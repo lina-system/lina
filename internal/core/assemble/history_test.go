@@ -142,3 +142,86 @@ func TestResultStorageEventsNeverExposeBodyToModel(t *testing.T) {
 		t.Fatalf("result history exposed storage body: %s %v", items, err)
 	}
 }
+
+// A long authored body must not return to the model through the call that
+// presented it. The ledger keeps the raw call and the paired output names the
+// result, so the request carries only that bounded reference.
+func TestPresentedResultCallCarriesNoBodyIntoModelHistory(t *testing.T) {
+	body := strings.Repeat("결과 content.\n", 6000) + "RESULT-END"
+	presented, err := json.Marshal(map[string]any{"type": "document_draft", "title": "Authored result", "summary": "Ready.", "body": map[string]any{"blocks": []any{map[string]any{"kind": "paragraph", "text": body}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments, err := json.Marshal(string(presented))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := `{"type":"function_call","id":"item-1","call_id":"present","name":"present_result","arguments":` + string(arguments) + `}`
+	output := `{"type":"function_call_output","call_id":"present","output":"{\"code\":\"ok\",\"result_id\":\"result:1\"}"}`
+	event := func(raw string, entry guard.Entry, speaker guard.SpeakerKind) ledger.Event {
+		masked, err := secrets.Mask(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ledger.Event{ConversationID: "conversation", AgentID: "agent", SpeakerKind: speaker, Origin: ledger.Origin{Kind: "native", Entry: entry, Locator: "source"}, ScaffoldKind: "provider_item", Body: masked}
+	}
+	events := []ledger.Event{event(call, guard.EntryAgent, guard.Agent), event(output, guard.EntryTool, guard.Tool)}
+	items, err := assemble.History(events, "conversation", "agent")
+	if err != nil || len(items) != 2 {
+		t.Fatalf("history = %s %v", items, err)
+	}
+	var kept struct {
+		Type      string `json:"type"`
+		ID        string `json:"id"`
+		CallID    string `json:"call_id"`
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	}
+	if err := json.Unmarshal(items[0], &kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept.Type != "function_call" || kept.ID != "item-1" || kept.CallID != "present" || kept.Name != "present_result" {
+		t.Fatalf("presented call lost identity: %+v", kept)
+	}
+	if strings.Contains(kept.Arguments, "RESULT-END") || len(kept.Arguments) > 512 {
+		t.Fatalf("presented body entered model history: %d bytes", len(kept.Arguments))
+	}
+	if !bytes.Equal(items[1], []byte(output)) {
+		t.Fatalf("paired output changed: %s", items[1])
+	}
+	// Calls that carry no result body keep their arguments exactly.
+	plain := `{"type":"function_call","call_id":"read","name":"read_result","arguments":"{\"result_id\":\"result:1\"}"}`
+	masked, err := secrets.Mask(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err = assemble.History([]ledger.Event{{ConversationID: "conversation", AgentID: "agent", SpeakerKind: guard.Agent, Origin: ledger.Origin{Kind: "native", Entry: guard.EntryAgent, Locator: "source"}, ScaffoldKind: "provider_item", Body: masked}}, "conversation", "agent")
+	if err != nil || len(items) != 1 || !bytes.Equal(items[0], []byte(plain)) {
+		t.Fatalf("plain call changed: %s %v", items, err)
+	}
+}
+
+func TestRefusedResultCallKeepsItsArgumentsInModelHistory(t *testing.T) {
+	body := strings.Repeat("결과 content.\n", 6000)
+	presented, err := json.Marshal(map[string]any{"type": "document_draft", "title": "Authored result", "summary": "Ready.", "body": map[string]any{"blocks": []any{map[string]any{"kind": "paragraph", "text": body}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments, err := json.Marshal(string(presented))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := `{"type":"function_call","call_id":"present","name":"present_result","arguments":` + string(arguments) + `}`
+	refusal := `{"type":"function_call_output","call_id":"present","output":"{\"code\":\"denied\"}"}`
+	event := func(raw string, entry guard.Entry, speaker guard.SpeakerKind) ledger.Event {
+		masked, err := secrets.Mask(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ledger.Event{ConversationID: "conversation", AgentID: "agent", SpeakerKind: speaker, Origin: ledger.Origin{Kind: "native", Entry: entry, Locator: "source"}, ScaffoldKind: "provider_item", Body: masked}
+	}
+	items, err := assemble.History([]ledger.Event{event(call, guard.EntryAgent, guard.Agent), event(refusal, guard.EntryTool, guard.Tool)}, "conversation", "agent")
+	if err != nil || len(items) != 2 || !bytes.Equal(items[0], []byte(call)) {
+		t.Fatalf("refused call lost its arguments: %v", err)
+	}
+}

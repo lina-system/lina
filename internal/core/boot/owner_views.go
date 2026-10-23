@@ -21,7 +21,13 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-const ownerViewRefreshInterval = 5 * time.Second
+const (
+	ownerViewRefreshInterval = 5 * time.Second
+	// ownerViewSettle coalesces a burst of commits into one projection. The
+	// publish must land within 250 ms of the commit (work-and-delegation.md#stages),
+	// so the settle window leaves room for the projection itself.
+	ownerViewSettle = 100 * time.Millisecond
+)
 
 var progressCapability = protocol.Capability{Name: "progress", Version: "1.0"}
 
@@ -149,7 +155,7 @@ func (r *conversationRuntime) runOwnerViews(watch context.Context, refresh <-cha
 				pending = r.topics.HasSubscribers("progress")
 			}
 		}
-		timer := time.NewTimer(250 * time.Millisecond)
+		timer := time.NewTimer(ownerViewSettle)
 		select {
 		case <-watch.Done():
 			timer.Stop()
@@ -189,7 +195,7 @@ func (r *conversationRuntime) ownerWaiting(ctx context.Context, names map[string
 		}
 		sources["outside"] = outsideWaitingSource{r.person, r.agent, name(r.agent)}
 	}
-	return waiting.NewWithLive(r.db, sources, map[string]waiting.LiveSource{"worker": workerWaitingSource{r, names}}).Build(ctx, r.person, opts)
+	return waiting.NewWithLive(r.db, sources, map[string]waiting.LiveSource{"worker": workerWaitingSource{r, names}, "a2a": a2aWaitingSource{r, names}}).Build(ctx, r.person, opts)
 }
 func waitingRows(list waiting.List) []protocol.WaitingRow {
 	rows := []protocol.WaitingRow{}
@@ -205,6 +211,18 @@ func waitingRows(list waiting.List) []protocol.WaitingRow {
 	return rows
 }
 func number(n int) json.Number { return json.Number(strconv.Itoa(n)) }
+
+// goalTitles reads each goal's own sentence. The execution ledger never holds
+// the goal's prose. A definition the person removed, or that no longer parses,
+// leaves that goal's name unknown and does not change the other names. A
+// failed ledger read still fails the projection.
+func (r *conversationRuntime) goalTitles(ctx context.Context) (map[string]string, error) {
+	if r.workEngine == nil || r.workEngine.engine == nil {
+		return map[string]string{}, nil
+	}
+	return r.workEngine.engine.GoalSentences(ctx)
+}
+
 func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progress, error) {
 	p, _, err := r.ownerProjection(ctx)
 	return p, err
@@ -222,10 +240,22 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		return protocol.Progress{}, "", err
 	}
 	var units []progress.Unit
+	titles, err := r.goalTitles(ctx)
+	if err != nil {
+		return protocol.Progress{}, "", err
+	}
 	err = r.db.Read(ctx, func(tx *canon.Tx) error {
 		var err error
 		units, err = progress.WorkUnits(ctx, tx, r.person, names)
-		return err
+		if err != nil {
+			return err
+		}
+		goals, err := progress.Goals(ctx, tx, r.person, names, func(id string) string { return titles[id] })
+		if err != nil {
+			return err
+		}
+		units = append(units, goals...)
+		return nil
 	})
 	if err != nil {
 		return protocol.Progress{}, "", err
@@ -276,6 +306,30 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		if v.Percent != nil {
 			percent := number(*v.Percent)
 			line.Percent = &percent
+		}
+		if len(v.Stages) > 0 {
+			stages := make([]protocol.ProgressStage, 0, len(v.Stages))
+			for _, entry := range v.Stages {
+				stage := protocol.ProgressStage{Kind: string(entry.Kind), Label: entry.Label, State: string(entry.State)}
+				if entry.Number > 0 {
+					value := number(entry.Number)
+					stage.Number = &value
+				}
+				if len(entry.Steps) > 0 {
+					steps := make([]protocol.ProgressStageStep, 0, len(entry.Steps))
+					for _, step := range entry.Steps {
+						wire := protocol.ProgressStageStep{Name: step.Name, State: string(step.State)}
+						if !step.StartedAt.IsZero() {
+							value := step.StartedAt.UTC().Format(time.RFC3339Nano)
+							wire.StartedAt = &value
+						}
+						steps = append(steps, wire)
+					}
+					stage.Steps = &steps
+				}
+				stages = append(stages, stage)
+			}
+			line.Stages = &stages
 		}
 		rows = append(rows, protocol.ProgressRow{Ref: entry.Ref, Line: line})
 	}
@@ -417,9 +471,13 @@ func (r *conversationRuntime) liveProgress(ctx context.Context, names map[string
 		if !session.started.IsZero() && (u.StartedAt.IsZero() || session.started.Before(u.StartedAt)) {
 			u.StartedAt = session.started
 		}
+		current := session.progressTurn()
 		session.mu.Lock()
 		if !exists && session.activity != "" && observation.View.State == "in_progress" {
 			u.Now = design.Text(eventLanguage(session.input), session.activity)
+		}
+		if !exists && session.doing != "" && session.doingTurn == current.TurnID && observation.View.State == "in_progress" {
+			u.Now = session.doing
 		}
 		owned := map[string]bool{}
 		for id := range session.questions {

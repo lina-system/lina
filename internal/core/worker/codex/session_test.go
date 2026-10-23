@@ -346,10 +346,11 @@ func TestInstalledCodex(t *testing.T) {
 	v, _ := s.Version(ctx)
 	t.Logf("installed Codex %s verified=%t", v, s.Compatibility().Verified)
 	dir := t.TempDir()
-	th, err := s.Start(ctx, l, worker.StartSpec{TaskID: "acceptance", AttemptID: "1", Workdir: dir, TaskPacket: "Wait for further instructions. Do not use tools yet."})
+	_, err = s.Start(ctx, l, worker.StartSpec{TaskID: "acceptance", AttemptID: "1", Workdir: dir, TaskPacket: "Wait for further instructions. Do not use tools yet."})
 	if err != nil {
 		t.Fatal(err)
 	}
+	var th worker.Thread
 	select {
 	case e := <-s.Events():
 		if e.Kind != worker.ProgressEvent || e.Progress.Phase != "started" {

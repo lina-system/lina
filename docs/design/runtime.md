@@ -42,10 +42,13 @@ External components (document parsers, OCR, the local transcription component, t
 LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Cursor, Gemini CLI, Grok or Antigravity, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
 
 - LINA uses the installed tool found on `PATH` or at a path the user configured, and records the version it observed.
+- Grok's installed version is probed with `grok --version`. The worker's separate
+  ACP handshake observation never replaces that CLI version or retains host
+  details from its metadata ([ACP adapter](work-and-delegation.md#acp-adapter)).
 - LINA lists the versions of each such tool that it has verified. A version not on the list is reported to the user as unverified, with the version found and the verified versions, and LINA still uses the tool. A function becomes unsupported only when its tool is missing, can't be started or connected to, or fails its protocol handshake, and LINA says why.
 - LINA never installs, updates or pins the tool on its own, and installs nothing inside it.
 - Nothing in this section applies to the Claude Agent SDK package. LINA installs that package itself, on first use of a Claude account, under Provider adapters.
-- Nor does it apply to the `claude-agent-acp` program that lets the ACP adapter drive Claude Code ([work-and-delegation.md](work-and-delegation.md#claude-code-through-acp)). The release pins it with its own lockfile, and LINA installs it on first use of the Claude Code worker, under the same rules as the Claude adapter's lockfile, without its optional packages. It always runs the person's installed `claude`; LINA still never installs, updates or pins Claude Code itself.
+- Nor does it apply to the `claude-agent-acp` program that lets the ACP adapter drive Claude Code ([work-and-delegation.md](work-and-delegation.md#claude-code-through-acp)). The release pins it with its own lockfile, and LINA installs it on first use of the Claude Code worker, under the same rules as the Claude adapter's lockfile, without its optional packages. Installation uses an isolated npm configuration and stages the complete lockfile tree before publishing it; reuse checks its recorded file integrity. It always runs the person's installed `claude`; LINA still never installs, updates or pins Claude Code itself.
 
 ## Processes
 
@@ -58,6 +61,7 @@ LINA uses some tools that the user installs and that LINA neither ships nor pins
 | Node | Go, a static binary | A service on each device | Device execution under grants |
 | Worker | The coding tool the user installed or signed in to, with the user's own configuration; Codex runs as `codex app-server`; Claude Code, Cursor, Gemini CLI, Grok and added agents run through the Agent Client Protocol, Claude Code under the pinned `claude-agent-acp` program; Antigravity runs as a headless child process ([work-and-delegation.md](work-and-delegation.md#workers)) | A stdio child of LINA Core, or of Node on a remote device | Workers, one child per task in flight |
 | Claude adapter | LINA's own TypeScript on Node.js, an external component pinned by the release, with the Claude Agent SDK installed on the person's machine (see Provider adapters) | A stdio child of LINA Core, started on first use of a Claude account and stopped after an idle period | Model calls through a Claude account |
+| Messenger add-on | LINA's own TypeScript on Node.js, an external component pinned by the release, running the agent-messenger SDK at a pinned version | A stdio child of LINA Core inside the OS sandbox, one per connected account of an unofficial messenger platform | Reading those platforms ([integrations.md](integrations.md#the-messenger-add-on)) |
 | Grok command | The official `grok` command the user installed | A stdio child of LINA Core, started for a turn and driven by the Go Grok adapter | Model calls through a Grok account |
 | Sandboxed commands | Whatever a tool call runs | Children of LINA Core inside the OS sandbox | Shell and file tools |
 | Background runs | Go, on the loop core of the LINA kit | Goroutines inside LINA Core, with no process of their own | Background research and analysis by LINA's sub-agents ([work-and-delegation.md](work-and-delegation.md#background-runs)) |
@@ -121,9 +125,9 @@ The loop behaves as follows:
 
 Core's `turn.Store` claims the inbox and creates the turn atomically, records preparation before the first request, and supplies the loop's commit callbacks. Its startup recovery closes unresolved calls and refuses to replay accepted turns, including a crash between a done output item and the complete assistant call message. Tool intents and receipts use the existing authority ledger through `turn.Tool`; uncertain effects remain unknown across restart. Approval suspension returns immediately, and `turn.ResumeApproval` dispatches the stored, hash-bound arguments under a fresh deadline after the answer. The caller installs the schema through canon migrations and runs recovery before admitting work.
 
-The lane's steering and stop controls target only its active turn. Steering is consumed at the next round boundary; queue closure or cancellation returns ownership of later input to admission for a follow-up. The conversation question tool receives the authenticated ledger event at that boundary, so an answer can resolve its pending card within the active turn. Questions created during the turn become eligible only when later owner input is consumed; the decision keeps the answering event as its source. A stop preserves the typed issuer and waits for started tools to return before releasing the lane. Preparation failure also closes steering admission and returns its pending input.
+The lane's steering and stop controls target only its active turn. Steering is consumed at the next round boundary; queue closure or cancellation returns ownership of later input to admission for a follow-up. The conversation question tool receives the authenticated ledger event at that boundary, so an answer can resolve its pending card within the active turn. Questions created during the turn become eligible only when later owner input is consumed; the decision keeps the answering event as its source. While a question remains open, work and successful completion require an assessment of the latest consumed input; reprocessing an older related input cannot release that gate. A stop preserves the typed issuer and waits for started tools to return before releasing the lane. Preparation failure also closes steering admission and returns its pending input.
 
-For a turn bound to its input ledger event, the stop or restart interruption is one plain system line in that conversation. The ledger append and terminal turn state commit together, so a failed append leaves recovery retryable. Recovery after a process kill closes open calls, keeps completed receipts, records the restart line once and never reissues the accepted input. The surface and speaking agent come from the durable input event. This is exercised through the real lane, turn store, ledger and a killed child process; client conversation routing remains with the client-service increment.
+For a turn bound to its input ledger event, the stop or restart interruption is one plain system line in that conversation. The ledger append and terminal turn state commit together, so a failed append leaves recovery retryable. Publication reads that committed outcome independently of the cancelled turn context; optional diagnostic lookup cannot suppress the stop notice. Recovery after a process kill closes open calls, keeps completed receipts, records the restart line once and never reissues the accepted input. The surface and speaking agent come from the durable input event. This is exercised through the real lane, turn store, ledger and a killed child process; client conversation routing remains with the client-service increment.
 
 When a streaming reply is stopped, its visible partials in the existing turn store commit with the aborted state and interruption line through the same atomic completion transaction as successful replies. Core seals the streamed block identities from that stored outcome and restores them before the interruption line after a restart. These partials are masked before storage and remain display-only aborted history, outside subsequent model requests. A failed terminal transaction cannot acknowledge a durable stop. The installed Core and headless TUI scenario `e2e/m1/tui-interrupted-reply.json` checks Esc, client reopen, graceful and forced Core restart, and no model request replay.
 
@@ -193,7 +197,7 @@ LINA Core can re-run a recorded turn, sandboxed and without effects, so that a c
 - Remembered statements preserve the recorded profile order and use the live profile's single-line whitespace projection of the masked content. A correction successor also excludes the original memory as `source_changed`, even if its recorded revision remains available. Replay never substitutes the correction into the original request.
 - Request assembly evidence that exceeds the ledger's inline limit is read from its exact material revision outside the canon read snapshot. Replay then rechecks current scope, retraction and material visibility before accepting it, as it does for other material-backed sources. If that material cannot be read, the turn is excluded as `missing_assembly` and export continues with valid turns. Cancellation and deadline failures still stop the operation.
 - A replay uses the kit's loop core with the candidate files, on the model and effort that the turn used unless the caller names others. It runs in the sandbox with network blocked and with a scratch directory of its own, and it never touches the working directory of a conversation.
-- A turn that only answered replays in full. A turn that read replays with LINA's local read tools live and the results of its network reads taken from the ledger. A turn whose tool call had an effect replays with that call answered by the recorded result, and is left out of the replay when no result was recorded. A replay never runs an effect and never writes the effect ledger or the conversation ledger.
+- A turn that only answered replays in full. A turn that read replays with LINA's local read tools live and the results of its network reads taken from the ledger. An agent-runtime provider issues those calls through Core's bridge into the sandbox. While that bridge waits for the runtime result, a nested `expand` or `recall_person` read is dispatched live on the same exchange and must finish before the result is accepted. Any other nested read fails the replay. A turn whose tool call had an effect replays with that call answered by the recorded result, and is left out of the replay when no result was recorded. A replay never runs an effect and never writes the effect ledger or the conversation ledger.
 - A replay's usage is recorded in its output as a run kind of its own, with the model account it used and each provider round. The installed development command writes no canon state, including budget reservations or settlements; its usage artifacts are separate from the install's budget totals ([Usage and cost](#usage-and-cost)).
 
 The installed invocation is `lina replay <episode-file|turn-id> --socket <path>
@@ -218,7 +222,8 @@ The Core client protocol adds `export_request`, `export_result`,
 `replay_request` and `replay_result` under the optional `replay/1.0` capability.
 These operations are unavailable during recovery. The CLI owns external input
 and output paths; Core owns export staging and never accepts a replay output
-path or a candidate directory from the wire. No command starts Core implicitly.
+path or a candidate directory from the wire. No command starts Core implicitly. The provider measurement variant and its
+private report format are defined under [Provider capabilities](#provider-capabilities).
 
 
 ## Model path
@@ -279,7 +284,7 @@ does not establish this client-level journey.
 - `store` is `false` and `stream` is `true`, as the Sign in with ChatGPT surface requires. Every request carries the full input it needs.
 - The adapter sends only fields that the Sign in with ChatGPT request surface accepts. `input` is an array. Instructions go in `instructions` or in developer-role items, never in system-role items. The fields that surface lists as unsupported (among them output limits, sampling parameters, truncation, `user`, `metadata`, `prompt_cache_retention`, and `previous_response_id` over HTTP) are not sent on it. Function and custom tools are declared in the form that surface requires. A field the surface does not document enters the request field list only after V1 shows it is accepted.
 - Each request carries its conversation's cache identity as `prompt_cache_key` once V1 shows the surface accepts it ([Provider capabilities](#provider-capabilities)).
-- Stateless requests include `reasoning.encrypted_content` regardless of whether an explicit reasoning effort is set. The [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) requires at least every reasoning item, tool call and tool output since the last user message to go back in the next request unchanged. LINA never sends an item of the current turn altered or dropped. When compacting earlier turns does not bring a follow-up request below the compaction threshold, LINA ends that turn and continues in a continuation turn whose request carries a compaction summary and the person's input once, so the round trip starts fresh ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)). When no compaction runs, LINA sends every earlier item back unchanged as well, because the conversation history carries them all ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)).
+- A stateless request asks for `reasoning.encrypted_content` when Core selected the reasoning-state capability for it, regardless of whether an explicit reasoning effort is set. The [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) requires at least every reasoning item, tool call and tool output since the last user message to go back in the next request unchanged. LINA never sends an item of the current turn altered or dropped. When compacting earlier turns does not bring a follow-up request below the compaction threshold, LINA ends that turn and continues in a continuation turn whose request carries a compaction summary and the person's input once, so the round trip starts fresh ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)). When no compaction runs, LINA sends every earlier item back unchanged as well, because the conversation history carries them all ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)).
 - Server state (`previous_response_id`, `store: true`, a provider's conversation or interaction objects), provider-side compaction, WebSocket mode and batch or flex tiers are provider capabilities. Each is used only when [Provider capabilities](#provider-capabilities) admits it for the route: LINA can recover without it, the ledger records its use, and the provider replay shows a gain. None is admitted today.
 - The request fields LINA sends form a list per model-API provider in the release manifest. A new field enters the list before it is sent.
 - Auxiliary reasoning (internal inference without tools) is a separate request with no tool list and no persona. It runs as its own run kind, can cause no external effect, and its output is never recorded as part of the conversation. A compaction summary is the one exception. It carries the conversation's fixed instructions and tool declarations unchanged, so it reuses the cached prefix, and Core runs none of its tool calls ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)).
@@ -288,6 +293,12 @@ does not establish this client-level journey.
 ### Provider capabilities
 
 Each provider adapter declares a capability set for each model it serves: the provider features that can cut billed input or waiting time. Core decides which to use, by fixed rules, from the request layout, the capability set, the ledger's times and the usage that providers report. No model makes this choice. The measurements behind these rules are in [provider-optimization.md](../research/provider-optimization.md).
+
+The model boundary exposes a named capability set per model. A missing name is
+unsupported, including for models absent from an adapter's declarations. The
+model list provides no capability defaults. Core intersects the declaration with
+the build's route admission set and any narrower adapter configuration before choosing values. Adapters refuse a
+requested capability outside either set before starting HTTP or a runtime.
 
 A capability is used only under all of these rules:
 
@@ -307,20 +318,57 @@ A capability is used only under all of these rules:
 
 The rules for each capability:
 
-- **Request order.** Requests follow the [request layout](conversation-and-memory.md#request-layout): fixed parts first, history, the person's input, then the ContextPacket. Within a conversation the tools and tool choice stay unchanged.
-- **Cache identity.** Core derives one identity per conversation: a digest of the main id, the agent id and the conversation id. A background run uses its run id. The identity holds no name or text, and it stays for the life of the conversation, across compactions.
+- **Request order.** Requests follow the [request layout](conversation-and-memory.md#request-layout): fixed parts first, history, the person's input, then the ContextPacket. Within a conversation the tools and tool choice stay unchanged, apart from tools loaded on demand. A failed-worker notice retains those declarations while Core disables its tool execution; declaration presence grants no permission. Compaction preserves the input-before-packet order; its summary request excludes both the current input and packet, including the standing profile.
+- **Cache identity.** Core derives one identity per conversation: a SHA-256 digest of a versioned, unambiguous tuple of the main id, the agent id and the conversation id. A background run hashes its run id under a separate domain. The identity holds no name or text, and it stays for the life of the conversation, across compactions and restarts. Epochs and request contents never enter it. Deriving and recording this identity does not admit its transmission to a provider.
 - **Cache marks.** Core marks four boundaries of every request:
   - after the fixed part (items 1 to 4 of the request layout, without plugin tools loaded on demand);
   - after the person's input of the previous turn;
   - after the person's input of the current turn;
   - in a follow-up request, after the newest item of the turn.
   An adapter whose provider needs explicit marks places them there; the others ignore them. The Claude adapter sends each earlier turn as its own text block of the runtime prompt and marks the last one, then sends the person's input and the ContextPacket.
+  Boundaries are exclusive counts in the request's item and tool arrays. The
+  fixed boundary excludes tools loaded on demand. A missing previous input or
+  newest follow-up item has no boundary; Core does not substitute external
+  user-role evidence for a person's input. Follow-ups retain the initial
+  boundaries and update the newest position after transforms. The request
+  digest covers these positions and all selected capability values.
 - **Cache lifetime.** Claude marks use 1 hour, set once per query on the runtime. A 1-hour write costs more only on the tokens added since the last request, while an expired 5-minute mark makes the next request write the whole history again. ChatGPT, Gemini and Grok keep their route's default, and LINA sends no lifetime field that V1 or V4 has not accepted.
-- **Reasoning state.** Every reasoning item, thinking block and thought signature returns unchanged in later requests, earlier turns included. Removing one changes the cached prefix as well as the model's state.
+- **Reasoning state.** Every reasoning item, thinking block and thought signature returns unchanged in later requests, earlier turns included. Removing one changes the cached prefix as well as the model's state. The Responses adapter asks for the encrypted form with `include: ["reasoning.encrypted_content"]` only when Core selected this capability; a route that narrows it away sends the request without that option and still returns whatever reasoning items the provider gives.
 - **Compaction.** Compaction and its summary request reuse the cache as [Compaction and resume](conversation-and-memory.md#compaction-and-resume) says.
 - **Server state and provider compaction.** Neither is admitted today. The plan routes refuse server state. On OpenAI's API, a chained request is billed for all earlier input again. xAI refuses instructions together with a chained request, so the chain cannot carry LINA's instructions on every request. A provider's own compaction returns a summary LINA cannot read, expand, check against retraction or delete with its sources.
 - **Batch and flex.** A background job (not a turn, a continuation or a background run) may use a provider's batch or flex tier when its account's route offers one and the job's deadline is longer than the tier's window. Each submission is recorded. A batch that fails or passes its window runs as a normal request.
 - **Provider replay.** One fixed, synthetic replay of LINA-shaped turns runs on each provider, with real accounts on opt-in. It reports, for every request, the input, read, written and plain tokens and the time to the first token. A change to a capability or to these rules carries its before and after from this replay. The episode export can feed the same replay from the person's own conversations on their machine, and those results stay off the repository.
+
+The development command is `lina provider-replay --provider <name> --socket
+<path> --fixture <file> --out <new-directory>`. Both caller and running Core
+require `LINA_QA_REAL_MODEL=1`, including scripted loopback tests. The named
+provider must match Core's configured adapter; there is no account fallback.
+The fixed public fixture contains the shipped persona and tool declarations,
+40 public history turns and four live turns, two with recorded tool results.
+Core uses its request assembler, capability admission and sandboxed loop. Each
+run has a fresh cache identity that stays stable across its turns. Ephemeral
+ContextPackets leave the history; returned reasoning items remain unchanged.
+
+`--episode <export.jsonl>` replaces `--fixture` and reuses the connected
+install's live ownership, reconstruction and removal checks. No effect runs,
+and neither mode writes canon or budget usage. Reports go only to a new private
+directory outside Git worktrees; symlinked parents receive the same check.
+
+`report.json` records every adapter request by turn and round: total input,
+cache reads, total writes, writes by reported lifetime, ordinary-rate input,
+and milliseconds from transport start to the first visible text or ready tool
+call. Reasoning-only items are not visible output. Unreported values and
+unobserved first output remain null. Provider-specific input accounting is
+normalized only when the required counters are known. Internal native-runtime
+requests that the adapter does not expose remain unmeasured. A failed or
+incomplete replay retains observed request measurements and exits nonzero;
+it is never retried automatically. Model replies and prompts stay out of the
+measurement report.
+
+`lina provider-replay compare <before.json> <after.json>` displays each request
+side by side, including missing requests, failures and unknown values. It
+refuses different source digests. The existing `replay_request` gains optional
+`provider` and `fixture` fields; ordinary episode replay remains compatible.
 
 ### Stream assembly
 
@@ -351,6 +399,7 @@ The Gemini adapter assembles its own stream by the same rules: deltas drive live
 ### Usage and cost
 
 - Usage comes from what each provider reports: the `usage` of a model-API response, the usage an agent runtime reports with a turn, and the usage events a worker reports, such as Codex's `thread/tokenUsage/updated`. It keeps the tokens read from and written to the provider's cache, with writes split by lifetime where the provider reports that. An unreported value is unknown, never zero.
+- Usage may additionally carry `cache_by_lifetime`, keyed by the reported lifetime, with independent optional `read` and `write` counts. Missing buckets or counts remain unknown. Existing aggregate cache counts remain independent reported totals; budget settlement does not add the buckets to input or output again. This is an optional addition to stored usage JSON, with no table migration or backfill.
 - The total budget covers conversation requests (turns in external channels and turns of agent exchanges included), background runs, the model calls of background jobs, worker threads, the sub-threads a worker starts, auxiliary reasoning. Development replays report their usage in output artifacts without changing canon or its budget totals. Every agent draws on the one budget, and each usage record names the agent it served, the account it used and, for a background run, the run.
 - Budget totals count tokens. A cost figure is shown only when the provider or runtime reports one, and is labelled an estimate when it is computed on the client (the Claude runtime's is). A plan route has no cost. Catalog prices and zero values are not actual cost.
 - LINA Core reserves and settles the budget. At the limit the conversation stops sending requests, a background run waits with its checkpoint and says what is done and what is not instead of being wrapped up, and workers are interrupted under the budget policy of [work-and-delegation.md](work-and-delegation.md). The Codex goal token budget is not used. This budget is the person's usage; it is not the turn budget, which only decides where work runs ([Turn budget](#turn-budget)).
@@ -407,6 +456,11 @@ The ChatGPT rows for LINA's own calls and for a Codex worker are two rows, becau
 ### Request regression
 
 A regression test compares LINA's requests with a baseline for each model-API provider: for ChatGPT, the request surface that the issuer documents for Sign in with ChatGPT and the requests recorded from the accepted turns of V1; for Gemini, the shape the Gemini API documents. It compares fields, `include`, the provider-state resend, the cache identity and marks, and the built-in tool declarations. The parts that differ by design are listed with the baseline and left out of the match: Codex's base instructions for coding work, which a LINA request never carries, LINA's developer-role persona and context items, and LINA's own tools ([conversation-and-memory.md](conversation-and-memory.md)). It runs again whenever a provider SDK pin, the request field list or a baseline moves.
+Layout changes move the request-order baseline in the same change. A scripted
+wire through the running Core must compare consecutive turns through the earlier
+person input, keep tools and tool choice stable, and show that a tool follow-up
+appends to its prepared request. Replay and episode export must preserve each
+recorded layout and its digest, including records made before the change.
 
 ## Accounts and sign-in
 
@@ -788,8 +842,11 @@ The initial JSON object contains these required fields; later implementation iss
 | `kitVersion` | Positive integer read from `kit/VERSION`, initially `1`. |
 | `sqlite` | Object with binding `module`, exact `version`, Go `moduleSum` (`h1:`), `sqliteVersion`, `wasmSHA256` (64 lowercase hex characters), `execution: "wazero"`, and `sqliteVec` (exact `version` and `sha256` of the complete custom Wasm engine; older manifests may have null). |
 | `providers.chatgpt` | `adapter: "responses"`, `retryCount: 0`, and `requestFields`, the explicit array of allowed top-level request fields. |
+| `providerCapabilities` | Route names mapped to admitted capability-name arrays. New builds include every implemented route, including empty sets. Older manifests without this optional field remain readable; absence grants no capability. |
 | `verifiedWorkerVersions` | Optional object mapping worker names to verified version arrays; `codex` uses bare versions from the adapter's `versions.json`, such as `["0.163.0"]`. |
 | `binaries` | Array of objects with `name` (basename), `size` (positive byte count), and `sha256` (64 lowercase hexadecimal characters). Includes both `lina` and `lina-node`, with platform suffixes. |
+
+The writer copies route admission sets from `kit/provider/capabilities.json`. The Responses descriptor also records its admitted `capabilities`; a per-request choice cannot widen that set. Unrecognized or unadmitted capabilities fail validation.
 
 The writer copies `providers` from `kit/provider/responses/manifest.json` and checks its adapter identity and zero retry count. The Responses adapter reads that configuration from the generated manifest, validates required and forbidden fields, and permits per-request narrowing only. The initial list is exercised by scripted wires; live V1 acceptance remains required before conversation acceptance.
 
@@ -1027,7 +1084,7 @@ Foundation keeps one local command and one required CI result. PRs select docs, 
 - Whether the Claude subscription route through the Agent SDK is allowed for LINA: the SDK's overview says third-party products may not offer claude.ai login without approval ([research](../research/provider-optimization.md#result)). Confirmed with the vendor before the release that depends on it. A Claude API-key route over the Messages API is planned as its own implementation.
 - The keep-alive interval of an idle ChatGPT refresh token, the warning period before a Claude token's year ends, the idle period after which the Claude adapter stops, and the number of concurrent turns per Claude account: set during implementation acceptance of the provider adapters.
 - Which quota source a Claude token supports (the runtime's events, the usage report, or both): decided by a live test in V4.
-- Where a model's context window comes from when its adapter reports none: set by the implementation issue that ships the provider adapters.
+- Model-specific tokenizers and authoritative context-window metadata for the remaining provider routes. Until both are available, the adapter uses the conservative byte budget in [Compaction and resume](conversation-and-memory.md#compaction-and-resume).
 - Narrowing a plugin server's network to named hosts: needs a filter in the sandbox wrapper; chosen at implementation acceptance of the plugin system, and until then the allowance is network on or off.
 - The starting values of the turn budget (acknowledgement, soft and hard budget, tool deadline), which only set the hand-off point: tuned by measurement during implementation acceptance of the conversation engine, on waiting time and completion quality together (rework, corrections and "that is not what I asked"), never on waiting time alone.
 - Replay uses immutable history references, pinned persona and recorded request configuration; missing reconstructible assembly excludes the turn. Raw ContextPackets remain unstored.

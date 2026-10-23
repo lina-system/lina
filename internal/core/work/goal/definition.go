@@ -169,7 +169,7 @@ func (e *Engine) prepareDefinition(ctx context.Context, g *Goal) error {
 	g.RecordID = "goal:" + g.ID
 	r, rev, err := e.cfg.Records.Read(ctx, g.RecordID)
 	if errors.Is(err, ErrDefinitionMissing) {
-		rev, err = e.cfg.Records.Commit(ctx, DefinitionChange{ID: g.RecordID, Path: "projects/" + actionID(Action{GoalID: g.ID}) + ".md", Data: definitionBytes(*g)}, g.Person, g.Agent)
+		_, err = e.cfg.Records.Commit(ctx, DefinitionChange{ID: g.RecordID, Path: "projects/" + actionID(Action{GoalID: g.ID}) + ".md", Data: definitionBytes(*g)}, g.Person, g.Agent)
 		if err != nil {
 			return err
 		}
@@ -210,6 +210,57 @@ func (e *Engine) hydrate(g *Goal) error {
 	g.TargetRevision = targetRevision(*g)
 	g.DefinitionText = saved.text
 	return nil
+}
+
+// GoalSentences returns each goal's canonical sentence, keyed by goal id.
+// The execution ledger does not store that prose. A missing or unreadable
+// definition omits only that goal. A ledger failure, or any other records
+// error, fails the call so a projection does not invent the remaining names.
+func (e *Engine) GoalSentences(ctx context.Context) (map[string]string, error) {
+	if e.cfg.Records == nil {
+		return nil, ErrInvalid
+	}
+	rows, err := e.journal.Records(ctx, "goal")
+	if err != nil {
+		return nil, err
+	}
+	titles := map[string]string{}
+	for _, row := range rows {
+		var g Goal
+		if err = json.Unmarshal(row.Body, &g); err != nil {
+			return nil, err
+		}
+		sentence, readErr := e.goalSentence(ctx, g)
+		if readErr != nil {
+			if errors.Is(readErr, ErrDefinitionMissing) || errors.Is(readErr, ErrInvalid) {
+				continue
+			}
+			return nil, readErr
+		}
+		if sentence != "" {
+			titles[g.ID] = sentence
+		}
+	}
+	return titles, nil
+}
+
+func (e *Engine) goalSentence(ctx context.Context, g Goal) (string, error) {
+	if cached, ok := e.definitions.Load(definitionKey{g.RecordID, g.RecordRevision}); ok {
+		saved := cached.(savedDefinition)
+		if saved.revision == g.RecordRevision {
+			return saved.definition.Outcome, nil
+		}
+	}
+	r, rev, err := e.cfg.Records.Read(ctx, g.RecordID)
+	if err != nil {
+		return "", err
+	}
+	d, err := parseDefinition(r, g.Person, g.Agent)
+	if err != nil {
+		return "", err
+	}
+	e.definitions.Store(definitionKey{g.RecordID, rev}, savedDefinition{d, rev, string(r.Data)})
+	return d.Outcome, nil
 }
 
 // RefreshDefinitions reads records outside any canon transaction. A changed

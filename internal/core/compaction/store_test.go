@@ -98,6 +98,7 @@ func counts(t *testing.T, db *canon.Store) []int {
 	return out
 }
 func TestPublicationRejectsStaleFrontierAndEpoch(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"append", "competing publish", "epoch"} {
 		t.Run(kind, func(t *testing.T) {
 			db, s, _, _ := fixture(t)
@@ -123,6 +124,7 @@ func TestPublicationRejectsStaleFrontierAndEpoch(t *testing.T) {
 	}
 }
 func TestPublicationCoverageAndTree(t *testing.T) {
+	t.Parallel()
 	db, s, _, cfg := fixture(t)
 	for _, kind := range []string{"gap", "duplicate", "foreign", "invented skip", "hidden verbatim"} {
 		t.Run(kind, func(t *testing.T) {
@@ -183,6 +185,7 @@ func forget(t *testing.T, db *canon.Store, r *retract.Store) {
 	}
 }
 func TestRetractionRebuildsLeafAndAncestorsAtomically(t *testing.T) {
+	t.Parallel()
 	db, s, r, _ := fixture(t)
 	publish(t, s, proposal(t, s, "leaf"))
 	publish(t, s, Proposal{Expected: frontier(t, s), ID: "parent", Children: []string{"leaf"}, Cover: []Coverage{{EventID: "e2"}}, Output: output("parent e1 e2")})
@@ -243,6 +246,7 @@ func TestRetractionRebuildsLeafAndAncestorsAtomically(t *testing.T) {
 	}
 }
 func TestRebuildRejectsConcurrentAppendWithoutPartialWrites(t *testing.T) {
+	t.Parallel()
 	db, s, r, _ := fixture(t)
 	publish(t, s, proposal(t, s, "leaf"))
 	forget(t, db, r)
@@ -258,6 +262,7 @@ func TestRebuildRejectsConcurrentAppendWithoutPartialWrites(t *testing.T) {
 	}
 }
 func TestPublicationRollsBackStorageFailure(t *testing.T) {
+	t.Parallel()
 	db, s, _, _ := fixture(t)
 	write(t, db, `CREATE TRIGGER fail_cover BEFORE INSERT ON sum_cover BEGIN SELECT RAISE(ABORT,'injected'); END;`)
 	if _, err := s.Publish(t.Context(), proposal(t, s, "failed")); err == nil || !strings.Contains(err.Error(), "injected") {
@@ -269,6 +274,7 @@ func TestPublicationRollsBackStorageFailure(t *testing.T) {
 }
 
 func TestRebuildFencesEpochAndCompetingRebuild(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"epoch", "rebuild"} {
 		t.Run(kind, func(t *testing.T) {
 			db, s, r, _ := fixture(t)
@@ -302,6 +308,7 @@ func TestRebuildFencesEpochAndCompetingRebuild(t *testing.T) {
 }
 
 func TestInvalidChildrenAndVerbatimCannotHideRevocation(t *testing.T) {
+	t.Parallel()
 	db, s, r, _ := fixture(t)
 	publish(t, s, proposal(t, s, "leaf"))
 	// Even an otherwise complete proposal cannot discard the established root.
@@ -343,6 +350,7 @@ func TestInvalidChildrenAndVerbatimCannotHideRevocation(t *testing.T) {
 }
 
 func TestRebuildRollsBackDatabaseFailure(t *testing.T) {
+	t.Parallel()
 	db, s, r, _ := fixture(t)
 	publish(t, s, proposal(t, s, "leaf"))
 	publish(t, s, Proposal{Expected: frontier(t, s), ID: "parent", Children: []string{"leaf"}, Cover: []Coverage{{EventID: "e2"}}, Output: output("parent")})
@@ -359,6 +367,7 @@ func TestRebuildRollsBackDatabaseFailure(t *testing.T) {
 }
 
 func TestPublicationRecordsSkipsAndRejectsIncompleteOutput(t *testing.T) {
+	t.Parallel()
 	db, s, _, _ := fixture(t)
 	_, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "copy", ConversationID: "conversation", PersonID: "person", AgentID: "agent", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(40, 0), RecordedAt: time.Unix(40, 0), TimeQuality: "observed", Body: "synthetic e1", ReplayOf: "e1"})
 	if err != nil {

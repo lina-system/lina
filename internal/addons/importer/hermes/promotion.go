@@ -37,6 +37,20 @@ func instruction(text string) bool {
 	return false
 }
 
+// promotionBody returns the body publication displays for r: the adopted
+// output sidecar bytes when the event has one, and the inline body otherwise.
+// Missing sidecar bytes keep the inline body, as publication does.
+func promotionBody(c *conversation, r *record) string {
+	if r.event != nil {
+		for _, attachment := range c.records {
+			if attachment.kind == "material" && attachment.material != nil && len(attachment.links) == 1 && attachment.links[0].target == r.id {
+				return attachment.sources[0].row.text("bytes")
+			}
+		}
+	}
+	return r.body
+}
+
 // PromotionBatches proposes verbatim quotes, never facts extracted from summary
 // text. Acceptance attests that a cluster concerns the person; it is not an
 // inferred provenance upgrade. The source language and precision stay intact.
@@ -54,8 +68,22 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 	}
 	for _, c := range p.conversations {
 		for _, r := range c.records {
-			if superseded[r.id] || hasFlag(r, "retracted") || strings.TrimSpace(r.body) == "" || len(ScanSecrets([]byte(r.body))) > 0 {
+			if superseded[r.id] || hasFlag(r, "retracted") || strings.TrimSpace(r.body) == "" {
 				continue
+			}
+			// Promotion judges the body publication displays, and the inline
+			// sentence it quotes. An event whose output sidecar cannot be
+			// masked publishes an unavailable notice, so it cannot back a
+			// memory item; secrets in either body stay excluded.
+			display := promotionBody(c, r)
+			masked, err := displayMask(display)
+			if err != nil || len(masked.Spans()) != 0 {
+				continue
+			}
+			if display != r.body {
+				if masked, err = displayMask(r.body); err != nil || len(masked.Spans()) != 0 {
+					continue
+				}
 			}
 			person := p.people[c.report.Profile]
 			precision := memory.Session
@@ -97,7 +125,7 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 				continue
 			}
 			if person == "" {
-				return nil, ErrSnapshot
+				return nil, invalidSnapshot("promotion person mapping required")
 			}
 			key := opaque(r.agent, person, strings.Join(strings.Fields(strings.ToLower(r.body)), " "), string(precision))
 			g := groups[key]
@@ -136,7 +164,7 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 // not a worker echo or text found in source data.
 func (p *Plan) Promote(ctx context.Context, db Canon, policy PromotionPolicy, accepted []string, confirmation string) (int, error) {
 	if strings.TrimSpace(confirmation) == "" {
-		return 0, ErrSnapshot
+		return 0, invalidSnapshot("promotion confirmation required")
 	}
 	batches, err := p.PromotionBatches(policy)
 	if err != nil {
@@ -156,7 +184,7 @@ func (p *Plan) Promote(ctx context.Context, db Canon, policy PromotionPolicy, ac
 	for _, id := range accepted {
 		b, ok := byID[id]
 		if !ok || b.PersonaProposal || seen[id] {
-			return 0, ErrSnapshot
+			return 0, invalidSnapshot("promotion batch selection")
 		}
 		seen[id] = true
 	}
@@ -173,7 +201,7 @@ func (p *Plan) Promote(ctx context.Context, db Canon, policy PromotionPolicy, ac
 					return err
 				}
 				if generation == "" {
-					return ErrSnapshot
+					return invalidSnapshot("promotion requires sealed backup")
 				}
 			}
 			var previous string

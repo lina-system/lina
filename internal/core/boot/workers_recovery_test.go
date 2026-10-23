@@ -204,8 +204,9 @@ func TestDelayedWorkerFinishCannotSettleCurrentRecovery(t *testing.T) {
 	if err := r.work.ReserveWorker(t.Context(), reservation, dir); err != nil {
 		t.Fatal(err)
 	}
-	probe := &failedRecoveryProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: current, State: worker.Idle}}, events: make(chan worker.Event, 2)}
+	probe := &failedRecoveryProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: current, State: worker.Idle}}, events: make(chan worker.Event, 3)}
 	late := worker.Event{Kind: worker.FinishEvent, Thread: previous, Finish: &worker.Finish{Status: worker.Done}}
+	probe.events <- worker.Event{Kind: worker.ProgressEvent, Thread: previous, Progress: &worker.Progress{Phase: "started"}}
 	probe.events <- late
 	probe.events <- late
 	close(probe.events)

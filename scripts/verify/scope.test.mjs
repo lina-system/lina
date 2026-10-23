@@ -653,7 +653,7 @@ for (const path of ['scripts/verify/dependency-exceptions.json', 'THIRD-PARTY-NO
 }
 
 test('brand tokens and generated data select verification while PNGs remain evidence', () => {
-  for (const path of ['design/tokens/light.json', 'design/tokens/tokens.css', 'DESIGN.md']) assert.equal(kind(path), 'automation');
+  for (const path of ['design/tokens/light.json', 'design/tokens/tokens.css', 'design/tokens/tokens.swift', 'DESIGN.md']) assert.equal(kind(path), 'automation');
   assert.equal(kind('internal/design/tokens_gen.go'), 'components');
   assert.equal(kind('evidence/brand/dark-connected.png'), 'docs');
   assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
@@ -672,13 +672,27 @@ test('vector rebuilds select automation and their notices remain documents', () 
   assert.equal(kind('packaging/sqlite-vec/unregistered.py'), 'unmapped');
 });
 
+test('native parts select automation and carry their own tests', t => {
+  for (const path of ['native/macos/unlock-plugin/src/lina_unlock.c', 'native/macos/unlock-plugin/README.md', 'native/macos/unlock-plugin/Info.plist']) {
+    assert.equal(kind(path), 'automation', path);
+  }
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'native/macos/unlock-plugin/src'), { recursive: true });
+  writeFileSync(join(r.cwd, 'native/macos/unlock-plugin/src/lina_unlock.c'), 'int main(void) { return 0; }\n');
+  const scope = r.classify(r.commit(), { base });
+  assert.equal(scope.reason, 'automation-change');
+  assert.equal(scope.automation, true);
+  assert.deepEqual(scope.unmapped, []);
+});
+
 test('QA guide and repository opt-in have registered verification', () => {
   assert.equal(kind('docs/qa.md'), 'docs');
   assert.equal(kind('.devflow'), 'automation');
 });
 
 test('Claude adapter and npm configuration select automation and dependency verification', () => {
-  for (const path of ['adapters/claude/adapter.ts', 'adapters/claude/package.json', 'adapters/claude/package-lock.json', '.npmrc', '.node-version', 'package.json', 'package-lock.json']) {
+  for (const path of ['adapters/claude-acp/package.json', 'adapters/claude-acp/package-lock.json', 'adapters/claude/adapter.ts', 'adapters/claude/package.json', 'adapters/claude/package-lock.json', '.npmrc', '.node-version', 'package.json', 'package-lock.json']) {
     assert.equal(kind(path), 'automation', path);
   }
 });
@@ -734,4 +748,11 @@ test('one-time takeover operator is verified separately from release commands', 
   const operator = componentRegistry.find(c => c.name === 'crw-takeover');
   assert.deepEqual(operator.packages, ['./tools/crw-takeover/...']);
   assert.equal(operator.binary, undefined);
+});
+
+test('shared generated UI template and embedded font belong to the Core build', () => {
+  for (const path of ['design/template.go', 'design/template/base.css', 'design/template/mock.js', 'design/fonts/PretendardVariable.woff2']) {
+    assert.equal(kind(path), 'components');
+  }
+  assert.equal(kind('design/tokens/tokens.css'), 'automation');
 });

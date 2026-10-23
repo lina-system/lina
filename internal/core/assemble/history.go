@@ -35,7 +35,7 @@ func History(events []ledger.Event, conversation, agent string, partner ...strin
 		if err != nil {
 			return nil, err
 		}
-		if e.ScaffoldKind == "prepare_ack" || e.ScaffoldKind == "request_assembly" || e.ScaffoldKind == "compaction_recorded" || e.ScaffoldKind == "result" || e.ScaffoldKind == "reply_check" {
+		if e.ScaffoldKind == "input_binding" || e.ScaffoldKind == "prepare_ack" || e.ScaffoldKind == "request_assembly" || e.ScaffoldKind == "compaction_recorded" || e.ScaffoldKind == "result" || e.ScaffoldKind == "reply_check" {
 			continue
 		}
 		if e.ScaffoldKind == "provider_item" {
@@ -70,6 +70,9 @@ func History(events []ledger.Event, conversation, agent string, partner ...strin
 		}
 		items = append(items, message(role, text))
 	}
+	// A presented result is projected with its paired receipt, so only a
+	// completed presentation loses its body from the model request.
+	items, _ = CondenseResultItems(items)
 	return items, nil
 }
 

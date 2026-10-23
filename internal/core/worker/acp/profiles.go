@@ -2,6 +2,7 @@
 package acp
 
 import (
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"strings"
 
 	"github.com/thisisjun786/lina/kit/proc"
@@ -10,28 +11,35 @@ import (
 // Profile describes an installed worker, not a provider or a settings override.
 // Empty version probes use initialize.agentInfo.version, or unknown.
 type Profile struct {
+	Delivery          worker.DeliveryProfile
 	Name, Command     string
 	Args, Environment []string
 	VersionCommand    string
 	VersionArgs       []string
 	RateLimitKey      string
 	VerifiedVersions  []string
+	Managed           bool
 }
 
 func BuiltinProfiles() []Profile {
 	return []Profile{
-		{Name: "claude-acp", Command: "claude-agent-acp", VersionCommand: "claude", VersionArgs: []string{"--version"}, RateLimitKey: "_claude/rateLimit"},
-		{Name: "cursor", Command: "cursor-agent", Args: []string{"acp"}, VersionCommand: "cursor-agent", VersionArgs: []string{"--version"}},
-		{Name: "gemini", Command: "gemini", Args: []string{"--acp"}},
-		{Name: "grok", Command: "grok", Args: []string{"--no-auto-update", "agent", "stdio"}, VersionCommand: "grok", VersionArgs: []string{"--version"}},
+		{Name: "claude-acp", Delivery: turnDelivery(), Managed: true, Command: "claude-agent-acp", VersionCommand: "claude", VersionArgs: []string{"--version"}, RateLimitKey: "_claude/rateLimit"},
+		{Name: "cursor", Delivery: turnDelivery(), Command: "cursor-agent", Args: []string{"acp"}, VersionCommand: "cursor-agent", VersionArgs: []string{"--version"}},
+		{Name: "gemini", Delivery: turnDelivery(), Command: "gemini", Args: []string{"--acp"}},
+		{Name: "grok", Delivery: turnDelivery(), Command: "grok", Args: []string{"--no-auto-update", "agent", "stdio"}, VersionCommand: "grok", VersionArgs: []string{"--version"}},
 	}
 }
 
 // Installed resolves executables without starting or installing any tool.
+// The Claude wrapper is managed by Core and is prepared only after selection.
 func Installed() []Profile {
 	var profiles []Profile
 	for _, p := range BuiltinProfiles() {
-		command, err := proc.LookPath(p.Command)
+		commandName := p.Command
+		if p.Managed {
+			commandName = "node"
+		}
+		command, err := proc.LookPath(commandName)
 		if err != nil {
 			continue
 		}
@@ -61,4 +69,16 @@ func environment(base, additions []string) []string {
 		}
 	}
 	return result
+}
+
+func turnDelivery() worker.DeliveryProfile {
+	return worker.DeliveryProfile{Tier: "turn", Mechanism: "next LINA tool result; session/prompt when idle", Available: true}
+}
+
+func (a *Adapter) DeliveryProfile() worker.DeliveryProfile {
+	p := a.cfg.Profile.Delivery
+	if p.Tier == "" {
+		p = worker.DeliveryProfile{Tier: "pull", Mechanism: "LINA tool unread notice and check_inbox; session/prompt when idle", Available: true}
+	}
+	return p
 }

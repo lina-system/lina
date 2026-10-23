@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,17 @@ function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8', env: cleanEnv() });
   assert.ifError(result.error);
   return result;
+}
+
+// A case-insensitive filesystem cannot hold two colliding paths, so a fixture
+// cannot express the collision. The check itself still reads the index.
+function skipCaseInsensitive(t) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'lina-case-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, 'probe'), '');
+  if (!existsSync(path.join(dir, 'PROBE'))) return false;
+  t.skip('case-insensitive filesystem cannot hold both paths');
+  return true;
 }
 
 function fixture(t, files) {
@@ -145,6 +156,86 @@ test('duplicate headings use collision-free suffixes in document order', (t) => 
   assert.match(result.stderr, /broken anchor guide\.md#tools-3/);
 });
 
+for (const underline of ['---', '===']) {
+  test(`multiline setext headings use the whole paragraph (${underline})`, (t) => {
+    const { check } = fixture(t, {
+      'README.md': '[heading](guide.md#first-linesecond-lineand-third)\n'
+        + '[duplicate](guide.md#first-linesecond-lineand-third-1)\n',
+      'guide.md': `First *line*\nsecond [line](guide.md)\nand \`third\`\n${underline}\n\n`
+        + `First line\nsecond line\nand third\n${underline}\n`,
+    });
+    const result = check();
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  test(`last line alone is not a multiline setext anchor (${underline})`, (t) => {
+    const { check } = fixture(t, {
+      'README.md': '[invalid](guide.md#second-line)\n',
+      'guide.md': `First line\nsecond line\n${underline}\n`,
+    });
+    const result = check();
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /README\.md: broken anchor guide\.md#second-line\n/);
+  });
+}
+
+for (const underline of ['---', '===']) {
+  test(`setext heading text excludes leading reference definitions (${underline})`, (t) => {
+    const { check } = fixture(t, {
+      'README.md': '[heading](guide.md#first-linesecond-line)\n'
+        + '[definition](guide.md#ref-httpsguidelinkother-guidemd-titlefirst-linesecond-line)\n',
+      'guide.md': '[ref]: https://guide.link\n[other]: guide.md "Title"\n'
+        + `First line\nsecond line\n${underline}\n`,
+    });
+    const result = check();
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /broken anchor guide\.md#ref-httpsguidelinkother-guidemd-titlefirst-linesecond-line\n/);
+    assert.doesNotMatch(result.stderr, /broken anchor guide\.md#first-linesecond-line/);
+  });
+}
+
+test('setext heading text keeps definition-like lines after its first line', (t) => {
+  const { check } = fixture(t, {
+    'README.md': '[heading](guide.md#first-lineref-httpsguidelink)\n'
+      + '[definition](guide.md#ref-httpsguidelink)\n',
+    'guide.md': 'First line\n[ref]: https://guide.link\n---\n',
+  });
+  const result = check();
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /broken anchor guide\.md#ref-httpsguidelink\n/);
+  assert.doesNotMatch(result.stderr, /broken anchor guide\.md#first-lineref-httpsguidelink/);
+});
+
+test('a paragraph of only reference definitions is not a setext heading', (t) => {
+  const { check } = fixture(t, {
+    'README.md': '[heading](guide.md#ref-httpsguidelink)\n',
+    'guide.md': '[ref]: https://guide.link\n---\n',
+  });
+  const result = check();
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /broken anchor guide\.md#ref-httpsguidelink\n/);
+});
+
+test('setext paragraphs stop at blank lines, headings, code, and comments', (t) => {
+  const boundaries = [
+    'Earlier paragraph\n\n',
+    '# Earlier heading\n',
+    'Earlier heading\n===\n',
+    'Earlier paragraph\n```md\nCode\n```\n',
+    'Earlier paragraph\n<!-- Comment -->\n',
+    'Earlier paragraph\n\n---\n',
+    'Earlier paragraph\n* * *\n',
+    'Earlier paragraph\n___\n',
+  ];
+  const files = Object.fromEntries(boundaries.map((prefix, index) => [
+    `guide-${index}.md`, `${prefix}First line\nsecond line\n---\n`,
+  ]));
+  files['README.md'] = boundaries.map((_, index) => `[heading](guide-${index}.md#first-linesecond-line)`).join('\n');
+  const { check } = fixture(t, files);
+  const result = check();
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('headings in code and comments cannot satisfy an anchor', (t) => {
   const { check } = fixture(t, {
     'README.md': ['fenced', 'nested', 'tilde', 'indented', 'comment', 'not-a-heading']
@@ -157,6 +248,32 @@ test('headings in code and comments cannot satisfy an anchor', (t) => {
   for (const anchor of ['fenced', 'nested', 'tilde', 'indented', 'comment', 'not-a-heading']) {
     assert.ok(result.stderr.includes(`broken anchor guide.md#${anchor}`), result.stderr);
   }
+});
+
+test('tracked paths that differ only by case fail', (t) => {
+  if (skipCaseInsensitive(t)) return;
+  const { check } = fixture(t, {
+    'docs/Guide.md': '# Guide\n',
+    'docs/guide.md': '# Guide\n',
+    'docs/other.md': '# Other\n',
+  });
+  const result = check();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /docs\/Guide\.md and docs\/guide\.md: tracked paths differ only by case/);
+});
+
+test('collisions in non-document paths fail', (t) => {
+  if (skipCaseInsensitive(t)) return;
+  const { check } = fixture(t, { 'a/Package.go': 'package a\n', 'a/package.go': 'package a\n' });
+  const result = check();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /a\/Package\.go and a\/package\.go: tracked paths differ only by case/);
+});
+
+test('distinct paths that differ by more than case pass', (t) => {
+  const { check } = fixture(t, { 'docs/Guide.md': '# Guide\n', 'docs/guide-notes.md': '# Notes\n' });
+  const result = check();
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test('external URLs, bare fragments, non-Markdown fragments, and code links stay excluded', (t) => {

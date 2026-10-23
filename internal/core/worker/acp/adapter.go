@@ -10,12 +10,14 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/doing"
 	wire "github.com/thisisjun786/lina/kit/acp"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
@@ -29,6 +31,7 @@ var generations atomic.Uint64
 
 type Config struct {
 	Profile     Profile
+	Prepare     func(context.Context, lease.Lease) (string, error)
 	Environment []string
 	Epoch       uint64
 	Leaser      lease.Leaser
@@ -36,6 +39,7 @@ type Config struct {
 type Result struct {
 	SessionID    string            `json:"session_id"`
 	AgentVersion string            `json:"agent_version"`
+	Handshake    *Handshake        `json:"handshake,omitempty"`
 	StopReason   string            `json:"stop_reason"`
 	Output       string            `json:"output"`
 	Unknown      []json.RawMessage `json:"unknown_updates,omitempty"`
@@ -44,27 +48,37 @@ type Result struct {
 // An adapter owns one session. The process lifetime is independent of individual
 // control-call contexts; only Interrupt requests protocol cancellation.
 type Adapter struct {
-	cfg             Config
-	control         sync.Mutex
-	mu              sync.Mutex
-	client          *wire.Client
-	life            context.Context
-	cancel          context.CancelFunc
-	started, closed bool
-	thread          worker.Thread
-	spec            worker.StartSpec
-	state           worker.ThreadState
-	version         string
-	turn            uint64
-	nextRequest     uint64
-	requests        map[string]*pendingDecision
-	cancelled       bool
-	result          Result
-	events          chan worker.Event
-	turns           sync.WaitGroup
-	tools           *toolServer
-	pending         map[string]toolPending
-	turnEnded       chan struct{}
+	doing             doing.Reader
+	cfg               Config
+	control           sync.Mutex
+	mu                sync.Mutex
+	client            *wire.Client
+	life              context.Context
+	cancel            context.CancelFunc
+	started, closed   bool
+	thread            worker.Thread
+	spec              worker.StartSpec
+	state             worker.ThreadState
+	version           string
+	turn              uint64
+	nextRequest       uint64
+	requests          map[string]*pendingDecision
+	cancelled         bool
+	result            Result
+	events            chan worker.Event
+	turns             sync.WaitGroup
+	tools             *toolServer
+	pending           map[string]toolPending
+	turnEnded         chan struct{}
+	sessionFailures   atomic.Bool
+	extensionFailure  *worker.Finish
+	extensionObserved time.Time
+	quotaRows         []provider.QuotaRow
+	uncertainEffects  bool
+	terminal          *worker.Finish
+	effectSeen        bool
+	transportEnded    bool
+	held              []wire.Update
 }
 
 var _ worker.Adapter = (*Adapter)(nil)
@@ -74,10 +88,14 @@ func New(cfg Config) *Adapter {
 }
 func (a *Adapter) Name() string { return a.cfg.Profile.Name }
 func (a *Adapter) Capabilities() worker.CapabilitySet {
-	return worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.AskQuestions}
+	caps := worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.AskQuestions}
+	if a.cfg.Profile.RateLimitKey != "" || a.sessionFailures.Load() {
+		caps = append(caps, worker.ReportQuota)
+	}
+	return caps
 }
-func (a *Adapter) Events() <-chan worker.Event                        { return a.events }
-func (a *Adapter) Quota(context.Context) ([]provider.QuotaRow, error) { return nil, nil }
+func (a *Adapter) Events() <-chan worker.Event { return a.events }
+
 func (a *Adapter) Version(ctx context.Context) (string, error) {
 	a.control.Lock()
 	defer a.control.Unlock()
@@ -123,10 +141,29 @@ func (a *Adapter) Version(ctx context.Context) (string, error) {
 func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) (worker.Thread, error) {
 	a.control.Lock()
 	defer a.control.Unlock()
+	return a.start(ctx, l, s, nil)
+}
+
+// RecoverAttempt continues only an attempt whose failed outcome dispatch has
+// already settled and admitted for recovery. It cannot reconcile an unknown
+// attempt after a Core crash, and never owns or resets the recovery allowance.
+func (a *Adapter) RecoverAttempt(ctx context.Context, l lease.Lease, s worker.StartSpec, prior worker.Thread) (worker.Thread, error) {
+	a.control.Lock()
+	defer a.control.Unlock()
+	turn, err := strconv.ParseUint(strings.TrimPrefix(prior.TurnID, "acp:"), 10, 64)
+	if err != nil || !strings.HasPrefix(prior.TurnID, "acp:") || turn == 0 || turn == ^uint64(0) || prior.ID == "" || prior.TaskID != s.TaskID || prior.AttemptID == "" || prior.AttemptID == s.AttemptID || prior.ProcessGeneration == 0 || prior.BindingEpoch == 0 || prior.BindingEpoch > a.cfg.Epoch {
+		return worker.Thread{}, ErrThread
+	}
+	return a.start(ctx, l, s, &prior)
+}
+
+func (a *Adapter) start(ctx context.Context, l lease.Lease, s worker.StartSpec, prior *worker.Thread) (worker.Thread, error) {
 	if err := ctx.Err(); err != nil {
 		return worker.Thread{}, err
 	}
-	if err := a.Capabilities().Require(s.Required...); err != nil {
+	// Quota capability can only be known after extension negotiation.
+	required := slices.DeleteFunc(slices.Clone(s.Required), func(c worker.Capability) bool { return c == worker.ReportQuota })
+	if err := a.Capabilities().Require(required...); err != nil {
 		return worker.Thread{}, err
 	}
 	if s.Model != "" || s.Effort != "" {
@@ -148,8 +185,21 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 		s.Tools = worker.WorkToolDeclarations()
 	}
 	a.spec = s
+	if prior != nil {
+		a.turn, _ = strconv.ParseUint(strings.TrimPrefix(prior.TurnID, "acp:"), 10, 64)
+	}
 	a.life, a.cancel = context.WithCancel(ctx)
 	a.mu.Unlock()
+	if a.cfg.Profile.Managed {
+		if a.cfg.Prepare == nil {
+			return worker.Thread{}, fmt.Errorf("%w: Claude ACP installer unavailable", ErrUnsupported)
+		}
+		program, err := a.cfg.Prepare(a.life, l)
+		if err != nil {
+			return worker.Thread{}, fmt.Errorf("prepare Claude ACP: %w", err)
+		}
+		a.cfg.Profile.Args = []string{program}
+	}
 	c, err := wire.Start(a.life, l, proc.Command{Path: a.cfg.Profile.Command, Args: a.cfg.Profile.Args, Dir: s.Workdir, Env: environment(a.cfg.Environment, a.cfg.Profile.Environment)})
 	if err != nil {
 		return worker.Thread{}, err
@@ -159,8 +209,14 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	a.mu.Unlock()
 	handshake, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	initialized, err := c.Initialize(handshake, wire.Implementation{Name: "lina", Version: "1"})
+	meta := map[string]json.RawMessage{"jetbrains": json.RawMessage(`{"air":{"version":1,"capabilities":["sessionFailure"]}}`)}
+	initialized, err := c.InitializeWithMeta(handshake, wire.Implementation{Name: "lina", Version: "1"}, &meta)
 	if err != nil {
+		c.Close()
+		return worker.Thread{}, err
+	}
+	a.sessionFailures.Store(advertisesFailures(initialized.Meta))
+	if err := a.Capabilities().Require(s.Required...); err != nil {
 		c.Close()
 		return worker.Thread{}, err
 	}
@@ -172,23 +228,29 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	success := false
 	defer func() {
 		if !success {
+			c.Close()
 			a.tools.close()
 		}
 	}()
-	session, err := c.NewSession(handshake, wire.NewSessionRequest{Cwd: s.Workdir, McpServers: []wire.McpServer{server}})
+	sessionID, held, err := restoreSession(handshake, c, s.Workdir, server, initialized.AgentCapabilities, prior)
 	if err != nil {
 		c.Close()
 		var remote *wire.RPCError
-		if errors.As(err, &remote) && remote.Code == -32000 {
+		if prior == nil && errors.As(err, &remote) && remote.Code == -32000 {
 			return worker.Thread{}, worker.ErrNeedsSignIn
 		}
 		return worker.Thread{}, err
 	}
 	a.mu.Lock()
-	a.thread = worker.Thread{ID: string(session.SessionID), TaskID: s.TaskID, AttemptID: s.AttemptID, ProcessGeneration: generations.Add(1), BindingEpoch: a.cfg.Epoch}
+	a.held = held
+	a.thread = worker.Thread{ID: string(sessionID), TaskID: s.TaskID, AttemptID: s.AttemptID, ProcessGeneration: generations.Add(1), BindingEpoch: a.cfg.Epoch}
 	a.result.SessionID = a.thread.ID
 	if initialized.AgentInfo != nil {
 		a.result.AgentVersion = initialized.AgentInfo.Version
+	}
+	if a.Name() == "grok" {
+		a.result.Handshake = grokHandshake(initialized)
+		a.result.AgentVersion = a.result.Handshake.Version
 	}
 	if a.version == "" {
 		a.version = a.result.AgentVersion
@@ -219,9 +281,14 @@ func (a *Adapter) beginLocked(ctx context.Context, text string) (worker.Thread, 
 	a.thread.TurnID = fmt.Sprintf("acp:%d", a.turn)
 	a.turnEnded = make(chan struct{})
 	a.state = worker.Active
+	a.doing.Busy(true, time.Now())
 	a.cancelled = false
+	a.extensionFailure = nil
 	a.result.Output = ""
 	a.result.StopReason = ""
+	a.terminal = nil
+	a.effectSeen = false
+	a.transportEnded = false
 	th := a.thread
 	result, err := a.client.StartPrompt(ctx, wire.PromptRequest{SessionID: wire.SessionID(th.ID), Prompt: []wire.ContentBlock{{Text: &wire.ContentBlockText{Text: text}}}})
 	if err != nil {
@@ -292,13 +359,29 @@ func (a *Adapter) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 	if !a.matches(t) {
 		return worker.ThreadSnapshot{}, ErrThread
 	}
-	return worker.ThreadSnapshot{Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Capabilities: a.Capabilities(), Output: a.result.Output, Pending: a.pendingLocked()}, nil
+	var finish *worker.Finish
+	if a.terminal != nil {
+		copy := *a.terminal
+		finish = &copy
+	}
+	pending := a.pendingLocked()
+	// A negotiated stop with a complete prompt reply can park an effect-free
+	// worker. Connection recovery still requires #751's joined transport.
+	typedStop := finish != nil && (finish.Failure == worker.RateLimitFailure || finish.Failure == worker.QuotaFailure || finish.Failure == worker.LoginFailure)
+	effectsKnown := finish != nil && (a.transportEnded || typedStop) && !a.effectSeen && !a.uncertainEffects && len(pending) == 0
+	observation := a.doing.Snapshot()
+	return worker.ThreadSnapshot{Doing: &observation, Finish: finish, EffectsKnown: effectsKnown, Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Capabilities: a.Capabilities(), Output: a.result.Output, Pending: pending}, nil
 }
 func (a *Adapter) Result() Result {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	r := a.result
 	r.Unknown = append([]json.RawMessage(nil), r.Unknown...)
+	if r.Handshake != nil {
+		handshake := *r.Handshake
+		handshake.Capabilities = slices.Clone(handshake.Capabilities)
+		r.Handshake = &handshake
+	}
 	return r
 }
 func (a *Adapter) Close(context.Context) error {

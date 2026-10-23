@@ -175,7 +175,7 @@ func (w *repairWorld) Execute(ctx context.Context, a work.Action) (work.Observat
 		if err != nil {
 			return out, err
 		}
-		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: p.Ref, Passed: passed}
+		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &work.CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: p.Ref, Passed: passed}
 	case work.Resume, work.RepairConflict, work.RepairQA, work.Observe, work.Decide, work.ContinueWorker:
 		return out, fmt.Errorf("unexpected action: %s", a.Kind)
 	default:
@@ -234,7 +234,7 @@ func TestCoreRepairsFailedRuntimeVerification(t *testing.T) {
 		MainHost: func(context.Context) (work.Node, error) {
 			return work.Node{ID: "probe-main", Connected: true, ObservedAt: time.Now().Unix(), CPUCores: 2, CPULimit: 2, AvailableMemoryMB: 1024, MemoryLimitMB: 1024, AvailableDiskMB: 1024, DiskLimitMB: 1024, Workers: map[string]bool{"stub": true}}, nil
 		},
-		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+		Ready: func(ctx context.Context, e *work.Engine, person, _ string) error {
 			agent, err := fixtureWorkOwner(ctx, root)
 			if err != nil {
 				return err

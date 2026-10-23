@@ -57,7 +57,7 @@ func TestLayoutAndDeterministicBytes(t *testing.T) {
 		}
 		texts = append(texts, item.Content)
 	}
-	want := []string{"core rules", "persona", "default", "voice", "growth", "catalog", "summary", "", "earlier", "clock and emotion", "reply budget", "pending", "skill body", "fact", "passage", "outside", "current"}
+	want := []string{"core rules", "persona", "default", "voice", "growth", "catalog", "summary", "", "earlier", "current", "clock and emotion", "reply budget", "pending", "skill body", "fact", "passage", "outside"}
 	if len(texts) != len(want) {
 		t.Fatalf("layout: %q", texts)
 	}
@@ -66,27 +66,27 @@ func TestLayoutAndDeterministicBytes(t *testing.T) {
 			t.Fatalf("item %d = %q, want %q", i, texts[i], text)
 		}
 	}
-	if !bytes.Equal(r.Items[7], in.History[0]) || !bytes.Equal(r.Items[len(r.Items)-1], in.Current) {
+	if !bytes.Equal(r.Items[7], in.History[0]) || !bytes.Equal(r.Items[9], in.Current) {
 		t.Fatal("opaque or user bytes changed")
 	}
 	if !reflect.DeepEqual(r.Tools, append(append([]provider.ToolDecl{}, in.AlwaysTools...), in.LoadedTools...)) {
 		t.Fatal("tool order changed")
 	}
-	for i, raw := range r.Items[:len(r.Items)-1] {
+	for i, raw := range r.Items {
 		if i == 7 || i == 8 {
 			continue
 		}
 		var item struct{ Role string }
 		json.Unmarshal(raw, &item)
 		wantRole := "developer"
-		if i >= 13 && i <= 15 {
+		if i == 9 || i >= 14 && i <= 16 {
 			wantRole = "user"
 		}
 		if item.Role != wantRole {
 			t.Fatalf("item %d role %q", i, item.Role)
 		}
 	}
-	if !strings.Contains(texts[15], "untrusted") || !strings.Contains(texts[14], "v2") || !strings.Contains(texts[13], "event-1") {
+	if !strings.Contains(texts[16], "untrusted") || !strings.Contains(texts[15], "v2") || !strings.Contains(texts[14], "event-1") {
 		t.Fatal("missing provenance")
 	}
 	encoded, _ := json.Marshal(report)
@@ -198,5 +198,36 @@ func TestDigestCoversRequestAndOpaqueBytes(t *testing.T) {
 		if assemble.Digest(r) == hash {
 			t.Fatal("request change not hashed")
 		}
+	}
+}
+
+func TestStandingProfileStaysInPacketAndCountsAgainstBudget(t *testing.T) {
+	in := input()
+	in.Profile = []provider.Item{json.RawMessage(`{"role":"user","content":"Remembered statement (preference): brief replies"}`)}
+	r, report := assemble.Assemble(in, count)
+	if report.Failure != "" {
+		t.Fatal(report)
+	}
+	if !bytes.Equal(r.Items[14], in.Profile[0]) || !bytes.Equal(r.Items[9], in.Current) {
+		t.Fatalf("profile or input moved: %s", r.Items)
+	}
+	r.Items[14][0] = '!'
+	if !json.Valid(in.Profile[0]) {
+		t.Fatal("profile aliases caller snapshot")
+	}
+	in.Packet = nil
+	in.MaxTokens = 12 // Fixed/history/current and tools fit exactly; the profile exceeds the limit.
+	if _, report = assemble.Assemble(in, count); report.Failure != assemble.TooLarge {
+		t.Fatalf("profile/input budget ignored: %+v", report)
+	}
+	profile := in.Profile
+	in.Profile = nil
+	if _, report = assemble.Assemble(in, count); report.Failure != "" {
+		t.Fatalf("fixture without profile should fit: %+v", report)
+	}
+	in.Profile = profile
+	in.Profile[0] = json.RawMessage(`invalid`)
+	if _, report = assemble.Assemble(in, count); report.Failure != assemble.Invalid {
+		t.Fatalf("invalid profile accepted: %+v", report)
 	}
 }

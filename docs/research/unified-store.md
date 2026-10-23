@@ -94,11 +94,112 @@ A live turn today recalls nothing by topic: no ledger search, no expand, no `rec
 - **Machine.** Linux x86-64, 24 threads, Go 1.27.3, with other jobs running (load about 7). Times show scale and shape, not exact budgets. Sizes and row counts are exact.
 - **Not measured.** Recall quality on the parity set: #849 has not published its question set yet (see [Recall quality](#recall-quality)).
 
-The harness becomes the committed store benchmark (#867), so later steps report against the same corpus. The private sample and scratch databases were deleted after the run.
+The committed [store benchmark](../../internal/core/storebench/README.md) (#867)
+provides a reproducible generated corpus and an opt-in reader for offline Hermes
+LCM snapshots. Its generated baseline below is separate from the private sample
+above. The private sample and scratch databases were deleted after the original run.
 
 ## Measurements
 
 All numbers below were observed on the sample and machine in [Method](#method).
+
+### Committed benchmark baseline
+
+Observed on schema 53, based on `52383480`, with the committed benchmark's default
+seed 851 and 100 turns. Command: `go test -bench . ./internal/core/storebench`.
+One measured fresh corpus; Linux amd64, Go 1.27.3, Intel Core Ultra 7 265KF,
+20 logical CPUs, other jobs running. Times are observations, not CI budgets.
+The following subsection alone uses generated data; the later measurements
+retain the original private sample.
+
+The generated corpus has 1,830 events, 100 person events, 476 events containing
+Hangul (26.01%), 4,011,575 text bytes (2,192 per event), 27 large bodies,
+100 distinct memory items and 2 summary nodes (14,604 bytes). The length buckets
+approximate the published mean and large-body share; the private length
+histogram is unknown. Unique generated person statements do not reproduce the
+private sample's repeated-statement revision amplification. This is a fixed
+workload for comparing schema steps, not a recall-quality or full-history estimate.
+
+| Allocation before forget | Bytes |
+| --- | ---: |
+| Database, including free pages | 21,626,880 |
+| Search trees, including index text and postings | 14,286,848 |
+| Free pages | 0 |
+| Large event bodies outside the database | 884,827 |
+
+| Main `dbstat` trees | Bytes |
+| --- | ---: |
+| `conv_event` | 4,177,920 |
+| `ledger_search_data` | 6,778,880 |
+| `ledger_search_text` | 5,062,656 |
+| `ledger_search_bigram` | 475,136 |
+| Its primary-key index | 548,864 |
+| `ledger_search_bigram_event` | 421,888 |
+| `memory_item` | 942,080 |
+| `memory_revision` | 479,232 |
+| `memory_search_data` | 376,832 |
+| `memory_search_text` | 286,720 |
+| `sum_node` | 20,480 |
+| `sum_cover` | 4,096 |
+
+All writes and queries use Core's pinned embedded SQLite. Because that engine
+omits `dbstat`, Python's standard SQLite reads allocation metadata from the same
+committed scratch database in read-only mode. The JSON report lists bytes for
+every B-tree. `index_bytes` sums trees whose owning table contains `search`,
+`fts` or `bigram`; future index changes must keep that classification current.
+
+| Path | Samples | p50 (ms) | p95 (ms) | max (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| `ledger.AdmitBatch`, one turn | 100 | 24.377 | 53.480 | 74.284 |
+| Memory `Remember` | 100 | 3.911 | 9.198 | 15.543 |
+| Summary `Publish` | 2 | 2.508 | 2.870 | 2.870 |
+| Ledger search, limit 12 | 60 | 15.753 | 27.087 | 27.816 |
+| Memory recall, limit 12 | 60 | 6.325 | 10.279 | 13.536 |
+| `recall_person`, depth 0 | 60 | 6.530 | 27.369 | 37.926 |
+| `retract.Forget`, distinct items | 3 | 12.201 | 19.911 | 19.911 |
+
+Queries use 48 literal substrings and 12 Hangul pairs from generated person
+events. The three paths returned 720, 637 and 637 total hits, respectively.
+All three forgotten items became invisible. No generated or private message,
+summary or query text is retained in this note. Later steps should run the same
+command and corpus settings and report their own before/after numbers.
+
+An earlier run of the same generated corpus on schema 52 (`33aa9346`, before
+#866) measured 21,614,592 database bytes, 14,282,752 index bytes and forget
+p50/p95 of 241.698/353.361 ms. The schema-53 run above includes #866's targeted
+index refresh. These are two observed runs under shared load, not a statistical
+speedup guarantee.
+
+### Shared index switch window (#869)
+
+One generated 100-turn corpus, seed 851, schema 58, Go 1.27.3 on Linux
+amd64 (AMD Ryzen 7 5800X; concurrent jobs). Command:
+`go test -run '^$' -bench BenchmarkStore -benchtime=1x ./internal/core/storebench`.
+These are observations, not latency budgets or a comparison across machines.
+
+All old indexes remain written. The corpus produced exactly 1,932 shared
+index documents: 1,830 events, 100 memory items and 2 summaries. All 60 literal
+queries returned the same event ids in the same recency order as ledger search.
+
+| Allocation | Bytes | Bytes per source byte |
+| --- | ---: | ---: |
+| Eligible source text (events, active memory, summaries) | 4,235,070 | 1.00 |
+| Shared trigram FTS shadow trees | 7,176,192 | 1.69 |
+| Shared pair FTS shadow trees | 901,120 | 0.21 |
+| All shared index trees, including metadata and queue | 8,630,272 | 2.04 |
+| All old and new search trees | 22,917,120 | 5.41 |
+
+| Write operation | Samples | p50 | p95 | max |
+| --- | ---: | ---: | ---: | ---: |
+| Admit one turn with both indexes | 100 | 88.55 ms | 278.85 ms | 387.52 ms |
+| Remember its person statement | 100 | 11.60 ms | 34.00 ms | 53.68 ms |
+| Publish a summary | 2 | 26.06 ms | 27.73 ms | 27.73 ms |
+
+Both FTS tables are contentless; their size includes tokens and FTS metadata,
+not a copied body column. Source bytes count each eligible view's text, including
+memory content derived from a person event. The corpus has no records; record
+projection/revision behavior is covered by its package tests. Private imported
+corpora and the full post-merge acceptance suite were not run for this measure.
 
 ### Index size
 
@@ -177,8 +278,8 @@ The model is in [Store and recall](../design/conversation-and-memory.md#store-an
 - **Citations are canon, the index is derived.** A citation is the provenance of the view that holds it, so losing it loses the view's meaning. The index can be rebuilt from canon and the records files. This keeps the existing rule that derived data is never the only copy of anything.
 - **One citation table instead of a view over the old shapes.** A view would give readers one shape, but retraction would still decode JSON per item. An index on the cited target is what makes a removal cost proportional to what it hides.
 - **No text in a citation.** A quote is a span of the cited event, read when shown. This closes finding 2: an erased event cannot survive inside memory evidence.
-- **Contentless FTS5 and integer postings.** The text already lives in `conv_event`, `memory_item`, `sum_node` and `records_text`; the index needs only document ids. Measured in [Index size](#index-size).
-- **One trigram index and one pair table for every kind.** The same query now means the same thing everywhere. Records lose word matching for text without Hangul: "cat" also finds "category", as it already does in conversation and memory text.
+- **Contentless FTS5 and integer document ids.** The text already lives in `conv_event`, `memory_item`, `sum_node` and `records_text`; the index needs only document ids. Measured in [Index size](#index-size).
+- **One trigram index and one pair FTS5 table for every kind.** The #1040 measurement selects composed Hangul pairs and lower-case words of other scripts, retaining term frequency for BM25; it replaces the proposed pair posting table. The same query now means the same thing everywhere. Records lose word matching for text without Hangul: "cat" also finds "category", as it already does in conversation and memory text.
 - **Short terms reach memory items and records only.** Those sets are small enough to scan literally, which memory does today. For events and summaries a term needs three characters or one Hangul pair, which the ledger requires today; a shorter term is left out there.
 - **Several terms, all required.** Today a query is one literal phrase, so "도쿄 여행" misses "여행 계획은 도쿄". Splitting on whitespace and requiring every term is the smallest change that fixes it. Its effect is measured on the parity set before the switch.
 - **Deterministic ranking, no model rerank.** BM25, fused with the vector rank by reciprocal rank when vectors exist, ties to the newer time. Core can run it inside the 250 ms packet cap. The model stays where it is needed: summaries and the depth-1 answer of `recall_person`. This replaces "full-text search and model reranking" in the design.

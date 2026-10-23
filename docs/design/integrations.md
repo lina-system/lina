@@ -1,6 +1,6 @@
 # Integrations
 
-This contract fixes how LINA connects to external services. LINA's conversation engine reaches a tool service through a plugin: one installable integration unit with a manifest. LINA ships first-party plugins for GitHub and Google and a small reviewed catalog of others, and the person can add any other MCP server. LINA Core hosts every plugin for every agent, holds the credentials LINA itself obtains, marks the tools that need approval and records every write. The contract covers the plugin system and its catalog, credentials and sign-in, the rules every plugin follows, the channels through which agents talk with the person on external messaging platforms, and the GitHub and Google plugins. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md). Turning on a plugin is the person's act. A first-party plugin or a catalog entry is part of a release, never a change to this contract.
+This contract fixes how LINA connects to external services. LINA's conversation engine reaches a tool service through a plugin: one installable integration unit with a manifest. LINA ships first-party plugins for GitHub and Google and a small reviewed catalog of others, and the person can add any other MCP server. LINA Core hosts every plugin for every agent, holds the credentials LINA itself obtains, marks the tools that need approval and records every write. The contract covers the plugin system and its catalog, credentials and sign-in, the rules every plugin follows, the channels through which agents talk with the person on external messaging platforms, the messenger sources through which LINA reads the person's own messenger accounts, and the GitHub and Google plugins. It is normative: implementations must follow it, and any change to it is made in this file and joins dev under [integration.md](../policy/integration.md). Turning on a plugin is the person's act. A first-party plugin or a catalog entry is part of a release, never a change to this contract.
 
 Remote agents use the separate [A2A boundary](#a2a), hosted by Core alongside
 the plugin and channel integrations.
@@ -16,6 +16,7 @@ This contract covers:
 - credentials, LINA's secret store and sign-in, including OAuth to remote MCP servers
 - the rules every plugin follows: field ownership, change signals, external evidence, writes and failures
 - channels: connections to external messaging platforms, their credentials, pairing, bindings and scopes, and the adapter boundary
+- messengers: the person's own messenger accounts as sources, the platforms and how each is reached, the messenger add-on, sync and coverage, and writes by grant
 - A2A: publishing a LINA agent and calling remote agents, including calls on behalf of Nodes
 - the GitHub plugin: the user's `gh` login and git setup, the command profile, LINA Core's own reads, field ownership in a connected part and the GitHub-specific merge rules
 - the Google plugin: the built-in connector, the user's own OAuth client, accounts, areas, consent and token failures
@@ -61,6 +62,7 @@ Built-in connectors exist only in first-party plugins. A third-party plugin conn
 - The person adds any other plugin one at a time: from a local folder or a Git URL that holds a manifest, from a remote MCP URL, or from a local server command. When the person gives a remote MCP URL or a local server command, LINA writes a minimal manifest for it.
 - A server definition that arrives inside a folder, a Git URL plugin or a worker's workspace turns nothing on by arriving. It needs the same view of its manifest and the same approval from the person as any other plugin, and credential variables in it expand to empty.
 - LINA never searches for, reuses or imports the configuration of other apps, such as the MCP servers or plugins set up in Codex or Claude. Plugins come only from the sources above.
+- A messenger source is not a plugin. Its adapters ship with LINA, and the messenger add-on is a component pinned by the release (see [Messengers](#messengers)).
 
 ### Installing and turning on
 
@@ -90,6 +92,7 @@ The adapter set is:
 | oh-my-opencode | Person-selected session records and memory artifacts from the prior tool's workspace or export. | Future. |
 | Honcho | Person-selected workspace peers, cards, conclusions, sessions, summaries and messages through a verified read API or export. | Future standalone adapter. |
 | Hermes | Per-profile lossless-context and host message databases, large-output sidecars and the install's Honcho person data. | First adapter; the owner's M1 continuity test for existing memory and work patterns. |
+| murmur | A stopped murmur data home: its spool and config. Its messages become messenger records, not sealed imported conversations ([conversation-and-memory.md](conversation-and-memory.md#importing-a-murmur-store)). | Planned; the owner's move off murmur. |
 | OpenClaw | Person-selected conversation/session records and memory files from a prior install or export. | Future. |
 
 These entries define intended sources, not accepted schemas or available readers. Work now covers Hermes only. Its embedded Honcho reader remains schema-gated; listing a future standalone Honcho adapter does not enable it. Each future adapter must independently verify its formats and implement the common contract before it can be offered.
@@ -136,7 +139,7 @@ A service profile is data in a plugin's manifest. It states:
 3. how to name a write's target, and how to read the service again when a write's outcome is unknown
 4. the provenance fields its results carry, such as a revision or an etag
 
-The first-party plugins carry profiles. LINA also ships profiles for major messaging services such as Slack, Microsoft Teams and Discord; a plugin for one of those services takes the shipped profile. A plugin without a profile has no tool that LINA Core marks (see Tool classification). A catalog entry carries a profile that LINA wrote. When an entry reaches a gateway whose tool list differs from one person to the next, its profile names the outward or irreversible tools by name pattern. A messaging plugin acts in the person's own account when the model calls it. It is not a channel connection (see Channels): an agent's bot is the agent's own face on a platform, and a plugin send is the person's message.
+The first-party plugins carry profiles. LINA also ships profiles for major messaging services such as Slack, Microsoft Teams and Discord; a plugin for one of those services takes the shipped profile. A plugin without a profile has no tool that LINA Core marks (see Tool classification). A catalog entry carries a profile that LINA wrote. When an entry reaches a gateway whose tool list differs from one person to the next, its profile names the outward or irreversible tools by name pattern. A messaging plugin acts in the person's own account when the model calls it. It is not a channel connection (see Channels): an agent's bot is the agent's own face on a platform, and a plugin send is the person's message. When the person also connected that account as a messenger source, the plugin's sends obey the chat's write grant ([Messengers](#messengers)).
 
 ### Tool classification
 
@@ -219,7 +222,10 @@ with **1.0** on the wire. Its versioned
 [a2a.proto](https://github.com/a2aproject/A2A/blob/v1.0.1/specification/a2a.proto)
 defines message shapes and ProtoJSON representation; this section defines
 LINA's admission and behavior. The [research note](../research/a2a.md) records
-source findings and limits. This design adds no running endpoint or dependency.
+source findings and limits. Core implements publication and outbound connections
+through its existing conversation, effect, work and result paths. Both use the
+standard library without an SDK dependency. The Node relay remains a separate
+implementation scope.
 
 A2A is a separate Core integration, not an MCP plugin, channel, worker adapter
 or `node` connection. An A2A peer does not become a LINA person, client, Node
@@ -328,7 +334,74 @@ Artifacts have stable ids and media types, with provenance retained in Core.
 Downloads require task authorization; they never expose local paths or ambient
 credentials. Result delivery is deduplicated across restart. Core emits
 `COMPLETED` only after verifying the task's done condition, not merely from
-model text, a tool exit or a worker's completion claim.
+model text, a tool exit or a worker's completion claim. Deleting the published
+persona rejects a task that has not started. Its terminal owner notice cannot
+be delivered to the trashed conversation; that notice stays pending for the
+task and does not fail publication recovery or stop other publications.
+Restoring the persona before trash expiry delivers the notice.
+
+#### Publication setup and task profile
+
+The owner configures publication with `lina a2a publish --state-root <root> --config
+<file>` while Core is stopped. `--credential-stdin` supplies the external
+issuer's introspection client secret to Core's existing secret store. The
+private `system/core/a2a.json` control record names the TLS certificate/key,
+exact Tailscale bind, issuer, audience, introspection endpoint, required scopes
+and publications. Missing or disabled configuration opens no A2A listener.
+Changing listener or issuer setup requires a restart; binding and definition
+changes are rechecked during execution and before disclosure. The configured
+HTTPS introspection endpoint must share the issuer's origin, refuse redirects
+and identify active Bearer access tokens with issuer, audience, expiry,
+subject, client identity and scopes. Token bytes are never persisted in tasks.
+
+Each publication uses `/a2a/<publication>` for JSON-RPC and
+`/a2a/<publication>/.well-known/agent-card.json` for discovery. The initial task
+profile accepts one JSON data part with `task` (an offered definition id) and
+`input` (bounded task data). The card advertises `application/json` input.
+This application data is not a protocol-level skill selector. Owner definitions
+pin exact Core record/web tool operations, a complete worker definition, an
+execution deadline, a tool-call ceiling and a committed-file output rule.
+Caller data can fill the work description; it cannot choose tools, paths,
+worker configuration, write area, branch, effects or budget.
+
+Each configured tool operation and the worker dispatch may run once. The
+published task uses an isolated conversation with forwarded input and no
+personal history or recall. Preset checks, tool effects, worker admission,
+local approvals and manager verification remain the existing Core paths.
+An incoming binding authorizes task admission and permitted replies; it does
+not by itself authorize the installed worker's OS-user permissions. Before any
+provider, tool or worker execution, Core shows the owner the exact caller input,
+task definition, tools, repository, write area and deadline. The approval states
+that the installed worker uses the owner's files, login and integrations. Only
+an authenticated owner can allow that request once or deny it. No eligible
+surface means refusal. The answer is bound to the request and current Core
+epoch; a caller message, another task or a restart cannot reuse it. Pending
+execution approval is `INPUT_REQUIRED`. Approval does not remove the preset
+ceiling or the worker's own later approval requirements. A denied worker
+approval stops that published task and cannot trigger an automatic worker retry.
+Core reports cancellation only from a recorded terminal observation; missing
+or uncertain evidence remains unknown.
+The publication does not authorize the manager to merge or close a PR.
+Supplementary messages on an authorized nonterminal task retain their origin
+and reach the owner's conversation as untrusted input. They do not change the
+accepted definition, extend its budget, restart execution or answer an approval.
+
+The committed output must be among the worker's in-scope changed files, match
+the configured content condition and size limit, and belong to the exact head
+of a verified manager decision and worker receipt. Core reopens those commit
+bytes before exposing an artifact, retaining its content hash and commit.
+The owner receives the same permitted content through the existing typed result
+path. Its result head, ledger revision and delivery marker commit atomically.
+The task projection contains no private conversation, credential or local path.
+
+Limits are 64 KiB per request and per task's retained input, 16 input messages,
+256 KiB per artifact, 32 active admissions per Core, and a binding's lower
+active-task limit. Owner deadlines are at most one hour and tool-call ceilings
+at most 32. Streams and blocking sends have a five-minute observation limit;
+ending observation does not cancel execution. List cursors are bound to the
+caller and query and expire on server restart. Downloads at
+`/a2a/<publication>/artifacts/<task>/<artifact>` require the same current
+access-token and task authorization as RPC reads.
 
 ### Calling a remote agent
 
@@ -370,6 +443,43 @@ to the originating conversation and any still-authorized Node command.
 Remote `COMPLETED` is a claim checked against the local done condition, not a
 LINA receipt or automatic acceptance of an external effect.
 
+### Outbound connection controls
+
+The owner uses the `a2a` client capability to configure, inspect, revoke and
+sign in to remote connections. The installed `lina a2a` command accepts settings
+on standard input. Credentials are transient settings fields and never enter a
+conversation. Task profiles bind an effect class, input prefix and byte limit,
+output media type and byte limit, and either an expected artifact SHA256 or
+explicit owner review (an empty hash). In review mode, Core retains an unverified
+preview; only an eligible owner confirming the inspected artifact hash can
+produce a verified result revision. Model tools cannot perform that confirmation.
+This local done condition verifies the requested content; it does not certify unrelated
+remote effects. Unknown classification still asks, and preset ceilings apply.
+
+The `remote_agent` conversation tool lists configured task definitions, sends a
+bounded message, observes a retained call or requests cancellation. The initial
+scope is the owner's direct Core conversation. Channel delegation, publication
+and Node relay are not admitted by this tool. Material or history upload is not
+implicit: only the validated text argument becomes a message part.
+
+The running list exposes retained remote work. A bounded Core observer polls
+known tasks after the model turn ends and after restart under fresh observation
+authority. It never replays an unknown initial send. Current-epoch recorded
+answers resume a follow-up through ordinary authority and approval; answers
+left unused across restart cannot send work.
+
+Input questions require the owner's recorded answer before a follow-up. A sign-in
+wait points to connection settings. OAuth uses authorization code with PKCE,
+configured issuer/client endpoints, a session-bound browser relay, issuer/state
+checks and bounded token lifetime. Expiry requires another sign-in; no model
+provider credential or refresh-token fallback is used.
+
+Artifacts may arrive as text, structured data, bytes or same-origin HTTPS URLs.
+Core retains bounded permitted content and checks the expected hash against
+assembled artifact parts. Verified text and binary file results use the existing
+result journal and material store, with the original conversation and remote
+source, identity, time and hash. Other remote completion claims remain unverified.
+
 ### Recovery and failures
 
 Published sends require a nonempty `messageId`. Before dispatch, Core stores
@@ -379,7 +489,9 @@ id with changed input is invalid. JSON-RPC ids are correlation ids only.
 Outbound message ids are stable, but A2A makes remote send deduplication
 optional. An uncertain send is **unknown**, never an automatic replay or a
 reason to try another agent. Read or resubscribe to a known remote task;
-otherwise the owner must resolve the uncertainty.
+otherwise the owner must resolve the uncertainty. Unresolved work also reserves
+its exact input within the originating conversation, so a new model call id or
+a different connection cannot silently repeat it.
 
 Revocation, epoch change or Node disconnect blocks new sends and follow-ups.
 Accepted remote work may continue. Core reconciles it through narrowly
@@ -407,7 +519,7 @@ worker results; protocol fixtures alone do not establish this behavior.
 
 ## Channels
 
-A channel is an external messaging platform through which the person talks with an agent: a Telegram bot, a Discord bot, or another platform added later. The message gateway in LINA Core connects agents to channels. A channel connection is not a plugin: a plugin gives the model tools, and a channel connection gives the person another place to talk with an agent. An agent's bot speaks as that agent and never in the person's name; a message in the person's name goes through a messaging plugin (see Service profiles).
+A channel is an external messaging platform through which the person talks with an agent: a Telegram bot, a Discord bot, or another platform added later. The message gateway in LINA Core connects agents to channels. A channel connection is not a plugin: a plugin gives the model tools, and a channel connection gives the person another place to talk with an agent. Reading the person's own conversations with other people is a messenger source, not a channel (see [Messengers](#messengers)). An agent's bot speaks as that agent and never in the person's name; a message in the person's name goes through a messaging plugin (see Service profiles).
 
 ### Connection, binding and scope
 
@@ -587,6 +699,74 @@ A [backup restore](filesystem.md#backup-generations) converts both queued and in
 
 A bot token is an API key in the sense of "Credentials and sign-in". The person enters it once; LINA Core keeps it in the secret store under the person's id and never returns it to any client. It goes only to the platform's API through the adapter. It never enters a model request, a log, the sandbox or an event of the self-diagnosis log.
 
+## Messengers
+
+A messenger source is one of the person's own messenger accounts that LINA reads into its store, such as KakaoTalk, Discord or iMessage. It is neither a channel nor a plugin. A channel is an agent's own bot that talks with the person. A plugin gives the model tools. A messenger source brings the person's conversations with other people into LINA, so that agents can search them with evidence and, where the person allows it, act in them. Per-platform evidence, terms and the upstream revision read: [messengers.md](../research/messengers.md). Implementation: #1069 to #1087, in the order of its plan.
+
+### Messenger sources
+
+- Connecting a source is the person's act. LINA never connects one on its own and never looks for messenger apps, sessions or exports on the machine.
+- A source is one account on one platform. It records the person it belongs to, the account's platform user id, its mode (official or unofficial), its adapter and its state: connected, needs sign-in, failing with its cause, unreachable (its Node is away), import-only, or disconnected.
+- A source holds chats. Each chat records its platform id, name, kind (direct, group, channel or thread), the time of its first message when known, its cursor and its coverage. The person can leave a chat out of sync, out of learning or out of embedding.
+- What a source reads becomes messenger records in canon ([conversation-and-memory.md](conversation-and-memory.md#messenger-records)). There is no second database.
+- Every agent can search a connected source, as every agent can use an enabled plugin. The person can name the agents that may read a source instead.
+- When a channel connection and a bot-mode source use the same bot token, Core still runs one Gateway session or poller for that token and gives each its events.
+
+### Platforms
+
+| Platform | Account | How LINA reaches it | Writes |
+| --- | --- | --- | --- |
+| KakaoTalk | Personal | The messenger add-on, signed in as a tablet sub-device | None: Kakao's terms forbid automating an account |
+| Discord | A bot the person adds to their servers | LINA's Discord adapter | By grant |
+| Discord | Personal | The messenger add-on, QR sign-in | None: Discord's terms forbid self-bots |
+| iMessage | Personal | A Mac Node reads a read-only copy of `chat.db` under a grant | By grant, through Messages automation on that Node |
+| Slack | Personal | Go, with the person's own Slack app and an OAuth user token | By grant |
+| Microsoft Teams | Work or school | Go, Microsoft Graph with the person's own Entra app | By grant |
+| Webex | Personal | Go, Webex REST with the person's own integration | By grant |
+| Telegram | Personal | Go, the official client API with the person's own `api_id` | By grant |
+| WhatsApp | Personal | The messenger add-on, as a linked device | None: WhatsApp's terms forbid automating an account |
+| LINE | Personal | The messenger add-on, as a secondary device | None: LINE's terms forbid automating an account |
+
+- Instagram, Channel Talk, WeChat, the WhatsApp Cloud API and the Telegram Bot API are not sources. Their reasons are in the research. Adding a platform or changing a platform's mode is a change to this table.
+- An official platform signs in with the person's own app or client, as Google does (see Google). LINA ships no Slack app, Entra app, Webex integration or Telegram `api_id`; the setup guide walks the person through making one. Tokens live in the secret store under the person's id. An administrator's policy is never worked around.
+- The connect card of an unofficial platform says in plain words that the platform's terms forbid automating a personal account, links the term, says that even reading may get the account limited, and says that LINA will only read. The person accepts before connecting, and LINA records the acceptance with the person and the date.
+- LINA never takes tokens, cookies or passwords from other apps or browsers, never signs in as an official client with that client's id or secret, never scripts a developer portal and never evicts the person's other devices. Reading never marks a message read, shows presence or typing, or joins or leaves a chat.
+
+### Messenger adapter boundary
+
+Each platform has one adapter. An adapter offers: its sign-in state; listing chats; reading a page of a chat from a cursor, oldest first; members; live events where the platform has them; fetching one attachment on request; and a static capability descriptor (history depth, cursor kind, edit and deletion signals, live events and write verbs). Only adapters of official platforms have write verbs. A ported adapter is LINA's own Go code, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
+
+### The messenger add-on
+
+Unofficial personal platforms are read through the messenger add-on: LINA's own small program that runs the agent-messenger SDK at a version pinned by the release, as a child of LINA Core ([runtime.md](runtime.md#processes)).
+
+- It offers read operations only. Write methods and reads that change read state have no route in it.
+- It runs in the OS sandbox with network on, and writes only in its data directory ([filesystem.md](filesystem.md#state-root-and-layout)).
+- The person signs in through the add-on's own flow, such as KakaoTalk's passcode or Discord's QR code, typing into it through the app or the TUI. LINA relays and keeps nothing. The session stays in the add-on's data directory, outside backups; after a restore or on a new main the person signs in again.
+- One process runs for each account and stays running, so the platform sees one session.
+- A pinned version changes only through a reviewed update that reads upstream's changes to the platforms LINA uses.
+- When the add-on or its runtime is missing or failing, only its sources fail.
+
+### Sync and coverage
+
+- Core reads each source on its schedule or from its live events. The records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Reading the same messages again adds nothing.
+- A chat's first fill reads back as far as the platform allows.
+- A message missing from a later read is never treated as deleted. Edits and deletions the platform reports follow [Messenger records](conversation-and-memory.md#messenger-records).
+- Each chat is fresh, stale (no complete read within its interval) or in a gap (the time since its last complete read passed the platform's read window, so messages may be lost). A gap is shown on the source and told to the person once. An archive import can fill it later.
+- Rates are the adapter's: it honours the platform's retry-after and keeps its cursor.
+- A failing source never blocks conversation or another source.
+
+### Writes by grant
+
+- Only adapters of official platforms write. A write in the person's name is an outward effect under [main-authority.md](main-authority.md#messengers): off by default, turned on by the person per chat, and asked every time where it reaches other people.
+- A write runs through the effect ledger with the platform, account, chat, verb and argument hash. Where the platform takes a client message id, that id carries the idempotency key. An unknown outcome is settled by reading the chat and is never sent again.
+- What LINA sends returns through sync linked to its effect, with speaker kind `agent` and the requesting agent's id. It is never read as the person's words or learned as evidence about the person ([Messenger records](conversation-and-memory.md#messenger-records)).
+
+### Disconnecting and deleting
+
+- Disconnecting stops sync at once and deletes the source's credentials or the add-on's session. The records stay, searchable as the person's history and labelled with the disconnected source.
+- Deleting a source's records, a chat or one record is the person's deletion of conversation content ([conversation-and-memory.md](conversation-and-memory.md#deleting-a-conversation)). A tombstone keeps the legacy reference, so a later sync or import does not bring the content back.
+
 ## GitHub
 
 ### The plugin
@@ -764,4 +944,7 @@ When a token fails, LINA Core marks that account as needing sign-in and tells th
 - Whether the owner's own messages in a Discord server may feed LINA's memory under Discord's developer policy: the owner confirms the reading before the Discord adapter ships. Until then the default `addressed` reads only what the agent is addressed with, and no memory is written from another person's message.
 - A webhook mode for a channel, which would need a public listener: never provided.
 - Rich messages and components of a platform, such as Telegram rich messages: shown only after the adapter's capability probe, with plain text as the fallback.
+- The sync interval, page size, read window and use of live events of each messenger platform: measured and set during implementation acceptance of its adapter.
+- Whether Slack and Webex accept the loopback redirect of the client relay: set by their first implementation; the fallback is pasting the redirected URL.
+- Whether Discord's developer policy allows learning from the owner's own messages that a bot-mode messenger source reads: confirmed before that source learns. Until then it is searchable and not learned from.
 - The progress digest of a channel: its line cap, whether a regular digest can be set, and the scheme of its link: set during implementation acceptance of the channel gateway.

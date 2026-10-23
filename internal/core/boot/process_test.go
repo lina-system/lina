@@ -42,7 +42,7 @@ func TestCoreProcess(t *testing.T) {
 				epoch := strconv.Itoa(iteration + 1)
 				child := startCore(t, binary, root, socket)
 				idle := child.connect(t, socket) // Listening may precede READY.
-				for _, versions := range [][]string{{"1.0"}, {"2.0", "1.0"}, {"2.0", "1.1"}} {
+				for _, versions := range [][]string{{"1.0"}, {"2.0", "1.0"}, {"2.0", "1.1"}, {"2.0", "1.2"}} {
 					conn := child.connect(t, socket)
 					conn.SetDeadline(time.Now().Add(5 * time.Second))
 					hello := helloEnvelope(t, versions)
@@ -75,10 +75,11 @@ func TestCoreProcess(t *testing.T) {
 					if envelope.Sender != (protocol.Sender{Party: protocol.PartyCore, ID: "main-test"}) || envelope.Epoch != epoch {
 						t.Fatalf("unexpected identity: %s", line)
 					}
-					if versions[len(versions)-1] == "1.0" {
+					selected := versions[len(versions)-1]
+					if selected == "1.0" || selected == "1.1" {
 						welcome, ok := envelope.Payload.(protocol.Welcome)
 						want := protocol.Welcome{
-							ProtocolVersion: "1.0", MainID: "main-test", Epoch: epoch,
+							ProtocolVersion: selected, MainID: "main-test", Epoch: epoch,
 							PersonID: "person:main-test", Agents: welcome.Agents, Capabilities: []protocol.Capability{},
 						}
 						if len(welcome.Agents) != 1 || welcome.Agents[0].AgentID == "" {
@@ -89,6 +90,7 @@ func TestCoreProcess(t *testing.T) {
 						}
 						// A welcomed connection remains usable, but grants no operations.
 						// Reads reach capability admission in both RECOVERING and READY.
+						request.Params.Protocol.Version = selected
 						request.Params.MessageID = "after-welcome"
 						request.Params.Epoch = epoch
 						request.Method = "history_get"

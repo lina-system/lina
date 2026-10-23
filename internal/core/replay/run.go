@@ -11,6 +11,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/thisisjun786/lina/internal/core/toolcatalog"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -25,9 +26,10 @@ type Call struct {
 }
 
 type RunConfig struct {
-	Request provider.Request
-	Calls   []Call
-	Stream  loop.StreamFunc
+	RuntimeTools bool
+	Request      provider.Request
+	Calls        []Call
+	Stream       loop.StreamFunc
 	// Only trusted local read implementations may be supplied. There is no
 	// effect executor, registry, canon writer, or default dispatch fallback.
 	Reads map[string]loop.Tool
@@ -77,11 +79,16 @@ func Run(ctx context.Context, cfg RunConfig) (loop.Outcome, error) {
 		}
 		recorded[key] = append(recorded[key], *call.Result)
 	}
+	all, err := recordedDeclarations(cfg.Calls)
+	if err != nil {
+		return loop.Outcome{}, err
+	}
+	catalog := &toolcatalog.Catalog{First: cfg.Request.Tools, All: all, Offset: len(cfg.Request.Items)}
 	var mu sync.Mutex
 	missing := false
 	cfg.Request.Purpose = provider.Replay
 	out, err := loop.Run(ctx, loop.Config{
-		Request: cfg.Request, Stream: cfg.Stream, Tools: cfg.Reads,
+		Request: cfg.Request, Stream: cfg.Stream, Tools: cfg.Reads, RuntimeTools: cfg.RuntimeTools,
 		// Discarding Journal: no callback reaches turn.Store or the effect ledger.
 		Journal: loop.Journal{}, Parallel: 1,
 		Admit: func(_ context.Context, call provider.ToolCall) *loop.Result {
@@ -100,13 +107,13 @@ func Run(ctx context.Context, cfg RunConfig) (loop.Outcome, error) {
 			missing = true
 			return &loop.Result{ID: call.ID, Code: loop.Unavailable}
 		},
-		Transform: func(_ context.Context, r provider.Request) (provider.Request, error) {
+		Transform: func(ctx context.Context, r provider.Request) (provider.Request, error) {
 			mu.Lock()
 			defer mu.Unlock()
 			if missing {
 				return r, ErrExcluded
 			}
-			return r, nil
+			return catalog.Transform(ctx, r)
 		},
 	})
 	mu.Lock()

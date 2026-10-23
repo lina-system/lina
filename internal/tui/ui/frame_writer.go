@@ -21,18 +21,20 @@ type frameWriter struct {
 	output  io.Writer
 	serial  uint64
 	marker  string
+	repair  string
 	pending chan error
 	private bool
 }
 
 const frameTitlePrefix = "lina-frame:"
 
-func (w *frameWriter) next() (string, <-chan error) {
+func (w *frameWriter) next(repair string) (string, <-chan error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.serial++
 	title := frameTitlePrefix + strconv.FormatUint(w.serial, 10)
 	w.marker = ansi.SetWindowTitle(title)
+	w.repair = repair
 	w.pending = make(chan error, 1)
 	return title, w.pending
 }
@@ -59,6 +61,9 @@ func (w *frameWriter) Write(data []byte) (int, error) {
 	}
 	if w.private {
 		data = bytes.ReplaceAll(data, []byte(ansi.SetWindowTitle("")), nil)
+	}
+	if matched && w.repair != "" {
+		data = append(bytes.Clone(data), w.repair...)
 	}
 	n, err := w.output.Write(data)
 	if err == nil && n != len(data) {

@@ -232,7 +232,7 @@ func (w *codeWorld) Execute(ctx context.Context, a work.Action) (work.Observatio
 		default:
 			return out, fmt.Errorf("unknown check %q", a.Check.Method)
 		}
-		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: w.output("criterion-"+a.ID, map[string]any{"revision": a.Revision, "passed": valid}), Passed: valid}
+		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &work.CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: w.output("criterion-"+a.ID, map[string]any{"revision": a.Revision, "passed": valid}), Passed: valid}
 	case work.Observe, work.Decide, work.PlanGoal:
 		return out, fmt.Errorf("unexpected action %s", a.Kind)
 	}
@@ -272,7 +272,7 @@ func TestM2RunToDoneCodeGoal(t *testing.T) {
 		MainHost: func(context.Context) (work.Node, error) {
 			return work.Node{ID: "main-work-fixture", Connected: true, ObservedAt: time.Now().Unix(), CPUCores: 4, CPULimit: 4, AvailableMemoryMB: 8000, MemoryLimitMB: 8000, AvailableDiskMB: 8000, DiskLimitMB: 8000, Workers: map[string]bool{"stub": true}}, nil
 		},
-		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+		Ready: func(ctx context.Context, e *work.Engine, person, _ string) error {
 			agent, err := fixtureWorkOwner(ctx, root)
 			if err != nil {
 				return err

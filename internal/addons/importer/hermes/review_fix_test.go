@@ -12,6 +12,7 @@ import (
 )
 
 func TestReviewIdenticalUIDReplayKeepsCanonicalHost(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	sqlSource(t, req.Profiles[0].LCMPath, `INSERT INTO messages(store_id,session_id,source,conversation_id,role,content,timestamp) VALUES(9,'synthetic-session','cli','synthetic-conversation','user','Synthetic request',100); INSERT INTO host_uid_bindings(store_id,uid,lineage_key,kind,binding_version) VALUES(9,'synthetic-message-1','home:synthetic-session','version',1)`)
 	p, err := Prepare(t.Context(), req)
@@ -33,6 +34,7 @@ func TestReviewIdenticalUIDReplayKeepsCanonicalHost(t *testing.T) {
 	}
 }
 func TestReviewUnsealedEventsNeverReachLiveLedger(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	p, err := Prepare(t.Context(), req)
 	if err != nil {
@@ -50,6 +52,7 @@ func TestReviewUnsealedEventsNeverReachLiveLedger(t *testing.T) {
 	}
 }
 func TestReviewSidecarHasReadableNativeMaterial(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	db := importStore(t)
 	root := filepath.Join(t.TempDir(), "materials")
@@ -118,6 +121,7 @@ func importMaterials(t *testing.T, db *canon.Store) (*assets.MaterialWriter, *as
 }
 
 func TestReviewMaterialAdoptionRollsBackAndReplays(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	db := importStore(t)
 	writer, store := importMaterials(t, db)

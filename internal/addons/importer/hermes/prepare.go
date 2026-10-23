@@ -34,7 +34,11 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 			return nil, err
 		}
 		tables := map[string][]sourceRow{}
-		schema := registeredSQLiteSchemas[src.kind]
+		schema, err := registeredSchema(ctx, db, src.kind)
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
 		var names []string
 		for name := range schema.Tables {
 			names = append(names, name)
@@ -53,6 +57,9 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 			keep := src.kind == HermesLCM && (name == "messages" || name == "host_uid_bindings" || name == "message_relations" || name == "summary_nodes" || name == "summary_node_provenance") || src.kind == HermesState && (name == "messages" || name == "sessions")
 			if !keep {
 				count.Omitted = "derived index, cache, rollup or operational state outside memory import"
+				if src.kind == HermesState && name == "delivery_obligations" {
+					count.Omitted = "gateway delivery retry state outside memory import"
+				}
 			} else {
 				rows, err := readRows(ctx, db, name, cols)
 				if err != nil {
@@ -60,10 +67,16 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 					return nil, err
 				}
 				for _, row := range rows {
+					if name == "host_uid_bindings" || name == "message_relations" {
+						if count.Kinds == nil {
+							count.Kinds = map[string]int{}
+						}
+						count.Kinds[row.text("kind")]++
+					}
 					k := rowKey(name, row, cols)
 					if k == "" {
 						db.Close()
-						return nil, ErrSnapshot
+						return nil, invalidSnapshot("source row key required")
 					}
 					tables[name] = append(tables[name], sourceRow{key: LegacyKey{string(src.kind), profile.ID, name, k}, row: row})
 				}
@@ -119,7 +132,7 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 		kind := s.row.text("kind")
 		id := s.row.integer("store_id")
 		if s.row.integer("binding_version") != 1 {
-			return nil, ErrSnapshot
+			return nil, invalidSnapshot("host_uid_bindings.binding_version must be 1")
 		}
 		if kind == "engine" && id == 0 {
 			c := b.conversation("lineage:" + s.row.text("lineage_key"))
@@ -127,7 +140,7 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 			r.flags = []string{"engine"}
 			continue
 		}
-		if kind != "canonical" && kind != "version" {
+		if kind != "canonical" && kind != "version" && kind != "alias_candidate" {
 			return nil, fmt.Errorf("%w: binding kind", ErrSnapshot)
 		}
 		r := b.lcm[id]
@@ -135,6 +148,10 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 			return nil, ErrSourceMissing
 		}
 		b.attach(r, s)
+		// A shadow alias is evidence about a candidate, not a confirmed identity.
+		if kind == "alias_candidate" {
+			continue
+		}
 		k := s.row.text("lineage_key") + "\x00" + s.row.text("uid")
 		bindings[k] = append(bindings[k], s)
 	}
@@ -143,7 +160,7 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 		for _, s := range ss {
 			if s.row.text("kind") == "canonical" {
 				if original != nil {
-					return nil, ErrSnapshot
+					return nil, invalidSnapshot("unique canonical UID binding")
 				}
 				original = b.lcm[s.row.integer("store_id")]
 			}
@@ -157,7 +174,7 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 			}
 			r := b.lcm[s.row.integer("store_id")]
 			if r.id == original.id {
-				return nil, ErrSnapshot
+				return nil, invalidSnapshot("version must differ from canonical event")
 			}
 			r.links = append(r.links, importLink{original.id, "supersedes", 0})
 			if samePayload(r.sources[0].row, original.sources[0].row) {
@@ -165,6 +182,16 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 				r.flags = append(r.flags, "replay")
 			}
 		}
+	}
+	// Index within this profile, so each host row considers only its UID's
+	// lineages instead of scanning every binding in the snapshot.
+	byUID := map[string]map[string][]sourceRow{}
+	for _, ss := range bindings {
+		uid, lineage := ss[0].row.text("uid"), ss[0].row.text("lineage_key")
+		if byUID[uid] == nil {
+			byUID[uid] = map[string][]sourceRow{}
+		}
+		byUID[uid][lineage] = ss
 	}
 	hostUID := map[string]*record{}
 	for _, s := range b.tables[HermesState]["messages"] {
@@ -179,25 +206,15 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 		}
 		uid := row.text("message_uid")
 		var target *record
+		var mapping *UIDLineageMapping
 		if uid != "" {
 			var candidates []sourceRow
-			lineage := ""
-			for _, ss := range bindings {
-				first := ss[0].row
-				lk := first.text("lineage_key")
-				if first.text("uid") == uid && (lk == root || strings.HasSuffix(lk, ":"+root)) {
-					if lineage != "" && lineage != lk {
-						return nil, fmt.Errorf("%w: ambiguous UID lineage", ErrSnapshot)
-					}
-					lineage = lk
-					candidates = ss
-				}
-			}
+			candidates, mapping = selectUIDLineage(byUID[uid], root)
 			for _, binding := range candidates {
 				r := b.lcm[binding.row.integer("store_id")]
 				if binding.row.text("kind") == "canonical" {
 					if target != nil {
-						return nil, ErrSnapshot
+						return nil, invalidSnapshot("unique host canonical UID target")
 					}
 					target = r
 				}
@@ -211,7 +228,7 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 					r := b.lcm[binding.row.integer("store_id")]
 					if binding.row.text("kind") == "version" && samePayload(row, r.sources[0].row) {
 						if version != nil && version != r {
-							return nil, ErrSnapshot
+							return nil, invalidSnapshot("unique matching UID payload version")
 						}
 						version = r
 					}
@@ -220,11 +237,15 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 					target = version
 				}
 			}
-			if target == nil {
+			if target == nil && mapping == nil {
 				target = hostUID[root+"\x00"+uid]
 			}
 		}
 		if target == nil {
+			if mapping != nil && mapping.Lineage != "" {
+				mapping.Lineage = ""
+				mapping.Reason = "no_matching_message"
+			}
 			c := b.sessionConversations[session]
 			if c == nil {
 				c = b.conversation("host:" + root)
@@ -233,6 +254,10 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 			target = b.message(c, s, 4)
 		} else {
 			b.attach(target, s)
+		}
+		if mapping != nil {
+			mapping.Source, mapping.EventID = s.key, target.id
+			p.uidLineages = append(p.uidLineages, *mapping)
 		}
 		if b.sessionConversations[session] == nil {
 			b.sessionConversations[session] = b.byID(target.conversation)
@@ -268,11 +293,16 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 			return nil, ErrSourceMissing
 		}
 		kind := s.row.text("kind")
-		if kind != "view_of" && kind != "supersedes" && kind != "pairs_with" {
-			return nil, ErrSnapshot
+		if kind != "view_of" && kind != "supersedes" && kind != "pairs_with" && kind != "composite" {
+			return nil, invalidSnapshot("message_relations.kind registered")
 		}
 		r := b.add(b.byID(from.conversation), "relation", 4, s)
 		r.links = []importLink{{from.id, "from", 0}, {to.id, kind, int(s.row.integer("ordinal"))}}
+		if kind == "composite" {
+			// A head is itself a constituent, not an event containing the entire
+			// composite. Retain group provenance and member order only as source links.
+			r.kind = "composite"
+		}
 	}
 	for _, s := range b.tables[HermesLCM]["summary_nodes"] {
 		c := b.sessionConversations[s.row.text("session_id")]
@@ -288,11 +318,11 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 		r := b.records[s.key]
 		var ids []int64
 		if err := json.Unmarshal([]byte(s.row.text("source_ids")), &ids); err != nil {
-			return nil, ErrSnapshot
+			return nil, invalidSnapshot("summary_nodes.source_ids JSON")
 		}
 		kind := s.row.text("source_type")
 		if kind != "messages" && kind != "nodes" {
-			return nil, ErrSnapshot
+			return nil, invalidSnapshot("summary_nodes.source_type registered")
 		}
 		for i, id := range ids {
 			var child *record
@@ -305,7 +335,7 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 				return nil, ErrSourceMissing
 			}
 			if child.conversation != r.conversation || child.id == r.id {
-				return nil, ErrSnapshot
+				return nil, invalidSnapshot("summary child must be distinct and in same conversation")
 			}
 			r.links = append(r.links, importLink{child.id, "child", i})
 		}
@@ -322,6 +352,37 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 	}
 	return b, nil
 }
+
+// The original home path is not available in a staged snapshot. Match the
+// compression root only when it identifies one lineage; never guess between
+// two home tags or follow a binding across a fork/reset boundary.
+func selectUIDLineage(lineages map[string][]sourceRow, root string) ([]sourceRow, *UIDLineageMapping) {
+	var names, matching []string
+	for lineage := range lineages {
+		names = append(names, lineage)
+		if lineage == root || strings.HasSuffix(lineage, ":"+root) {
+			matching = append(matching, lineage)
+		}
+	}
+	var candidates []sourceRow
+	if len(matching) == 1 {
+		candidates = lineages[matching[0]]
+	}
+	if len(names) <= 1 {
+		return candidates, nil
+	}
+	sort.Strings(names)
+	mapping := &UIDLineageMapping{SessionRoot: root, CandidateLineages: names}
+	switch len(matching) {
+	case 0:
+		mapping.Reason = "no_root_lineage"
+	case 1:
+		mapping.Lineage, mapping.Reason = matching[0], "session_root"
+	default:
+		mapping.Reason = "multiple_root_lineages"
+	}
+	return candidates, mapping
+}
 func samePayload(a, b Row) bool {
 	for _, f := range []string{"role", "content", "tool_calls", "tool_call_id", "tool_name"} {
 		if a[f] != b[f] {
@@ -334,7 +395,7 @@ func (b *profileBuilder) lineage(session string) (string, error) {
 	seen := map[string]bool{}
 	for {
 		if seen[session] {
-			return "", ErrSnapshot
+			return "", invalidSnapshot("session lineage cycle")
 		}
 		seen[session] = true
 		r := b.sessions[session]
@@ -470,7 +531,7 @@ func (b *profileBuilder) finish(ctx context.Context) error {
 	var visit func(*record) error
 	visit = func(r *record) error {
 		if active[r.id] {
-			return ErrSnapshot
+			return invalidSnapshot("summary child cycle")
 		}
 		if done[r.id] {
 			return nil

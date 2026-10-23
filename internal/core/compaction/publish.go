@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/recall"
 )
 
 // Publish commits node, links and exact event coverage together, after checking
@@ -45,6 +46,12 @@ func (s *Store) publish(ctx context.Context, p Proposal, audit func(*canon.Tx) e
 			if _, err := tx.ExecContext(ctx, "INSERT INTO sum_cover(node_id,event_id,ordinal,reason) VALUES(?,?,?,?)", n.ID, c.EventID, i, c.Reason); err != nil {
 				return err
 			}
+		}
+		if err := canon.WriteSummaryCitations(ctx, tx, n.ID, n.Revision); err != nil {
+			return err
+		}
+		if err := recall.IndexText(ctx, tx, "summary", n.ID, n.Output.Text); err != nil {
+			return err
 		}
 		if audit != nil {
 			return audit(tx)

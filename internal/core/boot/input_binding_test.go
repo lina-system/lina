@@ -1,0 +1,480 @@
+// SPDX-License-Identifier: Apache-2.0
+package boot
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/binding"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/lane"
+	"github.com/thisisjun786/lina/internal/core/waiting"
+	"github.com/thisisjun786/lina/internal/core/work"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
+	"github.com/thisisjun786/lina/internal/core/intakereplay"
+	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/kit/protocol"
+)
+
+func TestInputBindingAdmission(t *testing.T) {
+	r := controlRuntime(t)
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "garden", Title: "Garden", Kind: "project", State: "active", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	// Stop before model dispatch, after the actual authenticated admission path.
+	r.intakeReplay = func(context.Context, ledger.Event) error { return nil }
+	id, text := "one", "Garden"
+	for range 2 {
+		if _, err := r.Input(t.Context(), clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Input{InputID: &id, Text: &text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	var raw string
+	err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM conv_event b JOIN conv_event p ON b.parent_id=p.id WHERE b.scaffold_kind='input_binding' AND json_extract(p.origin,'$.locator')=?`, id).Scan(&count); err != nil {
+			return err
+		}
+		if count != 1 {
+			t.Errorf("binding count = %d, want exactly one", count)
+			return nil
+		}
+		return tx.QueryRowContext(t.Context(), `SELECT b.body FROM conv_event b JOIN conv_event p ON b.parent_id=p.id WHERE b.scaffold_kind='input_binding' AND json_extract(p.origin,'$.locator')=?`, id).Scan(&raw)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		return
+	}
+	var got struct {
+		Target  intakereplay.Target `json:"target"`
+		Decider string              `json:"decider"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Target.ID != "garden" || got.Decider != "exact-reference" {
+		t.Fatalf("binding: %s", raw)
+	}
+}
+
+func TestInputBindingStateAndPacket(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	s := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "garden", Title: "Garden", Kind: "project", State: "active", LastActivity: now}, {ID: "library", Title: "Library", Kind: "project", State: "active", LastActivity: now.Add(-time.Hour)}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, s, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	admit := func(id, text string, at time.Time, surface ledger.Surface) ledger.Event {
+		t.Helper()
+		e, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: id, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: surface, OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Body: text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	read := func(e ledger.Event) binding.Decision {
+		t.Helper()
+		saved, err := r.journal().Get(ctx, inputBindingID(e.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d binding.Decision
+		if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	surface := ledger.Surface{Kind: "tui"}
+	first := admit("first", "Garden", now, surface)
+	if d := read(first); d.Target.ID != "garden" || d.Decider != "exact-reference" {
+		t.Fatal(d)
+	}
+	aged := admit("aged", "continue", now.Add(time.Hour), surface)
+	if d := read(aged); d.Target.Class != "none" || !d.Unresolved || d.FocusFresh || d.Candidates[0].ID != "garden" {
+		t.Fatal(d)
+	}
+	replySurface := surface
+	replySurface.ReplyTo = first.ID
+	replied := admit("reply", "Library", now.Add(time.Hour+time.Second), replySurface)
+	if d := read(replied); d.Target.ID != "garden" || d.Decider != "reply-or-card" {
+		t.Fatal(d)
+	}
+	q := waiting.ConversationQuestion{ID: "format", Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: "asking", Input: replied.ID, AskedAt: now.Add(time.Hour), QuestionDraft: waiting.QuestionDraft{Question: "Format?", Recommendation: "table", Choices: []string{"table", "list"}, Default: "table"}}
+	if err := waiting.NewConversationQuestions(r.db).Ask(ctx, q, 2); err != nil {
+		t.Fatal(err)
+	}
+	answer := admit("answer", "2", now.Add(time.Hour+2*time.Second), surface)
+	if d := read(answer); d.Target.ID != "garden" || d.Decider != "offered-option" {
+		t.Fatal(d)
+	}
+	packet, err := r.inputBindingPacket(ctx, answer)
+	if err != nil || len(packet) != 1 || packet[0].Kind != assemble.Waiting {
+		t.Fatalf("packet=%+v err=%v", packet, err)
+	}
+	q.ID = "second-question"
+	q.Input = aged.ID
+	// A question with no item is still an open offered question. It must prevent
+	// an option answer from being falsely attributed to the other question.
+	if err := waiting.NewConversationQuestions(r.db).Ask(ctx, q, 2); err != nil {
+		t.Fatal(err)
+	}
+	ambiguous := admit("ambiguous", "2", now.Add(time.Hour+3*time.Second), surface)
+	if d := read(ambiguous); !d.Unresolved {
+		t.Fatal("two offered questions fired a rule", d)
+	}
+}
+
+func TestInputBindingRollsBackAdmission(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	r.intakeReplay = func(context.Context, ledger.Event) error { return nil }
+	if err := r.db.Write(ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE TRIGGER fail_binding BEFORE INSERT ON conv_event WHEN NEW.scaffold_kind='input_binding' BEGIN SELECT RAISE(ABORT,'fixture_binding_failure');END;`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	id, text := "rollback", "hello"
+	if _, err := r.Input(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Input{InputID: &id, Text: &text}); err == nil {
+		t.Fatal("binding failure accepted input")
+	}
+	if err := r.db.Write(ctx, func(tx *canon.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM conv_event WHERE json_extract(origin,'$.locator')=?`, id).Scan(&n); err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatal("orphan person input")
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM inbox WHERE native_id=?`, id).Scan(&n); err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatal("orphan receipt")
+		}
+		_, err := tx.ExecContext(ctx, "DROP TRIGGER fail_binding")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Input(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Input{InputID: &id, Text: &text}); err != nil {
+		t.Fatal("same-id retry after rollback", err)
+	}
+}
+
+func TestInputBindingNoticeAndScope(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "background", Title: "Inspect the garden", Kind: "run", State: "running", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "notice-parent", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notice := lane.Notice{ID: "notice", Run: "background", Person: r.person, Agent: r.agent, Conversation: r.conversation, Outcome: "complete", Summary: "Garden finished", Landed: now, Surface: ledger.Surface{Kind: "tui"}}
+	raw, _ := json.Marshal([]lane.Notice{notice})
+	record, _ := json.Marshal(notice)
+	if err = r.db.Write(ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(ctx, "INSERT INTO lane_notices(id,conversation,record,delivered) VALUES(?,?,?,1)", notice.ID, r.conversation, record)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.journal().Admit(ctx, guard.EntryBackgroundNotice, ledger.Input{ID: "notice", ParentID: parent.ID, ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "background_notice", Locator: "notice", OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", Body: string(raw)}); err != nil {
+		t.Fatal(err)
+	}
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "reply-notice", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui", ReplyTo: "notice"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Continue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(input.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.ID != "background" || d.Decider != "reply-or-card" {
+		t.Fatal(d)
+	}
+	foreign, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "foreign-reply", PersonID: r.person, AgentID: r.agent, ConversationID: "another-conversation", Surface: ledger.Surface{Kind: "tui", ReplyTo: "notice"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Continue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err = r.journal().Get(ctx, inputBindingID(foreign.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.Class != "none" || !d.Unresolved {
+		t.Fatal("foreign reply stole notice target", d)
+	}
+}
+
+func TestInputBindingRecoveryDoesNotStealFocus(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "a", Title: "Garden", Kind: "project", State: "active", LastActivity: now}, {ID: "b", Title: "Library", Kind: "project", State: "active", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	makeInput := func(id, text string) ledger.Input {
+		return ledger.Input{ID: id, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text}
+	}
+	old, err := ledger.New(r.db, nil).Admit(ctx, guard.EntryOwner, makeInput("legacy", "Garden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.journal().Admit(ctx, guard.EntryOwner, makeInput("recent", "Library")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.inputBindingPacket(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	next, err := r.journal().Admit(ctx, guard.EntryOwner, makeInput("next", "continue"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(next.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.ID != "b" || !d.Unresolved {
+		t.Fatal("recovered older input replaced recent focus", d)
+	}
+}
+
+func TestInputBindingChannelWorkWithoutMemory(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "garden", Title: "Garden", Kind: "project", State: "active", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	r.channelBinding = &channels.Binding{Scope: channels.Scope{Tools: true}}
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "channel-work", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "channel", Platform: "telegram", ChatID: "1"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Garden"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(input.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.ID != "garden" || d.Decider != "exact-reference" {
+		t.Fatal("work scope incorrectly requires memory scope", d)
+	}
+}
+
+func TestInputBindingLargeCandidateMetadata(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	title := strings.Repeat("Long title ", 2000)
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "long", Title: title, Kind: "project", State: "active", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "short-input", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Hello"})
+	if err != nil {
+		t.Fatal("unrelated work metadata rejected person input", err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(input.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Candidates) != 1 || d.Candidates[0].Title != strings.TrimSpace(title) {
+		t.Fatal("binding lost the offered title")
+	}
+}
+
+func TestInputBindingPublishedWorkCard(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	goal := work.Task{ID: "goal", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Garden", Done: "Checked result"}
+	if err := r.work.Create(ctx, goal); err != nil {
+		t.Fatal(err)
+	}
+	child := goal
+	child.ID = "child"
+	child.GoalID = goal.ID
+	if err := r.work.Create(ctx, child); err != nil {
+		t.Fatal(err)
+	}
+	round := waiting.Round{ID: "round", Goal: goal.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Deadline: now.Add(time.Hour), Questions: []waiting.Question{{ID: "choice", Prompt: "Format?", Recommendation: "A", Reason: waiting.SignificantChoice, Choices: []string{"A", "B"}, Default: "A", Dependents: []string{child.ID}}}}
+	if err := waiting.NewWorkRounds(r.db, r.work).Open(ctx, round); err != nil {
+		t.Fatal(err)
+	}
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "work-card-input", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui", Card: "work:round"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Check this"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(input.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.ID != goal.ID || d.Decider != "reply-or-card" {
+		t.Fatal(d)
+	}
+}
+
+func TestInputBindingWithdrawnQuestionCard(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "garden", Title: "Garden", Kind: "project", State: "active", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "question-source", "Garden")
+	q := waiting.ConversationQuestion{ID: "withdrawn-question", Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: "ask", Input: input.ID, AskedAt: now, QuestionDraft: waiting.QuestionDraft{Question: "Format?", Recommendation: "A", Choices: []string{"A", "B"}, Default: "A"}}
+	if err := waiting.NewConversationQuestions(r.db).Ask(ctx, q, 1); err != nil {
+		t.Fatal(err)
+	}
+	forgetQuestionInput(t, r, input)
+	answer, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "withdrawn-answer", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui", Card: q.ID}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(answer.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Decider != "no-rule" || !d.Unresolved {
+		t.Fatal("withdrawn question still decided binding", d)
+	}
+}
+
+func TestInputBindingMaterialNotice(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "background", Title: "Inspect the garden", Kind: "run", State: "running", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "long-notice-parent", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Start the run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notice := lane.Notice{ID: "long-notice", Run: "background", Person: r.person, Agent: r.agent, Conversation: r.conversation, Outcome: "complete", Summary: strings.Repeat("x", ledger.InlineBytes+1), Landed: now, Surface: ledger.Surface{Kind: "tui"}}
+	body, err := json.Marshal([]lane.Notice{notice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := json.Marshal(lane.Delivery{ID: notice.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, At: now, Notices: []lane.Notice{notice}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Write(ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(ctx, "INSERT INTO lane_notice_events(id,conversation,record) VALUES(?,?,?)", notice.ID, r.conversation, delivery)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.journal().Admit(ctx, guard.EntryBackgroundNotice, ledger.Input{ID: "long-notice-event", ParentID: parent.ID, ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "background_notice", Locator: "background-notice:" + notice.ID, OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", Body: string(body)}); err != nil {
+		t.Fatal(err)
+	}
+	var material sql.NullString
+	if err = r.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT material_id FROM conv_event WHERE id='long-notice-event'").Scan(&material)
+	}); err != nil || !material.Valid {
+		t.Fatalf("notice body stayed inline: %+v %v", material, err)
+	}
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "long-notice-reply", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui", ReplyTo: "long-notice-event"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Continue"})
+	if err != nil {
+		t.Fatal("material-backed notice blocked input admission", err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(input.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.ID != "background" || d.Decider != "reply-or-card" {
+		t.Fatal(d)
+	}
+}
+
+func TestInputBindingRetractedFocus(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "garden", Title: "Garden", Kind: "project", State: "active", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "retracted-focus", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Garden"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(source.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.ID != "garden" {
+		t.Fatalf("source input did not bind: %+v", d)
+	}
+	forgetQuestionInput(t, r, source)
+	next, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "retracted-focus-next", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "continue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err = r.journal().Get(ctx, inputBindingID(next.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var after binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &after); err != nil {
+		t.Fatal(err)
+	}
+	if after.Target.ID == "garden" || after.FocusFresh {
+		t.Fatal("withdrawn source still supplied the focus", after)
+	}
+}

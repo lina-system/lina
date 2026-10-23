@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+
 	"math"
 	"sort"
 	"strings"
@@ -76,32 +77,37 @@ const (
 )
 
 type Task struct {
-	PRGeneration   uint64    `json:"pr_generation"`
-	Continuations  int       `json:"continuations"`
-	ThreadHandle   string    `json:"thread_handle,omitempty"`
-	Repairs        string    `json:"repairs,omitempty"`
-	RepairedBy     string    `json:"repaired_by,omitempty"`
-	ResultRevision string    `json:"result_revision,omitempty"`
-	RepairAsked    bool      `json:"repair_asked"`
-	ID             string    `json:"id"`
-	Done           string    `json:"done"`
-	Repository     string    `json:"repository"`
-	Base           string    `json:"base"`
-	Area           string    `json:"area"`
-	Worker         string    `json:"worker"`
-	Resources      Resources `json:"resources"`
-	DependsOn      []string  `json:"depends_on"`
-	Stage          TaskStage `json:"stage"`
-	Attempt        int       `json:"attempt"`
-	Recoveries     int       `json:"recoveries"`
-	EffectsSettled bool      `json:"effects_settled"`
-	Conflicts      int       `json:"conflicts"`
-	QARepairs      int       `json:"qa_repairs"`
-	NodeID         string    `json:"node_id"`
-	Head           string    `json:"head"`
-	PR             PRState   `json:"pr"`
-	Merge          Proof     `json:"merge"`
-	QA             Proof     `json:"qa"`
+	Kind           StepKind         `json:"kind,omitempty"`
+	Background     *BackgroundBrief `json:"background,omitempty"`
+	Wait           *StepWait        `json:"wait,omitempty"`
+	Result         Proof            `json:"result,omitempty"`
+	Name           string           `json:"name,omitempty"`
+	PRGeneration   uint64           `json:"pr_generation"`
+	Continuations  int              `json:"continuations"`
+	ThreadHandle   string           `json:"thread_handle,omitempty"`
+	Repairs        string           `json:"repairs,omitempty"`
+	RepairedBy     string           `json:"repaired_by,omitempty"`
+	ResultRevision string           `json:"result_revision,omitempty"`
+	RepairAsked    bool             `json:"repair_asked"`
+	ID             string           `json:"id"`
+	Done           string           `json:"done"`
+	Repository     string           `json:"repository"`
+	Base           string           `json:"base"`
+	Area           string           `json:"area"`
+	Worker         string           `json:"worker"`
+	Resources      Resources        `json:"resources"`
+	DependsOn      []string         `json:"depends_on"`
+	Stage          TaskStage        `json:"stage"`
+	Attempt        int              `json:"attempt"`
+	Recoveries     int              `json:"recoveries"`
+	EffectsSettled bool             `json:"effects_settled"`
+	Conflicts      int              `json:"conflicts"`
+	QARepairs      int              `json:"qa_repairs"`
+	NodeID         string           `json:"node_id"`
+	Head           string           `json:"head"`
+	PR             PRState          `json:"pr"`
+	Merge          Proof            `json:"merge"`
+	QA             Proof            `json:"qa"`
 }
 type GoalState string
 
@@ -116,6 +122,7 @@ const (
 )
 
 type Goal struct {
+	StepGraph         *StepGraph          `json:"step_graph,omitempty"`
 	Conversation      string              `json:"conversation"`
 	Turn              string              `json:"turn"`
 	RecordID          string              `json:"record_id"`
@@ -175,6 +182,7 @@ const CheckCriterion ActionKind = "check_criterion"
 const ContinueWorker ActionKind = "continue_worker"
 
 type Action struct {
+	StepKind             StepKind        `json:"step_kind,omitempty"`
 	RecordRevision       string          `json:"record_revision,omitempty"`
 	InputVersion         *InputVersion   `json:"input_version,omitempty"`
 	Superseded           bool            `json:"superseded,omitempty"`
@@ -216,10 +224,11 @@ type Wait struct {
 	Until  int64  `json:"until"`
 }
 type Plan struct {
-	Actions []Action
-	Waits   []Wait
-	Close   []string
-	Block   []string
+	Frontier []FrontierStep
+	Actions  []Action
+	Waits    []Wait
+	Close    []string
+	Block    []string
 }
 
 func finite(n float64) bool { return !math.IsNaN(n) && !math.IsInf(n, 0) }
@@ -235,7 +244,7 @@ func has(items []string, id string) bool {
 	return false
 }
 func reserves(a Action) bool {
-	return a.State != "finished" && workerAction(a.Kind)
+	return a.State != "finished" && workerAction(a.Kind) && stepKind(a.StepKind) != WaitStep
 }
 
 // Slots applies both installed resource caps and the live observation. An
@@ -285,7 +294,7 @@ func validateGoalState(g Goal, pendingCorrection bool) error {
 	}
 	tasks := map[string]Task{}
 	for _, t := range g.Tasks {
-		if t.ID == "" || strings.TrimSpace(t.Done) == "" || t.Repository == "" || t.Base == "" || t.Area == "" || t.Worker == "" || !validResources(t.Resources) {
+		if !validStepWork(t) {
 			return ErrInvalid
 		}
 		if _, ok := tasks[t.ID]; ok {
@@ -390,7 +399,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 		plan.Waits = append(plan.Waits, Wait{g.ID, t.ID, reason, wake, now.Add(SafetySweep).Unix()})
 	}
 	add := func(g Goal, t Task, kind ActionKind, revision, node string) {
-		a := Action{GoalID: g.ID, TaskID: t.ID, Kind: kind, Attempt: t.Attempt, Revision: revision, NodeID: node, State: "queued", Deadline: now.Add(SafetySweep).Unix()}
+		a := Action{StepKind: t.Kind, GoalID: g.ID, TaskID: t.ID, Kind: kind, Attempt: t.Attempt, Revision: revision, NodeID: node, State: "queued", Deadline: now.Add(SafetySweep).Unix()}
 		if workerAction(kind) {
 			// A full plan can remove an ID and add it back in a later revision.
 			// Its settled worker history still owns the earlier attempt numbers.
@@ -401,7 +410,9 @@ func Derive(state State, now time.Time) (Plan, error) {
 				}
 			}
 			a.Attempt++
-			a.Resources = t.Resources
+			if stepKind(t.Kind) != WaitStep {
+				a.Resources = t.Resources
+			}
 		}
 		if kind == ContinueWorker {
 			a.Handle = t.ThreadHandle
@@ -469,7 +480,9 @@ func Derive(state State, now time.Time) (Plan, error) {
 			return n
 		}
 		allDone := true
-		for _, t := range g.Tasks {
+		orderedTasks := append([]Task(nil), g.Tasks...)
+		sort.Slice(orderedTasks, func(i, j int) bool { return orderedTasks[i].ID < orderedTasks[j].ID })
+		for _, t := range orderedTasks {
 			done := taskDone(t)
 			allDone = allDone && done
 			if pending(state.Actions, g.ID, t.ID) {
@@ -484,13 +497,13 @@ func Derive(state State, now time.Time) (Plan, error) {
 				blocked := false
 				for _, id := range t.DependsOn {
 					d := tasks[id]
-					if !d.Merge.proves(d.Merge.Revision) {
+					if !stepLanded(d) {
 						blocked = true
 						break
 					}
 				}
 				if blocked {
-					wait(g, t, "dependency", "merge.landed")
+					wait(g, t, "dependency", "step.landed")
 					continue
 				}
 				kind = Assign
@@ -647,12 +660,19 @@ func Derive(state State, now time.Time) (Plan, error) {
 	})
 	for _, c := range ready {
 		g, t, kind := c.goal, c.task, c.kind
+		if kind == Assign {
+			plan.Frontier = append(plan.Frontier, FrontierStep{g.ID, t.ID, stepKind(t.Kind)})
+		}
+		if stepKind(t.Kind) == WaitStep {
+			add(g, t, kind, "", "")
+			continue
+		}
 		overlaps := false
 		for _, held := range occupied {
 			if held.goal == g.ID && held.task.ID == t.ID {
 				continue
 			}
-			if held.task.Repository == t.Repository && areasOverlap(held.task.Area, t.Area) {
+			if stepKind(held.task.Kind) != WaitStep && held.task.Area != "" && t.Area != "" && held.task.Repository == t.Repository && areasOverlap(held.task.Area, t.Area) {
 				overlaps = true
 				break
 			}
@@ -664,7 +684,12 @@ func Derive(state State, now time.Time) (Plan, error) {
 		best := ""
 		score := -1.0
 		personal := true
+		available, quota := false, false
 		for _, n := range nodes {
+			if n.Workers[t.Worker] {
+				available = true
+				quota = quota || n.QuotaReset[t.Worker] <= now.Unix()
+			}
 			if !n.Workers[t.Worker] || n.QuotaReset[t.Worker] > now.Unix() {
 				continue
 			}
@@ -678,7 +703,11 @@ func Derive(state State, now time.Time) (Plan, error) {
 			}
 		}
 		if best == "" {
-			wait(g, t, "host_capacity", "node.changed")
+			if available && !quota {
+				wait(g, t, "worker_quota", "quota.changed")
+			} else {
+				wait(g, t, "host_capacity", "node.changed")
+			}
 			continue
 		}
 		add(g, t, kind, t.Head, best)

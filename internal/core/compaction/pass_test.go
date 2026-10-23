@@ -27,6 +27,7 @@ func fixturePass() (Pass, View) {
 	return p, v
 }
 func TestFailedSummaryKeepsEventsAndPublishesNothing(t *testing.T) {
+	t.Parallel()
 	p, v := fixturePass()
 	failed := errors.New("summarizer unavailable")
 	p.Summarize = func(context.Context, PassSegment) (Text, error) { return Text{}, failed }
@@ -41,6 +42,7 @@ func TestFailedSummaryKeepsEventsAndPublishesNothing(t *testing.T) {
 	}
 }
 func TestStubsPrecedeSummaryAndPreserveCurrentRoundTrip(t *testing.T) {
+	t.Parallel()
 	p, v := fixturePass()
 	v.History = []Record{{ID: "call", Item: provider.Item(`{"type":"function_call","call_id":"c","name":"read_file","arguments":"{}"}`)}, {ID: "output", Item: provider.Item(`{"type":"function_call_output","call_id":"c","output":"` + strings.Repeat("x", 2200) + `"}`), Note: "read_file completed"}, {ID: "tail", Item: message(strings.Repeat("t", 120)), User: true}}
 	v.Active = []Record{{ID: "reason", Item: provider.Item(`{"type":"reasoning","encrypted_content":"opaque"}`)}}
@@ -55,11 +57,16 @@ func TestStubsPrecedeSummaryAndPreserveCurrentRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(got.View.Active, v.Active) || !reflect.DeepEqual(got.View.Packet, v.Packet) || !reflect.DeepEqual(got.View.History[0], v.History[0]) || !strings.Contains(string(got.View.History[1].Item), "output") || !strings.Contains(string(got.View.History[1].Item), "expand") {
 		t.Fatalf("bad stub projection: %+v", got.View)
 	}
+	tail := got.Request.Items[len(got.Request.Items)-3:]
+	if !reflect.DeepEqual(tail, []provider.Item{v.Input.Item, v.Packet[0], v.Active[0].Item}) {
+		t.Fatalf("compaction reordered input, packet or active items: %s", tail)
+	}
 	if !strings.Contains(string(v.History[1].Item), strings.Repeat("x", 2200)) {
 		t.Fatal("mutated source")
 	}
 }
 func TestOversizeContinuationRecordsSizesAndSendsNothing(t *testing.T) {
+	t.Parallel()
 	p, v := fixturePass()
 	v.Input.Item = message(strings.Repeat("q", 2200))
 	p.Summarize = func(context.Context, PassSegment) (Text, error) {
@@ -81,6 +88,7 @@ func TestOversizeContinuationRecordsSizesAndSendsNothing(t *testing.T) {
 }
 
 func TestInTurnPreparedThenWholeTailKeepsNewRootLineage(t *testing.T) {
+	t.Parallel()
 	p, v := fixturePass()
 	p.Policy.KeepUserTokens = 1000
 	v.History = append(v.History, Record{ID: "tail", Item: message(strings.Repeat("t", 600)), User: true})
@@ -108,6 +116,7 @@ func TestInTurnPreparedThenWholeTailKeepsNewRootLineage(t *testing.T) {
 	}
 }
 func TestContinuationInputOnceAndNoPriorRoundTrip(t *testing.T) {
+	t.Parallel()
 	p, v := fixturePass()
 	v.Active = []Record{{ID: "opaque", Item: provider.Item(`{"type":"reasoning","encrypted_content":"old-round"}`)}}
 	p.Summarize = func(_ context.Context, s PassSegment) (Text, error) {
@@ -131,7 +140,7 @@ func TestContinuationInputOnceAndNoPriorRoundTrip(t *testing.T) {
 				t.Fatal("old round survived")
 			}
 		}
-		if count != 1 || !strings.Contains(string(r.Items[len(r.Items)-2]), "fresh-packet") {
+		if count != 1 || !strings.Contains(string(r.Items[len(r.Items)-1]), "fresh-packet") {
 			t.Fatalf("bad continuation layout: %s", r.Items)
 		}
 		return nil
@@ -142,6 +151,7 @@ func TestContinuationInputOnceAndNoPriorRoundTrip(t *testing.T) {
 }
 
 func TestCounterAlwaysReceivesConversationModel(t *testing.T) {
+	t.Parallel()
 	p, v := fixturePass()
 	p.Count = func(r provider.Request) int {
 		if r.Model != "model" {
@@ -161,6 +171,7 @@ func TestCounterAlwaysReceivesConversationModel(t *testing.T) {
 }
 
 func TestBoundaryRetainsCompleteTurns(t *testing.T) {
+	t.Parallel()
 	old := Record{ID: "old", Item: message(strings.Repeat("old ", 500)), User: true}
 	recent := []Record{
 		{ID: "recent", Item: message("read the catalog"), User: true},

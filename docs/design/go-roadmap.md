@@ -26,6 +26,35 @@ This document is informative. It orders the Go design of LINA Core and the termi
 11. One review per pull request. A high-risk contract change may get one extra independent read, and there is no standing gate of several verifiers.
 12. Design documents are written in English. Summaries for the person are in Korean.
 
+### LINA 1 acceptance record
+
+The [M1 record schema](../../evidence/m1/record.schema.json) and
+[owner runbook](../../evidence/m1/runbook.md) make rules 2, 7 and 10 checkable.
+One record retains complete attempts, each bound to one dev commit, build
+manifest, host code and fresh-install id. A1–A9 and every named failure injection
+have an explicit result. Headless receipts come from uncached Core/TUI tests;
+the owner's UI/UX verdict and confirmed S1–S11 terminal records are additional
+requirements. Synthetic tests cannot stand in for a hand run. The UI/UX verdict
+and each serial-matrix row that ran cite an owner-observation receipt
+(`format` 1, `kind` `owner-observation`) for that attempt. The headless receipt
+cannot stand in for that receipt.
+
+The serial matrix records fresh READY, planned restart, crash restart and
+whole-generation restore into a different root of the same main. Its decimal
+uint64 epochs rise strictly; restarts repeat no effect, and older-generation
+restore exposes zero forgotten search, summary or context hits. The restore row
+records the generation id backup prints: `generation-` plus its RFC 4648 base32
+text, at least 26 characters. Independent fault-test roots check their own
+epoch sequences, not this serial counter.
+
+After a failure, retain the failed attempt and append a complete attempt on the
+fixing dev commit, with a new run id, new install roots and new evidence. A
+measured terminal `gap`, including S7, stays `gap` with its original spike file.
+Unrun cells stay explicit and cannot pass. The checker verifies attachment hashes,
+commit bindings, result coverage, matrix invariants and diagnosis citations.
+Only an entirely passing final attempt can accept the phase; schema validity
+alone and this runbook's existence are not acceptance evidence.
+
 ## Phases
 
 Development starts with LINA Core and the TUI. The LINA app follows once they are usable and does not block Core work.

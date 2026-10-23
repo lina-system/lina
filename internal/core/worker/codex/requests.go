@@ -217,6 +217,16 @@ func (s *Session) Answer(ctx context.Context, t worker.Thread, a worker.Answer) 
 		s.mu.Unlock()
 		return errors.New("stale or unknown Codex answer")
 	}
+	if len(s.approvalKey) > 0 && (r.request.Method == "item/commandExecution/requestApproval" || r.request.Method == "item/fileChange/requestApproval" || r.request.Method == "item/permissions/requestApproval") {
+		allow, err := worker.VerifyApproval(s.approvalKey, t, r.request, a.Approval)
+		if err == nil {
+			err = verifyApprovalChoice(r.request, a.Result, allow)
+		}
+		if err != nil {
+			s.mu.Unlock()
+			return err
+		}
+	}
 	if err := validateAnswer(r.request, a.Result); err != nil {
 		s.mu.Unlock()
 		return err

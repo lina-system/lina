@@ -15,6 +15,8 @@ import (
 )
 
 type textPager struct {
+	surface                  *surfacePager
+	result                   *resultPager
 	board                    *boardView
 	records                  *recordPager
 	recordID                 string
@@ -45,16 +47,20 @@ func (m *shellModel) openPager(text string) {
 
 func (m *shellModel) pagerText() string {
 	if !m.conversation.pager.transcript {
-		return m.conversation.pager.text
+		return m.conversation.pager.text + m.conversation.pager.surface.status(m.styles.options.Language)
 	}
 	// Read the current projection, without retaining another history copy that
 	// could outlive authoritative replacements, revocation or a focus change.
 	var messages []string
 	for _, b := range m.content.Blocks {
-		if !conversationBlock(b) {
+		if !m.conversationBlock(b) {
 			continue
 		}
 		text := b.Text
+		if b.Card != nil {
+			// Use the same current card summary as the conversation viewport.
+			text = m.blocks[b.ID].text
+		}
 		if b.Kind == protocol.KindResult && !b.InlineReply {
 			text = design.Text(m.styles.options.Language, "result") + "  " + b.Title + "\n" + text
 		}
@@ -80,12 +86,25 @@ func (m *shellModel) refreshOpenCard() {
 	}
 	for _, card := range m.resultCards() {
 		if card.ID == p.cardID {
+			if p.surface != nil && (p.surface.id != card.ResultID || string(p.surface.revision) != card.ResultRevision) {
+				*p = textPager{}
+				return
+			}
+			if p.result != nil {
+				if card.ResultID != p.result.request.ResultID || card.ResultRevision != string(*p.result.request.Revision) {
+					*p = textPager{}
+				}
+				return
+			}
 			p.text = sanitize.Display(resultText(card))
 			if p.followEnd {
 				p.offset = len(m.pagerLines())
 			}
 			return
 		}
+	}
+	if p.result != nil {
+		*p = textPager{}
 	}
 }
 
@@ -127,6 +146,11 @@ func (m *shellModel) refreshResultStreams(message state.Msg) {
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
+	if p.surface != nil && !p.searching {
+		if handled, cmd := m.surfaceKey(msg, name); handled {
+			return cmd
+		}
+	}
 	if p.board != nil && !p.searching {
 		if handled, cmd := m.boardKey(name); handled {
 			return cmd
@@ -234,7 +258,7 @@ func (m *shellModel) pagerRows() []render.StyledRow {
 	}
 	config := render.Config{Width: max(1, width)}
 	stream := m.resultStreams[m.conversation.pager.cardID].stream
-	if stream == nil {
+	if stream == nil || m.conversation.pager.result != nil || m.conversation.pager.surface != nil {
 		stream = render.NewStream("pager", config, nil)
 		stream.Seal(1, m.pagerText())
 	}

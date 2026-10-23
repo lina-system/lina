@@ -11,6 +11,7 @@ import (
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 type conversationView struct {
@@ -18,6 +19,8 @@ type conversationView struct {
 	workSelected string
 	workIndex    int
 	workOffset   int
+	workCompact  bool
+	workFilter   protocol.RunningState
 	undo         []state.Draft
 	history      *inputHistory
 	scroll       int
@@ -58,7 +61,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		cards := m.resultCards()
 		if len(cards) > 0 {
 			if m.conversation.selected < 0 {
-				m.conversation.selected = len(cards) - 1
+				m.conversation.selected = m.selectedCardIndex(cards)
 			}
 			if key.Name == "up" {
 				m.conversation.selected = max(0, m.conversation.selected-1)
@@ -115,14 +118,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.conversation.pager.tool = true
 			return nil
 		}
-		if card, ok := m.selectedCard(); ok && card.RunID != "" {
-			return m.runningRequest(card.RunID, "open", nil)
-		}
-		m.openPager(m.cardText())
-		if card, ok := m.selectedCard(); ok {
-			m.conversation.pager.cardID = card.ID
-		}
-		return nil
+		return m.openResultCard()
 	case "ctrl+w":
 		m.openPager(m.topicText("waiting"))
 		m.conversation.pager.waiting = true
@@ -142,11 +138,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "enter":
 		if m.conversation.cardsFocused {
-			if card, ok := m.selectedCard(); ok && card.RunID != "" {
-				return m.runningRequest(card.RunID, "open", nil)
-			}
-			m.openPager(m.cardText())
-			return nil
+			return m.openResultCard()
 		}
 		text := strings.TrimSpace(m.content.Draft.Text)
 		if text == "/help" {

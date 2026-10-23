@@ -156,7 +156,7 @@ func (s *managementSession) request(ctx context.Context, c shellClient, p protoc
 	var id string
 	var err error
 	switch p := p.(type) {
-	case protocol.ProgressDigestGet, protocol.Stop, protocol.FollowUp, protocol.MultiTaskControl:
+	case protocol.SurfaceAction, protocol.ProgressDigestGet, protocol.Stop, protocol.FollowUp, protocol.MultiTaskControl:
 		id, err = c.Control(ctx, p)
 	case protocol.ProgressGet:
 		id, err = c.Progress(ctx, p)
@@ -171,6 +171,11 @@ func (s *managementSession) request(ctx context.Context, c shellClient, p protoc
 				s.boardPending = map[string]*boardView{}
 			}
 			s.boardPending[id] = s.model.conversation.pager.board
+		}
+	case protocol.ResultGet:
+		id, err = c.Result(ctx, p)
+		if err == nil && s.model.conversation.pager.result != nil {
+			s.model.conversation.pager.result.requestID = id
 		}
 	case protocol.RunningGet:
 		id, err = c.Running(ctx, p)
@@ -219,12 +224,25 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 		}
 		p.developerBusy = false
 	}
+	if _, result := request.(protocol.ResultGet); result {
+		p := &m.conversation.pager
+		if !p.open || p.result == nil || p.result.requestID != *e.ReplyTo {
+			return true, nil
+		}
+	}
 	if e.Error != nil {
 		text := design.Text(m.styles.options.Language, string(e.Error.Code))
 		if _, note := request.(protocol.FollowUp); note {
 			text += "\n" + design.Text(m.styles.options.Language, "note.help")
 		}
 		m.openPager(text)
+		return true, nil
+	}
+	if _, ok := request.(protocol.SurfaceAction); ok {
+		if e.Kind != protocol.KindItemDone {
+			return true, errStream
+		}
+		m.conversation.pager = textPager{}
 		return true, nil
 	}
 	switch p := e.Payload.(type) {
@@ -266,6 +284,16 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 		m.conversation.pager.lanes = m.conversation.pager.lanes.Replace(*p.Lanes)
 		m.conversation.pager.laneNext = p.NextCursor
 		m.refreshDeveloper()
+	case protocol.Result:
+		original, ok := request.(protocol.ResultGet)
+		if !ok {
+			return true, errStream
+		}
+		next, err := m.resultPageResponse(original, p)
+		if err != nil || next == nil {
+			return true, err
+		}
+		return true, s.request(ctx, c, *next)
 	case protocol.Running:
 		original, ok := request.(protocol.RunningGet)
 		if !ok || original.RunID == nil || p.RunID == nil || *p.RunID != *original.RunID {
@@ -306,6 +334,16 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 			lines = append(lines, fmt.Sprintf("%d", len(*p.Items)))
 			for _, item := range *p.Items {
 				lines = append(lines, item.ItemID+"  "+item.Holder+"  "+design.Text(m.styles.options.Language, item.Scope), item.Content, strings.Join(item.Evidence, "  "))
+				if item.EvidenceDetails != nil {
+					for _, ref := range *item.EvidenceDetails {
+						if ref.Quote != nil {
+							lines = append(lines, *ref.Quote)
+						}
+						if ref.Status != nil {
+							lines = append(lines, ref.Reference+"  "+*ref.Status)
+						}
+					}
+				}
 			}
 		}
 		m.openPager(strings.Join(lines, "\n"))

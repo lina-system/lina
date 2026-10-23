@@ -23,6 +23,7 @@ func TestPersonaReplayExactSources(t *testing.T) {
 	type request struct {
 		Input, Tools []json.RawMessage
 		Instructions string
+		ToolChoice   json.RawMessage
 	}
 	var mu sync.Mutex
 	var requests []request
@@ -80,6 +81,27 @@ func TestPersonaReplayExactSources(t *testing.T) {
 	}
 	mu.Lock()
 	original := requests[2]
+	first, followup := requests[0], requests[1]
+	inputEnd := -1
+	for i, raw := range first.Input {
+		var item struct{ Role, Content string }
+		if json.Unmarshal(raw, &item) == nil && item.Role == "user" && item.Content == "We are study partners." {
+			inputEnd = i + 1
+		}
+	}
+	if inputEnd < 0 || inputEnd == len(first.Input) {
+		t.Error("current input must precede the ContextPacket")
+	} else if len(original.Input) < inputEnd || !reflect.DeepEqual(first.Input[:inputEnd], original.Input[:inputEnd]) {
+		t.Error("next turn lost the previous request prefix through its person input")
+	}
+	if len(followup.Input) <= len(first.Input) || !reflect.DeepEqual(first.Input, followup.Input[:len(first.Input)]) {
+		t.Error("tool follow-up changed the prepared request")
+	}
+	for _, req := range []request{followup, original} {
+		if !reflect.DeepEqual(first.Tools, req.Tools) || !reflect.DeepEqual(first.ToolChoice, req.ToolChoice) || first.Instructions != req.Instructions {
+			t.Error("tools, tool choice or fixed instructions changed across requests")
+		}
+	}
 	mu.Unlock()
 	for _, marker := range []string{"skill:persona-change", "persona_revision", "persona_emotion", "persona_expression", "persona_settings", "persona-methodology:", "relationship_view"} {
 		raw, _ := json.Marshal(original)

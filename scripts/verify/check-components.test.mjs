@@ -264,7 +264,7 @@ setInterval(() => {}, 1000);
     } });
   assert.equal(result.status, 1);
   assert.equal(suppliedContext, true);
-  assert.match(result.output, /\$ go test -count=1 -timeout=6m -mod=readonly \.\/\.\.\./);
+  assert.match(result.output, /\$ go test -count=1 -timeout=6m -mod=readonly -p=1 \.\/\.\.\./);
   assert.match(result.output, /command timed out after [\d.]+ s \(budget 0\.\d+ s\): .*hung\.mjs/);
 });
 
@@ -281,7 +281,7 @@ test('components use the pinned toolchain, readonly commands, module verificatio
     ['env', 'GOVERSION'], ['mod', 'verify'], ['mod', 'verify'],
     ['build', '-mod=readonly', './...'],
     ['vet', '-mod=readonly', './...'], ['tool', 'exhaustive', './...'],
-    ['test', '-count=1', '-timeout=6m', '-mod=readonly', './...'],
+    ['test', '-count=1', '-timeout=6m', '-mod=readonly', '-p=1', './...'],
   ]);
   for (const call of calls) {
     assert.equal(call.env.GOTOOLCHAIN, 'go1.27.3');
@@ -355,6 +355,24 @@ test('module tests retain a diagnostic deadline inside their process budget', t 
   assert.ok(suite.timeoutMs > 360_000, 'the shared budget leaves time for Go timeout diagnostics');
   assert.ok(suite.timeoutMs <= componentsTimeoutMs - 5000, 'the test command retains the shared components deadline');
   assert.ok(calls.every(call => call.timeoutMs > 0 && call.timeoutMs <= componentsTimeoutMs));
+});
+
+test('a unit shard runs one test package at a time inside its CPU share', t => {
+  const sb = fixture(t);
+  const calls = [];
+  const result = checkComponents({ cwd: sb.dir, phase: 'unit', components: [kit], execute(command, args) {
+    calls.push(args);
+    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+  } });
+  assert.equal(result.status, 0, result.output);
+  const suite = calls.find(args => args[0] === 'test');
+  // GOMAXPROCS already bounds each test binary. Letting GOMAXPROCS packages
+  // run at once multiplies that bound, so progressing packages starve on a
+  // loaded host and reach the six-minute watchdog. One package at a time
+  // keeps the shard's total demand within its share.
+  assert.ok(suite.includes('-p=1'), 'unit packages must not multiply the shard CPU share');
+  assert.ok(suite.includes('-timeout=6m'), 'the package watchdog is retained');
+  assert.ok(suite.includes('-count=1'), 'tests remain uncached');
 });
 
 test('acceptance batches run every enumerated test once within the shared budget', t => {

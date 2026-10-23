@@ -195,7 +195,11 @@ func (m *shellModel) cardRows(c state.Card) ([]string, int) {
 			if i == m.cardField {
 				prefix = "> "
 			}
-			add(prefix + field.Name + " (" + string(field.Type) + "): " + m.content.CardView.Fields[field.Name])
+			kind := string(field.Type)
+			if field.Optional != nil && *field.Optional {
+				kind += ", optional"
+			}
+			add(prefix + field.Name + " (" + kind + "): " + m.content.CardView.Fields[field.Name])
 			if field.Choices != nil {
 				add(strings.Join(*field.Choices, " / "))
 			}
@@ -224,6 +228,9 @@ func (m *shellModel) cardRows(c state.Card) ([]string, int) {
 		}
 		add(design.Text(m.styles.options.Language, id))
 	} else {
+		if m.content.CardView.ID == c.ID && m.content.CardView.Notice != "" {
+			add(design.Text(m.styles.options.Language, m.content.CardView.Notice))
+		}
 		add(design.Text(m.styles.options.Language, "card.question_keys"))
 	}
 	add(design.Text(m.styles.options.Language, "card.escape"))
@@ -339,6 +346,11 @@ func (m *shellModel) cardReply(envelope protocol.Envelope) bool {
 			outcome = state.CardOutcome(*p.Outcome)
 		}
 	}
+	if envelope.Error != nil && request.QuestionAction != "" && envelope.Error.Code == protocol.ErrorMalformed {
+		m.content, _ = state.Reduce(m.content, state.CardAnswerInvalid{Request: request})
+		m.refreshBlocks()
+		return true
+	}
 	if envelope.Error != nil {
 		switch envelope.Error.Code {
 		case protocol.ErrorStaleEpoch:
@@ -388,32 +400,6 @@ func (m *shellModel) cardSummary(card state.Card) string {
 		text += " (" + design.Text(m.styles.options.Language, code) + ")"
 	}
 	return sanitize.Display(text)
-}
-func (m *shellModel) waitingLine() string {
-	count := 0
-	summary := ""
-	for _, card := range m.content.Cards {
-		if card.Outcome == "" {
-			count++
-			if summary == "" {
-				summary = card.Agent + ": " + card.Summary
-			}
-		}
-	}
-	if count == 0 {
-		supported := false
-		for _, cap := range m.content.Capabilities {
-			supported = supported || cap.Name == "waiting"
-		}
-		if !supported {
-			return design.Text(m.styles.options.Language, "shell.cards")
-		}
-	}
-	text := design.Text(m.styles.options.Language, "card.open") + " (" + strconv.Itoa(count) + ")"
-	if summary != "" {
-		text += "  " + sanitize.Display(summary)
-	}
-	return text
 }
 
 func (m *shellModel) cardPaste(text string) tea.Cmd {
