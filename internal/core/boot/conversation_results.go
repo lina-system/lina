@@ -99,12 +99,12 @@ func (r *conversationRuntime) prepareResultTools(turnID string, preparation *too
 	if err != nil {
 		return nil, err
 	}
-	bindings["present_result"], bindings["read_result"] = bound["present_result"], bound["read_result"]
+	bindings["present_result"], bindings["read_result"], bindings["present_surface"] = bound["present_result"], bound["read_result"], bound["present_surface"]
 	return coreexec.ResultDeclarations(), nil
 }
 
 func (r *conversationRuntime) resultNotice(ctx context.Context, call provider.ToolCall, out loop.Result) loop.Result {
-	if call.Name != "present_result" || out.Code != loop.OK {
+	if (call.Name != "present_result" && call.Name != "present_surface") || out.Code != loop.OK {
 		return out
 	}
 	var card result.Card
@@ -163,6 +163,9 @@ func (r *conversationRuntime) publishTypedResult(ctx context.Context, source led
 		return r.publish(ctx, protocol.KindItemDone, key, protocol.ItemDone{Text: &view.Text, Speaker: &speaker})
 	}
 	p := authoredResultWire(value, view.Text)
+	if value.Type == result.SurfaceType {
+		return r.publish(ctx, protocol.KindResult, key, p)
+	}
 	text, next, err := resultTextPage(*p.Text, 0)
 	if err != nil {
 		return err
@@ -177,6 +180,14 @@ func (r *conversationRuntime) typedChannelText(ctx context.Context, source ledge
 	value, view, err := r.typedResultView(ctx, source)
 	if err != nil {
 		return "", err
+	}
+	if value.Type == result.SurfaceType {
+		return value.Text + "\n" + "lina://conversation/" + r.conversation, nil
+
+	}
+	if value.Type == result.MockType {
+		return value.Title + "\n" + value.Text + "\n" + mockExportActions(value), nil
+
 	}
 	if view.Inline {
 		return view.Text, nil

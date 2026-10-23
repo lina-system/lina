@@ -54,7 +54,7 @@ type scriptedConnector struct{ script *sqlScript }
 func (c scriptedConnector) Connect(context.Context) (driver.Conn, error) {
 	return &scriptedConn{c.script}, nil
 }
-func (c scriptedConnector) Driver() driver.Driver { return scriptedDriver{c.script} }
+func (c scriptedConnector) Driver() driver.Driver { return scriptedDriver(c) }
 
 type scriptedDriver struct{ script *sqlScript }
 

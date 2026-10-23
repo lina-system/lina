@@ -180,7 +180,7 @@ Package totals (source / test lines): ui 7,288 / 7,248, state 1,436 / 1,159, ren
 | `type.tui-ui.stringly-capabilities-topics` | type | `ui/accounts.go:38`, `program.go:26` | low | S | Constants and topic helpers | 32 `hasCapability` calls with 13 string names | |
 | `test.tui-render.markdown-indirect-coverage` | test | `render/markdown.go:61` | low | S | Render-level Markdown tests | 46.7% coverage; tested only through `ui` | |
 | `dep.tui-term.test-harness-in-prod` | dep | `term/harness.go:25`, `recording.go:16` | low | S | Move to `term/termtest` | The `x/vt` emulator links into `cmd/lina` for tests only | |
-| `cons.tui-ui.small-duplicates-and-dead-code` | cons | `ui/board.go:105-110`, `cards.go:336` | low | S | Shared helpers; delete `waitingLine` | Keep-visible code 3 times; `waitingLine` has no caller | |
+| `cons.tui-ui.small-duplicates-and-dead-code` | cons | `ui/board.go:105-110`, `cards.go:336` | low | S | Shared helpers | Keep-visible code 3 times. `waitingLine` was removed | |
 | `doc.tui-design-t10.minor-drift` | doc | `docs/design/tui.md:1024,1027` | low | S | Remove the duplicate Ctrl+D row | Ctrl+D listed twice | |
 | `test.tui-sanitize.seed-gaps` | test | `sanitize/display.go:30-101` | low | S | Seeds for ESC intermediates and C1 | 73.9% coverage; no case for the intermediate branch | |
 

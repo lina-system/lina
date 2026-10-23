@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package protocol provides generated client 1.0 types and a strict JSON codec.
+// Package protocol provides generated client 1.0/1.1 types and a strict JSON codec.
 // Reserved payloads name future implementation work; accepting their empty
 // shape does not implement that capability. Framing and negotiation live above
 // this package.
@@ -10,9 +10,22 @@ package protocol
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/thisisjun786/lina/kit/protocol/internal/schema"
 )
+
+// RefusedFormFieldName reports names the waiting-card bridge will not present.
+// A form that uses one cannot be answered, so callers decline it instead of
+// leaving the worker waiting.
+func RefusedFormFieldName(name string) bool {
+	name = strings.ToLower(strings.NewReplacer("-", "_", " ", "_").Replace(name))
+	switch name {
+	case "password", "passwd", "secret", "api_key", "apikey", "key", "token", "access_token", "refresh_token", "credit_card", "card_number", "cvv", "payment", "payment_details":
+		return true
+	}
+	return name == ""
+}
 
 var clientSchema = func() *schema.Node {
 	value, err := schema.Parse([]byte(clientSchemaJSON))

@@ -149,7 +149,7 @@ func (s *SignInRelay) handle(ctx context.Context, session Session, envelope prot
 }
 func hasCapability(values []protocol.Capability, want protocol.Capability) bool {
 	for _, value := range values {
-		if value == want {
+		if protocol.CapabilityIdentity(value, want) {
 			return true
 		}
 	}

@@ -168,6 +168,43 @@ for (const underline of ['---', '===']) {
   });
 }
 
+for (const underline of ['---', '===']) {
+  test(`setext heading text excludes leading reference definitions (${underline})`, (t) => {
+    const { check } = fixture(t, {
+      'README.md': '[heading](guide.md#first-linesecond-line)\n'
+        + '[definition](guide.md#ref-httpsguidelinkother-guidemd-titlefirst-linesecond-line)\n',
+      'guide.md': '[ref]: https://guide.link\n[other]: guide.md "Title"\n'
+        + `First line\nsecond line\n${underline}\n`,
+    });
+    const result = check();
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, /broken anchor guide\.md#ref-httpsguidelinkother-guidemd-titlefirst-linesecond-line\n/);
+    assert.doesNotMatch(result.stderr, /broken anchor guide\.md#first-linesecond-line/);
+  });
+}
+
+test('setext heading text keeps definition-like lines after its first line', (t) => {
+  const { check } = fixture(t, {
+    'README.md': '[heading](guide.md#first-lineref-httpsguidelink)\n'
+      + '[definition](guide.md#ref-httpsguidelink)\n',
+    'guide.md': 'First line\n[ref]: https://guide.link\n---\n',
+  });
+  const result = check();
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /broken anchor guide\.md#ref-httpsguidelink\n/);
+  assert.doesNotMatch(result.stderr, /broken anchor guide\.md#first-lineref-httpsguidelink/);
+});
+
+test('a paragraph of only reference definitions is not a setext heading', (t) => {
+  const { check } = fixture(t, {
+    'README.md': '[heading](guide.md#ref-httpsguidelink)\n',
+    'guide.md': '[ref]: https://guide.link\n---\n',
+  });
+  const result = check();
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /broken anchor guide\.md#ref-httpsguidelink\n/);
+});
+
 test('setext paragraphs stop at blank lines, headings, code, and comments', (t) => {
   const boundaries = [
     'Earlier paragraph\n\n',

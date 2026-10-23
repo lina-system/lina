@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/work"
 )
@@ -98,7 +99,12 @@ func (r *Scheduler) release(ctx context.Context) error {
 		for _, c := range cards {
 			run, e := r.hooks.Start(ctx, c)
 			if errors.Is(e, ErrNotStarted) {
-				settled := r.store.StartFailed(ctx, c.Task.ID)
+				// Release already committed the reservation. A canceled caller
+				// must not keep the slot and area; the next wake uses what this
+				// cleanup frees. It does not start another worker on this call.
+				settle, cancelSettle := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				settled := r.store.StartFailed(settle, c.Task.ID)
+				cancelSettle()
 				freed = freed || settled == nil
 				e = errors.Join(e, settled)
 			} else if e == nil {

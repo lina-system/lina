@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,7 +71,19 @@ func TestM1StagedImportWorker(t *testing.T) {
 		paths[kind] = path
 	}
 	req := importer.Request{BatchID: "synthetic-batch", Confirmed: true, Profiles: []importer.Profile{{ID: scenario.Profile, AgentID: scenario.Agent, PersonID: scenario.Person, StatePath: paths["state"], LCMPath: paths["lcm"], OwnerChannels: []importer.OwnerChannel{{SessionID: "synthetic-session", Source: "cli"}}}}}
+	second := req.Profiles[0]
+	second.ID += "-second"
+	req.Profiles = append(req.Profiles, second)
 	plan, err := importer.Prepare(h.ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plan.Close()
+	rehearsal, err := plan.Rehearse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRehearsal, err := json.Marshal(rehearsal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +95,11 @@ func TestM1StagedImportWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	service, err := jobs.New(jobs.Config{Store: store, Epoch: 1, Definitions: map[string]jobs.Definition{scenario.JobID: {Agent: scenario.Agent, Apply: plan.ApplyJob}}})
+	var logicalTime atomic.Int64
+	// Keep due times in the past for the real worker's read-only snapshots.
+	// Advancing Core's clock explicitly avoids waiting for the job interval.
+	logicalTime.Store(time.Unix(1, 0).UnixNano())
+	service, err := jobs.New(jobs.Config{Store: store, Epoch: 1, Now: func() time.Time { return time.Unix(0, logicalTime.Load()) }, Definitions: map[string]jobs.Definition{scenario.JobID: {Agent: scenario.Agent, Apply: plan.ApplyJob}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +107,7 @@ func TestM1StagedImportWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	tasks := plan.Tasks()
-	if len(tasks) != 1 {
+	if len(tasks) != 2 {
 		t.Fatalf("tasks=%d", len(tasks))
 	}
 	for _, task := range tasks {
@@ -101,21 +118,28 @@ func TestM1StagedImportWorker(t *testing.T) {
 	socket := filepath.Join(h.root, "run", "jobs.sock")
 	stop := startJobService(t, h.ctx, service, socket, controls)
 	defer stop()
-	worker := h.command("--canon", path, "--socket", socket, "--once")
-	worker.start(t)
-	worker.wait(t, 0)
-	if got := jobWatermark(t, store, scenario.JobID); got != 1 {
+	// --once adopts one task. Each conversation must survive a separate worker.
+	for i := range tasks {
+		worker := h.command("--canon", path, "--socket", socket, "--once")
+		worker.start(t)
+		worker.wait(t, 0)
+		if got := jobWatermark(t, store, scenario.JobID); got != int64(i+1) {
+			t.Fatalf("after worker %d: watermark=%d", i+1, got)
+		}
+		logicalTime.Add(int64(time.Minute))
+	}
+	if got := jobWatermark(t, store, scenario.JobID); got != 2 {
 		t.Fatalf("watermark=%d", got)
 	}
 	verified, err := plan.Verify(h.ctx, store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verified.Rows != scenario.References {
+	if verified.Rows != 2*scenario.References {
 		t.Fatalf("references=%d", verified.Rows)
 	}
 	if err = store.Read(h.ctx, func(tx *canon.Tx) error {
-		for table, want := range map[string]int{"import_event": scenario.Events, "conv_event": 0, "moirai_aux": 0, "memory_item": 0, "moirai_applied": 1} {
+		for table, want := range map[string]int{"import_event": 2 * scenario.Events, "conv_event": 0, "moirai_aux": 0, "memory_item": 0, "moirai_applied": 2, "import_rehearsal": 1} {
 			var n int
 			if err := tx.QueryRowContext(h.ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 				return err
@@ -123,6 +147,13 @@ func TestM1StagedImportWorker(t *testing.T) {
 			if n != want {
 				t.Errorf("%s count=%d want %d", table, n, want)
 			}
+		}
+		var stored string
+		if err := tx.QueryRowContext(h.ctx, "SELECT report FROM import_rehearsal WHERE batch_id=?", req.BatchID).Scan(&stored); err != nil {
+			return err
+		}
+		if stored != string(wantRehearsal) {
+			t.Error("worker adoption changed the rehearsed report")
 		}
 		return nil
 	}); err != nil {
@@ -140,7 +171,7 @@ func TestM1StagedImportWorker(t *testing.T) {
 	if report.AddedRecords != 0 || report.AddedReferences != 0 {
 		t.Fatalf("reimport added rows: %+v", report)
 	}
-	worker = h.command("--canon", path, "--socket", socket, "--once")
+	worker := h.command("--canon", path, "--socket", socket, "--once")
 	worker.start(t)
 	worker.wait(t, 0)
 }

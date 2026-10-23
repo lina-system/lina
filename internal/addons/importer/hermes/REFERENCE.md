@@ -78,6 +78,27 @@ on both first import and retry. The original sidecar remains referenced by
 is needed. `TestM1ImportJSONMasking` exercises installed import, verified backup,
 repeat import, safe promotion and a restarted Core's memory API with synthetic data.
 
+### Import cost bounds
+
+- **seen** — LCM-X `host_uid.py:299-334` at the pinned revision looks up
+  `bindings.get(uid, ())` before checking canonical and payload versions.
+  Its lineage reader at lines 102–130 follows compression parents and stops
+  at explicit forks. The public source was inspected read-only because the
+  installation paths were unavailable.
+- **inferred** — The immutable plan can retain one rehearsal result and
+  encoding, including an error, across preview, conversation adoption and
+  rollback retries. Preview copies preserve owner-channel candidates and
+  UID-lineage mappings without sharing mutable slices with the retained report.
+- UID indexing and the recorded ambiguous-lineage decisions landed in #1103.
+  This change uses that profile-local matching implementation unchanged.
+- **unknown** — Synthetic checks establish call counts and result parity;
+  they do not establish throughput on an owner's installation.
+
+The regression counts rehearsal computations over multiple conversations and
+a rolled-back adoption. The Core job acceptance scenario runs the actual
+deterministic worker for two conversations and checks the retained report,
+receipts, reversible references and idempotent replay.
+
 Design authority: [Go Core](../../../../docs/design/go-core.md) and the contracts it cites.
 These notes retain implementation and validation history from the cited increments;
 they do not establish current acceptance or change the contracts.
@@ -131,6 +152,12 @@ reporting as other imported bodies. Scalar credential preparation failures also
 become `body_masking_error`, with originals and retry reports retained. The final
 scalar coverage check reads decoded JSON; scanning serialized escapes as plain
 text would discard already-masked quoted arguments.
+
+A material-backed assistant event with tool calls publishes the live JSON
+projection inline, using the sidecar bytes as its content, and the import record
+keeps the original sidecar material for reverse mapping. The event therefore has
+no material reference, so ledger reads, expansion and summary input see the
+calls.
 
 ## Owner channels and display provenance
 

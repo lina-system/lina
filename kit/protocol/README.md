@@ -1,7 +1,7 @@
 # Client protocol types
 
 [envelope.json](../../protocol/schema/client/1.0/envelope.json) is the canonical
-client 1.0 schema. It defines the envelope, the closed kind list, and the payload
+client 1.0/1.1 schema (the original path is retained). It defines the envelope, the closed kind list, and the payload
 fields already specified by the [host contract](../../docs/design/host-protocol.md).
 `client.gen.go` contains the generated Go types, enum constants, payload dispatch,
 and the schema used by the codec. Do not edit it by hand.
@@ -31,7 +31,9 @@ JSON whitespace are not significant.
 The original `Hello`, `Welcome`, `ErrorPayload`, envelope, reference and closed-code
 API remains available. The [handshake fixtures](../../protocol/fixtures/client/1.0/)
 round-trip without changing JSON values. A question's flat form has `plugin_name`
-and `fields`; each field has `name`, `type`, and `choices` for a choice. A question
+and `fields`; each field has `name`, `type`, and `choices` for a choice. An
+optional field sets `optional` to true and may be omitted from an accepted
+answer. A question
 answer has `answer` (`accept`, `decline`, `cancel`), with a `values` map only for
 accept. Its generated `FormValue` holds exactly one string, number or boolean.
 
@@ -95,3 +97,12 @@ includes every currently defined kind, the closed effect and error codes, result
 cards of every current type, exact numbers and references, version declarations,
 and malformed/unknown-kind recovery sequences. Reserved payloads and result
 bodies still need their application scenarios when their implementations arrive.
+
+## Generated cards (client 1.1)
+
+`surface_body` and `surface_widget_*` define the closed `lina.cards` 1.0 catalog.
+`ValidateSurfaceBody` and `ValidateSurfaceComponent` expose that same schema to
+Core; `kit/result` checks graph, bindings and action semantics and folds A2UI
+batches. No renderer is a validation authority. The fixtures under the existing
+1.0 corpus include explicit 1.1 frames and refusals for 1.0 surface frames.
+`surface_action` is an authenticated input request, never an approval.

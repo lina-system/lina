@@ -1,0 +1,10 @@
+{
+  "version":"v0.9", "catalogId":"lina.cards", "catalogVersion":"1.0", "surfaceId":"work",
+  "components":[
+    {"id":"root","component":"Column","children":["title","one","two","three"]},
+    {"id":"title","component":"Text","text":"진행 중인 일"},
+    {"id":"one","component":"WorkRow","title":"자료 조사","state":"running","elapsed":"2분","action":{"event":{"name":"open_research","context":{"work":"research"}}}},
+    {"id":"two","component":"WorkRow","title":"초안 작성","state":"waiting","elapsed":"1분","action":{"event":{"name":"open_draft","context":{"work":"draft"}}}},
+    {"id":"three","component":"WorkRow","title":"검토","state":"done","elapsed":"3분","action":{"event":{"name":"open_review","context":{"work":"review"}}}}
+  ],"dataModel":{},"deleted":false
+}

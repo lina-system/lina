@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/accounts"
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
@@ -55,6 +56,9 @@ func invalidateAuthority(ctx context.Context, db *canon.Store) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE worker_dispatch SET state='unknown',record=json_set(record,'$.state','unknown','$.restored',json('true')) WHERE state IN ('queued','running','unknown')`); err != nil {
+			return err
+		}
+		if err := work.FenceRestoredSteering(ctx, tx); err != nil {
 			return err
 		}
 		// A captured queue predates any delivery after the generation. Even an

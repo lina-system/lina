@@ -40,7 +40,7 @@ Request-size audits and an oversized turn's continuation marker contain no
 conversation text. The marker, diagnostic sizes and terminal outcome commit in
 one transaction. The existing ordered-prefix contract rejects summarizing items
 after a retained input; that case remains a recorded refusal, with no fabricated
-summary or incomplete reasoning round trip. Its size card restores from canon.
+summary or incomplete reasoning round trip. Its system notice and bounded `item_done.details` restore from canon; diagnostics do not create authored result cards. Outcome reads use a context independent of turn cancellation.
 
 `e2e/m2/conversation_compaction_test.go` exercises the installed Core, real tools,
 the worker socket, summary publication, the retained tail and restart using a
@@ -53,3 +53,14 @@ exclude foreground input positions. Steering's input-binding evidence remains
 protected transient context and cannot become summary source text. A summary's
 bounded value-condensation call contributes to the same preparation's reported
 usage; missing usage remains unknown.
+
+### Request and outcome regression repair (#1226)
+
+New request evidence uses `persona-tui-work-method-v2`; v1 evidence rebuilds
+with its original full-schema instructions. The enabled-tool instruction block
+carries names; native declarations retain
+complete schemas. The catalog transform recognizes older full-declaration
+blocks when replaying recorded requests. Loader receipts and declaration order
+remain unchanged. Large committed authored results survive a later request-size
+refusal, with the diagnostic kept as a separate system notice. The TUI prefers
+the authored result by default and exposes notice Details through card navigation.

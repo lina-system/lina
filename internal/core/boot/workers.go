@@ -35,6 +35,8 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
+type workerCallIdentityKey struct{}
+
 type workerRuntime struct {
 	recoveryWake chan struct{}
 	recoveryStop context.CancelFunc
@@ -64,6 +66,7 @@ type workerSession struct {
 	started             time.Time
 	activity            string
 	doing               string
+	doingTurn           string
 	approvals           map[string]worker.Event
 	questions           map[string]*workerQuestion
 	output              string
@@ -91,19 +94,21 @@ type workerArgs struct {
 	TaskPacket string `json:"task_packet,omitempty"`
 }
 type workerResult struct {
-	Live             bool               `json:"live"`
-	Owner            string             `json:"owner"`
-	Manager          string             `json:"manager"`
-	Session          string             `json:"session"`
-	Turn             string             `json:"turn"`
-	Generation       uint64             `json:"generation"`
-	Binding          uint64             `json:"binding"`
-	State            worker.ThreadState `json:"state"`
-	Worker           string             `json:"worker"`
-	Version          string             `json:"version"`
-	Verified         bool               `json:"verified"`
-	VerifiedVersions []string           `json:"verified_versions"`
-	Output           string             `json:"output"`
+	Delivery         *worker.DeliveryProfile `json:"delivery,omitempty"`
+	Steering         []work.SteeringMessage  `json:"steering,omitempty"`
+	Live             bool                    `json:"live"`
+	Owner            string                  `json:"owner"`
+	Manager          string                  `json:"manager"`
+	Session          string                  `json:"session"`
+	Turn             string                  `json:"turn"`
+	Generation       uint64                  `json:"generation"`
+	Binding          uint64                  `json:"binding"`
+	State            worker.ThreadState      `json:"state"`
+	Worker           string                  `json:"worker"`
+	Version          string                  `json:"version"`
+	Verified         bool                    `json:"verified"`
+	VerifiedVersions []string                `json:"verified_versions"`
+	Output           string                  `json:"output"`
 }
 
 func workerSchema(name string, raw json.RawMessage) (tools.Input, error) {
@@ -176,7 +181,7 @@ func workerDeclarations() []provider.ToolDecl {
 	}
 	return []provider.ToolDecl{
 		declaration("worker_start", "Start the installed Codex on an explicit task in an existing absolute work directory, using its own settings. Returns a session handle and version compatibility. This is a worker session, not verified task delivery. Optional kind selects a method from skill_index methodology=dev, or skill names one catalog ID; Core includes its immutable body in the task packet. Worker requests return to this conversation; automatic recovery and scheduling are separate.", `"workdir":{"type":"string"},"task_packet":{"type":"string"},"kind":{"type":"string"},"skill":{"type":"string"}`, `"workdir","task_packet"`),
-		declaration("worker_input", "Continue an idle worker or steer an active turn. Use the current handle from worker_snapshot; stale handles are refused.", control+`,"text":{"type":"string"}`, `"session","turn","generation","binding","text"`),
+		declaration("worker_input", "Send a follow-up using the connection delivery tier. Returns message receipts; turn and pull messages are seen at the next step. Use the current handle from worker_snapshot; stale handles are refused.", control+`,"text":{"type":"string"}`, `"session","turn","generation","binding","text"`),
 		declaration("worker_interrupt", "Request cancellation only when the user asks to stop this worker. Quote the current user request exactly. An acknowledgement is not cancellation completion; inspect worker_snapshot.", control+`,"quote":{"type":"string"}`, `"session","turn","generation","binding","quote"`),
 		declaration("worker_quota", "Read the installed worker account quota rows, retaining unknown windows and reset times.", `"session":{"type":"string"}`, `"session"`),
 		declaration("worker_read_file", "Read a UTF-8 file and its revision in this conversation worker session work directory through the file sandbox. Path is relative. Available from the recorded completion after restart. Use it to check a claimed file effect before reporting the result. An absent revision means the file does not exist.", `"session":{"type":"string"},"path":{"type":"string"}`, `"session","path"`),
@@ -277,7 +282,8 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, preparation *too
 			r.personaGrants[auth.GrantID] = g
 			r.personaMu.Unlock()
 			defer func() { r.personaMu.Lock(); delete(r.personaGrants, auth.GrantID); r.personaMu.Unlock() }()
-			return turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID).Execute(ctx, call)
+			ctx = context.WithValue(ctx, workerCallIdentityKey{}, turn.EffectKey(turnID, name, in.Target, call.ID))
+			return turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID).Execute(context.WithValue(ctx, steeringCallKey{}, call.ID), call)
 		}}
 	}
 	return workerDeclarations(), nil
@@ -373,7 +379,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 			return tools.Result{State: tools.Failed}, err
 		}
 		entry := &workerSession{origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, started: time.Now(), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
-		adapter, err := codex.Open(r.ctx, process, codex.Config{Bind: entry.bindRecovery})
+		adapter, err := codex.Open(r.ctx, process, codex.Config{Bind: entry.bindRecovery, ApprovalKey: r.personaAuthority.WorkerApprovalKey()})
 		if err != nil {
 			process.Release()
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
@@ -393,7 +399,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
 		release = false // A launch error may have started a turn; retain its reservation.
-		thread, err := entry.start(ctx, worker.StartSpec{TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
+		thread, err := entry.start(ctx, worker.StartSpec{ApprovalKey: r.personaAuthority.WorkerApprovalKey(), TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
 		if err != nil {
 			activity.Release()
 			if entry.reservation == "" {
@@ -472,7 +478,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 		body, err := json.Marshal(map[string]any{"rows": rows})
 		return tools.Result{State: tools.Applied, Body: body}, err
 	}
-	if entry.taskControlled() && name == "worker_input" && !owner {
+	if entry.taskControlled() && name == "worker_input" && !owner && !(entry.cancelTask != nil && entry.origin.agent == r.agent && entry.origin.conversation == r.conversation) {
 		return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker follow-up requires owner control"))}, nil
 	}
 	// Read the authoritative snapshot immediately before any control. The model's
@@ -532,7 +538,51 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 		}
 	}
 	if name == "worker_input" {
-		state, inputErr := entry.inputWorker(ctx, snap, a.Text, activity)
+
+		sender, kind := r.agent, "agent"
+		if owner {
+			sender, kind = r.person, "person"
+		}
+		id, _ := ctx.Value(workerCallIdentityKey{}).(string)
+		if owner {
+			id = turn.EffectKey(r.conversation, "owner_worker_input", snap.Thread.ID, turnID)
+		}
+		if id == "" {
+			id = rand.Text()
+		}
+		if owner && snap.Thread.TaskID != "" {
+			if err := worker.ResetMessages(ctx, r.db, snap.Thread.TaskID, "owner:"+id); err != nil {
+				activity.Release()
+				return tools.Result{State: tools.Failed}, err
+			}
+		} else if input.SpeakerKind == guard.Person && input.ID != "" && snap.Thread.TaskID != "" {
+			if err := worker.ResetMessages(ctx, r.db, snap.Thread.TaskID, "person:"+input.ID); err != nil {
+				activity.Release()
+				return tools.Result{State: tools.Failed}, err
+			}
+		}
+		if !owner && snap.Thread.TaskID != "" {
+			if err := worker.AdmitMessage(ctx, r.db, snap.Thread.TaskID, id, a.Text); err != nil {
+				activity.Release()
+				return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+			}
+		}
+
+		var state tools.State
+		var inputErr error
+		if r.work != nil {
+			var message work.SteeringMessage
+			message, inputErr = entry.storeSteeringFrom(ctx, id, a.Text, sender, kind)
+			if inputErr == nil {
+				state, inputErr = entry.deliverSteering(ctx, message, snap, activity)
+			} else {
+				activity.Release()
+				state = tools.Failed
+			}
+		} else {
+			state, inputErr = entry.inputWorker(ctx, snap, worker.FrameMessage(sender, kind, snap.Thread.TaskID, id, a.Text), activity)
+		}
+
 		if inputErr != nil {
 			result := tools.Result{State: state, Body: workerError(inputErr)}
 			if state == tools.Unknown {
@@ -563,6 +613,7 @@ func (e *workerSession) result(ctx context.Context, t worker.Thread) (tools.Resu
 	return e.encode(snap), nil
 }
 func (e *workerSession) start(ctx context.Context, spec worker.StartSpec) (worker.Thread, error) {
+	spec.TaskPacket = worker.FrameMessage(e.origin.agent, "agent", spec.TaskID, spec.AttemptID+":start", spec.TaskPacket)
 	thread, err := e.adapter.Start(ctx, e.process, spec)
 	if err != nil {
 		closeErr := e.close()
@@ -595,7 +646,18 @@ func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
 	if _, retained := e.adapter.(*retainedWorker); retained {
 		live = false
 	}
-	raw, _ := json.Marshal(workerResult{Live: live, Owner: e.origin.agent, Manager: e.origin.conversation, Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
+	var delivery *worker.DeliveryProfile
+	var messages []work.SteeringMessage
+	if e.origin.work != nil {
+		p := worker.Delivery(e.adapter)
+		delivery = &p
+		var err error
+		messages, err = e.origin.work.SteeringMessages(e.origin.ctx, e.mailboxKey())
+		if err != nil {
+			return tools.Result{State: tools.Failed, Body: workerError(err)}
+		}
+	}
+	raw, _ := json.Marshal(workerResult{Delivery: delivery, Steering: messages, Live: live, Owner: e.origin.agent, Manager: e.origin.conversation, Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
 
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
 }
@@ -614,7 +676,11 @@ func (e *workerSession) observe() {
 		switch event.Kind {
 		case worker.ProgressEvent:
 			if event.Progress.Phase == "started" {
-				_ = e.bindStartedRecovery(e.origin.ctx, event.Thread)
+				if err := e.bindStartedRecovery(e.origin.ctx, event.Thread); err == nil {
+					if err = e.resumeSteering(e.origin.ctx); err != nil {
+						fmt.Fprintf(os.Stderr, "worker mailbox resume: %v\n", err)
+					}
+				}
 			}
 			if event.Progress.Phase == "server_request_resolved" {
 				_ = e.trackRecoveryRequest(event.Progress.ItemID, false)
@@ -625,6 +691,9 @@ func (e *workerSession) observe() {
 			}
 		case worker.UsageEvent:
 		case worker.FinishEvent:
+			if err := e.finishSteering(e.origin.ctx, event); err != nil {
+				fmt.Fprintf(os.Stderr, "worker mailbox completion: %v\n", err)
+			}
 			e.recoveryMu.Lock()
 			rec := e.recovery
 			if event.Thread == rec.Thread && event.Finish.Failure == worker.ConnectionFailure && event.Finish.Code == "connection_lost" && rec.Finish != nil && rec.Finish.Code != "connection_lost" {

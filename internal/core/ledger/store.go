@@ -16,6 +16,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/kit/secret"
 )
@@ -285,7 +286,10 @@ func writeEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 			return err
 		}
 	}
-	return indexText(ctx, tx, e.ID, e.Body.DerivedText())
+	if err := indexText(ctx, tx, e.ID, e.Body.DerivedText()); err != nil {
+		return err
+	}
+	return recall.Index(ctx, tx, "event", e.ID, e.Body.DerivedText())
 }
 
 func nullable(s string) any {
@@ -324,7 +328,7 @@ func prepare(entry guard.Entry, in Input) (Event, error) {
 		return Event{}, ErrInvalid
 	}
 	switch in.Surface.Kind {
-	case "tui", "app", "agent_exchange", "manager":
+	case "tui", "app", "agent_exchange", "manager", "a2a":
 		if in.Surface.Platform != "" || in.Surface.ChatID != "" {
 			return Event{}, ErrInvalid
 		}

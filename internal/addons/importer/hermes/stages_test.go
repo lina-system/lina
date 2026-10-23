@@ -48,6 +48,7 @@ func importRequest(t *testing.T) Request {
 	return Request{BatchID: "batch", Confirmed: true, Profiles: []Profile{{ID: "profile", AgentID: "agent", PersonID: "person", LCMPath: lcm, StatePath: state, OwnerChannels: []OwnerChannel{{Source: "cli", SessionID: "synthetic-session"}}}}}
 }
 func TestStagedImportReconcilesAndReverses(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	db := importStore(t)
 	plan, err := Prepare(t.Context(), req)
@@ -135,6 +136,7 @@ func assertCount(t *testing.T, db *canon.Store, table string, want int) {
 	}
 }
 func TestStagedImportRefusesBeforeWrites(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	req.Confirmed = false
 	if _, err := Prepare(t.Context(), req); !errors.Is(err, ErrSnapshot) {
@@ -154,6 +156,7 @@ func TestStagedImportRefusesBeforeWrites(t *testing.T) {
 	}
 }
 func TestConversationTransactionRollsBackAndResumes(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	db := importStore(t)
 	p, err := Prepare(t.Context(), req)

@@ -48,6 +48,8 @@ import (
 // conversationRuntime is boot's composition of existing stores and flows. The
 // model and all accepted work belong to Core, independent of client lifetime.
 type conversationRuntime struct {
+	publications       *publicationRuntime
+	externalTask       string
 	summaryPreparation conversationPreparation
 	// Installed only by the isolated intake replay command, never by Core boot.
 	intakeReplay    func(context.Context, ledger.Event) error
@@ -88,6 +90,8 @@ type conversationRuntime struct {
 	coordinator     *conversationRuntime
 
 	materials        *conversationMaterials
+	recallStop       context.CancelFunc
+	recallDone       chan struct{}
 	assets           *assets.Store
 	root             string
 	steering         map[string][]acceptedSteering
@@ -343,6 +347,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startOwnerViews(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.initPublications(ctx); err != nil {
+		return nil, err
+	}
 	// Producers and the reactor may schedule recovered turns immediately.
 	// Start them only after background services and the final lanes are ready.
 	if err = r.startWorkerDispatch(ctx); err != nil {
@@ -380,11 +387,28 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.resumeWorkerCompletions(ctx); err != nil {
 		return nil, err
 	}
+	r.publications.start(ctx)
 	success = true
 	return r, nil
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.publications != nil && r.publications.stop != nil {
+		r.publications.stop()
+		select {
+		case <-r.publications.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if r.recallStop != nil {
+		r.recallStop()
+		select {
+		case <-r.recallDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if r.a2aStop != nil {
 		r.a2aStop()
 		select {
