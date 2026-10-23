@@ -33,3 +33,27 @@ repeat execution. Inferred for C-26: live failures should share the existing
 bounded read-only replacement budget; acknowledgement retries should retain
 the action result. Upstream recurrence-horizon and live timer retry semantics
 remain unknown. This follow-up changes LINA's native scheduler only.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-26 timer tool increment
+
+#129 implements `timers` through the running Core.
+`create_timer` admits an immutable schedule and action from an authenticated private main conversation; Core supplies the person, agent and conversation.
+`timer_status` and `cancel_timer` recheck that binding.
+Repeated admission under the same tool-call identity returns the saved receipt, including after expiry; a changed request conflicts.
+Cancellation stops future fires; already claimed work may finish.
+Channel scheduling is not admitted without a durable channel authority binding.
+
+### C-26 scheduler migration
+
+Canon migration 41 adds authored timer rows and scheduler-owned next instants, signatures and fire claims after completion events.
+One transaction commits a unique `(timer, instant)` fire and its next instant before any dispatch.
+One sleeper and four bounded delivery workers serve the scheduler.
+A timer's next fire cannot overtake an unfinished claim.
+On restart an older-epoch reminder or sensor claim is replaced at most once; an interrupted effect-capable job or second interrupted claim becomes `unknown` and remains inspectable.
+This is one durable fire per instant, not an exactly-once external-effect promise.

@@ -22,3 +22,20 @@ Read before implementation for #134. Authority: C-29 and
   Interactive control replies, resume and active steering are not advertised.
   The supplied Hermes and CRW checkouts are absent on this machine; no behavior
   or code from those projects is ported and no review workflow is executed.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-29 headless worker implementation
+
+`internal/core/worker/claudecode` implements C-29 with the installed `claude` headless process (`--print --output-format stream-json --verbose`).
+The matching `result` ends the turn before process exit; missing results, invalid messages, reported errors and permission denials fail.
+Core owns and reaps the child tree.
+`dispatch_work` accepts `worker: "claude"` through the same durable admission, work allocation, PR checks and manager boundary as Antigravity.
+An explicit selection keeps that adapter; omitted selection uses the quota and situation chooser in C-57, with Antigravity first among otherwise equal candidates.
+The artifact retains the final result alongside the independently read PR; receipt provenance is `adapter-derived`.
+No worker settings or integrations are installed.
+The headless `e2e/m2/claude-worker.json` scenario exercises installed Core, actual Git work and durable receipts with synthetic worker and GitHub boundaries.
