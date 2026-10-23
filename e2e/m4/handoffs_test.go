@@ -134,7 +134,7 @@ func TestHandoffReceiptsAndSingleArtifactOwner(t *testing.T) {
 			reply(w, "Unexpected input.")
 		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	h := newCore(t, server.URL)
 	lina, knowledge := h.agent("lina"), h.agent("knowledge")
 	h.turn(lina, "open", "Start owned draft")
@@ -239,7 +239,7 @@ func TestHandoffNextCheckSurvivesRestart(t *testing.T) {
 			reply(w, "Ready.")
 		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	h := newCore(t, server.URL)
 	peer = h.agent("knowledge")
 	lina := h.agent("lina")
