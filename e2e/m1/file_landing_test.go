@@ -100,12 +100,11 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	}))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
-	// Five Core boots plus worker observation, result inspection, interrupted
-	// delivery and restart verification share this scenario. Give these phases
-	// their own bounded budget instead of the default three-operation budget;
-	// each Core connection still has its existing operationTimeout.
-	scenarioContext, stopScenario := context.WithTimeout(t.Context(), 10*operationTimeout)
-	defer stopScenario()
+	// Five Core boots plus worker observation, file publication and recovery
+	// have their own bounded budget after installation. Each process and
+	// connection retains its operationTimeout bound.
+	scenarioContext, cancel := context.WithTimeout(t.Context(), 12*operationTimeout)
+	t.Cleanup(cancel)
 	h.ctx = scenarioContext
 	core := start(true)
 	client, conversation := conversationClient(t, h)
