@@ -137,7 +137,11 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			Tools []struct{ Name string }
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
+			// Restart can cancel a completion follow-up while its request body
+			// is still being sent. Keep reporting malformed live requests.
+			if r.Context().Err() == nil {
+				t.Error(err)
+			}
 			return
 		}
 		for _, tool := range request.Tools {
