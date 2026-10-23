@@ -656,6 +656,13 @@ evaluations remain with their corresponding implementation issues.
 
 **Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place.
 
+In both the sidebar and overlay, card navigation scrolls just enough to keep
+both rows of the selected card visible, including after a resize or progress
+update. Folded done cards are skipped. The overflow row counts all cards outside
+the visible window, before and after it, including those waiting on the person.
+The initial window starts at the top of Core's order; scrolling never changes
+that order, the conversation's reading position or the draft.
+
 **Updates.** Topic updates replace cards in place. They never move focus, scroll the conversation, change the draft or close an opened 일 view. From Core's commit of a work event to the PTY frame that shows the changed card, the 95th percentile is at most 500 ms and the maximum at most 1 s with 50 일 running (P).
 
 **Acceptance, defined before building.** `e2e/m3/work-panel.json` and its Go driver run installed Core with a fixture manager and stub workers, and the real TUI in a PTY at 120x34, in Korean and English, Unicode and ASCII. Inputs are fixed before any run: N = 1, 5, 20 and 50 일; the 일 at position i takes graph i mod 5 of a fixed corpus (one step; a chain of six; a diamond; a fan-out of one, 82 and one; two independent chains); names come from a fixed corpus of 1 to 60 graphemes with Hangul, wide, combining and emoji sequences. Exactly one 일 waits on the person and is the last one admitted; a second case at N = 50 has three. Each check passes or fails. No check is scored, retried or settled by sleeping:
