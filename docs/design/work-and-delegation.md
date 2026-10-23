@@ -815,7 +815,7 @@ The work of a goal is a graph of steps inside and a numbered list outside. The p
 - **Kinds and landing.** Graph submissions may mix `task` (the default), `background` and `wait` steps. A background step carries a `start_run` brief and resource request; it uses the existing run service and lands from its stored complete result. A wait names either a date (`at`, Unix seconds) or a canonical record and its current revision with a deadline. Core closes it only after observing the date or a different owner-visible record revision. An expired unchanged record needs a decision. Waits hold no worker capacity or write-area lease. Code predecessors release on observed merge, background predecessors on complete stored results, and wait predecessors on their closing observation; a completion claim alone releases none of them. An incomplete background result stays visible for a manager decision. A start the run service refuses before admission creates no run and no effect; the step closes as needing a decision, which releases its reservation so the manager can correct the brief.
 - **One placement pass.** The ready frontier includes steps held by area, quota or capacity, in deadline, dependency depth, goal creation time, goal id and step id order. Core reserves every compatible start in that pass, accounting for earlier reservations in the same pass. A quota hold is distinct from a host-capacity hold. Graph storage order and event delivery order do not set placement order; recovery observes existing claimed starts instead of issuing them again.
 - **Stages are display.** The stage list (see Stages) is a projection of the graph. A stage never holds work back: a step starts when it is in the frontier, even while an earlier stage still has steps running.
-- **Live sessions.** A worker session is live only while its step is in progress or its pull request is being operated on. When the step has landed or been closed, Core ends the worker's process without closing its thread or session (see Control). Files, branches, receipts and the recorded thread or session id remain, and a later execution generation resumes it the way that worker's recovery does (see Codex adapter and ACP adapter). The number of live sessions therefore follows the frontier, never the history of the goal.
+- **Live sessions.** A worker session is live only while its step is in progress or its pull request is being operated on. An open pull request keeps the session so the one conflict return can use it. When the step has landed or been closed, Core ends the worker's process and releases its activity without closing its thread or session (see Control). Files, branches, receipts and the recorded thread or session id remain, and a later execution generation resumes it the way that worker's recovery does (see Codex adapter and ACP adapter). The number of live sessions therefore follows the frontier, never the history of the goal.
 
 | Part | Owner | Reason |
 | --- | --- | --- |
@@ -861,13 +861,23 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
   tasks. A five-minute reconciliation observes inactive pull requests for lost
   signals; it does not perform a model call or a merge.
 - A known failure before worker dispatch settles that attempt as failed and
-  frees capacity and its area for other tasks in the same release event. It
-  neither lands the failed task nor replays setup after recovery; any prepared
-  worktree remains preserved. Errors after sending a start retain reservations
-  until the outcome is reconciled.
+  frees capacity and its area for other tasks in the same release event. The
+  settlement commits on a bounded cleanup context that does not follow caller
+  cancellation, so a canceled turn cannot keep the slot or the area. That
+  cleanup does not start another worker on the canceled call; the next wake,
+  including after restart, uses the freed slot. The failed attempt neither
+  lands nor replays setup after recovery; any prepared worktree remains
+  preserved. Errors after sending a start retain reservations until the
+  outcome is reconciled.
   This also applies during startup recovery: readiness is established before
   dispatch, and a recovered task's setup failure cannot disable delegation or
   terminate another task that was started in the same release event.
+- A quota or rate-limit finish is recorded before queued graph tasks are
+  reconsidered. When that finish has no exhausted window, the worker stays
+  blocked until its reset or a later measurement shows the limit below the cap.
+  The snapshot that missed the failure, and any older or unknown snapshot, does
+  not clear the stop. Rows from concurrent sessions merge per reported bucket
+  and window; a newer row in one window does not replace another window.
 - When slots are free, the manager may start a dependent task as a stacked pull request on an open predecessor. It records the predecessor and its head as the task's base, and Core checks capacity and disjoint write-area leases before dispatch. The dependency remains: the dependent cannot land before the predecessor. The worker brings the stack onto the landed base and owns its resulting checks to green before the manager checks the delivery.
 
 ## Workers

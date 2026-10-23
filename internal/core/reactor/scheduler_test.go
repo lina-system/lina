@@ -159,6 +159,52 @@ func TestKnownPreDispatchFailureReleasesReservations(t *testing.T) {
 	}
 }
 
+func TestCanceledCallerStillSettlesKnownStartFailure(t *testing.T) {
+	s := schedulerFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	starts := map[string]int{}
+	a, b := scheduledTask("a"), scheduledTask("b")
+	r := NewScheduler(s, Hooks{Availability: func(context.Context) (work.Availability, error) {
+		return work.Availability{Hosts: map[string]int{"local": 1}}, nil
+	}, Start: func(_ context.Context, c work.Card) (work.Run, error) {
+		starts[c.Task.ID]++
+		if c.Task.ID == "a" {
+			// Release has already reserved the card. Cancel the originating
+			// turn before any worker start is sent.
+			cancel()
+			return work.Run{}, errors.Join(ErrNotStarted, context.Canceled)
+		}
+		return work.Run{ID: "run:" + c.Task.ID, TaskID: c.Task.ID, Worker: "worker", NodeID: "local", ThreadID: "thread:" + c.Task.ID, TurnID: "turn", Generation: 1}, nil
+	}})
+	if err := r.Schedule(ctx, []work.Task{a, b}); !errors.Is(err, ErrNotStarted) {
+		t.Fatalf("known failure hidden: %v", err)
+	}
+	failed, err := s.Get(t.Context(), "a")
+	if err != nil || failed.Run != nil || failed.State != "failed" || failed.Scheduling.AreaHeld || failed.Scheduling.CapacityHeld {
+		t.Fatalf("canceled caller kept the reservation: %+v %v", failed, err)
+	}
+	if starts["b"] != 0 {
+		t.Fatalf("canceled call started more work: %v", starts)
+	}
+	if err := s.Recover(t.Context(), "restart"); err != nil {
+		t.Fatal(err)
+	}
+	failed, err = s.Get(t.Context(), "a")
+	if err != nil || failed.State != "failed" || failed.Scheduling.AreaHeld || failed.Scheduling.CapacityHeld {
+		t.Fatalf("restart restored the reservation: %+v %v", failed, err)
+	}
+	if err := r.Wake(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if starts["a"] != 1 || starts["b"] != 1 {
+		t.Fatalf("freed slot after restart: %v", starts)
+	}
+	failed, err = s.Get(t.Context(), "a")
+	if err != nil || failed.State != "failed" || failed.Scheduling.AreaHeld || failed.Scheduling.CapacityHeld {
+		t.Fatalf("wake replayed the known failure: %+v %v", failed, err)
+	}
+}
+
 func TestImmediateCompletionWaitsForAdmission(t *testing.T) {
 	s := schedulerFixture(t)
 	completed := make(chan error, 1)
