@@ -232,7 +232,7 @@ func (w *codeWorld) Execute(ctx context.Context, a work.Action) (work.Observatio
 		default:
 			return out, fmt.Errorf("unknown check %q", a.Check.Method)
 		}
-		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: w.output("criterion-"+a.ID, map[string]any{"revision": a.Revision, "passed": valid}), Passed: valid}
+		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &work.CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: w.output("criterion-"+a.ID, map[string]any{"revision": a.Revision, "passed": valid}), Passed: valid}
 	case work.Observe, work.Decide, work.PlanGoal:
 		return out, fmt.Errorf("unexpected action %s", a.Kind)
 	}
