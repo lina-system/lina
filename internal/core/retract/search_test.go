@@ -79,7 +79,7 @@ INSERT INTO memory_search_bigram(gram,item_id) SELECT '커피',id FROM memory_it
 		t.Fatal(err)
 	}
 	snapshotCanon(t, generation, filepath.Join(root, "canon.sqlite"))
-	db, s, flow, _, _ = memoryAt(t, root)
+	db, _, _, _, _ = memoryAt(t, root)
 	assertNoSearchRows(t, db)
 	search(0)
 }
@@ -183,7 +183,7 @@ func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshotCanon(t, generation, filepath.Join(root, "canon.sqlite"))
-	db, s, flow, _, _ = memoryAt(t, root)
+	db, _, _, _, _ = memoryAt(t, root)
 	events = ledger.New(db, nil)
 	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 0 {
 		t.Fatalf("restored copies exposed: %+v %v", hits, err)

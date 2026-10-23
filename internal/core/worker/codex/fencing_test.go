@@ -3,6 +3,8 @@ package codex
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -37,6 +39,15 @@ func TestLN133AnswersAreSingleUseAndInvalidAnswersStayPending(t *testing.T) {
 	canceled, cancel := context.WithCancel(p.ctx)
 	cancel()
 	a := worker.Answer{RequestID: e.Approval.ID, Result: json.RawMessage(`{"decision":"decline"}`)}
+	key, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.s.approvalKey = key
+	if err := p.s.Answer(p.ctx, e.Thread, a); err == nil {
+		t.Fatal("unsigned configured Core approval accepted")
+	}
+	p.s.approvalKey = nil
 	if err := p.s.Answer(canceled, e.Thread, a); err != context.Canceled {
 		t.Fatalf("canceled answer=%v", err)
 	}

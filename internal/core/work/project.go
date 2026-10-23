@@ -57,6 +57,17 @@ func advanceState(c *Card, e Event) error {
 		c.Completion = e.Completion
 	}
 	switch e.Kind {
+	case "steering":
+		if e.Steering == nil || e.Steering.TaskID != c.Task.ID {
+			return ErrInvalid
+		}
+		for i, m := range c.Steering {
+			if m.ID == e.Steering.ID {
+				c.Steering[i] = *e.Steering
+				return nil
+			}
+		}
+		c.Steering = append(c.Steering, *e.Steering)
 	case "created":
 		if c.Task.ID != "" || e.Task == nil || e.Task.ID != e.TaskID {
 			return ErrState

@@ -13,6 +13,7 @@ import (
 )
 
 func TestCurrentHermesLayout(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	sqlSource(t, req.Profiles[0].StatePath, string(fixture(t, "delivery.sql")))
 	sqlSource(t, req.Profiles[0].LCMPath, string(fixture(t, "current-kinds.sql"))+`; DELETE FROM host_uid_bindings WHERE store_id=2 AND kind='canonical'`)
@@ -108,6 +109,7 @@ func TestCurrentHermesLayout(t *testing.T) {
 }
 
 func TestDeliveryLayoutGate(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"", "ALTER TABLE delivery_obligations DROP COLUMN adapter_profile", "CREATE TABLE unknown_table(id INTEGER)", "ALTER TABLE delivery_obligations ADD COLUMN unknown_column TEXT", "ALTER TABLE delivery_obligations DROP COLUMN state"} {
 		t.Run(change, func(t *testing.T) {
 			source, db := hermesFixture(t, "state")
@@ -124,6 +126,7 @@ func TestDeliveryLayoutGate(t *testing.T) {
 }
 
 func TestSnapshotChecksAreNamed(t *testing.T) {
+	t.Parallel()
 	for _, query := range []string{
 		"UPDATE host_uid_bindings SET binding_version=2",
 		"UPDATE host_uid_bindings SET kind='unknown_kind'",

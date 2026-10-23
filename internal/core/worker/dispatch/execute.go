@@ -106,6 +106,20 @@ func (e *execution) closeDeferred() {
 }
 
 func (s *Service) execute(ctx context.Context, record Record) {
+	if s.cfg.ExecutionDeadline != nil {
+		deadline, err := s.cfg.ExecutionDeadline(ctx, record)
+		if err != nil {
+			s.mu.Lock()
+			delete(s.running, record.ID)
+			s.mu.Unlock()
+			return
+		}
+		if !deadline.IsZero() {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, deadline)
+			defer cancel()
+		}
+	}
 	e := execution{record: record}
 	r := &e.record
 	// Shutdown does not replay a possibly effective dispatch. Recovery marks the
@@ -529,6 +543,19 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 				progressSequence++
 				return service.ReportProgress(ctx, r.ID, run.ID, progressSequence, summary)
 			}
+			var stopExpired <-chan time.Time
+			interruptSent := cancelled
+			// Cancellation is durable and independent of the optional owner bridge.
+			// A worker that never confirms stopping is closed after a bounded wait;
+			// that retains an unknown outcome and its directory reservations.
+			startStopTimer := func() {
+				timer := time.NewTimer(5 * time.Second)
+				e.deferred = append(e.deferred, func() { timer.Stop() })
+				stopExpired = timer.C
+			}
+			if interruptSent {
+				startStopTimer()
+			}
 			for !observed {
 				select {
 				case event, ok := <-adapter.Events():
@@ -589,12 +616,34 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 						observed = true
 					}
 				case now := <-progressTick.C:
+					if !interruptSent {
+						err = s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+							return tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(record,'$.canceled'),0) FROM worker_dispatch WHERE id=?`, r.ID).Scan(&cancelled)
+						})
+						if err != nil {
+							r.Code = "control_unavailable"
+							unbind()
+							return false
+						}
+						if cancelled {
+							r.Canceled = true
+							interruptSent = true
+							stopCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+							_ = adapter.Interrupt(stopCtx, thread, worker.UserCancel)
+							cancel()
+							startStopTimer()
+						}
+					}
 					if err = recordProgress(progress.Flush(now, false)); err != nil {
 						r.Code = "progress_failed"
 						unbind()
 						closeAdapter(context.Background())
 						return false
 					}
+				case <-stopExpired:
+					r.Code = "cancel_unconfirmed"
+					unbind()
+					return false
 				case <-ctx.Done():
 					unbind()
 					closeAdapter(context.Background())
@@ -605,6 +654,8 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 			quotaStop := finish.Status == worker.Failed && (finish.Failure == worker.QuotaFailure || finish.Failure == worker.RateLimitFailure || finish.Failure == worker.LoginFailure)
 			if quotaStop {
 				err = s.park(ctx, adapter)
+			} else {
+				err = s.observeACPQuota(ctx, adapter)
 			}
 			snapshot, snapshotErr := terminalSnapshot(ctx, adapter, thread)
 			if snapshotErr == nil {

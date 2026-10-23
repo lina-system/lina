@@ -46,6 +46,15 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 
 Failure coverage also includes:
 
+- `TestM3WorkPanelLiveCodexWorker`: Core starts the worker, routes its approval
+  and question, displays live work-card activity, receives its file result and
+  retains the outcome after restart. The shared model fixture distinguishes
+  the current completion from the ContextPacket that follows it in the
+  [request layout](../../docs/design/conversation-and-memory.md#request-layout).
+  `TestWorkerCompletionFixtureRequestLayout` uses the real assembler to cover
+  trailing context, tool discovery, later inputs and result text that appears
+  only in retrieved context.
+
 - `TestM2WorkerDelayedCompletionOutput`: the model fixture selects the latest
   scenario input or worker result even when user-role ContextPacket evidence
   follows it. After recovery, a delayed first-turn completion arrives between
@@ -142,3 +151,10 @@ credential-free CI.
 
 [lcm]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/compaction.py
 [honcho]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/sdks/python/src/honcho/conclusions.py
+
+`TestM1MemoryQuotesInstalledCore` runs a conversation tool that remembers a
+name from a material-backed Korean event with a secret span. The installed
+Core resolves the quote through memory management before and after restart;
+canon inspection verifies that item/revision evidence contains no quote text.
+The management renderer's synthetic [capture](../../evidence/generated-ui/memory-quotes.png)
+shows a quote and an erased-source status.

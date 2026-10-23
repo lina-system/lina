@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -19,6 +20,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
@@ -33,18 +35,23 @@ type distribution struct {
 	MaxNS int64 `json:"max_ns"`
 }
 type report struct {
-	Version       int                     `json:"report_version"`
-	Schema        int                     `json:"schema_version"`
-	Corpus        counts                  `json:"corpus"`
-	MemoryItems   int                     `json:"memory_items"`
-	MaterialBytes int64                   `json:"material_bytes"`
-	TableBytes    map[string]int64        `json:"table_bytes"`
-	IndexBytes    int64                   `json:"index_bytes"`
-	DatabaseBytes int64                   `json:"database_bytes"`
-	FreeBytes     int64                   `json:"free_bytes"`
-	Latency       map[string]distribution `json:"latency"`
-	Hits          map[string]int          `json:"hits"`
-	ForgetHidden  int                     `json:"forget_hidden"`
+	Version         int                     `json:"report_version"`
+	Schema          int                     `json:"schema_version"`
+	Corpus          counts                  `json:"corpus"`
+	RecallDocuments int                     `json:"recall_documents"`
+	RecallParity    int                     `json:"recall_parity_queries"`
+	SourceBytes     int64                   `json:"source_bytes"`
+	RecallTextBytes int64                   `json:"recall_text_bytes"`
+	RecallPairBytes int64                   `json:"recall_pair_bytes"`
+	MemoryItems     int                     `json:"memory_items"`
+	MaterialBytes   int64                   `json:"material_bytes"`
+	TableBytes      map[string]int64        `json:"table_bytes"`
+	IndexBytes      int64                   `json:"index_bytes"`
+	DatabaseBytes   int64                   `json:"database_bytes"`
+	FreeBytes       int64                   `json:"free_bytes"`
+	Latency         map[string]distribution `json:"latency"`
+	Hits            map[string]int          `json:"hits"`
+	ForgetHidden    int                     `json:"forget_hidden"`
 }
 
 func summarize(samples []int64) distribution {
@@ -188,15 +195,81 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 		}
 		covered[node.Session] = end
 	}
+	recallIndex := recall.New(db, func(ctx context.Context, id string) (string, error) {
+		e, err := events.Get(ctx, id)
+		if e.BytesUnavailable {
+			return "", ledger.ErrBytesUnavailable
+		}
+		return e.Body.DerivedText(), err
+	})
+	for {
+		n, err := recallIndex.DrainBatch(ctx)
+		if err != nil {
+			return r, err
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if err := db.Read(ctx, func(tx *canon.Tx) error {
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM recall_doc").Scan(&r.RecallDocuments); err != nil {
+			return err
+		}
+		var memoryBytes int64
+		if err := tx.QueryRowContext(ctx, "SELECT coalesce(sum(length(cast(content AS BLOB))),0) FROM memory_item WHERE state='active'").Scan(&memoryBytes); err != nil {
+			return err
+		}
+		r.SourceBytes = int64(r.Corpus.TextBytes+r.Corpus.SummaryBytes) + memoryBytes
+		return nil
+	}); err != nil {
+		return r, err
+	}
+	if r.RecallDocuments != r.Corpus.Events+r.Corpus.Summaries+r.MemoryItems {
+		return r, errors.New("recall_document_count")
+	}
 	scope := memory.RecallScope{Agent: agent, Person: person}
 	for _, q := range c.queries() {
+		var hits []ledger.SearchHit
 		if err := timed("ledger_search", func() error {
-			hits, e := events.Search(ctx, ledger.SearchQuery{AgentID: agent, PersonID: person, Text: q, Limit: 12})
+			var e error
+			hits, e = events.Search(ctx, ledger.SearchQuery{AgentID: agent, PersonID: person, Text: q, Limit: 12})
 			r.Hits["ledger_search"] += len(hits)
 			return e
 		}); err != nil {
 			return r, err
 		}
+
+		var want []string
+		for _, hit := range hits {
+			want = append(want, hit.ID)
+		}
+		table := "recall_text"
+		if utf8.RuneCountInString(q) == 2 {
+			table = "recall_pair"
+		}
+		var got []string
+		e := db.Read(ctx, func(tx *canon.Tx) error {
+			rows, e := tx.QueryContext(ctx, "SELECT source_id FROM recall_doc WHERE kind='event' AND person=? AND holder=? AND replay=0 AND id IN (SELECT rowid FROM "+table+" WHERE "+table+" MATCH ?) ORDER BY julianday(occurred_at) DESC,source_id LIMIT 12", person, agent, canon.TrigramPhrase(q))
+			if e != nil {
+				return e
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var id string
+				if e = rows.Scan(&id); e != nil {
+					return e
+				}
+				got = append(got, id)
+			}
+			return rows.Err()
+		})
+		if e != nil {
+			return r, e
+		}
+		if !slices.Equal(got, want) {
+			return r, errors.New("recall_parity_mismatch")
+		}
+		r.RecallParity++
 		if err := timed("memory_recall", func() error {
 			hits, e := memory.New(db).Recall(ctx, scope, memory.Query{Text: q, At: 1800000000, Limit: 12})
 			r.Hits["memory_recall"] += len(hits)
@@ -216,6 +289,14 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 	// committed file read-only; it does not execute or time any store operation.
 	if err := measurePages(ctx, root, &r); err != nil {
 		return r, err
+	}
+	for table, size := range r.TableBytes {
+		if strings.HasPrefix(table, "recall_text_") {
+			r.RecallTextBytes += size
+		}
+		if strings.HasPrefix(table, "recall_pair_") {
+			r.RecallPairBytes += size
+		}
 	}
 	for _, id := range ids[:min(3, len(ids))] {
 		if err := timed("forget", func() error {

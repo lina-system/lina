@@ -78,6 +78,27 @@ on both first import and retry. The original sidecar remains referenced by
 is needed. `TestM1ImportJSONMasking` exercises installed import, verified backup,
 repeat import, safe promotion and a restarted Core's memory API with synthetic data.
 
+### Import cost bounds
+
+- **seen** — LCM-X `host_uid.py:299-334` at the pinned revision looks up
+  `bindings.get(uid, ())` before checking canonical and payload versions.
+  Its lineage reader at lines 102–130 follows compression parents and stops
+  at explicit forks. The public source was inspected read-only because the
+  installation paths were unavailable.
+- **inferred** — The immutable plan can retain one rehearsal result and
+  encoding, including an error, across preview, conversation adoption and
+  rollback retries. Preview copies preserve owner-channel candidates and
+  UID-lineage mappings without sharing mutable slices with the retained report.
+- UID indexing and the recorded ambiguous-lineage decisions landed in #1103.
+  This change uses that profile-local matching implementation unchanged.
+- **unknown** — Synthetic checks establish call counts and result parity;
+  they do not establish throughput on an owner's installation.
+
+The regression counts rehearsal computations over multiple conversations and
+a rolled-back adoption. The Core job acceptance scenario runs the actual
+deterministic worker for two conversations and checks the retained report,
+receipts, reversible references and idempotent replay.
+
 Design authority: [Go Core](../../../../docs/design/go-core.md) and the contracts it cites.
 These notes retain implementation and validation history from the cited increments;
 they do not establish current acceptance or change the contracts.
@@ -87,6 +108,23 @@ they do not establish current acceptance or change the contracts.
 The shared canon catalog appends import storage and completion receipts at migration 24, after the unchanged published migrations 1–23.
 Core, backup and restore can reopen imported state using that same catalog.
 Empty import tables do not load an adapter or start a run.
+
+### Imported tool-call bodies
+
+- **seen** — LCM-X `store.py:477-497,2129-2147` at the pinned revision
+  stores `tool_calls` separately from content, decodes the JSON on read and
+  restores both fields in `to_openai_msg`. The local reference directories were
+  unavailable; these lines were read from that revision's public source.
+- **seen** — LINA's native transcript stores function calls with `type`,
+  `call_id`, `name` and string `arguments`. The summary builder and event
+  expansion consume the live ledger body, not `legacy_ref.fields`.
+- **inferred** — Seal can publish an assistant body containing its content and
+  an ordered list of those native call items while leaving the staged body and
+  source reference fields intact for byte-exact row reconstruction.
+- **unknown** — Unregistered call formats and local installation modifications.
+  An unsupported nonempty call payload stays in the live body as
+  `unparsed_tool_calls`, preserving its exact source text rather than guessing
+  executable fields or losing arguments. Existing sealed conversations remain append-only.
 
 ## Current host layout and LCM kinds (#1102)
 
@@ -108,6 +146,18 @@ Empty import tables do not load an adapter or start a run.
   event, or asserting that one constituent is a view of another.
 - **unknown** — Other delivery table layouts and binding/relation kinds are
   not registered. The actual installation revision was not available here.
+
+Tool-call projections use the same JSON display scanner and unavailable-body
+reporting as other imported bodies. Scalar credential preparation failures also
+become `body_masking_error`, with originals and retry reports retained. The final
+scalar coverage check reads decoded JSON; scanning serialized escapes as plain
+text would discard already-masked quoted arguments.
+
+A material-backed assistant event with tool calls publishes the live JSON
+projection inline, using the sidecar bytes as its content, and the import record
+keeps the original sidecar material for reverse mapping. The event therefore has
+no material reference, so ledger reads, expansion and summary input see the
+calls.
 
 ## Owner channels and display provenance
 

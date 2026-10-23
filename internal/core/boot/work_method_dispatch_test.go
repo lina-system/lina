@@ -201,8 +201,12 @@ func TestDelegatedGoalWorkerRetainsRequesterBinding(t *testing.T) {
 		t.Fatalf("control calls=%d", probe.inputs)
 	}
 	probe.snapshot.State = worker.Idle
-	if err := r.ownerWorkerControl(t.Context(), clientsrv.Session{PersonID: r.person}, "session:goal-thread", &r.conversation, "idle-steer", "Continue"); err == nil {
-		t.Fatal("dispatched worker started a new idle turn")
+	if err := r.ownerWorkerControl(t.Context(), clientsrv.Session{PersonID: r.person}, "session:goal-thread", &r.conversation, "idle-steer", "Continue"); err != nil {
+		t.Fatal("idle follow-up did not record refusal", err)
+	}
+	messages, err := r.work.SteeringMessages(t.Context(), "codex:goal-thread")
+	if err != nil || len(messages) != 3 || messages[2].State != "refused" || probe.inputs != 2 {
+		t.Fatal("idle steering was not refused", messages, probe.inputs, err)
 	}
 	probe.snapshot.State = worker.Active
 	cancelled := 0

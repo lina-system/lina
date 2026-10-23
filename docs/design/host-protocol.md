@@ -386,7 +386,7 @@ acceptance alone does not grant a capability.
 | `history` | `conversation_id`, `agent_id`, and optional `snapshot`. The installed implementation discovers the concrete conversation; its subscription delivers the authoritative window. |
 | `input` | Nonempty `conversation_id`, `input_id`, `text` (at most 16,384 Unicode characters), and optional `mode` (`steer` or `queue`). Missing mode means steering when a turn is active and a new turn otherwise. Queue starts a follow-up through the same conversation lane. |
 | `interrupt` | Nonempty `conversation_id`; cancels the active turn with the person's typed cause. It does not terminate Core, close the client or cancel unrelated work. |
-| `item_done` | Existing `text` and stream metadata, with optional `echo_key`, `speaker` (`person`, `agent`, `system`, `forwarded`), `agent_id`, and `person_id`. Forwarded channel content keeps its speaker kind and carries no person id, both live and in restored history. `echo_key` is the admitted input id, allowing replacement of one local echo. |
+| `item_done` | Existing `text` and stream metadata, with optional `echo_key`, `speaker` (`person`, `agent`, `system`, `forwarded`), `agent_id`, and `person_id`. System notices may include optional `details` (at most 4,096 Unicode characters), shown only when opened and never treated as an authored result. Forwarded channel content keeps its speaker kind and carries no person id, both live and in restored history. `echo_key` is the admitted input id, allowing replacement of one local echo. |
 | `output_delta` | Existing text delta and stream metadata, with optional `agent_id`. The same topic/key becomes the completed item. |
 | `turn_state` | Existing stream metadata and optional `active` boolean plus `agent_id`. Optional `phase` is `waiting_model`, `streaming`, `tool` or `stopping`; optional `tool_name` is a trusted display name from the tool registry's display catalog. Clients do not parse activity from display text. |
 | `tool_activity` | Core-to-client display event with optional `stream` and `agent_id`, required string `call_id`, required string `tool_name` (the registry's display catalog label), and required `status` (`started` or `finished`). `finished` requires `outcome` (`ok` or `failed`) and a nonnegative numeric `duration_ms`; `started` forbids both. Optional `target` (at most 160 characters) and `summary` (at most 8192 characters) contain only explicitly Core-approved display text. Arguments and raw output are never fields of this event. |
@@ -488,7 +488,74 @@ The closed list of types for version 1.0:
 
 One more type, `app`, is reserved for a later view that a plugin supplies ([integrations.md](integrations.md)). It is not part of version 1.0, no party sends or accepts it, and its fallback is the tool's text result.
 
-Two types for generated UI, `surface` (an A2UI v0.9 card from LINA's catalog) and `mock` (a drawn mock whose body references its page bundle and PNG as assets), and the client kind `surface_action` are reserved for a later minor version. Their rules are in [surfaces.md](surfaces.md#generated-ui). Until that version no party sends or accepts them; a client that does not render them gets their `text`. A `surface` body is data under the rules below: it names catalog widgets and data, never code or a URL to fetch.
+Client **1.1** adds `surface`, an A2UI v0.9 card, `surface_action` and the
+separately negotiated `mock` type described below. The
+canonical [client schema](../../protocol/schema/client/1.0/envelope.json) retains
+its original path and defines both 1.0 and 1.1. A 1.0 envelope cannot contain a
+surface or surface action. An updated client first offers 1.1; if an installed
+older Core explicitly refuses that version, it may reconnect once within the
+same handshake deadline using a 1.0 envelope and capabilities without new fields.
+This retries negotiation only, never a person input or operation.
+
+A `surface` body has `version: "v0.9"`, `catalogId: "lina.cards"`,
+`catalogVersion: "1.0"`, `surfaceId`, `components`, `dataModel` and `deleted`.
+It contains one complete validated component tree rooted at `root`. Core folds
+one bounded batch of `createSurface`, `updateComponents`, `updateDataModel` and
+`deleteSurface` messages into one revision. A failed batch changes nothing.
+A deletion is a retained revision with `deleted: true`, empty components and
+data, and no actions. It remains readable in history and export.
+
+The `results` capability version `1.0` carries `types` and `catalogs` arrays in
+hello and welcome. The versioned catalog id is `lina.cards/1.0`. Welcome grants
+the intersection. Core derives `surface_controls` (action keys, names, resolved
+values and bindings; ordered field labels, current values and numbered choices)
+from the validated tree. Clients use those descriptors for local form state;
+they do not infer validation or authority from the catalog. A client negotiating 1.1 and this capability gets surface card
+fields and complete Core text (bounded surface text is never paginated); `body` and `surface_controls` are included only when it lists both
+`surface` and `lina.cards/1.0`. Other clients receive an ordinary text output
+item, including on replay. Existing 1.0 result behavior remains available.
+
+`surface_action` carries `result_id`, `revision`, `action`, `values` and
+`input_id`. Core resolves the person, agent and conversation from the authenticated
+connection and stored result. It validates the current revision and the exact
+fields of the named action. A bound input uses its widget's value schema;
+constant context values must match the card. A single choice accepts a string
+or a one-item list and is delivered as a string. Unknown actions or fields are
+`malformed`, old revisions are `stale_revision`, inaccessible results are
+`out_of_scope`, and a missing capability is `capability_not_negotiated`.
+
+Core records the press as owner input and inserts it in the durable conversation
+inbox in the same transaction as a revision recheck. `input_id` deduplicates
+retries. A press is queued for the next turn; it does not steer the active turn
+or answer an approval. Subsequent tools use their normal authority checks.
+The detailed rendering contract is [Generated cards](surfaces.md#generated-cards).
+
+Client 1.1 adds `mock`. Its closed body contains `request`, `checklist` (id,
+description, local action and target), `page` and `png` asset references,
+`previous` (null or a result id/revision), `stop_reason: "all_passed"` and seven
+passing executable `checks`. No HTML is in the body. Earlier candidates and
+stop reasons belong to the private run state. Only Core's checked renderer may
+publish a mock; ordinary `present_result` cannot create or replace one.
+
+The `mocks` capability, version 1.0 on client 1.1, adds `mock_request` and
+`mock_response`. Requests bind `conversation_id`, `result_id` and `revision`.
+`read` returns that retained revision. `asset` names `page` or `png`, with an
+optional byte `offset`; the response carries a pinned asset reference, MIME type,
+base64 `data` (at most 48 KiB decoded) and optional `next` byte offset. It never
+accepts a path or arbitrary asset id. `build` also needs `target` (`screen` or
+`mini_app`), `repositories` and the envelope's stable `idempotency_key`; it returns
+`goal_id`. Builds require the current revision and use normal work authority.
+Reads authorize the connected person and the named agent/conversation before
+looking up immutable history. Invalid or foreign references are refused without
+revealing their contents.
+
+Client 1.0 never receives the new kinds or result type: mock cards become ordinary
+text output items, including in history snapshots. Client 1.1 without `mocks`
+receives the mock's text without its body. The canonical client schema family
+currently retains its `client/1.0/envelope.json` path and explicitly validates
+both envelope versions; 1.1 fixtures live separately.
+
+
 
 Rules:
 
@@ -538,6 +605,13 @@ persona exposes a separate Core A2A listener on the tailnet, not the `client`
 or `node` listener. Core alone maps authenticated incoming work and remote observations
 to canonical local tasks and results.
 
+The publication listener serves only its Agent Cards, versioned A2A JSON-RPC/SSE
+and task-authorized artifact downloads. It uses the owner's TLS configuration
+and verifies the local tailscaled address before binding. It registers no host
+protocol handler. The owner receives publication progress, approvals and typed
+results through the existing conversation, waiting and result projections;
+the external caller receives only the separate A2A task projection.
+
 A Node can call a remote agent as part of a task the main dispatched. Its
 grant must name the approved remote connection and allowed call/data scope.
 Core carries the HTTP call so the Node receives no remote credential. The
@@ -561,6 +635,13 @@ existing authenticated `node` connection:
 - Core sends owner questions and results through the originating conversation's
   existing `client` projections. A remote question or a Node message is not an
   approval answer. Only a permitted owner surface can answer one.
+
+The outbound Core implementation adds the owner-only `a2a` 1.0 **client**
+capability (`a2a_request`, `a2a_result`). Connection setup and status use closed
+schema payloads and generated types. OAuth shares `sign_in_listen`,
+`sign_in_listening`, `sign_in_open` and `sign_in_redirect` on the same authenticated
+client session; it does not create a model-provider account. Input and sign-in
+waits project through the existing waiting and conversation surfaces.
 
 The Node implementation issue must add closed schema payloads, generated
 types, version/capability negotiation and conformance fixtures together with
@@ -586,7 +667,7 @@ Memory operations are `list`, `remember`, `correct` and `forget`, scoped to an
 `agent_id` and the connection's person. `item_id` identifies a correction or
 forget target; `text` holds a query or explicit statement; optional `holder`
 and `scope` apply only to remember. List accepts optional `after` (the last visible item id), and returns optional `next` for continuation. Pages bound serialized content plus evidence to 512 KiB, leaving room below the 1 MiB transport frame. A cursor is checked within the same authenticated scope before applying the result limit. Result items carry id, revision, content,
-holder, scope and canonical evidence identities. Correct returns the new id and
+holder, scope and canonical evidence identities. Optional `evidence_details` gives each reference's current quote or availability status, with deletion metadata for an erased source. Quotes follow the selected agent's evidence scope and secret masking; foreign evidence has only its reference. If quotes would make one item exceed a whole page, list omits those quotes with `quote_too_large`; if the optional details still do not fit, it retains the existing evidence identities without those details. Large quotes never make an otherwise listable item block continuation. Correct returns the new id and
 retains the target's holder and scope. Forget returns only the removed id.
 Agent operations are `list`, `create`, `choose`, `rename` and `delete`; requests
 carry `agent_id` and/or `name` as appropriate, and results return the affected id

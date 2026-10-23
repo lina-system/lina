@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/recall"
 )
 
 // Params is scoped by Core, never by an untrusted caller's person argument.
@@ -156,7 +157,7 @@ func putProjection(ctx context.Context, tx *canon.Tx, r indexRow) error {
 			}
 		}
 	}
-	return nil
+	return recall.IndexText(ctx, tx, "record", r.id, d.title+"\n"+d.note)
 }
 
 func (s *Store) ensureIndex(ctx context.Context, head string, files map[string]string) error {

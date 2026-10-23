@@ -2,12 +2,44 @@
 package codex
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
 	wire "github.com/thisisjun786/lina/third_party/codex-app-server/upstream"
 )
+
+func verifyApprovalChoice(request worker.Request, raw json.RawMessage, allow bool) error {
+	var expected any
+	if request.Method == "item/permissions/requestApproval" {
+		var p wire.PermissionsRequestApprovalParams
+		if err := json.Unmarshal(request.Params, &p); err != nil {
+			return err
+		}
+		scope := wire.PermissionGrantScopeTurn
+		r := wire.PermissionsRequestApprovalResponse{Scope: &scope}
+		if allow {
+			r.Permissions = wire.GrantedPermissionProfile{FileSystem: p.Permissions.FileSystem, Network: p.Permissions.Network}
+		}
+		expected = r
+	} else {
+		decision := "decline"
+		if allow {
+			decision = "accept"
+		}
+		expected = map[string]string{"decision": decision}
+	}
+	data, err := json.Marshal(expected)
+	if err != nil {
+		return err
+	}
+	var compact bytes.Buffer
+	if json.Compact(&compact, raw) != nil || !bytes.Equal(compact.Bytes(), data) {
+		return errors.New("Codex approval does not match signed choice")
+	}
+	return nil
+}
 
 // Validate known response shapes, then forward the original JSON unchanged.
 // Raw unions in the generator require explicit checks at this boundary.

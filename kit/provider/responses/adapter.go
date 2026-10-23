@@ -149,7 +149,13 @@ func (a *Adapter) body(r provider.Request) ([]byte, error) {
 	allowed := func(key string) bool {
 		return slices.Contains(a.config.RequestFields, key) && (len(r.Fields) == 0 || slices.Contains(r.Fields, key))
 	}
-	for _, key := range []string{"model", "input", "store", "stream", "include"} {
+	required := []string{"model", "input", "store", "stream"}
+	// Encrypted reasoning is the wire form of the reasoning-state capability,
+	// so its include option exists only when Core selected that capability.
+	if r.Capabilities.ReasoningState {
+		required = append(required, "include")
+	}
+	for _, key := range required {
 		if !allowed(key) {
 			return reject()
 		}
@@ -172,8 +178,10 @@ func (a *Adapter) body(r provider.Request) ([]byte, error) {
 	}
 	// Stateless reasoning must survive follow-up turns even when the model
 	// chooses its default effort. Effort controls only the reasoning override.
-	body := map[string]any{"model": r.Model, "store": false, "stream": true,
-		"include": []string{"reasoning.encrypted_content"}}
+	body := map[string]any{"model": r.Model, "store": false, "stream": true}
+	if r.Capabilities.ReasoningState {
+		body["include"] = []string{"reasoning.encrypted_content"}
+	}
 	if r.Instructions != "" && allowed("instructions") {
 		body["instructions"] = r.Instructions
 	}
@@ -438,4 +446,10 @@ func usage(w *wireUsage) provider.Usage {
 		return provider.Usage{}
 	}
 	return u
+}
+
+// RequestBudget retains conservative byte accounting until this adapter can
+// pair model context metadata with a tokenizer for its complete wire request.
+func (*Adapter) RequestBudget(provider.ModelRef) (int, func(provider.Request) int) {
+	return 128000, provider.RequestBytes
 }

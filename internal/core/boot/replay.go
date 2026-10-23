@@ -84,6 +84,12 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 	if err := r.authorize(s, nil); err != nil {
 		return protocol.ReplayResult{}, err
 	}
+	if p.Fixture != nil {
+		return r.providerFixture(ctx, s, p)
+	}
+	if p.Provider != nil && !r.providerReplayAllowed(p) {
+		return protocol.ReplayResult{}, replayFailure(replay.ErrInvalid)
+	}
 	if (p.TurnID == nil) == (p.Episode == nil) {
 		return protocol.ReplayResult{}, replayFailure(replay.ErrInvalid)
 	}
@@ -178,9 +184,28 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 		return protocol.ReplayResult{}, replayFailure(err)
 	}
 	usage := []provider.Meta{}
+	report := replay.ProviderReport{Version: 1, Provider: r.route.Adapter.Provider(), Route: r.route.Route, Model: request.Model, Source: replaySourceDigest(ep.Evidence.Hash), Requests: []replay.RequestReport{}}
+	round := 0
 	out, err := replay.Sandboxed(ctx, replay.SandboxConfig{Reads: reads, Executable: executable, Denied: r.replayDenied(), Environment: []string{"PATH=" + os.Getenv("PATH")}, Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
 		if err := source.ValidateEpisode(ctx, ep); err != nil {
 			return nil, err
+		}
+		if p.Provider != nil {
+			round++
+			if round > 16 {
+				return nil, replay.ErrInvalid
+			}
+			request.Layout = ep.Evidence.Layout.Clone()
+			if request.Layout != nil && len(request.Items) > len(ep.Items) {
+				request.Layout.Newest = &provider.Position{Items: len(request.Items), Tools: len(request.Tools)}
+			}
+			var err error
+			request, err = r.selectProviderCapabilities(request)
+			if err != nil {
+				return nil, err
+			}
+			request.Credential = r.route.Request(nil).Credential
+			return report.Observe(ep.TurnID, round, r.route.Route, time.Now, func() (provider.Stream, error) { return r.route.Adapter.Stream(ctx, activity, request) }, &request.Bridge), nil
 		}
 		request.Credential = r.route.Request(nil).Credential
 		stream, err := r.route.Adapter.Stream(ctx, activity, request)
@@ -188,7 +213,13 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 			return nil, err
 		}
 		return &replayUsageStream{Stream: stream, save: func(meta provider.Meta) { usage = append(usage, meta) }}, nil
-	}}, replay.WorkerInput{Request: request, Calls: ep.Calls})
+	}}, replay.WorkerInput{RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime, Request: request, Calls: ep.Calls})
+	if p.Provider != nil {
+		if err == nil {
+			err = source.ValidateEpisode(ctx, ep)
+		}
+		return providerReportOutput(report, err)
+	}
 	if err != nil {
 		return excluded(err)
 	}

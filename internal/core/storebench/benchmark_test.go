@@ -47,6 +47,9 @@ func TestSmallCorpusReport(t *testing.T) {
 			t.Fatalf("missing dbstat table: %s", table)
 		}
 	}
+	if r.RecallDocuments != r.Corpus.Events+r.Corpus.Summaries+r.MemoryItems || r.RecallParity != 60 || r.RecallTextBytes == 0 || r.RecallPairBytes == 0 || r.SourceBytes == 0 {
+		t.Fatal("missing recall measurements")
+	}
 	if r.Hits["ledger_search"] == 0 || r.Hits["memory_recall"] == 0 || r.Hits["recall_person"] == 0 || r.ForgetHidden != 3 {
 		t.Fatal("paths were not exercised")
 	}
