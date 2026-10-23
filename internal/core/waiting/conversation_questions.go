@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
@@ -32,13 +33,14 @@ type QuestionResolution struct {
 	At    time.Time `json:"at"`
 }
 type ConversationQuestion struct {
-	ID           string    `json:"id"`
-	Person       string    `json:"person"`
-	Agent        string    `json:"agent"`
-	Conversation string    `json:"conversation"`
-	Turn         string    `json:"turn"`
-	Input        string    `json:"input"`
-	AskedAt      time.Time `json:"asked_at"`
+	Binding      *binding.Choice `json:"binding,omitempty"`
+	ID           string          `json:"id"`
+	Person       string          `json:"person"`
+	Agent        string          `json:"agent"`
+	Conversation string          `json:"conversation"`
+	Turn         string          `json:"turn"`
+	Input        string          `json:"input"`
+	AskedAt      time.Time       `json:"asked_at"`
 	QuestionDraft
 	Resolution *QuestionResolution `json:"resolution,omitempty"`
 }
@@ -173,6 +175,9 @@ func (s *ConversationQuestions) ResolveWith(ctx context.Context, person, agent, 
 		}
 		switch d.Kind {
 		case "default_applied":
+			if q.Binding != nil {
+				return ErrInvalid
+			}
 			if d.Value != q.Default || d.Input == q.Input {
 				return ErrInvalid
 			}
