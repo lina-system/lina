@@ -297,12 +297,13 @@ func TestM2ClaudeAPIKeyProviderReplay(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		// Turns two and four carry one recorded tool call, as the fixture says.
 		if round == 2 || round == 5 {
-			name := "skill_index"
+			// The same arguments the fixture records.
+			name, input := "skill_index", `{"methodology":"dev"}`
 			if round == 5 {
-				name = "skill_notices"
+				name, input = "skill_notices", `{}`
 			}
 			messagesEvent(w, "message_start", `,"message":{"id":"msg_r","role":"assistant","content":[],"usage":{"input_tokens":100,"cache_read_input_tokens":70,"cache_creation_input_tokens":10,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":10},"output_tokens":1}}`)
-			fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"recorded\",\"name\":%q,\"input\":{}}}\n\n", name)
+			fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"recorded\",\"name\":%q,\"input\":%s}}\n\n", name, input)
 			messagesEvent(w, "content_block_stop", `,"index":0`)
 			messagesEvent(w, "message_stop", ``)
 			return
@@ -350,7 +351,8 @@ func TestM2ClaudeAPIKeyProviderReplay(t *testing.T) {
 	if err = json.Unmarshal(data, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Failure != "" || report.Provider != "claude" || report.Route != "claude_api_key" || len(report.Requests) != 6 {
+	// Six turn requests and the trailing compaction summary.
+	if report.Failure != "" || report.Provider != "claude" || report.Route != "claude_api_key" || len(report.Requests) != 7 || report.Requests[6].Turn != "summary" {
 		t.Fatalf("report: %+v", report)
 	}
 	for _, row := range report.Requests {
