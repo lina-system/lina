@@ -24,6 +24,8 @@ type terminalRenderer struct {
 	last         tea.View
 	size         tea.WindowSizeMsg
 	shown        bool
+	flushed      bool
+	frames       *frameWriter
 	program      *tea.Program
 	done         chan struct{}
 	err          error
@@ -58,11 +60,12 @@ func (m renderedView) View() tea.View { return m.view }
 func startTerminalRenderer(ctx context.Context, output io.Writer, width, height int, profile Profile) *terminalRenderer {
 	rendererContext, cancel := context.WithCancel(ctx)
 	r := &terminalRenderer{done: make(chan struct{}), size: tea.WindowSizeMsg{Width: width, Height: height}}
+	r.frames = &frameWriter{output: output}
 	initial := r.size
 	r.expectedSize.Store(&initial)
 	r.program = tea.NewProgram(renderedView{}, tea.WithFilter(func(model tea.Model, message tea.Msg) tea.Msg {
 		return r.filterSize(model, rendererMessages(model, message))
-	}), tea.WithContext(rendererContext), tea.WithInput(nil), tea.WithOutput(output), tea.WithColorProfile(profile.terminalProfile()), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
+	}), tea.WithContext(rendererContext), tea.WithInput(nil), tea.WithOutput(r.frames), tea.WithColorProfile(profile.terminalProfile()), tea.WithWindowSize(width, height), tea.WithoutSignalHandler(), tea.WithoutCatchPanics())
 	go func() {
 		defer close(r.done)
 		defer cancel()
@@ -114,9 +117,14 @@ func (r *terminalRenderer) filterSize(_ tea.Model, message tea.Msg) tea.Msg {
 }
 
 func (r *terminalRenderer) show(view tea.View, size tea.WindowSizeMsg) error {
-	if r.shown && r.size == size && reflect.DeepEqual(r.last, view) {
-		return nil
-	}
+	return r.showView(view, size, false)
+}
+
+func (r *terminalRenderer) showFlushed(view tea.View, size tea.WindowSizeMsg) error {
+	return r.showView(view, size, true)
+}
+
+func (r *terminalRenderer) showView(view tea.View, size tea.WindowSizeMsg, flush bool) error {
 	select {
 	case <-r.done:
 		if r.err == nil {
@@ -124,6 +132,14 @@ func (r *terminalRenderer) show(view tea.View, size tea.WindowSizeMsg) error {
 		}
 		return r.err
 	default:
+		if r.shown && r.size == size && reflect.DeepEqual(r.last, view) && (!flush || r.flushed) {
+			return nil
+		}
+		original := view
+		var written <-chan error
+		if flush {
+			view.WindowTitle, written = r.frames.next()
+		}
 		if r.size != size {
 			// Output is wrapped for raw mode, so Bubble Tea cannot query its
 			// terminal dimensions. Resize its cell buffer before the new view.
@@ -132,8 +148,19 @@ func (r *terminalRenderer) show(view tea.View, size tea.WindowSizeMsg) error {
 			r.size = size
 		}
 		r.program.Send(view)
-		r.last = view
+		if flush {
+			select {
+			case err := <-written:
+				if err != nil {
+					return err
+				}
+			case <-r.done:
+				return errors.Join(io.ErrClosedPipe, r.err)
+			}
+		}
+		r.last = original
 		r.shown = true
+		r.flushed = flush
 		return nil
 	}
 }
@@ -158,7 +185,10 @@ func (w rawTerminalWriter) Write(data []byte) (int, error) {
 	// the hardware cursor because DECSTBM homes it; the next diff still relies
 	// on the renderer's cursor position. This emits nothing on unchanged frames.
 	translated = append(translated, ansi.SaveCursor+ansi.SetTopBottomMargins(0, 0)+ansi.RestoreCursor...)
-	_, err := w.output.Write(translated)
+	n, err := w.output.Write(translated)
+	if err == nil && n != len(translated) {
+		err = io.ErrShortWrite
+	}
 	if err != nil {
 		return 0, err
 	}

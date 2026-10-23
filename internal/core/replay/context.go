@@ -47,6 +47,15 @@ func pinnedMemory(ctx context.Context, tx *canon.Tx, scope Scope, ref ledger.Ref
 	if strconv.FormatInt(revision, 10) != ref.Revision || visibility != "local" {
 		return memory.Item{}, Exclusion("source_changed")
 	}
+	// Corrections retain their predecessor's revision and do not necessarily
+	// advance the revocation epoch. Check again at publication/dispatch too.
+	var corrected bool
+	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM memory_item WHERE supersedes=?)", ref.ID).Scan(&corrected); err != nil {
+		return memory.Item{}, err
+	}
+	if corrected {
+		return memory.Item{}, Exclusion("source_changed")
+	}
 	var raw []byte
 	err = tx.QueryRowContext(ctx, `SELECT record FROM retract_visible_memory WHERE id=? AND person=? AND (holder=? OR holder='all') AND valid_from<=? AND (valid_until=0 OR valid_until>?)`, ref.ID, scope.Person, scope.Agent, at, at).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -98,7 +107,7 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 		if err != nil {
 			return nil, nil, err
 		}
-		raw, _ := json.Marshal(map[string]string{"role": "user", "content": "Remembered statement (" + item.ID + "): " + item.Content})
+		raw, _ := json.Marshal(map[string]string{"role": "user", "content": "Remembered statement (" + item.ID + "): " + memory.ProfileText(item.Content)})
 		profile = append(profile, raw)
 	}
 	// Check memory before any persona material or evidence fetch. Forgetting

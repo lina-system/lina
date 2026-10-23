@@ -445,7 +445,7 @@ func (s *Store) Profile(ctx context.Context, scope RecallScope, at int64, lines,
 	}
 	var result []Hit
 	for _, hit := range hits {
-		text := strings.Join(strings.Fields(hit.Content), " ")
+		text := ProfileText(hit.Content)
 		n := count(text)
 		if n < 0 {
 			return nil, ErrInvalid
@@ -458,6 +458,12 @@ func (s *Store) Profile(ctx context.Context, scope RecallScope, at int64, lines,
 		tokens -= n
 	}
 	return result, nil
+}
+
+// ProfileText is the single-line projection used by live profiles and replay.
+// It does not change the stored content or its revision.
+func ProfileText(content string) string {
+	return strings.Join(strings.Fields(content), " ")
 }
 
 // RestrictedEvents prevents raw ledger fallback or a second item from bypassing

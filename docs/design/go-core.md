@@ -1501,6 +1501,13 @@ restart persistence; `e2e/m2/headless-worker-recovery.json` covers Claude dispat
 - `internal/core/worker/acp` implements C-29 on that client. A profile holds the worker name, the command and arguments, the environment variables it sets (such as `CLAUDE_CODE_EXECUTABLE`), the version probe and the vendor rate-limit key it may read. Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added profiles come from an editable settings file defined by their own issue.
 - `kit/acp.StartPrompt` returns after writing `session/prompt` and supplies one buffered result. The adapter starts each turn through that barrier, so an immediate `session/cancel` cannot precede the prompt. `Prompt` retains its blocking convenience API; cancelling its wait sends no protocol cancel.
 - Dispatch records the post-initialization version and sends progress through `work.Service.ReportProgress`. This operation adds a `worker_progress` event to the existing ledger, validates the active run before idempotent retries, and projects the worker stage with source `worker_report`. It changes no storage schema and never claims completion.
+- A definitive authentication refusal during `session/new` returns
+  `worker.ErrNeedsSignIn` only after child cleanup, before any prompt. Dispatch
+  retains the worker/version/code as readiness evidence and lets the existing
+  chooser try another eligible worker. It creates no run for a refused session;
+  the next opened session uses the next actual run generation. Other start
+  errors retain their uncertain outcome. The Cursor installed-Core scenario in
+  `e2e/m2/cursor_worker_test.go` exercises this path.
 - An ACP session id is the thread id. ACP version 1 has no turn id, so Core assigns one per `session/prompt` request and binds every update, request and reply of that request to it, with the process generation and binding epoch.
 
 | ACP message | `worker.Event` |
@@ -1770,6 +1777,12 @@ assembly references and digest. This does not retain a transient ContextPacket
 or credentials. The identity-aware format calls the same `assemble.Instructions`
 builder as live turns; the recorded identity is used even if the agent is later
 renamed. Legacy layer-only records retain their original assembly format.
+Profile references retain their request order. Reconstruction uses the same
+single-line whitespace projection as the live profile over each authorized,
+masked memory revision. A correction successor excludes the predecessor even
+when its original revision is still stored. The installed-Core scenario in
+`e2e/m1/memory_replay_test.go` checks exact requests after restart, current
+memory exclusions and unchanged canon bytes through export and replay.
 A producer that lacks reconstructible assembly evidence is
 excluded with `missing_assembly`; replay never substitutes today's history or
 persona. Current assistant reply events and the structured source references in recorded

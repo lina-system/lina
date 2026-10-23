@@ -18,3 +18,17 @@ and C-29/C-60 in [Go Core](../../../../docs/design/go-core.md#work-engine).
 - **Unknown:** Synthetic lifecycle tests do not verify installed vendor versions,
   permission routing, work-tool MCP, recovery, steering or vendor quota sources.
   Those integrations have separate issues. No Hermes or Honcho code is copied.
+
+## Cursor readiness (#210)
+
+- **Seen:** [The protocol measurements](../../../../docs/research/worker-protocols.md)
+  record Cursor CLI 2026.10.22-27dcf5f answering ACP v1 without an agent version,
+  and rejecting `session/new` with -32000 without sign-in. The built-in profile
+  already runs `cursor-agent acp` and probes `cursor-agent --version`.
+- **Inferred:** That explicit authentication refusal is a failed readiness
+  check before any prompt. Close the partial client before returning a typed
+  sign-in failure; do not expose the agent's error message or data. Other
+  handshake failures do not prove that another worker can safely take over.
+- **Unknown:** A live signed-in Cursor round trip requires the person's account
+  and remains opt-in. Synthetic tests do not verify a vendor release. This
+  change implements the existing ACP contract, not a CRW or Hermes port.

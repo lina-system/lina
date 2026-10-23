@@ -24,6 +24,7 @@ import (
 
 var ErrThread = errors.New("ACP thread does not match current binding")
 var ErrUnsupported = errors.New("ACP operation is unsupported")
+
 var generations atomic.Uint64
 
 type Config struct {
@@ -158,6 +159,10 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	session, err := c.NewSession(handshake, wire.NewSessionRequest{Cwd: s.Workdir})
 	if err != nil {
 		c.Close()
+		var remote *wire.RPCError
+		if errors.As(err, &remote) && remote.Code == -32000 {
+			return worker.Thread{}, worker.ErrNeedsSignIn
+		}
 		return worker.Thread{}, err
 	}
 	a.mu.Lock()
