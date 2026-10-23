@@ -41,14 +41,32 @@ func projectWork(payload protocol.Payload) *state.WorkSummary {
 			c.State = *v.State
 		}
 		if v.Stages != nil {
+			refs := map[string][]string{}
+			if row.StageRefs != nil {
+				for _, ref := range *row.StageRefs {
+					number := ""
+					if ref.Number != nil {
+						number = ref.Number.String()
+					}
+					refs[ref.Kind+":"+number] = ref.Steps
+				}
+			}
 			for _, entry := range *v.Stages {
 				stage := state.WorkStage{Kind: entry.Kind, Label: panelText(entry.Label), State: entry.State}
 				if entry.Number != nil {
 					stage.Number = entry.Number.String()
 				}
 				if entry.Steps != nil {
-					for _, step := range *entry.Steps {
+					for i, step := range *entry.Steps {
 						value := state.WorkStageStep{Name: panelText(step.Name), State: step.State}
+						if ids := refs[stageKey(stage)]; i < len(ids) {
+							value.ID = ids[i]
+						}
+						if step.Workers != nil {
+							for _, w := range *step.Workers {
+								value.Workers = append(value.Workers, state.WorkStageWorker{Name: panelText(w.Name), State: w.State})
+							}
+						}
 						if step.StartedAt != nil {
 							value.Started, _ = time.Parse(time.RFC3339Nano, *step.StartedAt)
 						}

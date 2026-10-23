@@ -64,8 +64,14 @@ type WorkStage struct {
 }
 
 type WorkStageStep struct {
-	Name, State string
-	Started     time.Time
+	ID, Name, State string
+	Started         time.Time
+	Workers         []WorkStageWorker
+}
+
+type WorkStageWorker struct {
+	Name  string
+	State protocol.RunningState
 }
 
 // WaitingSummary is display-only. Answer identities remain on decision cards.

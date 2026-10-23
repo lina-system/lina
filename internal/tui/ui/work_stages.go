@@ -3,7 +3,6 @@ package ui
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/design"
@@ -14,6 +13,8 @@ import (
 type workStageView struct {
 	card, selected, expanded string
 	index                    int
+	step                     string
+	stepIndex, stepOffset    int
 }
 
 func stageKey(stage state.WorkStage) string { return stage.Kind + ":" + stage.Number }
@@ -59,7 +60,7 @@ func stageExpandable(stage state.WorkStage) bool {
 func (m *shellModel) syncWorkStage(card state.WorkCard) {
 	v := &m.conversation.workStages
 	if len(card.Stages) == 0 {
-		v.selected, v.expanded, v.index = "", "", 0
+		v.selected, v.expanded, v.index, v.step = "", "", 0, ""
 		return
 	}
 	index := min(v.index, len(card.Stages)-1)
@@ -67,6 +68,15 @@ func (m *shellModel) syncWorkStage(card state.WorkCard) {
 		index = currentWorkStage(card.Stages)
 	}
 	expanded := ""
+	if v.step != "" {
+		for _, stage := range card.Stages {
+			for _, step := range stage.Steps {
+				if step.ID == v.step && stageExpandable(stage) {
+					v.selected, v.expanded = stageKey(stage), stageKey(stage)
+				}
+			}
+		}
+	}
 	for i, stage := range card.Stages {
 		if stageKey(stage) == v.selected {
 			index = i
@@ -76,6 +86,23 @@ func (m *shellModel) syncWorkStage(card state.WorkCard) {
 		}
 	}
 	v.index, v.selected, v.expanded = index, stageKey(card.Stages[index]), expanded
+	if expanded == "" {
+		v.step, v.stepOffset = "", 0
+	} else if v.step != "" {
+		steps := navigableSteps(card.Stages[index].Steps)
+		if len(steps) == 0 {
+			v.step = ""
+		} else {
+			i := min(v.stepIndex, len(steps)-1)
+			for j, step := range steps {
+				if step.ID == v.step {
+					i = j
+					break
+				}
+			}
+			v.step, v.stepIndex = steps[i].ID, i
+		}
+	}
 }
 
 func (m *shellModel) workStageKey(card state.WorkCard, key string) {
@@ -84,11 +111,14 @@ func (m *shellModel) workStageKey(card state.WorkCard, key string) {
 	switch key {
 	case "esc":
 		if v.expanded != "" {
-			v.expanded = ""
+			v.expanded, v.step, v.stepOffset = "", "", 0
 		} else {
 			*v = workStageView{}
 		}
 	case "up", "down":
+		if m.moveWorkStep(card, key) {
+			return
+		}
 		if len(card.Stages) > 0 {
 			delta := 1
 			if key == "up" {
@@ -98,11 +128,15 @@ func (m *shellModel) workStageKey(card state.WorkCard, key string) {
 			v.selected = stageKey(card.Stages[v.index])
 		}
 	case "enter":
+		if v.step != "" {
+			return
+		}
 		if len(card.Stages) > 0 && stageExpandable(card.Stages[v.index]) {
 			if v.expanded == v.selected {
 				v.expanded = ""
 			} else {
 				v.expanded = v.selected
+				v.stepOffset = 0
 			}
 		}
 	case "ctrl+o":
@@ -184,7 +218,7 @@ func (m *shellModel) workStageRows(card state.WorkCard, width, height int) []str
 		}
 		stage := card.Stages[i]
 		prefix := "  "
-		if i == v.index {
+		if i == v.index && v.step == "" {
 			prefix = marker + " "
 		}
 		if stage.Number != "" {
@@ -192,7 +226,7 @@ func (m *shellModel) workStageRows(card state.WorkCard, width, height int) []str
 		}
 		rows = append(rows, clip(prefix+m.stageMark(stage.State)+" "+panelText(stage.Label)))
 		if i == expanded {
-			for _, row := range m.workStepRows(stage.Steps, stepBudget, tail) {
+			for _, row := range m.workStepRows(stage.Steps, stepBudget, width, tail) {
 				rows = append(rows, clip(row))
 			}
 		}
@@ -220,7 +254,9 @@ func visibleStages(stages []state.WorkStage, selected, expanded, budget int) []b
 	}
 	wanted := len(stages)
 	if expanded >= 0 {
-		wanted += len(stages[expanded].Steps)
+		for _, step := range stages[expanded].Steps {
+			wanted += stepRowCount(step)
+		}
 	}
 	if wanted <= budget {
 		return shown
@@ -243,47 +279,19 @@ func visibleStages(stages []state.WorkStage, selected, expanded, budget int) []b
 			next = true
 		}
 	}
+	// Replacing one entry by one count row saves no space and loses its label.
+	for i := 0; i < len(shown); {
+		if shown[i] { i++; continue }
+		start := i
+		for i < len(shown) && !shown[i] { i++ }
+		if i-start == 1 { shown[start] = true }
+	}
 	for i := len(stages) - 1; i >= 0 && stageRowCount(shown) > budget; i-- {
 		if !protected(i) {
 			shown[i] = false
 		}
 	}
 	return shown
-}
-
-func (m *shellModel) workStepRows(steps []state.WorkStageStep, budget int, tail string) []string {
-	if budget <= 0 {
-		return nil
-	}
-	steps = slices.DeleteFunc(slices.Clone(steps), func(s state.WorkStageStep) bool { return s.State == "superseded" })
-	shown := len(steps)
-	if shown > budget {
-		// Shedding preserves person waits before working, waiting and history.
-		rank := func(s state.WorkStageStep) int {
-			switch s.State {
-			case "needs_input":
-				return 0
-			case "working":
-				return 1
-			case "waiting":
-				return 2
-			case "done":
-				return 4
-			default:
-				return 3
-			}
-		}
-		slices.SortStableFunc(steps, func(a, b state.WorkStageStep) int { return rank(a) - rank(b) })
-		shown = max(0, budget-1)
-	}
-	rows := make([]string, 0, shown+1)
-	for _, step := range steps[:shown] {
-		rows = append(rows, "    "+m.stageMark(step.State)+" "+panelText(step.Name))
-	}
-	if shown < len(steps) {
-		rows = append(rows, "    "+fmt.Sprintf(design.Text(m.styles.options.Language, "work.more"), tail, len(steps)-shown))
-	}
-	return rows
 }
 
 func (m *shellModel) openWorkDetails() {
@@ -300,6 +308,7 @@ func (m *shellModel) openWorkDetails() {
 	if open {
 		m.syncWorkStage(card)
 		m.conversation.pager.workStage = m.conversation.workStages.selected
+		m.conversation.pager.workStep = m.conversation.workStages.step
 	}
 }
 
@@ -323,6 +332,20 @@ func (m *shellModel) workDetails() string {
 		for _, stage := range card.Stages {
 			if stageKey(stage) == p.workStage {
 				lines = []string{card.Name, stage.Label}
+				if p.workStep != "" {
+					lines = []string{card.Name, design.Text(m.styles.options.Language, "unknown")}
+					if stageExpandable(stage) && m.conversation.workStages.expanded == stageKey(stage) {
+						for _, step := range stage.Steps {
+							if step.ID == p.workStep && step.State != "superseded" {
+								lines = []string{card.Name, step.Name, m.stageMark(step.State)}
+								for _, worker := range liveStepWorkers(step) {
+									lines = append(lines, m.workWorkerLine(worker))
+								}
+							}
+						}
+					}
+					break
+				}
 				// Details follows the same disclosure rule as the panel.
 				if stageExpandable(stage) && m.conversation.workStages.expanded == stageKey(stage) {
 					for _, step := range stage.Steps {

@@ -254,3 +254,58 @@ func TestWorkPanelStagesUpdateAndDetails(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkPanelStagesWorkersAndStepIdentity(t *testing.T) {
+	var rows []protocol.ProgressRow
+	if err := json.Unmarshal([]byte(stagePanelRows), &rows); err != nil {
+		t.Fatal(err)
+	}
+	stages := *rows[0].Line.Stages
+	workers := []protocol.ProgressStageWorker{{Name: "Codex", State: protocol.RunningStateInProgress}}
+	(*stages[1].Steps)[0].Workers = &workers
+	// A malformed display update cannot put a worker under a closed entry.
+	(*stages[0].Steps)[0].Workers = &workers
+	refs := []protocol.ProgressStageRefs{}
+	for _, entry := range stages {
+		ref := protocol.ProgressStageRefs{Kind: entry.Kind, Number: entry.Number, Steps: []string{}}
+		if entry.Steps != nil {
+			for i := range *entry.Steps {
+				ref.Steps = append(ref.Steps, fmt.Sprintf("step-%s-%d", entry.Kind, i))
+			}
+		}
+		refs = append(refs, ref)
+	}
+	rows[0].StageRefs = &refs
+	raw, _ := json.Marshal(rows)
+	m := stagePanelShell(t, 100, design.English, false, string(raw))
+	if strings.Contains(m.View().Content, "[Codex]") {
+		t.Fatal("collapsed entry exposed worker")
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	view := ansi.Strip(m.View().Content)
+	if strings.Count(view, "[Codex]") != 1 {
+		t.Fatalf("E7: live worker absent or leaked outside active step:\n%s", view)
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if got := m.pagerText(); !strings.Contains(got, "Login screen") || strings.Contains(got, "Signup screen") {
+		t.Fatalf("step Details used the wrong selection: %s", got)
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	// Reorder and rename, keeping the opaque step references paired with Core's steps.
+	steps := *stages[1].Steps
+	steps[0].Name = "Renamed login"
+	steps[0], steps[1] = steps[1], steps[0]
+	refs[1].Steps[0], refs[1].Steps[1] = refs[1].Steps[1], refs[1].Steps[0]
+	raw, _ = json.Marshal(rows)
+	m.Update(shellData{Generation: 1, Message: workPanelFrame(t, 2, string(raw))})
+	m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if got := m.pagerText(); !strings.Contains(got, "Renamed login") || strings.Contains(got, "Signup screen") {
+		t.Fatalf("step identity did not survive replacement: %s", got)
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if strings.Contains(m.View().Content, "[Codex]") {
+		t.Fatal("collapsed step retained worker")
+	}
+}
