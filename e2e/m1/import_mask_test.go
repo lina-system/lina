@@ -72,10 +72,17 @@ func TestM1ImportJSONMasking(t *testing.T) {
 	defer cancel()
 	h.ctx = ctx
 	core := start(false)
-	c, _ := conversationClient(t, h)
-	agent, person := c.Welcome.Agents[0].AgentID, c.Welcome.PersonID
-	c.Close()
 	h.stopCore(core)
+	db, err := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agent, person string
+	err = db.QueryRowContext(h.ctx, `SELECT f.agent_id,r.person_id FROM agent_first_run f JOIN agents a ON a.id=f.agent_id JOIN agent_revisions r ON r.agent_id=a.id AND r.revision=a.revision`).Scan(&agent, &person)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
 	source := t.TempDir()
 	for _, kind := range []string{"lcm", "state"} {
 		db, err := canon.OpenSQLite(h.ctx, filepath.Join(source, kind+".db"))
