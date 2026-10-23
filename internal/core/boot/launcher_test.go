@@ -71,3 +71,28 @@ func TestClientInputCannotShadowALauncherRequest(t *testing.T) {
 		t.Fatalf("reserved input id was not refused: %v", err)
 	}
 }
+
+// A launcher line admitted by the first launcher build sits under its own
+// inbox source. A retry must still find it and keep its source, or it inserts
+// a second row and collides with the existing conversation event.
+func TestLauncherRetryFindsTheLauncherSourceAdmission(t *testing.T) {
+	r, session, first, second := managementFixture(t)
+	thread := launcherThreadPrefix + "req-legacy"
+	if _, err := inbox.New(r.db).Admit(t.Context(), inbox.Input{
+		Key:  inbox.Key{Conversation: "main:" + second, Source: launcherInputSource, NativeID: thread},
+		Body: []byte("an earlier launcher line"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.agents.Select(t.Context(), first, session.PersonID); err != nil {
+		t.Fatal(err)
+	}
+	agent, err := r.launcherAgent(t.Context(), session, protocol.LauncherRequest{RequestID: "req-legacy", Text: "again"})
+	if err != nil || agent != second {
+		t.Fatalf("launcher-source retry resolved %q, want %q: %v", agent, second, err)
+	}
+	source, err := r.launcherSource(t.Context(), "req-legacy")
+	if err != nil || source != launcherInputSource {
+		t.Fatalf("retry source = %q, want the admitting source %q: %v", source, launcherInputSource, err)
+	}
+}
