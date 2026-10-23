@@ -224,8 +224,36 @@ func TestM3WorkPanelLiveMatrix(t *testing.T) {
 			}
 		}
 	}
+	firstQuestion := pending
+	extraQuestions := []protocol.Question{question(48, "Check item 48"), question(47, "Check item 47")}
 	terminal = h.startTerminalSize([]string{"TERM=xterm-256color", "LANG=en_US.UTF-8", "LC_ALL=en_US.UTF-8"}, false, true, 120, 34)
 	waitResizeChrome(t, h, terminal, 34, "")
+	// The connection and waiting cards can render before the conversation
+	// snapshot. PgUp must act on known history, not an initially empty view.
+	if snap, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
+		return strings.Contains(strings.Join(panelCellRows(s, 0, 79), "\n"), "Panel item 49")
+	}); err != nil {
+		t.Fatalf("conversation history missing before scroll: %v\n%s", err, screenText(snap))
+	}
+	three, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
+		rows := panelCellRows(s, 80, 40)
+		firstCards := strings.Join(rows[2:8], "\n")
+		return strings.Contains(firstCards, "Panel item 47") && strings.Contains(firstCards, "Panel item 48") && strings.Contains(firstCards, "Panel item 49") && strings.Contains(firstCards, "Check item 47") && strings.Contains(firstCards, "Check item 48") && strings.Contains(firstCards, "Check item 49")
+	})
+	if err != nil {
+		t.Fatalf("three person-needed cards not visible: %v\n%s", err, screenText(three))
+	}
+	t.Logf("live matrix N=50 needs_person=3 visible_without_scroll=true\n%s", screenText(three))
+	for _, q := range extraQuestions {
+		pending = q
+		answer()
+	}
+	pending = firstQuestion
+	if snap, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
+		return strings.Contains(panelCellRows(s, 80, 40)[2], "Panel item 49") && strings.Contains(panelCellRows(s, 80, 40)[3], pending.Card.Summary)
+	}); err != nil {
+		t.Fatalf("single question order not restored: %v\n%s", err, screenText(snap))
+	}
 	h.keys(terminal, "Keep this draft")
 	beforeScroll := waitResizeChrome(t, h, terminal, 34, "Keep this draft")
 	h.keys(terminal, "\x1b[5~")
