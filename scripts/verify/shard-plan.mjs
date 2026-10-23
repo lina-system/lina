@@ -144,10 +144,10 @@ export function planComponents({ cwd, scope, inventory = readInventory, unitCoun
   const data = inventory(cwd);
   const byPath = new Map(data.packages.map(pkg => [pkg.path, pkg]));
   const selectedNames = new Set(scope.selectedComponents);
-  const metadata = scanScenarios({ cwd, packages: data.packages });
+  const metadata = scope.e2e === false ? { scenarios: [], sharedFiles: [] } : scanScenarios({ cwd, packages: data.packages });
   const scenarios = distinctScenarios(metadata.scenarios);
   const changed = scope.changed.filter(path => kind(path) !== 'docs');
-  const choice = selectScenarios({ scenarios, packages: data.packages, changed,
+  const choice = scope.e2e === false ? { selected: [], reason: 'pull-request-default' } : selectScenarios({ scenarios, packages: data.packages, changed,
     full: scope.automation || scope.dependencies || ['manual-full', 'empty-diff', 'base-unavailable', 'unmapped-paths'].includes(scope.reason),
     shared: changed.some(path => metadata.sharedFiles.includes(path)) || scenarios.some(scenario => scenario.unknownBinary),
   });

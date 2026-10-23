@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"name": "non-dev-origin", "missing_dev": false},
+    {"name": "missing-dev", "missing_dev": true}
+  ]
+}

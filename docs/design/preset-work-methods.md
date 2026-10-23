@@ -79,12 +79,12 @@ Core applies each field as data. Persona text never restates them.
 
 - **Tools.** The request declares Core's always-declared tools, then this agent's `tools.declare_first` groups, then on demand as today ([conversation-and-memory.md](conversation-and-memory.md#request-layout)). Availability is unchanged: every permitted tool stays reachable on demand by every agent, as [integrations.md](integrations.md#tool-classification) requires. The declared part of the request changes only with a record revision, so the cached prefix is kept.
 - **Workers.** A worker task is created only for an agent whose record sets `workers.dispatch`. Another agent's request for code work becomes an agent exchange to the agent whose record owns `code`, through the existing exchange and work mechanisms. Which worker runs a task stays the editable rule table of [work-and-delegation.md](work-and-delegation.md#choosing-the-worker).
-- **Reply shape.** The reply-type budgets remain the person's settings ([Reply shape](conversation-and-memory.md#reply-shape)). The record chooses the shape of each reply type for this agent. Core counts a breach of that shape with the budget breaches, per agent.
+- **Reply shape.** The reply-type budgets remain the person's settings ([Reply shape](conversation-and-memory.md#reply-shape)). The record chooses the shape of each reply type for this agent. Core counts a breach of that shape with the budget breaches, per agent. The installed conversation uses structured `present_result` data for shape checks: its declared `reply_type`, typed table/comparison alternatives and document recipient/audience fields. It never classifies free prose by wording. The prepared record and active fills are one snapshot for the request, presentation and measurement; later fills or preset changes cannot change an already recorded measurement. Each completed prose reply and each authored result revision has one `reply_check` ledger event, committed with its source and attributed to that source’s speaking agent. Restoring a card reads that check without counting again.
 - **Asking.** Core places the `ask` values in the ContextPacket's working-preference item. The question tool accepts at most `ask.per_turn` questions per turn. A question the person passes over closes at the person's next unrelated turn. The agent then proceeds with its stated recommendation and records that it did so, except for a target question under [What a message is about](conversation-and-memory.md#what-a-message-is-about): its instruction stays pending without execution until the person explicitly selects a target or cancels it. Skipping a question never grants approval for an outward or irreversible effect ([main-authority.md](main-authority.md#approval)).
 - **Done evidence.** A completion that Core records (a 할 일 marked done, a task delivered, a repair or an apply reported in a result card) carries an evidence reference of a kind the record requires for that work kind. Without one, Core records the completion as "claimed" and the card shows "not verified". Core never rewrites the reply. The breach counter counts every claimed completion.
 - **Hand-offs.** See Hand-offs.
 
-The record's values enter the request as one developer-role block after the persona layers. They change only with a record revision, so they stay inside the cached prefix of that agent. Filled values enter the ContextPacket with the blank-setting values, outside the cached prefix.
+The record's values enter the request as one developer-role block after the persona layers. They change only with a record revision, so they stay inside the cached prefix of that agent. Filled values enter the ContextPacket with the blank-setting values, outside the cached prefix. Conversation request evidence uses `persona-tui-work-method-v1` when it includes this record. Replay carries the pinned record in its optional `work_method` field and reconstructs the same prefix; older instruction formats keep their earlier prefix.
 
 ## Done evidence
 
@@ -111,6 +111,54 @@ Default requirements by work kind, which a record may extend but not weaken:
 | `document` (draft, sheet, invoice, contract) | `source_reopened` |
 | `purchase` | `receipt` |
 | `peer_report` | `labelled_claim` |
+
+Recorded completions carry a structured `completion` request with `work_kind`
+and `evidence` references (`kind`, `turn_id`, `call_id`). An empty `turn_id`
+selects the current prepared turn; storage retains its full identity. Core
+resolves each reference to a committed successful tool result in the same
+agent's conversation, excluding retracted inputs. Only completion-writing tools
+resolve evidence, and only the referenced turn/call pairs are read before the
+write transaction. Ordinary tools do not scan past results. A missing or failed call,
+another conversation's call, a wrong evidence kind, or a missing work kind
+cannot satisfy the requirement. The agent is responsible for choosing the
+observation that checks the work; this reference check does not replace the
+manager's judgment or reinterpret tool output as instructions. Every required
+kind, including active filled extensions, must be present. The decision retains
+the prepared work-method revision, required kinds and resolved references.
+
+`write_record` applies this check to a new transition to `completed`. A claim
+is saved as `claimed` and remains visible among active to-dos; it does not
+release dependent work. Planning edits preserve an existing completion. An unverified recurring
+completion does not advance to the next occurrence or disappear during
+model-free recurrence maintenance. A verified occurrence retains its evidence
+while the live record advances.
+`present_result` and `read_result` expose the same metadata on result cards.
+Ordinary previews carry no completion claim. Revising a completion card without
+new evidence cannot remove its unverified status. Core never changes the
+agent's reply, title, summary or body to enforce this policy.
+
+Task cards retain completion evidence separately from worker execution,
+manager acceptance and application. An applied result may still be claimed;
+the work display says "not verified" and does not count that claim as verified
+completion. `coding_decision` accepts the same optional `completion` request.
+The manager's `read_coding_delivery` reopens only the Core observations already
+supplied for its assigned receipt and head: PR checks and reviews, diff and base
+design. It reads no other task or conversation and reruns no command. The manager
+still judges whether those observations establish the required evidence kind;
+a green PR alone does not establish an owner-path run.
+Core resolves the completion references under the prepared manager policy and retains the assessment
+with the accepted receipt and head. Git application of that same delivery uses
+the retained assessment, including after restart; it does not require a live
+manager turn. A changed head or an older acceptance without an assessment
+cannot supply verified completion evidence. Acceptance alone does not mark the
+task done or increment a completion breach.
+Retrying an already recorded task acceptance preserves its first
+policy decision. A new completion has its own identity. Claimed completions
+increment the agent's durable counter once per identity; replays, record-index
+rebuilds and restart do not increment it again. When a delivered file changes, its current completion is invalidated with the
+apply evidence. Reopened work displays its current work state; earlier
+completion records remain historical evidence. Existing historical completions
+are not rewritten or counted retroactively.
 
 Evidence: [What counts as done](../research/m4-owner-agent-sessions.md#what-counts-as-done). In every role with done-claim corrections, the agent checked a proxy layer instead of the layer the person uses.
 

@@ -359,7 +359,8 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 
 **G2-07 Manager conformance check, one return, merge or close.** One check per delivered head against the work definition; one return for a missed definition, then merge or close.
-- Done when: a second check request for the same head is refused, while a fix generation with a new head gets one check; a failing required check is a Core-computed merge precondition that blocks without a verified verdict or P1 finding; a write-area violation is a Core-computed scope miss (`needs_changes`) without a model call; prose alone stores no verdict or finding. The worker owns CI and review fixes. Only a missed done condition, scope or design reference goes back once; a remaining gap closes the PR and leaves the task blocked.
+- Done when: a second check request for the same head is refused, while a fix generation with a new head gets one check; a failing required check is a Core-computed merge precondition that blocks without a verified verdict or P1 finding; missing or oversized change evidence finishes the review as blocked without a verdict or findings, even with an out-of-area path; with available evidence, a write-area violation is a Core-computed scope miss (`needs_changes`) without a model call; prose alone stores no verdict or finding. The worker owns CI and review fixes. Only a missed done condition, scope or design reference goes back once; a remaining gap closes the PR and leaves the task blocked.
+- Delivery increment (#144): a missed definition returns once with only P0/P1 ids; the same task/worktree/worker produces a new generation. A residual gap or terminal CI/review failure closes with its reason and blocks without verification. The existing merge service records application only after confirmation, releasing waiting work. `e2e/m2/delivery.json` covers return, merge, close and restart through installed Core.
 - Depends on: G2-02, G2-18, G2-19. Design refs: C-58; [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery).
 
 **G2-08 Worker stop, reconcile and one dispatch again.** Interrupts, snapshot reconcile, one dispatch again.
@@ -663,6 +664,10 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Done when: every fetched record is reported imported, lost or unsupported; each is mapped to a LINA id once; a failed switch is rolled back explicitly; no product path resolves a source id.
 - Depends on: G2-01, G2-17, G2-22. Design refs: [work-and-delegation.md](work-and-delegation.md#operational-switch).
 
+**G3-20 Work panel and stage list.** One manager per 일 with its steps as a graph in the work ledger; the TUI work panel, a sidebar with one card per 일 (name, elapsed time, what it is doing now) that opens to a numbered stage list, never a graph; the person's priority, pause, stop and run limit, enforced by Core.
+- Done when: a step-graph revision is admitted or refused whole, and a refused step name holds no id; the frontier and the stage list are the same for the same ledger; a done stage never reopens; a worker session ends when its step lands; rank, pause and the run limit take effect on the next scheduling pass; the checks E1 to E14 of T-16 pass in a 120x34 PTY; the running count counts lines, not tasks.
+- Depends on: G1-18, G2-02, G2-13, G3-09. Design refs: C-55, C-57, T-07, T-12, T-16; [work-and-delegation.md](work-and-delegation.md#step-graph), [work-and-delegation.md](work-and-delegation.md#stages), [surfaces.md](surfaces.md#progress-at-a-glance).
+
 ### 3.D Evidence and phase acceptance
 
 **G3-12 Non-competition evidence on a Linux box.** Tiers 1 and 2 of the evidence ladder.
@@ -671,7 +676,7 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 
 **G3-13 Phase 3 acceptance run.** Run script and evidence record for LINA 3.
 - Done when: one record holds every field of the phase rules and a result per check; every Node transition is one the state table allows; given-back slices are listed as not delivered.
-- Depends on: G3-02, G3-06, G3-07, G3-09, G3-12, G3-15, G3-16, G3-17, G3-18. Design refs: Phase rules.
+- Depends on: G3-02, G3-06, G3-07, G3-09, G3-12, G3-15, G3-16, G3-17, G3-18, G3-20. Design refs: Phase rules.
 
 ## Ended ids
 

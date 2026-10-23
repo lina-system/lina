@@ -23,8 +23,15 @@ func (s WorkListSource) Read(ctx context.Context, tx *canon.Tx, id string) (List
 		return ListItem{}, err
 	}
 	state := c.State
+	if c.State == "done" && c.Completion != nil && c.Completion.State == "claimed" {
+		state = "ready_for_review"
+	}
 	if state == "input_needed" {
 		state = "needs_input"
 	}
-	return ListItem{Person: s.Person, Agent: c.Task.AgentID, Summary: c.Task.Title, State: state}, nil
+	item := ListItem{Person: s.Person, Agent: c.Task.AgentID, Summary: c.Task.Title, State: state}
+	if c.WaitReason != nil {
+		item.Reason = c.WaitReason.Kind
+	}
+	return item, nil
 }
