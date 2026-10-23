@@ -100,6 +100,22 @@ func TestWorkPanelCardStagesAndLiveWorkers(t *testing.T) {
 	if strings.Contains(string(raw), `"workers"`) {
 		t.Fatal("ended worker remained visible")
 	}
+	// Active dispatches still belong to the decision bridge; only delivered
+	// sessions have transferred to worker.Live. Both must reach the panel.
+	entry := &workerSession{goalSession: "draft-session", goalPerson: r.person, goalAgent: r.agent, goalWorker: "codex", origin: r, adapter: probe, thread: worker.Thread{ID: "active-thread", TurnID: "active-turn"}, done: make(chan struct{})}
+	r.workers.mu.Lock()
+	r.workers.sessions[entry.thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, entry.thread.ID)
+		r.workers.mu.Unlock()
+		close(entry.done)
+	})
+	raw, _ = json.Marshal(read())
+	if !strings.Contains(string(raw), `"workers"`) {
+		t.Fatal("active dispatch was hidden until its turn finished")
+	}
 	g.Agent = "foreign-agent"
 	save()
 	if _, ok := read()["line"].(map[string]any)["stages"]; ok {

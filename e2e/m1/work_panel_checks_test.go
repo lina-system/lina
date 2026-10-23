@@ -656,8 +656,10 @@ func checkNoGraph(r *panelRecording) panelVerdict {
 // Stage rows have at most the two-cell selection prefix. Deeper state
 // marks belong to expanded steps; the optional action mark is presentation.
 func panelEntryLine(row string) bool {
-	indent := len(row)-len(strings.TrimLeft(row, " "))
-	if indent > 2 || strings.HasPrefix(row, "  › ") || strings.HasPrefix(row, "  > ") { return false }
+	indent := len(row) - len(strings.TrimLeft(row, " "))
+	if indent > 2 || strings.HasPrefix(row, "  › ") || strings.HasPrefix(row, "  > ") {
+		return false
+	}
 	return entryRow.MatchString(strings.TrimSpace(row))
 }
 

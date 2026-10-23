@@ -806,6 +806,24 @@ line holds no identity at all. A line without a stage list omits the field, whic
 older clients ignore. The stage word of a goal line is the label of its current
 stage entry.
 
+A work card carries the stages of its canonical goal link when that goal has
+the same person and agent. Missing or foreign links leave its list unknown.
+Core reuses the goal projection from the same canon snapshot; a client never
+joins cards to graphs by display names or row positions.
+
+The optional `stage_refs` on a progress row carries each entry's `kind`, optional
+`number`, and `steps`: opaque step refs in the same order as its displayed steps.
+These navigation refs stay outside `line` and never appear in panel text. A
+client without refs can still display entries, but cannot infer a step identity
+from its name. The optional `workers` on a displayed step is a list of `name`
+and `state` (`running_state`) pairs, without process or thread ids. It contains
+only active dispatch bindings or retained live sessions linked by that scoped
+step's canonical session handle. Active bindings also match the dispatch's
+original person and agent, independently of its manager persona. Core observes adapters outside canon, checks
+the bound turn, and drops ended or replaced sessions. An unsuccessful or stale
+observation reads unknown. Idle retained sessions read waiting. These additions
+grant no execution or worker-control authority.
+
 The optional `started_at` and `finished_at` fields are RFC 3339 instants recorded
 by Core; `now` is Core's short current-activity line. The TUI applies its snapshot
 clock offset when displaying elapsed minutes. Missing timestamps remain unknown,

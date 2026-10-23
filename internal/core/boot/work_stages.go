@@ -30,6 +30,9 @@ func (r *conversationRuntime) stageWorkers(ctx context.Context, units []progress
 				out[step.Session] = nil
 				readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				session, snapshot, live, err := registry.Observe(readCtx, step.Session)
+				if !live {
+					session, snapshot, live, err = r.activeStageWorker(readCtx, step.Session, u.Agent)
+				}
 				cancel()
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
@@ -48,6 +51,14 @@ func (r *conversationRuntime) stageWorkers(ctx context.Context, units []progress
 						state = protocol.RunningStateWaiting
 					case worker.Unknown:
 					}
+					if snapshot.State == worker.Waiting {
+						for _, request := range snapshot.Pending {
+							switch request.Method {
+							case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput", "mcpServer/elicitation/request", "session/request_permission":
+								state = protocol.RunningStateNeedsInput
+							}
+						}
+					}
 				}
 				name := laneText(session.Worker)
 				switch session.Worker {
@@ -62,4 +73,35 @@ func (r *conversationRuntime) stageWorkers(ctx context.Context, units []progress
 		}
 	}
 	return out, nil
+}
+
+// Dispatch owns an active adapter until it hands the finished turn to Live.
+// Use its trusted action binding, not the manager persona or a display name.
+func (r *conversationRuntime) activeStageWorker(ctx context.Context, handle, agent string) (worker.Session, worker.ThreadSnapshot, bool, error) {
+	registry := r.workers
+	if registry == nil {
+		return worker.Session{}, worker.ThreadSnapshot{}, false, nil
+	}
+	for _, e := range registry.entries() {
+		if e.goalSession != handle || e.goalPerson != r.person || e.goalAgent != agent {
+			continue
+		}
+		thread := e.progressTurn()
+		session := worker.Session{ID: handle, Worker: e.goalWorker, Started: e.started, Thread: thread}
+		snapshot, err := e.adapter.Snapshot(ctx, thread)
+		registry.mu.Lock()
+		current := registry.sessions[e.thread.ID] == e
+		registry.mu.Unlock()
+		select {
+		case <-e.done:
+			current = false
+		default:
+		}
+		// A new turn is a new observation, even while the same bridge survives.
+		if e.progressTurn() != thread {
+			current = false
+		}
+		return session, snapshot, current, err
+	}
+	return worker.Session{}, worker.ThreadSnapshot{}, false, nil
 }

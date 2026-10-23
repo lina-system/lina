@@ -681,6 +681,21 @@ Panel labels stay on one physical line; control, arrow and box-drawing character
 in supplied text cannot draw a graph. Removing the opened work returns to cards
 without moving focus or changing the draft.
 
+Within an expanded entry, Up and Down visit its steps before the next entry.
+Step selection follows the opaque ref supplied beside the display line, even
+when the name or position changes. Ctrl+O on a step shows that step's Details;
+closing the pager returns to the same selection. Expanded steps put person
+waits first, then working, waiting and remaining history. A step and its worker
+rows stay together when scrolling, with a count of steps hidden on either side.
+Worker state words use the client's language; worker rows disappear on collapse
+or when Core closes the step. A fold that would replace just one entry keeps
+that entry, since a count would save no row.
+
+`TestM3WorkPanelStages` uses the graphs and evaluators of `work-panel.json`,
+with `e2e/m3/work-panel-stages.json` selecting both widths, languages and glyph
+sets. It records collapsed and expanded views with real stub worker processes,
+then checks their artifacts and the removal of worker rows after landing.
+
 **Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place. In the focused card view, the selected name starts with the action mark (`›`, or `>` in ASCII); its width comes from the name budget so elapsed time stays intact.
 
 In both the sidebar and overlay, card navigation scrolls just enough to keep

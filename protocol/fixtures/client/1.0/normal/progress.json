@@ -43,7 +43,13 @@
                 {
                   "name": "Draft workshop",
                   "state": "working",
-                  "started_at": "2026-01-01T00:00:05Z"
+                  "started_at": "2026-01-01T00:00:05Z",
+                  "workers": [
+                    {
+                      "name": "Codex",
+                      "state": "in_progress"
+                    }
+                  ]
                 }
               ]
             },
@@ -65,7 +71,27 @@
               "state": "next"
             }
           ]
-        }
+        },
+        "stage_refs": [
+          {
+            "kind": "stage",
+            "steps": [
+              "step:0:0"
+            ],
+            "number": 1
+          },
+          {
+            "kind": "stage",
+            "steps": [
+              "step:1:0"
+            ],
+            "number": 2
+          },
+          {
+            "kind": "checking",
+            "steps": []
+          }
+        ]
       }
     ],
     "card_order": [

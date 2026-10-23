@@ -295,6 +295,7 @@ func TestWorkPanelStagesWorkersAndStepIdentity(t *testing.T) {
 	// Reorder and rename, keeping the opaque step references paired with Core's steps.
 	steps := *stages[1].Steps
 	steps[0].Name = "Renamed login"
+	steps[1].State = "working"
 	steps[0], steps[1] = steps[1], steps[0]
 	refs[1].Steps[0], refs[1].Steps[1] = refs[1].Steps[1], refs[1].Steps[0]
 	raw, _ = json.Marshal(rows)

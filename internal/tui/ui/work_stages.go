@@ -281,10 +281,17 @@ func visibleStages(stages []state.WorkStage, selected, expanded, budget int) []b
 	}
 	// Replacing one entry by one count row saves no space and loses its label.
 	for i := 0; i < len(shown); {
-		if shown[i] { i++; continue }
+		if shown[i] {
+			i++
+			continue
+		}
 		start := i
-		for i < len(shown) && !shown[i] { i++ }
-		if i-start == 1 { shown[start] = true }
+		for i < len(shown) && !shown[i] {
+			i++
+		}
+		if i-start == 1 {
+			shown[start] = true
+		}
 	}
 	for i := len(stages) - 1; i >= 0 && stageRowCount(shown) > budget; i-- {
 		if !protected(i) {
