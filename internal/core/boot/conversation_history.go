@@ -14,11 +14,17 @@ import (
 // The fallback fields preserve the pre-position history order for old records
 // and for durable outcomes committed before their first publication.
 const conversationHistorySources = `
- SELECT e.conversation_id,e.id AS item_key,e.id AS event_id,'' AS partial,'' AS turn_id,
+ SELECT e.conversation_id,CASE WHEN e.scaffold_kind='result' AND e.speaker_kind='agent' AND json_valid(e.body)
+        THEN 'result-card:'||json_extract(e.body,'$.result_id') ELSE e.id END AS item_key,
+        e.id AS event_id,'' AS partial,'' AS turn_id,
         e.rowid AS fallback,1 AS phase,0 AS partial_position
  FROM conv_event e
  WHERE (e.speaker_kind IN ('person','agent','forwarded') OR e.scaffold_kind IN ('interruption','failure','skill_change','persona_change','worker_session','run_handoff','background_notice','worker_result','coding_handoff','timer','plan_rejection'))
-   AND coalesce(e.scaffold_kind,'')<>'result'
+   AND (coalesce(e.scaffold_kind,'')<>'result' OR (e.speaker_kind='agent' AND
+        CASE WHEN json_valid(e.body) THEN json_type(e.body,'$.body')='object' ELSE 0 END
+        AND EXISTS(SELECT 1 FROM result_heads h WHERE h.event_id=e.id)
+        AND NOT EXISTS(SELECT 1 FROM plan_drafts p JOIN result_heads h ON h.id=p.result_id WHERE h.event_id=e.id)))
+
  UNION ALL
  SELECT e.conversation_id,h.id,e.id,'','',e.rowid,1,0
  FROM result_heads h JOIN plan_drafts p ON p.result_id=h.id JOIN conv_event e ON e.id=h.event_id

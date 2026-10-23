@@ -28,6 +28,16 @@ if(name==='host-report') {
 } else if(name==='gh') {
  if(args[0]==='pr' && args[1]==='create') { event('worker-pr'); console.log('https://github.com/fixture/project/pull/17'); }
  else if(args[0]==='pr' && args[1]==='view') {
+  if(process.env.LINA_GOAL_MODE?.startsWith('completion-') && !fs.existsSync(path.join(root,'owner-path-proof'))) {
+   // Simulate a completed CI owner-path check against the actual worker head.
+   // Reading this observation later does not rerun the check.
+   const pr=read(), wd=fs.readFileSync(path.join(root,'workdir'),'utf8');
+   const passed=git('-C',wd,'show',pr.headRefOid+':result.txt')==='worker produced this result';
+   pr.statusCheckRollup.push({__typename:'CheckRun',name:'owner-path-run',status:'COMPLETED',conclusion:passed?'SUCCESS':'FAILURE'});
+   fs.writeFileSync(path.join(root,'pr.json'),JSON.stringify(pr));
+   fs.writeFileSync(path.join(root,'owner-path-proof'),pr.headRefOid);
+   event('owner-path-check');
+  }
   if(process.env.LINA_GOAL_MODE==='external-merge') {
    const countFile=path.join(root,'pr-reads');
    const count=(fs.existsSync(countFile)?Number(fs.readFileSync(countFile,'utf8')):0)+1;
@@ -50,7 +60,10 @@ if(name==='host-report') {
   let body;
   if(endpoint==='graphql') body={data:{repository:{pullRequest:{headRefOid:pr.headRefOid,reviewThreads:{nodes:[],pageInfo:{hasNextPage:false}}}}}};
   else if(endpoint.endsWith('/pulls/17')) body={number:17,state:sha?'closed':'open',merged:!!sha,head:{sha:pr.headRefOid},base:{ref:'dev',repo:{full_name:'fixture/project'}},merge_commit_sha:sha};
-  else if(endpoint.includes('/check-runs?')) body={total_count:1,check_runs:[{name:'foundation',status:'completed',conclusion:'success'}]};
+  else if(endpoint.includes('/check-runs?')) {
+   const checks=pr.statusCheckRollup.filter(c=>c.__typename==='CheckRun').map(c=>({name:c.name,status:c.status.toLowerCase(),conclusion:c.conclusion.toLowerCase()}));
+   body={total_count:checks.length,check_runs:checks};
+  }
   else if(endpoint.includes('/status?')) body={sha:endpoint.split('/')[4],total_count:0,statuses:[]};
   else if(endpoint.includes('/git/ref/')) body={ref:'refs/heads/dev',object:{type:'commit',sha}};
   else if(endpoint.includes('/commits/')) body={sha};
