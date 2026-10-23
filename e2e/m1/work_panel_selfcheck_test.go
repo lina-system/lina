@@ -205,6 +205,92 @@ func TestM3WorkPanelChecksAllowRunningStepsToDrain(t *testing.T) {
 	}
 }
 
+// TestM3WorkPanelVisibleMatchesTheWaitingCard covers the fixed corpus's
+// repeated names: at N = 50 a waiting card shares its name with earlier cards,
+// so E1 must find the waiting card itself, not another card with its name.
+func TestM3WorkPanelVisibleMatchesTheWaitingCard(t *testing.T) {
+	base := syntheticPanelRecording(t)
+	for _, tc := range []struct {
+		name   string
+		hidden bool
+		want   bool
+	}{
+		{"waiting cards shown", false, true},
+		{"waiting cards hidden behind namesakes", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := cloneRecording(base)
+			c := &r.Cases[3]
+			for i := range c.Cards {
+				var admitted int
+				if _, err := fmt.Sscanf(c.Cards[i].ID, "일-%d", &admitted); err != nil {
+					t.Fatal(err)
+				}
+				c.Cards[i].Name = fmt.Sprintf("이름 %d", admitted%10)
+			}
+			drawn := *c
+			if tc.hidden {
+				// The frame keeps the waiting cards' namesakes and pushes the
+				// waiting cards themselves past the overflow row.
+				drawn.Cards = append(slices.Clone(c.Cards[c.Waiting:]), c.Cards[:c.Waiting]...)
+			}
+			first := &c.Frames[0]
+			first.Panel, first.Rows = renderSyntheticPanel(drawn, first.View, first.Filter, first.At)
+			for _, verdict := range evaluateWorkPanel(&r) {
+				if verdict.Check != "E1 visible" {
+					continue
+				}
+				if !verdict.Input || verdict.Passed != tc.want {
+					t.Fatalf("E1: input=%t passed=%t, want pass=%t (%s)", verdict.Input, verdict.Passed, tc.want, verdict.Detail)
+				}
+				return
+			}
+			t.Fatal("E1 was not evaluated")
+		})
+	}
+}
+
+// TestM3WorkPanelOrderFollowsAdjacentMoves covers E11 for every move a key can
+// make: Shift+Up and Shift+Down move an 일 one place, from anywhere in the rank.
+func TestM3WorkPanelOrderFollowsAdjacentMoves(t *testing.T) {
+	base := syntheticPanelRecording(t)
+	for _, tc := range []struct {
+		name     string
+		from, to int
+		want     bool
+	}{
+		{"up to the top", 1, 0, true},
+		{"down from the top", 0, 1, true},
+		{"up from below second place", 5, 4, true},
+		{"down from the middle", 5, 6, true},
+		{"down from second place", 1, 2, true},
+		{"jump to the top", 5, 0, false},
+		{"jump down", 2, 4, false},
+		{"unchanged", 5, 5, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := cloneRecording(base)
+			c := &r.Cases[2]
+			before := c.Passes[0].Rank
+			moved := before[tc.from]
+			rank := slices.Delete(slices.Clone(before), tc.from, tc.from+1)
+			rank = slices.Insert(rank, tc.to, moved)
+			pass := &c.Passes[1]
+			pass.Moved, pass.Rank, pass.Running, pass.Started = moved, rank, rank[:3], []string{rank[0]}
+			for _, verdict := range evaluateWorkPanel(&r) {
+				if verdict.Check != "E11 order" {
+					continue
+				}
+				if !verdict.Input || verdict.Passed != tc.want {
+					t.Fatalf("E11: input=%t passed=%t, want pass=%t (%s)", verdict.Input, verdict.Passed, tc.want, verdict.Detail)
+				}
+				return
+			}
+			t.Fatal("E11 was not evaluated")
+		})
+	}
+}
+
 func rankOfIDs(c *panelCase) []string {
 	out := []string{}
 	for _, card := range c.Cards {

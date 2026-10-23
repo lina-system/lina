@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"path"
 	"slices"
+	"strings"
 )
 
 type FileStamp struct {
@@ -19,12 +20,32 @@ type FileStamp struct {
 	Modified int64  `json:"modified"`
 }
 
+func (f *Files) isRetainedCaptureEntry(name string, entry fs.DirEntry, captured map[string]bool) bool {
+	slotDir := ""
+	switch {
+	case entry.IsDir() && strings.HasPrefix(path.Base(name), recoveryPrefix):
+		slotDir = name
+	case entry.Type().IsRegular() && path.Base(name) == "file" && strings.HasPrefix(path.Base(path.Dir(name)), recoveryPrefix):
+		slotDir = path.Dir(name)
+	default:
+		return false
+	}
+	if ok, seen := captured[slotDir]; seen {
+		return ok
+	}
+	info, err := f.versions.Lstat(recoveryMarker(slotDir))
+	ok := err == nil && info.Mode().IsRegular()
+	captured[slotDir] = ok
+	return ok
+}
+
 // manifest is an executor-only operation, not a model tool. Hashes are captured
 // inside the sandbox; the shell's receipt can describe changed paths even when
 // its exit status is a failure. Symlinks and protected Git metadata are excluded.
 func (f *Files) manifest(ctx context.Context) (FileResult, error) {
 	result := FileResult{Manifest: map[string]FileStamp{}}
 	entries := 0
+	captured := map[string]bool{}
 	err := fs.WalkDir(f.root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -32,9 +53,11 @@ func (f *Files) manifest(ctx context.Context) (FileResult, error) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		entries++
-		if entries > 10000 {
-			return ErrFileSize
+		if !f.isRetainedCaptureEntry(name, entry, captured) {
+			entries++
+			if entries > 10000 {
+				return ErrFileSize
+			}
 		}
 		if path.Base(name) == ".git" {
 			if entry.IsDir() {

@@ -899,7 +899,9 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
   contains, so one reported window is that limit. Each stopped limit keeps the
   reset its own row reported, including when usage is still under the cap.
   The worker stays blocked until every stopped limit reaches its own reset or
-  a later measurement shows that same limit below the cap. A newer row for
+  a later measurement shows that same limit below the cap. A recovered limit
+  stays recovered for that stop, even when a later snapshot lacks its newer
+  row. A newer row for
   another window or limit does not clear the stop, and a healthy window's
   reset cannot extend an exhausted one. The snapshot that missed the failure,
   and any older or unknown snapshot, does not clear the stop. Rows from
@@ -1064,6 +1066,10 @@ worker notices. `worker_snapshot` can return the recorded terminal outcome when
 no live session remains, explicitly marked non-live; that record cannot authorize
 worker control. Unstarted completion follow-ups resume from canon after restart;
 a claimed turn is never replayed and a committed reply is not duplicated.
+A successful completion committed before the restart settles that exact turn's
+recovery record, so a restart never presents the finished session as an unknown
+live placeholder or recovers it again. Failed and transport-loss notices stay
+unknown until the thread is read.
 Channel replies follow the completion back to its original input, retaining that
 input's address and the existing outbound delivery identity across restart.
 Recovery resolves the retained channel inbox address and its current most-specific
@@ -2140,8 +2146,11 @@ or an executable. The file contains:
   requires the criterion's `expected` record fields. Registration supplies the
   reader, never authority to perform the effect being verified.
 
-QA and outcome checks run in a disposable checkout of the observed merge commit.
-Deploy uses that same pinned revision. Core passes `LINA_GOAL_REVISION`,
+QA and a task-bound outcome check run in a disposable checkout of that task's
+current result. A repair whose QA passes replaces the failed commit for those
+checks; the merge check stays on the historical merge commit. A task with no
+repair uses its observed merge commit. Deploy uses the pinned revision of the
+service repository. Core passes `LINA_GOAL_REVISION`,
 `LINA_GOAL_TARGET` and `LINA_GOAL_ACTION` to the registered command. Its JSON output
 contains `revision`, `target`, `passed` (boolean) and a nonempty `evidence` string
 describing the observation. Core requires matching revision and target, retains
@@ -2167,7 +2176,9 @@ output and current external evidence again before closing the goal. An earlier
 merge remains valid when its recorded commit is still an ancestor of the current
 base; a base that removed the commit fails the check. A custom criterion targeting
 a repository uses that repository's observed merged revision, independently of
-the service repository. Completion
+the service repository. A custom criterion that names a task uses that task's
+current result revision, the same revision its QA check uses. Evidence recorded
+against a superseded merge cannot meet it. Completion
 returns to the originating conversation and survives restart without repeating
 effects. An uncertain worker, merge, QA or deployment is observed; it is never
 re-executed by the observation path. A deployment retains its original connection

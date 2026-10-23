@@ -63,7 +63,10 @@ type Store struct {
 	ReadCandidateMaterial func(context.Context, string, int64) (string, error)
 }
 
-var recordsMu sync.Mutex // Includes every handle, including the result saver.
+// recordsMu serializes every store in the process, including the result saver.
+// Parallel tests may contend on it. A test must not depend on the order in
+// which it acquires the mutex relative to another test.
+var recordsMu sync.Mutex
 var _ Repo = (*Store)(nil)
 
 func Open(stateRoot string, db Canon) (*Store, error) {
