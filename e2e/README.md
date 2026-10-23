@@ -97,6 +97,13 @@ The process harness keeps the spawning OS thread alive until the child is
 reaped. Restored-memory and replay startup paths use the same readiness check
 as installs.
 
+Installed goal-worker recovery scenarios use the Linux worker-load fixture on
+every Core start. The registered goal monitor controls initial assignment;
+the recovery queue separately samples OS load. A private Bubblewrap mount of
+`/proc/loadavg` keeps both recovery outcomes independent of unrelated host load,
+while preserving the installed binary and its normal capacity checks. Failures
+report the dispatch state, wait reason and observed worker launches.
+
 `scripts/verify/scope.mjs` registers `e2e/` and `./e2e/...` with the `lina`
 component. Foundation builds, vets, analyzes and runs selected tests uncached.
 Its scenario planner follows subprocess command dependencies as well as Go
@@ -147,6 +154,14 @@ No scripted provider response is used by these owner cases. `TestM1TUIChatPasteI
 provides the separate account-free paste regression; `TestAlphaWorkerCrashInstalledCore`
 checks that killing Core does not erase an acknowledged worker from its public
 lane snapshot.
+
+The coding journey checks the delivered answer, result file, executable function
+and original worker session after either a form answer or a spoken continuation.
+It does not require a card during that transition: the worker may still be idle
+or already finished. `TestM3WorkPanelLiveCodexWorker` checks the card while Core's
+worker is held at an unanswered approval or question, then verifies its artifact
+and restart. `TestAlphaWorkCardWaitsForProgress` holds back the card and its activity
+in separate recorder frames, without relying on execution speed.
 
 Set `LINA_ALPHA_CAPTURES` to a private absolute output directory to retain
 rendered text, ANSI output and terminal cells at each observed transition.

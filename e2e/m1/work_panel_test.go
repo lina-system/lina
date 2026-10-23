@@ -334,6 +334,9 @@ func TestM3WorkPanelLiveCodexWorker(t *testing.T) {
 				t.Fatalf("start changed or activity stuck: %+v", line)
 			}
 			activity = *line.Now
+			// The fixture cannot complete until this callback returns and its
+			// pending approval/question is answered. Check the card in that state.
+			alphaWorkCardScreen(t, h, terminal, design.English)
 			expected := activity
 			u := render.Unicode{}
 			if u.Width(expected) > 38 {

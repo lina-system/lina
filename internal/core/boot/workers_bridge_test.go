@@ -38,7 +38,7 @@ func TestWorkerQuotaAvailableWithoutMutationOrExtraAuthority(t *testing.T) {
 }
 
 func TestWorkerProjectionAndReceiptRejectForeignScope(t *testing.T) {
-	e := &workerSession{thread: worker.Thread{ID: "thread", TaskID: "task", AttemptID: "attempt", ProcessGeneration: 3, BindingEpoch: 1}, packet: "explicit task only", workdir: "/work", origin: &conversationRuntime{main: "node"}}
+	e := &workerSession{thread: worker.Thread{ID: "thread", TaskID: "task", AttemptID: "attempt", ProcessGeneration: 3, BindingEpoch: 1}, executionGeneration: 3, packet: "explicit task only", workdir: "/work", origin: &conversationRuntime{main: "node"}}
 	event := worker.Event{Thread: e.thread, Kind: worker.ToolCallEvent, ToolCall: &worker.ToolCall{ID: "request", CallID: "call", Namespace: "lina", Name: "read_projection", Arguments: json.RawMessage(`{}`)}}
 	event.Thread.TurnID = "turn"
 	result, err := e.executeWorkTool(t.Context(), event)
@@ -46,7 +46,7 @@ func TestWorkerProjectionAndReceiptRejectForeignScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	projection := result.(map[string]any)
-	if projection["task_packet"] != e.packet || projection["assignment_id"] != "task" || projection["revision"] == "" || len(projection["memory"].([]string)) != 0 || len(projection["materials"].([]string)) != 0 {
+	if projection["execution_generation"] != 3 || projection["task_packet"] != e.packet || projection["assignment_id"] != "task" || projection["revision"] == "" || len(projection["memory"].([]string)) != 0 || len(projection["materials"].([]string)) != 0 {
 		t.Fatalf("scope: %+v", projection)
 	}
 	event.ToolCall.Arguments = json.RawMessage(`{"task":"other"}`)

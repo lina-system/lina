@@ -151,7 +151,7 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 	}
 	owner := newConversationView(r.router.root, record.Owner, record.Manager)
 	owner.codingDelivery = delivery
-	e := &workerSession{cancelTask: func(ctx context.Context) error { return r.workerDispatch.Cancel(ctx, record.ID) }, adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
+	e := &workerSession{cancelTask: func(ctx context.Context) error { return r.workerDispatch.Cancel(ctx, record.ID) }, adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, executionGeneration: record.Attempt, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
 	r.workers.mu.Lock()
 	r.workers.sessions[thread.ID] = e
 	r.workers.mu.Unlock()

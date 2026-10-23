@@ -38,6 +38,22 @@ func alphaConversationScreen(t *testing.T, h *harness, terminal *terminal, langu
 // person or model is unbounded by those display units; do not require "0m".
 var alphaWorkTitle = regexp.MustCompile(`^.+ +(?:[0-9]m|[1-5][0-9]m|(?:[1-9]|1[0-9]|2[0-3])h [0-5][0-9]m|[1-9][0-9]*d (?:[01][0-9]|2[0-3])h)$`)
 
+// Call only while the fixture holds the worker active or awaiting an answer.
+// A connected conversation does not imply that its progress update arrived.
+func alphaWorkCardScreen(t *testing.T, h *harness, terminal *terminal, language design.Language) tuiterm.Snapshot {
+	t.Helper()
+	alphaConversationScreen(t, h, terminal, language)
+	ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+	defer cancel()
+	snapshot, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
+		return alphaHasWorkCard(strings.Join(panelCellRows(s, 80, 40), "\n"))
+	})
+	if err != nil {
+		t.Fatalf("work card did not arrive: %v; cells=%s", err, screenText(snapshot))
+	}
+	return snapshot
+}
+
 func alphaHasWorkCard(panel string) bool {
 	rows := strings.Split(panel, "\n")
 	for i := 0; i+1 < len(rows); i++ {

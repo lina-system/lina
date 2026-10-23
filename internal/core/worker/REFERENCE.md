@@ -23,3 +23,23 @@ wire types. The official [app-server documentation](https://developers.openai.co
 confirms version-specific generation and the initialize/initialized handshake;
 it is not the source of wire constants. Schema generation verifies a type
 baseline, not a runtime-tested worker version.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-29 session integration
+
+#132 connects session start, input, interrupt and snapshot to Core's normal conversation tool registry.
+Launch receipts record the installed version and control handle; version and terminal-output notices survive in conversation history.
+The per-session process belongs to Core, and hard activity is held per active turn.
+Session completion is not task delivery; full work dispatch, recovery, approvals and dynamic work tools remain their separate roadmap steps.
+
+### C-29 work tools and approvals
+
+The #133 running-Core bridge declares the four `lina` dynamic work tools, routes worker approvals through authenticated authority cards carrying the originating conversation, claims each answer before its single send, and exposes measured/unknown quota rows through `worker_quota`.
+Request withdrawal and terminal turns stop pending decisions.
+Tool results and completion receipts remain worker evidence, not verification verdicts.
+The headless `e2e/m2/codex-work-tools.json` scenario covers the stdio and conversation protocol round trip.

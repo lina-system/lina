@@ -13,6 +13,7 @@ func init() {
 		"agents.role.investing":   {"Investing · Advice only", "투자 · 조언만 제공"},
 		"agents.role.legal":       {"Legal · Drafts only", "법률 · 초안만 작성"},
 		"agents.from_description": {"From a description", "설명으로 생성"},
+		"agents.id":               {"id", "ID"},
 		"agents.advice_only":      {"Advice only", "조언만"},
 		"agents.draft_only":       {"Drafts only", "초안만"},
 		"agents.development":      {"Development owner", "개발 담당"},

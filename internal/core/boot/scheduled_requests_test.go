@@ -21,6 +21,8 @@ type scheduledAnswerProbe struct {
 	sent    chan struct{}
 }
 
+func (*scheduledAnswerProbe) Name() string { return "codex" }
+
 func (p *scheduledAnswerProbe) Answer(_ context.Context, thread worker.Thread, answer worker.Answer) error {
 	p.threads = append(p.threads, thread)
 	p.answers = append(p.answers, answer)

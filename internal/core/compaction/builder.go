@@ -25,6 +25,11 @@ type Builder struct {
 	Agent, Conversation string
 	Model               provider.ModelRef
 	Manager             bool
+	// CurrentInput identifies the retained input of a conversation turn. Later
+	// queued person/forwarded inputs count in the publication frontier, but are
+	// not part of this turn's request or summary sources. Empty disables this
+	// conversation-specific boundary for other builder callers.
+	CurrentInput string
 	// GenerationRevision binds reasoning effort and other summary route settings.
 	GenerationRevision string
 	// PreparationJob names the Core-registered Moirai job for this conversation.
@@ -101,6 +106,33 @@ func (b *Builder) capture(ctx context.Context, segment PassSegment) (Proposal, P
 			}
 			kept[r.ID] = true
 		}
+		queued := map[string]bool{}
+		if b.CurrentInput != "" {
+			if !kept[b.CurrentInput] {
+				return ErrCoverage
+			}
+			rows, err := tx.QueryContext(ctx, `SELECT id FROM conv_event WHERE conversation_id=? AND speaker_kind IN ('person','forwarded') AND rowid > (SELECT rowid FROM conv_event WHERE id=? AND conversation_id=?)`, b.Conversation, b.CurrentInput, b.Conversation)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					rows.Close()
+					return err
+				}
+				if wanted[id] || inherited[id] {
+					rows.Close()
+					return ErrCoverage
+				}
+				queued[id] = true
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
+				return err
+			}
+		}
 		all, err := events(ctx, tx, b.Conversation)
 		if err != nil {
 			return err
@@ -128,6 +160,11 @@ func (b *Builder) capture(ctx context.Context, segment PassSegment) (Proposal, P
 				}
 				p.Verbatim = append(p.Verbatim, e.id)
 				delete(kept, e.id)
+				tail = true
+			case queued[e.id] && skipReason(e) == "":
+				// Keep the id for exact coverage without reading its body into
+				// the resolved segment or changing the caller's request view.
+				p.Verbatim = append(p.Verbatim, e.id)
 				tail = true
 			default:
 				c := Coverage{EventID: e.id, Reason: skipReason(e)}

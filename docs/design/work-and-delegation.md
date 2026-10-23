@@ -1100,7 +1100,7 @@ One adapter drives every worker that speaks the Agent Client Protocol, version 1
 - **Session.** `session/new` carries the worktree as `cwd` and LINA's tool server as the only entry of `mcpServers`; the worker's own MCP servers stay in its own configuration. LINA calls `session/set_config_option` only to apply a model or effort that the worker profile names, and never changes the session mode. The task packet goes out as the first `session/prompt`.
 - **Events.** Message, thought, tool-call and plan updates are progress; `usage_update` is usage; plan entries become stage summaries labelled as the worker's report. An unknown update keeps its JSON and never ends a turn. Sub-agent updates are unstable in version 1 and are not consumed; a worker's own sub-agents stay inside its turn.
 - **Questions and approvals.** `elicitation/create` in form mode takes the authenticated waiting-card answer path, and secret input is unsupported, as for Codex. `session/request_permission` follows Approvals.
-- **Work tools.** LINA's tool server is a stdio MCP server provided by the `lina` command and named in `session/new` for that session only. It holds a token for that one session and relays calls to Core over its local socket. Its tools have the names and schemas of the Codex `lina` tools. It installs nothing in the person's setup and ends with the session.
+- **Work tools.** LINA's tool server is a stdio MCP server provided by the `lina` command and named in `session/new` for that session only. It holds a token for that one session and relays calls to Core over its local socket. Its tools have the names and schemas of the Codex `lina` tools. It installs nothing in the person's setup and ends with the session. Core supplies exactly one server, named `lina`, running `lina worker-tools`. A private per-session socket authenticates its token; Core derives the thread, turn, process generation and binding epoch. Listing tools is allowed during session initialization. Calls require an active turn, and pending calls expire when that turn ends. A foreign token or a call after the turn ends is refused. Tokens are neither persisted nor included in command arguments.
 - **Completion and cancel.** As Completion signals and Control define. A turn that is still open when the process exits is a failure; a `cancelled` stop reason without a cancel from Core is reported as cancelled by the worker.
 - **Client boundary.** Request ids may be strings, integers or null; replies preserve the original id, and an omitted id denotes a notification. Closing the client waits for transport and owned-process teardown even when another failure started cleanup. The shared client marks load replay before publishing updates and clears that mark when it reads the load response. Its pending permission handles expire when the prompt replies. Cancelling a local wait leaves the operation outstanding; only an explicit `session/cancel` requests interruption. A stalled consumer that fills a client event queue fails the connection rather than dropping progress or blocking completion.
 - **Recovery.** Core records the session id. Once-only recovery starts the same command again in the same worktree and sends `session/resume` where the worker advertises it, otherwise `session/load`. The history that `session/load` replays is not reported again as new progress. A worker that offers neither is restarted with a new session.
@@ -1120,8 +1120,8 @@ Card observations are coalesced at 250 ms intervals, with a final flush before
 the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
-This lifecycle slice advertises progress and completion. Approval/question
-routing, work-tool MCP, steering, quota and recovery remain separate integrations;
+The adapter advertises progress, completion and work tools. Native ACP approval/question
+routing, steering, quota and recovery remain separate integrations;
 requesting a capability that is not implemented fails before dispatch.
 
 #### Claude Code through ACP
@@ -1321,8 +1321,8 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 - LINA's work tools reach a worker through its adapter: for Codex, `thread/start.dynamicTools` in the namespace `lina`. LINA Core identifies the caller by thread, turn and call ids. For an ACP worker, it is one stdio MCP server that `session/new` names for that session only (see ACP adapter). For another worker, the adapter uses the per-run mechanism of that tool that installs nothing in the user's setup. Where a tool has no such channel, the adapter builds the receipt from the tool's final result and the pull request it opened, and marks it adapter-derived.
 - The tools are: submit a completion receipt; ask a question; send a coordination request (to LINA Core only, never to another worker); read the task projection, which is the LINA materials and memory projections the task may read. GitHub work and other integrations need no LINA tool; the worker uses its own setup.
 - LINA Core declares the tools and handles `item/tool/call`, or the MCP tool calls of an ACP worker's session server. The receipt and question schemas are LINA's own and are versioned with the worker adapter.
-- Scheduled `ask` calls and native worker questions retain the originating person, agent and conversation. Answers use the recorded request and thread/turn binding. Foreign and stale answers are refused; repeated answers return their recorded outcome without a second send.
-- Only the worker thread itself submits receipts.
+- Scheduled `ask` calls and native worker questions retain the originating person, agent and conversation. Their question forms name the worker that asked. Answers use the recorded request and thread/turn binding. Foreign and stale answers are refused; repeated answers return their recorded outcome without a second send.
+- Only the worker thread itself submits receipts. ACP uses the same Core handlers and schemas as Codex. Accepted receipt claims retain the session turn in the receipt and the process generation and binding epoch in their durable event identity; they never verify or complete the task.
 - A projection read returns only the scope the task allows, carries a revision, and never returns a revoked item. A write happens only on an explicit request and passes the grant check.
 
 ### Completion receipt
@@ -1434,6 +1434,8 @@ under the same control lock as reconciliation before releasing reservations
 or sending input.
 A delayed event may deliver an earlier turn's result, but only an event matching
 the current recovery thread and turn can change that recovery state.
+Core keeps reported output with its execution identity. An earlier turn's
+message or completion cannot replace or clear another turn's pending output.
 
 ## Judgment and delivery
 

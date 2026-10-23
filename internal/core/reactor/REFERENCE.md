@@ -26,3 +26,19 @@ The supplied live CRW and Hermes checkouts are unavailable in this environment.
 The pinned schema establishes neither their queue implementation nor crash or
 reconciliation behavior. No upstream queue algorithm is copied or claimed as
 verified, and no CRW process or review workflow is run.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-58 completion migration
+
+#128 adds canon migration 40 for `work_completions`, separate claim tombstones and Core-captured completion origins.
+A trusted terminal observation and its completion row commit with the work ledger/card in one fenced transaction, after a receipt exists.
+A late receipt creates the same signal when termination was already observed.
+The attempt key is Core's run ID; Git heads come from Core observations, and a result without a Git head uses the empty head.
+A corrected file receipt or directory fingerprint replaces the current row for that task/attempt/head with a new reaction identity; prior claims remain tombstones, and unchanged output retains its identity.
+Worker receipt formats stay unchanged.
+On upgrade, persisted dispatch PR evidence fills a previously absent terminal head; it cannot replace a known head.

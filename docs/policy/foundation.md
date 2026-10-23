@@ -64,9 +64,13 @@ reads the exact plan and newest shard result artifacts, including failures.
 `scripts/verify/post-merge-qa.mjs` opens or updates a `qa` issue for each failing
 Go top-level test, with nested failure lines, the tested head, first failing
 commit range and workflow run. A package timeout or panic also fails each
-unfinished test with an active leaf or an explicit nested failure, with bounded
-package diagnostics. Parallel tests paused for an execution slot, including
-parents waiting only on paused subtests, remain unknown and create no QA issue.
+unfinished test with an active leaf, an explicit nested failure, or a test named
+in Go's timeout running-test diagnostics, with bounded package diagnostics.
+The running-test list distinguishes a parent still executing after starting a
+parallel child from a parent waiting on its children. Its identities are retained
+per package even when a stack dump exceeds the diagnostic tail. Parallel tests
+paused for an execution slot, including parents waiting only on paused subtests,
+remain unknown and create no QA issue.
 Unknown results cannot close an existing issue or make the foundation gate pass.
 Completed tests retain their results; tests that never started are not reported
 as failures. Configure the

@@ -17,17 +17,8 @@ import (
 	wire "github.com/thisisjun786/lina/third_party/codex-app-server/upstream"
 )
 
-func workerWorkTools() []worker.Tool {
-	schema := func(properties, required string) json.RawMessage {
-		return json.RawMessage(`{"type":"object","properties":{` + properties + `},"required":[` + required + `],"additionalProperties":false}`)
-	}
-	return []worker.Tool{
-		{Namespace: "lina", Name: "read_projection", Description: "Read this assignment's task packet and revision. No other conversation, material or memory is authorized by this session.", InputSchema: schema("", "")},
-		{Namespace: "lina", Name: "ask", Description: "Ask the originating person a question and wait for their answer.", InputSchema: schema(`"question":{"type":"string"}`, `"question"`)},
-		{Namespace: "lina", Name: "coordinate", Description: "Send a coordination request to LINA Core in the originating conversation. This acknowledges receipt, not completion of the requested action.", InputSchema: schema(`"request":{"type":"string"}`, `"request"`)},
-		{Namespace: "lina", Name: "submit_receipt", Description: "Submit a version 1 completion claim using the existing work receipt shape. Read the projection for assignment identity. The receipt is retained as worker evidence; it cannot verify or deliver a task.", InputSchema: schema(`"receipt":`+workerReceiptSchema, `"receipt"`)},
-	}
-}
+func workerWorkTools() []worker.Tool { return worker.WorkToolDeclarations() }
+
 func decodeWorkerArgs(raw json.RawMessage, out any) error {
 	if len(raw) > 1<<20 {
 		return errors.New("worker arguments too large")
@@ -89,7 +80,7 @@ func (e *workerSession) executeWorkTool(ctx context.Context, event worker.Event)
 		if err := decodeWorkerArgs(call.Arguments, &struct{}{}); err != nil {
 			return nil, err
 		}
-		return map[string]any{"assignment_id": e.thread.TaskID, "execution_generation": 1, "attempt_id": e.thread.AttemptID, "thread_id": event.Thread.ID, "turn_id": event.Thread.TurnID, "task_packet": e.packet, "workdir": e.workdir, "node_id": e.origin.main, "revision": fmt.Sprintf("%x", sha256.Sum256([]byte(e.packet))), "materials": []string{}, "memory": []string{}}, nil
+		return map[string]any{"assignment_id": e.thread.TaskID, "execution_generation": max(1, e.executionGeneration), "attempt_id": e.thread.AttemptID, "thread_id": event.Thread.ID, "turn_id": event.Thread.TurnID, "task_packet": e.packet, "workdir": e.workdir, "node_id": e.origin.main, "revision": fmt.Sprintf("%x", sha256.Sum256([]byte(e.packet))), "materials": []string{}, "memory": []string{}}, nil
 	case "coordinate":
 		var args struct {
 			Request string `json:"request"`
@@ -101,7 +92,7 @@ func (e *workerSession) executeWorkTool(ctx context.Context, event worker.Event)
 			return nil, errors.New("empty coordination request")
 		}
 		id := e.requestKey(call.ID)
-		if err := e.origin.workerNotice(ctx, e.input, id, "Codex coordination request: "+args.Request); err != nil {
+		if err := e.origin.workerNotice(ctx, e.input, id, "Worker coordination request: "+args.Request); err != nil {
 			return nil, err
 		}
 		return map[string]any{"accepted": true, "event_id": id}, nil
@@ -112,7 +103,7 @@ func (e *workerSession) executeWorkTool(ctx context.Context, event worker.Event)
 		if err := decodeWorkerArgs(call.Arguments, &args); err != nil {
 			return nil, err
 		}
-		card := work.Card{Task: work.Task{ID: e.thread.TaskID, ArtifactRoots: []string{e.workdir}}, Run: &work.Run{ID: e.thread.AttemptID, TaskID: e.thread.TaskID, Generation: 1, ThreadID: event.Thread.ID, TurnID: event.Thread.TurnID, NodeID: e.origin.main}}
+		card := work.Card{Task: work.Task{ID: e.thread.TaskID, ArtifactRoots: []string{e.workdir}}, Run: &work.Run{ID: e.thread.AttemptID, TaskID: e.thread.TaskID, Generation: max(1, e.executionGeneration), ThreadID: event.Thread.ID, TurnID: event.Thread.TurnID, NodeID: e.origin.main}}
 		if err := work.ValidateWorkerReceipt(card, args.Receipt); err != nil {
 			return nil, err
 		}
@@ -121,7 +112,7 @@ func (e *workerSession) executeWorkTool(ctx context.Context, event worker.Event)
 			return nil, err
 		}
 		id := e.requestKey("receipt:" + args.Receipt.EventID)
-		if err := e.origin.workerNotice(ctx, e.input, id, "Codex completion claim (unverified): "+string(raw)); err != nil {
+		if err := e.origin.workerNotice(ctx, e.input, id, "Worker completion claim (unverified): "+string(raw)); err != nil {
 			return nil, err
 		}
 		return map[string]any{"accepted": true, "verified": false, "event_id": id}, nil
@@ -129,24 +120,3 @@ func (e *workerSession) executeWorkTool(ctx context.Context, event worker.Event)
 		return nil, errors.New("unknown LINA work tool")
 	}
 }
-
-// The worker gets the existing ledger receipt fields rather than an opaque
-// object it would have to guess. Core still validates every field on ingress.
-const workerReceiptSchema = `{
- "type":"object","additionalProperties":false,
- "required":["schema_version","eventId","relationshipId","executionGeneration","attempt","revisionHash","outcome","producer","turnRef","emittedAt","manifest","provenance"],
- "properties":{
-  "schema_version":{"type":"integer","enum":[1]},
-  "eventId":{"type":"string","description":"First 32 hex characters of SHA256 of relationshipId|executionGeneration|revisionHash|outcome for ready_for_review; otherwise relationshipId|executionGeneration|outcome|turnRef.turnId|attempt."},
-  "relationshipId":{"type":"string","description":"assignment_id from read_projection"},
-  "executionGeneration":{"type":"integer","enum":[1]},
-  "attempt":{"type":"integer","minimum":1},
-  "revisionHash":{"type":"string","description":"SHA256 of sorted path:sha256 manifest entries joined with newline; 64 zeros when empty."},
-  "outcome":{"type":"string","enum":["ready_for_review","failed","interrupted","blocked_needs_input"]},
-  "producer":{"type":"string","enum":["child"]},
-  "turnRef":{"type":"object","additionalProperties":false,"required":["threadId","turnId","turnStatus"],"properties":{"threadId":{"type":"string"},"turnId":{"type":"string"},"turnStatus":{"type":"string","enum":["completed","failed","interrupted"]}}},
-  "emittedAt":{"type":"string","description":"RFC3339 timestamp with explicit zone"},
-  "manifest":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"type":"string"},"sha256":{"type":"string"},"bytes":{"type":"integer","minimum":0}}}},
-  "provenance":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["artifact_id","task_id","node_id","path","sha256","observed_at"],"properties":{"artifact_id":{"type":"string"},"task_id":{"type":"string"},"node_id":{"type":"string"},"path":{"type":"string"},"sha256":{"type":"string"},"observed_at":{"type":"string"}}}}
- }
-}`
