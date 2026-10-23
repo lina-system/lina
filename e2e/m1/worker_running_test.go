@@ -124,7 +124,8 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 			if state == "" {
 				return strings.TrimSpace(strings.Join(lines[2:len(lines)-1], "\n")) == ""
 			}
-			return strings.HasPrefix(strings.TrimSpace(lines[2]), "Delegate a small file job. ") &&
+			// Focus adds a selection marker before the card title.
+			return strings.Contains(lines[2], "Delegate a small file job. ") &&
 				strings.TrimSpace(lines[3]) == design.Text(design.English, "running.state."+state)
 		})
 	}
