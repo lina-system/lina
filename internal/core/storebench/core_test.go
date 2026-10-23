@@ -65,7 +65,7 @@ func TestHeadlessCore(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("Core readiness deadline")
 	}
-	client, err := clientapi.Dial(ctx, socket, "0.0.0")
+	client, err := clientapi.DialWithCapabilities(ctx, socket, "0.0.0", []protocol.Capability{{Name: "memory", Version: "1.0"}})
 	if err != nil {
 		t.Fatal(err)
 	}
