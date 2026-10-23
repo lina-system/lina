@@ -38,6 +38,7 @@ func init() {
 		"progress.building":     {"building", "만드는 중"},
 		"progress.checking":     {"checking", "확인"},
 		"progress.done":         {"done", "끝"},
+		"stage.more":            {"%s and %d more", "%s 외 %d"},
 		"progress.empty":        {"No work in progress", "진행 중인 일이 없어요"},
 		"progress.more":         {"+%s more", "+%s개 더"},
 		"progress.waiting":      {"%s waiting for you", "%s개 답변 기다리는 중"},
