@@ -372,7 +372,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 						return
 					}
 					admitted, settled = false, true
-					if err = s.needsSignIn(ctx, &r, adapter); err != nil {
+					if err = s.needsSignIn(ctx, &r); err != nil {
 						return
 					}
 					continue

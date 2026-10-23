@@ -1153,15 +1153,26 @@ sends no prompt and retains no remote error text or account data. A protocol
 or connection failure is not evidence of an authentication refusal.
 Dispatch retains the refused worker, probed version and `needs_sign_in` code
 in its record without creating a worker run or receipt. After confirmed child
-cleanup, it uses the existing eligibility block and chooser to try the next
-worker within the existing two-worker limit. The replacement's work card also
-reports which worker needs sign-in. Explicit worker selection stays explicit;
+cleanup, it uses the task's attempted-worker exclusion and chooser to try the
+next worker within the existing two-worker limit. A readiness refusal does not
+block the worker's quota for other tasks: a new task rechecks the session so
+external sign-in can restore delegation, including after Core restarts. It
+does not retry an already refused worker within the same task. Actual quota
+and in-turn failure blocks retain their existing recovery rules. The replacement's
+work card also reports which worker needs sign-in. Explicit worker selection stays explicit;
 other start failures remain uncertain and are not retried.
+
+On startup, an old unmeasured worker-wide error block can be invalidated only
+when the dispatch history attributes every attempt at that worker to a
+definitive readiness refusal. Measured, account-specific or ambiguous blocks
+remain subject to quota recovery; a past sign-in refusal alone cannot clear them.
 
 `TestCursorReadinessThroughRunningCore` installs Core with synthetic Cursor and
 Gemini executables. It covers Cursor's unverified CLI version, the sign-in
 refusal and fallback, and a signed-in Cursor task producing a committed file
-and adapter-derived receipt. A live Cursor account test remains opt-in.
+and adapter-derived receipt. After a refusal and fallback, it also signs in
+externally, restarts Core and dispatches a new task to Cursor through completion.
+A live Cursor account test remains opt-in.
 
 The optional local graph scheduler also checks its initial quota observation
 before releasing recovered tasks. A failed or unanswered quota read disables

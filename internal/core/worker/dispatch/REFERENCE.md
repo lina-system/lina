@@ -32,6 +32,16 @@ The initial resource estimate is one CPU, 512 MiB memory and 1024 MiB disk per a
 Canon migration 43 replaces the repository-wide unique index with fenced area claims and durable worker quota.
 A late quota snapshot cannot erase a newer observed stop; admission rechecks quota before reserving the attempt.
 
+#962 keeps a definitive pre-prompt sign-in refusal in `ReadinessFailures` and
+`Tried`, without writing `worker_quota`. A new task therefore opens a session
+again after external sign-in. At startup, `recoverReadinessQuota` removes a
+legacy single unmeasured, unidentified error stop only when all retained
+attempts at that worker were readiness refusals. Potential execution, measured
+quota and account/bucket identities prevent invalidation. No schema changes.
+The readiness regression tests cover new-task selection, legacy recovery and
+preserved quota blocks; the installed Cursor scenario covers refusal, fallback,
+external sign-in, restart and a new adapter-derived result.
+
 ### C-58 correction delivery
 
 #144 connects the completion reactor's dispatch delivery to that judgment.
