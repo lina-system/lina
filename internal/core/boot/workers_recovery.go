@@ -232,11 +232,12 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 	}
 }
 
-// A committed completion is its exact turn's terminal observation. Core admits
-// it before it stores the matching recovery state, so a crash in between would
-// otherwise restart a finished session as an unknown live placeholder. The
-// newest owned completion is authoritative: an older one cannot settle a turn
-// that kept running after it.
+// A committed successful completion is its exact turn's terminal observation.
+// Core admits it before it stores the matching recovery state, so a crash in
+// between would otherwise restart a finished session as an unknown live
+// placeholder. The newest owned completion is authoritative: an older one
+// cannot settle a turn that kept running after it. Failed and transport-loss
+// notices stay unknown; cancellation alone does not make them terminal.
 func (r *conversationRuntime) settleRecordedWorker(ctx context.Context, rec *recovery.Record) bool {
 	if rec.Thread.TurnID == "" || rec.State == "decision" || rec.State == "parked" {
 		return false
@@ -272,7 +273,7 @@ func (r *conversationRuntime) settleRecordedWorker(ctx context.Context, rec *rec
 		if completion.Manager != rec.Conversation || completion.Owner != rec.Agent {
 			continue
 		}
-		if completion.Turn != rec.Thread.TurnID || (completion.Status != worker.Done && !rec.Canceled) {
+		if completion.Turn != rec.Thread.TurnID || completion.Status != worker.Done {
 			return false
 		}
 		if rec.Reservation != "" {

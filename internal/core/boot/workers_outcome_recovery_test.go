@@ -300,3 +300,37 @@ func TestWorkerRecoveryUsesCommittedCompletionAfterCrash(t *testing.T) {
 		t.Fatal("finished worker retained as an unknown live placeholder")
 	}
 }
+
+// Canceling a turn does not turn a transport-loss notice into terminal
+// evidence. Its effects stay unknown, so the record must keep its reservation
+// and normal reconciliation instead of being settled by the notice.
+func TestWorkerRecoveryKeepsCanceledTransportLossUnknown(t *testing.T) {
+	r := controlRuntime(t)
+	if r.workers.recoveryStop != nil {
+		r.workers.recoveryStop()
+		<-r.workers.recoveryDone
+		r.workers.recoveryStop = nil
+	}
+	ctx, now := t.Context(), time.Now()
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "canceled-input", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Create result.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "canceled-session", TurnID: "turn-1", TaskID: "task", AttemptID: "attempt", ProcessGeneration: 1, BindingEpoch: 1}
+	entry := &workerSession{origin: r, input: input, thread: thread, workdir: t.TempDir(), packet: "Create result.txt"}
+	if err := entry.recoveredFinish(ctx, worker.Event{Kind: worker.FinishEvent, Thread: thread, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: "connection_lost"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	rec := recovery.Record{ID: thread.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: input.ID, Workdir: entry.workdir, Packet: entry.packet, Thread: thread, State: "unknown", Canceled: true, Reservation: "canceled-reservation", Epoch: 1}
+	if err := (recovery.Recovery{DB: r.db}).Put(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	r.reconcileWorkers(ctx, map[string]bool{})
+	records, err := (recovery.Recovery{DB: r.db}).Records(ctx)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("recovery records: %+v %v", records, err)
+	}
+	if records[0].State == "finished" || records[0].Reservation != rec.Reservation {
+		t.Fatalf("transport loss settled a canceled turn: state=%s reservation=%q", records[0].State, records[0].Reservation)
+	}
+}
