@@ -4,6 +4,7 @@ package boot
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -33,7 +34,20 @@ func (r *conversationRuntime) ownerWorkerControl(ctx context.Context, s clientsr
 	if ref, ok := strings.CutPrefix(id, "task:"); ok {
 		var c work.Card
 		err := r.db.Read(ctx, func(tx *canon.Tx) error { var err error; c, err = work.ReadReference(ctx, tx, ref); return err })
-		if err != nil || c.Run == nil || c.Task.PersonID != "" && c.Task.PersonID != s.PersonID {
+		if err != nil || c.Task.PersonID != "" && c.Task.PersonID != s.PersonID {
+			return outsideManagement()
+		}
+		if c.Task.Schedule != nil && note == "" {
+			if _, err := r.stopScheduled(ctx, s.PersonID, conversation, ref); err != nil {
+				return outsideManagement()
+			}
+			if c.Run == nil || !c.Active {
+				r.notifyWorkerRunning()
+				r.notifyOwnerViews()
+				return nil
+			}
+		}
+		if c.Run == nil {
 			return outsideManagement()
 		}
 		card = &c
@@ -51,6 +65,15 @@ func (r *conversationRuntime) ownerWorkerControl(ctx context.Context, s clientsr
 	}
 	if card != nil && (card.Task.AgentID != entry.origin.agent || card.Task.ConversationID != entry.origin.conversation) {
 		return outsideManagement()
+	}
+	if entry.scheduled && note == "" && card == nil {
+		c, err := r.work.Get(ctx, entry.thread.TaskID)
+		if err != nil || c.Run == nil || c.Run.ThreadID != entry.thread.ID {
+			return outsideManagement()
+		}
+		if _, err = r.stopScheduled(ctx, s.PersonID, conversation, fmt.Sprintf("%s:%d", c.Task.ID, c.Run.Generation)); err != nil {
+			return outsideManagement()
+		}
 	}
 	entry.ownerControl.Lock()
 	defer entry.ownerControl.Unlock()

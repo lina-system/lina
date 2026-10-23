@@ -34,6 +34,15 @@ type shellCancelSignIn struct{ Generation uint64 }
 func (m *shellModel) canSignIn() bool {
 	return m.hasCapability("accounts") && m.hasCapability("sign_in_relay")
 }
+func (m *shellModel) hasCapability(name string) bool {
+	for _, cap := range m.content.Capabilities {
+		if cap.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *shellModel) hasComposer() bool {
 	return m.hasCapability("records") || m.hasCapability("web") || m.hasCapability("conversation") || m.hasCapability("accounts") || m.hasCapability("agents") || m.hasCapability("memory") || m.hasCapability("channels") || m.hasCapability("exchanges")
 }

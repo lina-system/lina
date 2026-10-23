@@ -77,6 +77,9 @@ func observeAdapter(adapter worker.Adapter) observation {
 // installed chooser candidates. Both paths honor quota and attempt fencing.
 func (s *Service) workersFor(r Record) []Factory {
 	name := r.Definition.Worker
+	if r.ReturnReceipt != "" {
+		name = r.Worker
+	}
 	if name == "" {
 		return s.cfg.Workers
 	}
