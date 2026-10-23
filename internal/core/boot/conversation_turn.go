@@ -39,6 +39,22 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
+// turnState holds the mutable state shared by a conversation turn's callbacks.
+type turnState struct {
+	items         []provider.Item
+	events        []ledger.Event
+	memoryEpoch   uint64
+	memoryRefs    []turn.Reference
+	preparedNames []memory.Item
+	bindings      map[string]loop.Tool
+	promoted      budget.Handle
+	round         int
+	filters       map[string]*conversationReplyStream
+	completed     []ledger.Admission
+	saved         []ledger.Event
+	replyShapes   reply.Shapes
+}
+
 func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, input ledger.Event, inboxID int64) (err error) {
 	turnID := "turn:" + input.ID
 	if err = r.setActive(ctx, true); err != nil {
@@ -52,14 +68,16 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	defer activity.Release()
 	releaseCredentials := r.vault.BeginTurn()
 	defer releaseCredentials()
-	bindings := map[string]loop.Tool{}
+	s := turnState{
+		bindings: map[string]loop.Tool{},
+		filters:  map[string]*conversationReplyStream{},
+	}
 	if r.channelBinding == nil || r.channelBinding.Scope.Tools {
 		if r.router.root.workerDispatch != nil {
-			bindings["dispatch_work"] = r.router.root.workerDispatch.Tool(dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID})
+			s.bindings["dispatch_work"] = r.router.root.workerDispatch.Tool(dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID})
 		}
-		bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
+		s.bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
 	}
-	var promoted budget.Handle
 	defer func() {
 		r.personaMu.Lock()
 		delete(r.personaGrants, turnID)
@@ -76,14 +94,8 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		r.personaMu.Unlock()
 
 	}()
-	var items []provider.Item
-	var events []ledger.Event
-	var memoryEpoch uint64
-	var memoryRefs []turn.Reference
-	var replyShapes reply.Shapes
 
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: input.Surface, Now: time.Now}
-	var preparedNames []memory.Item
 	prep := &turn.Preparation{
 		VerifyBuild: r.verifyBuild,
 		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
@@ -99,7 +111,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			items, memoryRefs, memoryEpoch, events, err = r.modelContext(ctx, input.ID)
+			s.items, s.memoryRefs, s.memoryEpoch, s.events, err = r.modelContext(ctx, input.ID)
 
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -111,21 +123,21 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			// modelContext includes the current event after its filtered history.
 			// Keep the assembly's dedicated current-input slot exactly once, and fail
 			// closed if retraction removed it between admission and preparation.
-			if len(items) == 0 || !bytes.Equal(items[len(items)-1], current[0]) {
+			if len(s.items) == 0 || !bytes.Equal(s.items[len(s.items)-1], current[0]) {
 				return turn.PreparedRequest{}, assemble.ErrHistory
 			}
-			items = items[:len(items)-1]
+			s.items = s.items[:len(s.items)-1]
 			at := time.Now().UTC()
 			minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
 			settings, err := r.agents.State(ctx, r.agent)
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			replyShapes, err = reply.ShapesFrom(agents.ProjectWorkMethod(persona, settings))
+			s.replyShapes, err = reply.ShapesFrom(agents.ProjectWorkMethod(persona, settings))
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, bindings)
+			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, s.bindings)
 
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -140,31 +152,31 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			preparedNames = names
+			s.preparedNames = names
 			minimum = append(minimum, namePacket...)
-			if err := r.prepareSkillTools(turnID, bindings); err != nil {
+			if err := r.prepareSkillTools(turnID, s.bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			if err := r.preparePlanningTools(turnID, bindings); err != nil {
+			if err := r.preparePlanningTools(turnID, s.bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			if err := r.prepareWorkTools(turnID, bindings); err != nil {
+			if err := r.prepareWorkTools(turnID, s.bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
+			if err := r.prepareWorkerTools(turnID, input, s.bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			if err := r.prepareRecordTools(turnID, input.ID, bindings); err != nil {
+			if err := r.prepareRecordTools(turnID, input.ID, s.bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			workDeclarations, err := r.prepareGoalWorkTools(turnID, bindings)
+			workDeclarations, err := r.prepareGoalWorkTools(turnID, s.bindings)
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			if err := r.prepareMethodologyTools(turnID, bindings); err != nil {
+			if err := r.prepareMethodologyTools(turnID, s.bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			if err := r.prepareResultTools(turnID, input, replyShapes, bindings); err != nil {
+			if err := r.prepareResultTools(turnID, input, s.replyShapes, s.bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
 			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
@@ -184,7 +196,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			webDeclarations, err := r.prepareWebTools(turnID, webProvider, bindings)
+			webDeclarations, err := r.prepareWebTools(turnID, webProvider, s.bindings)
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -194,24 +206,24 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 			declarations = append(declarations, coreexec.WorkDeclarations()...)
 			declarations = append(declarations, workerDeclarations()...)
-			declarations = append(declarations, r.prepareDelegationTools(turnID, bindings)...)
-			declarations = append(declarations, r.prepareTimerTools(turnID, bindings)...)
-			declarations = append(declarations, r.prepareExchangeTools(turnID, bindings)...)
+			declarations = append(declarations, r.prepareDelegationTools(turnID, s.bindings)...)
+			declarations = append(declarations, r.prepareTimerTools(turnID, s.bindings)...)
+			declarations = append(declarations, r.prepareExchangeTools(turnID, s.bindings)...)
 			if r.coding != nil {
-				clear(bindings)
+				clear(s.bindings)
 				catalog = nil
-				declarations, err = r.prepareCodingDecision(turnID, bindings)
+				declarations, err = r.prepareCodingDecision(turnID, s.bindings)
 				if err != nil {
 					return turn.PreparedRequest{}, err
 				}
 			}
 			if r.channelBinding != nil && !r.channelBinding.Scope.Tools {
-				clear(bindings)
+				clear(s.bindings)
 				declarations = nil
 				catalog = nil
 			}
 			if r.channelBinding != nil {
-				for name, tool := range bindings {
+				for name, tool := range s.bindings {
 					execute := tool.Execute
 					tool.Execute = func(ctx context.Context, call provider.ToolCall) loop.Result {
 						if err := r.validateChannel(ctx); err != nil || !r.channelBinding.Scope.Tools {
@@ -219,10 +231,10 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 						}
 						return execute(ctx, call)
 					}
-					bindings[name] = tool
+					s.bindings[name] = tool
 				}
 			}
-			if err := r.bindDoneEvidence(ctx, persona, bindings); err != nil {
+			if err := r.bindDoneEvidence(ctx, persona, s.bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
@@ -237,7 +249,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
 				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,
 				Catalog: catalog, AlwaysTools: declarations,
-				History: items, Current: current[0], Packet: packet,
+				History: s.items, Current: current[0], Packet: packet,
 				Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
 			}, conversationRequestSize)
 			if report.Failure != "" {
@@ -247,12 +259,12 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}
 				return turn.PreparedRequest{}, turn.ErrInvalid
 			}
-			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
+			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), s.memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), s.memoryRefs...)}
 			assembly.Context, err = r.recordContextSources(ctx, packet, report)
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			for _, event := range events {
+			for _, event := range s.events {
 				projected, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
 				if err != nil {
 					return turn.PreparedRequest{}, err
@@ -274,32 +286,28 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
 		Digest: assemble.Digest,
 	}
-	round := 0
-	filters := map[string]*conversationReplyStream{}
-	var completed []ledger.Admission
-	var saved []ledger.Event
 	complete := func(ctx context.Context, db turn.Canon) error {
-		if promoted.ID != "" {
+		if s.promoted.ID != "" {
 			now := time.Now()
-			completed = append(completed, ledger.Admission{Entry: guard.EntrySystem, Input: ledger.Input{
+			s.completed = append(s.completed, ledger.Admission{Entry: guard.EntrySystem, Input: ledger.Input{
 				ID: "handoff:" + turnID, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface,
 				OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", ScaffoldKind: "run_handoff",
 				Body: design.Text(eventLanguage(input), "notice.handoff"),
 			}})
 		}
-		if len(completed) == 0 {
+		if len(s.completed) == 0 {
 			return db.Write(ctx, func(*canon.Tx) error { return nil })
 		}
 		// Adapt the existing filter's generated draft into the same batch as all
 		// completed items. Turn completion, sources and cards commit together.
 		var batch []ledger.Admission
-		for _, item := range completed {
+		for _, item := range s.completed {
 			batch = append(batch, item)
 			masked, err := secrets.Mask(item.Input.Body)
 			if err != nil {
 				return err
 			}
-			filter, err := conversationFilter(replyShapes)
+			filter, err := conversationFilter(s.replyShapes)
 			if err != nil {
 				return err
 			}
@@ -326,19 +334,19 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 		}
 		var err error
-		saved, err = ledger.New(namingCanon{Canon: db, person: r.person, agent: r.agent, names: preparedNames, replies: batch}, r.materials).AdmitBatch(ctx, batch)
+		s.saved, err = ledger.New(namingCanon{Canon: db, person: r.person, agent: r.agent, names: s.preparedNames, replies: batch}, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
 	inputQueue := &conversationInputs{runtime: r, inputs: inputs}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete,
 		StartFromTurn: func(ctx context.Context, h budget.Handoff) (budget.Handle, error) {
 			var err error
-			promoted, err = r.promoteRun(ctx, input, h)
-			return promoted, err
+			s.promoted, err = r.promoteRun(ctx, input, h)
+			return s.promoted, err
 		},
 		ResultCommitted: r.background.notify, ToolActivity: r.toolActivity, Loop: loop.Config{
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
-			Tools:        bindings,
+			Tools:        s.bindings,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
 				return r.resultNotice(ctx, call, r.recordNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))))
 			},
@@ -347,7 +355,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				if inputQueue.failure != nil {
 					return nil, inputQueue.failure
 				}
-				round++
+				s.round++
 				if err := r.setPhase(ctx, protocol.TurnPhaseWaitingModel); err != nil {
 					return nil, err
 				}
@@ -358,16 +366,16 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				if err := r.validateChannel(ctx); err != nil {
 					return nil, err
 				}
-				if round == 1 {
-					refs := make([]turn.Reference, 0, len(preparedNames))
-					for _, name := range preparedNames {
+				if s.round == 1 {
+					refs := make([]turn.Reference, 0, len(s.preparedNames))
+					for _, name := range s.preparedNames {
 						refs = append(refs, turn.Reference{ID: name.ID, Revision: strconv.FormatInt(name.Revision, 10)})
 					}
-					if err := r.validateModelContext(ctx, memoryEpoch, refs); err != nil {
+					if err := r.validateModelContext(ctx, s.memoryEpoch, refs); err != nil {
 						return nil, err
 					}
 				}
-				if err := r.validateModelContext(ctx, memoryEpoch, memoryRefs); err != nil {
+				if err := r.validateModelContext(ctx, s.memoryEpoch, s.memoryRefs); err != nil {
 					return nil, err
 				}
 				if _, err := r.agents.Get(ctx, r.agent); err != nil {
@@ -376,20 +384,20 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return r.route.Adapter.Stream(ctx, activity, request)
 			},
 			Observe: func(ctx context.Context, e provider.Event) error {
-				key := fmt.Sprintf("%s:%d:%d", turnID, round, e.Index)
+				key := fmt.Sprintf("%s:%d:%d", turnID, s.round, e.Index)
 				switch e.Kind {
 				case provider.Delta:
 					if err := r.setPhase(ctx, protocol.TurnPhaseStreaming); err != nil {
 						return err
 					}
-					filter := filters[key]
+					filter := s.filters[key]
 					if filter == nil {
-						base, err := conversationFilter(replyShapes)
+						base, err := conversationFilter(s.replyShapes)
 						if err != nil {
 							return err
 						}
 						filter = &conversationReplyStream{filter: base}
-						filters[key] = filter
+						s.filters[key] = filter
 					}
 					view, delta, err := filter.Push(e.Delta)
 					if err != nil {
@@ -400,7 +408,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					}
 					// Persist exactly the safe visible prefix before publishing it.
 					// Deferred loop cleanup cannot run after SIGKILL.
-					if err := turn.New(r.db).CheckpointPartial(ctx, turnID, turn.Partial{Round: round - 1, Index: e.Index, Text: filter.sent}); err != nil {
+					if err := turn.New(r.db).CheckpointPartial(ctx, turnID, turn.Partial{Round: s.round - 1, Index: e.Index, Text: filter.sent}); err != nil {
 						return err
 					}
 					if view.Cut {
@@ -430,7 +438,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 						}
 					}
 					now := time.Now()
-					completed = append(completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
+					s.completed = append(s.completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
 					return nil
 				case provider.ToolCallReady, provider.Terminal:
 					return nil
@@ -438,14 +446,14 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return nil
 			},
 		}})
-	if promoted.ID != "" {
+	if s.promoted.ID != "" {
 		// The handle is durable before execution, and the run outlives this turn.
-		err = errors.Join(err, r.background.service.Release(context.WithoutCancel(ctx), promoted.ID))
+		err = errors.Join(err, r.background.service.Release(context.WithoutCancel(ctx), s.promoted.ID))
 	}
 	// Provider ItemDone stays provisional until completion and reply admission
 	// commit together. Publication can be recovered from history after a crash.
 	if err == nil {
-		for _, item := range saved {
+		for _, item := range s.saved {
 			if item.ScaffoldKind == "result" || item.ScaffoldKind == "reply_check" {
 				continue
 			}
@@ -457,7 +465,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}
 				continue
 			}
-			filter, filterErr := conversationFilter(replyShapes)
+			filter, filterErr := conversationFilter(s.replyShapes)
 			if filterErr != nil {
 				err = filterErr
 				break
