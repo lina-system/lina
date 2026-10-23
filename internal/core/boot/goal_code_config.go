@@ -34,9 +34,19 @@ type codeRepository struct {
 	Service    *codeService           `json:"service,omitempty"`
 }
 type codeConnections struct {
-	HostReport   *codeCommand              `json:"host_report,omitempty"`
-	Repositories map[string]codeRepository `json:"repositories"`
-	Limits       goal.Resources            `json:"limits"`
+	EvidenceChecks map[string]codeEvidenceConnection `json:"evidence_checks,omitempty"`
+	HostReport     *codeCommand                      `json:"host_report,omitempty"`
+	Repositories   map[string]codeRepository         `json:"repositories"`
+	Limits         goal.Resources                    `json:"limits"`
+}
+
+// Read-only connectors are fixed by the owner, not supplied by a goal. Binding
+// the repository preserves the goal's existing scope and authority boundary.
+type codeEvidenceConnection struct {
+	Repository string            `json:"repository"`
+	Target     string            `json:"target"`
+	Kind       goal.EvidenceKind `json:"kind"`
+	Command    codeCommand       `json:"command"`
 }
 
 func readCodeConnections(root string) (codeConnections, error) {
@@ -85,6 +95,21 @@ func readCodeConnections(root string) (codeConnections, error) {
 		}
 		if s := repo.Service; s != nil && (s.Target == "" || !validCodeCommand(s.Deploy) || !validCodeCommand(s.Probe)) {
 			return cfg, errors.New("invalid code-work service")
+		}
+	}
+	for method, c := range cfg.EvidenceChecks {
+		_, bound := cfg.Repositories[c.Repository]
+		if !bound || method == "" || strings.HasPrefix(method, "code:") || c.Target == "" || !validCodeCommand(c.Command) {
+			return cfg, errors.New("invalid evidence connection")
+		}
+		switch method {
+		case "merge.read", "qa.read", "deploy.read", "runtime.probe":
+			return cfg, errors.New("reserved evidence method")
+		}
+		switch c.Kind {
+		case goal.ReadEvidence, goal.RunEvidence, goal.CitationEvidence, goal.JudgmentEvidence:
+		default:
+			return cfg, errors.New("invalid evidence kind")
 		}
 	}
 	return cfg, nil
