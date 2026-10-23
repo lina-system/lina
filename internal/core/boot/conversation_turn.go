@@ -41,18 +41,20 @@ import (
 
 // turnState holds the mutable state shared by a conversation turn's callbacks.
 type turnState struct {
-	items         []provider.Item
-	events        []ledger.Event
-	memoryEpoch   uint64
-	memoryRefs    []turn.Reference
-	preparedNames []memory.Item
-	bindings      map[string]loop.Tool
-	promoted      budget.Handle
-	round         int
-	filters       map[string]*conversationReplyStream
-	completed     []ledger.Admission
-	saved         []ledger.Event
-	replyShapes   reply.Shapes
+	items              []provider.Item
+	events             []ledger.Event
+	memoryEpoch        uint64
+	memoryRefs         []turn.Reference
+	preparedNames      []memory.Item
+	bindings           map[string]loop.Tool
+	promoted           budget.Handle
+	round              int
+	filters            map[string]*conversationReplyStream
+	completed          []ledger.Admission
+	saved              []ledger.Event
+	replyShapes        reply.Shapes
+	questions          *questionTurn
+	questionRoundCalls int
 }
 
 func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, input ledger.Event, inboxID int64) (err error) {
@@ -69,8 +71,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	releaseCredentials := r.vault.BeginTurn()
 	defer releaseCredentials()
 	s := turnState{
-		bindings: map[string]loop.Tool{},
-		filters:  map[string]*conversationReplyStream{},
+		bindings:  map[string]loop.Tool{},
+		filters:   map[string]*conversationReplyStream{},
+		questions: &questionTurn{},
 	}
 	if r.channelBinding == nil || r.channelBinding.Scope.Tools {
 		if r.router.root.workerDispatch != nil {
@@ -137,7 +140,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, s.bindings)
+			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, s.bindings, s.questions)
 
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -182,6 +185,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
+			declarations = append(declarations, askQuestionDeclaration(), resolveQuestionDeclaration())
 			if r.channelBinding == nil || r.channelBinding.Scope.Memory {
 				declarations = append(declarations, coreexec.NameDeclaration())
 			}
@@ -347,6 +351,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		ResultCommitted: r.background.notify, ToolActivity: r.toolActivity, Loop: loop.Config{
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        s.bindings,
+			Before:       s.questions.before,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
 				return r.resultNotice(ctx, call, r.recordNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))))
 			},
@@ -356,6 +361,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					return nil, inputQueue.failure
 				}
 				s.round++
+				s.questionRoundCalls = 0
 				if err := r.setPhase(ctx, protocol.TurnPhaseWaitingModel); err != nil {
 					return nil, err
 				}
@@ -440,7 +446,13 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					now := time.Now()
 					s.completed = append(s.completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
 					return nil
-				case provider.ToolCallReady, provider.Terminal:
+				case provider.ToolCallReady:
+					s.questionRoundCalls++
+					return nil
+				case provider.Terminal:
+					if s.questionRoundCalls == 0 || r.route.Adapter.Class() == provider.AgentRuntime {
+						return s.questions.check(ctx)
+					}
 					return nil
 				}
 				return nil
