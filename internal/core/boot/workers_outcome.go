@@ -76,8 +76,23 @@ func (e *workerSession) finishOutcome(ctx context.Context, event worker.Event, o
 	// Coding ownership stays with dev; the input and result belong to the
 	// requesting conversation, including its original channel restrictions.
 	r := e.origin.workerDelivery()
-	if _, err := r.journal().Get(ctx, id); err == nil {
-		return nil
+	if prior, err := r.journal().Get(ctx, id); err == nil {
+		var recorded workerCompletion
+		if err := json.Unmarshal([]byte(prior.Body.Text()), &recorded); err != nil {
+			return err
+		}
+		if recorded.Failure != worker.ConnectionFailure || completion.Failure == worker.ConnectionFailure {
+			return nil
+		}
+		// Transport loss is not the turn's terminal result. Keep the notice,
+		// including those saved by older Core versions, and admit the confirmed
+		// result once under the same attempt/turn identity across rebindings.
+		id += ":terminal"
+		if _, err := r.journal().Get(ctx, id); err == nil {
+			return nil
+		} else if !errors.Is(err, ledger.ErrNotFound) {
+			return err
+		}
 	} else if !errors.Is(err, ledger.ErrNotFound) {
 		return err
 	}
