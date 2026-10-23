@@ -34,3 +34,20 @@ The stage word is the lowest-numbered stage entry that is not done.
 `Line.Stages` carries the entries, and the line holds no step id; `StageStep.ID` stays on the projection side.
 `e2e/m3/progress-line.json` drives a headless Core whose first step lands from an injected worker result: the subscribed topic carries the entries, the changed line arrives within 250 ms of the commit, exactly one line changes, and a recomputation that changes no line publishes no frame.
 `internal/core/boot/progress_line_test.go` checks the same projection and wire shape without a socket.
+
+### Event-to-card latency
+
+#771 projects a goal with its own stage list and no separate project rows as
+one work card. Grouping goals keep their child cards. The execution state and
+Now both come from observed steps.
+
+A progress overview reads graph revision history and work-card start times
+once per canon snapshot and groups them by goal. `GoalStages` and the overview
+share the same stage projection. This removes repeated decoding of every
+other goal's history without retaining a cache across transactions.
+
+`TestM3WorkPanelEventLatency` uses the fixed graph/name corpus, actual Core
+step reports and eight TUI PTYs. Each sample joins the durable work-engine
+event's precise admission time to the first complete renderer write showing
+its changed card. The scenario logs every sample and enforces the T-16 budget
+per language, glyph and width combination.

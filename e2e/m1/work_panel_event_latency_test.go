@@ -388,7 +388,7 @@ func TestM3WorkPanelEventLatency(t *testing.T) {
 			// Feed the actual observation into the shared T-16 E8/E9 evaluators.
 			rows := screenRows(frame.screen)
 			v.record.Frames = append(v.record.Frames, panelFrame{Label: "step", View: "cards", At: frame.at, Commit: committed, Rows: rows, Panel: panelCellRows(frame.screen, v.x, v.width), Composer: rows[fixture.Height-2], Anchor: strings.Join(v.anchor, "\n"), CursorHidden: frame.screen.CursorHidden})
-			v.record.Moves = append(v.record.Moves, panelTransition{Card: target, From: previous, To: *current.Now, Commit: committed, Frame: len(v.record.Frames) - 1})
+			v.record.Moves = append(v.record.Moves, panelTransition{Card: current.Name, From: previous, To: *current.Now, Commit: committed, Frame: len(v.record.Frames) - 1})
 		}
 		previous = *current.Now
 	}
@@ -401,7 +401,7 @@ func TestM3WorkPanelEventLatency(t *testing.T) {
 		// The shared evaluator's parser assumes the 40-column sidebar; the
 		// independent gate above covers every width with the same samples.
 		if v.x > 0 {
-			for _, verdict := range []panelVerdict{checkLatency(&panelRecording{Cases: []panelCase{v.record}}), checkCalm(&panelRecording{Cases: []panelCase{v.record}})} {
+			for _, verdict := range []panelVerdict{checkNowMoves(&panelRecording{Cases: []panelCase{v.record}}), checkLatency(&panelRecording{Cases: []panelCase{v.record}}), checkCalm(&panelRecording{Cases: []panelCase{v.record}})} {
 				if !verdict.Input || !verdict.Passed {
 					t.Errorf("%s %s: %s", v.name, verdict.Check, verdict.Detail)
 				}
