@@ -1,9 +1,9 @@
 {
   "evidence_type": "macos_bundle_build",
-  "recorded_at": "2026-10-23T21:41:00Z",
-  "product_source_commit": "b45819f8dca39aebf16937755e13dd83c63253a6",
+  "recorded_at": "2026-10-23T22:05:00Z",
+  "product_source_commit": "0709af10de270583b99c335b38a0501346e2fd1d",
   "workflow": ".github/workflows/macos-unlock-plugin.yml",
-  "run": "https://github.com/lina-system/lina/actions/runs/40028665046",
+  "run": "https://github.com/lina-system/lina/actions/runs/40030229768",
   "machine": {
     "runner": "macos-15-arm64",
     "os": "macOS 15.7.9",
