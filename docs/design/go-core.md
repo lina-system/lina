@@ -2395,6 +2395,11 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
 - A definitive authentication refusal during `session/new` returns `worker.ErrNeedsSignIn` only after child cleanup, before any prompt.
   Dispatch retains the worker/version/code as readiness evidence and lets the existing chooser try another eligible worker.
   It creates no run for a refused session; the next opened session uses the next actual run generation.
+  A refused session excludes that worker only from the current task's attempts;
+  new tasks recheck readiness without a persistent quota block. Startup clears
+  a legacy unmeasured worker-wide stop only when dispatch history contains
+  readiness refusals and no potentially executed attempt for that worker.
+  Measured or ambiguous quota blocks remain intact.
   Other start errors retain their uncertain outcome.
   The Cursor installed-Core scenario in `e2e/m2/cursor_worker_test.go` exercises this path.
 - ACP approval and form events use the existing `boot` worker bridge. The
