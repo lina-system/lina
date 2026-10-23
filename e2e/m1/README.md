@@ -28,6 +28,11 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 
 Failure coverage also includes:
 
+- `TestM1TurnBudgetHandoffInstalledCore` keeps the complete long task name
+  visible across wrapped rows in the 120-column terminal's running panel.
+  Its assertion reads that panel from one frame, excluding the conversation's
+  input echo, before checking result delivery and restart recovery.
+
 - `TestM2ConversationWorkerRunningInstalledCore`: a fixture worker started by
   `worker_start` remains visible in Ctrl+R after the conversation turn ends,
   with its owner agent before Codex. Explicitly finishing the worker removes
