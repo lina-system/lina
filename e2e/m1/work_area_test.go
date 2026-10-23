@@ -116,7 +116,8 @@ func TestM2WorkArea(t *testing.T) {
 		emitResponse(w, "Recorded.", true)
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatal(err)

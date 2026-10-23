@@ -18,8 +18,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/update"
 )
 
-// Serial: copying and verifying both update bundles alongside other Core
-// scenarios can exhaust the unchanged activation process deadline.
+// Serial: copying and verifying both update bundles is resource intensive.
 func TestM2UpdateClaudeCredential(t *testing.T) {
 	real := buildLina(t)
 	node := buildCommand(t, "lina-node")
@@ -91,6 +90,15 @@ func TestM2UpdateClaudeCredential(t *testing.T) {
 			code := 78
 			if configured {
 				code = 0
+			}
+			// Activation includes drain, backup verification, candidate preflight,
+			// conversation smoke and service restart. Use the scenario deadline,
+			// as the other activation cases do, rather than a single-operation wait.
+			select {
+			case <-activate.done:
+			case <-ctx.Done():
+				activate.killAndWait()
+				t.Fatalf("activation did not finish: %s", &activate.stderr)
 			}
 			activate.wait(t, code)
 			var receipt ctlfiles.UpdateRecord

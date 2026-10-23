@@ -77,9 +77,9 @@ func criterionRevision(g Goal, c Criterion) string {
 		}
 		return ""
 	}
-	return g.TargetRevision
+	return targetRevision(g)
 }
-func validCriteria(g Goal) bool {
+func validCriteria(g Goal, pendingCorrection bool) bool {
 	if len(g.Criteria) == 0 || len(g.Scope.Repositories) == 0 || strings.TrimSpace(g.Scope.Includes) == "" {
 		return false
 	}
@@ -91,7 +91,7 @@ func validCriteria(g Goal) bool {
 		repositories[repo] = true
 	}
 	for _, t := range g.Tasks {
-		if !g.DefinitionPending && !repositories[t.Repository] {
+		if !pendingCorrection && !repositories[t.Repository] {
 			return false
 		}
 	}
@@ -118,7 +118,7 @@ func validCriteria(g Goal) bool {
 		default:
 			return false
 		}
-		if c.Check.TaskID != "" && !g.DefinitionPending {
+		if c.Check.TaskID != "" {
 			found := false
 			for _, t := range g.Tasks {
 				found = found || t.ID == c.Check.TaskID
@@ -164,5 +164,5 @@ func taskDone(t Task) bool {
 	return t.Stage == TaskDone && t.Merge.proves(t.Merge.Revision) && t.QA.proves(taskResultRevision(t))
 }
 func freshTask(t Task) bool {
-	return t.Continuations == 0 && t.ThreadHandle == "" && t.Stage == TaskReady && t.Attempt == 0 && t.Head == "" && t.NodeID == "" && t.Merge == (Proof{}) && t.QA == (Proof{}) && t.PR == (PRState{}) && t.Recoveries == 0 && t.Conflicts == 0 && t.QARepairs == 0 && !t.EffectsSettled && t.RepairedBy == "" && t.ResultRevision == "" && !t.RepairAsked
+	return t.PRGeneration == 0 && t.Continuations == 0 && t.ThreadHandle == "" && t.Stage == TaskReady && t.Attempt == 0 && t.Head == "" && t.NodeID == "" && t.Merge == (Proof{}) && t.QA == (Proof{}) && t.PR == (PRState{}) && t.Recoveries == 0 && t.Conflicts == 0 && t.QARepairs == 0 && !t.EffectsSettled && t.RepairedBy == "" && t.ResultRevision == "" && !t.RepairAsked
 }

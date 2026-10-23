@@ -2,68 +2,17 @@
 package boot
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"path/filepath"
+	"encoding/json"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/thisisjun786/lina/internal/core/records"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
+	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
-type correctedWorkDriver struct {
-	engine   *work.Engine
-	root     string
-	observed chan work.Action
-}
-
-func (d *correctedWorkDriver) Authorize(context.Context, work.Action) error { return nil }
-func (d *correctedWorkDriver) Observe(_ context.Context, a work.Action) (work.Observation, error) {
-	if a.RetiredTask == nil || a.RetiredTask.Done != "old instructions" {
-		return work.Observation{}, fmt.Errorf("lost old definition")
-	}
-	d.observed <- a
-	return work.Observation{Status: work.OutcomeSucceeded, Head: "obsolete-head", EffectsSettled: true}, nil
-}
-func (d *correctedWorkDriver) Execute(ctx context.Context, a work.Action) (work.Observation, error) {
-	o := work.Observation{Status: work.OutcomeSucceeded}
-	s, err := d.engine.Snapshot(ctx)
-	if err != nil {
-		return o, err
-	}
-	g := s.Goals[0]
-	switch a.Kind {
-	case work.Assign:
-		if a.TaskID != "same-id" || g.Tasks[0].Done != "revised instructions" {
-			return o, fmt.Errorf("executed obsolete task")
-		}
-		if err = os.WriteFile(filepath.Join(d.root, "new-result"), []byte(g.Tasks[0].Done), 0600); err != nil {
-			return o, err
-		}
-		o.Head, o.EffectsSettled = "revised-head", true
-	case work.InspectPR:
-		p := work.Proof{Revision: "revised-head", Ref: "proof", Passed: true}
-		o.PR = work.PRState{Head: "revised-head", Checks: p, Review: p, Verified: p, Mergeable: true}
-	case work.Merge:
-		o.Head = "revised-head"
-		o.Proof = work.Proof{Revision: "merged-revision", Ref: "merge", Passed: true}
-	case work.RunQA, work.Verify:
-		data, err := os.ReadFile(filepath.Join(d.root, "new-result"))
-		if err != nil || string(data) != "revised instructions" {
-			return o, fmt.Errorf("missing revised result: %v", err)
-		}
-		o.Proof = work.Proof{Revision: a.Revision, Ref: "result-read", Passed: true}
-	case work.CheckCriterion:
-		o.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: "result-read", Passed: true}
-	case work.Resume, work.RepairConflict, work.RepairQA, work.ContinueWorker, work.Deploy, work.Observe, work.Decide, work.PlanGoal:
-		return o, fmt.Errorf("unexpected action %s", a.Kind)
-	}
-	return o, nil
-}
-
-func TestWorkRuntimeCompletesCorrectedPlanAndKeepsRetiredArtifact(t *testing.T) {
+func TestConversationCorrectsExistingGoalWithRevision(t *testing.T) {
 	r, _, agent, _ := managementFixture(t)
 	r.agent = agent
 	repo, err := records.Open(r.root, r.db)
@@ -72,97 +21,117 @@ func TestWorkRuntimeCompletesCorrectedPlanAndKeepsRetiredArtifact(t *testing.T) 
 	}
 	defer repo.Close()
 	r.records = repo
-	artifact := filepath.Join(r.root, "old-result")
-	if err = os.WriteFile(artifact, []byte("keep old result"), 0600); err != nil {
+	if err := r.startWork(t.Context(), &WorkConfig{Driver: func(*work.Engine) (work.Driver, error) { return parkedWorkDriver{}, nil }}); err != nil {
 		t.Fatal(err)
 	}
-	d := &correctedWorkDriver{root: r.root, observed: make(chan work.Action, 1)}
-	closed := make(chan work.Goal, 1)
-	cfg := WorkConfig{
-		Driver: func(e *work.Engine) (work.Driver, error) { d.engine = e; return d, nil },
-		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
-			task := work.Task{ID: "same-id", Done: "old instructions", Repository: "repo", Base: "dev", Area: "area", Worker: "stub", Resources: work.Resources{CPU: 1, MemoryMB: 100, DiskMB: 100}, Stage: work.TaskReady}
-			g := work.Goal{ID: "g", Person: person, Agent: agent, Summary: "corrected work", Done: "revised file exists", NoServiceReason: "library", Scope: work.GoalScope{Repositories: []string{"repo"}, Includes: "result"}, Tasks: []work.Task{task}, Criteria: []work.Criterion{{ID: "result", Statement: "file exists", Check: work.CriterionCheck{Kind: work.ReadEvidence, Method: "file.read", Target: "result"}}}}
-			if err := e.Admit(ctx, g); err != nil {
-				return err
-			}
-			if err := e.NodeChanged(ctx, work.Node{ID: "node", Connected: true, ObservedAt: time.Now().Unix(), CPUCores: 2, CPULimit: 2, AvailableMemoryMB: 1000, MemoryLimitMB: 1000, AvailableDiskMB: 1000, DiskLimitMB: 1000, Workers: map[string]bool{"stub": true}}); err != nil {
-				return err
-			}
-			if err := e.Reconcile(ctx); err != nil {
-				return err
-			}
-			s, err := e.Snapshot(ctx)
-			if err != nil {
-				return err
-			}
-			old, err := e.Claim(ctx, s.Actions[0].ID)
-			if err != nil {
-				return err
-			}
-			g = s.Goals[0]
-			record, rev, err := repo.Read(ctx, g.RecordID)
-			if err != nil {
-				return err
-			}
-			if _, err = repo.Commit(ctx, records.Change{ID: record.ID, Path: record.Path, Base: rev, Data: append(record.Data, []byte("\nUse revised instructions.\n")...)}, records.Actor{Person: person, Agent: agent}); err != nil {
-				return err
-			}
-			if err = e.Reconcile(ctx); err != nil {
-				return err
-			}
-			s, err = e.Snapshot(ctx)
-			if err != nil {
-				return err
-			}
-			task.Done = "revised instructions"
-			for _, a := range s.Actions {
-				if a.Kind != work.PlanGoal || a.State != "queued" {
-					continue
-				}
-				a, err = e.Claim(ctx, a.ID)
-				if err != nil {
-					return err
-				}
-				if err = e.Report(ctx, a.ID, a.Epoch, work.Observation{Status: work.OutcomeSucceeded, Tasks: []work.Task{task}}); err != nil {
-					return err
-				}
-			}
-			return e.Signal(ctx, work.Signal{ID: "old-worker-ended", ActionID: old.ID})
-		},
-		Changed: func(_ context.Context, s work.State) error {
-			if len(s.Goals) > 0 && s.Goals[0].State == work.GoalDone {
-				select {
-				case closed <- s.Goals[0]:
-				default:
-				}
-			}
-			return nil
-		},
-	}
-	if err = r.startWork(t.Context(), &cfg); err != nil {
+	defer r.workEngine.close(t.Context())
+	bindings := map[string]loop.Tool{}
+	if _, err := r.prepareGoalWorkTools("first-turn", bindings); err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
-		if err := r.workEngine.close(t.Context()); err != nil {
-			t.Error(err)
-		}
-	}()
-	select {
-	case g := <-closed:
-		if len(g.Tasks) != 1 || g.Tasks[0].Head != "revised-head" || g.Tasks[0].Attempt != 1 {
-			t.Fatalf("wrong corrected result: %+v", g.Tasks)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("Core failed to complete corrected plan")
+	input := `{"outcome":"fix the code","done":"checks pass","scope":{"repositories":["repo"],"includes":"library","excludes":"service"},"criteria":[{"id":"checked","statement":"library works","check":{"kind":"check","method":"acceptance","target":"repo"}}],"no_service_reason":"library","tasks":[]}`
+	result := bindings["dispatch_code_goal"].Execute(t.Context(), provider.ToolCall{ID: "dispatch", Name: "dispatch_code_goal", Arguments: input})
+	if result.Code != loop.OK {
+		t.Fatalf("admission failed: %+v", result)
 	}
-	select {
-	case <-d.observed:
-	default:
-		t.Fatal("Core did not read retired outcome")
+	before, err := r.workEngine.engine.Snapshot(t.Context())
+	if err != nil || len(before.Goals) != 1 {
+		t.Fatalf("admission snapshot: %+v %v", before, err)
 	}
-	data, err := os.ReadFile(artifact)
-	if err != nil || string(data) != "keep old result" {
-		t.Fatalf("correction removed old artifact: %q %v", data, err)
+	g := before.Goals[0]
+	// A later conversation turn must expose a correction of this same goal.
+	later := map[string]loop.Tool{}
+	decls, err := r.prepareGoalWorkTools("later-turn", later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	correct, ok := later["revise_code_goal"]
+	if !ok {
+		t.Fatal("conversation has no revision-checked goal correction tool")
+	}
+	declared := false
+	for _, raw := range decls {
+		var decl struct{ Name string }
+		if err := json.Unmarshal(raw, &decl); err != nil {
+			t.Fatal(err)
+		}
+		declared = declared || decl.Name == "revise_code_goal"
+	}
+	if !declared {
+		t.Fatal("correction binding is unavailable to the model")
+	}
+	var receipt struct {
+		GoalID, RecordID, Revision string
+	}
+	var fields map[string]string
+	if err := json.Unmarshal(result.Output, &fields); err != nil {
+		t.Fatal(err)
+	}
+	receipt.GoalID, receipt.RecordID, receipt.Revision = fields["goal_id"], fields["record_id"], fields["revision"]
+	if receipt.GoalID != g.ID || receipt.RecordID != g.RecordID || receipt.Revision != g.RecordRevision {
+		t.Fatalf("admission did not expose correction basis: %s", result.Output)
+	}
+	request := map[string]any{
+		"goal_id": g.ID, "revision": g.RecordRevision,
+		"outcome": "corrected outcome", "done": "corrected checks pass",
+		"scope":    work.GoalScope{Repositories: []string{"repo"}, Includes: "corrected library", Excludes: "service"},
+		"criteria": g.Criteria[:1], "assumptions": []string{"existing service stays available"},
+	}
+	call := func(id string) loop.Result {
+		t.Helper()
+		raw, _ := json.Marshal(request)
+		c := provider.ToolCall{ID: id, Name: "revise_code_goal", Arguments: string(raw)}
+		if _, err := correct.Validate(c); err != nil {
+			t.Fatal(err)
+		}
+		return correct.Execute(t.Context(), c)
+	}
+	updated := call("correct")
+	if updated.Code != loop.OK {
+		t.Fatalf("correction failed: %+v", updated)
+	}
+	after, err := r.workEngine.engine.Snapshot(t.Context())
+	if err != nil || len(after.Goals) != 1 {
+		t.Fatalf("correction created another goal: %+v %v", after, err)
+	}
+	got := after.Goals[0]
+	if got.ID != g.ID || got.RecordID != g.RecordID || got.RecordRevision == g.RecordRevision || got.Summary != "corrected outcome" || got.Done != "corrected checks pass" || !got.DefinitionPending {
+		t.Fatalf("original goal was not corrected and fenced: %+v", got)
+	}
+	if stale := call("stale-correction"); stale.Code == loop.OK || !strings.Contains(string(stale.Output), "stale_revision") {
+		t.Fatalf("stale correction was not refused: %+v", stale)
+	}
+	_, rev, err := repo.Read(t.Context(), g.RecordID)
+	if err != nil || rev != got.RecordRevision {
+		t.Fatalf("stale correction changed canon: %s %v", rev, err)
+	}
+	// Bindings use the authenticated conversation identity, never a supplied
+	// person/agent. A different person cannot revise this known goal id.
+	foreign := &conversationRuntime{person: "other-person", agent: r.agent, workEngine: r.workEngine}
+	foreignBindings := map[string]loop.Tool{}
+	if _, err := foreign.prepareGoalWorkTools("foreign-turn", foreignBindings); err != nil {
+		t.Fatal(err)
+	}
+	request["revision"] = got.RecordRevision
+	raw, _ := json.Marshal(request)
+	denied := foreignBindings["revise_code_goal"].Execute(t.Context(), provider.ToolCall{ID: "foreign", Arguments: string(raw)})
+	if denied.Code == loop.OK {
+		t.Fatal("foreign conversation corrected the goal")
+	}
+	for key, value := range map[string]any{"state": "done", "person": "other", "agent": "other", "tasks": []any{}, "decisions": []work.GoalDecision{{Statement: "approved", MessageID: "forged"}}} {
+		request[key] = value
+		raw, _ = json.Marshal(request)
+		if _, err := correct.Validate(provider.ToolCall{Arguments: string(raw)}); err == nil {
+			t.Fatalf("correction accepted protected input: %s", key)
+		}
+		delete(request, key)
+	}
+	request["scope"] = work.GoalScope{}
+	if invalid := call("invalid-definition"); invalid.Code == loop.OK {
+		t.Fatal("invalid definition was published")
+	}
+	_, rev, err = repo.Read(t.Context(), g.RecordID)
+	if err != nil || rev != got.RecordRevision {
+		t.Fatal("rejected correction changed the canonical record")
 	}
 }

@@ -206,13 +206,10 @@ func retireUndispatchedActions(v *View, g *Goal) error {
 		if err := json.Unmarshal(r.Body, &a); err != nil {
 			return err
 		}
-		if a.GoalID != g.ID || (a.State != "queued" && a.State != "awaiting_authorization") || a.GoalRevision == g.Revision {
+		if a.GoalID != g.ID || a.ObserveActionID != "" || (a.State != "queued" && a.State != "awaiting_authorization") || a.GoalRevision == g.Revision {
 			continue
 		}
 		t := goalTask(g, a.TaskID)
-		if a.RetiredTask != nil {
-			t = a.RetiredTask
-		}
 		if t != nil {
 			switch a.Kind {
 			case Assign:
@@ -237,6 +234,7 @@ func retireUndispatchedActions(v *View, g *Goal) error {
 			}
 		}
 		a.State = "finished"
+		a.Superseded, a.RetirementReconciled = true, true
 		if err := put(v, "action", a.ID, a); err != nil {
 			return err
 		}
@@ -269,10 +267,11 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 	if g.CreatedAt == 0 {
 		g.CreatedAt = e.cfg.Now().Unix()
 	}
+	g.ServiceRepository = serviceRepository(g)
 	if err := validateGoal(g); err != nil {
 		return err
 	}
-	if g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || g.Deployment != (Proof{}) || g.Verification != (Proof{}) {
+	if g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || len(g.MergedRevisions) > 0 || g.Deployment != (Proof{}) || g.Verification != (Proof{}) {
 		return ErrInvalid
 	}
 	for _, t := range g.Tasks {
@@ -328,6 +327,9 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 	}
 	now := e.cfg.Now()
 	err := e.journal.Update(ctx, Transition{ID: "derive:" + rand.Text(), Kind: "work.derived", At: now.Unix()}, func(v *View) error {
+		if err := e.reconcileRetired(v); err != nil {
+			return err
+		}
 		s, err := snapshotView(v)
 		if err != nil {
 			return err
@@ -364,7 +366,7 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 				if t != nil && a.Kind == PlanGoal {
 					t.RepairAsked = true
 				}
-				if t != nil && reserves(a) {
+				if t != nil && reserves(a) && a.ObserveActionID == "" {
 					t.Stage = TaskBuilding
 					t.Attempt = a.Attempt
 					t.NodeID = a.NodeID
@@ -433,6 +435,8 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					g.State = GoalBlocked
 					g.AttentionID = fmt.Sprintf("goal:%s:%d:attention", g.ID, g.Revision)
 					g.BlockedReason = "LINA could not find a way to finish the remaining done condition; a decision is needed."
+				case g.DefinitionPending:
+					g.State = GoalRunning
 				case allLanded:
 					g.State = GoalChecking
 				case active:
@@ -480,14 +484,15 @@ func (e *Engine) Claim(ctx context.Context, id string) (Action, error) {
 		if g.State == GoalDone || g.State == GoalStopped {
 			return ErrConflict
 		}
-		if t := goalTask(&g, a.TaskID); t != nil && a.Kind == Merge && t.Head != a.Revision {
+		if changedInputs(g, a) || a.ObserveActionID == "" && !currentActionTarget(g, a) {
 			return ErrConflict
 		}
-		if g.DefinitionPending && a.Kind != PlanGoal || a.GoalRevision != 0 && a.GoalRevision != g.Revision {
+		if g.DefinitionPending && a.Kind != PlanGoal && a.ObserveActionID == "" {
 			return ErrConflict
 		}
 		a.State = "claimed"
 		a.Epoch = e.cfg.Epoch
+		a.InputVersion = inputVersion(g, a)
 		out = a
 		return put(v, "action", id, a)
 	})
@@ -521,7 +526,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		if a.State == "finished" && bytes.Equal(a.Receipt, encode(o)) {
 			return errNoChange
 		}
-		if a.State == "finished" || a.State == "queued" {
+		if a.State == "queued" {
 			return ErrConflict
 		}
 		g, err := loadGoal(v, a.GoalID)
@@ -537,16 +542,23 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		a.ObserverEpoch = e.cfg.Epoch
 		a.Receipt = encode(o)
 		a.Deadline = e.cfg.Now().Add(SafetySweep).Unix()
-		if a.RetiredTask != nil {
-			if err = reportRetired(&a, o); err != nil {
-				return err
+		if staleInputs(g, a) {
+			// Retain the obsolete response as history, never as current evidence
+			// or a plan for this revision. A late result is not a Core failure.
+			a.State = "finished"
+			a.Superseded = true
+			if hasExternalEffect(a) && !currentActionTarget(g, a) && !effectSettled(a, o) {
+				// A different target cannot inherit this effect. Retain its
+				// lease and bounded observation wait until its outcome is known.
+				a.State = "unknown"
+				if o.Handle != "" {
+					a.Handle = o.Handle
+				}
 			}
-			return put(v, "action", a.ID, a)
+			return put(v, "action", id, a)
 		}
-		if o.Status == OutcomeSucceeded && a.Kind == PlanGoal && a.RecordRevision == g.RecordRevision && g.DefinitionPending {
-			if err = retireCorrectedActions(v, g, o.Tasks); err != nil {
-				return err
-			}
+		if a.State == "finished" {
+			return ErrConflict
 		}
 		switch o.Status {
 		case OutcomeQuota:
@@ -599,13 +611,40 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			a.State = "unknown"
 		case OutcomeNeedsPerson:
 			a.State = "needs_person"
+			if o.Handle != "" {
+				a.Handle = o.Handle
+			}
+			if t != nil && reserves(a) {
+				t.EffectsSettled = o.EffectsSettled
+			}
 		case OutcomeConflict:
-			if t == nil || a.Kind != Merge {
+			if t == nil || a.Kind != Merge && a.Kind != InspectPR {
 				return ErrInvalid
+			}
+			if a.Kind == InspectPR {
+				// Only an explicit conflict for the inspected current head spends
+				// the existing rebase allowance. Mergeable=false alone is unknown.
+				if o.PR.Head == "" || o.PR.Head != a.Revision || o.PR.Head != t.Head || o.PR.Mergeable {
+					return ErrInvalid
+				}
+				t.PR = o.PR
+				t.PR.ObservedAt = a.ObservedAt
 			}
 			a.State = "finished"
 			t.Stage = TaskConflicted
 		case OutcomeFailed:
+			if a.Kind == Verify {
+				if t != nil || !o.Proof.fails(a.Revision) {
+					return ErrInvalid
+				}
+				if g.TargetRevision != a.Revision || g.Revision != a.GoalRevision {
+					return ErrConflict
+				}
+				a.State = "finished"
+				g.Verification = o.Proof
+				g.Evidence = append(g.Evidence, o.Proof)
+				break
+			}
 			if t == nil {
 				a.State = "needs_person"
 				break
@@ -627,15 +666,33 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 				t.Stage = TaskQAFailed
 				t.QA = o.Proof
 				g.Evidence = append(g.Evidence, o.Proof)
-			case InspectPR, Merge:
+			case InspectPR, Merge, PlanGoal:
 				a.State = "needs_person"
-			case Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion:
+			case Deploy, Verify, Observe, Decide, CheckCriterion:
 				return ErrInvalid
 			}
 		case OutcomeSucceeded:
 			a.State = "finished"
+			correcting := a.Kind == PlanGoal && g.DefinitionPending
+			if correcting {
+				pending, err := correctionEffectsPending(v, g.ID)
+				if err != nil {
+					return err
+				}
+				if pending {
+					// A late old receipt may have scheduled a fresh read since
+					// this manager was dispatched. Use the same revision barrier.
+					a.Superseded = true
+					return put(v, "action", id, a)
+				}
+			}
 			if err = applySuccess(&g, t, a, o, e.cfg.Now().Unix()); err != nil {
 				return err
+			}
+			if correcting && !g.DefinitionPending {
+				if err = retireCompletedTaskHistory(v, g.ID); err != nil {
+					return err
+				}
 			}
 		default:
 			return ErrInvalid
@@ -651,6 +708,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		return put(v, "action", id, a)
 	})
 }
+
 func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 	switch a.Kind {
 	case CheckCriterion:
@@ -664,12 +722,6 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 				break
 			}
 		}
-		if g.Revision != a.GoalRevision || g.CheckRound != a.CheckRound || criterionRevision(*g, criterion) != a.Revision {
-			// This read completed for an obsolete target. Keep its receipt, but
-			// neither apply its evidence nor turn a normal revision into a fatal
-			// engine error. The current definition can now be assessed.
-			return nil
-		}
 		if !currentEvidence(*g, criterion, *o.Criterion) || o.Criterion.Revision != a.Revision {
 			return ErrConflict
 		}
@@ -681,18 +733,8 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		}
 		g.Checks = append(g.Checks, *o.Criterion)
 	case PlanGoal:
-		if a.RecordRevision != g.RecordRevision {
-			// An old plan cannot assess a newer definition, even if a newer
-			// manager has already cleared its fence. Execution-only revisions
-			// keep the record revision and allow independent repairs to settle.
-			if t != nil {
-				t.RepairAsked = false
-			}
-			return nil
-		}
 		if g.DefinitionPending {
-			g.AssessedFailure = "definition:" + g.RecordRevision
-			return applyCorrectedPlan(g, o.Tasks)
+			return applyCorrectionPlan(g, o)
 		}
 		if t != nil && (t.Stage != TaskQAFailed || t.RepairedBy != "") {
 			return ErrInvalid
@@ -746,8 +788,19 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		t.Merge = o.Proof
 		t.QA = Proof{}
 		t.Stage = TaskMerged
-		g.TargetRevision = o.Proof.Revision
-		g.Deployment = Proof{}
+		if g.MergedRevisions == nil {
+			g.MergedRevisions = map[string]string{}
+		}
+		g.MergedRevisions[t.Repository] = o.Proof.Revision
+		previous := g.TargetRevision
+		if g.ServiceTarget == "" {
+			g.TargetRevision = o.Proof.Revision
+		} else {
+			g.TargetRevision = targetRevision(*g)
+		}
+		if previous != g.TargetRevision {
+			g.Deployment = Proof{}
+		}
 		g.Verification = Proof{}
 		g.Evidence = append(g.Evidence, o.Proof)
 	case RunQA:
@@ -777,11 +830,15 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		}
 		g.Evidence = append(g.Evidence, o.Proof)
 	case Deploy:
-		if t != nil || g.ServiceTarget == "" || !o.Proof.proves(a.Revision) || g.TargetRevision != a.Revision {
+		if t != nil || g.ServiceTarget == "" || !o.Proof.proves(a.Revision) {
 			return ErrInvalid
 		}
-		g.Deployment = o.Proof
 		g.Evidence = append(g.Evidence, o.Proof)
+		// A settled old deployment remains history, but a corrected service
+		// binding needs fresh evidence even when both repositories share a SHA.
+		if a.GoalRevision == g.Revision && g.TargetRevision == a.Revision {
+			g.Deployment = o.Proof
+		}
 	case Verify:
 		if t != nil || !o.Proof.proves(a.Revision) || g.TargetRevision != a.Revision {
 			return ErrInvalid
@@ -838,17 +895,26 @@ func (e *Engine) awaitAuthorization(ctx context.Context, claimed Action) error {
 		if a.State != "claimed" || a.Epoch != e.cfg.Epoch {
 			return ErrConflict
 		}
+		g, err := loadGoal(v, a.GoalID)
+		if err != nil {
+			return err
+		}
+		if err = e.hydrate(&g); err != nil {
+			return err
+		}
 		a.State = "awaiting_authorization"
+		a.Receipt = encode(Observation{Status: OutcomeNeedsPerson, EffectsSettled: true})
 		if a.Signal != claimed.Signal {
 			// An approval hint arrived while Authorize was still reading. Do
 			// not lose that wake; the next claim rechecks current authority.
 			a.State = "queued"
 		}
-		if err = put(v, "action", a.ID, a); err != nil {
-			return err
+		// Authorize refused before Execute. A retry may therefore freeze fresh
+		// inputs, but it must still pass authority again before any effect.
+		if a.GoalRevision == g.Revision && currentActionTarget(g, a) {
+			a.InputVersion = inputVersion(g, a)
 		}
-		g, err := loadGoal(v, a.GoalID)
-		if err != nil {
+		if err = put(v, "action", a.ID, a); err != nil {
 			return err
 		}
 		// A definition/repair revision can commit while Authorize runs.
@@ -868,6 +934,31 @@ func (e *Engine) releaseDispatch(id string) {
 	e.journal.notify()
 }
 
+func (e *Engine) observationDue(a Action) bool {
+	return (a.State == "claimed" || a.State == "running" || a.State == "unknown") && (a.Epoch != e.cfg.Epoch && a.ObserverEpoch != e.cfg.Epoch || a.Deadline <= e.cfg.Now().Unix())
+}
+
+// The previous dispatch may have finished or parked after step's snapshot but
+// before it released the running reservation. Re-read after acquiring that
+// reservation so an authorization retry is never observed as an executed effect.
+func (e *Engine) readObservable(ctx context.Context, id string) (Action, error) {
+	var a Action
+	err := e.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		if err := tx.QueryRowContext(ctx, "SELECT body FROM work_records WHERE kind='action' AND id=?", id).Scan(&raw); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return err
+		}
+		if !e.observationDue(a) {
+			return ErrConflict
+		}
+		return nil
+	})
+	return a, err
+}
+
 func (e *Engine) step(ctx context.Context) error {
 	if err := e.Reconcile(ctx); err != nil {
 		return err
@@ -883,7 +974,7 @@ func (e *Engine) step(ctx context.Context) error {
 	}
 	for _, a := range s.Actions {
 		execute := a.State == "queued"
-		observe := (a.State == "claimed" || a.State == "running" || a.State == "unknown") && (a.Epoch != e.cfg.Epoch && a.ObserverEpoch != e.cfg.Epoch || a.Deadline <= e.cfg.Now().Unix())
+		observe := e.observationDue(a)
 		if !execute && !observe {
 			continue
 		}
@@ -894,33 +985,42 @@ func (e *Engine) step(ctx context.Context) error {
 		}
 		e.running[a.ID] = true
 		e.mu.Unlock()
+		var current Action
 		if execute {
-			claimed, err := e.Claim(ctx, a.ID)
-			if err != nil {
-				e.mu.Lock()
-				delete(e.running, a.ID)
-				e.mu.Unlock()
-				if errors.Is(err, ErrConflict) {
-					continue
-				}
-				return err
-			}
-			a = claimed
+			current, err = e.Claim(ctx, a.ID)
+		} else {
+			current, err = e.readObservable(ctx, a.ID)
 		}
+		if err != nil {
+			e.mu.Lock()
+			delete(e.running, a.ID)
+			e.mu.Unlock()
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			return err
+		}
+		a = current
 		e.wg.Go(func() {
 			defer e.releaseDispatch(a.ID)
 			var o Observation
 			var err error
 			authorizationDenied := false
-			if observe {
-				o, err = e.cfg.Driver.Observe(ctx, a)
+			effectMayHaveStarted := observe || a.ObserveActionID != ""
+			if effectMayHaveStarted {
+				source := a
+				if a.ObserveActionID != "" {
+					source.ID = a.ObserveActionID
+				}
+				o, err = e.cfg.Driver.Observe(ctx, source)
 			} else if err = e.cfg.Driver.Authorize(ctx, a); err == nil {
+				effectMayHaveStarted = true
 				o, err = e.cfg.Driver.Execute(ctx, a)
 			} else if errors.Is(err, ErrNeedsPerson) {
 				authorizationDenied = true
 			}
 			if errors.Is(err, ErrNeedsPerson) {
-				o = Observation{Status: OutcomeNeedsPerson}
+				o = Observation{Status: OutcomeNeedsPerson, EffectsSettled: !effectMayHaveStarted}
 			} else if err != nil {
 				o = Observation{Status: OutcomeUnknown}
 			}

@@ -19,6 +19,8 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+const ownerViewRefreshInterval = 5 * time.Second
+
 var progressCapability = protocol.Capability{Name: "progress", Version: "1.0"}
 
 type ownerViews struct {
@@ -42,6 +44,7 @@ func (r *conversationRuntime) notifyOwnerViews() {
 	}
 }
 func (r *conversationRuntime) startOwnerViews(ctx context.Context) error {
+	r.startOwnerControls()
 	r.ownerViews = &ownerViews{wake: make(chan struct{}, 1), done: make(chan struct{})}
 	if r.identity.TopicCapabilities == nil {
 		r.identity.TopicCapabilities = map[string]protocol.Capability{}
@@ -117,26 +120,42 @@ func (r *conversationRuntime) startOwnerViews(ctx context.Context) error {
 	r.ownerViews.stop = cancel
 	go func() {
 		defer close(r.ownerViews.done)
-		for {
-			changed := r.db.Changed()
-			_ = r.publishOwnerViews(watch)
+		timer := time.NewTicker(ownerViewRefreshInterval)
+		defer timer.Stop()
+		r.runOwnerViews(watch, timer.C)
+	}()
+	return nil
+}
+
+func (r *conversationRuntime) runOwnerViews(watch context.Context, refresh <-chan time.Time) {
+	for {
+		changed := r.db.Changed()
+		_ = r.publishOwnerViews(watch)
+		pending := false
+		for !pending {
 			select {
 			case <-watch.Done():
 				return
 			case <-changed:
+				pending = true
 			case <-r.ownerViews.wake:
-			}
-			timer := time.NewTimer(250 * time.Millisecond)
-			select {
-			case <-watch.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
+				pending = true
+			case <-refresh:
+				// External edits have no canon event. Reconcile only while an overview
+				// observer is connected; unchanged data still publishes no frame.
+				pending = r.topics.HasSubscribers("progress")
 			}
 		}
-	}()
-	return nil
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-watch.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 }
+
 func (r *conversationRuntime) ownerAgentNames(ctx context.Context) (map[string]string, error) {
 	agents, err := r.agents.List(ctx)
 	if err != nil {
@@ -158,6 +177,7 @@ func (r *conversationRuntime) ownerWaiting(ctx context.Context, names map[string
 	}
 	if r.background != nil {
 		sources["run"] = &waiting.RunInputSource{DB: r.db, Owner: r.background.service, AgentName: name}
+		sources["run_effect"] = waiting.RunEffectSource{AgentName: name}
 	}
 	if _, err := r.records.Head(ctx); err != nil {
 		if !errors.Is(err, records.ErrRecordsChanged) {
@@ -186,11 +206,14 @@ func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progr
 	return p, err
 }
 func (r *conversationRuntime) ownerProjection(ctx context.Context) (protocol.Progress, string, error) {
+	return r.ownerProjectionOrder(ctx, waiting.Priority)
+}
+func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order waiting.Order) (protocol.Progress, string, error) {
 	names, err := r.ownerAgentNames(ctx)
 	if err != nil {
 		return protocol.Progress{}, "", err
 	}
-	list, err := r.ownerWaiting(ctx, names, waiting.Options{Now: time.Now()})
+	list, err := r.ownerWaiting(ctx, names, waiting.Options{Now: time.Now(), Order: order})
 	if err != nil {
 		return protocol.Progress{}, "", err
 	}

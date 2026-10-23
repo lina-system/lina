@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/budget"
@@ -59,7 +60,13 @@ type Config struct {
 	// rolls back the receipt; replay can retry delivery without another write.
 	AfterApply func(context.Context) error
 }
-type Service struct{ cfg Config }
+type Service struct {
+	cfg Config
+	// Reservation admission and snapshot abandonment share this lock. Only
+	// calls owned by this Core instance may still complete a reserved result.
+	auxMu     sync.Mutex
+	auxActive map[string]bool
+}
 
 const maxPayloadBytes = 6 << 20
 
@@ -78,7 +85,7 @@ func New(cfg Config) (*Service, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Service{cfg: cfg}, nil
+	return &Service{cfg: cfg, auxActive: make(map[string]bool)}, nil
 }
 
 // apply is the single fenced durable mutation boundary, also used for Core's
@@ -228,6 +235,7 @@ func (s *Service) Aux(ctx context.Context, r jobapi.AuxRequest) (jobapi.AuxResul
 	var output []byte
 	var reservation string
 	cached := false
+	s.auxMu.Lock()
 	err := s.apply(ctx, r.Epoch, func(tx *canon.Tx) error {
 		var err error
 		j, task, err = s.check(ctx, tx, r.JobID, r.From, r.Through)
@@ -266,9 +274,18 @@ func (s *Service) Aux(ctx context.Context, r jobapi.AuxRequest) (jobapi.AuxResul
 		_, err = tx.ExecContext(ctx, "INSERT INTO moirai_aux(job,sequence,reservation) VALUES (?,?,?)", r.JobID, r.Through, reservation)
 		return err
 	})
+	if err == nil && !cached {
+		s.auxActive[reservation] = true
+	}
+	s.auxMu.Unlock()
 	if err != nil || cached {
 		return jobapi.AuxResult{Output: output}, err
 	}
+	defer func() {
+		s.auxMu.Lock()
+		delete(s.auxActive, reservation)
+		s.auxMu.Unlock()
+	}()
 	callCtx, cancel := context.WithTimeout(ctx, j.Timeout)
 	defer cancel()
 	result, callErr := d.Model(callCtx, Call{JobID: r.JobID, Input: task.Input, Kind: provider.Auxiliary, MaxTokens: j.MaxTokens})

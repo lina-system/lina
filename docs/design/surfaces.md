@@ -207,6 +207,8 @@ The person writes intent, LINA organizes, and the person zooms in and out. A per
 - The conversation is beside every screen. From any layer, "Talk about this" brings that context into the conversation with the chosen agent.
 - A surface opens to the conversation with the agent the person talked with last. The first run creates all eight starter agents and opens the conversation with Lina, asking for nothing before it talks except the ChatGPT sign-in ([conversation-and-memory.md](conversation-and-memory.md#first-run)).
 
+On initial connection and reconnection, the TUI refreshes agent metadata from Core before discovering conversation history when agent listing is available. Reopening the TUI against the same Core shows the resumed agent's current name in the header, composer and named replies, even when Welcome still contains only the agent selected at Core startup. This refresh does not require opening the agent list.
+
 ### Default view
 
 The person sees two things by default: the design at a glance, with how far every running piece of work has come (see Progress at a glance), and the list of what they must do or decide. Everything else is available on request.
@@ -235,9 +237,17 @@ Never a row: an item from a shared or group inbox that is not addressed to the p
 
 Order. The default order is: first what is blocking, meaning something waits on the person right now (the agent is idle without the answer, or a deadline falls within 24 hours), and then what is overdue; then irreversible or costly decisions before reversible ones; then the soonest due date, then the oldest unanswered request. The person can switch the order to lightest first (about 5 minutes, about 30 minutes, longer); a client asks Core for the order the person chose and never ranks. Rows are drawn in at most three groups: decide, do and reply, or the effort groups of the lightest-first order.
 
-Core uses source identity only to break otherwise equal ranks, keeping refreshes stable. In the default order, an upcoming deadline through exactly 24 hours counts as blocking; an overdue item comes next unless it also blocks an agent right now. Lightest-first uses the same default order within each effort group. The count is computed before the Home limit is applied.
+Core records when each live worker question arrives and preserves that request time across refreshes. Worker questions and run input requests share the oldest-unanswered ordering. Core uses source identity only to break otherwise equal ranks, keeping refreshes stable. In the default order, an upcoming deadline through exactly 24 hours counts as blocking; an overdue item comes next unless it also blocks an agent right now. Lightest-first uses the same default order within each effort group. The count is computed before the Home limit is applied.
 
 Size. Home shows at most five rows and the count of the rest ("+7 more"); the whole list opens in the work panel. When the list is empty, this view says so in one line ("nothing to decide now"). No reply and no other view carries that line.
+
+Unanswered background effect questions enter this list after their conversation
+lane delivers them, independently of the run's state or landing. They use the
+existing authenticated question card for answers. An answer or a withdrawn
+request removes the row from Home and the full list, including after restart.
+While a progress-topic subscriber is connected, Core rechecks outside record
+changes on five-second ticks. Open progress and waiting views receive additions
+and resolutions without another action. Unchanged projections produce no update.
 
 Answering. A row is answered in one tap or one word. Core re-reads the source and its answer mapping, refuses an outdated row or a different person, and records the source change and the answer with the person and requesting agent in one transaction. Repeated answers cannot create a second decision. When several decisions wait, the person can ask LINA to go through them one at a time: LINA asks one decision, records the answer and asks the next. A change to the list after an agent's action shows as a quiet badge; it never interrupts a reply that is being written or read.
 
@@ -261,8 +271,11 @@ Progress at a glance is one screen that shows how far every running 목표 and �
 - Detail opens only on request, in the work panel: the Details of the line's front page, the design at a glance of a 목표, and the tasks and background runs behind the line as the running list (in progress, waiting and landed) limited to that item (see Running list). The line is the summary. The running list and the work cards are the working record behind it, and their state words are the same.
 - In the app on a wide screen the lines are drawn as the board of Agent surfaces: the first column is "Waiting for me", then Running and Done.
 - In the TUI the same lines are drawn as text: the stage word and a bar of block characters, one line each, with a key that opens the Details of a line in a pager or a side pane. The TUI Home shows the same compact card.
-- `Ctrl+P` in the TUI reads the Core progress topic and keeps an open pane current without moving focus or changing a draft. Work handed directly to a worker remains visible while its plan inventory is unknown; the stage, bar, next task and just-finished plan task display unknown until the to-do record work supplies those observations. Worker messages never estimate them. `Ctrl+W` requests the full Core waiting list, including sources beyond conversation approval cards. Display text never includes the navigation references carried alongside the rows.
+- `Ctrl+P` in the TUI reads the Core progress topic and keeps an open pane current without moving focus or changing a draft. Work handed directly to a worker remains visible while its plan inventory is unknown; the stage, bar, next task and just-finished plan task display unknown until the to-do record work supplies those observations. Worker messages never estimate them. `Ctrl+W` requests the full Core waiting list, including sources beyond conversation approval cards. Display text never includes the navigation references carried alongside the rows. Open progress and waiting views reconcile outside record changes on five-second ticks, so an external edit appears and its restoration clears the request even while the conversation is idle.
 - In an external channel the same view is a digest of the lines: what needs the person first, then one line for each running item, at most five and a count of the rest, with no bar and a link that opens this screen when the app is installed ([integrations.md](integrations.md#channels)).
+- `/progress` requests this digest in the TUI and a paired private channel. Counts and the optional screen link are metadata after the at-most-five display rows. `/waiting priority` and `/waiting lightest` request Core's order; the TUI waiting pane also uses `o` to switch it and retains that choice on refresh.
+- The same explicit controls work in both surfaces: `/stop <run>` requests a stop, `/stop all` stops the person's background runs and live workers (restricted to the bound conversation in a shared channel), and `/note <run> <text>` sends a follow-up only to that target. Bare `/stop` interrupts the current conversation. The TUI running pane offers `s` for the selected row. A worker stop acknowledgement means the request was delivered; its current state still comes from the worker adapter. A shared channel cannot display the owner's full digest or waiting list.
+- A channel control command and its reply appear immediately in connected clients viewing the same conversation, with the same speaker attribution and order after history reload or restart. Refused commands also return their recorded reply to that conversation.
 - A question in the conversation about how things are going is answered with the digest ([conversation-and-memory.md](conversation-and-memory.md#reply-shape)).
 
 ### Layers
@@ -423,7 +436,13 @@ The 할 일 views are lenses over the same records, computed by LINA Core ([work
 
 One list shows everything LINA is doing in the background for the person: background runs and delegated coding tasks alike. LINA Core owns it, and the app and the TUI show it.
 
-- A row is one run or task, with a one-line summary in plain words of what it does for the person. Rows are in three groups: in progress, waiting (not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a limit on background runs, or the person) and landed. Rows that need the person (input needed) and rows ready for review come first.
+Conversation-started workers also appear while their turn is active, even when
+the conversation turn that delegated them has ended. Each row names its owner
+persona before the worker tool and summarizes the person's request. An idle
+worker leaves the list; a completed worker turn alone is not verified delivery.
+An unavailable observation remains unknown rather than disappearing as done.
+
+- A row is one run, task or conversation-started worker, with a one-line summary in plain words of what it does for the person. Rows are in three groups: in progress, waiting (not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a limit on background runs, or the person) and landed. Rows that need the person (input needed) and rows ready for review come first.
 - The state words are those of the work cards ([work-and-delegation.md](work-and-delegation.md#progress-display)): working is in progress; waiting for a slot is waiting; input needed is "Waiting for me"; a landed complete or partial result is ready for review; failed and stopped are landed with their label. A landed row leaves the list once the person has opened or dismissed it, and stays reachable from its conversation.
 - A task that stalls or fails shows its state word on its row until it has been dispatched again once; a second failure becomes a decision for the person under "Waiting for me".
 - Within the attention-first ordering, ties use oldest start time and then a stable source key. An opened or dismissed landed row stays hidden after restart; an active row stays visible when opened.
@@ -553,6 +572,7 @@ A surface never notifies about what it is already showing. Opening a notificatio
 What an agent is, the persona layers, presets, personal and common knowledge, and deletion are defined in [product-families.md](product-families.md) and [conversation-and-memory.md](conversation-and-memory.md). Creating, changing and deleting an agent is the person's act; every action below is a request to LINA Core and is recorded with the person id. On screen:
 
 - The agents screen lists the person's agents, initially the eight starters, each with its face, its name, its role, its source (the preset it was made from, or "from a description") and its last conversation when one exists. Choosing one opens its main conversation. Kai (investing) is labelled advice only and Kanna (legal) drafts only; these labels describe Core's effect policy, not a voice setting. Display the existing names and personas, not role names in their place. Every starter works with its shipped persona without the private backstory or world source.
+- The TUI agent list derives restricted-role and development-owner labels from Core's preset field, preserving them after a rename. A refused effect explains the advice/draft boundary and offers no approval to bypass it; the same limit applies to a bound channel or an empty persona.
 - Creating from a preset shows each preset with its form and lets the person name the new agent. Creating from a description takes the person's description and shapes the agent through the same questions as voice tuning ([conversation-and-memory.md](conversation-and-memory.md)). Either way, the new agent's main conversation opens.
 - An agent's settings hold its name, its expression switch and its notification mode. Its persona changes by asking the agent in conversation, and each change is a new persona revision ([conversation-and-memory.md](conversation-and-memory.md)). An agent made from a preset shows which layers come from its preset. Its settings also list the channels it is dispatched to, each with its scope, and open the log filtered to its exchanges.
 - An agent's settings show what it tracks for the person, the list of record sets it keeps (for example, areas it was told about), which grows when a new area appears ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)).

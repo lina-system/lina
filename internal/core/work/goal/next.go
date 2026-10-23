@@ -46,6 +46,10 @@ func (p Proof) proves(revision string) bool {
 	return revision != "" && p.Revision == revision && strings.TrimSpace(p.Ref) != "" && p.Passed
 }
 
+func (p Proof) fails(revision string) bool {
+	return revision != "" && p.Revision == revision && strings.TrimSpace(p.Ref) != "" && !p.Passed
+}
+
 type PRState struct {
 	Head       string `json:"head"`
 	Checks     Proof  `json:"checks"`
@@ -72,6 +76,7 @@ const (
 )
 
 type Task struct {
+	PRGeneration   uint64    `json:"pr_generation"`
 	Continuations  int       `json:"continuations"`
 	ThreadHandle   string    `json:"thread_handle,omitempty"`
 	Repairs        string    `json:"repairs,omitempty"`
@@ -135,9 +140,11 @@ type Goal struct {
 	Summary           string              `json:"-"`
 	Done              string              `json:"-"`
 	ServiceTarget     string              `json:"service_target"`
+	ServiceRepository string              `json:"service_repository,omitempty"`
 	NoServiceReason   string              `json:"no_service_reason"`
 	Tasks             []Task              `json:"tasks"`
 	TargetRevision    string              `json:"target_revision"`
+	MergedRevisions   map[string]string   `json:"merged_revisions,omitempty"`
 	Deployment        Proof               `json:"deployment"`
 	Verification      Proof               `json:"verification"`
 	Waits             []Wait              `json:"waits,omitempty"`
@@ -166,34 +173,33 @@ const CheckCriterion ActionKind = "check_criterion"
 const ContinueWorker ActionKind = "continue_worker"
 
 type Action struct {
-	// RetiredTask binds observation and reservations to a superseded definition.
-	// It is internal execution state, never an instruction to dispatch again.
-	RetiredTask *Task `json:"retired_task,omitempty"`
-	// Manager plans are bound to the canonical definition independently of
-	// execution revisions added by concurrent sibling repairs.
-	RecordRevision string          `json:"record_revision,omitempty"`
-	Signal         string          `json:"signal,omitempty"`
-	FailureKey     string          `json:"failure_key,omitempty"`
-	CriterionID    string          `json:"criterion_id,omitempty"`
-	Check          *CriterionCheck `json:"check,omitempty"`
-	GoalRevision   int64           `json:"goal_revision"`
-	CheckRound     int64           `json:"check_round"`
-	ID             string          `json:"id"`
-	GoalID         string          `json:"goal_id"`
-	TaskID         string          `json:"task_id"`
-	Kind           ActionKind      `json:"kind"`
-	Attempt        int             `json:"attempt"`
-	NodeID         string          `json:"node_id"`
-	Revision       string          `json:"revision"`
-	Resources      Resources       `json:"resources"`
-	State          string          `json:"state"`
-	Epoch          uint64          `json:"epoch"`
-	Handle         string          `json:"handle"`
-	Deadline       int64           `json:"deadline"`
-	Sequence       int             `json:"sequence"`
-	ObservedAt     int64           `json:"observed_at"`
-	ObserverEpoch  uint64          `json:"observer_epoch"`
-	Receipt        json.RawMessage `json:"receipt,omitempty"`
+	RecordRevision       string          `json:"record_revision,omitempty"`
+	InputVersion         *InputVersion   `json:"input_version,omitempty"`
+	Superseded           bool            `json:"superseded,omitempty"`
+	RetirementReconciled bool            `json:"retirement_reconciled,omitempty"`
+	ObserveActionID      string          `json:"observe_action_id,omitempty"`
+	Signal               string          `json:"signal,omitempty"`
+	FailureKey           string          `json:"failure_key,omitempty"`
+	CriterionID          string          `json:"criterion_id,omitempty"`
+	Check                *CriterionCheck `json:"check,omitempty"`
+	GoalRevision         int64           `json:"goal_revision"`
+	CheckRound           int64           `json:"check_round"`
+	ID                   string          `json:"id"`
+	GoalID               string          `json:"goal_id"`
+	TaskID               string          `json:"task_id"`
+	Kind                 ActionKind      `json:"kind"`
+	Attempt              int             `json:"attempt"`
+	NodeID               string          `json:"node_id"`
+	Revision             string          `json:"revision"`
+	Resources            Resources       `json:"resources"`
+	State                string          `json:"state"`
+	Epoch                uint64          `json:"epoch"`
+	Handle               string          `json:"handle"`
+	Deadline             int64           `json:"deadline"`
+	Sequence             int             `json:"sequence"`
+	ObservedAt           int64           `json:"observed_at"`
+	ObserverEpoch        uint64          `json:"observer_epoch"`
+	Receipt              json.RawMessage `json:"receipt,omitempty"`
 }
 type State struct {
 	Goals   []Goal   `json:"goals"`
@@ -263,8 +269,15 @@ func Slots(n Node, actions []Action, request Resources, now time.Time) int {
 	return int(min(math.Floor(cpu/request.CPU), float64(mem/request.MemoryMB), float64(disk/request.DiskMB)))
 }
 
-func validateGoal(g Goal) error {
-	if !validCriteria(g) || g.ID == "" || g.Person == "" || g.Agent == "" || strings.TrimSpace(g.Done) == "" || (g.ServiceTarget == "") == (g.NoServiceReason == "") {
+func validateGoal(g Goal) error { return validateGoalState(g, false) }
+
+// Only derivation of an already-persisted correction may temporarily retain
+// tasks outside the new scope. Admission and manager proposals remain strict.
+func validateGoalState(g Goal, pendingCorrection bool) error {
+	if !validCriteria(g, pendingCorrection) || g.ID == "" || g.Person == "" || g.Agent == "" || strings.TrimSpace(g.Done) == "" || (g.ServiceTarget == "") == (g.NoServiceReason == "") {
+		return ErrInvalid
+	}
+	if !g.DefinitionPending && !validServiceRepository(g) {
 		return ErrInvalid
 	}
 	tasks := map[string]Task{}
@@ -315,11 +328,14 @@ func pending(actions []Action, goal, task string) bool {
 	return false
 }
 func actionID(a Action) string {
-	raw, _ := json.Marshal([]any{a.GoalID, a.TaskID, a.Kind, a.Attempt, a.Revision, a.Sequence, a.CriterionID, a.GoalRevision, a.CheckRound, a.FailureKey})
+	key := []any{a.GoalID, a.TaskID, a.Kind, a.Attempt, a.Revision, a.Sequence, a.CriterionID, a.GoalRevision, a.CheckRound, a.FailureKey}
+	if a.ObserveActionID != "" {
+		key = append(key, "observe", a.ObserveActionID)
+	}
+	raw, _ := json.Marshal(key)
 	hash := sha256.Sum256(raw)
 	return hex.EncodeToString(hash[:])
 }
-func areaKey(t Task) string { return t.Repository + "\x00" + t.Area }
 
 // Derive is a deterministic projection of authoritative observations. It never
 // calls a model or an adapter. The caller must persist its actions/reservations
@@ -328,6 +344,9 @@ func Derive(state State, now time.Time) (Plan, error) {
 	plan := Plan{}
 	reservations := append([]Action(nil), state.Actions...)
 	goals := append([]Goal(nil), state.Goals...)
+	for i := range goals {
+		goals[i].TargetRevision = targetRevision(goals[i])
+	}
 	sort.Slice(goals, func(i, j int) bool { return goals[i].ID < goals[j].ID })
 	nodes := append([]Node(nil), state.Nodes...)
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
@@ -338,33 +357,25 @@ func Derive(state State, now time.Time) (Plan, error) {
 		depth int
 	}
 	var ready []candidate
-	occupied := map[string]string{}
+	type areaLease struct {
+		goal string
+		task Task
+	}
+	var occupied []areaLease
 	mergeSlots := map[string]bool{}
 	for _, g := range goals {
-		if err := validateGoal(g); err != nil {
+		if err := validateGoalState(g, g.DefinitionPending); err != nil {
 			return plan, err
 		}
 		for _, t := range g.Tasks {
 			for _, a := range state.Actions {
-				if a.GoalID == g.ID && a.TaskID == t.ID && a.RetiredTask == nil && a.Kind == Merge && a.State != "finished" {
+				if a.GoalID == g.ID && a.TaskID == t.ID && a.Kind == Merge && a.State != "finished" {
 					mergeSlots[t.Repository+"\x00"+t.Base] = true
 				}
 			}
 			if t.Stage != TaskReady && t.Stage != TaskDone && t.Stage != TaskMerged && t.Stage != TaskQAFailed {
-				occupied[areaKey(t)] = g.ID + "\x00" + t.ID
+				occupied = append(occupied, areaLease{g.ID, t})
 			}
-		}
-	}
-	for _, a := range state.Actions {
-		if a.RetiredTask == nil || a.State == "finished" {
-			continue
-		}
-		t := *a.RetiredTask
-		if reserves(a) || t.Stage != TaskReady && t.Stage != TaskDone && t.Stage != TaskMerged && t.Stage != TaskQAFailed {
-			occupied[areaKey(t)] = "retired:" + a.ID
-		}
-		if a.Kind == Merge {
-			mergeSlots[t.Repository+"\x00"+t.Base] = true
 		}
 	}
 	wait := func(g Goal, t Task, reason, wake string) {
@@ -383,6 +394,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 		if kind == PlanGoal {
 			a.RecordRevision = g.RecordRevision
 		}
+		a.InputVersion = inputVersion(g, a)
 		a.ID = actionID(a)
 		plan.Actions = append(plan.Actions, a)
 		reservations = append(reservations, a)
@@ -394,6 +406,16 @@ func Derive(state State, now time.Time) (Plan, error) {
 		if g.DefinitionPending {
 			if g.AssessedFailure == "definition:"+g.RecordRevision {
 				wait(g, Task{}, "person", "goal.record.changed")
+				continue
+			}
+			settling := false
+			for _, a := range state.Actions {
+				if a.GoalID == g.ID && a.TaskID != "" && a.Kind != PlanGoal && a.State != "finished" {
+					wait(g, Task{ID: a.TaskID}, "unknown_effect", "effect.observed")
+					settling = true
+				}
+			}
+			if settling {
 				continue
 			}
 			if !pending(state.Actions, g.ID, "") {
@@ -415,17 +437,22 @@ func Derive(state State, now time.Time) (Plan, error) {
 		for _, t := range g.Tasks {
 			tasks[t.ID] = t
 		}
-		allDone := true
-		for _, a := range state.Actions {
-			if a.GoalID == g.ID && a.RetiredTask != nil && a.State != "finished" {
-				allDone = false
-				reason := "unknown_effect"
-				if a.State == "needs_person" {
-					reason = "person"
-				}
-				wait(g, *a.RetiredTask, reason, "effect.observed")
+		// Share depths across candidates in this goal and snapshot. Traversing
+		// every path through shared ancestors would make derivation exponential.
+		depths := make(map[string]int, len(tasks))
+		var depth func(string) int
+		depth = func(id string) int {
+			if n, ok := depths[id]; ok {
+				return n
 			}
+			n := 0
+			for _, dep := range tasks[id].DependsOn {
+				n = max(n, 1+depth(dep))
+			}
+			depths[id] = n
+			return n
 		}
+		allDone := true
 		for _, t := range g.Tasks {
 			done := taskDone(t)
 			allDone = allDone && done
@@ -509,14 +536,6 @@ func Derive(state State, now time.Time) (Plan, error) {
 			default:
 				return Plan{}, ErrInvalid
 			}
-			var depth func(string) int
-			depth = func(id string) int {
-				n := 0
-				for _, dep := range tasks[id].DependsOn {
-					n = max(n, 1+depth(dep))
-				}
-				return n
-			}
 			ready = append(ready, candidate{g, t, kind, depth(t.ID)})
 		}
 		if !allDone || pending(state.Actions, g.ID, "") {
@@ -531,7 +550,19 @@ func Derive(state State, now time.Time) (Plan, error) {
 			continue
 		}
 		if !g.Verification.proves(g.TargetRevision) {
-			add(g, Task{}, Verify, g.TargetRevision, "")
+			if g.Verification.fails(g.TargetRevision) {
+				failure := fmt.Sprintf("verify:%d:%s", g.Revision, g.TargetRevision)
+				if g.AssessedFailure == failure {
+					plan.Block = append(plan.Block, g.ID)
+				} else {
+					a := Action{GoalID: g.ID, Kind: PlanGoal, Revision: g.TargetRevision, GoalRevision: g.Revision, RecordRevision: g.RecordRevision, FailureKey: failure, State: "queued", Deadline: now.Add(SafetySweep).Unix()}
+					a.InputVersion = inputVersion(g, a)
+					a.ID = actionID(a)
+					plan.Actions = append(plan.Actions, a)
+				}
+			} else {
+				add(g, Task{}, Verify, g.TargetRevision, "")
+			}
 			continue
 		}
 		if g.CheckRound == 0 {
@@ -554,6 +585,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 				plan.Block = append(plan.Block, g.ID)
 			} else {
 				a := Action{GoalID: g.ID, Kind: PlanGoal, GoalRevision: g.Revision, RecordRevision: g.RecordRevision, FailureKey: failure, State: "queued", Deadline: now.Add(SafetySweep).Unix()}
+				a.InputVersion = inputVersion(g, a)
 				a.ID = actionID(a)
 				plan.Actions = append(plan.Actions, a)
 			}
@@ -565,6 +597,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 				continue
 			}
 			a := Action{GoalID: g.ID, Kind: CheckCriterion, Revision: criterionRevision(g, c), CriterionID: c.ID, Check: &c.Check, GoalRevision: g.Revision, CheckRound: g.CheckRound, State: "queued", Deadline: now.Add(SafetySweep).Unix()}
+			a.InputVersion = inputVersion(g, a)
 			a.ID = actionID(a)
 			plan.Actions = append(plan.Actions, a)
 			missing = true
@@ -598,7 +631,17 @@ func Derive(state State, now time.Time) (Plan, error) {
 	})
 	for _, c := range ready {
 		g, t, kind := c.goal, c.task, c.kind
-		if owner := occupied[areaKey(t)]; owner != "" && owner != g.ID+"\x00"+t.ID {
+		overlaps := false
+		for _, held := range occupied {
+			if held.goal == g.ID && held.task.ID == t.ID {
+				continue
+			}
+			if held.task.Repository == t.Repository && areasOverlap(held.task.Area, t.Area) {
+				overlaps = true
+				break
+			}
+		}
+		if overlaps {
 			wait(g, t, "area", "merge.landed")
 			continue
 		}
@@ -623,7 +666,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 			continue
 		}
 		add(g, t, kind, t.Head, best)
-		occupied[areaKey(t)] = g.ID + "\x00" + t.ID
+		occupied = append(occupied, areaLease{g.ID, t})
 	}
 	return plan, nil
 }

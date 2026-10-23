@@ -98,6 +98,9 @@ func Load(source fs.FS, key string) (core, voice string, err error) {
 // Validate checks each pair independently, without logging source data.
 func Validate(source fs.FS) error {
 	for _, s := range Starters() {
+		if _, missing, err := LoadWorkMethod(source, s.Key); err != nil || missing {
+			return fmt.Errorf("%s: %w", s.Key, ErrWorkMethod)
+		}
 		if _, _, err := Load(source, s.Key); err != nil {
 			return fmt.Errorf("%s: %w", s.Key, err)
 		}

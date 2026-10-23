@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 )
 
@@ -36,12 +37,13 @@ type Snapshot struct {
 // bytes for measurement, not golden-file comparison. Use only synthetic input:
 // a recording is unbounded and can contain all displayed text.
 type Recorder struct {
-	mu       sync.Mutex
-	emulator *vt.Emulator
-	raw      bytes.Buffer
-	writes   int
-	changed  chan struct{}
-	closed   bool
+	mu           sync.Mutex
+	emulator     *vt.Emulator
+	raw          bytes.Buffer
+	writes       int
+	changed      chan struct{}
+	closed       bool
+	cursorHidden bool
 }
 
 func NewRecorder(width, height int) (*Recorder, error) {
@@ -55,7 +57,24 @@ func NewRecorder(width, height int) (*Recorder, error) {
 	if err := emulator.InputPipe().(io.Closer).Close(); err != nil {
 		return nil, err
 	}
-	return &Recorder{emulator: emulator, changed: make(chan struct{})}, nil
+	r := &Recorder{emulator: emulator, changed: make(chan struct{})}
+	// DECTCEM is global terminal state. x/vt v0.1.0's CursorHidden reads
+	// a per-screen cursor copy, which can resurrect the main screen's old
+	// visibility on an alternate-screen exit. Track the parsed mode changes
+	// rather than altering output or inferring visibility from screen switches.
+	emulator.SetCallbacks(vt.Callbacks{
+		EnableMode: func(mode ansi.Mode) {
+			if mode == ansi.ModeTextCursorEnable {
+				r.cursorHidden = false
+			}
+		},
+		DisableMode: func(mode ansi.Mode) {
+			if mode == ansi.ModeTextCursorEnable {
+				r.cursorHidden = true
+			}
+		},
+	})
+	return r, nil
 }
 
 func (r *Recorder) Write(p []byte) (int, error) {
@@ -77,7 +96,7 @@ func (r *Recorder) Write(p []byte) (int, error) {
 
 func (r *Recorder) snapshot() Snapshot {
 	cursor := r.emulator.CursorPosition()
-	s := Snapshot{CursorX: cursor.X, CursorY: cursor.Y, CursorHidden: r.emulator.CursorHidden(), AltScreen: r.emulator.IsAltScreen(), Bytes: r.raw.Len(), Writes: r.writes}
+	s := Snapshot{CursorX: cursor.X, CursorY: cursor.Y, CursorHidden: r.cursorHidden, AltScreen: r.emulator.IsAltScreen(), Bytes: r.raw.Len(), Writes: r.writes}
 	s.Cells = make([][]Cell, r.emulator.Height())
 	for y := range s.Cells {
 		s.Cells[y] = make([]Cell, r.emulator.Width())

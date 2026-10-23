@@ -8,12 +8,15 @@ import "strings"
 // is still pending are withheld, while their text remains readable without
 // styling. The sealed Goldmark parse decides literal/malformed syntax finally.
 type markdownPreview struct {
-	bullet                string
-	atStart               bool
-	leading               string
-	fence                 byte
-	fenceLen              int
-	fenceHeader           bool
+	bullet      string
+	atStart     bool
+	leading     string
+	fence       byte
+	fenceLen    int
+	fenceHeader bool
+	// fenceStart is an offset in emitted preview text, not Markdown source.
+	emitted, fenceStart   int
+	fenceLines            int
 	indented              bool
 	destinationEscape     bool
 	ticks, codeTicks      int
@@ -27,8 +30,13 @@ type markdownPreview struct {
 func (p *markdownPreview) feed(delta string) string {
 	var out strings.Builder
 	for i := range len(delta) {
+		inCode := p.fence != 0 && !p.fenceHeader
 		p.consume(delta[i], &out)
+		if inCode && p.fence != 0 && delta[i] == '\n' {
+			p.fenceLines++
+		}
 	}
+	p.emitted += out.Len()
 	return out.String()
 }
 
@@ -90,6 +98,8 @@ func (p *markdownPreview) consume(ch byte, out *strings.Builder) {
 						return
 					}
 					p.fence, p.fenceLen = first, count
+					p.fenceStart = p.emitted + out.Len()
+					p.fenceLines = 0
 					p.leading = ""
 					p.fenceHeader = ch != '\n'
 					p.atStart = ch == '\n'

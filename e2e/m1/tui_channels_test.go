@@ -190,7 +190,10 @@ func TestM1TUIChannelPairing(t *testing.T) {
 		for {
 			e := tap.next(t, h)
 			if e.Error != nil {
-				t.Fatalf("control refused: %s", e.Error.Code)
+				if kind := tap.requestKind(e); kind != "" && kind != protocol.KindChannelRequest {
+					continue // Discovery replies are not this command's outcome.
+				}
+				t.Fatalf("control refused: %s (request=%s)", e.Error.Code, tap.requestKind(e))
 			}
 			if e.Kind == protocol.KindItemDone {
 				t.Fatal("channel control became conversation input")

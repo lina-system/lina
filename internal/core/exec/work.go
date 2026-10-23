@@ -78,7 +78,12 @@ func workInput(raw json.RawMessage, name string) (tools.Input, error) {
 func RegisterWork(reg *tools.Registry, s *work.Service, agent, conversation string) ([]tools.Spec, error) {
 	var specs []tools.Spec
 	for _, name := range []string{"prepare_work", "retain_work_result", "report_work_result", "land_work_result"} {
-		spec := tools.Spec{Name: name, Placement: tools.Core, Conc: 1, Deadline: time.Minute, Schema: func(raw json.RawMessage) (tools.Input, error) { return workInput(raw, name) }}
+		class := tools.LocalWrite
+		// A model-selected destination is not proof of a private draft boundary.
+		if name == "land_work_result" {
+			class = tools.Unclassified
+		}
+		spec := tools.Spec{Classify: tools.Class(class), Name: name, Placement: tools.Core, Conc: 1, Deadline: time.Minute, Schema: func(raw json.RawMessage) (tools.Input, error) { return workInput(raw, name) }}
 		err := reg.Register(spec, func(ctx context.Context, l lease.Lease, in tools.Input) (tools.Result, error) {
 			var value any
 			var err error

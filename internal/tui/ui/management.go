@@ -148,6 +148,8 @@ func (s *managementSession) request(ctx context.Context, c *clientapi.Client, p 
 	var id string
 	var err error
 	switch p := p.(type) {
+	case protocol.ProgressDigestGet, protocol.Stop, protocol.FollowUp, protocol.MultiTaskControl:
+		id, err = c.Control(ctx, p)
 	case protocol.ProgressGet:
 		id, err = c.Progress(ctx, p)
 		if err == nil {
@@ -189,6 +191,20 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		return true, nil
 	}
 	switch p := e.Payload.(type) {
+	case protocol.ProgressDigest:
+		lines := append([]string{}, p.Lines...)
+		lines = append(lines, fmt.Sprintf(design.Text(m.styles.options.Language, "progress.digest_count"), p.Total, p.More))
+		m.openPager(strings.Join(lines, "\n"))
+	case protocol.StopResult:
+		m.openPager(design.Text(m.styles.options.Language, "control.stopped"))
+	case protocol.FollowUp:
+		m.openPager(design.Text(m.styles.options.Language, "control.note"))
+	case protocol.MultiTaskControl:
+		if p.Count == nil {
+			return true, errStream
+		}
+		m.openPager(fmt.Sprintf(design.Text(m.styles.options.Language, "control.stopped_all"), *p.Count))
+
 	case protocol.Waiting:
 		if _, ok := request.(protocol.WaitingGet); !ok || p.Rows == nil {
 			return true, errStream
@@ -259,7 +275,22 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		}
 		found := false
 		for _, a := range *p.Agents {
-			lines = append(lines, a.AgentID+"  "+a.Name)
+			label := a.AgentID + "  " + a.Name
+			if a.Preset != nil {
+				boundary := ""
+				switch *a.Preset {
+				case "investing":
+					boundary = "agents.advice_only"
+				case "legal":
+					boundary = "agents.draft_only"
+				case "dev":
+					boundary = "agents.development"
+				}
+				if boundary != "" {
+					label += " (" + design.Text(m.styles.options.Language, boundary) + ")"
+				}
+			}
+			lines = append(lines, label)
 			found = found || a.AgentID == active
 		}
 		m.openPager(strings.Join(lines, "\n"))
