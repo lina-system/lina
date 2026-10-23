@@ -75,12 +75,20 @@ func TestOwnerReapsOrphanedClearedEnvironmentDescendant(t *testing.T) {
 		done <- owner.Run(ctx, l, proc.Command{Path: exe, Args: []string{"-test.run=^TestDarwinEscapeProcess$"}, Env: []string{"LINA_PROC_DARWIN_TEST=orphan"}, Stdin: input, Stdout: writer, Stderr: os.Stderr})
 		writer.Close()
 	}()
+	// The leaf reports its pid, and the command reports that it has reaped the
+	// intermediate process, so the leaf's own parent record is gone before
+	// teardown.
 	reader := bufio.NewReader(output)
 	pid := 0
-	for pid == 0 {
+	orphaned := false
+	for pid == 0 || !orphaned {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			t.Fatal("descendant readiness: ", err)
+		}
+		if strings.TrimSpace(line) == "orphaned" {
+			orphaned = true
+			continue
 		}
 		_, _ = fmt.Sscanf(line, "pid=%d", &pid)
 	}
@@ -132,14 +140,18 @@ func TestDarwinEscapeProcess(t *testing.T) {
 		fmt.Printf("setsid=%v setpgid=%v\n", sidErr, pgErr)
 		os.Exit(0)
 	case "orphan":
-		// Start the intermediate process, which starts the leaf, then wait for
-		// the owner to end the command.
+		// Start the intermediate process, which starts the leaf, reap it so its
+		// process record disappears, then wait for the owner to end the command.
 		cmd := exec.Command(os.Args[0], "-test.run=^TestDarwinEscapeProcess$")
 		cmd.Env = []string{"LINA_PROC_DARWIN_TEST=middle"}
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Start(); err != nil {
 			panic(err)
 		}
+		if err := cmd.Wait(); err != nil {
+			panic(err)
+		}
+		fmt.Println("orphaned")
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(0)
 	case "middle":
