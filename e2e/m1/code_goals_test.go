@@ -314,7 +314,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		waitCodeGoalState(t, h, func(tx *canon.Tx) (bool, error) {
 			var state string
 			var attempt int
-			err := tx.QueryRowContext(h.ctx, "SELECT state, json_extract(record,'$.attempt') FROM worker_dispatch").Scan(&state, &attempt)
+			err := tx.QueryRowContext(h.ctx, "SELECT state, COALESCE(json_extract(record,'$.attempt'),0) FROM worker_dispatch").Scan(&state, &attempt)
 			return attempt == 2 && (state == "finished" || state == "decision"), err
 		})
 		c.Close()
