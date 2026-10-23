@@ -206,14 +206,14 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 		case protocol.TurnState:
 			if p.Active != nil && !*p.Active {
 				workerText, _ := alphaLastWorkerOutput(t, h)
-				if strings.Contains(workerText, "?") && (strings.Contains(workerText, "이름") || strings.Contains(strings.ToLower(workerText), "name")) {
+				if alphaNameRequest(workerText) {
 					spokenQuestion = workerText
 				}
 			}
 		case protocol.ItemDone:
 			if p.Speaker != nil && *p.Speaker == protocol.ConversationSpeakerAgent && p.Text != nil {
 				workerText, _ := alphaLastWorkerOutput(t, h)
-				if strings.Contains(workerText, "?") && (strings.Contains(workerText, "이름") || strings.Contains(strings.ToLower(workerText), "name")) {
+				if alphaNameRequest(workerText) {
 					spokenQuestion = workerText
 				}
 			}
@@ -242,7 +242,7 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 	} else {
 		// A worker can finish its turn with a question. Verify its durable source,
 		// then answer through the same conversation so LINA must route the reply.
-		alphaScreen(t, h, terminal, "question-in-conversation", func(s string) bool { return strings.Contains(s, "?") && strings.Contains(s, "이름") }, "")
+		alphaScreen(t, h, terminal, "question-in-conversation", alphaNameRequest, "")
 		h.keys(terminal, "\x1b[200~이름은 민준이야. 그 답을 같은 Codex 작업자에게 전하고 작업을 계속해 줘.\x1b[201~\r")
 	}
 	pane := terminal.screen.Snapshot()
@@ -359,6 +359,21 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 	terminal.process.wait(t, 0)
 	c.Close()
 	h.stopCore(core)
+}
+
+// A Korean request can end with a period ("이름을 알려 주세요."). The
+// durable worker completion establishes its origin; punctuation does not.
+func alphaNameRequest(text string) bool {
+	text = strings.ToLower(text)
+	if !strings.Contains(text, "이름") && !strings.Contains(text, "name") {
+		return false
+	}
+	for _, cue := range []string{"?", "알려", "입력", "어떤", "무엇", "which", "what", "tell", "provide"} {
+		if strings.Contains(text, cue) {
+			return true
+		}
+	}
+	return false
 }
 
 func alphaLastWorkerOutput(t *testing.T, h *harness) (string, int) {

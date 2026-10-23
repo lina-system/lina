@@ -615,7 +615,7 @@ explicit times rather than waiting for a provider window.
 operate the real TUI through a 120x34 PTY. They require explicit
 `LINA_QA_REAL_MODEL=1`, the owner's Responses environment, and the selected
 `claude-opus-5-5` model. The coding case also uses the installed Codex's own setup.
-No scripted provider response is used by these owner cases. `TestAlphaChatPasteInstalledCore`
+No scripted provider response is used by these owner cases. `TestM1TUIChatPasteInstalledCore`
 provides the separate account-free paste regression; `TestAlphaWorkerCrashInstalledCore`
 checks that killing Core does not erase an acknowledged worker from its public
 lane snapshot.
