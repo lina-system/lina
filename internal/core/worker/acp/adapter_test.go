@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -192,6 +193,37 @@ func TestInvalidStartDoesNotLaunch(t *testing.T) {
 		t.Fatal("relative workdir accepted")
 	}
 }
+
+func TestSessionReadinessAuthentication(t *testing.T) {
+	for _, tc := range []struct {
+		method, code string
+		needsSignIn  bool
+	}{
+		{"session/new", "-32000", true},
+		{"session/new", "-32603", false},
+		{"initialize", "-32000", false},
+	} {
+		t.Run(tc.method+tc.code, func(t *testing.T) {
+			a, ctx, l, spec := fixture(t)
+			a.cfg.Profile.Name = "cursor"
+			a.cfg.Environment = append(a.cfg.Environment, "ACP_ERROR_METHOD="+tc.method, "ACP_SESSION_ERROR="+tc.code)
+			thread, err := a.Start(ctx, l, spec)
+			if err == nil || thread.ID != "" || a.Result().SessionID != "" {
+				t.Fatal("rejected session became a worker thread", thread, err)
+			}
+			if got := errors.Is(err, worker.ErrNeedsSignIn); got != tc.needsSignIn {
+				t.Fatalf("authentication classification: code=%s needs_sign_in=%v error=%v", tc.code, got, err)
+			}
+			if tc.needsSignIn && strings.Contains(err.Error(), "private-account-detail") {
+				t.Fatal("account detail leaked through readiness")
+			}
+			if _, err := os.Stat(filepath.Join(spec.Workdir, "result.txt")); !os.IsNotExist(err) {
+				t.Fatal("prompt ran without a session", err)
+			}
+		})
+	}
+}
+
 func agentFixture() {
 	if os.Getenv("LINA_RESPONSES_API_KEY") != "" || os.Getenv("WORKER_LOGIN") != "preserved" {
 		os.Exit(10)
@@ -220,6 +252,10 @@ func agentFixture() {
 		}
 		if json.Unmarshal(scan.Bytes(), &f) != nil {
 			os.Exit(12)
+		}
+		if f.Method == os.Getenv("ACP_ERROR_METHOD") {
+			send(map[string]any{"jsonrpc": "2.0", "id": f.ID, "error": map[string]any{"code": json.RawMessage(os.Getenv("ACP_SESSION_ERROR")), "message": "private-account-detail"}})
+			continue
 		}
 		switch f.Method {
 		case "initialize":
