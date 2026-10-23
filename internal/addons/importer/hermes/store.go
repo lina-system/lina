@@ -49,7 +49,7 @@ func manifest(c *conversation) string {
 // Apply callback; the deterministic worker needs no model or writable database.
 func (p *Plan) Apply(ctx context.Context, tx *canon.Tx, index int) (Report, error) {
 	if p.rehearsal || index < 0 || index >= len(p.conversations) {
-		return Report{}, ErrSnapshot
+		return Report{}, invalidSnapshot("apply requires import plan and valid conversation index")
 	}
 	c := p.conversations[index]
 	hash := manifest(c)
@@ -216,7 +216,7 @@ func reverse(ctx context.Context, tx *canon.Tx, key LegacyKey) (Row, error) {
 	}
 	var row Row
 	if err = json.Unmarshal([]byte(fields), &row); err != nil || row == nil {
-		return nil, ErrSnapshot
+		return nil, invalidSnapshot("reverse source row JSON")
 	}
 	if column != "" {
 		v, _ := value(body)

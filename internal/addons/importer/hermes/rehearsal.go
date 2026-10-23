@@ -4,6 +4,7 @@ package hermes
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -52,6 +53,7 @@ func (p *Plan) Rehearse() (RehearsalReport, error) {
 	report.Inventory = slices.Clone(report.Inventory)
 	for i := range report.Inventory {
 		report.Inventory[i].Columns = slices.Clone(report.Inventory[i].Columns)
+		report.Inventory[i].Kinds = maps.Clone(report.Inventory[i].Kinds)
 	}
 	report.Speakers = slices.Clone(report.Speakers)
 	for i := range report.Speakers {

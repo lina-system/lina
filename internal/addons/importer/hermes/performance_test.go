@@ -126,6 +126,43 @@ func TestRehearsalFailureIsRetainedWithoutWrites(t *testing.T) {
 	}
 }
 
+func TestRehearsalPreviewDoesNotChangeInventoryKinds(t *testing.T) {
+	p, err := Prepare(t.Context(), importRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { p.Close() })
+	preview, err := p.Rehearse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := json.Marshal(preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	for _, table := range preview.Inventory {
+		for kind := range table.Kinds {
+			table.Kinds[kind] = -1
+			changed = true
+		}
+	}
+	if !changed {
+		t.Fatal("fixture must include binding kind counts")
+	}
+	again, err := p.Rehearse()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatal("preview mutation changed the next rehearsal report")
+	}
+}
+
 func TestImportUIDLookupPreservesLineage(t *testing.T) {
 	for _, tc := range []struct {
 		name, lineage, extra string

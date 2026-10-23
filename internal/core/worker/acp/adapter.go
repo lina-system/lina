@@ -30,6 +30,7 @@ var generations atomic.Uint64
 
 type Config struct {
 	Profile     Profile
+	Prepare     func(context.Context, lease.Lease) (string, error)
 	Environment []string
 	Epoch       uint64
 	Leaser      lease.Leaser
@@ -37,6 +38,7 @@ type Config struct {
 type Result struct {
 	SessionID    string            `json:"session_id"`
 	AgentVersion string            `json:"agent_version"`
+	Handshake    *Handshake        `json:"handshake,omitempty"`
 	StopReason   string            `json:"stop_reason"`
 	Output       string            `json:"output"`
 	Unknown      []json.RawMessage `json:"unknown_updates,omitempty"`
@@ -152,6 +154,16 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	a.spec = s
 	a.life, a.cancel = context.WithCancel(ctx)
 	a.mu.Unlock()
+	if a.cfg.Profile.Managed {
+		if a.cfg.Prepare == nil {
+			return worker.Thread{}, fmt.Errorf("%w: Claude ACP installer unavailable", ErrUnsupported)
+		}
+		program, err := a.cfg.Prepare(a.life, l)
+		if err != nil {
+			return worker.Thread{}, fmt.Errorf("prepare Claude ACP: %w", err)
+		}
+		a.cfg.Profile.Args = []string{program}
+	}
 	c, err := wire.Start(a.life, l, proc.Command{Path: a.cfg.Profile.Command, Args: a.cfg.Profile.Args, Dir: s.Workdir, Env: environment(a.cfg.Environment, a.cfg.Profile.Environment)})
 	if err != nil {
 		return worker.Thread{}, err
@@ -191,6 +203,10 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	a.result.SessionID = a.thread.ID
 	if initialized.AgentInfo != nil {
 		a.result.AgentVersion = initialized.AgentInfo.Version
+	}
+	if a.Name() == "grok" {
+		a.result.Handshake = grokHandshake(initialized)
+		a.result.AgentVersion = a.result.Handshake.Version
 	}
 	if a.version == "" {
 		a.version = a.result.AgentVersion
@@ -303,6 +319,11 @@ func (a *Adapter) Result() Result {
 	defer a.mu.Unlock()
 	r := a.result
 	r.Unknown = append([]json.RawMessage(nil), r.Unknown...)
+	if r.Handshake != nil {
+		handshake := *r.Handshake
+		handshake.Capabilities = slices.Clone(handshake.Capabilities)
+		r.Handshake = &handshake
+	}
 	return r
 }
 func (a *Adapter) Close(context.Context) error {

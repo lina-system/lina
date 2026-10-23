@@ -15,7 +15,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: foundation-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && 'latest' || github.run_id }}
+  # PRs: newest head only. dev pushes: one run at a time; GitHub keeps only the newest waiting run,
+  # so a burst of merges tests the latest dev head instead of every intermediate one.
+  group: foundation-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ (github.event_name == 'pull_request' || github.event_name == 'push') && 'latest' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
