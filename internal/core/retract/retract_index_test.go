@@ -117,7 +117,9 @@ VALUES('event',?,'person-1','','agent-1','erased',50,'{}','erase-event')`, id)
 }
 
 func TestRemovalHidesCitingViewsFromTheSharedIndex(t *testing.T) {
+	t.Parallel()
 	t.Run("forgotten item", func(t *testing.T) {
+		t.Parallel()
 		db, removals, flow, _, _ := memoryFixture(t)
 		source := seedMemory(t, db, flow, "source-1", "conversation-1", "도서관 violet source")
 		unrelated := seedMemory(t, db, flow, "source-2", "conversation-2", "도서관 blue other")
@@ -138,6 +140,7 @@ func TestRemovalHidesCitingViewsFromTheSharedIndex(t *testing.T) {
 	})
 
 	t.Run("supersession chain", func(t *testing.T) {
+		t.Parallel()
 		db, removals, flow, _, _ := memoryFixture(t)
 		first := seedMemory(t, db, flow, "source-1", "conversation-1", "도서관 violet first")
 		next := func(event, body, supersedes string) memory.Item {
@@ -170,6 +173,7 @@ func TestRemovalHidesCitingViewsFromTheSharedIndex(t *testing.T) {
 	})
 
 	t.Run("summary covers a retracted event", func(t *testing.T) {
+		t.Parallel()
 		db, _, _, _, _ := memoryFixture(t)
 		admit(t, db, "cover-1", "summary-conversation", "도서관 first")
 		admit(t, db, "cover-2", "summary-conversation", "도서관 second")
@@ -187,6 +191,7 @@ func TestRemovalHidesCitingViewsFromTheSharedIndex(t *testing.T) {
 	})
 
 	t.Run("summary that skipped the erased event stays", func(t *testing.T) {
+		t.Parallel()
 		db, _, _, _, _ := memoryFixture(t)
 		admit(t, db, "skip-1", "skip-conversation", "도서관 base")
 		if _, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "skip-copy", ConversationID: "skip-conversation", PersonID: "person-1", AgentID: "agent-1",
@@ -215,6 +220,7 @@ func TestRemovalHidesCitingViewsFromTheSharedIndex(t *testing.T) {
 	})
 
 	t.Run("item evidence is another forgotten item", func(t *testing.T) {
+		t.Parallel()
 		db, removals, flow, _, _ := memoryFixture(t)
 		root := seedMemory(t, db, flow, "source-1", "conversation-1", "도서관 violet root")
 		child, err := deriveMemory(t, db, root.ID, "도서관 violet child")
@@ -239,6 +245,7 @@ func TestRemovalHidesCitingViewsFromTheSharedIndex(t *testing.T) {
 	})
 
 	t.Run("recovery keeps another hidden ancestor", func(t *testing.T) {
+		t.Parallel()
 		db, removals, flow, _, _ := memoryFixture(t)
 		first := seedMemory(t, db, flow, "source-1", "conversation-1", "도서관 violet first")
 		second := seedMemory(t, db, flow, "source-2", "conversation-2", "도서관 blue second")
@@ -275,6 +282,7 @@ func TestRemovalHidesCitingViewsFromTheSharedIndex(t *testing.T) {
 	})
 
 	t.Run("erased memory keeps its dependents hidden", func(t *testing.T) {
+		t.Parallel()
 		db, removals, flow, _, _ := memoryFixture(t)
 		root := seedMemory(t, db, flow, "source-1", "conversation-1", "도서관 violet root")
 		child, err := deriveMemory(t, db, root.ID, "도서관 violet child")
@@ -300,8 +308,10 @@ func TestRemovalHidesCitingViewsFromTheSharedIndex(t *testing.T) {
 }
 
 func TestForgetHidesOnlyItsOwnIndexDocuments(t *testing.T) {
+	t.Parallel()
 	for _, count := range []int{100, 1000} {
 		t.Run(fmt.Sprintf("items-%d", count), func(t *testing.T) {
+			t.Parallel()
 			db, removals, flow, _, _ := memoryFixture(t)
 			root := seedMemory(t, db, flow, "source-1", "conversation-1", "도서관 violet root")
 			child, err := deriveMemory(t, db, root.ID, "도서관 violet child")
@@ -407,6 +417,7 @@ func assertRecallWrites(t *testing.T, db *canon.Store, deleted, inserted int, qu
 }
 
 func TestRestrictedEventsReadCitations(t *testing.T) {
+	t.Parallel()
 	db, _, flow, _, _ := memoryFixture(t)
 	protected := memoryWrite("source-1", "도서관 violet protected")
 	protected.Item.Scope = memory.NeverLeaves
