@@ -40,6 +40,24 @@ func projectWork(payload protocol.Payload) *state.WorkSummary {
 		if v.State != nil {
 			c.State = *v.State
 		}
+		if v.Stages != nil {
+			for _, entry := range *v.Stages {
+				stage := state.WorkStage{Kind: entry.Kind, Label: panelText(entry.Label), State: entry.State}
+				if entry.Number != nil {
+					stage.Number = entry.Number.String()
+				}
+				if entry.Steps != nil {
+					for _, step := range *entry.Steps {
+						value := state.WorkStageStep{Name: panelText(step.Name), State: step.State}
+						if step.StartedAt != nil {
+							value.Started, _ = time.Parse(time.RFC3339Nano, *step.StartedAt)
+						}
+						stage.Steps = append(stage.Steps, value)
+					}
+				}
+				c.Stages = append(c.Stages, stage)
+			}
+		}
 		c.Waiting, _ = strconv.Atoi(string(v.Waiting))
 		cards = append(cards, c)
 	}
@@ -135,6 +153,9 @@ func matchesWorkFilter(c state.WorkCard, filter protocol.RunningState) bool {
 func (m *shellModel) workPanelRows(width, height int) []string {
 	if width <= 0 || height <= 0 {
 		return nil
+	}
+	if card, ok := m.openedWorkCard(); ok {
+		return m.workStageRows(card, width, height)
 	}
 	text := func(id string) string { return design.Text(m.styles.options.Language, id) }
 	ellipsis := "…"
@@ -251,6 +272,10 @@ func panelClip(s string, width int, tail string) string {
 }
 
 func (m *shellModel) workPanelKey(key string) tea.Cmd {
+	if card, ok := m.openedWorkCard(); ok && key != "ctrl+c" && key != "ctrl+d" {
+		m.workStageKey(card, key)
+		return nil
+	}
 	switch key {
 	case "ctrl+d":
 		m.status = ConnectionStatus{State: Quit}
@@ -259,6 +284,14 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 		return m.controlC()
 	case "esc":
 		m.conversation.workFocused = false
+	case "enter":
+		cards, _ := m.selectableWorkCards()
+		if len(cards) > 0 {
+			m.conversation.workStages = workStageView{card: cards[m.conversation.workIndex].ID}
+			m.syncWorkStage(cards[m.conversation.workIndex])
+		}
+	case "ctrl+o":
+		m.openWorkDetails()
 	case "ctrl+p":
 		m.conversation.workCompact = !m.conversation.workCompact
 	case "left", "right":

@@ -670,6 +670,17 @@ and emits nothing for an unchanged frame.
 - When the entries do not fit, the leading done entries fold into one row that keeps the last done entry visible, and the entries after the first next one fold into a count. The current stage never folds. Expanded steps fold like cards: waiting on the person first, then working, waiting and done, then a count row.
 - Ctrl+O opens the Details of the selected card, entry or step in the pager. Esc goes back one level: from the steps to the stage list, from the stage list to the cards, and from the cards to the composer with its draft.
 
+Opening a card selects its first unfinished entry without expanding it. The
+selection follows Core's stage number (or the kind of an unnumbered entry)
+across updates. Enter toggles expansion only for an entry with ready or started
+steps; an entry that becomes done or next loses its expansion. A missing stage
+list shows the unknown word, without inventing entries from the Now line.
+Folded entries remain reachable with Up and Down, with the current and selected
+entries kept visible. Details returns to the same panel level in both widths.
+Panel labels stay on one physical line; control, arrow and box-drawing characters
+in supplied text cannot draw a graph. Removing the opened work returns to cards
+without moving focus or changing the draft.
+
 **Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place. In the focused card view, the selected name starts with the action mark (`›`, or `>` in ASCII); its width comes from the name budget so elapsed time stays intact.
 
 In both the sidebar and overlay, card navigation scrolls just enough to keep
