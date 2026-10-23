@@ -1,0 +1,8 @@
+{
+  "title": "Prepare the workshop report",
+  "note": "The accepted report is attached.",
+  "assignee": {"kind": "worker", "id": "fixture-worker"},
+  "tags": ["reviewed"],
+  "priority": "high",
+  "checklist": [{"text": "Attach the result", "checked": true}]
+}

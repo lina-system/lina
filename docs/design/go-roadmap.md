@@ -443,6 +443,9 @@ completion conditions to repository tests and installed Core scenarios.
   ambiguous-date refusal. [The to-do scenario](../../e2e/m2/todos.json) runs Core
   through capture, refused writes, views, rescheduling and index repair on
   restart. Recurrence advancement, candidates and memo promotion belong to #156.
+- #674 permits planning edits that preserve delegated completion. Its
+  [installed-Core scenario](../../e2e/m2/todo-completed-planning.json) checks
+  saved tags, priority and checklist, the completed state and restart durability.
 - Done when: the today rule passes its fixture; a recurring item advances only to a future occurrence; a dependency cycle is rejected; an ambiguous date is never saved silently; a candidate is added on its own only when the deterministic test passes.
 - Depends on: G2-22, G2-03. Design refs: C-54; [work-and-delegation.md](work-and-delegation.md#the-to-do-record).
 

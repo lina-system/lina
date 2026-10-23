@@ -3,6 +3,7 @@ package exec
 
 import (
 	"encoding/json"
+
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -13,7 +14,8 @@ func validateTodoEdit(before, after string, next records.Todo) error {
 	if field(before, "execution_state") != field(after, "execution_state") {
 		return records.ErrInvalid
 	}
-	if next.State != "completed" {
+	// Planning edits may preserve completion already recorded by the engine.
+	if next.State != "completed" || field(before, "state") == "completed" {
 		return nil
 	}
 	delegated := func(front string) bool {
