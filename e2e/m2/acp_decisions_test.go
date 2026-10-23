@@ -405,7 +405,7 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				}
 			}
 			noFile()
-			assertACPDecisionViews(t, h, fmt.Sprintf("task:%s:%d", record.ID, card.Run.Generation))
+			assertACPDecisionViews(t, h, "session:"+record.Thread.ID, record.Thread.TaskID)
 			if mode == "form" {
 				if question.Card == nil || question.ConversationID != conversation || question.Form == nil || len(question.Form.Fields) != 3 || question.Form.PluginName != scenario.worker {
 					t.Fatalf("form lost origin or schema: %+v", question)
@@ -569,9 +569,13 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 
 // Read fresh owner views while the worker is blocked on its unanswered request.
 // The fixture cannot finish until the test answers, so this has no duration race.
-func assertACPDecisionViews(t *testing.T, h *harness, ref string) {
+func assertACPDecisionViews(t *testing.T, h *harness, runningRef, progressRef string) {
 	t.Helper()
 	for _, topic := range []string{"running", "progress"} {
+		ref := runningRef
+		if topic == "progress" {
+			ref = progressRef
+		}
 		c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: topic, Version: "1.0"}})
 		if err != nil {
 			t.Fatal(err)
