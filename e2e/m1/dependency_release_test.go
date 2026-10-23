@@ -83,7 +83,12 @@ func testM3DelegationStartFailure(t *testing.T, scenario string) {
 	testM3DependencyRelease(t, &fault, nil, "", "")
 }
 
-func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict, preset, stopMode string) {
+func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict, preset, stopMode string, outcomes ...scheduledOutcomeScenario) {
+	var outcome scheduledOutcomeScenario
+	if len(outcomes) != 0 {
+		outcome = outcomes[0]
+	}
+	var recalling atomic.Bool
 	raw, err := os.ReadFile("../m3/dependency-release.json")
 	if err != nil {
 		t.Fatal(err)
@@ -105,6 +110,16 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
+			return
+		}
+		if outcome != nil && recalling.Load() {
+			recallScheduledOutcomes(t, w, request.Input, outcome, taskIDs)
+			return
+		}
+		if outcome != nil && respondScheduledOutcome(t, w, request.Input, outcome) {
+			return
+		}
+		if respondWorkerCompletion(w, request.Input, "") {
 			return
 		}
 		if preset != "" {
@@ -246,7 +261,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			t.Fatal(err)
 		}
 	}
-	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": fault == nil && conflict == nil && stopMode == "", "conflict": conflict, "stop": stopMode != ""})
+	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": outcome == nil && fault == nil && conflict == nil && stopMode == "", "conflict": conflict, "stop": stopMode != "", "outcomes": outcome})
 	gh := filepath.Join(h.root, "fixture-gh")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 	if err = os.WriteFile(gh, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s forge \"$@\"\n", quote(node), quote(program), quote(h.root))), 0700); err != nil {
@@ -361,7 +376,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	answeredQuestions := map[string]bool{}
 	approvalAnswered := false
 	wantQuestions := 2
-	if fault != nil || conflict != nil || stopMode != "" {
+	if outcome != nil || fault != nil || conflict != nil || stopMode != "" {
 		wantQuestions, approvalAnswered = 0, true
 	}
 	answerCtx, stopAnswers := context.WithTimeout(h.ctx, operationTimeout)
@@ -427,6 +442,19 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			case <-retry.C:
 			}
 		}
+	}
+	if outcome != nil {
+		checkScheduledOutcomes(t, h, client, conversation, store, taskIDs, outcome)
+		client.Close()
+		h.stopCore(core)
+		recalling.Store(true)
+		core = start()
+		client, conversation = conversationClient(t, h)
+		admittedTurn(t, h, client, conversation, "recall-scheduled", "Recall both scheduled worker reports.")
+		checkScheduledOutcomeRecords(t, h, store, taskIDs, outcome)
+		client.Close()
+		h.stopCore(core)
+		return
 	}
 	if stopMode != "" {
 		controls, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "stop-fixture", []protocol.Capability{{Name: "running", Version: "1.0"}})

@@ -807,6 +807,17 @@ remaining uncertainty. This is an ordinary conversation continuation, not a new
 worker review loop or an automatic worker retry. Raw worker output is evidence
 for the persona, not a second system-speaker result in the conversation.
 
+Scheduled workers use this same completion path, including failed or interrupted
+turns and observed connection loss. Core retains the last completed assistant
+message only from the bound task, session, turn, attempt, process generation and
+binding. It commits the report and follow-up before releasing the execution,
+clears the prior turn's output, and deduplicates repeated completion events.
+Connection loss retains the uncertain reservation. The report remains untrusted
+evidence; it creates no receipt, verdict, merge or verified task completion.
+Authenticated owner follow-ups may steer an active scheduled turn after the
+current handle checks. Starting another turn remains the scheduler's operation;
+model input and owner input to idle or unknown scheduled sessions are refused.
+
 `worker_read_file` reads a relative file in the owned session's work directory
 through the existing sandboxed file executor, returning its content and revision.
 It grants no writes or network access and refuses paths outside that directory.

@@ -406,6 +406,13 @@ through a correction turn. Core returns it to the same worker exactly once,
 requires input for the remaining conflict, and retains the dependent's gate
 until the forge merge. Repeated observation and restart cannot resend work.
 
+`m3/scheduled-outcomes.json` steers active scheduled workers through the owner
+protocol. They write and commit real artifacts, then report success or failure
+through final assistant text without submitting receipts. Core delivers both
+reports to the originating persona and restores their untrusted evidence and
+recorded snapshots after restart. Neither report verifies the task nor releases
+its dependent. The synthetic worker rejects a second turn start.
+
 Installed-Core fixtures wait for command admission after connecting the socket.
 An empty input must be refused as malformed (or capability-not-negotiated for an
 unconfigured Core), rather than unavailable during recovery, before the scenario

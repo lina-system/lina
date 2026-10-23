@@ -140,6 +140,16 @@ func (s *Session) bound(t worker.Thread, turn bool) error {
 	return nil
 }
 func (s *Session) Input(ctx context.Context, t worker.Thread, in worker.Input) error {
+	return s.inputTurn(ctx, t, in, false)
+}
+
+// Steer cannot open a new turn if the worker finishes between Core's snapshot
+// and delivery. The scheduled execution remains owned by the scheduler.
+func (s *Session) Steer(ctx context.Context, t worker.Thread, in worker.Input) error {
+	return s.inputTurn(ctx, t, in, true)
+}
+
+func (s *Session) inputTurn(ctx context.Context, t worker.Thread, in worker.Input, activeOnly bool) error {
 	s.control.Lock()
 	defer s.control.Unlock()
 	if strings.TrimSpace(in.Text) == "" {
@@ -157,6 +167,9 @@ func (s *Session) Input(ctx context.Context, t worker.Thread, in worker.Input) e
 	}
 	switch state {
 	case worker.Idle:
+		if activeOnly {
+			return errors.New("Codex turn is no longer active")
+		}
 		return s.startTurn(ctx, in.Text, t)
 	case worker.Active:
 		var response wire.V2TurnSteerResponse
