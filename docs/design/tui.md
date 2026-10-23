@@ -19,6 +19,7 @@ Numbers marked (P) are starting values to measure. A number without (P) comes fr
 | Running list | What LINA does in the background: in progress, waiting, landed ([surfaces.md](surfaces.md#running-list)). |
 | Waiting list | What only the person can decide or do, ranked by Core ([surfaces.md](surfaces.md#waiting-for-me)). |
 | Details (자세히) | The audit trail behind a card, a result or an answer, opened only on request. |
+| Work panel | The right-hand sidebar of [surfaces.md](surfaces.md#layout): a result being handled, or with none open one card per 일 (T-16). |
 
 ## Decision index
 
@@ -40,6 +41,7 @@ Ids are stable. Section headings carry the ids they specify. T-02 is withdrawn: 
 | T-13 | Results, cards and the pager | new |
 | T-14 | Agent surfaces and settings as text | new |
 | T-15 | Notifications | new |
+| T-16 | Work panel and stage list | new |
 
 ## Boundaries and trust (T-01)
 
@@ -334,7 +336,7 @@ Width tiers (P):
 
 | Tier | Columns | Arrangement |
 | --- | --- | --- |
-| Wide | 120 and up | Conversation and an optional side pane |
+| Wide | 120 and up | Conversation and the work panel (T-16) |
 | Medium | 80 to 119 | Conversation; everything else as overlays |
 | Narrow | below 80 | One region at a time, switched by key |
 | Too small | below 40 columns or 10 rows | A size notice and the status line |
@@ -416,7 +418,7 @@ func Plan(size Size, caps Caps, st Shape) Layout // regions disjoint, sum fits, 
 - The header, the status line, one composer row and a transcript floor of four rows (P) always survive.
 - The composer grows with the draft to six rows (P), then scrolls inside itself.
 - The composer rule consumes one row, using `glyph.rule` and `color.line` across the full terminal width. It is a hairline, not a box.
-- What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line, then the composer rule disappears. A folded part keeps its count, so a count on screen always equals the list.
+- What remains is shared in a stated order of shedding: the side pane closes first, then the running strip folds to a count, then the card row folds to one summary line, then the composer rule disappears. A folded part keeps its count, so a count on screen always equals the list. The work panel of T-16 is a column beside these regions: it closes only when the width leaves the wide tier, and it never takes the transcript floor.
 - `Plan` treats negative dimensions as zero. At too-small sizes it reserves one
   status row when a cell exists and uses the remaining rows for the size notice.
   At usable sizes a granted, populated running strip starts at one to three rows
@@ -517,13 +519,13 @@ Home is the starting state of the conversation. "Waiting for me", "At a glance" 
   `name  stage-word  [block-bar]  just finished  next  !`
 
   The stage word is Core's. A bar of block characters and the word always go together. `!` marks a line that waits on the person. A value that cannot be observed reads "unknown". An 일 of a 목표 is indented below it.
-- A key opens the whole progress view: waiting rows first, then the lines, in one scrolling list with no tabs. A key on a line opens its Details in the pager, and a second key shows the running list limited to that line.
+- The progress view is the work panel of T-16, one card per 일. Enter on a card opens its stage list, Ctrl+O opens its Details in the pager, and Ctrl+R there shows the running list limited to that 일.
 - The line "nothing to decide now" appears in the Waiting for me view only, never in a reply.
 - A change to a list after an agent's action is a quiet badge. It never moves focus, never interrupts typing and never lands in the middle of a reply being written or read.
 
 The conversation screen projects granted waiting/running topic rows in Core
 order and keeps their counts when folded. Ctrl+W and Ctrl+R open their complete
-retained text in the pager; Ctrl+P opens the granted progress topic. Missing
+retained text in the pager; Ctrl+P opens the granted progress topic in the work panel (T-16). Missing
 capabilities use the single local explanation of T-07 and leave no placeholder
 rows. Granted empty lists are hidden on Home without an unavailable notice.
 Opening an empty granted Waiting for me list with Ctrl+W shows the localized
@@ -582,6 +584,82 @@ An unknown run state remains explicitly unknown in Running. Opening the board sy
 change notifications. Progress, waiting and running updates refresh the waiting query; running updates and replacement snapshots regroup
 rows immediately, without changing the draft or moving selection to another
 identity. The board does not infer completion, progress or priority from text.
+
+## Work panel and stage list (T-16)
+
+Contract: [surfaces.md](surfaces.md#progress-at-a-glance), [work-and-delegation.md](work-and-delegation.md#progress-line), [work-and-delegation.md](work-and-delegation.md#stages). Measurements: [the work panel research](../research/work-panel.md).
+
+The work panel is the primary way to see work in the TUI: a sidebar at the right of the conversation with one card per 일. The person reads the 일, not the workers. Every string follows the wording rule of [surfaces.md](surfaces.md#default-view). The TUI computes no stage, order, state or text of work; it draws Core's progress lines and counts only the cards it folds.
+
+**Place.** In the wide tier the panel is always shown while the `progress` capability is granted. It is a column from below the header to above the composer rule, 40 columns wide, or a third of the terminal width up to 56 columns (P), separated from the conversation by one blank column. With no cards it shows only its one-word title. While it is shown, the At a glance card row and the running strip take no rows, and their counts stay in the status line. The Waiting for me card row stays under the conversation, where decisions are answered. In the medium and narrow tiers the same panel is an overlay over the conversation region, opened by Ctrl+P and closed by Esc. It replaces the full-screen progress view.
+
+**Cards.** Below the title, each 일 is a card of exactly two rows, and nothing else by default:
+
+```
+출장 준비                     2h 10m
+  확인 필요 · 숙소 결제
+로그인 수정                      42m
+  로그인 화면 수정 외 1
+자료 조사                    1d 03h
+  대기 · 호스트 답장
+끝 12
+… 9개 더 · 확인 필요 1
+```
+
+- The diagram is schematic: it fixes order and content, not glyphs or widths.
+- The first row is the name and, right-aligned, the elapsed time since its work started, from Core's start time and the clock offset of T-06 rule 4: `0m` to `59m`, then `1h 05m`, then `2d 04h`. A done card stops at its finish. The elapsed time is never cut; the name is truncated at a grapheme boundary with an ellipsis.
+- The second row, indented two cells, is Core's Now: what the 일 is doing right now, in a few words ([work-and-delegation.md](work-and-delegation.md#progress-line)). It is truncated the same way and never wraps.
+- A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too.
+- Cards keep Core's order: waiting on the person, running, waiting on something outside, done. Done cards fold into one row. When the cards do not fit, the last row (`…`, or `...` in ASCII) gives the number of hidden cards and, when any of them waits on the person, how many. Cards that wait on the person are hidden last. The numbers always equal the hidden cards.
+- The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time.
+
+**Views.** Ctrl+P on the focused panel switches between cards and a compact view of one row per 일: the name, then Now, then the elapsed time right-aligned; Now shrinks first. Left and Right change the state filter: all, needs you, running, waiting, done. The title shows the filter when it is not all, and fold and count rows then count only that state.
+
+**Adjusting.** On a selected card, Shift+Up and Shift+Down move the 일 up or down in priority, Space pauses or resumes it, and Delete asks to stop it: the card's second row asks for Enter to confirm, and any other key cancels. `-` and `+` lower and raise the run limit by one, and `0` returns it to automatic; the title shows the limit only when the person set one. These keys are not letters, so they work while a Korean input method is on. The TUI sends each choice to Core and changes nothing locally: a card moves, pauses or shows its place only when Core's update arrives ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)). While the panel has focus, the footer shows these keys as whole hints (T-10).
+
+**Stage list.** Enter on a card opens the 일 view in the panel: a row with the 일's name and a back mark (`‹`, or `<` in ASCII), then one row per entry of its stage list ([work-and-delegation.md](work-and-delegation.md#stages)):
+
+```
+‹ 로그인 수정
+1 ✓ 원인 찾기
+2 ● 로그인 화면 수정 외 1
+    ● 로그인 화면 수정
+        [Codex] 진행 중
+    ○ 가입 화면 수정
+3 · 통합 확인
+4 · 확인
+```
+
+- An entry is its number, the mark of its state (`✓` done, `●` working, `○` waiting, `!` needs the person, `×` failed or stopped, `?` unknown, `·` next; ASCII `+`, `*`, `o`, `!`, `x`, `?`, `.`) and its label. A parallel group is exactly one entry, whose label names its first step and the number of the others.
+- Enter on an open entry (normally only the current stage) expands it to its steps, indented two cells, and under each step in progress its live worker sessions, indented four, as the worker name in brackets and its state word. No other entry expands, and nothing else shows a worker.
+- No row of the panel draws an edge, an arrow or a box between steps. Order is the only form a dependency takes.
+- When the entries do not fit, the leading done entries fold into one row that keeps the last done entry visible, and the entries after the first next one fold into a count. The current stage never folds. Expanded steps fold like cards: waiting on the person first, then working, waiting and done, then a count row.
+- Ctrl+O opens the Details of the selected card, entry or step in the pager. Esc goes back one level: from the steps to the stage list, from the stage list to the cards, and from the cards to the composer with its draft.
+
+**Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place.
+
+**Updates.** Topic updates replace cards in place. They never move focus, scroll the conversation, change the draft or close an opened 일 view. From Core's commit of a work event to the PTY frame that shows the changed card, the 95th percentile is at most 500 ms and the maximum at most 1 s with 50 일 running (P).
+
+**Acceptance, defined before building.** `e2e/m3/work-panel.json` and its Go driver run installed Core with a fixture manager and stub workers, and the real TUI in a PTY at 120x34, in Korean and English, Unicode and ASCII. Inputs are fixed before any run: N = 1, 5, 20 and 50 일; the 일 at position i takes graph i mod 5 of a fixed corpus (one step; a chain of six; a diamond; a fan-out of one, 82 and one; two independent chains); names come from a fixed corpus of 1 to 60 graphemes with Hangul, wide, combining and emoji sequences. Exactly one 일 waits on the person and is the last one admitted; a second case at N = 50 has three. Each check passes or fails. No check is scored, retried or settled by sleeping:
+
+| Check | Pass when |
+| --- | --- |
+| E1 visible | With no key sent, every 일 that waits on the person has its card inside the panel in the first settled frame, at every N. |
+| E2 two rows | At N = 1, 5 and 20, every shown card is exactly two rows no wider than the panel: the name with the elapsed time, then the Now line. |
+| E3 elapsed | Every shown card's elapsed time equals Core's start time to the frame time, in the display format, to the minute. |
+| E4 now moves | Each injected step transition that changes Core's Now changes that card's second row in the next frame to the new Now; a frame without a transition changes no Now line. |
+| E5 counts | The fold and overflow rows' numbers equal the hidden cards and the hidden cards that wait on the person, and the status count equals Core's. |
+| E6 no graph | Every opened 일 view has exactly one row per stage entry plus its fold rows; a group of k parallel steps is one row naming its first step and k − 1 others; no panel row holds an arrow or box-drawing character (U+2190 to U+21FF, U+2500 to U+257F). |
+| E7 workers | Bracketed worker rows appear only under the expanded steps of an open entry. |
+| E8 latency | Over 50 step transitions injected at N = 50, the time from Core's recorded commit to the first PTY frame showing the change meets the bound above. |
+| E9 calm | During E8 the draft, the focus and the conversation's reading anchor are unchanged. |
+| E10 views | At N = 20 and 50, the compact view shows every shown card in one row with its name, Now and elapsed time, and each filter shows only cards in that state, with count rows counting only them. |
+| E11 order | After a move key, the next scheduling pass that Core records places the 일's ready steps by its new rank, and the next frame shows the card in its new place. |
+| E12 pause | After Space, the next pass dispatches no step of that 일 and its card shows 일시정지; after Space again its steps dispatch on the next pass; after Delete and Enter the 일 is `stopped`, and after Delete and another key nothing changes. |
+| E13 limit | Over 20 일 with the limit set to 1, to 3 and to automatic, from the next pass after each change no 일 past the limit starts a step, steps already running continue until they end, the number of 일 with a step in progress then never exceeds the limit, and each 일 past it with no step in progress shows its reason and place in rank order. |
+| E14 shortage | When a stub worker reports its quota exhausted, or the host report shows no free capacity, the next pass lowers the automatic limit and starts no step past it, healthy running steps continue, and each card past the limit with no step in progress shows the quota or load reason with its place. |
+
+E11 to E14 read the pass from Core's ledger, not from timing. The run records N, the frames, the measured times and each result. A miss is investigated before a bound changes. The evaluation does not establish whether Core's Now lines and the manager's step names are good words for the person, which needs a check against human labels, or whether the person asks "what is running" less often; the research note names the field measurement for that.
 
 ## Results, cards and the pager (T-13)
 
@@ -1031,7 +1109,7 @@ and limits are recorded in [the shortcut reference](tui-shortcuts-reference.md).
 | Ctrl+D | Quit this TUI |
 | Ctrl+Z | Undo draft editing |
 | PgUp/PgDn | Scroll the conversation |
-| Ctrl+W, Ctrl+P, Ctrl+R | Waiting for me, progress, running list |
+| Ctrl+W, Ctrl+P, Ctrl+R | Waiting for me, work panel (T-16), running list |
 | Ctrl+O | Open the selected result |
 | F6 | Open the first unresolved decision |
 | End | Return to the latest conversation output and resume following |

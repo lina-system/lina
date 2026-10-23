@@ -193,6 +193,15 @@ func TestReplayCorpusAndReuse(t *testing.T) {
 				w.Epoch = got.Epoch
 				want.Payload = w
 			}
+			// Raw JSON bodies retain whitespace on decode; delivery re-encodes them.
+			// Compare the normalized typed value while retaining exact JSON numbers.
+			normalized, err := json.Marshal(want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = json.Unmarshal(normalized, &want); err != nil {
+				t.Fatal(err)
+			}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("fixture changed: %s", name)
 			}

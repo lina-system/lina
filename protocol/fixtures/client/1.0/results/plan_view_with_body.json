@@ -1,0 +1,69 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "result",
+  "message_id": "result-example",
+  "attempt_id": "result-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "result_id": "plan-example",
+    "revision": 2,
+    "type": "plan_view",
+    "title": "Example",
+    "summary": "Example summary",
+    "status": "preview",
+    "saved_as": null,
+    "revised_by": "agent-example",
+    "provenance": {
+      "agent_id": "agent-example",
+      "conversation_id": "conversation-example",
+      "turn_id": "turn-example",
+      "task_id": null
+    },
+    "text": "Workshop plan",
+    "body": {
+      "confirm": "plan-example",
+      "entries": [
+        {
+          "id": "goal-example",
+          "kind": "goal",
+          "title": "Deliver a workshop",
+          "state": "active",
+          "parent": null,
+          "done": "Workshop delivered"
+        },
+        {
+          "id": "project-example",
+          "kind": "project",
+          "title": "Run workshop",
+          "state": "planned",
+          "parent": "goal-example",
+          "done": "Participants complete the session"
+        },
+        {
+          "id": "todo-example",
+          "kind": "todo",
+          "title": "Book the room",
+          "state": "planned",
+          "parent": "project-example",
+          "done": "Reservation received",
+          "stage": "Preparation",
+          "depends_on": []
+        }
+      ]
+    }
+  }
+}
