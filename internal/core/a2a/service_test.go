@@ -339,7 +339,8 @@ func TestMultipartBinaryEvidence(t *testing.T) {
 	body := []byte{0xff, 0, 1, 2, 3}
 	call.Profile.MediaType = "application/octet-stream"
 	call.Profile.SHA256 = hash(body)
-	artifacts := []Artifact{{ID: "binary", Parts: []Part{{Raw: base64.StdEncoding.EncodeToString(body[:2]), MediaType: call.Profile.MediaType}, {Raw: base64.StdEncoding.EncodeToString(body[2:]), MediaType: call.Profile.MediaType}}}}
+	first, second := base64.StdEncoding.EncodeToString(body[:2]), base64.StdEncoding.EncodeToString(body[2:])
+	artifacts := []Artifact{{ID: "binary", Parts: []Part{{Raw: &first, MediaType: call.Profile.MediaType}, {Raw: &second, MediaType: call.Profile.MediaType}}}}
 	if err = f.service.verify(t.Context(), f.connection, &call, artifacts); err != nil || !call.Verified || len(call.Evidence) != 1 || !bytes.Equal(call.Evidence[0].Body, body) {
 		t.Fatal("binary parts not retained and checked", err)
 	}
@@ -453,5 +454,22 @@ func TestUncertainTaskCannotFallbackWithChangedInput(t *testing.T) {
 	_, _ = f.service.Send(t.Context(), f.owner, "new-intent-in-same-task", Input{Connection: "peer", Task: "compute", Text: "compute differently"})
 	if f.sends.Load() != 1 {
 		t.Fatal("unknown task sent another operation under changed input")
+	}
+}
+
+func TestEmptyRawArtifactIsRetained(t *testing.T) {
+	f := peer(t, "task")
+	call, err := f.send(t, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call.Profile.MediaType = "application/octet-stream"
+	call.Profile.SHA256 = hash(nil)
+	var artifacts []Artifact
+	if err = json.Unmarshal([]byte(`[{"artifactId":"empty","parts":[{"raw":"","mediaType":"application/octet-stream"}]}]`), &artifacts); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.service.verify(t.Context(), f.connection, &call, artifacts); err != nil || !call.Verified {
+		t.Fatal("empty bytes treated as absent part", err)
 	}
 }

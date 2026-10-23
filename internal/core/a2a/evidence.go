@@ -52,7 +52,7 @@ func (s *Service) verify(ctx context.Context, c Connection, call *Call, artifact
 		mediaType := ""
 		for _, part := range artifact.Parts {
 			count := 0
-			for _, yes := range []bool{part.Text != nil, part.Raw != "", part.URL != "", part.Data != nil} {
+			for _, yes := range []bool{part.Text != nil, part.Raw != nil, part.URL != "", part.Data != nil} {
 				if yes {
 					count++
 				}
@@ -76,8 +76,8 @@ func (s *Service) verify(ctx context.Context, c Connection, call *Call, artifact
 			switch {
 			case part.Text != nil:
 				body = []byte(*part.Text)
-			case part.Raw != "":
-				body, err = base64.StdEncoding.DecodeString(part.Raw)
+			case part.Raw != nil:
+				body, err = base64.StdEncoding.DecodeString(*part.Raw)
 			case part.Data != nil:
 				if !json.Valid(part.Data) {
 					return ErrEvidence

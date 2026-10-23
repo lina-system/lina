@@ -57,7 +57,7 @@ type Scopes struct {
 }
 type Part struct {
 	Text      *string         `json:"text,omitempty"`
-	Raw       string          `json:"raw,omitempty"`
+	Raw       *string         `json:"raw,omitempty"`
 	URL       string          `json:"url,omitempty"`
 	Data      json.RawMessage `json:"data,omitempty"`
 	MediaType string          `json:"mediaType,omitempty"`
