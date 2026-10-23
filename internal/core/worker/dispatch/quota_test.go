@@ -27,7 +27,7 @@ func TestQuotaPersistsAndBlockedWorkersAreNeverOpenedBeforeReset(t *testing.T) {
 	opens := map[string]int{}
 	closed := 0
 	factory := func(name string, rows []provider.QuotaRow) Factory {
-		return Factory{Name: name, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+		return Factory{Name: name, Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
 			opens[name]++
 			return &quotaAdapter{name: name, rows: rows}, func(context.Context) error { closed++; return nil }, nil
 		}}
