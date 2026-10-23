@@ -26,6 +26,7 @@ import (
 
 func TestConversationSessionCompactsBeforeToolFollowup(t *testing.T) {
 	r, p := turnRuntime(t)
+	r.route.Adapter = bindingCatalogBudgetProvider{p}
 	queuedContextEvent(t, r, "archive", "archive-marker "+strings.Repeat("archive ", 4000), guard.EntryOwner, "")
 	queuedContextEvent(t, r, "archive-reply", "Archived.", guard.EntryAgent, "")
 	input, inbox := admitTurnInput(t, r, "continue-current-work")
@@ -92,7 +93,7 @@ func TestConversationQueuesSummaryOnlyAfterDelivery(t *testing.T) {
 	for _, condense := range []bool{false, true} {
 		t.Run(fmt.Sprintf("condense=%v", condense), func(t *testing.T) {
 			r, p := turnRuntime(t)
-			r.route.Adapter = usageTurnProvider{p}
+			r.route.Adapter = bindingCatalogUsageProvider{usageTurnProvider{p}}
 			queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 4000), guard.EntryOwner, "")
 			queuedContextEvent(t, r, "archive-reply", "Archived.", guard.EntryAgent, "")
 			input, inbox := admitTurnInput(t, r, "finish-current-work")
@@ -162,6 +163,21 @@ func TestConversationQueuesSummaryOnlyAfterDelivery(t *testing.T) {
 			}
 		})
 	}
+}
+
+// These scenarios budget room for the binding schemas while retaining enough
+// history to test their original trigger: the tool result or delivered answer.
+// Production limits and the explicit adapter-budget/oversize tests stay intact.
+type bindingCatalogBudgetProvider struct{ *turnProvider }
+
+func (bindingCatalogBudgetProvider) RequestBudget(provider.ModelRef) (int, func(provider.Request) int) {
+	return 144000, conversationRequestSize
+}
+
+type bindingCatalogUsageProvider struct{ usageTurnProvider }
+
+func (bindingCatalogUsageProvider) RequestBudget(provider.ModelRef) (int, func(provider.Request) int) {
+	return 144000, conversationRequestSize
 }
 
 type budgetTurnProvider struct{ *turnProvider }

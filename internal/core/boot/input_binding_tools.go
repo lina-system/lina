@@ -63,7 +63,7 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 		if !ok {
 			continue
 		}
-		properties["input_binding"] = map[string]any{"type": "object", "description": "Request ordinal from bind_input, default 0. Omit input_event_id for the current input; use an admitted event ID to act on consumed steering.", "properties": map[string]any{"input_event_id": inputEventIDSchema(), "request": map[string]any{"type": "integer", "minimum": 0, "maximum": 31}}, "required": []string{"request"}, "additionalProperties": false}
+		properties["input_binding"] = map[string]any{"type": "object", "properties": map[string]any{"input_event_id": map[string]string{"type": "string"}, "request": map[string]any{"type": "integer", "default": 0}}, "additionalProperties": false}
 		declarations[n], _ = json.Marshal(d)
 		s.bindings[name] = loop.Tool{
 			Validate: func(c provider.ToolCall) (string, error) {
