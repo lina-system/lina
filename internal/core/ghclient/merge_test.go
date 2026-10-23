@@ -209,3 +209,37 @@ func TestObserveMergeMissingCommitAndFailedChecks(t *testing.T) {
 		})
 	}
 }
+
+func TestHistoricalMergeRemainsVerifiedAfterBaseAdvances(t *testing.T) {
+	replies := mergedBundle(nextSHA)
+	replies = append(replies, fakeResponse{200, "", `{"status":"ahead","merge_base_commit":{"sha":"` + mergedSHA + `"}}`})
+	f := &fakeRunner{replies: replies}
+	c := testClient(t, f)
+	r, err := c.ReadLanded(t.Context(), Ref{"o/r", 140}, "dev", sha, mergedSHA)
+	if err != nil || r.State != "merged" || r.Commit != mergedSHA {
+		t.Fatalf("historical merge lost: %+v %v", r, err)
+	}
+	for _, args := range f.args {
+		if args[0] != "api" {
+			t.Fatal("observation wrote to GitHub")
+		}
+	}
+}
+func TestHistoricalMergeRejectsRemovedCommit(t *testing.T) {
+	replies := mergedBundle(nextSHA)
+	replies = append(replies, fakeResponse{200, "", `{"status":"diverged","merge_base_commit":{"sha":"` + nextSHA + `"}}`})
+	c := testClient(t, &fakeRunner{replies: replies})
+	if r, err := c.ReadLanded(t.Context(), Ref{"o/r", 140}, "dev", sha, mergedSHA); err == nil || r.State == "merged" {
+		t.Fatalf("removed merge accepted: %+v %v", r, err)
+	}
+}
+
+func TestHistoricalMergeReconcilesAnUnreceiptedWrite(t *testing.T) {
+	replies := mergedBundle(nextSHA)
+	replies = append(replies, fakeResponse{200, "", `{"status":"ahead","merge_base_commit":{"sha":"` + mergedSHA + `"}}`})
+	c := testClient(t, &fakeRunner{replies: replies})
+	r, err := c.ReadLanded(t.Context(), Ref{"o/r", 140}, "dev", sha, "")
+	if err != nil || r.Commit != mergedSHA || r.State != "merged" {
+		t.Fatalf("uncertain merge did not settle from ancestry: %+v %v", r, err)
+	}
+}

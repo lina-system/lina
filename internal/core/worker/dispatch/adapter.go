@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 	"github.com/thisisjun786/lina/internal/core/worker/claudecode"
+	"github.com/thisisjun786/lina/kit/lease"
 )
 
 type attempt interface {
@@ -27,23 +28,54 @@ func (s *Service) attempt(name string) (attempt, observation, error) {
 			break
 		}
 		a := antigravity.New(antigravity.Config{Binary: s.cfg.Binary, Environment: s.cfg.Environment, Epoch: s.cfg.Epoch, Leaser: s.cfg.Activities})
-		return a, func() (json.RawMessage, []antigravity.DeniedAction) {
-			result := a.Result()
-			return mustJSON(result), result.DeniedActions
-		}, nil
+		return a, observeAdapter(a), nil
 	case "claude":
 		if s.cfg.ClaudeBinary == "" {
 			break
 		}
 		a := claudecode.New(claudecode.Config{Binary: s.cfg.ClaudeBinary, Environment: s.cfg.Environment, Epoch: s.cfg.Epoch, Leaser: s.cfg.Activities})
-		return a, func() (json.RawMessage, []antigravity.DeniedAction) {
+		return a, observeAdapter(a), nil
+	}
+	return nil, nil, errors.New("worker unavailable")
+}
+
+func observeAdapter(adapter worker.Adapter) observation {
+	switch a := adapter.(type) {
+	case *antigravity.Adapter:
+		return func() (json.RawMessage, []antigravity.DeniedAction) {
+			result := a.Result()
+			return mustJSON(result), result.DeniedActions
+		}
+	case *claudecode.Adapter:
+		return func() (json.RawMessage, []antigravity.DeniedAction) {
 			result := a.Result()
 			var denied []antigravity.DeniedAction
 			for _, denial := range result.PermissionDenials {
 				denied = append(denied, antigravity.DeniedAction{Action: denial.ToolUseID, DisplayName: denial.ToolName})
 			}
 			return mustJSON(result), denied
-		}, nil
+		}
 	}
-	return nil, nil, errors.New("worker unavailable")
+	return func() (json.RawMessage, []antigravity.DeniedAction) { return nil, nil }
+}
+
+// Explicit selections retain their adapter choice; omitted selections use the
+// installed chooser candidates. Both paths honor quota and attempt fencing.
+func (s *Service) workersFor(r Record) []Factory {
+	name := r.Definition.Worker
+	if name == "" {
+		return s.cfg.Workers
+	}
+	for _, f := range s.cfg.Workers {
+		if f.Name == name {
+			return []Factory{f}
+		}
+	}
+	return []Factory{{Name: name, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+		a, _, err := s.attempt(name)
+		if err != nil {
+			return nil, nil, err
+		}
+		return a, a.Close, nil
+	}}}
 }

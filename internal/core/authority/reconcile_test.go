@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
@@ -146,5 +147,76 @@ func TestCancelInterruptedDoesNotReleaseAnotherReservation(t *testing.T) {
 	})
 	if err != nil || active != "different" || revision != "later" {
 		t.Fatalf("foreign target changed: %s %s %v", active, revision, err)
+	}
+}
+
+func TestAppliedObservationReleasesOnlyItsReservedTarget(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		t.Run(fmt.Sprint(restart), func(t *testing.T) {
+			f := setup(t)
+			definition := spec(false)
+			input, err := definition.Schema(f.call.Args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ticket, err := f.service.Begin(t.Context(), f.call, definition, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = f.service.Finish(t.Context(), ticket, tools.Result{State: tools.Unknown}); err != nil {
+				t.Fatal(err)
+			}
+			expected, err := f.service.Effect(t.Context(), f.call.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if restart {
+				if err = f.store.Close(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				f.cfg.Epoch++
+				f.call.Auth.Epoch++
+				f.store, err = canon.Open(t.Context(), f.cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.open(t)
+			}
+			proof := tools.Result{State: tools.Applied, Revision: "r2", Body: json.RawMessage(`{"source":"observed","proof":"readback"}`)}
+			foreign := expected
+			foreign.Person = "someone-else"
+			if err = f.service.ReconcileApplied(t.Context(), foreign, proof); err == nil {
+				t.Fatal("foreign effect was settled")
+			}
+			if err = f.service.ReconcileApplied(t.Context(), expected, proof); err != nil {
+				t.Fatal(err)
+			}
+			observed, err := f.service.Effect(t.Context(), expected.Key)
+			if err != nil || observed.State != tools.Applied {
+				t.Fatalf("observation not retained: %+v %v", observed, err)
+			}
+			f.observedRevision, f.grantedRevision = "r2", "r2"
+			f.call.Auth.Revision = "r2"
+			f.call.Key = "next-deployment"
+			if _, err = f.service.Begin(t.Context(), f.call, definition, input); err != nil {
+				t.Fatalf("observed effect kept its reservation: %v", err)
+			}
+			if err = f.service.ReconcileApplied(t.Context(), expected, proof); err != nil {
+				t.Fatal(err)
+			}
+			var active string
+			if err = f.store.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT active_key FROM authority_targets WHERE target='document'").Scan(&active)
+			}); err != nil || active != f.call.Key {
+				t.Fatalf("old observation released a newer write: %s %v", active, err)
+			}
+			live, err := f.service.Effect(t.Context(), f.call.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = f.service.ReconcileApplied(t.Context(), live, proof); !errors.Is(err, tools.ErrInProgress) {
+				t.Fatalf("live write was settled: %v", err)
+			}
+		})
 	}
 }
