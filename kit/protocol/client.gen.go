@@ -98,8 +98,66 @@ const (
 	KindWebResult            Kind = "web_result"
 	KindRecordRequest        Kind = "record_request"
 	KindRecordResult         Kind = "record_result"
+	KindA2aRequest           Kind = "a2a_request"
+	KindA2aResult            Kind = "a2a_result"
 )
 
+type A2aCallStatus struct {
+	AgentID        string  `json:"agent_id"`
+	Connection     string  `json:"connection"`
+	ConversationID string  `json:"conversation_id"`
+	ID             string  `json:"id"`
+	Question       *string `json:"question,omitempty"`
+	RemoteTask     *string `json:"remote_task,omitempty"`
+	ResultID       *string `json:"result_id,omitempty"`
+	State          string  `json:"state"`
+	Verified       bool    `json:"verified"`
+}
+type A2aConnection struct {
+	CardURL     string       `json:"card_url"`
+	ID          string       `json:"id"`
+	Oauth       *A2aOauth    `json:"oauth,omitempty"`
+	Origin      string       `json:"origin"`
+	PrivateHost *string      `json:"private_host,omitempty"`
+	Profiles    []A2aProfile `json:"profiles"`
+	Scheme      string       `json:"scheme"`
+}
+type A2aConnectionStatus struct {
+	Enabled  bool   `json:"enabled"`
+	ID       string `json:"id"`
+	Revision string `json:"revision"`
+}
+type A2aOauth struct {
+	AuthorizationURL string   `json:"authorization_url"`
+	ClientID         string   `json:"client_id"`
+	Issuer           string   `json:"issuer"`
+	Scopes           []string `json:"scopes"`
+	TokenURL         string   `json:"token_url"`
+}
+type A2aProfile struct {
+	Effect         string      `json:"effect"`
+	InputPrefix    string      `json:"input_prefix"`
+	MaxInputBytes  json.Number `json:"max_input_bytes"`
+	MaxOutputBytes json.Number `json:"max_output_bytes"`
+	MediaType      string      `json:"media_type"`
+	Name           string      `json:"name"`
+	Sha256         string      `json:"sha256"`
+}
+type A2aRequest struct {
+	AgentID          *string        `json:"agent_id,omitempty"`
+	Answer           *string        `json:"answer,omitempty"`
+	CallID           *string        `json:"call_id,omitempty"`
+	Connection       *A2aConnection `json:"connection,omitempty"`
+	ConnectionID     *string        `json:"connection_id,omitempty"`
+	Credential       *string        `json:"credential,omitempty"`
+	Operation        string         `json:"operation"`
+	VerificationHash *string        `json:"verification_hash,omitempty"`
+}
+type A2aResult struct {
+	Calls       *[]A2aCallStatus       `json:"calls,omitempty"`
+	Connections *[]A2aConnectionStatus `json:"connections,omitempty"`
+	Operation   string                 `json:"operation"`
+}
 type AccountRequest struct {
 	AccountID *string `json:"account_id,omitempty"`
 	Operation *string `json:"operation,omitempty"`
@@ -1191,6 +1249,8 @@ func (WebRequest) isPayload()           {}
 func (WebResult) isPayload()            {}
 func (RecordRequest) isPayload()        {}
 func (RecordResult) isPayload()         {}
+func (A2aRequest) isPayload()           {}
+func (A2aResult) isPayload()            {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -1558,6 +1618,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p RecordResult
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindA2aRequest:
+		var p A2aRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindA2aResult:
+		var p A2aResult
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -1687,7 +1755,9 @@ const clientSchemaJSON = `{
         "web_request",
         "web_result",
         "record_request",
-        "record_result"
+        "record_result",
+        "a2a_request",
+        "a2a_result"
       ]
     },
     "message_id": {
@@ -3197,6 +3267,38 @@ const clientSchemaJSON = `{
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "a2a_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/a2a_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "a2a_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/a2a_result"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -4303,21 +4405,21 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "waiting_answer": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -4795,14 +4897,14 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "memory_import_progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "memory_promotion_batch": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -4983,7 +5085,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "agent_talk_subscribe": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -5045,7 +5147,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "task_cancel": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -5528,14 +5630,14 @@ const clientSchemaJSON = `{
       ]
     },
     "saved_reference": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "save_destination": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -7546,6 +7648,253 @@ const clientSchemaJSON = `{
       "required": [
         "state",
         "label"
+      ],
+      "additionalProperties": false
+    },
+    "a2a_profile": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "effect": {
+          "type": "string",
+          "enum": [
+            "research",
+            "calculation",
+            "private_draft",
+            "external_effect",
+            "investment_order",
+            "binding_execution",
+            "unclassified"
+          ]
+        },
+        "input_prefix": {
+          "type": "string"
+        },
+        "max_input_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^([0-9a-f]{64})?$"
+        },
+        "media_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "effect",
+        "input_prefix",
+        "max_input_bytes",
+        "max_output_bytes",
+        "sha256",
+        "media_type"
+      ],
+      "additionalProperties": false
+    },
+    "a2a_oauth": {
+      "type": "object",
+      "properties": {
+        "issuer": {
+          "type": "string"
+        },
+        "authorization_url": {
+          "type": "string"
+        },
+        "token_url": {
+          "type": "string"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "issuer",
+        "authorization_url",
+        "token_url",
+        "client_id",
+        "scopes"
+      ],
+      "additionalProperties": false
+    },
+    "a2a_connection": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "card_url": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "private_host": {
+          "type": "string"
+        },
+        "scheme": {
+          "type": "string"
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/a2a_profile"
+          }
+        },
+        "oauth": {
+          "$ref": "#/$defs/a2a_oauth"
+        }
+      },
+      "required": [
+        "id",
+        "card_url",
+        "origin",
+        "scheme",
+        "profiles"
+      ],
+      "additionalProperties": false
+    },
+    "a2a_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "configure",
+            "list",
+            "revoke",
+            "credential",
+            "sign_in",
+            "calls",
+            "answer",
+            "verify_result"
+          ]
+        },
+        "connection": {
+          "$ref": "#/$defs/a2a_connection"
+        },
+        "connection_id": {
+          "type": "string"
+        },
+        "credential": {
+          "type": "string"
+        },
+        "call_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "verification_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "a2a_connection_status": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "enabled",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "a2a_call_status": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "connection": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_id": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "remote_task": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "result_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "connection",
+        "agent_id",
+        "conversation_id",
+        "state",
+        "verified"
+      ],
+      "additionalProperties": false
+    },
+    "a2a_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "connections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/a2a_connection_status"
+          }
+        },
+        "calls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/a2a_call_status"
+          }
+        }
+      },
+      "required": [
+        "operation"
       ],
       "additionalProperties": false
     }
