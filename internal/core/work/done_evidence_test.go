@@ -3,8 +3,11 @@ package work
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/result"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,6 +33,38 @@ func TestTaskCompletionWithoutDoneEvidenceIsClaimed(t *testing.T) {
 	_ = json.Unmarshal(raw, &got)
 	if got.Completion.State != "claimed" || got.Completion.Label != "not verified" {
 		t.Fatalf("missing work-kind evidence must remain claimed: %s", raw)
+	}
+}
+
+func TestChangedDeliveryClearsCurrentCompletion(t *testing.T) {
+	s, _, receipt, _ := fileFixture(t)
+	card := submitFiles(t, s, receipt)
+	proof := result.CompletionRequest{WorkKind: "document", Evidence: []result.EvidenceReference{{Kind: "source_reopened", TurnID: "turn", CallID: "read"}}}
+	ctx := result.WithCompletionPolicy(t.Context(), func(req result.CompletionRequest) result.Completion {
+		return result.AssessCompletion(req, nil, func(result.EvidenceReference) bool { return true })
+	})
+	evidence, err := s.LandFiles(ctx, card.Task.ID, receipt.EventID, card.FileSnapshot.Fingerprint, "Checked source", proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err = s.Get(t.Context(), card.Task.ID)
+	if err != nil || card.Completion == nil || card.Completion.State != "done" {
+		t.Fatalf("initial completion: %+v %v", card, err)
+	}
+	writeFixture(t, filepath.Join(evidence.Path, "out/result.txt"), "changed destination")
+	if _, err = s.LandFiles(ctx, card.Task.ID, receipt.EventID, card.FileSnapshot.Fingerprint, "Recheck", proof); !errors.Is(err, ErrFilesChanged) {
+		t.Fatal(err)
+	}
+	if err = s.Rebuild(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	card, err = s.Get(t.Context(), card.Task.ID)
+	if err != nil || card.Applied || card.State != "ready_for_review" || card.Completion != nil {
+		t.Fatalf("invalidated delivery retained completion: %+v %v", card, err)
+	}
+	page, _, err := s.SummaryPage(t.Context(), card.Task.ID+":1", 0)
+	if err != nil || !strings.HasPrefix(page, "ready_for_review:") {
+		t.Fatalf("reopened delivery presented as done: %s %v", page, err)
 	}
 }
 

@@ -54,7 +54,7 @@ func Lanes(ctx context.Context, db *canon.Store, person, after string, agents ma
 				details = append(details, stage.Name+" ("+stage.Source+"): "+stage.Summary)
 			}
 			state := c.State
-			if c.Completion != nil && c.Completion.State == "claimed" {
+			if c.State == "done" && c.Completion != nil && c.Completion.State == "claimed" {
 				state = "claimed"
 			}
 			lanes = append(lanes, protocol.WorkerLane{LaneID: r.ID, TaskID: c.Task.ID, AgentID: c.Task.AgentID, AgentName: bounded(name), Worker: bounded(r.Worker), ThreadID: bounded(r.ThreadID), TurnID: bounded(r.TurnID), NodeID: bounded(r.NodeID), State: state, Title: bounded(c.Task.Title), Generation: strconv.Itoa(r.Generation), Details: details})

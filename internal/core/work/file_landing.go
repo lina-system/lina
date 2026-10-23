@@ -104,6 +104,7 @@ func advanceFiles(c *Card, e Event) error {
 		}
 		c.FileCopies[i] = *e.FileCopy
 	case "files_invalidated":
+		c.Completion = nil
 		c.Applied = false
 		c.FileEvidence = nil
 		c.State = "ready_for_review"

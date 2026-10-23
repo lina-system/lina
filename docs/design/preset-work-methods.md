@@ -141,7 +141,9 @@ the work display says "not verified" and does not count that claim as verified
 completion. Retrying an already recorded task acceptance preserves its first
 policy decision. A new completion has its own identity. Claimed completions
 increment the agent's durable counter once per identity; replays, record-index
-rebuilds and restart do not increment it again. Existing historical completions
+rebuilds and restart do not increment it again. When a delivered file changes, its current completion is invalidated with the
+apply evidence. Reopened work displays its current work state; earlier
+completion records remain historical evidence. Existing historical completions
 are not rewritten or counted retroactively.
 
 Evidence: [What counts as done](../research/m4-owner-agent-sessions.md#what-counts-as-done). In every role with done-claim corrections, the agent checked a proxy layer instead of the layer the person uses.

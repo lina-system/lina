@@ -88,7 +88,7 @@ func (s *Service) SummaryPage(ctx context.Context, id string, offset int64) (str
 	}
 	var b strings.Builder
 	state := c.State
-	if c.Completion != nil {
+	if c.State == "done" && c.Completion != nil {
 		state = c.Completion.Label
 	}
 	b.WriteString(state + ": " + c.Task.Title + "\n")
