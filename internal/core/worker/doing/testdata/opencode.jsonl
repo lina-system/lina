@@ -1,0 +1,2 @@
+{"type":"session.updated","properties":{"info":{"id":"fixture","title":"Login repair"}}}
+{"type":"todo.updated","properties":{"sessionID":"fixture","todos":[{"content":"Running tests","status":"in_progress","priority":"medium"}]}}

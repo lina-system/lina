@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/doing"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -31,6 +32,8 @@ type Config struct {
 // One adapter owns one task attempt. A result ends its turn; Close reaps the
 // remaining process tree. It never installs settings or grants tool permission.
 type Adapter struct {
+	doing      doing.Reader
+	files      doing.ClaudeFiles
 	finish     *worker.Finish
 	effectSeen bool
 	cfg        Config
@@ -195,7 +198,8 @@ func (a *Adapter) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 		copy := *a.finish
 		finish = &copy
 	}
-	return worker.ThreadSnapshot{Finish: finish, EffectsKnown: finish != nil && !a.effectSeen, Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Model: a.spec.Model, Capabilities: a.Capabilities(), Output: a.result.Result}, nil
+	observation := a.doing.Snapshot()
+	return worker.ThreadSnapshot{Doing: &observation, Finish: finish, EffectsKnown: finish != nil && !a.effectSeen, Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Model: a.spec.Model, Capabilities: a.Capabilities(), Output: a.result.Result}, nil
 }
 func (a *Adapter) Result() Result {
 	a.mu.Lock()
@@ -227,6 +231,10 @@ func (a *Adapter) Close(ctx context.Context) error {
 func (a *Adapter) emit(ctx context.Context, e worker.Event) bool {
 	a.mu.Lock()
 	e.Thread = a.thread
+	a.files.Read(&a.doing, time.Now())
+	a.doing.Busy(e.Finish == nil, time.Now())
+	observation := a.doing.Snapshot()
+	e.Doing = &observation
 	a.mu.Unlock()
 	select {
 	case a.events <- e:
