@@ -18,6 +18,8 @@ void lina_paths_prefix(struct lina_paths *paths, const char *prefix) {
   join(paths->enabled, LINA_PATH_MAX, paths->state_dir, "enabled");
   join(paths->measured, LINA_PATH_MAX, paths->state_dir, "measured-builds");
   join(paths->eval_marker, LINA_PATH_MAX, paths->state_dir, "eval-test-mac");
+  join(paths->evaluation, LINA_PATH_MAX, paths->state_dir, "evaluation");
+  join(paths->restore_retry, LINA_PATH_MAX, paths->state_dir, "restore-retry");
   snprintf(paths->bundle, LINA_PATH_MAX, "%s/Library/Security/SecurityAgentPlugins/LinaUnlock.bundle", prefix);
   snprintf(paths->guard, LINA_PATH_MAX, "%s/Library/PrivilegedHelperTools/com.lina.locked-screen.guard",
            prefix);

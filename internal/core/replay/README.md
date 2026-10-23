@@ -12,7 +12,8 @@ measurement reports outside Git worktrees. See the
 [public fixture and command examples](../../../testdata/provider-replay/README.md).
 
 `ProviderReport` version 1 contains a source digest, route/model identity and
-one row per adapter stream. `input` is total input; `plain` is ordinary-rate
+one row per adapter stream, including the optional compaction summary request
+under the turn `summary`. `input` is total input; `plain` is ordinary-rate
 input. Responses supplies total input, from which known cache reads are
 subtracted. Claude supplies ordinary-rate input, so total input is known only
 when read and write counts are also known. Lifetime maps preserve absent
