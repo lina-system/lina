@@ -100,7 +100,12 @@ func TestM1ConversationHistoryOrder(t *testing.T) {
 				for {
 					frame := tap.next(t, h)
 					if frame.Error != nil {
-						t.Fatalf("TUI input receipt refused: %+v; reply_to=%v; kind=%s; stderr=%s; wire=%s", frame.Error, frame.ReplyTo, frame.Kind, &core.stderr, tap.bytes())
+						// Optional discovery replies can arrive after the input.
+						// Keep refusals tied to the request this barrier verifies.
+						if kind := tap.requestKind(frame); kind != "" && kind != protocol.KindInput {
+							continue
+						}
+						t.Fatalf("TUI input receipt refused: %+v; request=%s; kind=%s; stderr=%s; wire=%s", frame.Error, tap.requestKind(frame), frame.Kind, &core.stderr, tap.bytes())
 					}
 					if item, ok := frame.Payload.(protocol.ItemDone); ok && item.Text != nil && *item.Text == text {
 						if frame.EffectState != protocol.EffectApplied || item.EchoKey == nil || *item.EchoKey == "" {
