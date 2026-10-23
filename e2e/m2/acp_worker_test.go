@@ -29,8 +29,16 @@ import (
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
+	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
+
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
+		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
+	}
+	os.Exit(m.Run())
+}
 
 // This scenario launches the real Core command. Only the model, ACP agent and
 // GitHub boundary are synthetic; dispatch, worktrees, commits and cards are real.
