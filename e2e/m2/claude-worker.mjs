@@ -25,6 +25,17 @@ else {
   fs.writeFileSync(counter, String(attempts));
   if (attempts > 1 && !prompt.includes('Do not recreate or clean the worktree')) throw Error('recovery lost continuation');
   if (mode === 'exit-zero') process.exit(0);
+  const malformed = {
+    invalid_message: '{',
+    session_mismatch: JSON.stringify({type:'assistant',session_id:'foreign'}),
+    invalid_result: JSON.stringify({type:'result',session_id:'fixture',subtype:'success'}),
+    invalid_init: JSON.stringify({type:'system',subtype:'init',session_id:'fixture',cwd:process.cwd()}),
+    invalid_usage: JSON.stringify({type:'result',session_id:'fixture',subtype:'success',is_error:false,usage:{input_tokens:-1}}),
+  };
+  if (Object.hasOwn(malformed, mode)) {
+    console.log(malformed[mode]);
+    process.exit(0);
+  }
   if (mode === 'denied') {
     console.log(JSON.stringify({type:'result',subtype:'success',session_id:'fixture',is_error:false,result:'Permission needed.',permission_denials:[{tool_name:'Bash',tool_use_id:'tool'}]}));
   } else {

@@ -430,11 +430,15 @@ without undo. Replay and view aliases of an already adopted source/action
 remain pending without another record, undo handle or notice, across restart.
 A new independent commitment may add the same action once no open equivalent
 remains. Three rejected additions in a recognized class retains later items of
-that class as candidates.
+that class as candidates. Automatic additions allocate an unused record path;
+an existing file never blocks a valid candidate or gets overwritten by it.
 
 Recurring completion and advancement append one `record_occurrence` work-ledger
 event in the same checkpoint as the saved version. The event names the old and
 new occurrences and the reason; it creates neither a new task nor a worker card.
+Completion after the recurrence is exhausted still records one completion
+event without scheduling another occurrence. Repeating the saved write or
+editing a completed record does not record completion again.
 Editing only the current next occurrence preserves the original recurrence
 anchor. Changing the recurrence rule starts the future series at its new next
 occurrence. Core's counters remain inaccessible to tool arguments.
@@ -669,11 +673,20 @@ window and reset. `e2e/m2/worker-quota-windows.json` covers the installed Core
 handoff and durable per-window state across restart.
 A successful `worker_quota` read from a routed conversation refreshes the shared
 dispatch service and wakes its chooser, including after a stop without a reset.
-The chooser merges observations per provider, account and window. A partial
+The chooser merges observations per provider, account and reported bucket. A partial
 recovery remains usable when a healthy sibling retains its earlier observation
 time; older or absent measurements preserve the corresponding saved window.
 `e2e/m2/codex-quota-recovery.json` proves a sparse Codex recovery reaches the
 installed Core's dispatch cache and remains eligible after restart.
+Codex bucket identity survives an unknown-to-known duration change and Core
+restart. A fresh observation can recover that bucket without clearing a
+different limit, account or sibling bucket. Legacy rows without identity keep
+their block when no unambiguous match exists. `TestM2WorkerQuotaIdentityRecovery`
+exercises this recovery through the installed Core, with worker tools and an
+artifact, and checks the durable choice after restart.
+An error-inferred stop recorded without provider or account metadata can recover
+from a newer successful quota read by the same worker. A stale or empty read
+does not establish recovery, and known accounts keep their own blocks.
 
 The provisional worker rule table is read at startup from
 `system/core/worker-choice.json`. Its `rules` contain `worker`, `tags` and integer
@@ -1068,9 +1081,13 @@ the operational switch's directory gate. Multiple paths for one external task
 share its task binding while retaining every path for later adoption checks.
 Rollback fences a dispatch even though its new task id differs from the imported
 task id. A refused preflight releases its reservations after process cleanup;
-an attempted start or missing terminal result retains them across restart. A
-confirmed terminal result releases them only after process cleanup and the
-durable task finish. Shutdown alone is not terminal evidence.
+an attempted start or missing terminal result retains them across restart.
+Every synthesized Claude or Antigravity connection failure, including malformed
+messages, mismatched sessions and invalid results, leaves the execution unknown
+without a completion receipt. Codex transport loss does the same; an observed
+terminal Codex provider connection failure still settles the execution. A
+confirmed terminal result releases reservations only after process cleanup and
+the durable task finish. Shutdown alone is not terminal evidence.
 
 After a successful result, Core compares protected refs and changed files with
 the definition, then reads the branch's PR through fixed `ghclient` calls. Delivery
@@ -1858,8 +1875,12 @@ identical import retry remains idempotent. Reservations survive loss of
 observations and restart; a terminal worker turn releases its reservation, even
 when the worker reports a provider connection failure. A synthesized
 `connection_lost` finish is not terminal evidence and retains the reservation.
-Input refused locally before sending a request preserves the existing turn's
-binding, or releases a new idle-turn reservation that never ran. Ambiguous
+An initial worker start definitively refused before dispatch releases its
+reservation after successful process cleanup, even when the calling context
+has been cancelled. An ambiguous start or failed cleanup retains it. Input
+refused locally before sending a request, including steering context cancellation,
+preserves the existing turn's binding, or releases a new idle-turn reservation
+that never ran. Ambiguous
 input outcomes remain reserved as unknown. Every accepted worker input
 rebinds its reservation to the resulting turn before an older completion can
 release it, including a turn that became idle during steering. An unreadable

@@ -430,6 +430,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					t.Fatalf("restart repeated a headless attempt: %s %v", count, err)
 				}
 			}
+			if scenario.Worker == "claude" && claudeUnknownCode(workerCase) != "" {
+				assertClaudeReceipt(t, h, workerCase)
+			}
 			if scenario.CompletionEvents {
 				assertWorkCompletion(t, h)
 			}

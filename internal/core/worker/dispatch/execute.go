@@ -445,7 +445,10 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			break
 		}
 	}
-	if finish.Failure == worker.ConnectionFailure && finish.Code == "missing_result" {
+	// Claude and Antigravity synthesize connection failures without a result.
+	// Codex alone also reports observed provider failures as "connection";
+	// its transport-loss finish is synthetic and must remain unknown too.
+	if finish.Failure == worker.ConnectionFailure && !(r.WorkerName() == "codex" && finish.Code == "connection") {
 		r.Code = finish.Code
 		return
 	}

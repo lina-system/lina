@@ -120,3 +120,34 @@ func TestWorkerRecoveryReleasesCompletedTurnActivity(t *testing.T) {
 		t.Fatalf("reconciled completion retained activity: state=%s released=%v active=%d inputs=%d", e.recovery.State, released, len(e.active), probe.inputs)
 	}
 }
+
+type failedRecoveryProbe struct {
+	workerProbe
+	events chan worker.Event
+}
+
+func (p *failedRecoveryProbe) Events() <-chan worker.Event { return p.events }
+func TestWorkerRecoveryFailureRetainsUnknownDirectoryReservation(t *testing.T) {
+	r := controlRuntime(t)
+	thread := worker.Thread{ID: "failed-thread", TurnID: "failed-turn", TaskID: "task", AttemptID: "attempt", ProcessGeneration: 1, BindingEpoch: 1}
+	dir := t.TempDir()
+	const reservation = "unknown-worker"
+	if err := r.work.ReserveWorker(t.Context(), reservation, dir); err != nil {
+		t.Fatal(err)
+	}
+	probe := &failedRecoveryProbe{events: make(chan worker.Event, 1)}
+	probe.events <- worker.Event{Kind: worker.FinishEvent, Thread: thread, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure, Code: "tool_failed"}}
+	close(probe.events)
+	e := &workerSession{origin: r, thread: thread, adapter: probe, workdir: dir, reservation: reservation, reservationTurn: thread.TurnID, active: map[string]lease.Lease{}, done: make(chan struct{}), close: func() error { return nil }, recovery: recovery.Record{ID: thread.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: "input", Thread: thread, State: "running", Reservation: reservation}}
+	e.observe()
+	if e.recovery.State != "unknown" {
+		t.Fatalf("failure did not retain uncertainty: %s", e.recovery.State)
+	}
+	if err := r.work.CheckWorker(t.Context(), reservation); err != nil {
+		t.Fatalf("unknown effects released directory reservation: %v", err)
+	}
+	records, err := (recovery.Recovery{DB: r.db}).Records(t.Context())
+	if err != nil || len(records) != 1 || records[0].State != "unknown" || records[0].Reservation != reservation {
+		t.Fatalf("unknown reservation not durable: %+v %v", records, err)
+	}
+}

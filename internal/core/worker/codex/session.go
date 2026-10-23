@@ -170,6 +170,7 @@ func (s *Session) Input(ctx context.Context, t worker.Thread, in worker.Input) e
 	case worker.Idle:
 		return s.startTurn(ctx, in.Text, t)
 	case worker.Active:
+		started := false
 		var response wire.V2TurnSteerResponse
 		err = s.callGuarded(ctx, string(wire.ClientRequestTurnSteerMethodTurnSteer), wire.V2TurnSteerParams{ThreadId: t.ID, ExpectedTurnId: t.TurnID, Input: input(in.Text)}, &response, func() error {
 			if err := s.bound(t, true); err != nil {
@@ -178,8 +179,12 @@ func (s *Session) Input(ctx context.Context, t worker.Thread, in worker.Input) e
 			if s.snapshot.State != worker.Active || len(s.pendingRequests()) > 0 {
 				return errors.Join(worker.ErrInputRefused, errors.New("Codex thread cannot accept ordinary input"))
 			}
+			started = true
 			return nil
 		})
+		if !started {
+			return errors.Join(worker.ErrInputRefused, err)
+		}
 		if err == nil && response.TurnId != t.TurnID {
 			err = errors.New("Codex steering turn mismatch")
 		}

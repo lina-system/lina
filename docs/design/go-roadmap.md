@@ -460,9 +460,15 @@ completion conditions to repository tests and installed Core scenarios.
   [The replay scenario](../../e2e/m2/record-candidate-replay.json) verifies
   completion and cancellation through Core tools, then restart and replay
   refusal without another record, notice or undo operation.
+- #745 records completion after recurrence exhaustion and allocates unused
+  candidate paths. [The exhausted-completion scenario](../../e2e/m2/record-exhausted-completion.json)
+  verifies one completion event after a note edit and restart; the candidate
+  scenario also preserves an occupied record through addition and undo.
 - #674 permits planning edits that preserve delegated completion. Its
   [installed-Core scenario](../../e2e/m2/todo-completed-planning.json) checks
   saved tags, priority and checklist, the completed state and restart durability.
+- The [parent acceptance record](../../evidence/todos-acceptance.md) maps all five
+  completion conditions to existing package tests and installed Core scenarios.
 - Done when: the today rule passes its fixture; a recurring item advances only to a future occurrence; a dependency cycle is rejected; an ambiguous date is never saved silently; a candidate is added on its own only when the deterministic test passes.
 - Depends on: G2-22, G2-03. Design refs: C-54; [work-and-delegation.md](work-and-delegation.md#the-to-do-record).
 

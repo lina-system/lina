@@ -376,11 +376,12 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
 		release = false // A launch error may have started a turn; retain its reservation.
-		thread, err := adapter.Start(ctx, process, worker.StartSpec{TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
+		thread, err := entry.start(ctx, worker.StartSpec{TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
 		if err != nil {
 			activity.Release()
-			adapter.Close()
-			process.Release()
+			if entry.reservation == "" {
+				return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+			}
 			return tools.Result{State: tools.Unknown, Body: workerError(err)}, err
 		}
 		entry.thread = thread
@@ -601,6 +602,25 @@ func (e *workerSession) result(ctx context.Context, t worker.Thread) (tools.Resu
 	}
 	return e.encode(snap), nil
 }
+func (e *workerSession) start(ctx context.Context, spec worker.StartSpec) (worker.Thread, error) {
+	thread, err := e.adapter.Start(ctx, e.process, spec)
+	if err != nil {
+		closeErr := e.close()
+		e.process.Release()
+		// A definitive refusal dispatched no initial turn. Only successful
+		// process cleanup permits releasing its durable directory reservation.
+		if errors.Is(err, worker.ErrInputRefused) && closeErr == nil {
+			releaseErr := e.origin.work.ReleaseWorker(context.WithoutCancel(ctx), e.reservation)
+			if releaseErr == nil {
+				e.reservation = ""
+			}
+			err = errors.Join(err, releaseErr)
+		}
+		err = errors.Join(err, closeErr)
+	}
+	return thread, err
+}
+
 func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
 	e.recoveryMu.Lock()
 	state := e.recovery.State
@@ -644,6 +664,7 @@ func (e *workerSession) observe() {
 		case worker.FinishEvent:
 			e.recoveryMu.Lock()
 			rec := e.recovery
+			settled := rec.ID == ""
 			deliver := event.Finish.Status == worker.Done || rec.Canceled || rec.ID == ""
 			delivered := false
 			if deliver {
@@ -660,6 +681,7 @@ func (e *workerSession) observe() {
 				}
 				if (recovery.Recovery{DB: e.origin.db}).Put(e.origin.ctx, rec) == nil {
 					e.recovery = rec
+					settled = rec.State != "unknown"
 				}
 			}
 			e.recoveryMu.Unlock()
@@ -669,7 +691,9 @@ func (e *workerSession) observe() {
 			terminal := event.Finish.Failure != worker.ConnectionFailure || event.Finish.Code != "connection_lost"
 			e.stopRequests(event.Thread.TurnID)
 			e.mu.Lock()
-			if e.origin.work != nil && e.reservationTurn == event.Thread.TurnID && terminal {
+			// A terminal failure can retain unknown effects. Reconciliation
+			// keeps its directory fenced until those effects settle.
+			if e.origin.work != nil && e.reservationTurn == event.Thread.TurnID && terminal && settled {
 				if err := e.origin.work.ReleaseWorker(context.WithoutCancel(e.origin.ctx), e.reservation); err == nil {
 					e.reservation = ""
 					e.reservationTurn = ""

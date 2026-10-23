@@ -929,7 +929,10 @@ there is no separate client endpoint.
   dependencies, waiting state, planned start and checklist ticks. The same
   publication checkpoint appends a `record_occurrence` event to the work ledger,
   including the prior occurrence, next occurrence, time and completion/advance
-  reason. These events create no delegated work card. Core runs
+  reason. Completing an already exhausted series also appends one completion
+  event, even when its recurrence fields stay unchanged. Repeating the saved
+  write or editing an already completed record adds no completion event.
+  These events create no delegated work card. Core runs
   overdue advancement at startup and each minute without a model or worker.
   Date-only occurrences remain due throughout their civil day. Timed
   to-dos preserve seconds and fractional seconds (up to Go time precision);
@@ -962,11 +965,17 @@ there is no separate client endpoint.
   pages retain unanswered proposals and define an explicit scope for presenting
   a group, without automatically accepting it.
 - Automatic additions commit their numbered candidate, record and undo receipt
-  through the existing publication journal. A committed intent is the recovery
+  through the existing publication journal. Core allocates the first unused
+  path under the repository writer lock: `inbox/candidate-<number>.md`, then
+  `inbox/candidate-<number>-2.md` and higher suffixes. Occupied records keep
+  their contents, paths and revisions. A committed intent is the recovery
   decision; restart finishes that exact decision without dispatching a tool or
   reclassifying source text. The headless `e2e/m2/record-candidates.json` scenario
   covers verified admission, forged and missing evidence, duplicate refusal,
-  notices, undo, and pending/rejected persistence after restart.
+  notices, undo, occupied-path preservation and pending/rejected persistence
+  after restart. `e2e/m2/record-exhausted-completion.json` covers model-free
+  exhaustion, completion through installed Core tools, a later note edit and
+  exactly one completion event after restart.
   `e2e/m2/record-candidate-replay.json` covers replay/view suppression after
   completion and cancellation through installed Core tools and a restart,
   preserving the saved version without another record, notice or undo operation.
