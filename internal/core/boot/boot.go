@@ -111,6 +111,9 @@ type Config struct {
 	// Boot always supplies the durable main id, epoch and recovery state itself.
 	Client       clientsrv.Identity
 	Conversation *modelpath.ResponsesConfig
+	// Messenger supplies the platform adapters Core reads messenger sources
+	// with. Core owns the registry, admission and the sync loop.
+	Messenger *MessengerConfig
 	// SignInTransport is an in-process test seam; production uses the fixed issuer.
 	SignInTransport http.RoundTripper
 	// ChannelTransport is an in-process platform test seam; production uses the fixed Telegram and Discord origins.
@@ -336,6 +339,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport)
 		if openErr != nil {
 			return openErr
+		}
+		if err := runtime.startMessenger(ctx, cfg.Messenger); err != nil {
+			return err
 		}
 		conversation = runtime
 		runtime.replaySocket = cfg.Socket

@@ -67,3 +67,23 @@ updates indexed documents only when that value changes. `recall_conversation`
 indexes `(conversation, person)` for the lookup. Repeat messages from the same
 person do not rewrite documents or their scope index entries. The person value
 on a document stays the one `recall_source` already derived.
+
+### Messenger store
+
+Migration 63 adds the messenger source registry, its chats with their sync,
+learn and embed switches, the cursor, the coverage of each complete read, the
+unique legacy reference of each record with its revision chain, and the writes
+LINA made in the person's name. Record text stays in `conv_event`; the new
+tables hold identity, switches and provenance only.
+
+The same migration widens `ev_rel` to the messenger relation kinds
+`replies_to` and `in_thread`. SQLite cannot change a `CHECK` constraint in
+place, so the table is rebuilt: its append-only triggers, the `retract_lineage`
+view and the three triggers that read it are dropped and recreated with their
+published text. Existing relations are copied unchanged. A published install
+keeps its events and relations; the upgrade test covers that path.
+
+Two triggers keep the one index consistent with the removal projection: hiding
+an event deletes its `recall_doc` row and pending entry in the same transaction
+as the removal, and restoring it queues the document again. The old ledger index
+keeps its own fence, which already covers memory-driven exclusions.

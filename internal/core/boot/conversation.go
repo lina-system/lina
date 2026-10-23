@@ -28,6 +28,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lane"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
+	"github.com/thisisjun786/lina/internal/core/messenger"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/results"
@@ -79,6 +80,9 @@ type conversationRuntime struct {
 	replaySocket    string
 	dispatchMu      *sync.RWMutex
 	removals        *retract.Store
+	messenger       *messenger.Service
+	messengerStop   context.CancelFunc
+	messengerDone   chan struct{}
 	channels        *channelRuntime
 	workArea        *work.Area
 	delegation      *delegationRuntime
@@ -391,6 +395,14 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.messengerStop != nil {
+		r.messengerStop()
+		select {
+		case <-r.messengerDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if r.publications != nil && r.publications.stop != nil {
 		r.publications.stop()
 		select {

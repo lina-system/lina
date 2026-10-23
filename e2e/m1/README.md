@@ -158,3 +158,12 @@ Core resolves the quote through memory management before and after restart;
 canon inspection verifies that item/revision evidence contains no quote text.
 The management renderer's synthetic [capture](../../evidence/generated-ui/memory-quotes.png)
 shows a quote and an erased-source status.
+
+`TestM1MessengerStoreInstalledCore` runs the real messenger store inside
+installed Core with a scripted adapter. Core reads two pages of one chat, an
+edit and a platform-reported deletion, stops between pages, and resumes from the
+committed cursor; a later run that re-serves the newest page adds nothing. The
+scenario checks the ledger records and their speaker kinds, the supersession and
+retraction relations, the tombstone that keeps the legacy reference, the
+coverage and cursor rows, the one index's documents with origin `messenger`, and
+that a URL secret is masked while the URL's public text stays.
