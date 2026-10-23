@@ -507,30 +507,33 @@ func TestM2InstalledCodexLive(t *testing.T) {
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	// Core places the current input immediately before the ContextPacket's
-	// clock. Later user-role evidence is context, and discovery can append tool
-	// receipts after it. Neither may replace the input driving this turn.
-	var item struct{ Role, Content string }
-	found := false
+	// Core places the prepared ContextPacket after the current input. Its
+	// mandatory clock reference marks that boundary; later user-role evidence
+	// (including persona settings or retrieved worker results) is not the input.
+	// Discovery calls/results can follow the packet in the same turn.
 	for i, raw := range inputs {
-		var context struct{ Role, Content string }
-		if json.Unmarshal(raw, &context) != nil || context.Role != "developer" {
-			continue
+		var item struct{ Role, Content string }
+		if json.Unmarshal(raw, &item) == nil && item.Role == "developer" && strings.Contains(item.Content, `References: [{"id":"clock:`) {
+			inputs = inputs[:i]
+			break
 		}
-		_, references, ok := strings.Cut(context.Content, "\nReferences: ")
-		var refs []struct{ ID string }
-		if !ok || json.Unmarshal([]byte(references), &refs) != nil || len(refs) == 0 || !strings.HasPrefix(refs[0].ID, "clock:") {
-			continue
-		}
-		found = i > 0 && json.Unmarshal(inputs[i-1], &item) == nil && item.Role == "user"
-		break
 	}
-	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+	var content string
+	found := false
+	for i := len(inputs) - 1; i >= 0; i-- {
+		var item struct{ Role, Content string }
+		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
+			content = item.Content
+			found = true
+			break
+		}
+	}
+	if !found || !strings.Contains(content, `<external_evidence origin="worker-session:`) {
 		return false
 	}
 	if result == "" {
 		emitResponse(w, "Worker finished.", true)
-	} else if strings.Contains(item.Content, result) {
+	} else if strings.Contains(content, result) {
 		emitResponse(w, "Worker outcome: "+result, true)
 	} else {
 		emitResponse(w, "Worker stopped.", true)

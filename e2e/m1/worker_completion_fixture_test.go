@@ -12,10 +12,7 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-// Use Core's request assembler so fixture routing follows the same current
-// input / ContextPacket boundary as the installed worker journeys.
-func TestWorkerCompletionFixtureCurrentInput(t *testing.T) {
-	const result = "fixture-worker-artifact"
+func TestWorkerCompletionFixtureInput(t *testing.T) {
 	message := func(role, content string) provider.Item {
 		raw, err := json.Marshal(map[string]string{"role": role, "content": content})
 		if err != nil {
@@ -23,50 +20,64 @@ func TestWorkerCompletionFixtureCurrentInput(t *testing.T) {
 		}
 		return raw
 	}
-	worker, err := guard.Admit(guard.EntryTool, "worker-session:fixture", result)
-	if err != nil {
-		t.Fatal(err)
+	evidence := func(origin, text string) provider.Item {
+		m, err := guard.Admit(guard.EntryTool, origin, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, _ := m.Evidence()
+		return message(e.Role, e.Text)
 	}
-	evidence, _ := worker.Evidence()
-	completion := message(evidence.Role, evidence.Text)
+	const result = "CURRENT_WORKER_RESULT"
+	completion := evidence("worker-session:current", result)
 	for _, tc := range []struct {
 		name    string
 		current provider.Item
-		history []provider.Item
+		context bool
+		tools   bool
 		want    bool
 	}{
-		{"completion", completion, nil, true},
-		{"later person input", message("user", "Inspect another file."), []provider.Item{completion}, false},
-		{"later system input", message("user", "A scheduled check is due."), []provider.Item{completion}, false},
+		{"completion", completion, false, false, true},
+		{"completion-with-context", completion, true, false, true},
+		{"completion-after-discovery", completion, true, true, true},
+		{"person-after-completion", message("user", "Start another task."), true, false, false},
+		{"other-evidence-after-completion", evidence("plugin:result", "Another result."), true, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			request, report := assemble.Assemble(assemble.Input{
-				AgentID: "fixture", PersonaRevision: "fixture", Model: "fixture", MaxTokens: 1000,
-				History: tc.history, Current: tc.current,
-				Packet: assemble.ContextPacket{
-					{ID: "clock:fixture", Kind: assemble.Clock, Text: "2026-10-23T00:00:00Z"},
-					{ID: "persona-settings:fixture", Kind: assemble.Commitments, Origin: "persona-record:fixture", Text: "Synthetic persona settings"},
-					{ID: "memory:fixture", Kind: assemble.Memory, Origin: "memory:fixture", Text: "Synthetic recalled evidence"},
-				},
-			}, func(provider.Request) int { return 1 })
+			input := assemble.Input{
+				AgentID: "fixture-agent", PersonaRevision: "fixture-revision", Model: "fixture-model", MaxTokens: 100,
+				History: []provider.Item{evidence("worker-session:previous", "PREVIOUS_WORKER_RESULT")}, Current: tc.current,
+			}
+			if tc.context {
+				input.Packet = assemble.ContextPacket{
+					{ID: "clock:fixture-turn", Kind: assemble.Clock, Text: "2026-10-23T00:00:00Z"},
+					{ID: "preferences", Kind: assemble.Commitments, Origin: "conversation-questions:fixture", Text: "Use concise replies."},
+					{ID: "settings", Kind: assemble.Commitments, Origin: "persona-record:fixture", Text: "Prepared settings."},
+					{ID: "retrieved", Kind: assemble.External, Origin: "worker-session:context", Text: "RETRIEVED_WORKER_RESULT"},
+				}
+			}
+			request, report := assemble.Assemble(input, func(provider.Request) int { return 1 })
 			if report.Failure != "" {
 				t.Fatal(report.Failure)
 			}
-			// Tool discovery can append protocol items after the packet.
-			request.Items = append(request.Items, provider.Item(`{"type":"function_call_output","call_id":"load-tools","output":"ok"}`))
+			if tc.tools {
+				request.Items = append(request.Items,
+					json.RawMessage(`{"type":"function_call","call_id":"discover","name":"load_tools","arguments":"{}"}`),
+					json.RawMessage(`{"type":"function_call_output","call_id":"discover","output":"{}"}`))
+			}
 			inputs := make([]json.RawMessage, len(request.Items))
-			for i, item := range request.Items {
-				inputs[i] = json.RawMessage(item)
+			for i, raw := range request.Items {
+				inputs[i] = json.RawMessage(raw)
 			}
-			response := httptest.NewRecorder()
-			if got := respondWorkerCompletion(response, inputs, result); got != tc.want {
-				t.Fatalf("completion handled=%t, want %t", got, tc.want)
+			w := httptest.NewRecorder()
+			if got := respondWorkerCompletion(w, inputs, result); got != tc.want {
+				t.Fatalf("handled=%t, want %t; response=%s", got, tc.want, w.Body.String())
 			}
-			if tc.want && !strings.Contains(response.Body.String(), result) {
-				t.Fatal("completion response lost the worker result")
+			if tc.want && !strings.Contains(w.Body.String(), result) {
+				t.Fatalf("current worker result missing: %s", w.Body.String())
 			}
-			if !tc.want && response.Body.Len() != 0 {
-				t.Fatal("previous completion consumed a later input")
+			if !tc.want && w.Body.Len() != 0 {
+				t.Fatalf("unrelated input received a worker response: %s", w.Body.String())
 			}
 		})
 	}
