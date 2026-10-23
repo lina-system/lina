@@ -27,6 +27,7 @@ import (
 )
 
 type codexWorkScenario struct {
+	QuotaRelease                   string `json:"quota_release,omitempty"`
 	QuotaRecovery                  bool   `json:"quota_recovery,omitempty"`
 	UnknownQuotaWindow             bool   `json:"unknown_quota_window,omitempty"`
 	QuestionCount                  int    `json:"question_count,omitempty"`
@@ -257,7 +258,10 @@ func codexWorkToolsFixture() {
 				fail("Core changed server request id: " + string(r.ID))
 			}
 		case "thread/read":
-			if fixture.QuotaRecovery && quotaRead {
+			_, releaseErr := os.Stat(fixture.QuotaRelease)
+			if fixture.QuotaRecovery && quotaRead && releaseErr == nil {
+				// Core may poll thread/read independently. Release recovery only
+				// after the model fixture has observed the initial quota pair.
 				// A sparse update changes only primary. The adapter must retain
 				// secondary's original observation time through the next quota read.
 				primary := map[string]any{"usedPercent": fixture.FiveHour}
@@ -323,11 +327,14 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 		t.Fatal(err)
 	}
 	fixture.Kind = kind
+	workdir := t.TempDir()
+	if fixture.QuotaRecovery {
+		fixture.QuotaRelease = filepath.Join(workdir, "quota-observed")
+	}
 	data, err = json.Marshal(fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	workdir := t.TempDir()
 	finished := make(chan struct{})
 	var calls atomic.Int32
 	var quotaChecked atomic.Bool
@@ -413,6 +420,11 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 				return
 			}
 			weeklyObserved.Store(quota.Rows[1].Observed)
+			if err := os.WriteFile(fixture.QuotaRelease, nil, 0600); err != nil {
+				t.Error(err)
+				emitResponse(w, "Quota fixture failed.", true)
+				return
+			}
 			emitPersonaCall(w, "refresh-worker", "worker_snapshot", map[string]any{"session": sessionID.Load().(string)})
 			return
 		}

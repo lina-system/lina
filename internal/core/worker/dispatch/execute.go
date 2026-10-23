@@ -177,6 +177,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err = s.save(ctx, r); err != nil {
 		return
 	}
+	r.DesignText = map[string]string{}
 	for _, ref := range d.DesignRefs {
 		file, anchor, _ := strings.Cut(ref, "#")
 		body, err := git(repo, "show", base+":"+file)
@@ -184,6 +185,11 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			r.Code = "design_reference_missing"
 			return
 		}
+		masked, maskErr := secrets.Mask(body)
+		if maskErr != nil {
+			return
+		}
+		r.DesignText[ref] = masked.DerivedText()
 	}
 	workspace := work.Workspace{TaskID: r.ID, Path: workdir, Spec: work.WorkspaceSpec{
 		RepositoryID: repositoryID, Source: repo, Base: base, Branch: d.Branch,
@@ -372,10 +378,12 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		head, headErr := git(workdir, "rev-parse", "HEAD")
 		branch, branchErr := git(workdir, "branch", "--show-current")
 		dirty, dirtyErr := git(workdir, "status", "--porcelain")
-		files, filesErr := git(workdir, "diff", "--name-only", base+".."+head)
-		if e == nil && after == protected && workErr == nil && workAfter == workProtected && headErr == nil && head != base && branchErr == nil && branch == d.Branch && dirtyErr == nil && dirty == "" && filesErr == nil && allowedFiles(files, d.WriteArea) {
+		files, filesErr := git(workdir, "diff", "--name-only", "--no-renames", "-z", base+".."+head, "--")
+		if e == nil && after == protected && workErr == nil && workAfter == workProtected && headErr == nil && head != base && branchErr == nil && branch == d.Branch && dirtyErr == nil && dirty == "" && filesErr == nil {
+			r.ChangedFiles = strings.Split(strings.TrimSuffix(files, "\x00"), "\x00")
 			pr, prErr := antigravity.ReadPullRequest(ctx, s.cfg.PR, repository, d.Branch, d.Base, head)
-			if prErr == nil {
+			identityOK := pr.Number > 0 && pr.URL == fmt.Sprintf("https://github.com/%s/pull/%d", repository, pr.Number) && pr.Branch == d.Branch && pr.Base == d.Base && pr.Head == head
+			if (prErr == nil || errors.Is(prErr, antigravity.ErrPullRequestNotReady)) && identityOK {
 				r.PR = &pr
 				r.Code = "change_evidence_unavailable"
 				patch, patchErr := git(workdir, "diff", "--no-ext-diff", "--no-textconv", base, head, "--")
@@ -385,11 +393,14 @@ func (s *Service) execute(ctx context.Context, r Record) {
 						r.PR = &pr
 						r.Code = "ready_for_review"
 						r.ChangeEvidence = masked.Text()
+						if prErr != nil {
+							r.Code = "pr_unverified"
+						}
 					}
 				}
 			}
 		}
-		if r.PR == nil {
+		if r.PR == nil || r.Code != "ready_for_review" {
 			outcome = "blocked_needs_input"
 		}
 	}

@@ -26,17 +26,7 @@ var (
 
 // Schema is installed by Core in a numbered migration after the ledger. Heads
 // contain only locators; the ledger is the sole store of preview content.
-const Schema = `
-CREATE TABLE result_heads (
- id TEXT PRIMARY KEY NOT NULL, person TEXT NOT NULL, agent TEXT NOT NULL,
- conversation TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0),
- event_id TEXT NOT NULL, save_key TEXT
-);
-CREATE TABLE result_saves (
- key TEXT PRIMARY KEY NOT NULL, result_id TEXT NOT NULL UNIQUE REFERENCES result_heads(id),
- state TEXT NOT NULL CHECK(state IN ('unknown','applied')), reference BLOB NOT NULL
-);
-`
+const Schema = canon.ResultsSchema
 
 type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
@@ -128,6 +118,13 @@ func (s *Store) Present(ctx context.Context, scope result.Scope, p result.Presen
 	}
 	err = s.db.Write(ctx, func(tx *canon.Tx) error {
 		if p.ID != "" {
+			var managed int
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM plan_drafts WHERE result_id=?", p.ID).Scan(&managed); err != nil {
+				return err
+			}
+			if managed != 0 {
+				return ErrOutOfScope
+			}
 			old, key, err := s.head(ctx, tx, scope, p.ID)
 			if err != nil {
 				return err

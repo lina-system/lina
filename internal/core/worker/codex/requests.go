@@ -203,7 +203,9 @@ func (s *Session) resolved(p wire.V2ServerRequestResolvedNotification) error {
 }
 
 func (s *Session) Answer(ctx context.Context, t worker.Thread, a worker.Answer) error {
-	s.control.Lock()
+	if err := s.control.Lock(ctx); err != nil {
+		return err
+	}
 	defer s.control.Unlock()
 	s.mu.Lock()
 	if err := s.bound(t, true); err != nil {
