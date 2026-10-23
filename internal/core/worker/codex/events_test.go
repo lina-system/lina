@@ -20,6 +20,8 @@ func TestFailedTurnClassification(t *testing.T) {
 		{`{"httpConnectionFailed":{"httpStatusCode":401}}`, worker.LoginFailure},
 		{`{"responseStreamDisconnected":{"httpStatusCode":429}}`, worker.RateLimitFailure},
 		{`{"responseStreamConnectionFailed":{"httpStatusCode":503}}`, worker.ConnectionFailure},
+		{`{"httpConnectionFailed":{}}`, worker.ConnectionFailure},
+		{`{"responseStreamDisconnected":{}}`, worker.ConnectionFailure},
 		{`"futureError"`, worker.WorkerFailure},
 	} {
 		t.Run(tc.info, func(t *testing.T) {

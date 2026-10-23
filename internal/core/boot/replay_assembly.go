@@ -95,7 +95,7 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 	}
 	request, report := assemble.Assemble(assemble.Input{
 		Core: core, AgentID: a.AgentID, PersonaRevision: a.PersonaRevision,
-		AgentName: a.AgentName, OwnerPersonID: a.OwnerPersonID, Persona: ep.Persona,
+		AgentName: a.AgentName, OwnerPersonID: a.OwnerPersonID, Persona: ep.Persona, WorkMethod: ep.WorkMethod,
 		Catalog: catalog, AlwaysTools: ep.Evidence.Tools, History: history, Current: ep.Items[len(ep.Items)-1], Packet: packet,
 		Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Fields: ep.Evidence.Fields, MaxTokens: 128000,
 	}, conversationRequestSize)

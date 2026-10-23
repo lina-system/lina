@@ -444,7 +444,7 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 		return Episode{}, Exclusion("missing_persona")
 	}
 	if ep.Evidence.Assembly.InstructionFormat == "persona-tui-work-method-v1" {
-		if persona.WorkMethodRevision != ep.Evidence.Assembly.WorkMethodRevision {
+		if persona.WorkMethod == "" || persona.WorkMethodRevision != ep.Evidence.Assembly.WorkMethodRevision {
 			return Episode{}, Exclusion("missing_persona")
 		}
 		ep.WorkMethod = persona.WorkMethod
