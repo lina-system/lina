@@ -32,6 +32,22 @@ The Go tests cover canonical/version/engine binding distinctions, repeated IDs
 in different profiles, unchanged per-copy source fields, owner/automation
 attribution, missing links, rollback, round-trip hashes and idempotent replay.
 
+## UIDs shared across lineages
+
+- **seen** — At the same pinned LCM-X revision, `host_uid.py:78-130` builds
+  `<home_tag>:<root>`, where the tag hashes the resolved original `state.db`
+  path. Compression follows parents; fork, delegation and reset stop the walk.
+  `store.py:1052-1081,1111-1125` scopes canonical uniqueness and reads/writes
+  to a lineage. One UID in several lineages is permitted, not a global conflict.
+- **inferred** — Within one imported profile, a host row can select a binding
+  when exactly one lineage matches its session root. Otherwise it remains its
+  own event with its legacy reference. Every host row whose UID has message
+  bindings in multiple lineages needs an explicit mapping decision in the report.
+- **unknown** — A moved snapshot does not establish the original home path.
+  Multiple home tags with the same root cannot be ranked safely, even when
+  their bindings point to the same stored message. The importer preserves the
+  host rows separately instead of choosing a tag by iteration order.
+
 Identical payload versions retain a separate replay event while host copies keep
 the canonical binding. Unsealed events use private staging tables until the
 separate seal, and sidecar bytes use the native material writer’s recovery and

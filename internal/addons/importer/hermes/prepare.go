@@ -166,6 +166,16 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 			}
 		}
 	}
+	// Index within this profile, so each host row considers only its UID's
+	// lineages instead of scanning every binding in the snapshot.
+	byUID := map[string]map[string][]sourceRow{}
+	for _, ss := range bindings {
+		uid, lineage := ss[0].row.text("uid"), ss[0].row.text("lineage_key")
+		if byUID[uid] == nil {
+			byUID[uid] = map[string][]sourceRow{}
+		}
+		byUID[uid][lineage] = ss
+	}
 	hostUID := map[string]*record{}
 	for _, s := range b.tables[HermesState]["messages"] {
 		row := s.row
@@ -179,20 +189,10 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 		}
 		uid := row.text("message_uid")
 		var target *record
+		var mapping *UIDLineageMapping
 		if uid != "" {
 			var candidates []sourceRow
-			lineage := ""
-			for _, ss := range bindings {
-				first := ss[0].row
-				lk := first.text("lineage_key")
-				if first.text("uid") == uid && (lk == root || strings.HasSuffix(lk, ":"+root)) {
-					if lineage != "" && lineage != lk {
-						return nil, fmt.Errorf("%w: ambiguous UID lineage", ErrSnapshot)
-					}
-					lineage = lk
-					candidates = ss
-				}
-			}
+			candidates, mapping = selectUIDLineage(byUID[uid], root)
 			for _, binding := range candidates {
 				r := b.lcm[binding.row.integer("store_id")]
 				if binding.row.text("kind") == "canonical" {
@@ -220,11 +220,15 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 					target = version
 				}
 			}
-			if target == nil {
+			if target == nil && mapping == nil {
 				target = hostUID[root+"\x00"+uid]
 			}
 		}
 		if target == nil {
+			if mapping != nil && mapping.Lineage != "" {
+				mapping.Lineage = ""
+				mapping.Reason = "no_matching_message"
+			}
 			c := b.sessionConversations[session]
 			if c == nil {
 				c = b.conversation("host:" + root)
@@ -233,6 +237,10 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 			target = b.message(c, s, 4)
 		} else {
 			b.attach(target, s)
+		}
+		if mapping != nil {
+			mapping.Source, mapping.EventID = s.key, target.id
+			p.uidLineages = append(p.uidLineages, *mapping)
 		}
 		if b.sessionConversations[session] == nil {
 			b.sessionConversations[session] = b.byID(target.conversation)
@@ -321,6 +329,37 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 		}
 	}
 	return b, nil
+}
+
+// The original home path is not available in a staged snapshot. Match the
+// compression root only when it identifies one lineage; never guess between
+// two home tags or follow a binding across a fork/reset boundary.
+func selectUIDLineage(lineages map[string][]sourceRow, root string) ([]sourceRow, *UIDLineageMapping) {
+	var names, matching []string
+	for lineage := range lineages {
+		names = append(names, lineage)
+		if lineage == root || strings.HasSuffix(lineage, ":"+root) {
+			matching = append(matching, lineage)
+		}
+	}
+	var candidates []sourceRow
+	if len(matching) == 1 {
+		candidates = lineages[matching[0]]
+	}
+	if len(names) <= 1 {
+		return candidates, nil
+	}
+	sort.Strings(names)
+	mapping := &UIDLineageMapping{SessionRoot: root, CandidateLineages: names}
+	switch len(matching) {
+	case 0:
+		mapping.Reason = "no_root_lineage"
+	case 1:
+		mapping.Lineage, mapping.Reason = matching[0], "session_root"
+	default:
+		mapping.Reason = "multiple_root_lineages"
+	}
+	return candidates, mapping
 }
 func samePayload(a, b Row) bool {
 	for _, f := range []string{"role", "content", "tool_calls", "tool_call_id", "tool_name"} {
