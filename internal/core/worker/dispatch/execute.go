@@ -273,6 +273,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	var run work.Run
 	var finish worker.Finish
 	var observation observation
+	var settledConnection bool
 	if observing {
 		readCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		snap, readErr := s.observeThread(readCtx, l, &r, workdir)
@@ -507,6 +508,8 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			if r.Snapshot == nil || r.Snapshot.Finish == nil {
 				r.Snapshot = &worker.ThreadSnapshot{Thread: thread, State: worker.Unknown, Finish: &finish}
 			}
+			_, canRecoverAttempt := adapter.(attemptRecoverer)
+			settledConnection = canRecoverAttempt && r.Snapshot.EffectsKnown
 			unbind()
 			// No second worker may touch this worktree until the first process
 			// and all of its descendants have been reaped.
@@ -533,7 +536,9 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	// Claude and Antigravity synthesize connection failures without a result.
 	// Codex alone also reports observed provider failures as "connection";
 	// its transport-loss finish is synthetic and must remain unknown too.
-	if finish.Failure == worker.ConnectionFailure && !(r.WorkerName() == "codex" && finish.Code == "connection") {
+	// ACP may instead supply a joined process with a complete, effect-free
+	// terminal snapshot. That evidence admits the shared recovery policy.
+	if finish.Failure == worker.ConnectionFailure && !settledConnection && !(r.WorkerName() == "codex" && finish.Code == "connection") {
 		r.Code = finish.Code
 		return
 	}

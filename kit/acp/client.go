@@ -355,6 +355,9 @@ func (c *Client) read() {
 	for {
 		raw, err := c.transport.Read(c.ctx)
 		if err != nil {
+			if errors.Is(err, io.EOF) && len(raw) > 0 {
+				err = io.ErrUnexpectedEOF
+			}
 			c.fail(err)
 			return
 		}
