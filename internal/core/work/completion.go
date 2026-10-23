@@ -21,6 +21,7 @@ type Completion struct {
 	Attempt   string `json:"attempt"`
 	Head      string `json:"head"`
 	ReceiptID string `json:"receipt_id"`
+	Revision  string `json:"revision,omitempty"`
 }
 
 var gitHead = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
@@ -73,7 +74,10 @@ func completionFor(c Card) (Completion, bool) {
 		return Completion{}, false
 	}
 	e := Completion{TaskID: c.Task.ID, Attempt: c.Run.ID, Head: c.CompletionHead, ReceiptID: c.Receipt.EventID}
-	key, _ := json.Marshal([]string{e.TaskID, e.Attempt, e.Head})
+	if c.FileSnapshot != nil {
+		e.Revision = c.FileSnapshot.Fingerprint
+	}
+	key, _ := json.Marshal([]string{e.TaskID, e.Attempt, e.Head, e.ReceiptID, e.Revision})
 	e.ID = digest(string(key))
 	return e, true
 }
@@ -86,7 +90,7 @@ func insertCompletion(ctx context.Context, tx *canon.Tx, c Card) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO work_completions(id,task_id,attempt,head,record) VALUES(?,?,?,?,?) ON CONFLICT(task_id,attempt,head) DO NOTHING`, e.ID, e.TaskID, e.Attempt, e.Head, raw)
+	_, err = tx.ExecContext(ctx, `INSERT INTO work_completions(id,task_id,attempt,head,record) VALUES(?,?,?,?,?) ON CONFLICT(task_id,attempt,head) DO UPDATE SET id=excluded.id,record=excluded.record WHERE work_completions.id<>excluded.id`, e.ID, e.TaskID, e.Attempt, e.Head, raw)
 	return err
 }
 

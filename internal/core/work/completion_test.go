@@ -3,6 +3,9 @@ package work
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -225,6 +228,69 @@ func TestCompletionLegacyHeadAndMovedHeadCycles(t *testing.T) {
 		must(err)
 		if claimed {
 			t.Fatal("restored or old head reacted after head moved")
+		}
+	}
+}
+
+func TestCompletionReplacementFileReceipt(t *testing.T) {
+	for _, changed := range []string{"file", "directory"} {
+		for _, handled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/handled=%t", changed, handled), func(t *testing.T) {
+				s, w, r, _ := fileFixture(t)
+				submitFiles(t, s, r)
+				ctx := t.Context()
+				must := func(err error) {
+					t.Helper()
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				prior, err := s.PendingCompletions(ctx, "1")
+				must(err)
+				if len(prior) != 1 {
+					t.Fatal(prior)
+				}
+				if handled {
+					_, _, ok, err := s.ClaimCompletion(ctx, prior[0].ID, "1")
+					must(err)
+					if !ok {
+						t.Fatal("claim refused")
+					}
+					must(s.AcknowledgeCompletion(ctx, prior[0].ID, "1"))
+				}
+				if changed == "file" {
+					writeFixture(t, filepath.Join(w.Path, "out/result.txt"), "corrected result")
+				} else {
+					must(os.Mkdir(filepath.Join(w.Path, "out", "new-empty-directory"), 0700))
+				}
+				replacement := fileReceipt(t, w)
+				submitFiles(t, s, replacement)
+				pending, err := s.PendingCompletions(ctx, "1")
+				must(err)
+				if len(pending) != 1 || pending[0].ID == prior[0].ID || pending[0].ReceiptID != replacement.EventID {
+					t.Fatalf("replacement lost: prior=%+v pending=%+v", prior, pending)
+				}
+				var n int
+				must(s.db.Read(ctx, func(tx *canon.Tx) error {
+					return tx.QueryRowContext(ctx, "SELECT count(*) FROM work_completions").Scan(&n)
+				}))
+				if n != 1 {
+					t.Fatal("same task/attempt/head did not collapse", n)
+				}
+				_, _, ok, err := s.ClaimCompletion(ctx, pending[0].ID, "1")
+				must(err)
+				if !ok {
+					t.Fatal("replacement not current")
+				}
+				must(s.AcknowledgeCompletion(ctx, pending[0].ID, "1"))
+				submitFiles(t, s, replacement)
+				must(s.ReconcileCompletions(ctx))
+				pending, err = s.PendingCompletions(ctx, "2")
+				must(err)
+				if len(pending) != 0 {
+					t.Fatal("unchanged output reacted twice", pending)
+				}
+			})
 		}
 	}
 }
