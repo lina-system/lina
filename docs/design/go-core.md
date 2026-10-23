@@ -953,8 +953,11 @@ there is no separate client endpoint.
   and the proposed title must match its action after whitespace/case normalization.
   Other wording and sources stay candidates. This does not treat a model's
   interpretation or confidence as a source fact. Existing open titles and source
-  links prevent duplicate additions. An undone source hash cannot be reintroduced
-  through a replay alias. Three rejected additions in one recognized class is
+  links prevent duplicate additions. For the same person and normalized action,
+  an adopted or rejected source hash cannot be reintroduced through a replay or
+  view alias, even after completion or cancellation without undo and after restart.
+  An independent source remains eligible when no open equivalent exists.
+  Three rejected additions in one recognized class is
   the initial fallback threshold; further items remain candidates. Numbered
   pages retain unanswered proposals and define an explicit scope for presenting
   a group, without automatically accepting it.
@@ -964,6 +967,9 @@ there is no separate client endpoint.
   reclassifying source text. The headless `e2e/m2/record-candidates.json` scenario
   covers verified admission, forged and missing evidence, duplicate refusal,
   notices, undo, and pending/rejected persistence after restart.
+  `e2e/m2/record-candidate-replay.json` covers replay/view suppression after
+  completion and cancellation through installed Core tools and a restart,
+  preserving the saved version without another record, notice or undo operation.
 
 `promote_memo` and `undo_record` use the existing authenticated record-tool
 registry. Promotion preserves the memo's id, path, title and note, sets its kind
