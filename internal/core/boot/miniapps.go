@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"strings"
 	"time"
 
@@ -217,19 +216,22 @@ func (g miniAppGate) Finish(ctx context.Context, ticket tools.Ticket, out tools.
 	return g.gate.Finish(ctx, ticket, out)
 }
 
-// miniAppFetcher fetches only a public address, under the web tools rules. A
-// redirect that leaves the public web is refused.
-type miniAppFetcher struct{ transport http.RoundTripper }
+// miniAppFetcher fetches only an address the app declared and only on the
+// public web. It resolves once, rejects a non-public answer, and dials the
+// address it validated, so a second DNS answer cannot steer the connection. A
+// redirect gets the same treatment on every hop.
+type miniAppFetcher struct {
+	transport http.RoundTripper
+	lookup    func(context.Context, string) ([]netip.Addr, error)
+}
 
 func (f miniAppFetcher) Fetch(ctx context.Context, hosts []string, rawURL string) ([]byte, string, error) {
 	declared := miniapps.Manifest{Name: "fetch", Hosts: hosts}
-	if !declared.HasHost(rawURL) || !f.public(ctx, rawURL) {
+	if !declared.HasHost(rawURL) || !coreexec.PublicWebURL(rawURL) {
 		return nil, "", miniapps.ErrForbidden
 	}
-	// A redirect can leave a declared host, so every hop is checked against the
-	// same list the app declared.
-	client := &http.Client{Timeout: 30 * time.Second, Transport: f.transport, CheckRedirect: func(r *http.Request, via []*http.Request) error {
-		if len(via) >= 5 || !declared.HasHost(r.URL.String()) || !f.public(r.Context(), r.URL.String()) {
+	client := &http.Client{Timeout: 30 * time.Second, Transport: f.pinned(f.transport), CheckRedirect: func(r *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || !declared.HasHost(r.URL.String()) || !coreexec.PublicWebURL(r.URL.String()) {
 			return miniapps.ErrForbidden
 		}
 		return nil
@@ -250,27 +252,60 @@ func (f miniAppFetcher) Fetch(ctx context.Context, hosts []string, rawURL string
 	return body, response.Header.Get("Content-Type"), nil
 }
 
-func (f miniAppFetcher) public(ctx context.Context, raw string) bool {
-	if !coreexec.PublicWebURL(raw) {
-		return false
+// pinned dials only an address this call resolved and validated.
+func (f miniAppFetcher) pinned(base http.RoundTripper) http.RoundTripper {
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	transport := &http.Transport{
+		Proxy:                 nil,
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 20 * time.Second,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, err
+			}
+			ip, err := f.resolve(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		},
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
+	if base != nil {
+		transport.TLSClientConfig = nil
+		if t, ok := base.(*http.Transport); ok && t.TLSClientConfig != nil {
+			transport.TLSClientConfig = t.TLSClientConfig.Clone()
+		}
 	}
-	if ip, err := netip.ParseAddr(u.Hostname()); err == nil {
-		return coreexec.PublicWebIP(ip)
+	return transport
+}
+
+// resolve answers one public address for host or refuses the fetch. Every
+// answer is checked, so one private address in the set stops it.
+func (f miniAppFetcher) resolve(ctx context.Context, host string) (netip.Addr, error) {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if !coreexec.PublicWebIP(ip) {
+			return netip.Addr{}, miniapps.ErrForbidden
+		}
+		return ip, nil
 	}
-	addresses, err := net.DefaultResolver.LookupNetIP(ctx, "ip", u.Hostname())
+	lookup := f.lookup
+	if lookup == nil {
+		lookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
+			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+		}
+	}
+	addresses, err := lookup(ctx, host)
 	if err != nil || len(addresses) == 0 {
-		return false
+		return netip.Addr{}, miniapps.ErrForbidden
 	}
 	for _, ip := range addresses {
 		if !coreexec.PublicWebIP(ip) {
-			return false
+			return netip.Addr{}, miniapps.ErrForbidden
 		}
 	}
-	return true
+	return addresses[0], nil
 }
 
 // miniAppCall is one model tool call against the registry.

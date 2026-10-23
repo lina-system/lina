@@ -417,6 +417,20 @@ func (h *Host) limit(appID, route string) bool {
 	return true
 }
 
+// appBytes resolves one request path for a revision. The fixed template always
+// wins for its own names, in the pre-live preview and on the live origin alike,
+// so a checked draw uses the bytes the person will actually receive.
+func appBytes(files map[string][]byte, name string) ([]byte, bool) {
+	if template := generatedui.MiniAppFiles(); name != "index.html" && template[name] != nil {
+		return template[name], true
+	}
+	if validatePath(name) != nil {
+		return nil, false
+	}
+	data := files[name]
+	return data, data != nil
+}
+
 func (h *Host) serveFile(w http.ResponseWriter, r *http.Request, appID, token string) (int, bool) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return http.StatusMethodNotAllowed, false
@@ -432,22 +446,12 @@ func (h *Host) serveFile(w http.ResponseWriter, r *http.Request, appID, token st
 	if name == "" || name == "." {
 		name = "index.html"
 	}
-	var data []byte
-	// The fixed template is served first: its font and styles are not app files
-	// and would otherwise fail the app path rules.
-	if template := generatedui.MiniAppFiles(); template[name] != nil && name != "index.html" {
-		data = template[name]
-	} else {
-		if err := validatePath(name); err != nil {
-			return http.StatusNotFound, false
-		}
-		files, err := h.svc.readRevision(app.ID, app.Revision)
-		if err != nil {
-			return http.StatusNotFound, false
-		}
-		data = files[name]
+	files, err := h.svc.readRevision(app.ID, app.Revision)
+	if err != nil {
+		return http.StatusNotFound, false
 	}
-	if data == nil {
+	data, ok := appBytes(files, name)
+	if !ok {
 		return http.StatusNotFound, false
 	}
 	media := mime.TypeByExtension(path.Ext(name))
@@ -672,7 +676,6 @@ func (h *Host) Preview(ctx context.Context, files map[string][]byte) (string, fu
 		return "", nil, err
 	}
 	port := l.Addr().(*net.TCPAddr).Port
-	template := generatedui.MiniAppFiles()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -680,17 +683,8 @@ func (h *Host) Preview(ctx context.Context, files map[string][]byte) (string, fu
 		if name == "" || name == "." {
 			name = "index.html"
 		}
-		data, ok := files[name]
-		if !ok && name != "index.html" {
-			data = template[name]
-		}
-		if data == nil {
-			if err := validatePath(name); err != nil {
-				http.NotFound(w, r)
-				return
-			}
-		}
-		if data == nil {
+		data, ok := appBytes(files, name)
+		if !ok || data == nil {
 			http.NotFound(w, r)
 			return
 		}

@@ -407,3 +407,28 @@ func TestGatewayRateLimitsRefuseTheNextCall(t *testing.T) {
 		t.Fatalf("the gateway did not rate limit reads: %d", status)
 	}
 }
+
+// The pre-live preview and the live origin serve the fixed template, never a
+// candidate's own copy of it, so a checked draw uses the bytes the person gets.
+func TestTemplateAssetsWinInPreviewAndOnTheOrigin(t *testing.T) {
+	f := newFixture(t)
+	files := appFiles("")
+	files["base.css"] = []byte("body{color:#ff0000}")
+	files["tokens.css"] = []byte(":root{--x:#ff0000}")
+	url, closeFn, err := f.host.Preview(t.Context(), files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFn()
+	client := &http.Client{Timeout: 10 * time.Second}
+	for _, name := range []string{"base.css", "tokens.css"} {
+		response, err := client.Get(url + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := readAll(t, response)
+		if response.StatusCode != http.StatusOK || strings.Contains(body, "#ff0000") {
+			t.Fatalf("the preview served the app's own %s: %d %s", name, response.StatusCode, body)
+		}
+	}
+}
