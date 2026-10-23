@@ -8,6 +8,16 @@ import (
 	"testing"
 )
 
+// TestHeadless starts real Core with a synthetic installed identity and a
+// private state root, and connects a generated-type JSON-RPC client to its Unix
+// socket. A second process runs real lina tui with a controlling PTY at 80 by
+// 24 cells. The test waits for the live connection-state code, sends an empty
+// input through the protocol client without a configured model route, and
+// checks the correlated capability_not_negotiated / refused reply. Ctrl-D and
+// double Ctrl-C quit paths and terminal EOF restore the terminal. Another
+// handshake and request prove that TUI quit leaves Core running. Core stops
+// gracefully and removes its socket and run sentinel. The absent-Core case
+// checks that the TUI creates no state.
 func TestHeadless(t *testing.T) {
 	t.Parallel()
 

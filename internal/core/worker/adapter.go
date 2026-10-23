@@ -102,6 +102,11 @@ type Input struct{ Text string }
 // It must never describe a transport failure or an ambiguous remote outcome.
 var ErrInputRefused = errors.New("worker input refused before dispatch")
 
+// ErrNeedsSignIn is a definitive authentication refusal during Start, before
+// any prompt or task input. The adapter must close and join its partial child
+// before returning it. Other start errors can have unknown effects.
+var ErrNeedsSignIn = errors.New("worker needs sign-in")
+
 type Reason string
 
 const (
@@ -122,6 +127,10 @@ const (
 )
 
 type ThreadSnapshot struct {
+	// Finish belongs to the exact requested turn. EffectsKnown is true only when
+	// a complete read establishes that no effect is awaiting reconciliation.
+	Finish       *Finish
+	EffectsKnown bool
 	// Output is the latest completed assistant message in the current turn.
 	Output                     string
 	Thread                     Thread

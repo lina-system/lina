@@ -21,10 +21,15 @@ const handoff = "Reference summary of earlier turns. The latest input is the act
 const managerHandoff = "Reference summary of earlier project events. The current project event batch under the existing delegation is the active input, not a new message from the person.\n"
 
 // Auxiliary uses the conversation model/account and reasoning effort. It clears
-// all unrelated history, tools and bridges. The caller owns normal cost limits.
+// unrelated history and tools by default; RetainPrefix preserves an explicit
+// conversation prefix for compaction. Bridges are always cleared. The caller
+// owns normal cost limits.
 type Auxiliary struct {
-	Request provider.Request
-	Stream  func(context.Context, provider.Request) (provider.Stream, error)
+	// RetainPrefix keeps the caller-supplied fixed prefix and tools for cache reuse.
+	// Request.Items must contain only the fixed prefix; Records are exact projections.
+	RetainPrefix bool
+	Request      provider.Request
+	Stream       func(context.Context, provider.Request) (provider.Stream, error)
 }
 
 func (a Auxiliary) Summarize(ctx context.Context, segment PassSegment) (Text, error) {
@@ -54,6 +59,19 @@ func (a Auxiliary) Summarize(ctx context.Context, segment PassSegment) (Text, er
 	req.Bridge = nil
 	req.Fields = nil
 	req.Items = []provider.Item{textItem("developer", summaryInstructions), textItem("user", "<"+delimiter+">\n"+string(body)+"\n</"+delimiter+">")}
+	if a.RetainPrefix {
+		req.Instructions = a.Request.Instructions
+		req.Tools = copyItems(a.Request.Tools)
+		req.Fields = append(provider.FieldList(nil), a.Request.Fields...)
+		req.Items = copyItems(a.Request.Items)
+		if len(segment.Root) > 0 {
+			req.Items = append(req.Items, append(provider.Item(nil), segment.Root...))
+		}
+		for _, record := range segment.Records {
+			req.Items = append(req.Items, append(provider.Item(nil), record.Item...))
+		}
+		req.Items = append(req.Items, textItem("developer", summaryInstructions))
+	}
 	stream, err := a.Stream(ctx, req)
 	if err != nil {
 		return Text{}, errors.Join(ErrSummary, err)

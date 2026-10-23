@@ -61,7 +61,7 @@ func TestWorkerStartCancelledDuringManagerAdmissionCanRetry(t *testing.T) {
 	defer func() { close(release); <-active }()
 	<-busy
 	bindings := map[string]loop.Tool{}
-	if err = r.prepareWorkerTools(turnID, ledger.Event{}, bindings); err != nil {
+	if _, err = r.prepareWorkerTools(turnID, &toolPreparation{event: ledger.Event{}}, bindings); err != nil {
 		t.Fatal(err)
 	}
 	cancelled, cancelBeforeAdmission := context.WithCancel(t.Context())
@@ -162,7 +162,7 @@ func TestWorkerSchemaRejectsInjectedSettingsAndIncompleteControls(t *testing.T) 
 func TestWorkerStartValidatesCallBeforeManagerAdmission(t *testing.T) {
 	r := controlRuntime(t)
 	bindings := map[string]loop.Tool{}
-	if err := r.prepareWorkerTools("turn", ledger.Event{}, bindings); err != nil {
+	if _, err := r.prepareWorkerTools("turn", &toolPreparation{event: ledger.Event{}}, bindings); err != nil {
 		t.Fatal(err)
 	}
 	for _, call := range []provider.ToolCall{
@@ -253,7 +253,7 @@ func TestWorkerControlsAreBoundToConversationAndCurrentHandle(t *testing.T) {
 func TestWorkerInterruptRequiresQuoteFromCurrentUserInput(t *testing.T) {
 	r := &conversationRuntime{workers: &workerRuntime{}}
 	bindings := map[string]loop.Tool{}
-	if err := r.prepareWorkerTools("turn", ledger.Event{}, bindings); err != nil {
+	if _, err := r.prepareWorkerTools("turn", &toolPreparation{event: ledger.Event{}}, bindings); err != nil {
 		t.Fatal(err)
 	}
 	call := provider.ToolCall{ID: "cancel", Name: "worker_interrupt", Arguments: `{"session":"thread","turn":"turn","generation":1,"binding":1,"quote":"stop this worker"}`}
@@ -290,5 +290,33 @@ func TestWorkerStartAcceptsSingleMethodSelection(t *testing.T) {
 		if _, err := workerSchema("worker_start", json.RawMessage(raw)); err == nil {
 			t.Fatalf("accepted %s", raw)
 		}
+	}
+}
+
+func TestWorkerCancelPersistenceFailureReleasesSession(t *testing.T) {
+	for _, source := range []string{"dispatch", "session"} {
+		t.Run(source, func(t *testing.T) {
+			owner := &conversationRuntime{person: "person", agent: "agent", conversation: "main:agent"}
+			probe := &workerProbe{snapshot: worker.ThreadSnapshot{Thread: worker.Thread{ID: "thread", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}, State: worker.Active}}
+			entry := &workerSession{adapter: probe, origin: owner, thread: probe.snapshot.Thread}
+			if source == "dispatch" {
+				entry.cancelTask = func(context.Context) error { return context.Canceled }
+			} else {
+				entry.recovery.ID = "invalid-persisted-binding"
+			}
+			owner.workers = &workerRuntime{sessions: map[string]*workerSession{"thread": entry}}
+			in, err := workerSchema("worker_interrupt", json.RawMessage(`{"session":"thread","turn":"turn","generation":1,"binding":1,"quote":"stop"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := owner.workerOperation(t.Context(), "worker_interrupt", "control", ledger.Event{}, in)
+			if err == nil || result.State != tools.Failed || probe.interrupts != 0 {
+				t.Fatalf("failed persistence sent interrupt: %+v %v", result, err)
+			}
+			if !entry.mu.TryLock() {
+				t.Fatal("failed cancellation retained session mutex")
+			}
+			entry.mu.Unlock()
+		})
 	}
 }

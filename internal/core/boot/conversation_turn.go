@@ -22,16 +22,13 @@ import (
 	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
-	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/reply"
-	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/turn"
-	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -41,6 +38,7 @@ import (
 
 // turnState holds the inputs and mutable state shared by a conversation turn's callbacks.
 type turnState struct {
+	activity           lease.Lease
 	runtime            *conversationRuntime
 	input              ledger.Event
 	turnID             string
@@ -50,6 +48,7 @@ type turnState struct {
 	memoryRefs         []turn.Reference
 	preparedNames      []memory.Item
 	bindings           map[string]loop.Tool
+	toolCatalog        *turnToolCatalog
 	promoted           budget.Handle
 	round              int
 	filters            map[string]*conversationReplyStream
@@ -74,6 +73,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	releaseCredentials := r.vault.BeginTurn()
 	defer releaseCredentials()
 	s := turnState{
+		activity:  activity,
 		runtime:   r,
 		input:     input,
 		turnID:    turnID,
@@ -81,12 +81,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		filters:   map[string]*conversationReplyStream{},
 		questions: &questionTurn{},
 	}
-	if r.channelBinding == nil || r.channelBinding.Scope.Tools {
-		if r.router.root.workerDispatch != nil {
-			s.bindings["dispatch_work"] = r.router.root.workerDispatch.Tool(dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID})
-		}
-		s.bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
-	}
+
 	defer func() {
 		r.personaMu.Lock()
 		delete(r.personaGrants, turnID)
@@ -124,6 +119,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				Body: design.Text(eventLanguage(input), "notice.handoff"),
 			}})
 		}
+		var err error
+		s.completed, err = conversationTranscript(ctx, db, turnID, input, s.completed)
+		if err != nil {
+			return err
+		}
 		if len(s.completed) == 0 {
 			return db.Write(ctx, func(*canon.Tx) error { return nil })
 		}
@@ -132,6 +132,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		var batch []ledger.Admission
 		for _, item := range s.completed {
 			batch = append(batch, item)
+			if item.Input.ScaffoldKind == "provider_item" {
+				continue
+			}
 			masked, err := secrets.Mask(item.Input.Body)
 			if err != nil {
 				return err
@@ -162,11 +165,10 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}})
 			}
 		}
-		var err error
 		s.saved, err = ledger.New(namingCanon{Canon: db, person: r.person, agent: r.agent, names: s.preparedNames, replies: batch}, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
-	inputQueue := &conversationInputs{runtime: r, inputs: inputs}
+	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete,
 		StartFromTurn: func(ctx context.Context, h budget.Handoff) (budget.Handle, error) {
 			var err error
@@ -176,7 +178,10 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		ResultCommitted: r.background.notify, ToolActivity: r.toolActivity, Loop: loop.Config{
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        s.bindings,
-			Before:       s.questions.before,
+			Transform: func(ctx context.Context, request provider.Request) (provider.Request, error) {
+				return s.toolCatalog.transform(ctx, request)
+			},
+			Before: s.questions.before,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
 				return r.resultNotice(ctx, call, r.recordNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))))
 			},
@@ -291,7 +296,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	// commit together. Publication can be recovered from history after a crash.
 	if err == nil {
 		for _, item := range s.saved {
-			if item.ScaffoldKind == "result" || item.ScaffoldKind == "reply_check" {
+			if item.ScaffoldKind == "provider_item" || item.ScaffoldKind == "result" || item.ScaffoldKind == "reply_check" {
 				continue
 			}
 			if item.SpeakerKind == guard.System {
@@ -390,12 +395,35 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	if err != nil {
 		return turn.PreparedRequest{}, err
 	}
-	catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, s.bindings, s.questions)
-
-	if err != nil {
-		return turn.PreparedRequest{}, err
+	toolInput := &toolPreparation{ctx: ctx, event: input, persona: persona, settings: settings, at: at, replyShapes: s.replyShapes, questions: s.questions}
+	// Declaration order is part of the provider request and its recorded digest.
+	// A family binds its tools and returns their declarations in this one pass.
+	var declarations []provider.ToolDecl
+	for _, prepare := range []toolPreparer{
+		r.preparePersonaTools,
+		r.prepareSkillTools,
+		r.prepareRecordTools,
+		r.prepareResultTools,
+		r.prepareGoalWorkTools,
+		r.prepareMethodologyTools,
+		r.preparePlanningTools,
+		r.prepareRunTools,
+		r.prepareWebTools,
+		r.prepareDispatchTools,
+		r.prepareWorkTools,
+		r.prepareWorkerTools,
+		r.prepareDelegationTools,
+		r.prepareTimerTools,
+		r.prepareExchangeTools,
+	} {
+		family, err := prepare(turnID, toolInput, s.bindings)
+		if err != nil {
+			return turn.PreparedRequest{}, err
+		}
+		declarations = append(declarations, family...)
 	}
-	minimum = append(minimum, personaPacket...)
+	catalog := toolInput.catalog
+	minimum = append(minimum, toolInput.packet...)
 	methodology, err := r.methodologyContext(ctx)
 	if err != nil {
 		return turn.PreparedRequest{}, err
@@ -407,66 +435,11 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	}
 	s.preparedNames = names
 	minimum = append(minimum, namePacket...)
-	if err := r.prepareSkillTools(turnID, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.preparePlanningTools(turnID, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.prepareWorkTools(turnID, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.prepareWorkerTools(turnID, input, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.prepareRecordTools(turnID, input.ID, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	workDeclarations, err := r.prepareGoalWorkTools(turnID, s.bindings)
-	if err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.prepareMethodologyTools(turnID, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.prepareResultTools(turnID, input, s.replyShapes, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
-	declarations = append(declarations, coreexec.EmotionDeclarations()...)
-	declarations = append(declarations, coreexec.RelationshipDeclaration())
-	declarations = append(declarations, askQuestionDeclaration(), resolveQuestionDeclaration())
-	if r.channelBinding == nil || r.channelBinding.Scope.Memory {
-		declarations = append(declarations, coreexec.NameDeclaration())
-	}
-	declarations = append(declarations, coreexec.SkillDeclarations()...)
-	declarations = append(declarations, coreexec.RecordDeclarations()...)
-	declarations = append(declarations, coreexec.ResultDeclarations()...)
-	declarations = append(declarations, workDeclarations...)
-	declarations = append(declarations, methodologyDeclarations()...)
-	declarations = append(declarations, coreexec.PlanningDeclarations()...)
-	declarations = append(declarations, startRunDeclaration())
-	webProvider, err := r.selectedWebProvider()
-	if err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	webDeclarations, err := r.prepareWebTools(turnID, webProvider, s.bindings)
-	if err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	declarations = append(declarations, webDeclarations...)
-	if r.router.root.workerDispatch != nil {
-		declarations = append(declarations, dispatch.Declaration())
-	}
-	declarations = append(declarations, coreexec.WorkDeclarations()...)
-	declarations = append(declarations, workerDeclarations()...)
-	declarations = append(declarations, r.prepareDelegationTools(turnID, s.bindings)...)
-	declarations = append(declarations, r.prepareTimerTools(turnID, s.bindings)...)
-	declarations = append(declarations, r.prepareExchangeTools(turnID, s.bindings)...)
+
 	if r.coding != nil {
 		clear(s.bindings)
 		catalog = nil
-		declarations, err = r.prepareCodingDecision(turnID, s.bindings)
+		declarations, err = r.prepareCodingDecision(turnID, toolInput, s.bindings)
 		if err != nil {
 			return turn.PreparedRequest{}, err
 		}
@@ -475,6 +448,19 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		clear(s.bindings)
 		declarations = nil
 		catalog = nil
+	}
+	if failedWorkerReaction(s.input) {
+		clear(s.bindings)
+		declarations = nil
+		catalog = nil
+	}
+	if !failedWorkerReaction(s.input) && r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
+		state, err := r.agents.State(ctx, r.agent)
+		if err != nil {
+			return turn.PreparedRequest{}, err
+		}
+		s.toolCatalog = prepareToolGroups(declarations, agents.ProjectWorkMethod(persona, state), s.bindings)
+		declarations = s.toolCatalog.first
 	}
 	if r.channelBinding != nil {
 		for name, tool := range s.bindings {
@@ -498,20 +484,36 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	if err := pinPersonaState(packet, r.agent, r.conversation); err != nil {
 		return turn.PreparedRequest{}, err
 	}
-	request, report := assemble.Assemble(assemble.Input{
+	request, report, err := r.compactConversation(ctx, assemble.Input{
 		Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
 		AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
 		AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,
 		Catalog: catalog, AlwaysTools: declarations,
 		History: s.items, Current: current[0], Packet: packet,
 		Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
-	}, conversationRequestSize)
+	}, s.events, func(ctx context.Context, request provider.Request) (provider.Stream, error) {
+		r.dispatchMu.RLock()
+		defer r.dispatchMu.RUnlock()
+		if err := r.validateModelContext(ctx, s.memoryEpoch, s.memoryRefs); err != nil {
+			return nil, err
+		}
+		if err := r.validateChannel(ctx); err != nil {
+			return nil, err
+		}
+		return r.route.Adapter.Stream(ctx, s.activity, request)
+	})
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
 	if report.Failure != "" {
 		if report.Failure == assemble.TooLarge {
 			return turn.PreparedRequest{}, turn.ErrRequestTooLarge
 
 		}
 		return turn.PreparedRequest{}, turn.ErrInvalid
+	}
+	if s.toolCatalog != nil {
+		s.toolCatalog.offset = len(request.Items)
 	}
 	assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), s.memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), s.memoryRefs...)}
 	assembly.Context, err = r.recordContextSources(ctx, packet, report)

@@ -16,6 +16,13 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM1ProviderFailureHistory (m1/provider-failure-history.json) runs HTTP 503
+// and SSE EOF after a delta against installed Core, with input and history
+// displayed through the real TUI in a 120x60 PTY. It checks the failure notice
+// and partial before and after a graceful Core restart, no provider replay, and
+// a new successful turn whose model context excludes the failed partial. Notice
+// wording is captured from the live protocol rather than fixed in the scenario.
+//
 // Exercise the installed Core and real TUI, including both failures from #358.
 // Capture the notice from the protocol instead of pinning its wording.
 func TestM1ProviderFailureHistory(t *testing.T) {

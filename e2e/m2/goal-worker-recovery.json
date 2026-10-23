@@ -1,0 +1,3 @@
+{
+  "modes": ["worker-recovery", "worker-recovery-failed"]
+}

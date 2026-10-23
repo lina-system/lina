@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/boot"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/proc"
 )
@@ -234,6 +235,10 @@ func TestCoreRepairsFailedRuntimeVerification(t *testing.T) {
 			return work.Node{ID: "probe-main", Connected: true, ObservedAt: time.Now().Unix(), CPUCores: 2, CPULimit: 2, AvailableMemoryMB: 1024, MemoryLimitMB: 1024, AvailableDiskMB: 1024, DiskLimitMB: 1024, Workers: map[string]bool{"stub": true}}, nil
 		},
 		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+			agent, err := fixtureWorkOwner(ctx, root)
+			if err != nil {
+				return err
+			}
 			admissions++
 			return e.Admit(ctx, work.Goal{ID: "runtime-repair", Person: person, Agent: agent, Summary: "repair the service", Done: "service returns healthy", Scope: work.GoalScope{Repositories: []string{"fixture"}, Includes: "repair the fixture service"}, ServiceTarget: w.url, Tasks: []work.Task{repairTask("initial")}, Criteria: []work.Criterion{{ID: "answers", Statement: "service returns healthy", Check: work.CriterionCheck{Kind: work.RunEvidence, Method: "service.answers", Target: w.url}}}})
 		},
@@ -302,4 +307,15 @@ func TestCoreRepairsFailedRuntimeVerification(t *testing.T) {
 	if admissions != 1 || failures != 1 || counts[work.PlanGoal] != 1 || counts[work.Assign] != 2 || counts[work.Deploy] != 2 || counts[work.Verify] != 2 {
 		t.Fatalf("repair repeated or bypassed stages: admissions=%d failures=%d calls=%v", admissions, failures, counts)
 	}
+}
+
+func fixtureWorkOwner(ctx context.Context, root string) (string, error) {
+	db, err := canon.OpenSQLiteReader(ctx, filepath.Join(root, "canon/canon.sqlite"))
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var id string
+	err = db.QueryRowContext(ctx, "SELECT agent_id FROM agent_starters WHERE preset='dev'").Scan(&id)
+	return id, err
 }

@@ -15,6 +15,14 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM3NonCompetitionInstalledCore (m3/non-competition.json) runs installed
+// Core's record tools through a local fixture provider and its public client
+// socket. It checks a real saved record, refusal of an out-of-scope path used
+// as an id, and preservation of an external edit against an old revision while
+// Core stays running. It is supporting protocol evidence; the Linux
+// non-competition ladder (evidence/non-competition/README.md) still requires
+// human concurrent-session measurements.
+//
 // This is protocol evidence for file safety in a running installed Core. It is
 // deliberately not a human concurrent-session measurement of the Linux ladder.
 func TestM3NonCompetitionInstalledCore(t *testing.T) {

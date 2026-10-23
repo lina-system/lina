@@ -34,6 +34,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stdout, runtime.GOMAXPROCS(0))
 		return
 	}
+	if os.Getenv("LINA_WORKER_FIXTURE") == "3" && len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "app-server") {
+		recoveryWorkerFixture()
+		return
+	}
 	if updateManagerHelper() {
 		return
 	}

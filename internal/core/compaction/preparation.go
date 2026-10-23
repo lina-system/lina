@@ -206,30 +206,25 @@ func (p Pass) boundarySegment(v View) (PassSegment, error) {
 		segment.Protected = append(segment.Protected, v.Input)
 	}
 	segment.Protected = append(segment.Protected, v.Active...)
-	kept := map[string]bool{}
-	budget := 0
+	// Keep a contiguous suffix of complete turns. Retaining only user items
+	// would put summarized calls/replies after a retained event, violating the
+	// summary tree's prefix coverage and splitting protocol round trips.
+	start, budget := len(v.History), 0
 	for i := len(v.History) - 1; i >= 0; i-- {
-		r := v.History[i]
-		if !r.User {
-			continue
-		}
-		n := p.itemTokens(v.Request, r.Item)
+		n := p.itemTokens(v.Request, v.History[i].Item)
 		if n < 0 {
 			return PassSegment{}, ErrPass
 		}
-		if budget+n > p.Policy.KeepUserTokens {
+		budget += n
+		if budget > p.Policy.KeepUserTokens {
 			break
 		}
-		budget += n
-		kept[r.ID] = true
-	}
-	for _, r := range v.History {
-		if kept[r.ID] {
-			segment.Verbatim = append(segment.Verbatim, r)
-		} else {
-			segment.Records = append(segment.Records, r)
+		if v.History[i].User {
+			start = i
 		}
 	}
+	segment.Records = copyRecords(v.History[:start])
+	segment.Verbatim = copyRecords(v.History[start:])
 	return segment, nil
 }
 

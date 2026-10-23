@@ -4,9 +4,13 @@ package boot
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"io"
+	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/records"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
@@ -68,7 +72,7 @@ func decodeWork(raw string) (workInput, error) {
 	}
 	return in, nil
 }
-func (r *conversationRuntime) prepareGoalWorkTools(turnID string, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
+func (r *conversationRuntime) prepareGoalWorkTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	runtime := r.workEngine
 	if runtime == nil && r.router != nil {
 		runtime = r.router.root.workEngine
@@ -86,13 +90,25 @@ func (r *conversationRuntime) prepareGoalWorkTools(turnID string, bindings map[s
 			if err != nil {
 				return loop.Result{ID: c.ID, Code: loop.Invalid}
 			}
+			owner, conversation, ownerTurn := r.agent, r.conversation, turnID
+			method, err := r.preparedMethod(ctx, turnID, r.agent)
+			if err != nil {
+				return loop.Result{ID: c.ID, Code: loop.Failed}
+			}
+			if !dispatches(method) {
+				a, err := r.assignCoding(ctx, dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}, turnID+":"+c.ID, c.Name, strings.Join(in.Scope.Repositories, "\n"), json.RawMessage(c.Arguments))
+				if err != nil {
+					return loop.Result{ID: c.ID, Code: loop.Denied, Output: workerError(err)}
+				}
+				owner, conversation, ownerTurn = a.Owner, a.Conversation, "coding:"+a.ID
+			}
 			tasks := []work.Task{}
 			for _, t := range in.Tasks {
 				tasks = append(tasks, work.Task{ID: t.ID, Done: t.Done, Repository: t.Repository, Base: t.Base, Area: t.Area, Worker: t.Worker, Resources: t.Resources, DependsOn: t.DependsOn, Stage: work.TaskReady})
 			}
 			// Identity, execution state, criterion evidence and authority are never
 			// accepted from the model. Later effects are authorized by the driver.
-			goal := work.Goal{ID: turnID + ":" + c.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID, Summary: in.Outcome, Done: in.Done, Scope: in.Scope, Assumptions: in.Assumptions, Criteria: in.Criteria, ServiceTarget: in.ServiceTarget, ServiceRepository: in.ServiceRepository, NoServiceReason: in.NoServiceReason, Tasks: tasks}
+			goal := work.Goal{ID: turnID + ":" + c.ID, Person: r.person, Agent: owner, Conversation: conversation, Turn: ownerTurn, Summary: in.Outcome, Done: in.Done, Scope: in.Scope, Assumptions: in.Assumptions, Criteria: in.Criteria, ServiceTarget: in.ServiceTarget, ServiceRepository: in.ServiceRepository, NoServiceReason: in.NoServiceReason, Tasks: tasks}
 			if err = runtime.engine.Admit(ctx, goal); err != nil {
 				return loop.Result{ID: c.ID, Code: loop.Invalid, Output: json.RawMessage(`{"code":"work_admission_failed"}`)}
 			}
@@ -118,7 +134,24 @@ func (r *conversationRuntime) prepareGoalWorkTools(turnID string, bindings map[s
 			if err != nil {
 				return loop.Result{ID: c.ID, Code: loop.Invalid}
 			}
-			receipt, err := runtime.engine.Revise(ctx, in.GoalID, in.Revision, r.person, r.agent, in.Definition)
+			owner := r.agent
+			if err := r.db.Read(ctx, func(tx *canon.Tx) error {
+				a, err := readCoding(ctx, tx, in.GoalID)
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				if a.Origin.Person != r.person || (a.Owner != r.agent && (a.Origin.Agent != r.agent || a.Origin.Conversation != r.conversation)) {
+					return work.ErrInvalid
+				}
+				owner = a.Owner
+				return nil
+			}); err != nil {
+				return loop.Result{ID: c.ID, Code: loop.Denied}
+			}
+			receipt, err := runtime.engine.Revise(ctx, in.GoalID, in.Revision, r.person, owner, in.Definition)
 			if err != nil {
 				code := "work_correction_failed"
 				if errors.Is(err, work.ErrStaleDefinition) || errors.Is(err, records.ErrStaleRevision) {

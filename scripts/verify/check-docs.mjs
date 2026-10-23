@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
-// Check local file targets in tracked Markdown and LICENSE. This is not an anchor or URL checker.
+// Check local file targets and Markdown heading anchors in tracked Markdown and LICENSE.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -12,6 +12,7 @@ const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: '
 const tracked = new Set(execFileSync('git', ['ls-files', '--cached', '-z'], { cwd: root }).toString('utf8').split('\0').filter(Boolean));
 const documents = [...tracked].filter((name) => /\.md$/i.test(name) || name === 'LICENSE').sort();
 const failures = [];
+const anchorCache = new Map();
 
 function insideRoot(target) {
   const relative = path.relative(root, target);
@@ -37,10 +38,25 @@ function check(source, destination) {
   const trackedTarget = tracked.has(relative) || [...tracked].some((file) => file.startsWith(`${relative ? `${relative}/` : ''}`));
   if (!trackedTarget || !existsSync(target) || !insideRoot(realpathSync(target))) {
     failures.push(`${source}: broken target ${destination}`);
+    return;
+  }
+  const hash = destination.indexOf('#');
+  if (hash < 0 || !/\.md$/i.test(relative) || !tracked.has(relative)) return;
+  let fragment;
+  try {
+    fragment = decodeURIComponent(destination.slice(hash + 1));
+  } catch {
+    failures.push(`${source}: invalid encoded target ${destination}`);
+    return;
+  }
+  if (!fragment) return;
+  if (!anchorCache.has(target)) anchorCache.set(target, headingAnchors(readFileSync(target, 'utf8')));
+  if (!anchorCache.get(target).has(fragment)) {
+    failures.push(`${source}: broken anchor ${destination}`);
   }
 }
 
-function visibleMarkdown(text) {
+function visibleMarkdown(text, keepInlineCode = false) {
   let fence = null;
   return text.split('\n').map((line) => {
     const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
@@ -50,8 +66,45 @@ function visibleMarkdown(text) {
       return '';
     }
     if (fence || /^(?: {4}|\t)/.test(line)) return '';
-    return line.replace(/(`+)(?:[^`]|(?!\1)`)*?\1/g, '');
+    return keepInlineCode ? line : line.replace(/(`+)(?:[^`]|(?!\1)`)*?\1/g, '');
   }).join('\n');
+}
+
+function headingText(text) {
+  // Code contributes literal text, but must not be interpreted as emphasis or links.
+  const code = [];
+  const plain = text.replace(/(`+)(.*?)\1/g, (_, marker, content) => {
+    code.push(content);
+    return `\0${code.length - 1}\0`;
+  }).replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/!?\[([^\]]*)\]\[[^\]]*\]/g, '$1')
+    .replace(/<[^>]*>/g, '')
+    .replace(/[*~]/g, '')
+    .replace(/(?<![\p{L}\p{N}])(_{1,2})(?=\S)(.+?)\1(?![\p{L}\p{N}])/gu, '$2')
+    .replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (entity, value) => {
+      if (!value.startsWith('#')) return { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0' }[value.toLowerCase()];
+      const point = value[1].toLowerCase() === 'x' ? parseInt(value.slice(2), 16) : Number(value.slice(1));
+      return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : '\ufffd';
+    });
+  return plain.replace(/\0(\d+)\0/g, (_, index) => code[Number(index)]);
+}
+
+function headingAnchors(text) {
+  const anchors = new Set();
+  const lines = visibleMarkdown(text.replace(/<!--[\s\S]*?-->/g, ''), true).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const atx = /^ {0,3}#{1,6}(?:[\t ]+(.*)|$)/.exec(lines[i]);
+    let title;
+    if (atx) title = (atx[1] ?? '').replace(/[\t ]+#+[\t ]*$/, '').trim();
+    else if (lines[i].trim() && /^ {0,3}(?:=+|-+)[\t ]*$/.test(lines[i + 1] ?? '')) title = lines[i++].trim();
+    else continue;
+    // GitHub lowercases heading text, removes punctuation and replaces spaces.
+    const base = headingText(title).toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\- ]/gu, '').replace(/ /g, '-');
+    let anchor = base;
+    for (let suffix = 1; anchors.has(anchor); suffix++) anchor = `${base}-${suffix}`;
+    anchors.add(anchor);
+  }
+  return anchors;
 }
 
 function links(text) {
@@ -84,5 +137,5 @@ if (failures.length) {
   console.error(failures.join('\n'));
   process.exitCode = 1;
 } else {
-  console.log(`Checked ${documents.length} tracked documents: local file targets OK (external URLs and anchors not checked).`);
+  console.log(`Checked ${documents.length} tracked documents: local file targets and Markdown heading anchors OK (external URLs not checked).`);
 }

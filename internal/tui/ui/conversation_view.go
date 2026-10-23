@@ -28,7 +28,7 @@ func (m *shellModel) conversationPlan() layout.Layout {
 		cardRows = len(summary.Lines)
 		cardCount = cardRows + summary.More
 	}
-	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{ActivityRows: activityRows, SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: cardCount, CardRows: cardRows, Attachments: len(m.content.Draft.Attachments) > 0})
+	return layout.Plan(m.size, layout.Caps{SidePane: true, Running: m.hasCapability("running"), Cards: m.hasCapability("waiting")}, layout.Shape{WorkPanel: m.hasCapability("progress"), ActivityRows: activityRows, SidePane: m.conversation.pager.open, ComposerRows: m.conversation.composer.Height(), RunningCount: len(m.topicBlocks("running")), CardCount: cardCount, CardRows: cardRows, Attachments: len(m.content.Draft.Attachments) > 0})
 }
 
 func (m *shellModel) conversationContent(showNotice bool) string {
@@ -40,6 +40,13 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if plan.Notice.Height > 0 {
 			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
 		}
+		return strings.Join(rows, "\n")
+	}
+	if m.conversation.workFocused && plan.SidePane.Height == 0 {
+		for i, line := range m.workPanelRows(plan.Conversation.Width, plan.Conversation.Height) {
+			rows[plan.Conversation.Y+i] = line
+		}
+		rows[plan.Header.Y] = clip(m.styles.Title.Render(m.conversationName()))
 		return strings.Join(rows, "\n")
 	}
 	if m.conversation.pager.open && plan.SidePane.Height == 0 {
@@ -283,14 +290,26 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		}
 		rows[plan.Composer.Y+i] = clip(prefix + line)
 	}
-	if plan.SidePane.Height > 0 {
+	if plan.SidePane.Height > 0 && !m.conversation.pager.open && m.hasCapability("progress") {
+		lines := m.workPanelRows(plan.SidePane.Width, plan.SidePane.Height)
+		for y := 0; y < plan.SidePane.Height; y++ {
+			left := ansi.Truncate(rows[plan.SidePane.Y+y], plan.Conversation.Width, "")
+			left += strings.Repeat(" ", max(0, plan.SidePane.X-ansi.StringWidth(left)))
+			right := ""
+			if y < len(lines) {
+				right = lines[y]
+			}
+			rows[plan.SidePane.Y+y] = left + right
+		}
+	}
+	if plan.SidePane.Height > 0 && m.conversation.pager.open {
 		p := &m.conversation.pager
 		lines := m.pagerRows()
 		p.offset = min(p.offset, max(0, len(lines)-plan.SidePane.Height))
 		lines = lines[p.offset:]
 		for y := 0; y < plan.SidePane.Height; y++ {
 			left := ansi.Truncate(rows[plan.SidePane.Y+y], plan.Conversation.Width, "")
-			left += strings.Repeat(" ", max(0, plan.Conversation.Width-ansi.StringWidth(left)))
+			left += strings.Repeat(" ", max(0, plan.SidePane.X-ansi.StringWidth(left)))
 			right := ""
 			if y < len(lines) {
 				right = m.styles.markdownRow(lines[y])

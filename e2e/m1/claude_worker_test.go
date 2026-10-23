@@ -13,6 +13,14 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 )
 
+// TestM2ClaudeWorkerThroughInstalledCore (m2/claude-worker.json) runs
+// dispatch_work with worker=claude through installed Core. A headless fixture
+// worker writes and commits a real artifact, opens a synthetic PR and reports a
+// final result while staying alive. Core must reap it, retain the result and PR
+// in an adapter-derived receipt, and preserve the conversation result on
+// restart. Other cases cover permission denial, exit zero without a result and
+// pending PR checks. No personal account or GitHub write is used. Run with go
+// test ./e2e/m1 -run '^TestM2ClaudeWorkerThroughInstalledCore$'.
 func TestM2ClaudeWorkerThroughInstalledCore(t *testing.T) {
 	t.Parallel()
 	testHeadlessWorkerThroughInstalledCore(t, "../m2/claude-worker.json", false)
@@ -68,6 +76,49 @@ func assertClaudeReceipt(t *testing.T, h *harness, mode string) {
 		}
 	} else if card.Receipt.Outcome != "failed" {
 		t.Fatal("failed worker became delivery")
+	}
+}
+
+// TestM2HeadlessWorkerRecovery runs m2/headless-worker-recovery.json through
+// installed Core, checking Claude dispatch's two attempts, retained receipt
+// artifacts and durable decision with a synthetic worker and no account.
+func TestM2HeadlessWorkerRecovery(t *testing.T) {
+	testHeadlessWorkerThroughInstalledCore(t, "../m2/headless-worker-recovery.json", false)
+}
+func assertHeadlessRecovery(t *testing.T, h *harness) {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(h.ctx)
+	var raw []byte
+	if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, "SELECT record FROM worker_dispatch").Scan(&raw)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var rec dispatch.Record
+	if err = json.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.State != "decision" || rec.Attempt != 2 {
+		t.Fatalf("headless recovery=%s", raw)
+	}
+	card, err := work.New(db).Get(h.ctx, rec.ID)
+	if err != nil || card.Run == nil || card.Run.Generation != 2 || card.Receipt == nil {
+		t.Fatalf("missing second receipt: %+v %v", card, err)
+	}
+	for _, name := range []string{"result.json", "result-2.json"} {
+		if _, err = os.Stat(filepath.Join(h.root, "work", "runs", rec.ID, name)); err != nil {
+			t.Fatal("prior receipt artifact lost", err)
+		}
+	}
+	var decisions int
+	if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, "SELECT count(*) FROM worker_recovery WHERE id=? AND json_extract(record,'$.State')='decision'", "dispatch:"+rec.ID).Scan(&decisions)
+	}); err != nil || decisions != 1 {
+		t.Fatalf("decision not durable: %d %v", decisions, err)
 	}
 }
 

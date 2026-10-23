@@ -6,27 +6,70 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 )
 
-func (s *Service) finish(ctx context.Context, r Record, runID, status string) error {
+func (s *Service) finish(ctx context.Context, r Record, runID, status string, receipts ...work.Receipt) error {
 	head := ""
 	if r.PR != nil {
 		head = r.PR.Head
 	}
+	if len(receipts) > 1 {
+		return work.ErrInvalid
+	}
 	return s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
+		var canceled bool
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(record,'$.canceled'),0) FROM worker_dispatch WHERE id=?`, r.ID).Scan(&canceled); err != nil {
+			return err
+		}
+		r.Canceled = r.Canceled || canceled
+
+		if len(receipts) == 1 {
+			if err := work.SubmitIn(ctx, tx, runID, receipts[0]); err != nil {
+				return err
+			}
+		}
+		if r.Snapshot != nil {
+			var raw []byte
+			var card work.Card
+			if err := tx.QueryRowContext(ctx, "SELECT record FROM work_cards WHERE task_id=?", r.ID).Scan(&raw); err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &card); err != nil {
+				return err
+			}
+			if card.Receipt == nil || card.Run == nil || card.Run.ID != runID {
+				return work.ErrState
+			}
+		}
 		if err := work.FinishIn(ctx, tx, r.ID, runID, status, head); err != nil {
 			return err
+		}
+		// Restart observation must settle effects even when the turn succeeded.
+		// Live successful delivery retains its process/result validation path.
+		if r.Snapshot != nil && r.Snapshot.Finish != nil && (r.ObserveEpoch != 0 || r.Snapshot.Finish.Status != worker.Done) {
+			r = recoveryRecord(r)
+		}
+		if r.State != "unknown" {
+			// An earlier uncertainty notice does not acknowledge this result.
+			r.Announced = false
 		}
 		return saveRecord(ctx, tx, r)
 	})
 }
 func saveRecord(ctx context.Context, tx *canon.Tx, r Record) error {
+	var canceled bool
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(record,'$.canceled'),0) FROM worker_dispatch WHERE id=?`, r.ID).Scan(&canceled); err != nil {
+		return err
+	}
+	r.Canceled = r.Canceled || canceled
 	_, err := tx.ExecContext(ctx, "UPDATE worker_dispatch SET state=?,record=? WHERE id=?", r.State, mustJSON(r), r.ID)
 	return err
 }
@@ -50,7 +93,7 @@ func (s *Service) React(ctx context.Context, event work.Completion, card work.Ca
 	}
 	// Goal execution observes this durable receipt through GoalRecord. Its
 	// engine owns judgment and continuation; do not also publish a task result.
-	if r.Goal {
+	if r.Goal || r.State == "queued" || r.State == "running" || r.Attempt > 0 && event.Attempt != fmt.Sprintf("%s:%d", r.ID, r.Attempt) {
 		return true, nil
 	}
 	if r.Announced {

@@ -16,6 +16,12 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM2KoreanRecordSearchInstalledTUI (m2/records-korean-search.json) runs the
+// installed Core and a real PTY TUI against a loopback Responses fixture. It
+// saves a Korean memo, checks the attached-word and list controls, searches by
+// the noun before and after an edit, restarts Core and checks the same id,
+// revision and note through search and read. Run go test -count=1 ./e2e/m1 -run
+// '^TestM2KoreanRecordSearchInstalledTUI$'.
 func TestM2KoreanRecordSearchInstalledTUI(t *testing.T) {
 	raw, err := os.ReadFile("../m2/records-korean-search.json")
 	if err != nil {

@@ -4,12 +4,15 @@ package ui
 
 import (
 	"fmt"
+	"strings"
+	"unicode"
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/internal/tui/state"
+	"github.com/thisisjun786/lina/kit/secret"
 )
 
 func newConversationView(styles Styles) conversationView {
@@ -56,7 +59,39 @@ func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	m.syncComposer()
+	// The placeholder is the only retained credential context. Protect text
+	// typed at that boundary as well as later pastes, including after undo or
+	// recall, without retaining any of the original secret.
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.Text != "" && key.Mod & ^tea.ModShift == 0 {
+		c := &m.conversation.composer
+		c.DeleteSelection()
+		key.Text = trimChatContinuation(c.Value()[:composerOffset(c)], key.Text)
+		msg = key
+	}
+	// Mask before the textarea can truncate or retain a pasted credential.
+	// The second pass also covers a value pasted after an existing "token=".
+	_, pasted := msg.(tea.PasteMsg)
+	if paste, ok := msg.(tea.PasteMsg); ok {
+		// Check the full insertion before the textarea limit can cut a token
+		// assembled across pastes below its recognizable length.
+		c := &m.conversation.composer
+		c.DeleteSelection()
+		text := c.Value()
+		offset := composerOffset(c)
+		paste.Content = maskChatPaste(trimChatContinuation(text[:offset], paste.Content))
+		msg = paste
+		inserted := text[:offset] + paste.Content + text[offset:]
+		if masked := maskChatPaste(inserted); masked != inserted {
+			c.SetValue(masked)
+			msg = tea.PasteMsg{}
+		}
+	}
 	c, command := m.conversation.composer.Update(msg)
+	if pasted {
+		if masked := maskChatPaste(c.Value()); masked != c.Value() {
+			c.SetValue(masked)
+		}
+	}
 	m.conversation.composer = c
 	draft := m.content.Draft
 	if draft.Text != c.Value() {
@@ -69,6 +104,39 @@ func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
 	draft.Text = c.Value()
 	m.content, _ = state.Reduce(m.content, state.EditDraft{Draft: draft})
 	return command
+}
+
+func composerOffset(c *textarea.Model) int {
+	lines := strings.Split(c.Value(), "\n")
+	offset := 0
+	for _, line := range lines[:c.Line()] {
+		offset += len(line) + 1
+	}
+	return offset + len(string([]rune(lines[c.Line()])[:c.Column()]))
+}
+
+// Discard only the newly inserted continuation. Existing text after the cursor
+// may be public text next to a masked quoted value and must remain intact.
+func trimChatContinuation(before, inserted string) string {
+	if !strings.HasSuffix(before, secret.Placeholder) {
+		return inserted
+	}
+	boundary := strings.IndexFunc(inserted, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(",;\"'<>}]).", r)
+	})
+	if boundary < 0 {
+		return ""
+	}
+	return inserted[boundary:]
+}
+
+// A rejected structured value must not fall back to its original bytes.
+func maskChatPaste(text string) string {
+	masked, err := secret.Mask(text)
+	if err != nil {
+		return secret.Placeholder
+	}
+	return masked.Text()
 }
 
 func (m *shellModel) reduceInput(msg state.Msg) tea.Cmd {

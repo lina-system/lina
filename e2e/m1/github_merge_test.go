@@ -16,6 +16,12 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM2GitHubMergeInstalledCore (m2/github-merge.json) drives the installed
+// Core's merge capability with a synthetic gh process and real temporary parent
+// clone. It proves head and protected-ref changes prevent writes, the accepted
+// head is pinned, confirmed results survive restart without a second merge, and
+// external merges require commit/ref evidence and report failed checks. It uses
+// no external credentials.
 func TestM2GitHubMergeInstalledCore(t *testing.T) {
 	t.Parallel()
 

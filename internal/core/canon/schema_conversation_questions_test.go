@@ -6,7 +6,12 @@ import "testing"
 func TestConversationQuestionsMigration(t *testing.T) {
 	cfg := storeConfig(t)
 	all := Migrations()
-	cfg.Migrations = all[:len(all)-1]
+	for i, migration := range all {
+		if migration.SQL == conversationQuestionsSchema {
+			cfg.Migrations = all[:i]
+			break
+		}
+	}
 	old, err := Open(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)

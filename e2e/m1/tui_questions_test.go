@@ -128,6 +128,10 @@ func TestQuestionCoreHelper(t *testing.T) {
 		t.Fatalf("source calls=%d", source.calls)
 	}
 }
+
+// TestM1TUIQuestions (m1/tui-questions.json) checks exact typed form answers
+// and terminal publication. This scenario creates no second product decision
+// store and uses no timing sleeps.
 func TestM1TUIQuestions(t *testing.T) {
 	t.Parallel()
 
