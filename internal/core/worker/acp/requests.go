@@ -87,6 +87,10 @@ func (a *Adapter) Answer(ctx context.Context, th worker.Thread, answer worker.An
 		return err
 	}
 	a.mu.Lock()
+	if a.requests[answer.RequestID] == nil {
+		a.mu.Unlock()
+		return a.answerTool(th, answer)
+	}
 	defer a.mu.Unlock()
 	if !a.matches(th) {
 		return ErrThread

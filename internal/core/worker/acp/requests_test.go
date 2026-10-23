@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/worker"
 )
 
@@ -170,5 +171,81 @@ func TestPermissionReplyNeverRemembersAChoice(t *testing.T) {
 		if json.Unmarshal(raw, &got) != nil || got.Outcome.OptionID != tc.want || (tc.want == "" && got.Outcome.Outcome != "cancelled") {
 			t.Fatalf("unsafe option: %s", raw)
 		}
+	}
+}
+
+func TestWorkToolsWhileDecisionPending(t *testing.T) {
+	for _, mode := range []string{"answer", "turn-finish"} {
+		t.Run(mode, func(t *testing.T) {
+			a, ctx, l, spec := fixture(t)
+			spec.TaskPacket = "question"
+			thread, err := a.Start(ctx, l, spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decision := pendingRequest(t, ctx, a)
+			results := make(chan clientapi.WorkerToolResponse, 1)
+			errors := make(chan error, 1)
+			go func() {
+				result, err := clientapi.CallWorkerTool(ctx, filepath.Join(a.tools.dir, "core.sock"), clientapi.WorkerToolRequest{
+					Token: a.tools.token, Method: "tools/call", Name: "read_projection", Arguments: json.RawMessage(`{}`),
+				})
+				if err != nil {
+					errors <- err
+					return
+				}
+				results <- result
+			}()
+			var call *worker.ToolCall
+			for call == nil {
+				select {
+				case event := <-a.Events():
+					call = event.ToolCall
+				case result := <-results:
+					t.Fatalf("work tool refused while a decision is pending: %+v", result)
+				case err := <-errors:
+					t.Fatal(err)
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+			}
+			if mode == "turn-finish" {
+				// Prompt completion can arrive before either owner answer.
+				a.finish(thread, worker.Finish{Status: worker.Done})
+			} else {
+				if err := a.Answer(ctx, thread, worker.Answer{RequestID: call.ID, Result: json.RawMessage(`{"success":true,"contentItems":[{"type":"inputText","text":"ready"}]}`)}); err != nil {
+					t.Fatal(err)
+				}
+				snapshot, err := a.Snapshot(ctx, thread)
+				if err != nil || snapshot.State != worker.Waiting || len(snapshot.Pending) != 1 || snapshot.Pending[0].ID != decision.ID {
+					t.Fatalf("work-tool answer consumed the native decision: %+v %v", snapshot, err)
+				}
+			}
+			select {
+			case result := <-results:
+				if mode == "turn-finish" {
+					if result.Error != "refused" {
+						t.Fatalf("pending work tool survived completion: %+v", result)
+					}
+				} else if result.Error != "" || !json.Valid(result.Result) {
+					t.Fatalf("missing work-tool answer: %+v", result)
+				}
+			case err := <-errors:
+				t.Fatal(err)
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			answer := worker.Answer{RequestID: decision.ID, Result: json.RawMessage(`{"action":"accept","content":{"name":"result"}}`)}
+			if mode == "turn-finish" {
+				if err := a.Answer(ctx, thread, answer); err == nil {
+					t.Fatal("native answer survived completion")
+				}
+			} else if err := a.Answer(ctx, thread, answer); err != nil {
+				t.Fatal(err)
+			}
+			if finish := terminal(t, ctx, a); finish.Status != worker.Done {
+				t.Fatal(finish)
+			}
+		})
 	}
 }
