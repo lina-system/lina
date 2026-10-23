@@ -24,18 +24,6 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
-// Keep the configured route's conservative byte budget while counting all
-// assembled instructions, context, history and tool declarations.
-func conversationRequestSize(request provider.Request) int {
-	n := len(request.Instructions)
-	for _, items := range [][]provider.Item{request.Items, request.Tools} {
-		for _, item := range items {
-			n += len(item)
-		}
-	}
-	return n
-}
-
 func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string) (grant.Grant, grant.Environment, error) {
 	r.personaMu.Lock()
 	g, ok := r.personaGrants[id]
