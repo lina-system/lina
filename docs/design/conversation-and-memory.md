@@ -858,6 +858,7 @@ Memory has two layers. Personal knowledge is held by one agent and known only to
 - Moving an item between layers is a recorded act. The person does it, or an agent does it when the person asks or under a grant the person gave ([main-authority.md](main-authority.md)).
 - The same fact learned in conversations with two agents is one common item with two pieces of evidence.
 - When the evidence of a common item is a turn in one agent's conversation, another agent sees the source agent, the time and the event id of that evidence. The turn itself is shown to the person and to the source agent. This reference counts as evidence: the item is still a sourced item for every agent.
+- Replaying a turn with a common name validates each source event under its source agent for the same person. Evidence accumulated from several agents remains valid without revealing their conversation text. Private, never-leaves, removed or unavailable sources still exclude the replay; shared names grant no access to another agent's raw history.
 - Correcting or forgetting a common item applies to every agent. Correcting or forgetting a personal item applies to its holder.
 - The standing profile and the person model are views over these layers, not a layer of their own. An agent has no profile or card of its own.
 
