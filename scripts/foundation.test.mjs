@@ -283,3 +283,14 @@ for (const extension of ['yml', 'yaml']) {
     assert.notEqual(run('git', ['notes', '--ref=refs/notes/foundation', 'show', head], { cwd: work, env: sb.env }).status, 0);
   });
 }
+
+test('GitHub queued concurrency passes the pinned actionlint compatibility check', t => {
+  const sb = sandbox(t);
+  const { work } = developmentRepository(sb);
+  sb.commit(work, 'ci: queue reporters', {
+    '.github/workflows/ci.yml': workflow.replace('jobs:', 'concurrency:\n  group: qa\n  cancel-in-progress: false\n  queue: max\njobs:'),
+  });
+  const result = foundation(sb, work);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.evidence.checks.automation.result, 'success');
+});

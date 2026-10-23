@@ -449,6 +449,9 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		}
 	}
 	answeredQuestions := map[string]bool{}
+	var withdrawnQuestion *protocol.Question
+	var withdrawnApproval *protocol.ApprovalRequest
+	withdrawalChecked := false
 	approvalAnswered := false
 	wantQuestions := 2
 	if outcome != nil || fault != nil || conflict != nil || stopMode != "" {
@@ -466,11 +469,27 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		}
 		switch card := frame.Payload.(type) {
 		case protocol.Question:
+			if card.Form != nil && len(card.Form.Fields) == 1 && card.Form.Fields[0].Name == "withdrawn" {
+				withdrawnQuestion = &card
+				continue
+			}
 			if card.Card != nil && answeredQuestions[card.Card.ID] {
 				continue
 			}
 			if card.Card == nil || card.ConversationID != conversation {
 				t.Fatal("question origin lost")
+			}
+			if !withdrawalChecked {
+				// The next request is an event-order barrier: both withdrawals
+				// precede it in the worker stream. No sleep can make this pass.
+				if withdrawnQuestion == nil || withdrawnQuestion.Card.Outcome == nil || *withdrawnQuestion.Card.Outcome != protocol.DecisionOutcomeStopped {
+					t.Fatal("scheduled worker withdrawal left its question pending")
+				}
+				if withdrawnApproval == nil {
+					t.Fatal("scheduled worker approval was never presented")
+				}
+				assertScheduledWithdrawal(t, h, *withdrawnQuestion, *withdrawnApproval)
+				withdrawalChecked = true
 			}
 			answer := "confirmed"
 			values := protocol.FormValues{"answer": protocol.FormValue{String: &answer}}
@@ -479,6 +498,21 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			}
 			answeredQuestions[card.Card.ID] = true
 		case protocol.ApprovalRequest:
+			if card.Card != nil {
+				withdrawn := false
+				for _, target := range card.Card.Targets {
+					var args struct {
+						ItemID string `json:"itemId"`
+					}
+					if strings.HasSuffix(target.Name, "arguments") && json.Unmarshal([]byte(target.Value), &args) == nil && args.ItemID == "withdrawn" {
+						withdrawn = true
+					}
+				}
+				if withdrawn {
+					withdrawnApproval = &card
+					continue
+				}
+			}
 			if approvalAnswered {
 				continue
 			}
