@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/result"
@@ -184,7 +185,7 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	if e.Kind == "receipt" && (c.Run == nil || c.Run.ID != e.RunID) {
 		return ErrState
 	}
-	if e.Kind == "worker_progress" && (c.Run == nil || c.Run.ID != e.RunID || !c.Active || c.Receipt != nil) {
+	if (e.Kind == "worker_progress" || e.Kind == "worker_activity") && (c.Run == nil || c.Run.ID != e.RunID || !c.Active || c.Receipt != nil) {
 		return ErrState
 	}
 	var prior []byte
@@ -194,6 +195,8 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 		if err = json.Unmarshal(prior, &old); err != nil {
 			return err
 		}
+		old.RecordedAt = ""
+		e.RecordedAt = ""
 		old.Completion = nil // The first committed policy decision is immutable.
 		old.DoneAcceptance = nil
 		if reflect.DeepEqual(old, e) {
@@ -204,6 +207,7 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	e.RecordedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	if err = advance(&c, e); err != nil {
 		return err
 	}

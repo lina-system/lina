@@ -592,6 +592,13 @@ Contract: [surfaces.md](surfaces.md#progress-at-a-glance), [work-and-delegation.
 
 The work panel is the primary way to see work in the TUI: a sidebar at the right of the conversation with one card per 일. The person reads the 일, not the workers. Every string follows the wording rule of [surfaces.md](surfaces.md#default-view). The TUI computes no stage, order, state or text of work; it draws Core's progress lines and counts only the cards it folds.
 
+Core's `card_order` selects the flat card sequence. The shared overview remains
+in goal-child order for indented text views; projecting cards never mutates it.
+Without `card_order`, cards retain the received row order.
+`TestM3ProgressHierarchyInstalledCore` (`e2e/m3/progress-hierarchy.json`) checks
+both orders through installed Core, restart, and the 120x34 sidebar and 100x34
+overlay in Korean and English with Unicode and ASCII glyphs.
+
 **Place.** In the wide tier the panel is always shown while the `progress` capability is granted. It is a column from below the header to above the composer rule, 40 columns wide, or a third of the terminal width up to 56 columns (P), separated from the conversation by one blank column. With no cards it shows only its one-word title. While it is shown, the At a glance card row and the running strip take no rows, and their counts stay in the status line. The Waiting for me card row stays under the conversation, where decisions are answered. In the medium and narrow tiers the same panel is an overlay over the conversation region, opened by Ctrl+P and closed by Esc. It replaces the full-screen progress view.
 
 **Cards.** Below the title, each 일 is a card of exactly two rows, and nothing else by default:
@@ -612,7 +619,17 @@ The work panel is the primary way to see work in the TUI: a sidebar at the right
 - The second row, indented two cells, is Core's Now: what the 일 is doing right now, in a few words ([work-and-delegation.md](work-and-delegation.md#progress-line)). It is truncated the same way and never wraps.
 - A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too.
 - Cards keep Core's order: waiting on the person, running, waiting on something outside, done. Done cards fold into one row. When the cards do not fit, the last row (`…`, or `...` in ASCII) gives the number of hidden cards and, when any of them waits on the person, how many. Cards that wait on the person are hidden last. The numbers always equal the hidden cards.
-- The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time.
+- The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time. Its timer uses the next elapsed-minute boundary and the existing Core clock offset. An absent start stays unknown. Snapshot replacement and live updates share the same typed card projection; neither changes conversation focus or the reading anchor.
+
+The alpha card path is exercised by `TestM3WorkPanelInstalledCoreMatrix` and
+`TestM3WorkPanelLiveCodexWorker`, using `e2e/m3/work-panel.json`. The former reads
+replayed work through installed Core in both languages and glyph modes at 120x34
+and 100x34, including 1, 5, 20 and 50 cards. The latter launches the Codex protocol
+fixture through Core, observes the same start and changing person-request activity
+in a real 120x34 PTY, and checks the resulting artifact and restart. The deterministic
+TUI matrix checks two-row clipping, folded/overflow counts and 50 streamed changes
+with a retained draft, focus and reading anchor. Stage-list and scheduling-control
+evaluations remain with their corresponding implementation issues.
 
 **Views.** Ctrl+P on the focused panel switches between cards and a compact view of one row per 일: the name, then Now, then the elapsed time right-aligned; Now shrinks first. Left and Right change the state filter: all, needs you, running, waiting, done. The title shows the filter when it is not all, and fold and count rows then count only that state.
 

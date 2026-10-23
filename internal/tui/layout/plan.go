@@ -16,6 +16,7 @@ const (
 
 type Caps struct{ SidePane, Running, Cards bool }
 type Shape struct {
+	WorkPanel                         bool
 	ActivityRows                      int
 	ComposerRows                      int
 	Attachments, SidePane             bool
@@ -60,18 +61,19 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 	}
 	// Only granted, populated lists consume rows. Missing capabilities remain
 	// typed flags; their one-time explanation belongs to the local status notice.
+	work := st.WorkPanel && p.Tier == Wide
 	running := 0
-	if caps.Running && p.RunningCount > 0 {
+	if caps.Running && p.RunningCount > 0 && !work {
 		running = min(3, p.RunningCount)
 	}
 	cards := 0
 	if caps.Cards && p.CardCount > 0 {
 		cards = min(5, max(1, st.CardRows))
 	}
-	side := st.SidePane && caps.SidePane && p.Tier == Wide
+	side := st.SidePane && caps.SidePane && p.Tier == Wide || work
 	rule := 1
 	used := func() int { return 2 + 4 + composer + attachment + running + cards + activity + rule }
-	if used() > h {
+	if used() > h && !work {
 		side = false
 	}
 	if used() > h && running > 1 {
@@ -111,13 +113,26 @@ func Plan(size Size, caps Caps, st Shape) Layout {
 	p.Conversation = take(h - 2 - composer - attachment - running - cards - activity - rule)
 	if side {
 		sideWidth := w / 3
-		p.Conversation.Width = w - sideWidth
+		gap := 0
+		if work {
+			sideWidth = min(56, max(40, sideWidth))
+			gap = 1
+		}
+		p.Conversation.Width = w - sideWidth - gap
 		p.SidePane = Rect{w - sideWidth, p.Conversation.Y, sideWidth, p.Conversation.Height}
 	}
 	p.Running = take(running)
 	p.Cards = take(cards)
 	p.Attachments = take(attachment)
 	p.Activity = take(activity)
+	if work {
+		p.SidePane.Height = y - p.SidePane.Y
+		for _, r := range []*Rect{&p.Running, &p.Cards, &p.Attachments, &p.Activity} {
+			if r.Height > 0 {
+				r.Width = p.Conversation.Width
+			}
+		}
+	}
 	p.ComposerRule = take(rule)
 	p.Composer = take(composer)
 	return p

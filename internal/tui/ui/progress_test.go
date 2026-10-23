@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestProgressPagerUsesCurrentRowsWithoutIdentity(t *testing.T) {
+func TestProgressPanelUsesCurrentRowsWithoutIdentity(t *testing.T) {
 	m := conversationShell()
 	m.Update(tea.WindowSizeMsg{Width: 140, Height: 30})
 	m.Update(shellData{Generation: 1, Message: workListWelcome(t, "conversation", "progress")})
@@ -36,11 +36,11 @@ func TestProgressPagerUsesCurrentRowsWithoutIdentity(t *testing.T) {
 	}
 	m.Update(shellData{Generation: 1, Message: frame("Workshop", "1", true)})
 	m.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
-	if !strings.Contains(m.conversation.pager.text, "Workshop") || !strings.Contains(m.conversation.pager.text, "unknown") || strings.Contains(m.conversation.pager.text, "hidden-id") {
-		t.Fatalf("progress: %s", m.conversation.pager.text)
+	if !strings.Contains(m.View().Content, "Workshop") || !strings.Contains(m.View().Content, design.Text(m.styles.options.Language, "unknown")) || strings.Contains(m.View().Content, "hidden-id") {
+		t.Fatalf("progress: %s", m.View().Content)
 	}
 	m.Update(shellData{Generation: 1, Message: frame("Updated workshop", "2", false)})
-	if !strings.Contains(m.conversation.pager.text, "Updated workshop") || m.content.Draft.Text != "keep my draft" {
+	if !strings.Contains(m.View().Content, "Updated workshop") || m.content.Draft.Text != "keep my draft" {
 		t.Fatal("progress not live or lost draft")
 	}
 }

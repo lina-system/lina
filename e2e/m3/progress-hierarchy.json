@@ -1,0 +1,12 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "tasks": [
+    {"id": "a-goal", "title": "Prepare workshop"},
+    {"id": "a-running", "parent": "a-goal", "title": "Draft workshop"},
+    {"id": "a-needs", "parent": "a-goal", "title": "Choose venue", "needs_input": true},
+    {"id": "b-goal", "title": "Prepare release"},
+    {"id": "b-running", "parent": "b-goal", "title": "Build release"},
+    {"id": "b-needs", "parent": "b-goal", "title": "Choose release date", "needs_input": true},
+    {"id": "c-standalone", "title": "Read guide"}
+  ]
+}
