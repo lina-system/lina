@@ -57,7 +57,7 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 		{"deny", "cursor", "cursor-agent", "deny"},
 		{"cancel", "grok", "grok", "cancel"},
 		{"restart", "gemini", "gemini", "restart"},
-		{"form", "claude-acp", "claude-agent-acp", "form"},
+		{"form", "gemini", "gemini", "form"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			mode := scenario.mode

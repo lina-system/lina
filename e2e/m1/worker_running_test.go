@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/loop"
 )
 
 // A conversation delegation remains visible after the persona's turn ends.
@@ -40,6 +41,7 @@ func TestM2ConversationWorkerProgressInstalledCore(t *testing.T) {
 func testConversationWorkerViews(t *testing.T, progress, failure bool, glyphs string) {
 	workdir := t.TempDir()
 	var calls atomic.Int32
+	var failedStartDenied atomic.Bool
 	var control map[string]any
 	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
@@ -50,10 +52,27 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool, glyphs st
 		if scriptedCodingManager(t, w, req) {
 			return
 		}
-		if respondWorkerCompletion(w, req.Input, "") {
-			if failure && len(req.Tools) != 0 {
-				t.Error("failed worker reaction can start more work")
+		var current struct{ Content string }
+		if failure && json.Unmarshal(fixtureTurnInput(req.Input), &current) == nil && strings.Contains(current.Content, `<external_evidence origin="worker-session:`) {
+			var latest struct{ Type, Output string }
+			_ = json.Unmarshal(fixtureLatestInput(req.Input), &latest)
+			if latest.Type == "function_call_output" {
+				var result loop.Result
+				if json.Unmarshal([]byte(latest.Output), &result) != nil || result.ID != "blocked-worker-start" || result.Code != loop.Unavailable {
+					t.Errorf("failed worker reaction did not refuse execution: %s", latest.Output)
+				} else {
+					failedStartDenied.Store(true)
+				}
+				emitResponse(w, "Worker failed.", true)
+			} else {
+				if !toolReachable(req.Tools, "worker_start") {
+					t.Error("failed worker reaction changed the tool declarations")
+				}
+				emitPersonaCall(w, "blocked-worker-start", "worker_start", map[string]any{"workdir": workdir, "task_packet": "Do not run after a failed worker."})
 			}
+			return
+		}
+		if respondWorkerCompletion(w, req.Input, "") {
 			return
 		}
 		switch calls.Add(1) {
@@ -185,6 +204,9 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool, glyphs st
 	}
 	if calls.Load() != 4 {
 		t.Fatalf("worker rounds=%d", calls.Load())
+	}
+	if failure && !failedStartDenied.Load() {
+		t.Fatal("failed worker reaction did not exercise the execution refusal")
 	}
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)

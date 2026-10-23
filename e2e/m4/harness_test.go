@@ -243,13 +243,31 @@ func reply(w http.ResponseWriter, text string) {
 type lastItem struct{ Type, Role, CallID, Output, Content string }
 
 func last(q modelRequest) lastItem {
-	var v struct {
+	type inputItem struct {
 		Type, Role      string
 		CallID          string `json:"call_id"`
 		Output, Content string
 	}
+	var v inputItem
 	if len(q.Input) > 0 {
 		_ = json.Unmarshal(q.Input[len(q.Input)-1], &v)
+	}
+	// Conversation packets follow the triggering event. Exchange requests
+	// have no such packet; their final item remains the active input.
+	if v.Type != "function_call_output" {
+		for i := len(q.Input) - 1; i > 0; i-- {
+			var item struct{ Role, Content string }
+			if json.Unmarshal(q.Input[i], &item) != nil || item.Role != "developer" {
+				continue
+			}
+			_, references, ok := strings.Cut(item.Content, "\nReferences: ")
+			var refs []struct{ ID string }
+			if ok && json.Unmarshal([]byte(references), &refs) == nil && len(refs) > 0 && strings.HasPrefix(refs[0].ID, "clock:") {
+				v = inputItem{}
+				_ = json.Unmarshal(q.Input[i-1], &v)
+				break
+			}
+		}
 	}
 	return lastItem{v.Type, v.Role, v.CallID, v.Output, v.Content}
 }
