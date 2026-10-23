@@ -41,6 +41,20 @@ This specification was written before the Go implementation.
 No upstream implementation or prompt is copied. See
 [third-party notices](../../../THIRD-PARTY-NOTICES.md#lcm-x).
 
+## Queued inputs at a turn boundary
+
+Reference: the pinned LCM-X revision above, inspected before this fix.
+
+- **Seen** — `dag.py:267-325` publishes a summary and its provenance together
+  and permits related writes in that transaction.
+- **Inferred / LINA mapping** — a later queued person or forwarded input is
+  part of the publication frontier, but not the current request or summary.
+  Account for its id in the retained ledger tail, leaving its body untouched
+  for its own turn. Keep the complete frontier and ordered-prefix checks.
+- **Unknown upstream / specified by LINA** — this reference does not define
+  Core's queued-input identity or model-context filtering. Those boundaries
+  come from LINA's preparation and request-layout contracts.
+
 ## Coverage order and restored exclusions
 
 Reference: the same pinned LCM-X revision above, inspected before this fix.
