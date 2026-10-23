@@ -73,14 +73,8 @@ func TestM2WorkArea(t *testing.T) {
 		if scriptedWorkCompletion(w, request.Input) {
 			return
 		}
-		names := map[string]bool{}
-		for _, raw := range request.Tools {
-			var d struct{ Name string }
-			_ = json.Unmarshal(raw, &d)
-			names[d.Name] = true
-		}
 		for _, name := range scenario.Tools {
-			if !names[name] {
+			if !toolReachable(request.Tools, name) {
 				t.Errorf("running Core missing tool %s", name)
 				emitResponse(w, "Unavailable.", true)
 				return

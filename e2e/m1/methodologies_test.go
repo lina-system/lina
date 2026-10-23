@@ -83,7 +83,7 @@ func seedMethodologyAgents(t *testing.T, h *harness, person, selected string) ma
 
 type methodologyRequest struct {
 	Instructions string
-	Tools        []struct{ Name string }
+	Tools        []fixtureToolDeclaration
 	Input        []json.RawMessage
 }
 

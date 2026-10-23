@@ -37,7 +37,7 @@ func TestM2ConversationCorrectsAdmittedGoal(t *testing.T) {
 	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Input []json.RawMessage
-			Tools []struct{ Name string }
+			Tools []fixtureToolDeclaration
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
@@ -66,10 +66,7 @@ func TestM2ConversationCorrectsAdmittedGoal(t *testing.T) {
 				emitResponse(w, "Unexpected request.", true)
 				return
 			}
-			found := false
-			for _, declaration := range request.Tools {
-				found = found || declaration.Name == tool
-			}
+			found := toolReachable(request.Tools, tool)
 			if !found {
 				t.Errorf("conversation did not declare %s", tool)
 			}

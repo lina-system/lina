@@ -63,10 +63,17 @@ func (w catalogResponseWriter) Flush() {
 	}
 }
 
-func toolReachable(declarations []json.RawMessage, name string) bool {
-	for _, raw := range declarations {
-		var d fixtureToolDeclaration
-		if json.Unmarshal(raw, &d) == nil && (d.Name == name || d.Name == "call_tool" && slices.Contains(d.Parameters.Properties.Name.Enum, name)) {
+func toolReachable(declarations any, name string) bool {
+	raw, err := json.Marshal(declarations)
+	if err != nil {
+		return false
+	}
+	var tools []fixtureToolDeclaration
+	if json.Unmarshal(raw, &tools) != nil {
+		return false
+	}
+	for _, d := range tools {
+		if d.Name == name || d.Name == "call_tool" && slices.Contains(d.Parameters.Properties.Name.Enum, name) {
 			return true
 		}
 	}

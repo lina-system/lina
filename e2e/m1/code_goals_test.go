@@ -25,16 +25,12 @@ func TestM2InstalledCodeGoalTool(t *testing.T) {
 	t.Parallel()
 	var offered atomic.Bool
 	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request struct{ Tools []struct{ Name string } }
+		var request struct{ Tools []fixtureToolDeclaration }
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 			return
 		}
-		for _, tool := range request.Tools {
-			if tool.Name == "dispatch_code_goal" {
-				offered.Store(true)
-			}
-		}
+		offered.Store(toolReachable(request.Tools, "dispatch_code_goal"))
 		emitResponse(w, "Ready.", true)
 	})))
 	defer server.Close()
@@ -175,10 +171,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 			return
 		}
 		if calls.Add(1) == 1 {
-			offered := false
-			for _, tool := range request.Tools {
-				offered = offered || tool.Name == "dispatch_code_goal"
-			}
+			offered := toolReachable(request.Tools, "dispatch_code_goal")
 			if !offered {
 				t.Error("installed Core has no goal driver")
 				emitResponse(w, "Unavailable.", true)
