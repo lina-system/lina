@@ -139,6 +139,11 @@ func TestDecisionCoreHelper(t *testing.T) {
 	<-done
 }
 
+// TestM1TUICards (m1/tui-cards.json) exercises two clients racing one approval
+// and stale group membership through the production listener/authority path.
+// The same scenario's replay count is consumed by the Bubble Tea
+// recording-writer test. This scenario creates no second product decision store
+// and uses no timing sleeps.
 func TestM1TUICards(t *testing.T) {
 	t.Parallel()
 

@@ -27,6 +27,15 @@ type workerLaneScenario struct {
 	Output                  string
 }
 
+// TestM3WorkerLanesInstalledCore (m3/worker-lanes.json) uses installed Core and
+// a real headless TUI to show two sessions of the same worker as separate
+// folded lanes. A fixture writes a real artifact and records its receipt,
+// terminal observation and content verification through the work service before
+// startup. The second unfinished execution becomes unknown during Core
+// recovery. The scenario checks protocol identities, explicit expansion with
+// stage provenance, refresh, folding and reopening. It exercises Core's read
+// path and TUI.
+//
 // #34's installed binary/PTY harness consumes genuine work ledger records,
 // including a content-checked artifact and an interrupted execution. The Core
 // process owns projection/recovery and the public socket; no fake Core is used.

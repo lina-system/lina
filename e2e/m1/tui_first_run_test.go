@@ -18,6 +18,11 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM1TUIFirstRunInstalledCore uses a fresh installed Core and a 100x34 PTY
+// in Korean and English. It checks the wordmark and three catalog suggestions,
+// their removal on the first input while the fixture reply is held, and their
+// absence from Core snapshots and a reopened TUI after Core restart. The typed
+// input reaches the provider exactly once; no sleeps establish display state.
 func TestM1TUIFirstRunInstalledCore(t *testing.T) {
 	for _, language := range []design.Language{design.English, design.Korean} {
 		t.Run(string(language), func(t *testing.T) {

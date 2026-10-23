@@ -94,6 +94,10 @@ func (c *conversationScriptConn) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
+// TestM1TUIConversationStream runs m1/tui-conversation-stream.json through the
+// PTY lifecycle, scripting the fake Core's streaming completion and steering
+// sequence. No personal credentials are required; physical-terminal and
+// real-model acceptance remain separate.
 func TestM1TUIConversationStream(t *testing.T) {
 	t.Parallel()
 

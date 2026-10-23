@@ -27,6 +27,20 @@ import (
 	takeover "github.com/thisisjun786/lina/tools/crw-takeover/switcher"
 )
 
+// TestM3OperationalSwitch (m3/operational-switch.json) exercises the owner-only
+// switch on the real Core socket: missing approval, a failed transfer with
+// explicit service restoration, a held external task, successful transfer, and
+// a real Core-launched fixture worker output and receipt. It covers locally
+// refused worker input, a confirmed terminal provider connection failure,
+// restart with an outstanding execution, rollback refusal until drain, and
+// preservation of originals, Git branches, worktree registrations, receipts and
+// journals after explicit rollback. The external coordinator is synthetic; its
+// call log checks that approval precedes stop and durable LINA release precedes
+// external restart. Imported tasks and receipt facts use the engine API while
+// Core is stopped, as in the M2 ledger scenario; worker start, interrupt,
+// resume and result observation use the running Core tool registry and a
+// separate stdio process.
+//
 // Live switch operations go through the real Core binary. The executor fixture
 // uses the same work admission API as the engine and a real child process; only
 // the external coordinator is synthetic. No installed CRW or account is used.

@@ -17,6 +17,13 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM1TUISpeakerBoundariesInstalledCore creates and selects a long-named
+// agent through the real TUI, then requests a fenced Korean reply from
+// installed Core in a 40x34 ASCII PTY. It checks provider routing, usable reply
+// width, literal empty code boundary rows, and stable completion metadata
+// across draft redraws. Both untagged and Go-tagged fences run through the same
+// path, so syntax highlighting must retain the code's leading and trailing
+// empty rows.
 func TestM1TUISpeakerBoundariesInstalledCore(t *testing.T) {
 	for _, language := range []string{"", "go"} {
 		t.Run("language="+language, func(t *testing.T) {
