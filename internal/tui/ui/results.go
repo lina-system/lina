@@ -89,9 +89,6 @@ func (m *shellModel) cardText() string {
 	}
 	return strings.Join(lines, "\n\n")
 }
-func (m *shellModel) openPager(text string) {
-	m.conversation.pager = textPager{open: true, text: sanitize.Display(text)}
-}
 
 func conversationBlock(b state.Block) bool {
 	return b.Topic != "core" && b.Topic != "running" && (b.Topic != "waiting" || b.Card != nil) && b.Topic != "progress" && b.Kind != protocol.KindTurnState && b.Kind != protocol.KindToolActivity

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/thisisjun786/lina/internal/clientapi"
 	terminalkeys "github.com/thisisjun786/lina/internal/tui/term"
 )
 
@@ -45,7 +46,13 @@ func Run(ctx context.Context, socket, productVersion string, input io.Reader, ou
 		}
 		terminal = true
 	}
-	return runClientShell(ctx, socket, productVersion, input, display, terminal)
+	return runClientShell(ctx, func(ctx context.Context) (connectionPeer, error) {
+		client, err := clientapi.DialWithCapabilities(ctx, socket, productVersion, shellCapabilities)
+		if err != nil {
+			return nil, err
+		}
+		return clientPeer{client}, nil
+	}, input, display, terminal)
 }
 
 var errQuit = errors.New("TUI quit requested")
