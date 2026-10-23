@@ -24,7 +24,7 @@ type transportFunc func(*http.Request) (*http.Response, error)
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func config(t *testing.T) Config {
 	t.Helper()
-	c, err := ReadConfig(strings.NewReader(`{"providers":{"chatgpt":{"adapter":"responses","retryCount":0,"requestFields":["model","input","store","stream","instructions","tools","reasoning","include"]}}}`))
+	c, err := ReadConfig(strings.NewReader(`{"providers":{"chatgpt":{"adapter":"responses","retryCount":0,"capabilities":["reasoning_state"],"requestFields":["model","input","store","stream","instructions","tools","reasoning","include"]}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,6 +261,7 @@ func TestManifestFieldsAndOpaqueInput(t *testing.T) {
 	r.Instructions = "not allowed"
 	r.Effort = "high"
 	r.Fields = append(c.RequestFields, "metadata", "instructions")
+	r.Capabilities.ReasoningState = true
 	_, meta, err := run(t, a, r)
 	if err != nil {
 		t.Fatal(err)
@@ -287,6 +288,7 @@ func TestEmptyEffortStillRequestsEncryptedReasoning(t *testing.T) {
 	})
 	r := request()
 	r.Model = "fixture-reasoning-model"
+	r.Capabilities.ReasoningState = true
 	if _, _, err := run(t, a, r); err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +297,7 @@ func TestEmptyEffortStillRequestsEncryptedReasoning(t *testing.T) {
 	}
 }
 
-func TestEncryptedReasoningMustBeAllowedWithoutEffort(t *testing.T) {
+func TestEncryptedReasoningNeedsItsFieldOnlyWhenSelected(t *testing.T) {
 	for _, source := range []string{"manifest", "request"} {
 		t.Run(source, func(t *testing.T) {
 			c := config(t)
@@ -306,14 +308,35 @@ func TestEncryptedReasoningMustBeAllowedWithoutEffort(t *testing.T) {
 			} else {
 				r.Fields = fields
 			}
+			// A selected reasoning capability cannot reach the wire without its
+			// field, so the adapter refuses instead of silently dropping state.
+			selected := r
+			selected.Capabilities.ReasoningState = true
 			a, count := fixture(t, c, func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "text/event-stream")
-				completed(w)
+				t.Error("request without the selected capability's field was sent")
 			})
-			_, _, err := run(t, a, r)
+			_, _, err := run(t, a, selected)
 			failure(t, err, provider.NotAccepted)
 			if count.Load() != 0 {
 				t.Fatal("sent stateless request without encrypted state")
+			}
+			// Without the capability the same request goes in full, unchanged.
+			a, count = fixture(t, c, func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]json.RawMessage
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if _, ok := body["include"]; ok {
+					t.Error("unselected capability reached the wire")
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				completed(w)
+			})
+			if _, _, err := run(t, a, r); err != nil {
+				t.Fatal(err)
+			}
+			if count.Load() != 1 {
+				t.Fatalf("requests: %d", count.Load())
 			}
 		})
 	}
