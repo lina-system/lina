@@ -175,7 +175,7 @@ func (w *repairWorld) Execute(ctx context.Context, a work.Action) (work.Observat
 		if err != nil {
 			return out, err
 		}
-		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: p.Ref, Passed: passed}
+		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &work.CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: p.Ref, Passed: passed}
 	case work.Resume, work.RepairConflict, work.RepairQA, work.Observe, work.Decide, work.ContinueWorker:
 		return out, fmt.Errorf("unexpected action: %s", a.Kind)
 	default:

@@ -256,7 +256,7 @@ func (r *conversationRuntime) Memory(ctx context.Context, s clientsrv.Session, p
 			materials = &bound
 		}
 		sourceID := rand.Text()
-		event, e := ledger.New(r.db, materials).Admit(ctx, guard.EntryOwner, ledger.Input{ID: "memory-input:" + sourceID, ConversationID: "memory-statement:" + sourceID, PersonID: s.PersonID, AgentID: scope.Agent, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: *p.Text})
+		event, e := ledger.New(r.db, materials).AfterAdmission(r.bindInput).Admit(ctx, guard.EntryOwner, ledger.Input{ID: "memory-input:" + sourceID, ConversationID: "memory-statement:" + sourceID, PersonID: s.PersonID, AgentID: scope.Agent, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: *p.Text})
 		if e != nil {
 			return result, e
 		}

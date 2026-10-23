@@ -10,20 +10,24 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+
 	"github.com/thisisjun786/lina/internal/core/work"
 )
 
 // Step contains manager-owned inputs only. Execution state remains in Task.
 type Step struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Done       string    `json:"done"`
-	Repository string    `json:"repository"`
-	Base       string    `json:"base"`
-	Area       string    `json:"area"`
-	Worker     string    `json:"worker"`
-	Resources  Resources `json:"resources"`
-	DependsOn  []string  `json:"depends_on"`
+	Kind       StepKind         `json:"kind,omitempty"`
+	Background *BackgroundBrief `json:"background,omitempty"`
+	Wait       *StepWait        `json:"wait,omitempty"`
+	ID         string           `json:"id"`
+	Name       string           `json:"name"`
+	Done       string           `json:"done"`
+	Repository string           `json:"repository"`
+	Base       string           `json:"base"`
+	Area       string           `json:"area"`
+	Worker     string           `json:"worker"`
+	Resources  Resources        `json:"resources"`
+	DependsOn  []string         `json:"depends_on"`
 }
 
 type StepGraph struct {
@@ -48,7 +52,11 @@ const (
 )
 
 func (s Step) task() Task {
-	return Task{ID: s.ID, Name: s.Name, Done: s.Done, Repository: s.Repository, Base: s.Base, Area: s.Area, Worker: s.Worker, Resources: s.Resources, DependsOn: s.DependsOn, Stage: TaskReady}
+	worker := s.Worker
+	if stepKind(s.Kind) == BackgroundStep {
+		worker = "background"
+	}
+	return Task{Kind: s.Kind, Background: s.Background, Wait: s.Wait, ID: s.ID, Name: s.Name, Done: s.Done, Repository: s.Repository, Base: s.Base, Area: s.Area, Worker: worker, Resources: s.Resources, DependsOn: s.DependsOn, Stage: TaskReady}
 }
 
 func validateSteps(g Goal, steps []Step) error {
@@ -84,6 +92,12 @@ func validateSteps(g Goal, steps []Step) error {
 				return GraphUnknownStep
 			}
 			seen[dep] = true
+		}
+		if stepKind(s.Kind) == WaitStep && s.Area != "" {
+			return GraphInvalidArea
+		}
+		if stepKind(s.Kind) == WaitStep || s.Area == "" && stepKind(s.Kind) == BackgroundStep {
+			continue
 		}
 		areas := strings.Split(s.Area, ",")
 		for i := range areas {
@@ -140,7 +154,7 @@ func validateSteps(g Goal, steps []Step) error {
 	}
 	for i, a := range steps {
 		for _, b := range steps[i+1:] {
-			if a.Repository != b.Repository || depends(a.ID, b.ID) || depends(b.ID, a.ID) {
+			if len(areaSets[a.ID]) == 0 || len(areaSets[b.ID]) == 0 || a.Repository != b.Repository || depends(a.ID, b.ID) || depends(b.ID, a.ID) {
 				continue
 			}
 			overlap, err := work.ScheduledAreasOverlap(areaSets[a.ID], areaSets[b.ID])

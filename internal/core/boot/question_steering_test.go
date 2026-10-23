@@ -50,7 +50,7 @@ func TestQuestionLiveSteering(t *testing.T) {
 				t.Fatal("unconsumed steering authorized resolution", got)
 			}
 			queue := &conversationInputs{runtime: r, inputs: inputs, questions: gate}
-			if drained := queue.Drain(); len(drained) != 1 || queue.failure != nil {
+			if drained := queue.Drain(); len(drained) != 2 || string(drained[0]) != string(items[0]) || queue.failure != nil {
 				t.Fatalf("drain=%v error=%v", drained, queue.failure)
 			}
 			if err := gate.check(t.Context()); err == nil {

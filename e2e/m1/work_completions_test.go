@@ -132,6 +132,15 @@ func loseCompletion(t *testing.T, h *harness) {
 // Script only the current completion input. A prior completion in conversation
 // history must not consume a later person's tool request.
 func scriptedWorkCompletion(w http.ResponseWriter, input []json.RawMessage) bool {
+	// Core appends ContextPacket after the current input. Its mandatory clock
+	// reference marks the boundary; later user-role evidence is not a new input.
+	for i, raw := range input {
+		var item struct{ Role, Content string }
+		if json.Unmarshal(raw, &item) == nil && item.Role == "developer" && strings.Contains(item.Content, `References: [{"id":"clock:`) {
+			input = input[:i]
+			break
+		}
+	}
 	for i := len(input) - 1; i >= 0; i-- {
 		var item struct{ Role, Content string }
 		if json.Unmarshal(input[i], &item) != nil || item.Role != "user" {

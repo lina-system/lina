@@ -31,5 +31,5 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 			adapter.Environment = append(adapter.Environment, key+"="+value)
 		}
 	}
-	return &Config{Adapter: adapter, Model: provider.ModelRef(model), credential: provider.NewCredential("configured-claude", provider.ObservedCLILogin, "")}, nil
+	return &Config{Route: "claude", Adapter: adapter, Model: provider.ModelRef(model), credential: provider.NewCredential("configured-claude", provider.ObservedCLILogin, "")}, nil
 }

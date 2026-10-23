@@ -11,8 +11,9 @@ also has the user role. The old `respondWorkerCompletion` fixture stopped at the
 last user-role item, so it missed the earlier worker completion and returned its
 fallback startup reply.
 
-The shared fixture correction in #1180 (for #1001) skips reference-bearing
-ContextPacket evidence while retaining the boundary of the latest actual input.
+The shared fixture correction on dev (`063ec5a9`, merged through #1214) selects
+the latest user input before the ContextPacket's first developer item. This
+keeps retrieved evidence and appended discovery results out of that selection.
 Core's request layout and the [approval contract](../docs/design/tui.md#approvals-questions-and-sign-in-t-04)
 remain unchanged.
 

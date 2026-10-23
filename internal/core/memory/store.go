@@ -16,12 +16,16 @@ import (
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
-type Store struct{ db *canon.Store }
+type Canon interface {
+	Read(context.Context, func(*canon.Tx) error) error
+	Write(context.Context, func(*canon.Tx) error) error
+}
+type Store struct{ db Canon }
 
-func New(db *canon.Store) *Store { return &Store{db: db} }
-func normalize(s string) string  { return strings.Join(strings.Fields(strings.ToLower(s)), " ") }
-func present(s string) bool      { return strings.TrimSpace(s) != "" }
-func validScope(s Scope) bool    { return s == Local || s == Private || s == NeverLeaves }
+func New(db Canon) *Store       { return &Store{db: db} }
+func normalize(s string) string { return strings.Join(strings.Fields(strings.ToLower(s)), " ") }
+func present(s string) bool     { return strings.TrimSpace(s) != "" }
+func validScope(s Scope) bool   { return s == Local || s == Private || s == NeverLeaves }
 func scopeRank(s Scope) int {
 	if s == NeverLeaves {
 		return 2

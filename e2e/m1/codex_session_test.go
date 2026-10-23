@@ -169,7 +169,11 @@ func codexSessionFixture() {
 					if err := os.WriteFile(filepath.Join(workdir, "result.txt"), []byte("LINA_WORKER_RESULT"), 0600); err != nil {
 						os.Exit(97)
 					}
-					notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turnID, "item": map[string]any{"type": "agentMessage", "id": "result", "text": "Created result.txt: LINA_WORKER_RESULT"}})
+					output := "Created result.txt: LINA_WORKER_RESULT"
+					if question := os.Getenv("LINA_WORKER_FINISH_QUESTION"); question != "" {
+						output = question
+					}
+					notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turnID, "item": map[string]any{"type": "agentMessage", "id": "result", "text": output}})
 					state = "idle"
 					notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turnID, "status": "completed"}})
 				}(cwd, turn)
@@ -505,28 +509,40 @@ func TestM2InstalledCodexLive(t *testing.T) {
 	h.stopCore(core)
 }
 
-// Existing adapter journeys explicitly handle the additional persona turns.
-func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	// ContextPacket evidence follows the current input and also has the user
-	// role. Skip its source references, as well as discovery call/results,
-	// without reaching past a newer person or unrelated external input.
+func workerCompletionInput(inputs []json.RawMessage) string {
+	// History has no developer messages. The first developer item after the
+	// current input begins Core's ContextPacket, which can also contain user
+	// evidence. Classify the last user input before that packet, not retrieved
+	// context or the discovery call/results appended after it.
 	var item struct{ Role, Content string }
 	found := false
-	for i := len(inputs) - 1; i >= 0; i-- {
-		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
-			if strings.Contains(item.Content, "<external_evidence ") && strings.Contains(item.Content, "\nReferences: ") {
-				continue
-			}
-			found = true
+	for _, raw := range inputs {
+		var next struct{ Role, Content string }
+		if json.Unmarshal(raw, &next) != nil {
+			continue
+		}
+		if next.Role == "developer" && found {
 			break
+		}
+		if next.Role == "user" {
+			item, found = next, true
 		}
 	}
 	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+		return ""
+	}
+	return item.Content
+}
+
+// Existing adapter journeys explicitly handle the additional persona turns.
+func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
+	content := workerCompletionInput(inputs)
+	if content == "" {
 		return false
 	}
 	if result == "" {
 		emitResponse(w, "Worker finished.", true)
-	} else if strings.Contains(item.Content, result) {
+	} else if strings.Contains(content, result) {
 		emitResponse(w, "Worker outcome: "+result, true)
 	} else {
 		emitResponse(w, "Worker stopped.", true)

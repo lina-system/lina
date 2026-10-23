@@ -284,7 +284,7 @@ Progress at a glance is one screen that shows how far every running 목표 and �
 - Opening a line or a card shows its stage list ([work-and-delegation.md](work-and-delegation.md#stages)): one numbered entry per stage, marked done, now or next, with steps that run together as one entry with their count, and 확인 (checking) last. The dependency graph behind it is never drawn. Only a stage that has started and is not done opens further, to its steps and to the worker sessions under each step in progress; no other view of a line shows a worker.
 - A line or a card has a fixed height and never wraps. A view too short for all of them keeps those that wait on the person in view first, folds done ones into one row, and ends with one row that gives the number it does not show and, when some of them wait on the person, how many.
 - In the TUI each 일 is a card in the work panel, a sidebar at the right of the conversation on a wide terminal and an overlay otherwise. A card holds only the name, the elapsed time and what the 일 is doing now ([work-and-delegation.md](work-and-delegation.md#progress-line)), in two rows; opening it shows the stage list ([tui.md](tui.md#work-panel-and-stage-list-t-16)).
-- The person can switch the cards to a compact view of one line each, or filter them to one state: needs you, running, waiting or done.
+- The person can switch the cards to a compact view of one line each, or filter them to one state: needs you, running, waiting or done. In the TUI, Ctrl+P on the focused panel switches views and Left/Right cycles the filters. The title names the active filter; fold and overflow counts include only matching cards, while the status line keeps the totals for all work. Done cards stay folded. Changing views or filters preserves the conversation draft.
 - On a selected card the person can move the 일 up or down in priority, pause or resume it, or stop it; stopping asks for confirmation. A global run limit sets how many 일 run at once, automatic by default from host capacity and quota. An 일 past the limit waits in order and its card says so ("자리 대기 · 3번째"); when quota or host load runs short, Core lowers the count itself and the cards say why. Core decides and enforces all of this ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)); a client shows it and sends the person's choice.
 
 ### Layers
@@ -314,7 +314,10 @@ Core presents what the person should open and keep, apart from the chat text, as
 
 - Block documents in the style of Notion: 목표 pages, designs and memos, with checklist blocks inside them. A checklist block is a line of that document until the person promotes it to a 할 일. A block document is the person's input surface (intent fields, memos) and LINA's output surface (front pages, drafts), never a giant document the person has to maintain.
 - 할 일 views in the style of Things (see To-dos).
-- Results of the types below. A PDF report or a slide deck is a `file` result, made only when the person asks. A version comparison is a `comparison` result.
+- Results of the types below. A PDF report or a slide deck is a `file` result, made only when the person asks. A version comparison is a `comparison` result. A verified remote artifact may
+  also be a `file` result with its admitted media type and an opaque material
+  reference. An unsupported viewer offers the file as data; media metadata
+  never authorizes execution or a remote URL load.
 
 **Types.** Each type has a complete rendering on every surface. The last column is the card's default action; everything else is in the work panel.
 
