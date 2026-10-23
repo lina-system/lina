@@ -26,17 +26,7 @@ var (
 
 // Schema is installed by Core in a numbered migration after the ledger. Heads
 // contain only locators; the ledger is the sole store of preview content.
-const Schema = `
-CREATE TABLE result_heads (
- id TEXT PRIMARY KEY NOT NULL, person TEXT NOT NULL, agent TEXT NOT NULL,
- conversation TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0),
- event_id TEXT NOT NULL, save_key TEXT
-);
-CREATE TABLE result_saves (
- key TEXT PRIMARY KEY NOT NULL, result_id TEXT NOT NULL UNIQUE REFERENCES result_heads(id),
- state TEXT NOT NULL CHECK(state IN ('unknown','applied')), reference BLOB NOT NULL
-);
-`
+const Schema = canon.ResultsSchema
 
 type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
@@ -70,7 +60,7 @@ type Store struct {
 }
 
 func New(db Canon, cfg Config) (*Store, error) {
-	if db == nil || cfg.Journal == nil || cfg.Writer == nil {
+	if db == nil || cfg.Journal == nil {
 		return nil, result.ErrMalformed
 	}
 	if cfg.TextRunes <= 0 {
@@ -102,7 +92,7 @@ func (s *Store) head(ctx context.Context, tx *canon.Tx, scope result.Scope, id s
 	return r, save.String, err
 }
 func (s *Store) Present(ctx context.Context, scope result.Scope, p result.PresentRequest) (result.Card, error) {
-	if !validScope(scope) || strings.TrimSpace(p.Title) == "" || utf8.RuneCountInString(p.Title) > 200 || strings.TrimSpace(p.Summary) == "" || utf8.RuneCountInString(p.Summary) > 600 || p.ID == "" && p.BaseRevision != 0 || p.ID != "" && p.BaseRevision <= 0 {
+	if !result.ValidReplyType(p.ReplyType) || !validScope(scope) || strings.TrimSpace(p.Title) == "" || utf8.RuneCountInString(p.Title) > 200 || strings.TrimSpace(p.Summary) == "" || utf8.RuneCountInString(p.Summary) > 600 || p.ID == "" && p.BaseRevision != 0 || p.ID != "" && p.BaseRevision <= 0 {
 		return result.Card{}, result.ErrMalformed
 	}
 	// Reject invalid input before decoding it for masking; duplicate fields must
@@ -122,7 +112,7 @@ func (s *Store) Present(ctx context.Context, scope result.Scope, p result.Presen
 	if err != nil {
 		return result.Card{}, err
 	}
-	r := result.Result{ID: p.ID, Revision: 1, Type: p.Type, Title: p.Title, Summary: p.Summary, Text: result.PlainText(body, nil), Body: raw, Status: "preview", RevisedBy: scope.AgentID, Provenance: result.Provenance{AgentID: scope.AgentID, ConversationID: scope.ConversationID, TurnID: scope.TurnID, TaskID: scope.TaskID}}
+	r := result.Result{ReplyType: p.ReplyType, ID: p.ID, Revision: 1, Type: p.Type, Title: p.Title, Summary: p.Summary, Text: result.PlainText(body, nil), Body: raw, Status: "preview", RevisedBy: scope.AgentID, Provenance: result.Provenance{AgentID: scope.AgentID, ConversationID: scope.ConversationID, TurnID: scope.TurnID, TaskID: scope.TaskID}}
 	if r.ID == "" {
 		r.ID = newID()
 	}
@@ -238,6 +228,9 @@ func (s *Store) Save(ctx context.Context, scope result.Scope, p result.SaveReque
 	key := SaveKey(p.ID, p.Revision, dest)
 	var publish PreparedSave
 	if prior == "" {
+		if s.cfg.Writer == nil {
+			return receipt, ErrOutOfScope
+		}
 		publish, err = s.cfg.Writer.Prepare(ctx, scope, snapshot, dest)
 		if err != nil {
 			return receipt, err

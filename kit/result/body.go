@@ -89,12 +89,14 @@ type Axis struct {
 	Unit  string `json:"unit"`
 }
 type Draft struct {
+	Recipient   string     `json:"recipient,omitempty"`
 	Blocks      []Block    `json:"blocks"`
 	FromSummary *ResultRef `json:"from_summary"`
 }
 
 // Block is a tagged union; validation refuses fields from any other variant.
 type Block struct {
+	Audience string    `json:"audience,omitempty"`
 	Kind     string    `json:"kind"`
 	Text     string    `json:"text,omitempty"`
 	Level    int       `json:"level,omitempty"`

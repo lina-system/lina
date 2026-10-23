@@ -424,6 +424,8 @@ fixtures.
 
 ## Typed results
 
+The Core tool request may carry optional `reply_type` (`chat`, `status`, `comparison`, `candidates`, `third_party`) for reply-shape measurement. A draft may name its `recipient` and mark a block’s `audience` (`recipient` or `person`). Older bodies omit these fields. They are data annotations, not authority, and do not change the Result RPC envelope. Core uses the existing `summary`, `text` and provenance fields to publish the bounded presentation.
+
 Core presents anything that the person should open and keep apart from the chat text as one typed result: a table, a diagram, a chart, a comparison, a plan, an outline, a draft document or a file. A result of delegated work ([work-and-delegation.md](work-and-delegation.md)) is presented the same way when it is shown to the person. Results are data. How each type is drawn is defined in [surfaces.md](surfaces.md#result-surfaces), how a conversation stores and uses a result in [conversation-and-memory.md](conversation-and-memory.md#results), and how a result is saved in [materials-and-knowledge.md](materials-and-knowledge.md#saving-a-result).
 
 A result has these fields:

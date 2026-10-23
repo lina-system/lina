@@ -91,7 +91,7 @@ func ResultTools(registry *tools.Registry, service ResultService, scope result.S
 				if _, err := result.Validate(p.Type, p.Body, result.Limits{}); err != nil {
 					return tools.Input{}, err
 				}
-				if p.Title == "" || p.Summary == "" || p.ID == "" && p.BaseRevision != 0 || p.ID != "" && p.BaseRevision <= 0 {
+				if !result.ValidReplyType(p.ReplyType) || p.Title == "" || p.Summary == "" || p.ID == "" && p.BaseRevision != 0 || p.ID != "" && p.BaseRevision <= 0 {
 					return tools.Input{}, result.ErrMalformed
 				}
 				normalized = p

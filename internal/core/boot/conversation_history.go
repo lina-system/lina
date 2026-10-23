@@ -20,6 +20,9 @@ const conversationHistorySources = `
  WHERE (e.speaker_kind IN ('person','agent','forwarded') OR e.scaffold_kind IN ('interruption','failure','skill_change','persona_change','worker_session','run_handoff','background_notice','worker_result','coding_handoff','timer'))
    AND coalesce(e.scaffold_kind,'')<>'result'
  UNION ALL
+ SELECT e.conversation_id,'typed-result:'||h.id,e.id,'','',e.rowid,1,0
+ FROM result_heads h JOIN conv_event e ON e.id=h.event_id
+ UNION ALL
  SELECT e.conversation_id,printf('%s:%d:%d',r.id,p.round+1,p.ordinal),'',p.body,r.id,
         e.rowid,0,p.rowid
  FROM turn_runs r

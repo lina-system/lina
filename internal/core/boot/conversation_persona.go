@@ -57,6 +57,10 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	if g.Identity.Profile == "worker-session" {
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: strconv.FormatUint(r.epoch, 10)}, nil
 	}
+	if g.Identity.Profile == "results" {
+		env, err := r.resultEnvironment(ctx, g)
+		return g, env, err
+	}
 	if g.Identity.Profile == "records" {
 		env, err := r.recordEnvironment(ctx, g)
 		return g, env, err
@@ -93,7 +97,7 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: strconv.FormatInt(a.Revision, 10)}, nil
 }
 
-func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID string, input ledger.Event, persona agents.Preparation, at time.Time, bindings map[string]loop.Tool) ([]assemble.Skill, assemble.ContextPacket, error) {
+func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID string, input ledger.Event, persona agents.Preparation, settings agents.State, at time.Time, bindings map[string]loop.Tool) ([]assemble.Skill, assemble.ContextPacket, error) {
 	versions, err := r.skills.Catalog(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -130,10 +134,6 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	}
 	for _, spec := range specs {
 		bindings[spec.Name] = turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID)
-	}
-	settings, err := r.agents.State(ctx, r.agent)
-	if err != nil {
-		return nil, nil, err
 	}
 	scope.StateRevision = agents.StateRevision(settings)
 	scope.ExpressionRevision = agents.ExpressionRevision(settings)

@@ -611,15 +611,23 @@ func (r *conversationRuntime) publish(ctx context.Context, kind protocol.Kind, k
 // The installed conversation currently has no negotiated surface width or
 // language setting. Use the Korean ceiling and the acceptance surface's 80
 // columns, with the same wrapping as the TUI. Keep policy in the existing filter.
-func conversationFilter() (*reply.Filter, error) {
-	return reply.NewFilter(reply.Config{Budget: reply.ChatCeiling(), Language: "ko", RenderLines: func(text string) int {
+func conversationFilter(shapes ...reply.Shapes) (*reply.Filter, error) {
+	var method *reply.Shapes
+	if len(shapes) > 0 {
+		method = &shapes[0]
+	}
+	return reply.NewFilter(conversationReplyConfig(method))
+}
+
+func conversationReplyConfig(method *reply.Shapes) reply.Config {
+	return reply.Config{Shapes: method, Budget: reply.ChatCeiling(), Language: "ko", RenderLines: func(text string) int {
 		if text == "" {
 			return 0
 		}
 		stream := render.NewStream("reply", render.Config{Width: 80}, nil)
 		stream.Seal(1, text)
 		return stream.Len()
-	}})
+	}}
 }
 
 // Keep possible credential prefixes private until the admission masker can
@@ -782,6 +790,12 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			}
 			continue
 		}
+		if e.ScaffoldKind == "result" {
+			if err := r.publishTypedResult(ctx, e); err != nil {
+				return err
+			}
+			continue
+		}
 		if e.SpeakerKind == guard.Agent {
 			filter, err := conversationFilter()
 			if err != nil {
@@ -867,6 +881,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		delete(r.personaGrants, turnID+":expression")
 		delete(r.personaGrants, turnID+":relationship")
 		delete(r.personaGrants, turnID+":coding")
+		for id, g := range r.personaGrants {
+			if g.Identity.TaskID == turnID && g.Identity.Profile == "results" {
+				delete(r.personaGrants, id)
+			}
+		}
 		r.personaMu.Unlock()
 
 	}()
@@ -874,6 +893,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	var events []ledger.Event
 	var memoryEpoch uint64
 	var memoryRefs []turn.Reference
+	var replyShapes reply.Shapes
 
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: input.Surface, Now: time.Now}
 	prep := &turn.Preparation{
@@ -909,7 +929,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			items = items[:len(items)-1]
 			at := time.Now().UTC()
 			minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
-			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, at, bindings)
+			settings, err := r.agents.State(ctx, r.agent)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			replyShapes, err = reply.ShapesFrom(agents.ProjectWorkMethod(persona, settings))
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, bindings)
 
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -939,11 +967,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareMethodologyTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.prepareResultTools(turnID, input, replyShapes, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
+			declarations = append(declarations, coreexec.ResultDeclarations()...)
 			declarations = append(declarations, workDeclarations...)
 			declarations = append(declarations, methodologyDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
@@ -997,7 +1029,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			request, report := assemble.Assemble(assemble.Input{
 				Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
 				AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
-				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID,
+				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,
 				Catalog: catalog, AlwaysTools: declarations,
 				History: items, Current: current[0], Packet: packet,
 				Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
@@ -1061,13 +1093,16 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err != nil {
 				return err
 			}
-			filter, err := conversationFilter()
+			filter, err := conversationFilter(replyShapes)
 			if err != nil {
 				return err
 			}
 			view, err := filter.Push(masked.Text())
 			if err != nil {
 				return err
+			}
+			if item.Entry == guard.EntryAgent {
+				batch = append(batch, filter.Check().Admission(item.Input))
 			}
 			if view.Card != nil {
 				card := r.replyCard(item.Input.ID, turnID, view, eventLanguage(input))
@@ -1099,7 +1134,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        bindings,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
-				return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
+				return r.resultNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result)))
 			},
 			Inputs: inputQueue,
 			Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
@@ -1134,7 +1169,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					}
 					filter := filters[key]
 					if filter == nil {
-						base, err := conversationFilter()
+						base, err := conversationFilter(replyShapes)
 						if err != nil {
 							return err
 						}
@@ -1196,7 +1231,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	// commit together. Publication can be recovered from history after a crash.
 	if err == nil {
 		for _, item := range saved {
-			if item.ScaffoldKind == "result" {
+			if item.ScaffoldKind == "result" || item.ScaffoldKind == "reply_check" {
 				continue
 			}
 			if item.SpeakerKind == guard.System {
@@ -1207,7 +1242,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}
 				continue
 			}
-			filter, filterErr := conversationFilter()
+			filter, filterErr := conversationFilter(replyShapes)
 			if filterErr != nil {
 				err = filterErr
 				break
