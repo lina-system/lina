@@ -136,6 +136,9 @@ func (m *shellModel) waitingText(rows []protocol.WaitingRow) string {
 }
 
 func (m *shellModel) ownerCommand(text string) (bool, tea.Cmd) {
+	if handled, cmd := m.noteCommand(text); handled {
+		return true, cmd
+	}
 	kind, request, ok := protocol.OwnerCommand(text, "")
 	if !ok || kind == protocol.KindInterrupt {
 		return false, nil
