@@ -68,8 +68,8 @@ func (d *correctedWorkDriver) Execute(ctx context.Context, a work.Action) (work.
 }
 
 func TestWorkRuntimeCompletesCorrectedPlanAndKeepsRetiredArtifact(t *testing.T) {
-	r, _, agent, _ := managementFixture(t)
-	r.agent = agent
+	r, _, _, _ := managementFixture(t)
+	r.agent = workAgentFixture(t, r)
 	repo, err := records.Open(r.root, r.db)
 	if err != nil {
 		t.Fatal(err)
