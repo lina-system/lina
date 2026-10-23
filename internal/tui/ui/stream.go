@@ -118,6 +118,7 @@ func projectStream(envelope protocol.Envelope, languages ...design.Language) (st
 			block := state.Block{ID: streamKey(payload.Topic, item.Key), Kind: item.Kind, Revision: revision, Done: item.Kind != protocol.KindOutputDelta}
 			block.Card = projectCard(body, envelope.Epoch, revision)
 			block.Waiting = projectWaiting(body)
+			block.Work = projectWork(body)
 			if text != nil {
 				block.Text = *text
 			}
@@ -175,6 +176,7 @@ func projectStream(envelope protocol.Envelope, languages ...design.Language) (st
 			}
 			block.Card = projectCard(envelope.Payload, envelope.Epoch, revision)
 			block.Waiting = projectWaiting(envelope.Payload)
+			block.Work = projectWork(envelope.Payload)
 			p.message = state.ItemDone{Epoch: metadata.Cursor.Epoch, Topic: metadata.Topic, Cursor: seq, Block: block}
 		}
 	}
