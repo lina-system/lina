@@ -1739,7 +1739,7 @@ Stream failure, incomplete output or publication failure leaves the unresolved e
 Continuations durably record the ended turn and original input reference before fitting, rebuild the packet and send the original input once.
 An oversized continuation returns `request_too_large`, sends nothing, and records complete and per-part sizes.
 These APIs attach through the loop transform and composition callbacks; no new client-protocol or TUI endpoint is introduced.
-`compaction.Builder` resolves authorized, masked canonical event bodies and the immediate child root before invoking the auxiliary summarizer.
+`compaction.Builder` resolves authorized, masked canonical event bodies and the immediate child root before invoking the auxiliary summarizer. The conversation composition reprojects those sources as provider items and applies the same bounded result reference as request assembly before that call, including when a stale root is rebuilt from visible events. A refused or unfinished presentation keeps its arguments.
 A completed preparation can be reused after new verbatim/current-turn events arrive only when its summarized sources, root and revocation epoch are unchanged; its publication frontier is refreshed and checked again at commit.
 The new node and its content-free compaction audit event commit together.
 `Expansion.Read`, exposed through the agent-bound `exec.ExpandTool`, pages source events in ledger order across a node’s descendants, reads full material revisions, preserves secret masks and refuses retracted, foreign or unavailable sources.
