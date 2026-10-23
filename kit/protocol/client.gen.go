@@ -577,6 +577,7 @@ type PlanResponse struct {
 	Revision    *string      `json:"revision,omitempty"`
 }
 type Progress struct {
+	CardOrder   *[]string      `json:"card_order,omitempty"`
 	Lanes       *[]WorkerLane  `json:"lanes,omitempty"`
 	NextCursor  *string        `json:"next_cursor,omitempty"`
 	Rows        *[]ProgressRow `json:"rows,omitempty"`
@@ -598,12 +599,15 @@ type ProgressGet struct {
 }
 type ProgressLine struct {
 	Depth        json.Number   `json:"depth"`
+	FinishedAt   *string       `json:"finished_at,omitempty"`
 	JustFinished string        `json:"just_finished"`
 	Kind         string        `json:"kind"`
 	Name         string        `json:"name"`
 	Next         string        `json:"next"`
+	Now          *string       `json:"now,omitempty"`
 	Percent      *json.Number  `json:"percent,omitempty"`
 	Stage        string        `json:"stage"`
+	StartedAt    *string       `json:"started_at,omitempty"`
 	State        *RunningState `json:"state,omitempty"`
 	Waiting      json.Number   `json:"waiting"`
 }
@@ -612,6 +616,7 @@ type ProgressRow struct {
 	Ref  string       `json:"ref"`
 }
 type ProgressUpdate struct {
+	CardOrder   *[]string       `json:"card_order,omitempty"`
 	Rows        *[]ProgressRow  `json:"rows,omitempty"`
 	Stream      *StreamMetadata `json:"stream,omitempty"`
 	Text        *string         `json:"text,omitempty"`
@@ -4106,6 +4111,12 @@ const clientSchemaJSON = `{
         "next_cursor": {
           "type": "string"
         },
+        "card_order": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "rows": {
           "type": "array",
           "items": {
@@ -4134,6 +4145,12 @@ const clientSchemaJSON = `{
         },
         "text": {
           "type": "string"
+        },
+        "card_order": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "rows": {
           "type": "array",
@@ -7022,6 +7039,17 @@ const clientSchemaJSON = `{
     "progress_line": {
       "type": "object",
       "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "now": {
+          "type": "string"
+        },
         "name": {
           "type": "string"
         },

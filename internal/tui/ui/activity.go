@@ -43,7 +43,7 @@ func (m *shellModel) staticActivity() bool {
 
 func (m *shellModel) activityInterval() time.Duration {
 	if !m.activityVisible() {
-		return 0
+		return m.workPanelInterval()
 	}
 	millis := m.styles.tokens.MotionActivityFrame
 	if m.staticActivity() {
