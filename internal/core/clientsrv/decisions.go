@@ -184,9 +184,11 @@ func (d *Decisions) PublishQuestion(ctx context.Context, id string) error {
 		return &OperationError{Code: protocol.ErrorMalformed}
 	}
 	if !safeQuestionForm(question.Form) {
-		outcome := protocol.DecisionOutcomeRefused
 		card := *question.Card
-		card.Outcome = &outcome
+		if card.Outcome == nil {
+			outcome := protocol.DecisionOutcomeRefused
+			card.Outcome = &outcome
+		}
 		question.Card = &card
 		question.Form = nil
 	}

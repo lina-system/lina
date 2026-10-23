@@ -238,10 +238,6 @@ func reserves(a Action) bool {
 	return a.State != "finished" && workerAction(a.Kind)
 }
 
-func workerAction(kind ActionKind) bool {
-	return kind == Assign || kind == Resume || kind == RepairConflict || kind == RepairQA || kind == ContinueWorker
-}
-
 // Slots applies both installed resource caps and the live observation. An
 // observed active reservation counts against the cap but not twice against
 // measured load. Unknown/stale samples and nonfinite resources fail closed.
