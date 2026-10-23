@@ -612,6 +612,8 @@ their later resets cannot extend an exhausted window's block. If no exhausted
 window is reported or cached, the stop is recorded separately with an unknown
 window and reset. `e2e/m2/worker-quota-windows.json` covers the installed Core
 handoff and durable per-window state across restart.
+A successful `worker_quota` read from a routed conversation refreshes the shared
+dispatch service and wakes its chooser, including after a stop without a reset.
 
 The provisional worker rule table is read at startup from
 `system/core/worker-choice.json`. Its `rules` contain `worker`, `tags` and integer

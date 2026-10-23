@@ -363,8 +363,12 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		if err != nil {
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
-		if r.workerDispatch != nil {
-			if err = r.workerDispatch.ObserveQuota(ctx, entry.adapter.Name(), rows); err != nil {
+		dispatcher := r.workerDispatch
+		if r.router != nil && r.router.root != nil {
+			dispatcher = r.router.root.workerDispatch
+		}
+		if dispatcher != nil {
+			if err = dispatcher.ObserveQuota(ctx, entry.adapter.Name(), rows); err != nil {
 				return tools.Result{State: tools.Failed}, err
 			}
 		}

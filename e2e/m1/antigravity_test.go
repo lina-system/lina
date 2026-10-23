@@ -213,6 +213,11 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				return p
 			}
 			core := start()
+			t.Cleanup(func() {
+				if t.Failed() && test.Choice == "quota-windows" {
+					logWorkerQuotaState(t, h)
+				}
+			})
 			if test.LegacyAdmission {
 				if _, err = os.Stat(filepath.Join(fixture, "workdir")); !os.IsNotExist(err) {
 					t.Fatal("legacy admission ran before its conversation receipt", err)

@@ -20,6 +20,37 @@ func TestM2WorkerQuotaWindows(t *testing.T) {
 	testHeadlessWorkerThroughInstalledCore(t, "../m2/worker-quota-windows.json", false)
 }
 
+func logWorkerQuotaState(t *testing.T, h *harness) {
+	db, err := canon.OpenReader(context.Background(), filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Log("quota diagnostics:", err)
+		return
+	}
+	defer db.Close(context.Background())
+	err = db.Read(context.Background(), func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(context.Background(), "SELECT record FROM worker_dispatch")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw []byte
+			if err := rows.Scan(&raw); err != nil {
+				return err
+			}
+			var r dispatch.Record
+			if err := json.Unmarshal(raw, &r); err != nil {
+				return err
+			}
+			t.Logf("dispatch state=%s wait=%s worker=%s tried=%v code=%s", r.State, r.Wait, r.Worker, r.Tried, r.Code)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Log("quota diagnostics:", err)
+	}
+}
+
 func assertWorkerQuotaWindows(t *testing.T, h *harness, fixture string) {
 	t.Helper()
 	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
