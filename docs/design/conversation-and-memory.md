@@ -289,6 +289,8 @@ Preparation never waits on background work. A background run that is running or 
 
 Mandatory retraction checks and permission checks finish during preparation, before the request is assembled. Model and effort selection, model switching and the rule that an accepted turn is never replayed are defined in [runtime.md](runtime.md).
 
+Preparation identifies a queued input by its exact ledger event id in the retraction-filtered history. If that event is missing, preparation fails before dispatch; another event with identical text cannot replace it.
+
 ### What a message is about
 
 Every input of the person is bound to one target: the focus, another 목표, 일 or 할 일, a task or background run, a new item, or none. The binding decides where an answer, a change or a steer lands. Core decides what a surface fact settles, the model decides the rest, and the person sees every pick that leaves the focus and can move it with one tap. In the owner's messages to his agents, about one in five referred to running or earlier work, and the agents picked the wrong target for about one in fifty ([research](../research/message-intake.md)).
@@ -380,6 +382,7 @@ A request is laid out from what changes least to what changes most, so the prefi
    7. external evidence (user role, marked untrusted): worker results and what plugins read
 7. **The person's current input.**
 
+- A queued input can precede the prior turn's completed reply or system notice in the ledger. Preparation moves only that input event to item 7, exactly once, and retains the other visible history in ledger order, including those later replies and notices. Later queued person inputs stay out of this request. Distinct history events with the same text remain distinct.
 - This layout is the first request of a turn. When no compaction runs during the turn (see Compaction and resume), a follow-up request in the same turn, after tool results, keeps that request unchanged, apart from the plugin tools loaded on demand, and appends at its end, in ledger order, only the new reasoning items, tool calls and tool outputs and any steering input the person sent during the turn, in the user role ([runtime.md](runtime.md)). The ContextPacket is not rebuilt within a turn.
 - This layout is the request of a model-API provider. For an agent-runtime provider, the adapter receives the same layers in the same order as one non-persisted session. The runtime's own reasoning items do not return in later requests, the exact request input cannot be recorded, and the ledger records what the runtime reports instead ([runtime.md](runtime.md#providers)). How a runtime caches a prefix is the vendor's.
 - Nothing that changes from turn to turn enters items 1 to 3 or the always-declared part of item 4. The time, the emotional state and the selected skill bodies sit in the ContextPacket. When the plugin tools loaded on demand change, the cached prefix ends at that point.
