@@ -69,13 +69,15 @@ type Config struct {
 	Changed func(context.Context, State) error
 }
 type Engine struct {
-	definitions sync.Map
-	journal     *Journal
-	cfg         Config
-	mu          sync.Mutex
-	running     map[string]bool
-	wg          sync.WaitGroup
-	failures    chan error
+	definitions   sync.Map
+	journal       *Journal
+	cfg           Config
+	mu            sync.Mutex
+	running       map[string]bool
+	wg            sync.WaitGroup
+	failures      chan error
+	evidenceCtx   context.Context
+	evidenceReads map[string]*evidenceRead
 }
 
 func NewEngine(cfg Config) (*Engine, error) {
@@ -85,7 +87,7 @@ func NewEngine(cfg Config) (*Engine, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	e := &Engine{journal: NewJournal(cfg.DB), cfg: cfg, running: map[string]bool{}, failures: make(chan error, 1)}
+	e := &Engine{journal: NewJournal(cfg.DB), cfg: cfg, running: map[string]bool{}, failures: make(chan error, 1), evidenceReads: map[string]*evidenceRead{}}
 	if cfg.DriverFactory != nil {
 		if cfg.Driver != nil {
 			return nil, ErrInvalid
@@ -843,6 +845,9 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	e.mu.Lock()
+	e.evidenceCtx = ctx
+	e.mu.Unlock()
 	r := startReconciler(ctx, e.journal, func(ctx context.Context) error { return e.step(ctx) }, e.cfg.Sweep, func(ctx context.Context) error {
 		if e.cfg.Refresh != nil {
 			if err := e.cfg.Refresh(ctx, e); err != nil {
@@ -904,6 +909,9 @@ func (e *Engine) awaitAuthorization(ctx context.Context, claimed Action) error {
 			return err
 		}
 		// A definition/repair revision can commit while Authorize runs.
+		if err = retireEvidenceWaits(v, g); err != nil {
+			return err
+		}
 		if err = retireUndispatchedActions(v, &g); err != nil {
 			return err
 		}

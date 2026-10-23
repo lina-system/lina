@@ -7,12 +7,15 @@ the criterion's expected fields before storing a passing result. Worker receipts
 and model arguments cannot supply this execution projection.
 
 The installed code driver implements `EvidenceReader`. `closingEvidence` reads
-all current evidence outside the canon transaction; the close transaction checks
+all current evidence asynchronously, with at most one reader per goal under the
+runner's cancellation and shutdown lifetime; the close transaction checks
 the revision/round/content token again. `RefreshEvidence` uses the same path at
 startup and on the safety sweep. Invalidations clear the current checks, advance
 the round and preserve observations in `work_events`. `TargetChanged` is trusted
 integration ingress for a target or a source passage change. It grants no effect
-authority and never redispatches a worker.
+authority and never redispatches a worker. Invalidation retires undispatched
+checks, including authorization waits, before a late grant can refresh their
+inputs. Startup derivation schedules no external reads until the runner starts.
 
 Evidence data is additive JSON in the existing work ledger; no database schema
 migration is needed. Previously saved reference-only checks are invalidated and

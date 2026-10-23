@@ -4,6 +4,7 @@ package goal
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -35,6 +36,9 @@ func evidenceEngine(t *testing.T, d *evidenceDriver, state GoalState) (*Engine, 
 	if err = e.journal.Update(t.Context(), Transition{ID: "fixture", Kind: "fixture", At: 100}, func(v *View) error { return put(v, "goal", g.ID, g) }); err != nil {
 		t.Fatal(err)
 	}
+	ctx, cancel := context.WithCancel(t.Context())
+	e.evidenceCtx = ctx
+	t.Cleanup(func() { cancel(); e.wg.Wait() })
 	return e, g
 }
 
@@ -64,6 +68,10 @@ func TestCheckingRereadsEveryEvidenceAndReopensChangedTarget(t *testing.T) {
 			if err := e.Reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
+			e.wg.Wait()
+			if err := e.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			s, err := e.Snapshot(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -90,6 +98,7 @@ func TestCompletedEvidenceRefreshAndChangeHintAreDurable(t *testing.T) {
 	if err := e.RefreshEvidence(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	e.wg.Wait()
 	s, _ := e.Snapshot(t.Context())
 	if s.Goals[0].State != GoalRunning || len(s.Goals[0].Checks) != 0 {
 		t.Fatalf("completed goal retained stale evidence: %+v", s.Goals[0])
@@ -151,5 +160,137 @@ func TestPluginPassedFlagCannotOverrideExpectedRecord(t *testing.T) {
 	p, err := Derive(State{Goals: []Goal{g}}, time.Unix(100, 0))
 	if err != nil || len(p.Close) != 0 || len(p.Actions) != 1 || p.Actions[0].Kind != PlanGoal {
 		t.Fatalf("mismatch did not return to repair: %+v %v", p, err)
+	}
+}
+
+func TestSlowEvidenceDoesNotBlockAnotherGoal(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	assigned := make(chan Action, 1)
+	var once sync.Once
+	d := &evidenceDriver{read: func(_ Action, old CriterionEvidence) (CriterionEvidence, error) {
+		once.Do(func() { close(started) })
+		<-release
+		return old, nil
+	}}
+	d.run = func(a Action) (Observation, error) {
+		if a.Kind == Assign && a.GoalID == "unrelated" {
+			assigned <- a
+			return Observation{Status: OutcomeRunning, Handle: "worker"}, nil
+		}
+		return Observation{}, ErrInvalid
+	}
+	e, _ := evidenceEngine(t, d, GoalChecking)
+	other := oneGoal(readyTask("other"))
+	other.ID = "unrelated"
+	if err := e.Admit(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.NodeChanged(t.Context(), readyNode("n")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- e.Run(ctx) }()
+	defer func() {
+		close(release)
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reader did not start")
+	}
+	select {
+	case <-assigned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow evidence blocked another goal's dispatch")
+	}
+}
+
+func TestEvidenceInvalidationRetiresAuthorizationWait(t *testing.T) {
+	e, g := evidenceEngine(t, &evidenceDriver{}, GoalChecking)
+	if err := e.TargetChanged(t.Context(), "first", g.Criteria[0].Check.Target); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := e.Snapshot(t.Context())
+	a, err := e.Claim(t.Context(), s.Actions[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.awaitAuthorization(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.TargetChanged(t.Context(), "second", a.Check.Target); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Signal(t.Context(), Signal{ID: "late-approval", ActionID: a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = e.Snapshot(t.Context())
+	for _, old := range s.Actions {
+		if old.ID == a.ID && (old.State != "finished" || !old.Superseded) {
+			t.Fatalf("obsolete authorization wait revived: %+v", old)
+		}
+	}
+}
+
+func TestChangedRoundDuringAuthorizationCannotRefreshOldCheck(t *testing.T) {
+	e, g := evidenceEngine(t, &evidenceDriver{}, GoalChecking)
+	if err := e.TargetChanged(t.Context(), "first", g.Criteria[0].Check.Target); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := e.Snapshot(t.Context())
+	a, err := e.Claim(t.Context(), s.Actions[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The authority call is still in flight when the target changes.
+	if err = e.TargetChanged(t.Context(), "changed-in-authorize", a.Check.Target); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.awaitAuthorization(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Signal(t.Context(), Signal{ID: "late-grant", ActionID: a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = e.Snapshot(t.Context())
+	for _, old := range s.Actions {
+		if old.ID == a.ID && (old.State != "finished" || !old.Superseded) {
+			t.Fatalf("stale authorization requeued: %+v", old)
+		}
+	}
+}
+
+func TestStartupDerivationDoesNotStartEvidenceCommands(t *testing.T) {
+	d := &evidenceDriver{read: func(_ Action, old CriterionEvidence) (CriterionEvidence, error) {
+		t.Error("startup ran an external reader")
+		return old, nil
+	}}
+	e, _ := evidenceEngine(t, d, GoalChecking)
+	e.evidenceCtx = nil
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := e.Snapshot(t.Context())
+	if s.Goals[0].State == GoalDone {
+		t.Fatal("startup closed before the runner rechecked evidence")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.evidenceReads) != 0 {
+		t.Fatal("startup scheduled a reader without its runner lifetime")
 	}
 }

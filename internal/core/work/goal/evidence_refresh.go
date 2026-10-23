@@ -4,6 +4,7 @@ package goal
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"reflect"
 )
@@ -13,6 +14,54 @@ import (
 // replay the effect whose result is being checked.
 type EvidenceReader interface {
 	RereadEvidence(context.Context, Action, CriterionEvidence) (CriterionEvidence, error)
+}
+
+type evidenceRead struct {
+	token            string
+	running, current bool
+	cancel           context.CancelFunc
+}
+
+// Read-only revalidation has no effect to redispatch after a crash. Keep at most
+// one reader per goal; the journal and close token fence its eventual result.
+// Run owns its context and joins it at shutdown. Startup derivation only queues
+// work, so a slow connector cannot delay publishing Core's ingress.
+func (e *Engine) scheduleEvidence(reader EvidenceReader, g Goal, refresh bool) bool {
+	token := evidenceToken(g)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.evidenceCtx == nil || e.evidenceCtx.Err() != nil {
+		return false
+	}
+	if old := e.evidenceReads[g.ID]; old != nil {
+		if old.running {
+			if old.token != token {
+				old.cancel()
+			}
+			return false
+		}
+		if !refresh && old.token == token {
+			return old.current
+		}
+	}
+	ctx, cancel := context.WithCancel(e.evidenceCtx)
+	flight := &evidenceRead{token: token, running: true, cancel: cancel}
+	e.evidenceReads[g.ID] = flight
+	e.wg.Go(func() {
+		current, err := e.rereadEvidence(ctx, reader, g)
+		e.mu.Lock()
+		flight.running, flight.current = false, current && err == nil
+		e.mu.Unlock()
+		if err != nil && ctx.Err() == nil {
+			select {
+			case e.failures <- err:
+			default:
+			}
+		}
+		cancel()
+		e.journal.notify()
+	})
+	return false
 }
 
 func evidenceToken(g Goal) string {
@@ -38,9 +87,7 @@ func (e *Engine) RefreshEvidence(ctx context.Context) error {
 		if g.State == GoalStopped || g.DefinitionPending || len(g.Checks) == 0 {
 			continue
 		}
-		if _, err = e.rereadEvidence(ctx, reader, g); err != nil {
-			return err
-		}
+		e.scheduleEvidence(reader, g, true)
 	}
 	return nil
 }
@@ -65,11 +112,7 @@ func (e *Engine) closingEvidence(ctx context.Context) (map[string]string, error)
 		if !has(p.Close, g.ID) {
 			continue
 		}
-		current, err := e.rereadEvidence(ctx, reader, g)
-		if err != nil {
-			return nil, err
-		}
-		if current {
+		if e.scheduleEvidence(reader, g, false) {
 			verified[g.ID] = evidenceToken(g)
 		}
 	}
@@ -114,6 +157,9 @@ func (e *Engine) rereadEvidence(ctx context.Context, reader EvidenceReader, g Go
 		if err != nil {
 			return err
 		}
+		if err = e.hydrate(&current); err != nil {
+			return err
+		}
 		if current.State == GoalStopped || evidenceToken(current) != evidenceToken(g) {
 			return errNoChange
 		}
@@ -121,6 +167,9 @@ func (e *Engine) rereadEvidence(ctx context.Context, reader EvidenceReader, g Go
 			return nil
 		}
 		reopenEvidence(&current)
+		if err = retireEvidenceWaits(v, current); err != nil {
+			return err
+		}
 		return put(v, "goal", current.ID, current)
 	})
 	if errors.Is(err, errNoChange) {
@@ -170,6 +219,9 @@ func (e *Engine) TargetChanged(ctx context.Context, id, target string) error {
 				continue
 			}
 			reopenEvidence(&g)
+			if err = retireEvidenceWaits(v, g); err != nil {
+				return err
+			}
 			if err = put(v, "goal", g.ID, g); err != nil {
 				return err
 			}
@@ -187,4 +239,23 @@ func failedEvidence(g Goal) bool {
 		}
 	}
 	return false
+}
+
+// Authorization refused before execution. An old round must not be revived by
+// a late approval hint with a new InputVersion and its old Action.CheckRound.
+func retireEvidenceWaits(v *View, g Goal) error {
+	for _, row := range v.Records("action") {
+		var a Action
+		if err := json.Unmarshal(row.Body, &a); err != nil {
+			return err
+		}
+		if a.GoalID != g.ID || (a.Kind != CheckCriterion && (a.Kind != PlanGoal || a.TaskID != "")) || (a.State != "queued" && a.State != "awaiting_authorization") || !staleInputs(g, a) {
+			continue
+		}
+		a.State, a.Superseded, a.RetirementReconciled = "finished", true, true
+		if err := put(v, "action", a.ID, a); err != nil {
+			return err
+		}
+	}
+	return nil
 }

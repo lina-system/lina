@@ -1757,7 +1757,10 @@ success flag cannot override a mismatch.
 
 Before closure, the installed Core reads every collected item again, including
 the actual external record and retained command output. It checks the goal
-revision and checking round again when committing closure. A changed, missing or
+revision and checking round again when committing closure. Re-reads run independently
+for each goal under the work runner, so slow connectors cannot block Core startup
+or unrelated work. An invalidated round retires its undispatched and authorization-
+waiting checks; a late grant cannot revive them. A changed, missing or
 unreadable item reopens the goal to `running` and starts a fresh checking round;
 prior observations and worker results remain in history. An integration's target
 change hint also invalidates criteria that read that target as a source. Repeated
