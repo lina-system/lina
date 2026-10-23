@@ -118,6 +118,12 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 		var spans []secrets.Span
 		// Enriched bodies are JSON: Mask walks their decoded strings, including
 		// nested argument JSON. Plaintext offsets can split escaped quotes.
+		if !material.Valid && display != r.body {
+			display, err = maskScalarCallCredentials(display)
+			if err != nil {
+				return err
+			}
+		}
 		if material.Valid || display == r.body {
 			for _, s := range ScanSecrets([]byte(display)) {
 				spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
