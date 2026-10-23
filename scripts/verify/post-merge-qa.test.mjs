@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { sandbox } from '../test-fixture.mjs';
 import { collectObservations, reconcileQA } from './post-merge-qa.mjs';
 import { goTestOutcomes } from './pipeline.mjs';
 
@@ -49,6 +51,54 @@ test('Go failures retain nested diagnostic lines under the top-level test identi
   assert.equal(outcomes.length, 2);
   assert.deepEqual(outcomes[0], { package: 'example/e2e', test: 'TestOne', result: 'fail', output: 'scenario.go:12: broken\n' });
   assert.equal(outcomes[1].result, 'skip');
+});
+
+test('abnormal package failure reports only started unfinished tests with bounded diagnostics', () => {
+  const events = [
+    { Action: 'run', Package: 'example/e2e', Test: 'TestPassed' },
+    { Action: 'pass', Package: 'example/e2e', Test: 'TestPassed' },
+    { Action: 'skip', Package: 'example/e2e', Test: 'TestSkipped' },
+    { Action: 'run', Package: 'other/e2e', Test: 'TestOther' },
+    { Action: 'run', Package: 'example/e2e', Test: 'TestOne' },
+    { Action: 'run', Package: 'example/e2e', Test: 'TestOne/child' },
+    { Action: 'run', Package: 'example/e2e', Test: 'TestTwo' },
+    { Action: 'output', Package: 'example/e2e', Output: 'x'.repeat(20000) + '\npanic: test timed out\n' },
+    { Action: 'fail', Package: 'example/e2e' },
+  ];
+  const outcomes = goTestOutcomes(events.map(event => JSON.stringify(event)).join('\n'));
+  assert.deepEqual(outcomes.map(({ test, result }) => [test, result]), [
+    ['TestPassed', 'pass'], ['TestSkipped', 'skip'], ['TestOther', 'unknown'], ['TestOne', 'fail'], ['TestTwo', 'fail'],
+  ]);
+  for (const outcome of outcomes.filter(outcome => outcome.result === 'fail')) {
+    assert.match(outcome.output, /panic: test timed out/);
+    assert.ok(outcome.output.length <= 16000);
+  }
+});
+
+test('a real Go timeout reaches QA reporting without inventing unexecuted tests', async t => {
+  const sb = sandbox(t);
+  sb.write(sb.dir, 'go.mod', 'module example/e2e\n\ngo 1.24\n');
+  sb.write(sb.dir, 'timeout_test.go', `// SPDX-License-Identifier: Apache-2.0
+package e2e
+import "testing"
+func TestOne(t *testing.T) { t.Log("waiting for timeout"); select {} }
+func TestTwo(t *testing.T) { t.Fatal("must not run") }
+`);
+  const run = spawnSync('go', ['test', '-json', '-count=1', '-timeout=1s', '.'], {
+    cwd: sb.dir, env: { PATH: process.env.PATH, HOME: sb.dir, GOWORK: 'off', GOENV: 'off',
+      GOCACHE: process.env.GOCACHE, GOTOOLCHAIN: 'local' }, encoding: 'utf8', timeout: 120000,
+  });
+  assert.equal(run.error, undefined);
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stdout, /panic: test timed out/);
+  const input = fixture();
+  input.records[0].tests = goTestOutcomes(run.stdout);
+  assert.deepEqual(input.records[0].tests.map(({ test, result }) => [test, result]), [['TestOne', 'fail']]);
+  const mock = github();
+  await reconcileQA({ ...options(mock), ...input });
+  assert.equal(mock.issues.length, 1);
+  assert.match(mock.issues[0].body, /panic: test timed out/);
+  assert.match(mock.issues[0].body, /timeout_test.go/);
 });
 
 test('failure opens one QA issue, repeats update it, and a later passing head closes it', async () => {
