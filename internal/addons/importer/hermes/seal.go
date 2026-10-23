@@ -109,6 +109,31 @@ func (p *Plan) Seal(ctx context.Context, db Canon, backup func(context.Context) 
 	return report, err
 }
 
+// displayMask masks an event display under the publication rule. A body that
+// cannot be masked becomes an unavailable notice instead of a display.
+func displayMask(display string) (secrets.Masked, error) {
+	var spans []secrets.Span
+	// Raw assignment spans may include JSON's quotes or escape sequences.
+	// Let the shared JSON scanner inspect decoded strings instead. These
+	// spans are detector output, not independent sensitivity annotations.
+	if !json.Valid([]byte(display)) {
+		for _, s := range ScanSecrets([]byte(display)) {
+			spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
+		}
+	}
+	masked, err := secrets.Mask(display, spans...)
+	if err == nil && json.Valid([]byte(display)) {
+		// Check remaining scalar credentials at decoded JSON boundaries.
+		// A plaintext rescan of serialized JSON can flag an escape before
+		// an already-masked quoted value and discard an otherwise safe body.
+		checked, checkErr := maskScalarCallCredentials(masked.Text())
+		if !json.Valid([]byte(masked.Text())) || checkErr != nil || checked != masked.Text() {
+			err = secrets.ErrSpan
+		}
+	}
+	return masked, err
+}
+
 func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *conversation) error {
 	parent := ""
 	for _, r := range c.records {
@@ -155,27 +180,9 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 				err = secrets.ErrSpan
 			}
 		}
-		var spans []secrets.Span
-		// Raw assignment spans may include JSON's quotes or escape sequences.
-		// Let the shared JSON scanner inspect decoded strings instead. These
-		// spans are detector output, not independent sensitivity annotations.
-		if !json.Valid([]byte(display)) {
-			for _, s := range ScanSecrets([]byte(display)) {
-				spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
-			}
-		}
 		var masked secrets.Masked
 		if err == nil {
-			masked, err = secrets.Mask(display, spans...)
-		}
-		if err == nil && json.Valid([]byte(display)) {
-			// Check remaining scalar credentials at decoded JSON boundaries.
-			// A plaintext rescan of serialized JSON can flag an escape before
-			// an already-masked quoted value and discard an otherwise safe body.
-			checked, checkErr := maskScalarCallCredentials(masked.Text())
-			if !json.Valid([]byte(masked.Text())) || checkErr != nil || checked != masked.Text() {
-				err = secrets.ErrSpan
-			}
+			masked, err = displayMask(display)
 		}
 		originFields := map[string]string{"kind": "import", "locator": r.id, "source_session": e.session}
 		if errors.Is(err, secrets.ErrSpan) {

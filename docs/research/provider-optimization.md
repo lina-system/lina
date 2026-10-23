@@ -57,6 +57,17 @@ Research for [#850](https://github.com/thisisjun786/lina/issues/850). It measure
   - Messages usage: `input_tokens`, `cache_read_input_tokens` and `cache_creation_input_tokens`.
   "Plain" below means input billed at the ordinary rate. No cost is computed from a price list. xAI reports its own per-request cost, which is quoted as reported.
 
+The repeatable implementation is now the
+[public provider replay fixture](../../testdata/provider-replay/README.md), run
+through the installed `lina provider-replay` command and running Core. Preserve
+the same fixture digest for a before/after comparison. Its versioned report
+keeps unknown counters as null, splits reported cache writes by lifetime, and
+measures the first output at the adapter stream. The loopback acceptance test
+checks these reports without a real account; real-account runs require explicit
+opt-in. This implementation adds no new provider measurements to the historical
+results below. Native runtime requests and counters hidden by an adapter cannot
+be inferred from a stream total.
+
 ## Measurements
 
 ### Replay
