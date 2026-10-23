@@ -1132,7 +1132,21 @@ they do not enable operations the adapter has not implemented.
   incomplete protocol stream or an unfinished request keeps the outcome unknown. Loading or resuming a session
   does not reconcile an unknown turn after a Core crash. A second settled death
   creates the existing decision row and cannot start a third worker.
-- **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of a request (-32000 is login expiry); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
+- **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of `session/new` (-32000 means needs sign-in) or of `session/prompt` (a worker failure with code `prompt_failed`); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
+  Core opts into only AIR v1 `sessionFailure` and accepts it only when the
+  initialize response advertises it. Its error-severity category/actions map
+  to rate limited (`limit`/`retry`), quota exhausted (`limit`/no actions),
+  sign-in required (`access`/`login`) or connection lost
+  (`connection`/`new_session`). Warnings and unknown combinations do not end
+  a turn. The prompt reply remains the terminal boundary: request errors and
+  explicit non-success stop reasons take precedence over extension reports.
+  Claude's reported bucket, utilization, status and Unix-seconds reset become
+  quota rows; context-window usage is not subscription quota. Missing values
+  remain unknown. Core saves reported rows before closing the session, and an
+  exhausted worker permits only the existing single replacement after cleanup.
+  Replacement requires no tool activity, unknown update, unfinished request or
+  earlier prompt-error uncertainty. A native tool's `completed` or `failed`
+  status does not establish its external effects, as for connection recovery.
 - **Never sent.** `authenticate` and `logout`, because the person signs in to a worker in the worker itself; `session/delete`; and `session/set_mode`. `session/close` is sent only on an explicit close.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
 
@@ -1149,10 +1163,12 @@ the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
 A JSON-RPC error reply to the prompt is an observed worker failure, including
-when the process exits immediately after replying. Core records the failed turn
+when the process exits immediately after replying. It uses code `prompt_failed`
+regardless of the remote error code. Core records the failed turn
 and an adapter-derived receipt without retaining the remote error message or
 data. The reply alone does not settle external effects: unresolved effects keep
-the existing recovery fence until reconciliation.
+the existing recovery fence until reconciliation; a later successful prompt
+does not settle that earlier uncertainty.
 The adapter advertises progress, completion, work tools, approvals and questions. ACP
 requests use the existing worker authority and waiting-card bridge, preserving
 the originating conversation. Cards identify the ACP worker; Codex cards retain
@@ -1168,7 +1184,7 @@ without requesting secret input. Field names the waiting-card bridge refuses
 are declined the same way and are not shown as a card.
 A pending native decision leaves the prompt's work tools available; prompt
 completion expires both decision and work-tool requests.
-Steering, quota and recovery remain separate integrations;
+Steering and recovery remain separate integrations;
 requesting a capability that is not implemented fails before dispatch.
 
 #### Claude Code through ACP
