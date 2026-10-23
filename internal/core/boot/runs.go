@@ -104,80 +104,79 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 	}
 	r.lanes = lane.NewWithNotices(b.notices)
 	r.identity.TopicCapabilities["running"] = runningCapability
-	r.identity.Operations[protocol.KindStop] = clientsrv.Operation{Capability: runningCapability, Handle: r.stopRun}
-	r.identity.Operations[protocol.KindRunningGet] = clientsrv.Operation{Capability: runningCapability, Handle: func(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
-		if err := r.authorize(s, nil); err != nil {
-			return clientsrv.Result{}, err
-		}
-		request := e.Payload.(protocol.RunningGet)
-		response := protocol.Running{RunID: request.RunID}
-		if request.RunID != nil {
-			if request.Action == nil {
-				return clientsrv.Result{}, runs.ErrInvalid
+	if err := addOperations(&r.identity, map[protocol.Kind]clientsrv.Operation{
+		protocol.KindStop: {Capability: runningCapability, Handle: r.stopRun},
+		protocol.KindRunningGet: {Capability: runningCapability, Handle: func(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
+			if err := r.authorize(s, nil); err != nil {
+				return clientsrv.Result{}, err
 			}
-			ref := runs.ListRef{Source: "run", ID: *request.RunID}
-			if id, ok := strings.CutPrefix(ref.ID, "task:"); ok {
-				ref.Source, ref.ID = "work", id
-			} else if id, ok := strings.CutPrefix(ref.ID, "session:"); ok {
-				ref.Source, ref.ID = "session", id
-			}
-			switch string(*request.Action) {
-			case "open":
-				var offset int64
-				var err error
-				if request.Offset != nil {
-					offset, err = request.Offset.Int64()
-				}
-				if err != nil {
+			request := e.Payload.(protocol.RunningGet)
+			response := protocol.Running{RunID: request.RunID}
+			if request.RunID != nil {
+				if request.Action == nil {
 					return clientsrv.Result{}, runs.ErrInvalid
 				}
-				var text string
-				var next int64
-				if ref.Source == "work" {
-					text, next, err = r.work.SummaryPage(ctx, ref.ID, offset)
-				} else if ref.Source == "session" {
-					text, err = r.workerRunningSummary(ctx, s.PersonID, ref.ID, offset)
-				} else {
-					text, next, err = b.service.ResultPage(ctx, s.PersonID, ref.ID, offset)
+				ref := runs.ListRef{Source: "run", ID: *request.RunID}
+				if id, ok := strings.CutPrefix(ref.ID, "task:"); ok {
+					ref.Source, ref.ID = "work", id
+				} else if id, ok := strings.CutPrefix(ref.ID, "session:"); ok {
+					ref.Source, ref.ID = "session", id
 				}
-				if err != nil {
-					return clientsrv.Result{}, err
-				}
-				response.Text = &text
-				if next > 0 {
-					n := json.Number(strconv.FormatInt(next, 10))
-					response.Next = &n
-				}
-				if err = b.list.Open(ctx, s.PersonID, ref); err != nil {
-					return clientsrv.Result{}, err
-				}
-			case "dismiss":
-				if ref.Source == "session" {
-					if err := b.sessions.refresh(ctx); err != nil {
+				switch string(*request.Action) {
+				case "open":
+					var offset int64
+					var err error
+					if request.Offset != nil {
+						offset, err = request.Offset.Int64()
+					}
+					if err != nil {
+						return clientsrv.Result{}, runs.ErrInvalid
+					}
+					var text string
+					var next int64
+					if ref.Source == "work" {
+						text, next, err = r.work.SummaryPage(ctx, ref.ID, offset)
+					} else if ref.Source == "session" {
+						text, err = r.workerRunningSummary(ctx, s.PersonID, ref.ID, offset)
+					} else {
+						text, next, err = b.service.ResultPage(ctx, s.PersonID, ref.ID, offset)
+					}
+					if err != nil {
 						return clientsrv.Result{}, err
 					}
+					response.Text = &text
+					if next > 0 {
+						n := json.Number(strconv.FormatInt(next, 10))
+						response.Next = &n
+					}
+					if err = b.list.Open(ctx, s.PersonID, ref); err != nil {
+						return clientsrv.Result{}, err
+					}
+				case "dismiss":
+					if ref.Source == "session" {
+						if err := b.sessions.refresh(ctx); err != nil {
+							return clientsrv.Result{}, err
+						}
+					}
+					if err := b.list.Dismiss(ctx, s.PersonID, ref); err != nil {
+						return clientsrv.Result{}, err
+					}
+				default:
+					return clientsrv.Result{}, runs.ErrInvalid
 				}
-				if err := b.list.Dismiss(ctx, s.PersonID, ref); err != nil {
-					return clientsrv.Result{}, err
-				}
-			default:
+			} else if request.Action != nil || request.Offset != nil {
 				return clientsrv.Result{}, runs.ErrInvalid
 			}
-		} else if request.Action != nil || request.Offset != nil {
-			return clientsrv.Result{}, runs.ErrInvalid
-		}
-		return clientsrv.Result{Kind: protocol.KindRunning, Payload: response}, r.publishRunning(ctx)
-	}}
-	refresh := r.identity.RefreshTopic
-	r.identity.RefreshTopic = func(ctx context.Context, topic string) error {
+			return clientsrv.Result{Kind: protocol.KindRunning, Payload: response}, r.publishRunning(ctx)
+		}}}); err != nil {
+		return err
+	}
+	r.chainRefresh(func(ctx context.Context, topic string) error {
 		if topic == "running" {
 			return r.publishRunning(ctx)
 		}
-		if refresh != nil {
-			return refresh(ctx, topic)
-		}
 		return nil
-	}
+	})
 	if err = b.service.Recover(ctx); err != nil {
 		return err
 	}

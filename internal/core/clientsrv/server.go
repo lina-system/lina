@@ -201,7 +201,6 @@ func servePeer(ctx context.Context, conn net.Conn, identity Identity, peer peerI
 func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, peer peerIdentity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	connectionID := rand.Text()
 	if identity.Supported == nil {
 		identity.Supported = LocalCombinations()
 	}
@@ -218,9 +217,12 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 	if err != nil || epoch == 0 {
 		return
 	}
+	c := clientConnection{
+		identity: identity,
+		peer:     peer,
+		session:  Session{ConnectionID: rand.Text(), PersonID: identity.PersonID, Epoch: epoch, Capabilities: []protocol.Capability{}},
+	}
 	welcomed := false
-	clientID := ""
-	capabilities := []protocol.Capability{}
 	// Observe EOF while an operation is blocked in an issuer exchange. A
 	// connection that goes away must cancel that exchange before admission.
 	frames := make(chan []byte)
@@ -244,7 +246,7 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 	defer func() { cancel(); conn.Close(); <-readDone }()
 	defer func() {
 		cancel()
-		session := Session{ConnectionID: connectionID, PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, Capabilities: capabilities}
+		session := c.session
 		if identity.DecisionPresence != nil {
 			identity.DecisionPresence(session, false)
 		}
@@ -257,7 +259,7 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 	legacy := legacyActivity{}
 	topics := newTopicSession(ctx, identity, identity.Topics,
 		func(id json.RawMessage, envelope protocol.Envelope) error {
-			if !slices.Contains(capabilities, TurnActivityCapability) {
+			if !slices.Contains(c.session.Capabilities, TurnActivityCapability) {
 				envelope = legacy.project(envelope)
 			}
 			if id != nil {
@@ -271,7 +273,7 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 		},
 		func(topic string) bool {
 			capability, installed := identity.topicCapability(topic)
-			return installed && slices.Contains(capabilities, capability) && (identity.AuthorizeTopic == nil || identity.AuthorizeTopic(ctx, topic))
+			return installed && slices.Contains(c.session.Capabilities, capability) && (identity.AuthorizeTopic == nil || identity.AuthorizeTopic(ctx, topic))
 		}, func() { conn.Close() })
 	defer func() { conn.Close(); topics.Close() }()
 	for {
@@ -313,97 +315,30 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 		answer := reply(envelope, identity)
 		closeAfter := false
 		finishReply := func() {}
-		hello, isHello := envelope.Payload.(protocol.Hello)
-		var selected string
-		var granted []protocol.Capability
-		var supported bool
-		if hello.Peer != nil && hello.Platform != nil {
-			selected, granted, supported = negotiate(identity.Supported, *hello.Peer, *hello.Platform, hello.ProtocolVersions, hello.Capabilities)
-		}
-		granted = slices.DeleteFunc(granted, func(capability protocol.Capability) bool {
-			if capability == lifecycleCapability && identity.Restart != nil {
-				return false
-			}
-			if identity.Topics != nil {
-				for _, installed := range identity.TopicCapabilities {
-					if installed == capability {
-						return false
-					}
-				}
-			}
-			for _, operation := range identity.Operations {
-				if operation.Handle != nil && (operation.Capability == capability || slices.Contains(operation.AdditionalCapabilities, capability)) {
-					return false
-				}
-			}
-			return true
-		})
 		switch {
 		case req.Method != string(envelope.Kind):
 			refuse(&answer, protocol.ErrorMalformed, "method and kind differ")
 			closeAfter = !welcomed
-		case welcomed && (envelope.Sender.Party != protocol.PartyClient || envelope.Sender.ID != clientID):
-			refuse(&answer, protocol.ErrorNotAuthorized, "client identity changed")
-		case welcomed && envelope.Epoch != identity.Epoch:
-			refuse(&answer, protocol.ErrorStaleEpoch, "request epoch differs from Core")
-		case welcomed && identity.Recovering != nil && identity.Recovering() && !readOnlyEnvelope(envelope):
-			refuse(&answer, protocol.ErrorUnavailable, "Core is recovering")
-		case welcomed && (envelope.Kind == protocol.KindApprovalAnswer || envelope.Kind == protocol.KindQuestionAnswer || envelope.Kind == protocol.KindWaitingAnswer) && !peer.canDecide():
-			refuse(&answer, protocol.ErrorNotAuthorized, "client is not an eligible decider")
+		case welcomed && !c.admit(envelope, &answer):
+			// Admission has already populated the refusal.
 		case welcomed && (envelope.Kind == protocol.KindRestartRequest || envelope.Kind == protocol.KindRestartGet):
-			if identity.Restart == nil || !slices.Contains(capabilities, lifecycleCapability) {
+			if identity.Restart == nil || !slices.Contains(c.session.Capabilities, lifecycleCapability) {
 				refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "lifecycle capability was not negotiated")
 			} else {
 				finishReply = restartReply(ctx, identity, envelope, &answer)
 			}
 		case welcomed:
-			if handled, err := topics.handle(req.ID, envelope); handled {
+			if handled, err := c.dispatch(ctx, topics, req.ID, envelope, &answer); handled {
 				if err != nil {
 					return
 				}
 				continue
 			}
-			operation, exists := identity.Operations[envelope.Kind]
-			required := operation.Capability
-			if operation.CapabilityFor != nil {
-				required = operation.CapabilityFor(envelope)
-			}
-			if !exists || operation.Handle == nil || !slices.Contains(capabilities, required) {
-				refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "capability not negotiated")
-			} else {
-				session := Session{ConnectionID: connectionID, PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, CanDecide: peer.canDecide(), Capabilities: capabilities}
-				result, err := operation.Handle(ctx, session, envelope)
-				if err != nil {
-					code := protocol.ErrorUnavailable
-					var failure *OperationError
-					if errors.As(err, &failure) {
-						code = failure.Code
-					}
-					refuse(&answer, code, string(code))
-				} else {
-					answer.Kind, answer.Payload = result.Kind, result.Payload
-					if result.Effect != "" {
-						answer.EffectState = result.Effect
-					}
-				}
-			}
-		case req.Method != "hello" || envelope.Kind != protocol.KindHello || !isHello || envelope.Sender.Party != protocol.PartyClient || envelope.Sender.ID != hello.ID:
-			refuse(&answer, protocol.ErrorMalformed, "expected a client hello request")
-			closeAfter = true
-		case !supported:
-			refuse(&answer, protocol.ErrorUnsupportedCombination, "no supported client combination")
-			closeAfter = true
 		default:
-			answer.Kind = protocol.KindWelcome
-			answer.Payload = protocol.Welcome{
-				ProtocolVersion: selected, Capabilities: granted,
-				MainID: identity.MainID, Epoch: identity.Epoch, PersonID: identity.PersonID, Agents: identity.Agents,
-			}
-			welcomed = true
-			clientID = hello.ID
-			capabilities = granted
-			if identity.DecisionPresence != nil {
-				identity.DecisionPresence(Session{ConnectionID: connectionID, PersonID: identity.PersonID, Epoch: epoch, ClientID: clientID, CanDecide: peer.canDecide(), Capabilities: capabilities}, true)
+			welcomed = c.negotiateHello(envelope, &answer)
+			closeAfter = !welcomed
+			if welcomed && identity.DecisionPresence != nil {
+				identity.DecisionPresence(c.facts(), true)
 			}
 		}
 		err = conn.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
@@ -412,6 +347,114 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 			return
 		}
 	}
+}
+
+// clientConnection retains authenticated connection facts across message stages.
+// Decider eligibility is refreshed where the listener previously checked it.
+type clientConnection struct {
+	identity Identity
+	peer     peerIdentity
+	session  Session
+}
+
+func (c *clientConnection) facts() Session {
+	session := c.session
+	session.CanDecide = c.peer.canDecide()
+	return session
+}
+
+// negotiateHello runs only before welcome and after method/kind validation.
+func (c *clientConnection) negotiateHello(envelope protocol.Envelope, answer *protocol.Envelope) bool {
+	hello, isHello := envelope.Payload.(protocol.Hello)
+	if envelope.Kind != protocol.KindHello || !isHello || envelope.Sender.Party != protocol.PartyClient || envelope.Sender.ID != hello.ID {
+		refuse(answer, protocol.ErrorMalformed, "expected a client hello request")
+		return false
+	}
+	var selected string
+	var granted []protocol.Capability
+	var supported bool
+	if hello.Peer != nil && hello.Platform != nil {
+		selected, granted, supported = negotiate(c.identity.Supported, *hello.Peer, *hello.Platform, hello.ProtocolVersions, hello.Capabilities)
+	}
+	granted = slices.DeleteFunc(granted, func(capability protocol.Capability) bool {
+		if capability == lifecycleCapability && c.identity.Restart != nil {
+			return false
+		}
+		if c.identity.Topics != nil {
+			for _, installed := range c.identity.TopicCapabilities {
+				if installed == capability {
+					return false
+				}
+			}
+		}
+		for _, operation := range c.identity.Operations {
+			if operation.Handle != nil && (operation.Capability == capability || slices.Contains(operation.AdditionalCapabilities, capability)) {
+				return false
+			}
+		}
+		return true
+	})
+	if !supported {
+		refuse(answer, protocol.ErrorUnsupportedCombination, "no supported client combination")
+		return false
+	}
+	answer.Kind = protocol.KindWelcome
+	answer.Payload = protocol.Welcome{
+		ProtocolVersion: selected, Capabilities: granted,
+		MainID: c.identity.MainID, Epoch: c.identity.Epoch, PersonID: c.identity.PersonID, Agents: c.identity.Agents,
+	}
+	c.session.ClientID = hello.ID
+	c.session.Capabilities = granted
+	return true
+}
+
+// admit preserves the order of guards for every request after welcome.
+func (c *clientConnection) admit(envelope protocol.Envelope, answer *protocol.Envelope) bool {
+	switch {
+	case envelope.Sender.Party != protocol.PartyClient || envelope.Sender.ID != c.session.ClientID:
+		refuse(answer, protocol.ErrorNotAuthorized, "client identity changed")
+	case envelope.Epoch != c.identity.Epoch:
+		refuse(answer, protocol.ErrorStaleEpoch, "request epoch differs from Core")
+	case c.identity.Recovering != nil && c.identity.Recovering() && !readOnlyEnvelope(envelope):
+		refuse(answer, protocol.ErrorUnavailable, "Core is recovering")
+	case deciderKinds[envelope.Kind] && !c.peer.canDecide():
+		refuse(answer, protocol.ErrorNotAuthorized, "client is not an eligible decider")
+	default:
+		return true
+	}
+	return false
+}
+
+// dispatch runs only for admitted, non-lifecycle requests. A handled topic
+// writes its own response; otherwise answer is populated for the message loop.
+func (c *clientConnection) dispatch(ctx context.Context, topics *topicSession, id json.RawMessage, envelope protocol.Envelope, answer *protocol.Envelope) (bool, error) {
+	if handled, err := topics.handle(id, envelope); handled {
+		return true, err
+	}
+	operation, exists := c.identity.Operations[envelope.Kind]
+	required := operation.Capability
+	if operation.CapabilityFor != nil {
+		required = operation.CapabilityFor(envelope)
+	}
+	if !exists || operation.Handle == nil || !slices.Contains(c.session.Capabilities, required) {
+		refuse(answer, protocol.ErrorCapabilityNotNegotiated, "capability not negotiated")
+	} else {
+		result, err := operation.Handle(ctx, c.facts(), envelope)
+		if err != nil {
+			code := protocol.ErrorUnavailable
+			var failure *OperationError
+			if errors.As(err, &failure) {
+				code = failure.Code
+			}
+			refuse(answer, code, string(code))
+		} else {
+			answer.Kind, answer.Payload = result.Kind, result.Payload
+			if result.Effect != "" {
+				answer.EffectState = result.Effect
+			}
+		}
+	}
+	return false, nil
 }
 
 var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)

@@ -47,39 +47,44 @@ func (r *conversationRuntime) notifyOwnerViews() {
 	}
 }
 func (r *conversationRuntime) startOwnerViews(ctx context.Context) error {
-	r.startOwnerControls()
+	if err := r.startOwnerControls(); err != nil {
+		return err
+	}
 	r.ownerViews = &ownerViews{wake: make(chan struct{}, 1), done: make(chan struct{})}
 	if r.identity.TopicCapabilities == nil {
 		r.identity.TopicCapabilities = map[string]protocol.Capability{}
 	}
 	r.identity.Topics = r.topics
 	r.identity.TopicCapabilities["progress"] = progressCapability
-	lanes := r.identity.Operations[protocol.KindProgressGet]
-	op := lanes
-	op.AdditionalCapabilities = []protocol.Capability{progressCapability}
-	op.CapabilityFor = func(e protocol.Envelope) protocol.Capability {
-		p := e.Payload.(protocol.ProgressGet)
-		if p.View != nil && *p.View == "overview" {
-			return progressCapability
+	if err := r.wrapOperation(protocol.KindProgressGet, func(lanes clientsrv.Operation) clientsrv.Operation {
+		op := lanes
+		op.AdditionalCapabilities = []protocol.Capability{progressCapability}
+		op.CapabilityFor = func(e protocol.Envelope) protocol.Capability {
+			p := e.Payload.(protocol.ProgressGet)
+			if p.View != nil && *p.View == "overview" {
+				return progressCapability
+			}
+			return lanes.Capability
 		}
-		return lanes.Capability
+		op.Handle = func(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
+			p := e.Payload.(protocol.ProgressGet)
+			if p.View == nil || *p.View == "lanes" {
+				return lanes.Handle(ctx, s, e)
+			}
+			if err := r.authorize(s, nil); err != nil {
+				return clientsrv.Result{}, err
+			}
+			if p.After != nil {
+				return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
+			}
+			result, err := r.ownerSnapshot(ctx)
+			return clientsrv.Result{Kind: protocol.KindProgress, Payload: result}, err
+		}
+		return op
+	}); err != nil {
+		return err
 	}
-	op.Handle = func(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
-		p := e.Payload.(protocol.ProgressGet)
-		if p.View == nil || *p.View == "lanes" {
-			return lanes.Handle(ctx, s, e)
-		}
-		if err := r.authorize(s, nil); err != nil {
-			return clientsrv.Result{}, err
-		}
-		if p.After != nil {
-			return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
-		}
-		result, err := r.ownerSnapshot(ctx)
-		return clientsrv.Result{Kind: protocol.KindProgress, Payload: result}, err
-	}
-	r.identity.Operations[protocol.KindProgressGet] = op
-	r.identity.Operations[protocol.KindWaitingGet] = clientsrv.Operation{Capability: clientsrv.DecisionsCapability, Handle: func(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
+	if err := addOperations(&r.identity, map[protocol.Kind]clientsrv.Operation{protocol.KindWaitingGet: {Capability: clientsrv.DecisionsCapability, Handle: func(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
 		if err := r.authorize(s, nil); err != nil {
 			return clientsrv.Result{}, err
 		}
@@ -106,19 +111,15 @@ func (r *conversationRuntime) startOwnerViews(ctx context.Context) error {
 		rows := waitingRows(list)
 		total, more := number(list.Total), number(list.More)
 		return clientsrv.Result{Kind: protocol.KindWaiting, Payload: protocol.Waiting{Rows: &rows, Total: &total, More: &more}}, nil
-	}}
-	refresh := r.identity.RefreshTopic
-	r.identity.RefreshTopic = func(ctx context.Context, topic string) error {
-		if refresh != nil {
-			if err := refresh(ctx, topic); err != nil {
-				return err
-			}
-		}
+	}}}); err != nil {
+		return err
+	}
+	r.chainRefresh(func(ctx context.Context, topic string) error {
 		if topic == "progress" {
 			return r.publishOwnerViews(ctx)
 		}
 		return nil
-	}
+	})
 	watch, cancel := context.WithCancel(ctx)
 	r.ownerViews.stop = cancel
 	go func() {

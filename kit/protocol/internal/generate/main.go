@@ -69,6 +69,9 @@ func keys[T any](values map[string]T) []string {
 }
 
 func generate(data []byte) ([]byte, error) {
+	if bytes.ContainsRune(data, '`') {
+		return nil, fmt.Errorf("schema contains a backtick; cannot embed it as a Go raw string")
+	}
 	root, err := schema.Parse(data)
 	if err != nil {
 		return nil, err
@@ -282,11 +285,7 @@ func generate(data []byte) ([]byte, error) {
 		}
 	}
 	fmt.Fprintln(&b, "}, nil }")
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, data); err != nil {
-		return nil, err
-	}
-	fmt.Fprintf(&b, "\nconst clientSchemaJSON = %q\n", compact.String())
+	fmt.Fprintf(&b, "\nconst clientSchemaJSON = `%s`\n", data)
 	source, err := format.Source(b.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("format generated types: %w", err)

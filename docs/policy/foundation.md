@@ -124,7 +124,7 @@ The owner's local [integration script](integration.md) pushes the notes with `de
 
 ## Change classification
 
-The executable path map is `scripts/verify/scope.mjs`.
+The executable path map is `scripts/verify/scope.mjs`. All paths under `internal/core/` belong to `lina`, whose Go checks include `./internal/core/...`. New Core families need only a layer entry in `internal/archtest`; they need no foundation path-map entry. The architecture check still rejects unknown Core families and disallowed imports.
 
 | Change | Selection |
 | --- | --- |
