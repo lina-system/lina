@@ -15,6 +15,7 @@ const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.m
 function registryFor(cwd) {
   // Older trees and minimal verification fixtures may not have these packages yet.
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
+  const nodePackages = existsSync(join(cwd, 'internal/node')) ? ['./internal/node/...'] : [];
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
   const manifest = existsSync(join(cwd, 'internal/core/manifest')) ? ['./internal/core/manifest/...'] : [];
   // Keep registrations sorted, one per line, so independent additions can merge.
@@ -76,7 +77,7 @@ function registryFor(cwd) {
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
     { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/manifest/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', 'testdata/crw/', ...coreDirectories, ...addonDirectories, ...clientDirectories, 'third_party/codex-app-server/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...manifest, ...persona, ...skills, ...corePackages, ...addonPackages, ...clientPackages, ...e2e, ...vendored], binary: 'lina' },
     { name: 'moirai-worker', module: '.', directories: ['cmd/moirai-worker/', 'internal/moirai/'], files: [], packages: ['./cmd/moirai-worker/...', './internal/moirai/...'], binary: 'moirai-worker' },
-    { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
+    { name: 'lina-node', module: '.', directories: ['cmd/lina-node/', 'internal/node/'], files: [], packages: ['./cmd/lina-node/...', ...nodePackages], binary: 'lina-node' },
   ];
 }
 

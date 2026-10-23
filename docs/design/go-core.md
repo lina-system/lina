@@ -1117,13 +1117,13 @@ local source identities, so an old export cannot resurrect forgotten content.
 
 ## Node
 
-**C-35 Node (changed).** A separate static binary importing only the kit packages for grant, lease, sandbox, proc, protocol, rpc, diag and secret. It connects over the `node` connection, locally or on the tailnet.
+**C-35 Node (changed).** A separate static binary whose Node packages may compose one another, importing outside Node only the standard library and the kit packages for grant, lease, sandbox, proc, protocol, rpc, diag and secret. It connects over the `node` connection, locally or on the tailnet.
 
 - Device identity comes from Tailscale. Core asks the local daemon's API who owns the remote address (`DeviceIdentity.WhoIs`; a Linux implementation first, others at Node acceptance) and registers the device on first connection. Registration grants nothing. There is no key pinning.
 - The Node state machine of [main-authority.md](main-authority.md#node-states) is table-driven.
 - A write-ahead receipt journal is acknowledged by boot id and sequence. Every effect passes `grant.Check`, the OS permission and the live session. Commands dedupe by command id.
 - Expiry is a duration the Node counts on a clock that includes suspend (candidates: `CLOCK_BOOTTIME`, `mach_continuous_time`); the numbers are Node acceptance values.
-- The seat lease ([non-competition.md](non-competition.md#seat-lease)) is a grant naming a GUI session plus Node-side exclusivity.
+- The seat lease ([non-competition.md](non-competition.md#seat-lease)) is a grant naming a GUI session plus Node-side exclusivity. The seat manager binds explicit handover to the current session revision, cancels on person input, lock or resume, and appends an end receipt through the Node journal interface. Unlock never revives it. The macOS event adapter takes an injected notification source; fake-source tests do not prove native monitoring or Core wiring.
 - A receipt for an artifact carries provenance. Earlier-epoch receipts are read only while a Node is RECONCILING, matched on ids, and settle an effect as `reconciled`, not `receipted`.
 - Noted for the Node phase, not yet in the contracts: LINA Core runs on the person's own computer by default, and other devices join as Nodes in one action. Nodes bid for work by free capacity, load, readiness and capabilities (a logged-in browser, a messenger app, a platform-only app, a GPU); work of a failed or vanished Node is offered to another. A Node keeps repositories only as a cache (clone on demand, worktree removed after merge), and for other work it gets read-only copies of the files it needs, fetched by content hash, and returns its outputs as result artifacts that Core files into the one canonical store. Credentials are granted per job and never copied into a Node's files. These rules are folded into the Node, work and storage contracts with the Node phase.
 

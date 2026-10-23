@@ -34,6 +34,31 @@ A measurement that leaves out any part of the background load that the install r
 
 LINA touches the person's GUI session only under a seat lease: the person's explicit, exclusive and revocable handover of one GUI session to LINA, named in the grant. One task holds a seat lease at a time: the grant names that task, and the lease records the agent that asked for it. Another task, whichever agent asked for it, waits for the lease or gets another session. Without a live seat lease LINA never sends input to the person's session and never takes its focus. Revoking the lease returns the session to the person at once, and a stale grant never acts on a session the person has taken back.
 
+The Node-side seat manager binds an authenticated handover to the grant, person,
+task, GUI session and current session revision. Person input, a session lock and
+resume invalidate older handovers, including handovers not yet used to acquire a
+lease. Lock cancels the lease; unlock only permits a fresh handover and never
+restores an old grant. Resume cancels every session's lease. A competing task
+receives a busy result and stays waiting, or requests another session; the seat
+manager never queues GUI effects. A fresh handover is required after takeover.
+
+Each lease end cancels its work context before attempting to append a receipt.
+The receipt identifies the grant, task, requesting agent, person, Node boot,
+main epoch, session and closed end reason, with an opaque receipt id. Only a
+durable journal acknowledgement makes that receipt available as evidence. A
+journal failure still cancels the work and fences new acquisitions. Losing the
+OS event stream also revokes the leases and blocks new handovers. Executors
+recheck the grant immediately before each GUI effect and honor cancellation.
+
+`internal/node/seat` implements that state machine and
+`internal/node/macos` translates a supplied OS notification interface. Physical
+input, injected input, lock, unlock and resume are distinct notifications; the
+interface carries no input contents. Neither package records the screen nor
+keeps the machine awake. Their fake-source tests establish package behavior
+only. Core grant/receipt transport, durable journal wiring and the native event
+source must be connected before a running install can claim this behavior.
+They do not establish a macOS matrix measurement.
+
 A Windows service runs in Session 0 and never sends input directly to the person's GUI.
 
 The launcher and its clipboard history are features the person turns on, so they are an exception to the focus and clipboard columns on that machine. The launcher takes focus only when the person invokes it, and the clipboard history follows the rules in [surfaces.md](surfaces.md). Every other rule of this document still applies to that machine.
@@ -83,8 +108,8 @@ A measured cell passes only when all of the following are observed during a conc
 - Clipboard: zero clipboard reads and zero clipboard writes on the person's clipboard, apart from the clipboard history the person turned on.
 - File scope: zero out-of-scope file access, and zero lost human edits. Every file LINA touches is in the scope of its grant. When a file changed under the person's hands, LINA's write against the stale revision is rejected; the person's version wins.
 - CPU and memory yield: under concurrent load from the person, from LINA and from the background load (LIFE world activity, channel sessions, every agent's background work, agent exchanges and background sub-agent runs included), the person's input latency stays within the declared bounds, and LINA's processes stay within their declared resource bounds. LINA yields when the person needs the machine and recovers its own work afterwards. LINA never kills the person's processes.
-- Lock and unlock: the outcome is measured per cell. Locking the person's session must never let LINA act on that session, and unlocking must never let a stale grant resume as if nothing happened.
-- Sleep and resume: the outcome is measured per cell. Resuming from sleep never revives a grant that expired while the machine was asleep, and never lets a stale grant act on the person's session.
+- Lock and unlock: the seat lease ends with a receipt id on lock and cannot revive on unlock; the outcome is measured per cell. Locking the person's session must never let LINA act on that session, and unlocking must never let a stale grant resume as if nothing happened.
+- Sleep and resume: resume revokes every seat lease with a receipt id and requires fresh handover; the outcome is measured per cell. Resuming from sleep never revives a grant that expired while the machine was asleep, and never lets a stale grant act on the person's session.
 - Disconnect: an observed disconnect from the main blocks new work and requests cancellation of running work at once. A silent disconnect ends authorization at the grant's expiry deadline, as defined in [main-authority.md](main-authority.md). In both cases the person's session stays untouched.
 
 Bounds for latency, resource use, yield time and recovery time are declared per test before the test runs and recorded with the evidence. A test without declared bounds is not a measurement. The resident budget each LINA process declares in [runtime.md](runtime.md) is one of the bounds of the CPU and memory yield column.

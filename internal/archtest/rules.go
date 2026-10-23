@@ -170,8 +170,8 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			if within(owner, "internal/node") || within(owner, "cmd/lina-node") {
 				allowedKit := within(imported, rootModule+"/kit") && nodeKit[family(imported, rootModule+"/kit")]
 				allowedBuildinfo := owner == "cmd/lina-node" && imported == rootModule+"/internal/buildinfo"
-				if !standard[imported] && !allowedKit && !allowedBuildinfo {
-					report(spec.Pos(), "Node", "only the standard library, C-35 kit packages and cmd/lina-node's buildinfo import are allowed: "+imported)
+				if !standard[imported] && !allowedKit && !allowedBuildinfo && !within(imported, rootModule+"/internal/node") {
+					report(spec.Pos(), "Node", "only Node packages, the standard library, C-35 kit packages and cmd/lina-node's buildinfo import are allowed: "+imported)
 				}
 			}
 			if imported == "os" {
