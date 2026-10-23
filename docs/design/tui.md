@@ -592,6 +592,13 @@ Contract: [surfaces.md](surfaces.md#progress-at-a-glance), [work-and-delegation.
 
 The work panel is the primary way to see work in the TUI: a sidebar at the right of the conversation with one card per 일. The person reads the 일, not the workers. Every string follows the wording rule of [surfaces.md](surfaces.md#default-view). The TUI computes no stage, order, state or text of work; it draws Core's progress lines and counts only the cards it folds.
 
+Core's `card_order` selects the flat card sequence. The shared overview remains
+in goal-child order for indented text views; projecting cards never mutates it.
+Without `card_order`, cards retain the received row order.
+`TestM3ProgressHierarchyInstalledCore` (`e2e/m3/progress-hierarchy.json`) checks
+both orders through installed Core, restart, and the 120x34 sidebar and 100x34
+overlay in Korean and English with Unicode and ASCII glyphs.
+
 **Place.** In the wide tier the panel is always shown while the `progress` capability is granted. It is a column from below the header to above the composer rule, 40 columns wide, or a third of the terminal width up to 56 columns (P), separated from the conversation by one blank column. With no cards it shows only its one-word title. While it is shown, the At a glance card row and the running strip take no rows, and their counts stay in the status line. The Waiting for me card row stays under the conversation, where decisions are answered. In the medium and narrow tiers the same panel is an overlay over the conversation region, opened by Ctrl+P and closed by Esc. It replaces the full-screen progress view.
 
 **Cards.** Below the title, each 일 is a card of exactly two rows, and nothing else by default:
