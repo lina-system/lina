@@ -2140,8 +2140,11 @@ or an executable. The file contains:
   requires the criterion's `expected` record fields. Registration supplies the
   reader, never authority to perform the effect being verified.
 
-QA and outcome checks run in a disposable checkout of the observed merge commit.
-Deploy uses that same pinned revision. Core passes `LINA_GOAL_REVISION`,
+QA and a task-bound outcome check run in a disposable checkout of that task's
+current result. A repair whose QA passes replaces the failed commit for those
+checks; the merge check stays on the historical merge commit. A task with no
+repair uses its observed merge commit. Deploy uses the pinned revision of the
+service repository. Core passes `LINA_GOAL_REVISION`,
 `LINA_GOAL_TARGET` and `LINA_GOAL_ACTION` to the registered command. Its JSON output
 contains `revision`, `target`, `passed` (boolean) and a nonempty `evidence` string
 describing the observation. Core requires matching revision and target, retains
@@ -2167,7 +2170,9 @@ output and current external evidence again before closing the goal. An earlier
 merge remains valid when its recorded commit is still an ancestor of the current
 base; a base that removed the commit fails the check. A custom criterion targeting
 a repository uses that repository's observed merged revision, independently of
-the service repository. Completion
+the service repository. A custom criterion that names a task uses that task's
+current result revision, the same revision its QA check uses. Evidence recorded
+against a superseded merge cannot meet it. Completion
 returns to the originating conversation and survives restart without repeating
 effects. An uncertain worker, merge, QA or deployment is observed; it is never
 re-executed by the observation path. A deployment retains its original connection

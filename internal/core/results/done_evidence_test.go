@@ -10,6 +10,7 @@ import (
 )
 
 func TestCompletionEvidenceRevisionsAndCounter(t *testing.T) {
+	t.Parallel()
 	s, db, _, _ := setup(t)
 	p := proposal()
 	p.Completion = &result.CompletionRequest{WorkKind: "document"}

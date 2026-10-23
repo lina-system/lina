@@ -16,6 +16,18 @@ type ProviderFixture struct {
 	Tools   []provider.ToolDecl `json:"tools"`
 	History []provider.Item     `json:"history"`
 	Turns   []FixtureTurn       `json:"turns"`
+	// Summary adds one compaction summary request over the first Segment
+	// history items, shaped as Core sends it. Absent means no summary row.
+	Summary *FixtureSummary `json:"summary,omitempty"`
+}
+
+// FixtureSummary chooses the segment a measured summary request covers. The
+// segment ends at a complete turn, so Segment is even and leaves a tail.
+// Baseline measures the request Core sent before it carried the conversation's
+// cache boundary: the same prefix items, tools and segment, with no layout.
+type FixtureSummary struct {
+	Segment  int  `json:"segment"`
+	Baseline bool `json:"baseline,omitempty"`
 }
 type FixtureTurn struct {
 	Input   provider.Item `json:"input"`
@@ -63,6 +75,9 @@ func ParseProviderFixture(raw string) (ProviderFixture, error) {
 		}
 	}
 	if loops != 2 {
+		return f, ErrInvalid
+	}
+	if f.Summary != nil && (f.Summary.Segment <= 0 || f.Summary.Segment >= len(f.History) || f.Summary.Segment%2 != 0) {
 		return f, ErrInvalid
 	}
 	return f, nil

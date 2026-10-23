@@ -175,3 +175,12 @@ shows a quote and an erased-source status.
   T-16’s p95 500 ms / maximum 1 s bounds. The run also checks worker result
   files, card Now and retention of the draft, selection and reading position.
   See [the measurement notes](../m3/work-panel-latency.md).
+
+`TestM1MessengerStoreInstalledCore` runs the real messenger store inside
+installed Core with a scripted adapter. Core reads two pages of one chat, an
+edit and a platform-reported deletion, stops between pages, and resumes from the
+committed cursor; a later run that re-serves the newest page adds nothing. The
+scenario checks the ledger records and their speaker kinds, the supersession and
+retraction relations, the tombstone that keeps the legacy reference, the
+coverage and cursor rows, the one index's documents with origin `messenger`, and
+that a URL secret is masked while the URL's public text stays.

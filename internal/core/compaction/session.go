@@ -28,6 +28,9 @@ func NewSession(p Pass, v View, resolve ResolveItems) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The boundary already decided whether to compact early. Follow-up requests
+	// inside the turn keep the ordinary trigger.
+	p.Cold = false
 	return &Session{pass: p, view: copyView(v), original: v.request().Items, resolve: resolve}, nil
 }
 func (s *Session) View() View { return copyView(s.view) }
