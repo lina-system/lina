@@ -171,7 +171,7 @@ func TestDelegatedFileCompletionReturnsToRequester(t *testing.T) {
 	}
 	requester := newConversationView(r, first.Agent.ID, "main:"+first.Agent.ID)
 	bindings := map[string]loop.Tool{}
-	if err = requester.prepareWorkTools("turn:delegated-file", bindings); err != nil {
+	if _, err = requester.prepareWorkTools("turn:delegated-file", nil, bindings); err != nil {
 		t.Fatal(err)
 	}
 	result := bindings["prepare_work"].Execute(t.Context(), provider.ToolCall{ID: "prepare", Name: "prepare_work", Arguments: `{"task_id":"delegated-file","title":"Create a report","done":"Report exists","workspace":{}}`})
