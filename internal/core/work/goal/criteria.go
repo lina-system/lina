@@ -69,6 +69,9 @@ func goalCriteria(g Goal) []Criterion {
 	return out
 }
 func criterionRevision(g Goal, c Criterion) string {
+	if c.Check.Method == "steps.read" {
+		return targetRevision(g)
+	}
 	if c.Check.TaskID != "" {
 		for _, t := range g.Tasks {
 			if t.ID == c.Check.TaskID {

@@ -75,3 +75,24 @@ func TestFrontierResultsOnlyGoalHasVerificationRevision(t *testing.T) {
 		t.Fatal("missing result borrowed a revision")
 	}
 }
+
+func TestFrontierAggregateCriterionAcrossRepositories(t *testing.T) {
+	a := readyTask("a")
+	a.Kind = WaitStep
+	a.Wait = &StepWait{At: 1}
+	a.Area, a.Base, a.Worker = "", "", ""
+	a.Resources = Resources{}
+	a.Stage = TaskDone
+	a.Result = Proof{Revision: "1", Ref: "date", Passed: true}
+	b := a
+	b.ID = "b"
+	b.Repository = "other"
+	g := oneGoal(a, b)
+	g.Scope.Repositories = []string{"repo", "other"}
+	for _, target := range g.Scope.Repositories {
+		c := Criterion{ID: "outcome", Check: CriterionCheck{Kind: ReadEvidence, Method: "steps.read", Target: target}}
+		if got := criterionRevision(g, c); got == "" || got != targetRevision(g) {
+			t.Fatalf("aggregate criterion borrowed repository merge: %q", got)
+		}
+	}
+}

@@ -2,12 +2,15 @@
 package boot
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/records"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 )
 
 func TestGoalStepWaitReadsOwnedRecordAndExpiry(t *testing.T) {
@@ -53,5 +56,36 @@ func TestGoalStepWaitReadsOwnedRecordAndExpiry(t *testing.T) {
 				t.Fatal("unproven close")
 			}
 		})
+	}
+}
+
+func TestGoalStepBackgroundUsesRecordedOrigin(t *testing.T) {
+	r, _, owner, source := managementFixture(t)
+	d := &codeGoalDriver{runtime: r}
+	g := goal.Goal{ID: "goal", Person: r.person, Agent: owner, Conversation: "manager:goal", Turn: "coding:source"}
+	a := codingAssignment{ID: g.ID, Manager: "manager", Owner: owner, Conversation: g.Conversation, Origin: dispatch.Origin{Person: r.person, Agent: source, Conversation: "main:" + source, Turn: "source-turn"}}
+	raw, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(t.Context(), "INSERT INTO coding_managers(id,person,owner,unit,conversation) VALUES(?,?,?,?,?)", a.Manager, g.Person, g.Agent, g.ID, g.Conversation); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO coding_assignments(id,manager,record) VALUES(?,?,?)", a.ID, a.Manager, raw)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	o, err := d.goalRunOrigin(t.Context(), g)
+	if err != nil || o.Agent != source || o.Conversation != a.Origin.Conversation || o.Turn != a.Origin.Turn || o.Epoch != r.epoch {
+		t.Fatalf("lost originating authority: %+v %v", o, err)
+	}
+	for _, change := range []func(*goal.Goal){func(g *goal.Goal) { g.Person = "other" }, func(g *goal.Goal) { g.Agent = source }, func(g *goal.Goal) { g.Conversation = "main:" + owner }} {
+		other := g
+		change(&other)
+		if _, err = d.goalRunOrigin(t.Context(), other); err == nil {
+			t.Fatal("mismatched delegation accepted")
+		}
 	}
 }

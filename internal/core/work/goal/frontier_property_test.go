@@ -8,8 +8,6 @@ import (
 	"sort"
 	"testing"
 	"time"
-
-	"github.com/thisisjun786/lina/internal/core/runs"
 )
 
 // The oracle does not call Derive, Slots, stepLanded or taskDone. Graphs have
@@ -28,7 +26,7 @@ func TestFrontierGeneratedGraphsAndEventOrders(t *testing.T) {
 				switch i % 3 {
 				case 1:
 					x.Kind = BackgroundStep
-					x.Background = &runs.Brief{Goal: "Read", Scope: "catalog", NotTouch: "files", Done: "read", Result: "notes", Checks: []runs.Check{{Name: "read", Kind: runs.Claimed}}}
+					x.Background = &BackgroundBrief{Goal: "Read", Scope: "catalog", NotTouch: "files", Done: "read", Result: "notes", Checks: []BackgroundCheck{{Name: "read", Kind: "claimed"}}}
 				case 2:
 					x.Kind = WaitStep
 					x.Wait = &StepWait{At: 200}

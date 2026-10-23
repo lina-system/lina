@@ -6,14 +6,12 @@ import (
 	"reflect"
 	"testing"
 	"time"
-
-	"github.com/thisisjun786/lina/internal/core/runs"
 )
 
 func TestFrontierMixedGraphCommitsClaimsAndRestart(t *testing.T) {
 	e, db := graphFixture(t)
 	steps := []Step{
-		{ID: "bg-entry", Name: "Read catalog", Kind: BackgroundStep, Repository: "repo", Done: "bg-entry", Resources: Resources{CPU: 1, MemoryMB: 1, DiskMB: 1}, Background: &runs.Brief{Goal: "Read", Scope: "catalog", NotTouch: "files", Done: "bg-entry", Result: "notes", Checks: []runs.Check{{Name: "bg-entry", Kind: runs.Claimed}}}},
+		{ID: "bg-entry", Name: "Read catalog", Kind: BackgroundStep, Repository: "repo", Done: "bg-entry", Resources: Resources{CPU: 1, MemoryMB: 1, DiskMB: 1}, Background: &BackgroundBrief{Goal: "Read", Scope: "catalog", NotTouch: "files", Done: "bg-entry", Result: "notes", Checks: []BackgroundCheck{{Name: "bg-entry", Kind: "claimed"}}}},
 		{ID: "time-entry", Name: "Wait for date", Kind: WaitStep, Repository: "repo", Done: "date reached", Wait: &StepWait{At: 200}},
 		graphStep("build", "Prepare output"),
 	}

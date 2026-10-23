@@ -3,22 +3,49 @@ package boot
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
+// Delegated managers have an internal conversation. Their background results
+// return through the recorded originating conversation, with its own authority.
+func (d *codeGoalDriver) goalRunOrigin(ctx context.Context, g goal.Goal) (runs.Origin, error) {
+	o := runs.Origin{Person: g.Person, Agent: g.Agent, Conversation: g.Conversation, Turn: g.Turn, Epoch: d.runtime.epoch}
+	err := d.runtime.db.Read(ctx, func(tx *canon.Tx) error {
+		a, err := readCoding(ctx, tx, g.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if a.Owner != g.Agent || a.Conversation != g.Conversation || a.Origin.Person != g.Person {
+			return goal.ErrNeedsPerson
+		}
+		o.Agent, o.Conversation, o.Turn = a.Origin.Agent, a.Origin.Conversation, a.Origin.Turn
+		return nil
+	})
+	return o, err
+}
+
 func (d *codeGoalDriver) backgroundStep(ctx context.Context, g goal.Goal, t goal.Task, a goal.Action, observe bool) (goal.Observation, error) {
 	if d.runtime.background == nil || t.Background == nil {
 		return goal.Observation{}, goal.ErrNeedsPerson
 	}
 	s := d.runtime.background.service
-	origin := runs.Origin{Person: g.Person, Agent: g.Agent, Conversation: g.Conversation, Turn: g.Turn, Epoch: d.runtime.epoch}
+	origin, err := d.goalRunOrigin(ctx, g)
+	if err != nil {
+		return goal.Observation{}, err
+	}
 	var id string
 	if observe {
 		r, found, err := s.Started(ctx, origin, a.ID)
@@ -118,7 +145,10 @@ func (d *codeGoalDriver) readStepResult(ctx context.Context, s goal.State, g goa
 		if d.runtime.background == nil {
 			return goal.Proof{}, goal.ErrNeedsPerson
 		}
-		origin := runs.Origin{Person: g.Person, Agent: g.Agent, Conversation: g.Conversation, Turn: g.Turn}
+		origin, err := d.goalRunOrigin(ctx, g)
+		if err != nil {
+			return goal.Proof{}, err
+		}
 		for _, a := range s.Actions {
 			if a.GoalID != g.ID || a.TaskID != t.ID || a.Kind != goal.Assign || a.Superseded || a.State != "finished" {
 				continue

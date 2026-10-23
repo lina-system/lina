@@ -10,24 +10,24 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/runs"
+
 	"github.com/thisisjun786/lina/internal/core/work"
 )
 
 // Step contains manager-owned inputs only. Execution state remains in Task.
 type Step struct {
-	Kind       StepKind    `json:"kind,omitempty"`
-	Background *runs.Brief `json:"background,omitempty"`
-	Wait       *StepWait   `json:"wait,omitempty"`
-	ID         string      `json:"id"`
-	Name       string      `json:"name"`
-	Done       string      `json:"done"`
-	Repository string      `json:"repository"`
-	Base       string      `json:"base"`
-	Area       string      `json:"area"`
-	Worker     string      `json:"worker"`
-	Resources  Resources   `json:"resources"`
-	DependsOn  []string    `json:"depends_on"`
+	Kind       StepKind         `json:"kind,omitempty"`
+	Background *BackgroundBrief `json:"background,omitempty"`
+	Wait       *StepWait        `json:"wait,omitempty"`
+	ID         string           `json:"id"`
+	Name       string           `json:"name"`
+	Done       string           `json:"done"`
+	Repository string           `json:"repository"`
+	Base       string           `json:"base"`
+	Area       string           `json:"area"`
+	Worker     string           `json:"worker"`
+	Resources  Resources        `json:"resources"`
+	DependsOn  []string         `json:"depends_on"`
 }
 
 type StepGraph struct {

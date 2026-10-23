@@ -3,11 +3,20 @@ package goal
 
 import (
 	"strings"
-
-	"github.com/thisisjun786/lina/internal/core/runs"
 )
 
 type StepKind string
+
+// BackgroundBrief is the ledger's work definition. Boot converts its wire
+// shape to the run service input; the work store does not depend on that flow.
+type BackgroundBrief struct {
+	Goal, Scope, NotTouch, Done string
+	Checks                      []BackgroundCheck
+	Result                      string
+	Allow                       []string
+}
+
+type BackgroundCheck struct{ Name, Kind string }
 
 const (
 	TaskStep       StepKind = "task"
@@ -47,7 +56,7 @@ func validStepWork(t Task) bool {
 			return false
 		}
 		for _, c := range b.Checks {
-			if c.Name == "" || c.Kind != runs.Claimed && c.Kind != runs.ToolCalled && c.Kind != runs.CitationsResolve {
+			if c.Name == "" || c.Kind != "claimed" && c.Kind != "tool_called" && c.Kind != "citations_resolve" {
 				return false
 			}
 		}

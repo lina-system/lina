@@ -82,7 +82,7 @@ func (s *stepGraphScenario) respond(t *testing.T, w http.ResponseWriter, request
 		}
 		p.DependsOn = []string{"facts", "time-entry"}
 		return []goal.Step{p,
-			{ID: "facts", Name: "Read catalog", Kind: goal.BackgroundStep, Done: "Catalog read", Repository: "fixture/project", Resources: goal.Resources{CPU: 0.01, MemoryMB: 1, DiskMB: 1}, DependsOn: []string{}, Background: &runs.Brief{Goal: "Read catalog", Scope: "skill catalog", NotTouch: "files", Done: "Catalog read", Result: "notes", Allow: []string{"skill_index"}, Checks: []runs.Check{{Name: "skill_index", Kind: runs.ToolCalled}}}},
+			{ID: "facts", Name: "Read catalog", Kind: goal.BackgroundStep, Done: "Catalog read", Repository: "fixture/project", Resources: goal.Resources{CPU: 0.01, MemoryMB: 1, DiskMB: 1}, DependsOn: []string{}, Background: &goal.BackgroundBrief{Goal: "Read catalog", Scope: "skill catalog", NotTouch: "files", Done: "Catalog read", Result: "notes", Allow: []string{"skill_index"}, Checks: []goal.BackgroundCheck{{Name: "skill_index", Kind: "tool_called"}}}},
 			{ID: "time-entry", Name: "Wait for date", Kind: goal.WaitStep, Done: "Date reached", Repository: "fixture/project", DependsOn: []string{}, Wait: &goal.StepWait{At: 1}},
 		}
 	}
