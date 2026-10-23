@@ -306,10 +306,8 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 				if retire {
 					a.State = "finished"
 					a.Superseded = true
-					if t := goalTask(&current, a.TaskID); a.Kind == PlanGoal && t != nil && t.RepairedBy == "" {
-						t.RepairAsked = false
-						a.RetirementReconciled = true
-					}
+					// Reconcile clears a claimed repair assessment's marker and
+					// commits RetirementReconciled together, including after restart.
 				}
 				if err = put(v, "action", a.ID, a); err != nil {
 					return err

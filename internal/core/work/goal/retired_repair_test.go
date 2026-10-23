@@ -28,6 +28,9 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	// A clarification also changes the record revision while leaving b's
 	// failed task inputs and QA evidence unchanged.
 	revisionEdit(t, e)
+	if !revisionSnapshot(t, e).Goals[0].Tasks[1].RepairAsked {
+		t.Fatal("definition refresh cleared the claimed assessment before reconciliation")
+	}
 	repair.ID, repair.Repairs, repair.DependsOn = "obsolete-repair-b", "b", []string{"b"}
 	for range 2 {
 		if err := e.Report(t.Context(), managers[1].ID, managers[1].Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
@@ -39,12 +42,18 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 			t.Fatalf("old report did not retain pending retirement: %+v", a)
 		}
 	}
+	if !revisionSnapshot(t, e).Goals[0].Tasks[1].RepairAsked {
+		t.Fatal("obsolete report cleared the assessment before reconciliation")
+	}
 	cfg := e.cfg
 	cfg.Epoch++
 	var err error
 	e, err = NewEngine(cfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !revisionSnapshot(t, e).Goals[0].Tasks[1].RepairAsked {
+		t.Fatal("restart lost the pending assessment retirement")
 	}
 	// Reports retain obsolete receipts; reconciliation clears their markers.
 	// Restart before that step to prove the unfinished retirement is durable.
@@ -54,6 +63,11 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	g := revisionSnapshot(t, e).Goals[0]
 	if b := g.Tasks[1]; b.Stage != TaskQAFailed || b.RepairAsked || b.RepairedBy != "" || b.QA.Ref != "failed-qa" {
 		t.Fatalf("retired assessment stranded or changed its task: %+v", b)
+	}
+	for _, a := range revisionSnapshot(t, e).Actions {
+		if a.ID == managers[1].ID && !a.RetirementReconciled {
+			t.Fatal("reconciliation did not commit the completed retirement")
+		}
 	}
 	// Accept the clarification, then require a new assessment of the same b.
 	revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("clarification")}})
