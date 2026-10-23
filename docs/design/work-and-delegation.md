@@ -411,7 +411,12 @@ The completion guard applies to transitions into `completed`; preserving that
 state does not permit changing an execution observation.
 
 The current conversation path accepts exact ISO dates and offset-bearing
-RFC 3339 times. Natural-language dates, ambiguous numeric dates, nonexistent
+RFC 3339 times with two-digit time components and an optional dot-separated
+fraction. Numeric offsets have hours from 00 to 14 and minutes from 00 to 59,
+and the resulting UTC instant must fit SQLite's date range. These checks apply
+to `when`, `deadline`, `repeat.next`, `waiting_on.since` and
+`waiting_on.next_check`; accepted text is preserved. Noncanonical or unsupported
+timestamps, natural-language dates, ambiguous numeric dates, nonexistent
 calendar dates and times without an offset return `ambiguous_date` before any
 saved version. The agent asks the person to resolve the date and then supplies
 the exact value; it must not invent a resolution. Natural-language parsing and
