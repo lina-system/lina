@@ -560,6 +560,21 @@ for its conversation tool receipt to commit. The Codex `worker_start` session pa
 uses the same resolver and exposes the same packet through `read_projection`.
 The existing `dispatch_work` definition carries these fields for Antigravity.
 
+Before a new `dispatch_work` admission reaches the manager or queue, Core
+requires a nonblank done condition and write area, resolves the base to a commit,
+and checks each `path#section` against Markdown headings in that commit. A
+working-tree edit or a heading inside a code example cannot supply a section.
+Heading anchors use lowercase text, hyphens for spaces, and numbered suffixes
+for duplicate headings. Missing files, sections or base commits refuse admission
+without creating a task or starting a worker.
+
+Core persists the resolved base commit with the definition. Admission retries
+and queued execution keep that commit even if the named branch moves. The
+packet includes the assignment id, pinned base, assigned branch and complete
+definition. In the Antigravity headless path, it explains that the adapter derives
+the receipt from the final worker result and observed PR; it grants no material
+or memory projections beyond the supplied definition and method.
+
 Mechanical checks stay in Core, rather than becoming instructions in a skill:
 
 - Work-definition completeness, protected branches, design references and write
@@ -583,6 +598,35 @@ turns words such as “verified” into acceptance evidence.
 ### Choosing the worker
 
 LINA chooses the worker for a task from the situation, the person's subscription quota and the host's capacity, and hands the task off. The situation is the kind of work and the repository. Quota is what each worker reports about its remaining quota; an unknown quota is a value, and for a worker that reports none LINA Core uses its own usage accounting ([runtime.md](runtime.md)). The choice follows an editable table of rules, marked provisional, which the power settings show ([surfaces.md](surfaces.md)). A worker whose quota row is ok is preferred, an unknown row is usable but unmeasured, a blocked row is unavailable until the stated reset (or until the next successful call when no reset is given), and a reset time is never inferred ([runtime.md](runtime.md#usage-and-cost)). If a worker stops on quota, rate limit, login expiry or repeated connection failure, LINA hands the same task packet to the next suitable worker without asking the person. Two workers never share a worktree.
+
+The installed `dispatch_work` path preserves the admitted packet, pinned base,
+method and assigned branch across one automatic replacement. The quota-stopped
+process tree is reaped before the replacement receives the workspace; partial
+work remains there. Each attempt gets its own execution generation. A second
+quota stop is retained as a terminal failed observation and cannot start a third
+worker. A restart preserves quota blocks, area claims and uncertain attempts.
+An explicit reset makes a blocked row eligible as unmeasured, without inventing
+a fresh quota measurement or reset time.
+Parking preserves independently reported healthy, warning and unknown windows;
+their later resets cannot extend an exhausted window's block. If no exhausted
+window is reported or cached, the stop is recorded separately with an unknown
+window and reset. `e2e/m2/worker-quota-windows.json` covers the installed Core
+handoff and durable per-window state across restart.
+A successful `worker_quota` read from a routed conversation refreshes the shared
+dispatch service and wakes its chooser, including after a stop without a reset.
+
+The provisional worker rule table is read at startup from
+`system/core/worker-choice.json`. Its `rules` contain `worker`, `tags` and integer
+`priority`; the top-level `provisional` must be true. Tags match the work kind
+and local repository path. Quota eligibility and host capacity always win over
+priority. Without rules, otherwise equal candidates retain the installed
+Antigravity-then-Codex order. These rules grant no worker permissions.
+
+Queued tasks may share a repository. Core claims their declared areas in the
+same fenced transaction as handoff, and only free areas can start. The claim
+continues through delivery and manager judgment until trusted application;
+missing evidence and interrupted execution retain it. Receipt replay never
+resets the reservation or the number of attempted workers.
 
 ### Operating the pull request
 
@@ -879,6 +923,43 @@ LINA Core, or the Node on a remote device, starts every worker as a child proces
 - LINA installs no hook, plugin or setting in a worker to obtain a signal.
 - A worker that reports a typed failure (an error code, an authentication or billing category, a rate-limit category) produces a failure event with that type.
 
+### Claude Code headless adapter
+
+Core resolves the person's installed `claude` and launches it in the task
+worktree with `--print --output-format stream-json --verbose`, sending the task
+packet on stdin. Its login, provider, permissions, instructions and integrations
+remain its own. Core adds no hook, plugin, skill, permission bypass or settings
+file. The installed version is recorded and reported as unverified until an
+account-backed round trip establishes compatibility.
+
+A `system/init` message binds the session and must match the requested cwd and
+any explicit model. Assistant messages supply progress; the final `result`
+supplies usage and ends the turn immediately, even while the process remains
+alive. Core then reaps the process tree before releasing its activity. EOF
+without a result, malformed messages, mismatched sessions, error results and
+permission denials are failures. Other informational messages cannot complete a
+turn. Interactive approvals, work tools, resume and steering are not advertised
+by this one-attempt headless adapter.
+
+With `claude`, `git` and `gh` installed, `dispatch_work` can select `worker:
+"claude"`. Existing omitted selections remain Antigravity. The same authorized,
+committed admission and assigned worktree rules apply. No schema migration is
+needed: the optional worker selection stays in the durable task definition.
+An unavailable selected executable yields `worker_unavailable` without a
+substitute worker. A final success is only a worker report. Core reads the
+assigned branch's PR, current head, checks and review before recording readiness;
+pending or missing evidence cannot become delivery. The artifact preserves the
+final result and PR observations, masks secrets, omits denial tool inputs and
+marks receipt provenance `adapter-derived`. Acceptance and merge remain separate.
+Results return to the originating conversation and survive restart without
+replaying execution.
+
+`e2e/m2/claude-worker.json` covers result-before-exit, real file and commit
+creation, the derived receipt, denied permissions, missing results, pending PR
+checks and restart. The installed Core and Git work are real; the Claude and
+GitHub boundaries are synthetic. This establishes the integration contract,
+not authenticated worker execution or a verified Claude version.
+
 ### Antigravity headless adapter
 
 Core resolves the installed `agy` executable and runs it as a supervised child
@@ -1123,6 +1204,13 @@ replacement must belong to the corrected scope.
 
 When a revision invalidates queued actions, Core retires them and releases their reservations in the same ledger transaction. A worker action that was never dispatched restores its task's runnable stage and does not spend an attempt, continuation or recovery. A cancelled manager action likewise does not consume the task's repair turn. Adding a repair task also revises the goal: obsolete queued sibling actions are retired and derived again, so independent work remains runnable. Actions already claimed keep their reservations until Core reads their outcome; revision never dispatches their effects again.
 
+A task signal or revision cannot reopen an action whose outcome Core already
+accepted as terminal. A different late report against its obsolete inputs stays
+in the event history without replacing the accepted receipt or changing the
+task's later stage, including after restart. Only superseded effects whose
+outcomes still need reconciliation receive replacement observations; those
+reads retain the original effect identity and never dispatch it again.
+
 A completed criterion check for an obsolete goal revision, checking round or target is retained as a receipt without applying its evidence or stopping Core. A manager response assesses only the canonical record revision it was given; an older response cannot clear the corrected definition's fence, add its old tasks, or mark the correction blocked. Independent sibling repair plans remain valid across execution revisions while the canonical definition is unchanged.
 
 Retiring an obsolete task repair assessment clears its assessment marker in
@@ -1248,6 +1336,7 @@ Every ready task starts at once, limited only by the person's quota and by what 
 
 - The main host and each connected Node report what they can take; on an installation without Node, the main host alone reports, through the same report that Core makes for itself. A report holds its cores, its load, its available memory and disk, its declared resource caps ([non-competition.md](non-competition.md)), the workers ready on it and their quota rows, and its current reservations. Core computes the free slots of each host from these, and does not use a fixed count per host, per repository or per fleet. A report that is stale or unknown counts as no free capacity, and a Node that is disconnected or yielding gets nothing new.
 - A slot is reserved in the same transaction that claims the task, so two derivations never place the same task or overfill a Node. An award to a Node carries a token and a deadline; an award whose outcome is unknown is resolved by reading that Node's receipt before the task can go anywhere else.
+- A replacement observation keeps the original dispatched effect's identity for matching the Node's measured work. That reservation still counts against resource caps, but is not subtracted again from measured CPU, available memory or disk. Unobserved reservations remain deducted until the Node reports them.
 - Ready tasks are placed in a stable order: tasks of goals with a person's deadline first, then by dependency depth, then by the age of the goal. Within that order, a task goes to the Node with the most headroom that has a suitable worker, and Nodes kept for the person's own use come last.
 - Dependency depth visits each task and its edges at most once per goal during a derivation, reusing shared ancestors across ready tasks. Depths are recomputed from each new snapshot and are never shared between goals.
 - Background runs and plugin effects run in Core and use the person's model and service accounts. They follow the run limits of Background runs and the account's own rate limits, and they never take a Node slot.
@@ -1371,6 +1460,87 @@ cannot prevent other goals from expiring or Core from restarting.
 - **At the start, one line.** What LINA will do, what done means, any assumption it made, and what it will need from the person if that is already known. For example: "출장 준비 시작할게요. 일정·숙소·이동을 캘린더에 넣고 일정표를 만들어 둘게요. 숙소 결제만 확인받을게요."
 - **While it runs, nothing new.** The goal is a progress line and its tasks are rows of the running list. A landing of one task is a row change, not a notice. Only a row of "Waiting for me" can notify, under the notification rules of [surfaces.md](surfaces.md).
 - **At the end, one summary.** It begins with the outcome word (done, or stopped, or blocked with the reason), says in a line what changed for the person, and gives one clause of evidence per criterion in the person's words ("일정표는 자료에 있고, 캘린더 세 건 확인했고, 호텔 확인 메일 받았어요"). It lists what was handed to the person as their own 할 일. It names no issue, pull request, branch, check, path or id; those are in the Details of the goal's card.
+
+### Installed code-goal execution
+
+The installed `lina core` supplies the code-goal Driver. Conversation admission
+binds the goal to the authenticated person, agent, conversation and turn; a model
+cannot supply execution state, receipts, authority or a Driver. The installed
+Antigravity worker runs through the existing dispatch service, with its own
+credentials, a separate worktree and the dev manager's assignment and delivery
+judgments. An adapter without resume support preserves interrupted work and asks
+for attention; it never starts a duplicate execution to imitate a resume.
+
+The owner registers repository connections in `system/code-work.json` under the
+installed state root. This is a private regular file with mode `0600`, outside
+the repository; a symlink, unknown field or invalid command is refused. Core
+loads it at startup. A missing file grants no repository or deployment target.
+The model selects registered repository and check names, never command arguments
+or an executable. The file contains:
+
+- `limits`: positive `cpu`, `memory_mb` and `disk_mb` capacity ceilings, combined
+  with the main host's measured load and installed worker availability.
+- Optional `host_report`: a registered read-only monitor command for environments
+  where Core cannot read the host's counters directly. Without it, Core reads
+  the OS counters. The monitor emits `cpu_cores`, `load_cpu`,
+  `available_memory_mb` and `available_disk_mb`; Core supplies the identity,
+  observation time, installed worker readiness and capacity ceilings. Reported
+  cores are capped by Core's available CPUs. Invalid or failed reports supply no
+  capacity. The installed acceptance uses a fixture monitor so an unrelated CI
+  workload cannot determine whether its fixture worker starts.
+- `repositories`: a map from GitHub `owner/repository` names to `clone` (an
+  absolute local clone), `base`, `design_refs`, `qa` and `checks`. Each command
+  has an absolute `path` and optional literal `args`. `checks` maps criterion
+  methods to commands. Task write areas are comma-separated path globs.
+- An optional repository `service`: `target`, `public`, `deploy` and `probe`.
+  The target is an installed connection name. The probe is a read-only command.
+  A goal cannot omit deployment for a registered service. Public deployment
+  uses the existing argument-bound approval path; registration grants no public
+  deployment approval. A private deployment remains subject to preset limits
+  and the current goal's scope.
+
+QA and outcome checks run in a disposable checkout of the observed merge commit.
+Deploy uses that same pinned revision. Core passes `LINA_GOAL_REVISION`,
+`LINA_GOAL_TARGET` and `LINA_GOAL_ACTION` to the registered command. Its JSON output
+contains `revision`, `target`, `passed` (boolean) and a nonempty `evidence` string
+describing the observation. Core requires matching revision and target, retains
+the output and command identity, and treats a nonzero exit as failure. An exit
+code without this evidence cannot complete a stage. An explicit deployment failure remains failed even if that revision is serving;
+it is not retried automatically. A deployment also requires
+an independent probe of the running service; the deploy command's output alone
+does not prove it is running.
+
+Core captures protected refs before starting the worker, re-reads the PR's current
+head, checks and review, requires the dev manager's verified verdict, and merges
+through the existing durable merge authority and shared-base slot. Only a
+confirming GitHub read releases QA. Criterion checks read their retained QA
+output and current external evidence again before closing the goal. An earlier
+merge remains valid when its recorded commit is still an ancestor of the current
+base; a base that removed the commit fails the check. A custom criterion targeting
+a repository uses that repository's observed merged revision, independently of
+the service repository. Completion
+returns to the originating conversation and survives restart without repeating
+effects. An uncertain worker, merge, QA or deployment is observed; it is never
+re-executed by the observation path. A deployment retains its original connection
+before dispatch so a changed setting cannot settle it against another service.
+An unsuccessful read-only probe of an uncertain deployment keeps the action
+unknown and its authority reservation held. Core retains valid negative evidence
+and probes again on restart or the safety sweep; an unhealthy service alone
+cannot settle the deployment or turn it into a terminal failure.
+When a probe confirms an uncertain deployment, Core records the applied authority
+receipt and releases that effect's target reservation in one transaction. It
+checks the original actor, target and action binding, refuses a live invocation,
+and cannot release a subsequent writer's reservation. The deployment is not
+issued again.
+
+The installed-binary acceptance uses fixture worker and GitHub executables, real
+Git commits, registered check commands and a local HTTP service. It proves one
+code goal through worker execution, manager judgment, merge, QA, deploy, probe,
+criterion readback and closure, then restarts Core and requires no repeated
+effects. A public service without approval must remain undeployed.
+An interrupted deployment whose first recovery probe fails must remain eligible
+for reconciliation, release its reservation after a successful probe, and close
+without issuing the deployment again.
 
 ### Acceptance
 

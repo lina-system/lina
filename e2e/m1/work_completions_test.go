@@ -18,7 +18,7 @@ import (
 
 func TestM2WorkCompletions(t *testing.T) {
 	t.Parallel()
-	testAntigravityThroughInstalledCore(t, "../m2/work-completions.json", false)
+	testHeadlessWorkerThroughInstalledCore(t, "../m2/work-completions.json", false)
 }
 
 func assertWorkCompletion(t *testing.T, h *harness) {

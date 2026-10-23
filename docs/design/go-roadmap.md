@@ -344,6 +344,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-03 Timers, reminders and sensors.** Durable timers, reminders, deterministic sensors.
 - #129 connects canon-backed timers to installed Core conversation tools and the shared reaction lane. `e2e/m2/timers.json` covers a scheduled job creating a record, model-free reminders, record-revision sensors, cancellation and restart. Focused tests exercise cron/RRULE DST gaps and folds, concurrent claims, bounded read-only recovery and SIGKILL before/after the claim commit.
+- #699 bounds RRULE intervals at admission and settles failed deliveries within the running Core. `e2e/m2/timer-recovery.json` covers interval refusal, an independent reminder, and a later sensor occurrence saving a result after source restoration without a Core restart.
 - Done when: a nonexistent local time and a repeated hour each fire once; `kill -9` at claim gives one fire per instant; an unchanged sensor signature spends no model call.
 - Depends on: G1-11, G2-02. Design refs: C-26.
 
@@ -353,7 +354,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Done when: the round trip completes with the installed Codex and records its version; an unverified version is reported and still used; a worker approval reaches the originating conversation and the answer returns; no sandbox, credential or setting is imposed on the worker.
 - Depends on: G1-05, G1-18. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#codex-adapter).
 
-**G2-05 Claude Code adapter.** Headless child, final result as signal.
+**G2-05 Claude Code adapter.** Headless child, final result as signal. #134 connects the installed `claude` worker to `dispatch_work`, preserves its final result with independent PR evidence in an adapter-derived receipt, and covers execution and failure paths through `e2e/m2/claude-worker.json`. The account-free scenario does not establish live Claude version compatibility.
 - Done when: a final result message ends the turn; exit without one is a failure; a receipt built from the final result and the pull request is marked adapter-derived; nothing is installed into the user's tool.
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 
@@ -366,6 +367,8 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G1-02, G2-04, G2-05. Design refs: C-29, C-58; [work-and-delegation.md](work-and-delegation.md#stall-and-failure).
 
 **G2-18 Work definition and worker choice.** `dispatch_work`, task packet, chooser, quota fallback.
+- #138 wires quota-aware Antigravity/Codex choice, fenced write-area claims and one durable packet-preserving handoff into installed Core. `e2e/m2/worker-choice.json` covers quota, overlap, editable situation rules and restart with real task artifacts.
+- Definition validation (#137): invalid definitions and unresolved base-commit sections are refused before admission. Valid packets retain the assignment and pinned base through queueing and retries. `e2e/m2/work-definition.json` covers refusal and a real worker result through running Core.
 - Done when: a definition without a done condition or write area is refused; two tasks with overlapping write areas are never in flight together; a worker whose quota row is blocked is not chosen before its reset; unknown quota is usable; a quota stop hands the same packet once to the next worker.
 - Depends on: G2-01, G2-04. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#work-definition).
 

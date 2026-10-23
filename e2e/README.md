@@ -401,6 +401,14 @@ is found through search and read by LINA id, source-id lookup fails, a new resul
 is saved, and restart keeps the imported identity. This operator-only test and
 fixture are excluded from release archives together with the takeover tool.
 
+`m2/claude-worker.json` runs `dispatch_work` with `worker=claude` through
+installed Core. A headless fixture worker writes and commits a real artifact,
+opens a synthetic PR and reports a final result while staying alive. Core must
+reap it, retain the result and PR in an adapter-derived receipt, and preserve the
+conversation result on restart. Other cases cover permission denial, exit zero
+without a result and pending PR checks. No personal account or GitHub write is
+used. Run with `go test ./e2e/m1 -run '^TestM2ClaudeWorkerThroughInstalledCore$'`.
+
 `m3/antigravity.json` dispatches through installed Core's conversation tool,
 starts its supervised headless worker in a new worktree, produces a real file
 and commit, and verifies a recorded PR at that head. Separate cases cover soft
@@ -465,3 +473,26 @@ result. The note journey holds a background provider response after ten
 foreground tool rounds, then checks one scoped follow-up in the next request.
 The account journey checks unknown quota independently of status and reported
 plan at 100 and 40 columns. External model wires and account data are synthetic.
+
+`m2/work-definition.json` drives `dispatch_work` through installed Core. It
+refuses missing done conditions, write areas and base-commit design sections,
+including headings inside code examples, before a worker is queued. Valid work
+receives the full packet and produces a committed file, observed PR and durable
+receipt. Moving the source base during manager admission leaves the allocated
+worktree and packet pinned to the validated commit. Worker and GitHub boundaries
+are synthetic; Core, Git and the work ledger run normally.
+
+`m2/worker-choice.json` runs installed Core through the conversation protocol.
+Synthetic Antigravity and Codex streams prove unknown quota, blocked-worker
+exclusion, one quota handoff with identical packet bytes, a second quota stop,
+repository choice rules, and overlapping-area waits across restart. The worker
+creates the real result file and Git commit; GitHub observations are synthetic.
+The first quota-stopped process deliberately remains alive until Core reaps it,
+and the replacement checks that it is gone before touching the workspace.
+
+`m2/worker-quota-windows.json` drives a Codex quota stop with an exhausted
+five-hour window and a healthy weekly window through installed Core. The
+replacement worker commits a real result. Persisted quota keeps the windows
+independent before and after restart, and selection at the reported short-window
+reset does not wait for the healthy weekly window. Reset-boundary assertions use
+explicit times rather than waiting for a provider window.
