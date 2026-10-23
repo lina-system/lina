@@ -54,6 +54,8 @@ func underPullRequest(t Task) bool {
 		return t.Conflicts < 1
 	case TaskWorkerLost:
 		return t.EffectsSettled && t.Recoveries < 1
+	case TaskReady, TaskBuilding, TaskMerged, TaskQAFailed, TaskDone, TaskNeedsPerson:
+		return false
 	}
 	return false
 }

@@ -132,7 +132,7 @@ func (w *stepWorld) Execute(ctx context.Context, a work.Action) (work.Observatio
 			return out, fmt.Errorf("missing criterion check")
 		}
 		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &work.CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: w.proof("criterion-"+a.ID, a.Revision).Ref, Passed: true}
-	default:
+	case work.Resume, work.RepairConflict, work.RepairQA, work.ContinueWorker, work.Deploy, work.Observe, work.Decide, work.PlanGoal:
 		return out, fmt.Errorf("unexpected action %s", a.Kind)
 	}
 	return out, nil
@@ -230,6 +230,7 @@ func expectedLive(s work.State) int {
 				if t.EffectsSettled && t.Recoveries < 1 {
 					live++
 				}
+			case work.TaskReady, work.TaskBuilding, work.TaskMerged, work.TaskQAFailed, work.TaskDone, work.TaskNeedsPerson:
 			}
 		}
 	}
@@ -238,24 +239,6 @@ func expectedLive(s work.State) int {
 
 // building counts steps whose turn is still running. Their process exists but
 // no handle is recorded yet, so they bound the live count without deciding it.
-func building(s work.State) int {
-	count := 0
-	for _, g := range s.Goals {
-		if g.State == work.GoalDone || g.State == work.GoalStopped {
-			continue
-		}
-		for _, t := range g.Tasks {
-			if t.Stage == work.TaskBuilding {
-				count++
-			}
-		}
-	}
-	return count
-}
-
-// undecided reports whether any action is still queued, claimed or running.
-// Its process may not exist yet, or may exist without its delivery, so the
-// count is compared for equality only when every dispatch has been observed.
 func undecided(s work.State) bool {
 	for _, a := range s.Actions {
 		switch a.State {
