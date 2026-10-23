@@ -1,0 +1,38 @@
+{
+  "case_id": "todos",
+  "checks": [
+    {
+      "id": "elements",
+      "passed": true
+    },
+    {
+      "id": "controls",
+      "passed": true
+    },
+    {
+      "id": "tokens",
+      "passed": true
+    },
+    {
+      "id": "network",
+      "passed": true
+    },
+    {
+      "id": "errors",
+      "passed": true
+    },
+    {
+      "id": "layout_390",
+      "passed": true
+    },
+    {
+      "id": "layout_1280",
+      "passed": true
+    }
+  ],
+  "judge": "unqualified",
+  "owner_labels": 0,
+  "request": "열린 할 일을 보여 주고 하나를 끝냄으로 표시하게 해 줘",
+  "text": true,
+  "version": 1
+}

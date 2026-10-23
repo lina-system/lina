@@ -226,6 +226,7 @@ func (s *Store) PersonBrief(ctx context.Context, scope RecallScope, topic string
 		return nil, ErrInvalid
 	}
 	var result []BriefSentence
+	var generation int64
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
 		current, err := readBrief(ctx, tx, scope.Person, scope.Agent)
 		if err != nil {
@@ -242,9 +243,27 @@ func (s *Store) PersonBrief(ctx context.Context, scope RecallScope, topic string
 			return err
 		}
 		result = current.Sentences
+		generation = task.Generation
 		return nil
 	})
-	return result, err
+	if err != nil || len(result) == 0 {
+		return result, err
+	}
+	var refs []Evidence
+	for _, sentence := range result {
+		refs = append(refs, sentence.Citations...)
+	}
+	refs, err = s.Quotes(ctx, scope, "person_brief", canon.BriefCitationID(scope.Person, scope.Agent), generation, refs)
+	if err != nil {
+		return nil, err
+	}
+	offset := 0
+	for i := range result {
+		n := len(result[i].Citations)
+		result[i].Citations = refs[offset : offset+n]
+		offset += n
+	}
+	return result, nil
 }
 func validateBriefSources(ctx context.Context, tx *canon.Tx, task BriefTask, scope RecallScope, at int64, resolve ResolveEvidence) error {
 	var epoch int64
@@ -341,7 +360,18 @@ func writeBrief(ctx context.Context, tx *canon.Tx, record briefRecord) error {
 	}
 	task := record.Task
 	_, err = tx.ExecContext(ctx, `INSERT INTO memory_person_brief VALUES(?,?,?,?) ON CONFLICT(person,agent) DO UPDATE SET generation=excluded.generation,record=excluded.record`, task.Scope.Person, task.Scope.Agent, task.Generation, raw)
-	return err
+	if err != nil {
+		return err
+	}
+	var refs []Evidence
+	for _, sentence := range record.Sentences {
+		refs = append(refs, sentence.Citations...)
+	}
+	evidence, err := json.Marshal(refs)
+	if err != nil {
+		return err
+	}
+	return canon.WriteEvidenceCitations(ctx, tx, "person_brief", canon.BriefCitationID(task.Scope.Person, task.Scope.Agent), task.Generation, evidence)
 }
 func BriefApply(agent, person string, now func() int64, resolve ResolveEvidence) func(context.Context, *canon.Tx, jobapi.Task, json.RawMessage) error {
 	return func(ctx context.Context, tx *canon.Tx, task jobapi.Task, output json.RawMessage) error {

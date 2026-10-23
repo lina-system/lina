@@ -20,39 +20,9 @@ import (
 func NewMemory(db *canon.Store, materials ledger.Materials, aux Auxiliary) *Memory {
 	events := ledger.New(db, materials)
 	m := newMemory(db, nil, nil, aux)
+	m.store = memory.New(db).WithQuotes(events.Citation)
 	m.prepare = func(ctx context.Context, in memory.Write) (memory.ResolveEvidence, error) {
-		if db == nil {
-			return nil, memory.ErrInvalid
-		}
-		cached := materialBodies{}
-		for _, ref := range in.Item.Evidence {
-			if ref.Kind != memory.Event || ref.Revision != 0 {
-				return nil, memory.ErrEvidence
-			}
-			if _, err := canonicalEvent(ctx, events, ref.ID, cached); err != nil {
-				return nil, err
-			}
-		}
-		return func(ctx context.Context, tx *canon.Tx, ref memory.Evidence) (memory.Origin, error) {
-			event, err := canonicalEvent(ctx, ledger.New(transactionReader{tx}, cached), ref.ID, nil)
-			if err != nil {
-				return memory.Origin{}, err
-			}
-			person := event.PersonID
-			// Non-person events carry no person id. The authenticated flow supplies
-			// the owning person; the source agent still must match at memory commit.
-			if person == "" {
-				person = in.Person
-			}
-			origin := memory.Origin{ID: event.ID, Person: person, Agent: event.AgentID, Speaker: event.SpeakerKind, Quote: event.Body.DerivedText(), OccurredAt: event.OccurredAt.Unix(), Scope: memory.Local}
-			for _, span := range event.Spans {
-				origin.Sensitivity = append(origin.Sensitivity, span.Sensitivity)
-				if span.Sensitivity == "third_party" {
-					origin.Scope = memory.Private
-				}
-			}
-			return origin, nil
-		}, nil
+		return PrepareMemoryEvidence(ctx, db, materials, in)
 	}
 	m.ledger = func(ctx context.Context, scope memory.RecallScope, q memory.Query) ([]RecallSource, error) {
 		// Raw conversation evidence has no grant for projection to another audience.
@@ -90,6 +60,9 @@ func NewMemory(db *canon.Store, materials ledger.Materials, aux Auxiliary) *Memo
 				continue
 			}
 			event, err := events.Get(ctx, id)
+			if errors.Is(err, ledger.ErrBytesUnavailable) && ctx.Err() == nil {
+				continue
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -168,4 +141,42 @@ func canonicalEvent(ctx context.Context, events *ledger.Store, id string, cache 
 			return ledger.Event{}, errors.Join(memory.ErrEvidence, err)
 		}
 	}
+}
+
+// PrepareMemoryEvidence verifies material bytes before a caller enters the writer.
+// The resolver rechecks the immutable ledger metadata in the caller transaction.
+func PrepareMemoryEvidence(ctx context.Context, db *canon.Store, materials ledger.Materials, in memory.Write) (memory.ResolveEvidence, error) {
+	events := ledger.New(db, materials)
+	if db == nil {
+		return nil, memory.ErrInvalid
+	}
+	cached := materialBodies{}
+	for _, ref := range in.Item.Evidence {
+		if ref.Kind != memory.Event || ref.Revision != 0 {
+			return nil, memory.ErrEvidence
+		}
+		if _, err := canonicalEvent(ctx, events, ref.ID, cached); err != nil {
+			return nil, err
+		}
+	}
+	return func(ctx context.Context, tx *canon.Tx, ref memory.Evidence) (memory.Origin, error) {
+		event, err := canonicalEvent(ctx, ledger.New(transactionReader{tx}, cached), ref.ID, nil)
+		if err != nil {
+			return memory.Origin{}, err
+		}
+		person := event.PersonID
+		// Non-person events carry no person id. The authenticated flow supplies
+		// the owning person; the source agent still must match at memory commit.
+		if person == "" {
+			person = in.Person
+		}
+		origin := memory.Origin{ID: event.ID, Person: person, Agent: event.AgentID, Speaker: event.SpeakerKind, Quote: event.Body.DerivedText(), OccurredAt: event.OccurredAt.Unix(), Scope: memory.Local}
+		for _, span := range event.Spans {
+			origin.Sensitivity = append(origin.Sensitivity, span.Sensitivity)
+			if span.Sensitivity == "third_party" {
+				origin.Scope = memory.Private
+			}
+		}
+		return origin, nil
+	}, nil
 }

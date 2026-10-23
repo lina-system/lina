@@ -6,6 +6,8 @@ package authority
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -32,8 +34,9 @@ type Config struct {
 	CanPresent func() bool
 }
 type Service struct {
-	store *canon.Store
-	cfg   Config
+	workerSigningKey ed25519.PrivateKey
+	store            *canon.Store
+	cfg              Config
 }
 type Effect struct {
 	Class                                            tools.EffectClass `json:",omitempty"`
@@ -51,10 +54,14 @@ func Open(ctx context.Context, store *canon.Store, cfg Config) (*Service, error)
 	if store == nil || cfg.Epoch == 0 || cfg.Resolve == nil {
 		return nil, tools.ErrInvalid
 	}
-	s := &Service{store: store, cfg: cfg}
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	s := &Service{store: store, cfg: cfg, workerSigningKey: key}
 	// An interrupted external call cannot be inferred to have failed. Preserve
 	// its target reservation until reconciliation; never automatically replay it.
-	err := store.Write(ctx, func(tx *canon.Tx) error {
+	err = store.Write(ctx, func(tx *canon.Tx) error {
 		if err := s.checkEpoch(ctx, tx); err != nil {
 			return err
 		}

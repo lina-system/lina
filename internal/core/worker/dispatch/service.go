@@ -34,21 +34,9 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
-type Definition struct {
-	Worker     string   `json:"worker,omitempty"`
-	Kind       string   `json:"kind,omitempty"`
-	Skill      string   `json:"skill,omitempty"`
-	Repository string   `json:"repository"`
-	Base       string   `json:"base"`
-	Branch     string   `json:"branch"`
-	What       string   `json:"what"`
-	Why        string   `json:"why"`
-	Scope      []string `json:"scope"`
-	NotTouch   []string `json:"not_touch"`
-	Done       string   `json:"done"`
-	DesignRefs []string `json:"design_refs"`
-	WriteArea  []string `json:"write_area"`
-}
+// Definition is the canonical work contract shared with trusted Core admissions.
+type Definition = work.WorkerDefinition
+
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
 	ReadinessFailures []ReadinessFailure         `json:"readiness_failures,omitempty"`
@@ -126,24 +114,28 @@ func taskBranch(requested, id string) string {
 }
 
 type Config struct {
-	AuthorizeRecovery func(context.Context, Record) (bool, error)
-	Workers           []Factory
-	Rules             []work.ChoiceRule
-	Capacity          func(context.Context) int
-	Bind              func(Record, worker.Adapter, worker.Thread, string, string) (func(worker.Event), func())
-	Manage            func(context.Context, Record) (Record, error)
-	Skills            *skills.Store
-	DB                *canon.Store
-	Work              *work.Service
-	Area              *work.Area
-	Root, Main        string
-	Epoch             uint64
-	Binary, Git       string
-	PR                antigravity.PullRequestReader
-	Environment       []string
-	Activities        lease.Leaser
-	Publish           func(context.Context, Record) error
-	ClaudeBinary      string
+	ApprovalKey        []byte
+	ExecutionDeadline  func(context.Context, Record) (time.Time, error)
+	AuthorizeExecution func(context.Context, Record) (bool, error)
+	AuthorizeRecovery  func(context.Context, Record) (bool, error)
+	Workers            []Factory
+	Rules              []work.ChoiceRule
+	Capacity           func(context.Context) int
+	Bind               func(Record, worker.Adapter, worker.Thread, string, string) (func(worker.Event), func())
+	Manage             func(context.Context, Record) (Record, error)
+	Skills             *skills.Store
+	DB                 *canon.Store
+	Work               *work.Service
+	Area               *work.Area
+	Root, Main         string
+	Epoch              uint64
+	Binary, Git        string
+	PR                 antigravity.PullRequestReader
+	Environment        []string
+	Activities         lease.Leaser
+	PrepareClaudeACP   func(context.Context, lease.Lease) (string, error)
+	Publish            func(context.Context, Record) error
+	ClaudeBinary       string
 }
 type Service struct {
 	cfg     Config
@@ -161,6 +153,9 @@ func Open(ctx context.Context, cfg Config) (*Service, error) {
 	s := &Service{cfg: cfg, running: map[string]bool{}, done: make(chan struct{}), wake: make(chan struct{}, 1)}
 	s.ctx, s.cancel = context.WithCancel(ctx)
 	records, err := s.records(ctx)
+	if err == nil {
+		err = s.recoverReadinessQuota(ctx, records)
+	}
 	if err != nil {
 		s.cancel()
 		return nil, err
@@ -226,8 +221,8 @@ func (s *Service) Close(ctx context.Context) error {
 
 var branchName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 
-func validate(d Definition) error {
-	if d.Worker != "" && !slices.Contains(explicitWorkers(), d.Worker) {
+func validate(d Definition, factories ...Factory) error {
+	if d.Worker != "" && !slices.Contains(explicitWorkers(factories...), d.Worker) {
 		return work.ErrInvalid
 	}
 	if !filepath.IsAbs(d.Repository) || filepath.Clean(d.Repository) != d.Repository || !branchName.MatchString(d.Base) || !branchName.MatchString(d.Branch) || d.Branch == d.Base || d.Branch == "main" || d.Branch == "master" || d.Branch == "dev" || strings.TrimSpace(d.What) == "" || strings.TrimSpace(d.Why) == "" || strings.TrimSpace(d.Done) == "" || len(d.Scope) == 0 || len(d.DesignRefs) == 0 || len(d.WriteArea) == 0 {
@@ -267,7 +262,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		if err != nil || masked.Text() != c.Arguments {
 			return d, work.ErrInvalid
 		}
-		if err := validate(d); err != nil {
+		if err := validate(d, s.cfg.Workers...); err != nil {
 			return d, err
 		}
 		d.Skill, err = skills.MethodID(d.Kind, d.Skill)
@@ -306,6 +301,9 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 				body["boundary"] = "This work is limited to advice or private drafts; unrestricted worker execution is unavailable."
 			}
 			return loop.Result{ID: c.ID, Code: loop.Denied, Output: mustJSON(body)}
+		}
+		if d.Worker == "claude-acp" && !s.WorkerAvailable(d.Worker) {
+			return loop.Result{ID: c.ID, Code: loop.Unavailable, Output: mustJSON(map[string]string{"worker": d.Worker, "cause": "Claude ACP requires the person's claude and node on PATH."})}
 		}
 		if !replay {
 			base, repositoryKey, err := s.baseForAdmission(ctx, origin, c.ID, d)
@@ -484,6 +482,18 @@ func (s *Service) sync() {
 				_ = s.save(s.ctx, r)
 				continue
 			}
+			if s.cfg.AuthorizeExecution != nil {
+				allowed, err := s.cfg.AuthorizeExecution(s.ctx, r)
+				if err != nil {
+					continue
+				}
+				if !allowed {
+					r.State = "finished"
+					r.Code = "authority_revoked"
+					_ = s.save(s.ctx, r)
+					continue
+				}
+			}
 			if r.Recoveries > 0 && s.cfg.AuthorizeRecovery != nil {
 				allowed, err := s.cfg.AuthorizeRecovery(s.ctx, r)
 				if err != nil {
@@ -533,8 +543,17 @@ func (s *Service) sync() {
 		}
 	}
 }
-func Declaration() provider.ToolDecl {
-	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to an available installed worker; worker optionally names an explicit selection. Core allocates a detached task worktree from a local GitHub clone. It appends the generated task ID to the requested branch unless already present, and returns the assigned branch. The worker creates that branch. Supply the complete authorized task, design sections, done condition and write area. The dev manager checks the definition before Core returns a task receipt; completion returns to this conversation. The worker uses its own permissions and login. Optional kind selects a development method from skill_index methodology=dev; skill overrides it with one catalog ID. Core includes that version in the task packet.","parameters":{"type":"object","properties":{"worker":{"type":"string","enum":` + string(mustJSON(explicitWorkers())) + `},"kind":{"type":"string"},"skill":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
+
+// Declaration includes this Core's added workers without widening another
+// service's admission or changing the built-in compatibility declaration.
+func (s *Service) Declaration() provider.ToolDecl {
+	return declaration(s.cfg.Workers)
+}
+
+func Declaration() provider.ToolDecl { return declaration(nil) }
+
+func declaration(factories []Factory) provider.ToolDecl {
+	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to an available installed worker; worker optionally names an explicit selection. Core allocates a detached task worktree from a local GitHub clone. It appends the generated task ID to the requested branch unless already present, and returns the assigned branch. The worker creates that branch. Supply the complete authorized task, design sections, done condition and write area. The dev manager checks the definition before Core returns a task receipt; completion returns to this conversation. The worker uses its own permissions and login. Optional kind selects a development method from skill_index methodology=dev; skill overrides it with one catalog ID. Core includes that version in the task packet.","parameters":{"type":"object","properties":{"worker":{"type":"string","enum":` + string(mustJSON(explicitWorkers(factories...))) + `},"kind":{"type":"string"},"skill":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
 }
 
 type output struct{ bytes.Buffer }

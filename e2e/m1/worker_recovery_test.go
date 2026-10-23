@@ -36,6 +36,7 @@ func recoveryWorkerFixture() {
 		turns, _ = strconv.Atoi(string(raw))
 	}
 	state := "idle"
+	steered := false
 	scan := bufio.NewScanner(os.Stdin)
 	enc := json.NewEncoder(os.Stdout)
 	for scan.Scan() {
@@ -82,10 +83,24 @@ func recoveryWorkerFixture() {
 			_ = os.WriteFile(filepath.Join(dir, "turn-count"), []byte(strconv.Itoa(turns)), 0600)
 			turn := fmt.Sprintf("turn-%d", turns)
 			state = "active"
+			if (mode == "followup_reply" || mode == "followup_pending") && turns == 2 {
+				_ = os.WriteFile(filepath.Join(dir, "followup-result.txt"), []byte("Follow-up work survived."), 0600)
+				if mode == "followup_reply" {
+					reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
+				}
+				continue // No started or completed notification for the follow-up.
+			}
 			notify("turn/started", map[string]any{"threadId": "recovery-thread", "turn": map[string]any{"id": turn, "status": "inProgress"}})
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
 			if turns == 1 {
 				_ = os.WriteFile(filepath.Join(dir, "recovery-result.txt"), []byte("The worker preserved its work."), 0600)
+				if mode == "followup_reply" || mode == "followup_pending" {
+					state = "idle"
+					notify("turn/completed", map[string]any{"threadId": "recovery-thread", "turn": map[string]any{"id": turn, "status": "completed"}})
+				}
+				if mode == "disconnect_restart" {
+					return // Persisted work survives loss of both worker and Core.
+				}
 				if mode == "disconnect" {
 					go func() {
 						for {
@@ -116,8 +131,31 @@ func recoveryWorkerFixture() {
 				state = "idle"
 				notify("turn/completed", map[string]any{"threadId": "recovery-thread", "turn": map[string]any{"id": turn, "status": "failed"}})
 			}
+		case "turn/steer":
+			var expected string
+			_ = json.Unmarshal(f.Params["expectedTurnId"], &expected)
+			if (mode != "steer_snapshot_failure" && mode != "steer_pending") || turns != 1 || expected != "turn-1" || steered {
+				os.Exit(90)
+			}
+			steered = true
+			// Persist real work, but emit no event that could repair Core's binding.
+			file, err := os.OpenFile(filepath.Join(dir, "steer-count"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+			if err != nil {
+				os.Exit(91)
+			}
+			_, _ = file.WriteString("1")
+			_ = file.Close()
+			// The artifact is the crash barrier: publish it after the send count.
+			_ = os.WriteFile(filepath.Join(dir, "followup-result.txt"), []byte("Follow-up work survived."), 0600)
+			if mode != "steer_pending" {
+				reply(map[string]any{"turnId": expected})
+			}
 		case "thread/read":
-			reply(map[string]any{"thread": thread()})
+			if steered && mode == "steer_snapshot_failure" {
+				_ = enc.Encode(map[string]any{"id": f.ID, "error": map[string]any{"code": -32000, "message": "snapshot temporarily unavailable"}})
+			} else {
+				reply(map[string]any{"thread": thread()})
+			}
 		case "thread/turns/list":
 			_ = os.WriteFile(filepath.Join(dir, "snapshot-requested"), []byte("read"), 0600)
 			for {
@@ -127,7 +165,7 @@ func recoveryWorkerFixture() {
 				time.Sleep(time.Millisecond)
 			}
 			status := "failed"
-			if mode == "completed" || mode == "disconnect" || mode == "delayed" {
+			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" || mode == "delayed" || mode == "followup_reply" || mode == "steer_snapshot_failure" || mode == "steer_pending" {
 				status = "completed"
 			}
 			items := []any{map[string]any{"type": "agentMessage", "id": "message", "text": "Retained worker result."}}
@@ -147,6 +185,7 @@ func recoveryWorkerFixture() {
 // one continuation, a second-failure decision, retained files and no third turn
 // across restart. Its disconnect case confirms successful output after a
 // transport-loss notice without another worker turn or duplicate response.
+// disconnect_restart also kills Core after the provisional reaction commits.
 // No authenticated worker account is used.
 func TestM2WorkerRecovery(t *testing.T) {
 	var scenario struct {
@@ -171,7 +210,7 @@ func TestM2WorkerRecovery(t *testing.T) {
 					return
 				}
 				step := calls.Add(1)
-				if mode == "disconnect" && step == 4 {
+				if (mode == "disconnect" || mode == "disconnect_restart") && step == 4 {
 					context, err := json.Marshal(req.Input)
 					if err != nil || !bytes.Contains(context, []byte("Retained worker result.")) {
 						t.Error("confirmed worker output missing from result response context")
@@ -218,6 +257,9 @@ func TestM2WorkerRecovery(t *testing.T) {
 				// Admit and react to the transport failure before terminal readback.
 				waitRecovery(t, h, func() bool { return workerRecoveryReactions(t, h) == 1 })
 			} else {
+				if mode == "disconnect_restart" {
+					waitRecovery(t, h, func() bool { return workerRecoveryReactions(t, h) == 1 })
+				}
 				core.killAndWait() // SIGKILL: no graceful worker or Core checkpoint.
 			}
 			before := calls.Load()
@@ -265,7 +307,7 @@ func TestM2WorkerRecovery(t *testing.T) {
 				}
 				return rec.State == want && rec.ObservedAt > 0
 			})
-			if mode == "disconnect" {
+			if mode == "disconnect" || mode == "disconnect_restart" {
 				db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 				if err != nil {
 					t.Fatal(err)
@@ -298,11 +340,11 @@ func TestM2WorkerRecovery(t *testing.T) {
 			}
 			client.Close()
 			reactions := 0
-			if mode == "completed" || mode == "disconnect" {
+			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" {
 				reactions = 1
 			}
 			priorReactions := 0
-			if mode == "disconnect" {
+			if mode == "disconnect" || mode == "disconnect_restart" {
 				priorReactions = 1
 			}
 			waitRecovery(t, h, func() bool {

@@ -8,23 +8,28 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
 func replayInstructions(format string, p agents.Preparation, tools []provider.ToolDecl) (string, error) {
-	if format != "persona-tui-work-method-v1" {
+	if format != "persona-tui-work-method-v1" && format != "persona-tui-work-method-v2" {
 		p.WorkMethod = ""
 	}
-	text, err := assemble.Instructions(p, tools)
+	build := assemble.LegacyInstructions
+	if format == "persona-tui-work-method-v2" {
+		build = assemble.Instructions
+	}
+	text, err := build(p, tools)
 	if err != nil {
 		return "", err
 	}
 	switch format {
 	case "agent-v1":
 		return text, nil
-	case "persona-tui-v1", "persona-tui-work-method-v1":
+	case "persona-tui-v1", "persona-tui-work-method-v1", "persona-tui-work-method-v2":
 		return assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting + "\n\n" + text, nil
 	case "persona-v1":
 		return assemble.PersonaCoreV1 + "\n\n" + text, nil
@@ -53,6 +58,14 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 		ref := source.Source
 		item := assemble.ContextItem{ID: ref.ID, Revision: ref.Revision, Text: source.Text}
 		switch ref.Source {
+		case "input-binding-v1":
+			if len(ref.Evidence) != 1 {
+				return nil, replay.Exclusion("missing_assembly")
+			}
+			item.AgentID = a.AgentID
+			item.Kind = assemble.Waiting
+			item.Origin = "input-binding:" + ref.Evidence[0].ID
+			item.Evidence = []assemble.Ref{{ID: ref.Evidence[0].ID}}
 		case "clock-v1":
 			item.Kind = assemble.Clock
 		case "skill-v1":
@@ -91,19 +104,35 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 		}
 		packet = append(packet, item)
 	}
-	history := append(append([]provider.Item(nil), profile...), ep.Items[:len(ep.Items)-1]...)
+	history := ep.Items[:len(ep.Items)-1]
+	switch a.RequestLayout {
+	case "": // Legacy records put the standing profile before history.
+		history = append(append([]provider.Item(nil), profile...), history...)
+		profile = nil
+	case ledger.InputBeforeContextV1:
+	default:
+		return nil, replay.Exclusion("missing_assembly")
+	}
 	core := assemble.PersonaCoreV1
-	if a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" {
+	if a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" || a.InstructionFormat == "persona-tui-work-method-v2" {
 		core += "\n" + assemble.TUIFormatting
 	}
 	request, report := assemble.Assemble(assemble.Input{
 		Core: core, AgentID: a.AgentID, PersonaRevision: a.PersonaRevision,
 		AgentName: a.AgentName, OwnerPersonID: a.OwnerPersonID, Persona: ep.Persona, WorkMethod: ep.WorkMethod,
-		Catalog: catalog, AlwaysTools: ep.Evidence.Tools, History: history, Current: ep.Items[len(ep.Items)-1], Packet: packet,
+		Catalog: catalog, AlwaysTools: ep.Evidence.Tools, History: history, Profile: profile, Current: ep.Items[len(ep.Items)-1], Packet: packet,
 		Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Fields: ep.Evidence.Fields, MaxTokens: 128000,
 	}, conversationRequestSize)
 	if report.Failure != "" || len(report.Dropped) != 0 {
 		return nil, replay.Exclusion("missing_assembly")
+	}
+	if a.RequestLayout == "" {
+		// Preserve the recorded order and digest; do not reinterpret old turns
+		// using today's cache layout. Opaque history bytes remain untouched.
+		current := len(request.Items) - len(report.Items) - 1
+		item := request.Items[current]
+		copy(request.Items[current:], request.Items[current+1:])
+		request.Items[len(request.Items)-1] = item
 	}
 	return request.Items, nil
 }

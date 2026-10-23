@@ -41,7 +41,7 @@ func (j LedgerJournal) Append(ctx context.Context, tx *canon.Tx, s result.Scope,
 		parent = j.ParentID
 	}
 	switch j.Surface.Kind {
-	case "app", "tui":
+	case "app", "tui", "launcher":
 		if j.Surface.Platform != "" || j.Surface.ChatID != "" {
 			return "", result.ErrMalformed
 		}

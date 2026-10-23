@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/e2e/fixture"
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -84,7 +85,8 @@ func codexSessionFixture() {
 			if count == 1 {
 				var inputs []struct{ Text string }
 				_ = json.Unmarshal(r.Params["input"], &inputs)
-				switchFailures = len(inputs) == 1 && inputs[0].Text == "switch refusal and terminal connection failure"
+				// Core frames the task packet, so match its text, not the frame.
+				switchFailures = len(inputs) == 1 && strings.Contains(inputs[0].Text, "switch refusal and terminal connection failure")
 			}
 			turn = fmt.Sprintf("turn-%d", count)
 			state = "active"
@@ -169,7 +171,11 @@ func codexSessionFixture() {
 					if err := os.WriteFile(filepath.Join(workdir, "result.txt"), []byte("LINA_WORKER_RESULT"), 0600); err != nil {
 						os.Exit(97)
 					}
-					notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turnID, "item": map[string]any{"type": "agentMessage", "id": "result", "text": "Created result.txt: LINA_WORKER_RESULT"}})
+					output := "Created result.txt: LINA_WORKER_RESULT"
+					if question := os.Getenv("LINA_WORKER_FINISH_QUESTION"); question != "" {
+						output = question
+					}
+					notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turnID, "item": map[string]any{"type": "agentMessage", "id": "result", "text": output}})
 					state = "idle"
 					notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turnID, "status": "completed"}})
 				}(cwd, turn)
@@ -505,24 +511,25 @@ func TestM2InstalledCodexLive(t *testing.T) {
 	h.stopCore(core)
 }
 
+func workerCompletionInput(inputs []json.RawMessage) string {
+	// Tool follow-ups retain the same current input; packet evidence after it
+	// is not another worker outcome or a new request.
+	var item struct{ Role, Content string }
+	if json.Unmarshal(fixture.CurrentInput(inputs), &item) != nil || item.Role != "user" || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+		return ""
+	}
+	return item.Content
+}
+
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	// Discovery adds call/results after the current input. Classify the latest
-	// user input, rather than mistaking a load_tools receipt for a new request.
-	var item struct{ Role, Content string }
-	found := false
-	for i := len(inputs) - 1; i >= 0; i-- {
-		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
-			found = true
-			break
-		}
-	}
-	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+	content := workerCompletionInput(inputs)
+	if content == "" {
 		return false
 	}
 	if result == "" {
 		emitResponse(w, "Worker finished.", true)
-	} else if strings.Contains(item.Content, result) {
+	} else if strings.Contains(content, result) {
 		emitResponse(w, "Worker outcome: "+result, true)
 	} else {
 		emitResponse(w, "Worker stopped.", true)

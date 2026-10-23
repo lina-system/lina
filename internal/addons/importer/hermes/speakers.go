@@ -80,15 +80,15 @@ func (e ClassifiedEvent) PersonEvidence() (PersonEvidence, bool) {
 // the ordered import stage retains these decisions with its events and report.
 func ClassifySpeakers(ctx context.Context, in SpeakerProfile) (SpeakerReport, error) {
 	if in.Profile == "" || in.PersonID == "" {
-		return SpeakerReport{}, ErrSnapshot
+		return SpeakerReport{}, invalidSnapshot("speaker profile and person required")
 	}
 	owners := map[string]OwnerChannel{}
 	for _, o := range in.OwnerChannels {
 		if o.SessionID == "" || !interactiveSource(o.Source) {
-			return SpeakerReport{}, ErrSnapshot
+			return SpeakerReport{}, invalidSnapshot("owner channel session and interactive source")
 		}
 		if _, exists := owners[o.SessionID]; exists {
-			return SpeakerReport{}, ErrSnapshot
+			return SpeakerReport{}, invalidSnapshot("unique owner channel session")
 		}
 		owners[o.SessionID] = o
 	}
@@ -110,7 +110,7 @@ func ClassifySpeakers(ctx context.Context, in SpeakerProfile) (SpeakerReport, er
 	seen := map[string]bool{}
 	for _, event := range in.Events {
 		if event.ID == "" || seen["event:"+event.ID] {
-			return SpeakerReport{}, ErrSnapshot
+			return SpeakerReport{}, invalidSnapshot("unique nonempty event id")
 		}
 		seen["event:"+event.ID] = true
 		var decisions []speakerDecision
@@ -123,7 +123,7 @@ func ClassifySpeakers(ctx context.Context, in SpeakerProfile) (SpeakerReport, er
 			for _, id := range source.ids {
 				key := fmt.Sprintf("%s:%d", source.name, id)
 				if source.db == nil || id <= 0 || seen[key] {
-					return SpeakerReport{}, ErrSnapshot
+					return SpeakerReport{}, invalidSnapshot("speaker source present and row id positive and unique")
 				}
 				seen[key] = true
 				d, err := readSpeaker(ctx, source.db, state, id, source.host, owners)
@@ -156,7 +156,7 @@ func openSpeakerSource(ctx context.Context, path string, kind SQLiteSource) (*sq
 	if err != nil {
 		return nil, err
 	}
-	if err = checkSQLite(ctx, db, registeredSQLiteSchemas[kind]); err != nil {
+	if _, err = registeredSchema(ctx, db, kind); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -243,9 +243,16 @@ func readSpeaker(ctx context.Context, db, state *sql.DB, id int64, host bool, ow
 			kinds = append(kinds, speakerDecision{guard.Agent, false})
 		}
 	}
-	// Display payloads have no registered provenance vocabulary. Their presence
-	// cannot be silently discarded to elevate a user-role row to person.
-	if display != "" || metadata != "" {
+	// Presentation markers never establish a sender. Notifications are explicit
+	// machinery; ordinary input and steering still need the confirmed channel.
+	switch display {
+	case "internal_notification":
+		kinds = append(kinds, speakerDecision{guard.System, false})
+	case "", "steer":
+	default:
+		kinds = append(kinds, unknownSpeaker())
+	}
+	if metadata != "" && !knownInputMetadata(metadata) {
 		kinds = append(kinds, unknownSpeaker())
 	}
 	if len(kinds) > 0 {
@@ -267,14 +274,34 @@ func readSpeaker(ctx context.Context, db, state *sql.DB, id int64, host bool, ow
 	if hasSession && (owner.UserID != user || owner.ChatID != chat) {
 		return speakerDecision{guard.ExternalParticipant, false}, nil
 	}
-	if hasSession && sessionSource != "cli" && (user == "" || chat == "" || (chatType != "private" && chatType != "dm")) {
+	if localOwnerSource(sessionSource) {
+		if chatType != "" && chatType != "private" && chatType != "dm" {
+			return unknownSpeaker(), nil
+		}
+	} else if user == "" || chat == "" || (chatType != "private" && chatType != "dm") {
 		return unknownSpeaker(), nil
 	}
 	return speakerDecision{guard.Person, false}, nil
 }
+
+// gateway_input_owner identifies a persisted delivery, not a human. Only the
+// registered singleton string shape is neutral; extra fields remain unproven.
+func knownInputMetadata(metadata string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(metadata), &fields) != nil || len(fields) != 1 {
+		return false
+	}
+	var token string
+	return json.Unmarshal(fields["gateway_input_owner"], &token) == nil && token != ""
+}
+
+func localOwnerSource(source string) bool {
+	return source == "cli" || source == "desktop" || source == "webui"
+}
+
 func interactiveSource(source string) bool {
 	switch source {
-	case "cli", "telegram", "discord", "slack", "signal", "whatsapp":
+	case "cli", "desktop", "webui", "telegram", "discord", "slack", "signal", "whatsapp":
 		return true
 	}
 	return false

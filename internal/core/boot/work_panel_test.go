@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 )
 
 func TestWorkPanelCoreSessionStart(t *testing.T) {
@@ -110,5 +111,95 @@ func TestWorkPanelCoreAttentionOrder(t *testing.T) {
 		if (row.Line.Waiting == "1") != (i < 3) {
 			t.Fatalf("waiting order lost at %d: %+v", i, row)
 		}
+	}
+}
+
+func TestWorkPanelDoingFromSameAdapterEvent(t *testing.T) {
+	r, _ := runningWorkerFixture(t)
+	session := r.workers.sessions["fixture"]
+	for _, line := range []string{"Login · Reading tests", "Login · Running tests"} {
+		raw := fmt.Sprintf(`{"Thread":{"ID":%q,"TurnID":%q},"Kind":1,"Progress":{"Phase":"doing"},"Doing":{"line":%q,"busy":true,"since":"2026-10-23T00:00:00Z"}}`, session.thread.ID, session.thread.TurnID, line)
+		var event worker.Event
+		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			t.Fatal(err)
+		}
+		session.observeActivity(event)
+		p, err := r.ownerSnapshot(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Rows == nil || len(*p.Rows) != 1 || (*p.Rows)[0].Line.Now == nil || *(*p.Rows)[0].Line.Now != line {
+			t.Fatalf("doing not applied within event: %+v", p)
+		}
+		event.Thread.TurnID = "stale"
+		event.Doing.Line = "stale"
+		session.observeActivity(event)
+		p, err = r.ownerSnapshot(t.Context())
+		if err != nil || *(*p.Rows)[0].Line.Now != line {
+			t.Fatal("stale observation replaced current doing", err)
+		}
+	}
+}
+
+func TestWorkPanelDoingFollowsCurrentTurn(t *testing.T) {
+	r, _ := runningWorkerFixture(t)
+	session := r.workers.sessions["fixture"]
+	session.thread.TurnID = "launch"
+	session.reservationTurn = "launch"
+	session.recovery = recovery.Record{ID: session.thread.ID, Thread: worker.Thread{ID: session.thread.ID, TurnID: "launch"}, State: "running"}
+	observe := func(turn, line string) {
+		t.Helper()
+		raw := fmt.Sprintf(`{"Thread":{"ID":%q,"TurnID":%q},"Kind":1,"Progress":{"Phase":"doing"},"Doing":{"line":%q,"busy":true,"since":"2026-10-23T00:00:00Z"}}`, session.thread.ID, turn, line)
+		var event worker.Event
+		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			t.Fatal(err)
+		}
+		session.observeActivity(event)
+	}
+	now := func() string {
+		t.Helper()
+		p, err := r.ownerSnapshot(t.Context())
+		if err != nil || p.Rows == nil || len(*p.Rows) != 1 || (*p.Rows)[0].Line.Now == nil {
+			t.Fatalf("progress line missing: %+v %v", p.Rows, err)
+		}
+		return *(*p.Rows)[0].Line.Now
+	}
+	observe("launch", "Login · Reading tests")
+	if now() != "Login · Reading tests" {
+		t.Fatalf("launch observation missing: %s", now())
+	}
+	// Input and recovery rebind the current turn and leave the launch handle.
+	session.recovery.Thread.TurnID = "follow-up"
+	session.reservationTurn = "follow-up"
+	if session.thread.TurnID != "launch" {
+		t.Fatal("launch handle changed")
+	}
+	if now() == "Login · Reading tests" {
+		t.Fatal("previous turn stayed on the card after the current turn changed")
+	}
+	observe("launch", "Login · Stale title")
+	if strings.Contains(now(), "Stale") || now() == "Login · Reading tests" {
+		t.Fatalf("launch-turn observation replaced the current turn: %s", now())
+	}
+	observe("follow-up", "Login · Running tests")
+	if now() != "Login · Running tests" {
+		t.Fatalf("current turn observation missing: %s", now())
+	}
+	observe("launch", "Login · Reading tests")
+	if now() != "Login · Running tests" {
+		t.Fatalf("stale turn replaced current doing: %s", now())
+	}
+
+	// worker_input before a recovery record exists stores the turn on the reservation.
+	session.recovery = recovery.Record{}
+	session.doing = ""
+	session.reservationTurn = "reserved-turn"
+	observe("reserved-turn", "Login · Writing the fix")
+	if now() != "Login · Writing the fix" {
+		t.Fatalf("reservation binding ignored: %s", now())
+	}
+	observe("launch", "Login · Reading tests")
+	if now() != "Login · Writing the fix" {
+		t.Fatalf("launch handle accepted over the reservation binding: %s", now())
 	}
 }

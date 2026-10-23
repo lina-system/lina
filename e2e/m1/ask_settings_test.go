@@ -330,7 +330,7 @@ func TestQuestionAnswerInstalledCore(t *testing.T) {
 	c.Close()
 	h.stopCore(core)
 	core = start(true)
-	c, conversation = conversationClient(t, h)
+	c, _ = conversationClient(t, h)
 	defer c.Close()
 	if calls.Load() != 4 {
 		t.Fatal("completed answer replayed after restart")

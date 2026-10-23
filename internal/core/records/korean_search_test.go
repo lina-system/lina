@@ -198,3 +198,34 @@ func TestKoreanRecordSearchLiteralPhrases(t *testing.T) {
 		}
 	}
 }
+
+func TestRecallProjectionFollowsRecordRevision(t *testing.T) {
+	s, _, db := setup(t)
+	c := Change{ID: "record", Path: "inbox/record.md", Data: doc("record", "도서관에서 공부")}
+	c.Base = commit(t, s, c)
+	check := func(term string, want int) {
+		t.Helper()
+		err := db.Read(t.Context(), func(tx *canon.Tx) error {
+			var n int
+			if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM recall_doc WHERE kind='record' AND source_id='record' AND revision=? AND id IN (SELECT rowid FROM recall_text WHERE recall_text MATCH ?)`, string(c.Base), term).Scan(&n); err != nil {
+				return err
+			}
+			if n != want {
+				t.Fatalf("record revision search=%d, want %d", n, want)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	check("도서관", 1)
+	c.Data = doc("record", "새로운 계획")
+	c.Base = commit(t, s, c)
+	check("도서관", 0)
+	check("새로운", 1)
+	if err := s.Rebuild(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	check("새로운", 1)
+}

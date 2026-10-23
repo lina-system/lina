@@ -1,0 +1,19 @@
+{
+  "task": "write-result",
+  "input": "Produce result.txt in the approved repository.",
+  "artifact": "worker produced this result\n",
+  "cases": [
+    "verified",
+    "duplicate",
+    "caller-isolation",
+    "restart",
+    "expired",
+    "revoked",
+    "stream-interruption",
+    "unverified",
+    "denied",
+    "uncertain-cancel",
+    "revoked-running",
+    "intake-denied"
+  ]
+}

@@ -20,6 +20,10 @@ func (c *Client) Running(ctx context.Context, request protocol.RunningGet) (stri
 	return c.request(ctx, protocol.KindRunningGet, request)
 }
 
+func (c *Client) Result(ctx context.Context, request protocol.ResultGet) (string, error) {
+	return c.request(ctx, protocol.KindResultGet, request)
+}
+
 // Work sends an owner operation once; Receive owns the correlated result.
 func (c *Client) Work(ctx context.Context, request protocol.WorkSwitchRequest) (string, error) {
 	return c.request(ctx, protocol.KindWorkSwitchRequest, request)
@@ -36,6 +40,8 @@ func (c *Client) Waiting(ctx context.Context, request protocol.WaitingGet) (stri
 // Control sends an explicit owner request once; Core owns its effect and reply.
 func (c *Client) Control(ctx context.Context, p protocol.Payload) (string, error) {
 	switch p.(type) {
+	case protocol.SurfaceAction:
+		return c.request(ctx, protocol.KindSurfaceAction, p)
 	case protocol.ProgressDigestGet:
 		return c.request(ctx, protocol.KindProgressDigestGet, p)
 	case protocol.Stop:

@@ -204,6 +204,33 @@ An incoming request, OAuth scope, Agent Card or remote result cannot enlarge it.
 Changing or revoking the binding fences subsequent execution and disclosure,
 including an already open stream.
 
+Published admissions retain the issuer/subject/client identity, definition and
+binding fingerprint, expiry and deadline with the local task. Core checks that
+fingerprint before model/tool work, worker launch or recovery, an owner approval
+reply to the worker, and every externally visible projection. The incoming
+access token is introspected for each request and before stream updates; it is
+not retained as a credential for later execution. Token expiry bounds the
+admission's execution authority. A fresh access token may read a retained result
+only through the still-current binding and its original output scope.
+
+Only the existing authenticated owner surfaces answer local approvals. A2A
+follow-ups are forwarded task data, never owner answers. A cancellation request
+is durable before Core interrupts work. An interrupt acknowledgment without
+terminal execution evidence leaves the task unknown; it cannot produce a
+canceled or completed claim or authorize a replacement worker. The dispatcher
+observes durable cancellation even if no owner-session bridge is registered.
+An owner denial is persisted as a stop before it is relayed to a published
+worker, preventing an interrupted receipt from authorizing recovery.
+
+The publication binding alone cannot activate an installed worker with the
+owner's permissions. Core requires a separate one-time owner execution decision
+over the exact incoming message and fixed task definition before sending that
+input to a provider or tool. The decision explicitly names the worker's existing
+access to owner files, login and integrations. It is checked again at model/tool
+execution, worker launch/recovery and approval relay, and expires at epoch change.
+This is explicit owner delegation of an installed worker, not confinement of the
+worker's process. A missing, denied or stale decision cannot start execution.
+
 A Core-executed outgoing call records the grant fields on the main: owner,
 requesting agent, task, command, epoch, host, OS user, exact scope and expiry;
 Node/boot/session fields are none. This is local authority for Core's A2A
@@ -234,6 +261,13 @@ or canceling the existing remote task; it cannot use reconciliation to send
 new work. If remote authority is also gone, the unknown result stays visible
 to the owner. Revocation cannot promise to undo work already accepted remotely.
 
+The outbound conversation tool uses the ordinary effect ledger and approval
+surface. Owner connection settings and recorded input answers cannot be supplied
+by the model. A fresh observation or cancellation grant is limited to the
+retained call; it never authorizes another send. An unknown outcome reserves
+its exact input in the originating conversation across model call ids and
+connections, until the uncertainty has been resolved.
+
 ## Approval
 
 Core validates a tool's arguments before checking authority or claiming its effect key. A durable effect claim precedes execution, and its result is recorded separately: no storage transaction spans a tool call. A repeated key returns the first recorded result or unknown, including after restart; it never executes again. A stale write is refused before the handler and records the observed revision and, when Core knows it, the previous writing agent. An unresolved effect reserves its target until reconciliation so another call cannot silently overwrite it.
@@ -245,6 +279,7 @@ Only a trusted observation or the person's recorded decision can settle an unkno
 - The default inside a device LINA uses is no approval. Reading, writing and executing there proceed inside the grant without asking.
 - LINA asks every time only for effects that reach outside the user and are hard to reverse: sending mail or messages (including an agent's post into a chat that other people can read, but not a reply that a channel binding covers, see Channels), payments and purchases, public posting or publication, and unrecoverable deletion.
 - Every other effect inside the grant is done by the agent and reported in one line, with one action to undo it where it can be undone ([work-and-delegation.md](work-and-delegation.md#default-posture)).
+- Using the screen of a locked Mac asks once for each task, with the choices once and deny, and no standing grant covers it ([non-competition.md](non-competition.md#work-on-a-locked-mac)). Turning the feature on for a Mac in settings is a standing setting, not the approval of any task.
 - A write outside the grant, and network access for a sandboxed command, widen what the sandbox holds back, and they ask the first time, with the choices once, always allow and deny. "Always allow" is a standing grant the person can revoke (see [runtime.md](runtime.md) for sandboxed commands).
 - A standing grant applies to every agent unless the person names agents in it. Naming agents is the person's recorded choice. A grant that names only agents that have been deleted applies to no agent, and the record says so.
 - Deletion first goes to a recoverable form: a trash, a retained copy or a snapshot. Only deletion that cannot be recovered needs approval. When the person chooses immediate permanent deletion of a conversation, a memory item or a material, that choice is the approval, and LINA records it as such with the person.
@@ -300,6 +335,17 @@ An external channel is one more surface that carries the owner's input to an age
 - The message shows in one view what will happen, where, and whether it can be undone, with the arguments and the choices. When the arguments do not fit in one message the channel offers no buttons: it shows a short card with a link, and the request waits in the app or the TUI.
 - In a channel the choices are once and deny. "Always allow" is set in the app, where the reach of a standing grant is visible, and it does not appear in the owner's own chat either.
 - Every answer is recorded with the choice, the person (by the paired id), the agent that asked, and the platform's message and chat ids. The message is then edited to show the decision and its buttons are removed. A button on a request that is already answered, or from an earlier epoch, is answered with a short note and removed.
+
+### Messengers
+
+A messenger source reads the person's own messenger accounts ([integrations.md](integrations.md#messengers)). Connecting the source covers reading it. Acting in the person's name there is an outward effect:
+
+- Only platforms whose terms allow automating the account have writes. On the others no write is offered and no write grant can be made, and the source says why.
+- Writes are off by default. The person turns them on for one chat of one source and names the verbs: send, reply, edit, delete, upload, react or mark read. This write grant is recorded with the person, the agents it names (or every agent) and the date, is listed with the standing grants and is revoked there. It is not the approval of any one write.
+- Send, reply, edit, upload, deletion for everyone and mark read reach other people and cannot be taken back. Each asks every time, with the choices once and deny, and the request shows the chat, who will see it and the text. The person cannot grant a standing right to post in a chat.
+- A reaction can be removed. Under the chat's write grant it runs without asking and is reported in one line with one action to undo it.
+- Preset effect limits apply first. A messaging plugin for the same account obeys the same write grant.
+- Reads never change the platform's state: no read receipt, presence, typing, join or leave.
 
 ## Deferred
 

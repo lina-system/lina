@@ -185,7 +185,7 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	if e.Kind == "receipt" && (c.Run == nil || c.Run.ID != e.RunID) {
 		return ErrState
 	}
-	if (e.Kind == "worker_progress" || e.Kind == "worker_activity") && (c.Run == nil || c.Run.ID != e.RunID || !c.Active || c.Receipt != nil) {
+	if (e.Kind == "worker_progress" || e.Kind == "worker_activity" || e.Kind == "worker_doing") && (c.Run == nil || c.Run.ID != e.RunID || !c.Active || c.Receipt != nil) {
 		return ErrState
 	}
 	var prior []byte

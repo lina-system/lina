@@ -32,6 +32,7 @@ type SignInRelay struct {
 	person   string
 	service  SignInService
 	attempts map[string]relayAttempt
+	external map[string]ExternalSignIn
 }
 
 func NewSignInRelay(person string, service SignInService) *SignInRelay {
@@ -47,13 +48,23 @@ func (s *SignInRelay) Operations() map[protocol.Kind]Operation {
 func (s *SignInRelay) disconnect(session Session) {
 	s.mu.Lock()
 	delete(s.attempts, session.ConnectionID)
+	external, ok := s.external[session.ConnectionID]
+	delete(s.external, session.ConnectionID)
 	s.mu.Unlock()
+	if ok {
+		external.Disconnect()
+	}
 	s.service.Disconnect(session.ConnectionID)
 }
 func relayRefusal(code protocol.ErrorCode) error { return &OperationError{Code: code} }
 func (s *SignInRelay) handle(ctx context.Context, session Session, envelope protocol.Envelope) (Result, error) {
 	if s.service == nil || session.ConnectionID == "" || session.PersonID != s.person {
 		return Result{}, relayRefusal(protocol.ErrorNotAuthorized)
+	}
+	if _, accountRequest := envelope.Payload.(protocol.AccountRequest); !accountRequest {
+		if result, handled, err := s.handleExternal(ctx, session, envelope.Payload); handled {
+			return result, err
+		}
 	}
 	if !hasCapability(session.Capabilities, AccountsCapability) || !hasCapability(session.Capabilities, SignInCapability) {
 		return Result{}, relayRefusal(protocol.ErrorCapabilityNotNegotiated)
@@ -63,7 +74,7 @@ func (s *SignInRelay) handle(ctx context.Context, session Session, envelope prot
 		if payload.Operation == nil || *payload.Operation != "sign_in" || payload.Provider == nil || *payload.Provider != "chatgpt" || payload.Purpose == nil || (*payload.Purpose != "login" && *payload.Purpose != "provider") {
 			return Result{}, relayRefusal(protocol.ErrorMalformed)
 		}
-		s.service.Disconnect(session.ConnectionID)
+		s.disconnect(session)
 		s.mu.Lock()
 		for id, attempt := range s.attempts {
 			if !time.Now().Before(attempt.expires) {
@@ -138,7 +149,7 @@ func (s *SignInRelay) handle(ctx context.Context, session Session, envelope prot
 }
 func hasCapability(values []protocol.Capability, want protocol.Capability) bool {
 	for _, value := range values {
-		if value == want {
+		if protocol.CapabilityIdentity(value, want) {
 			return true
 		}
 	}

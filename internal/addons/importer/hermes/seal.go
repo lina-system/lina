@@ -5,17 +5,26 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/kit/secret"
 )
 
+type BodyFailure struct {
+	EventID string
+	Reason  string
+}
+
 type SealReport struct {
-	AddedSeals       int
-	Verification     Verification
-	BackupGeneration string
+	AddedSeals        int
+	Verification      Verification
+	BackupGeneration  string
+	UnavailableBodies int
+	BodyFailures      []BodyFailure
 }
 
 // Seal publishes only a verified range. A failed backup leaves an explicit
@@ -24,7 +33,7 @@ type SealReport struct {
 func (p *Plan) Seal(ctx context.Context, db Canon, backup func(context.Context) (string, error)) (SealReport, error) {
 	report := SealReport{}
 	if backup == nil {
-		return report, ErrSnapshot
+		return report, invalidSnapshot("seal backup callback required")
 	}
 	needBackup := false
 	err := db.Write(ctx, func(tx *canon.Tx) error {
@@ -53,7 +62,26 @@ func (p *Plan) Seal(ctx context.Context, db Canon, backup func(context.Context) 
 			} else {
 				report.BackupGeneration = generation
 			}
+			// Read the durable outcome on retries too; counts describe the range,
+			// not just the events newly published by this call.
+			rows, err := tx.QueryContext(ctx, `SELECT id,json_extract(origin,'$.body_masking_error') FROM conv_event
+ WHERE conversation_id=? AND json_extract(origin,'$.body_masking_error') IS NOT NULL ORDER BY id`, c.record.id)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var failure BodyFailure
+				if err := rows.Scan(&failure.EventID, &failure.Reason); err != nil {
+					rows.Close()
+					return err
+				}
+				report.BodyFailures = append(report.BodyFailures, failure)
+			}
+			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+				return err
+			}
 		}
+		report.UnavailableBodies = len(report.BodyFailures)
 		return nil
 	})
 	if err != nil {
@@ -67,7 +95,7 @@ func (p *Plan) Seal(ctx context.Context, db Canon, backup func(context.Context) 
 		return report, err
 	}
 	if generation == "" {
-		return report, ErrSnapshot
+		return report, invalidSnapshot("seal backup generation required")
 	}
 	err = db.Write(ctx, func(tx *canon.Tx) error {
 		for _, c := range p.conversations {
@@ -79,6 +107,31 @@ func (p *Plan) Seal(ctx context.Context, db Canon, backup func(context.Context) 
 	})
 	report.BackupGeneration = generation
 	return report, err
+}
+
+// displayMask masks an event display under the publication rule. A body that
+// cannot be masked becomes an unavailable notice instead of a display.
+func displayMask(display string) (secrets.Masked, error) {
+	var spans []secrets.Span
+	// Raw assignment spans may include JSON's quotes or escape sequences.
+	// Let the shared JSON scanner inspect decoded strings instead. These
+	// spans are detector output, not independent sensitivity annotations.
+	if !json.Valid([]byte(display)) {
+		for _, s := range ScanSecrets([]byte(display)) {
+			spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
+		}
+	}
+	masked, err := secrets.Mask(display, spans...)
+	if err == nil && json.Valid([]byte(display)) {
+		// Check remaining scalar credentials at decoded JSON boundaries.
+		// A plaintext rescan of serialized JSON can flag an escape before
+		// an already-masked quoted value and discard an otherwise safe body.
+		checked, checkErr := maskScalarCallCredentials(masked.Text())
+		if !json.Valid([]byte(masked.Text())) || checkErr != nil || checked != masked.Text() {
+			err = secrets.ErrSpan
+		}
+	}
+	return masked, err
 }
 
 func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *conversation) error {
@@ -93,12 +146,12 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 		if err := tx.QueryRowContext(ctx, "SELECT material_id,material_revision FROM import_event WHERE id=?", r.id).Scan(&material, &materialRevision); err != nil {
 			return err
 		}
-		display := r.body
+		content := r.body
 		if material.Valid {
 			found := false
 			for _, attachment := range c.records {
 				if attachment.kind == "material" && len(attachment.links) == 1 && attachment.links[0].target == r.id {
-					display = attachment.sources[0].row.text("bytes")
+					content = attachment.sources[0].row.text("bytes")
 					found = true
 					break
 				}
@@ -106,25 +159,57 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 			if !found {
 				return ErrConflict
 			}
-			if !utf8.ValidString(display) {
-				display = "[binary imported material]"
-			}
+		}
+		display, err := publishedBody(r, content)
+		if err != nil {
+			return err
 		}
 		// Originals and byte-addressed flags stay in import_event for lossless
 		// reverse mapping; live consumers use the native masked representation.
-		var spans []secrets.Span
-		for _, s := range ScanSecrets([]byte(display)) {
-			spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
+		projected := display != content
+		if projected {
+			display, err = maskScalarCallCredentials(display)
+			if err != nil {
+				// Projection masking failures use the same durable outcome
+				// as failures in the shared body scanner below.
+				err = secrets.ErrSpan
+			}
+			if !utf8.ValidString(content) {
+				// json.Marshal would replace invalid bytes; refuse the
+				// projection instead of publishing altered content.
+				err = secrets.ErrSpan
+			}
 		}
-		masked, err := secrets.Mask(display, spans...)
+		var masked secrets.Masked
+		if err == nil {
+			masked, err = displayMask(display)
+		}
+		originFields := map[string]string{"kind": "import", "locator": r.id, "source_session": e.session}
+		if errors.Is(err, secrets.ErrSpan) {
+			// Keep the original in import_event / its material. Publish only a
+			// safe inline substitute so one bad body cannot refuse the profile.
+			originFields["body_masking_error"] = secrets.ErrSpan.Error()
+			fallback := "Imported body unavailable (" + secrets.ErrSpan.Error() + "): "
+			masked, err = secrets.Mask(fallback+secret.Placeholder, secrets.Span{Start: len(fallback), End: len(fallback) + len(secret.Placeholder), Sensitivity: "secret"})
+			material = sql.NullString{}
+			materialRevision = sql.NullInt64{}
+		}
 		if err != nil {
 			return err
 		}
 		var body any = masked.Text()
 		if material.Valid {
-			body = nil
+			if projected {
+				// A live JSON projection replaces the material body for this
+				// event; import_event keeps the original sidecar for reverse
+				// mapping.
+				material = sql.NullString{}
+				materialRevision = sql.NullInt64{}
+			} else {
+				body = nil
+			}
 		}
-		origin, _ := json.Marshal(map[string]string{"kind": "import", "locator": r.id, "source_session": e.session})
+		origin, _ := json.Marshal(originFields)
 		_, err = tx.ExecContext(ctx, `INSERT INTO conv_event(id,conversation_id,parent_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,body,material_id,material_revision)
    VALUES(?,?,?,?,?,?,'{"kind":"import"}',?,?,?,?,?,?,?,?)`, r.id, r.conversation, nullable(e.parent), nullable(e.classified.person), r.agent, e.classified.kind, e.occurred, e.recorded, e.quality, string(origin), nullable(e.replay), body, material, materialRevision)
 		if err != nil {
@@ -191,7 +276,7 @@ func (p *Plan) Finish(ctx context.Context, db Canon, policy PromotionPolicy, acc
 			return seal, n, err
 		}
 		if generation == "" {
-			return seal, n, ErrSnapshot
+			return seal, n, invalidSnapshot("promotion backup generation required")
 		}
 		err = db.Write(ctx, func(tx *canon.Tx) error {
 			for _, id := range accepted {

@@ -48,9 +48,17 @@ type SQLiteSchema struct {
 // the two). The destination is a new file under the caller's import staging.
 // It must not exist. Failure removes only a destination created by this call.
 func SnapshotSQLite(ctx context.Context, source, destination string, kind SQLiteSource) error {
-	known, ok := registeredSQLiteSchemas[kind]
-	if !ok {
+	if _, ok := registeredSQLiteSchemas[kind]; !ok {
 		return fmt.Errorf("%w: unregistered SQLite source %q", ErrSchema, kind)
+	}
+	reader, closeSource, err := canon.OpenSQLiteInspection(ctx, source)
+	if err != nil {
+		return err
+	}
+	known, err := registeredSchema(ctx, reader, kind)
+	closeSource()
+	if err != nil {
+		return err
 	}
 	return snapshotSQLite(ctx, source, destination, known)
 }
@@ -107,6 +115,38 @@ func snapshotSQLite(ctx context.Context, source, destination string, known SQLit
 		return fmt.Errorf("%w: source changed during snapshot; retry when quiet", ErrConflict)
 	}
 	return nil
+}
+
+// Presence only selects a registered variant; the full descriptor comparison
+// still rejects every unregistered table, view, column or version.
+func registeredSchema(ctx context.Context, db *sql.DB, kind SQLiteSource) (SQLiteSchema, error) {
+	known, ok := registeredSQLiteSchemas[kind]
+	if !ok {
+		return SQLiteSchema{}, fmt.Errorf("%w: unregistered SQLite source %q", ErrSchema, kind)
+	}
+	if kind == HermesState {
+		var present int
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='delivery_obligations'").Scan(&present); err != nil {
+			return SQLiteSchema{}, err
+		}
+		if present != 0 {
+			var adapter int
+			if err := db.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_xinfo('delivery_obligations') WHERE name='adapter_profile'").Scan(&adapter); err != nil {
+				return SQLiteSchema{}, err
+			}
+			tables := make(map[string][]Column, len(known.Tables)+1)
+			for name, columns := range known.Tables {
+				tables[name] = columns
+			}
+			columns := deliveryColumns
+			if adapter == 0 {
+				columns = columns[:len(columns)-1]
+			}
+			tables["delivery_obligations"] = columns
+			known.Tables = tables
+		}
+	}
+	return known, checkSQLite(ctx, db, known)
 }
 
 func checkSQLite(ctx context.Context, db *sql.DB, known SQLiteSchema) error {
@@ -222,7 +262,7 @@ func sourceFingerprint(ctx context.Context, path string) (string, error) {
 		}
 		if !info.Mode().IsRegular() {
 			f.Close()
-			return "", ErrSnapshot
+			return "", invalidSnapshot("SQLite source regular file")
 		}
 		fmt.Fprintf(h, "%s:%d:%d:", suffix, info.Size(), info.ModTime().UnixNano())
 		_, err = io.Copy(h, f)

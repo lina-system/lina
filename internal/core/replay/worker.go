@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
+	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/toolcatalog"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/proc"
@@ -23,19 +25,22 @@ import (
 // child. The same kit loop runs inside the OS sandbox, with model transport
 // brokered by Core over inherited pipes and no network in the child.
 type WorkerInput struct {
-	Request   provider.Request
-	Calls     []Call
-	ReadNames []string
+	RuntimeTools bool
+	Request      provider.Request
+	Calls        []Call
+	ReadNames    []string
 }
 type workerFrame struct {
-	Read    *provider.ToolCall `json:"read,omitempty"`
-	Result  *loop.Result       `json:"result,omitempty"`
-	Request *provider.Request  `json:"request,omitempty"`
-	Event   *provider.Event    `json:"event,omitempty"`
-	Meta    *provider.Meta     `json:"meta,omitempty"`
-	Outcome *loop.Outcome      `json:"outcome,omitempty"`
-	Error   string             `json:"error,omitempty"`
-	End     bool               `json:"end,omitempty"`
+	Call       *provider.ToolCall   `json:"call,omitempty"`
+	ToolResult *provider.ToolResult `json:"tool_result,omitempty"`
+	Read       *provider.ToolCall   `json:"read,omitempty"`
+	Result     *loop.Result         `json:"result,omitempty"`
+	Request    *provider.Request    `json:"request,omitempty"`
+	Event      *provider.Event      `json:"event,omitempty"`
+	Meta       *provider.Meta       `json:"meta,omitempty"`
+	Outcome    *loop.Outcome        `json:"outcome,omitempty"`
+	Error      string               `json:"error,omitempty"`
+	End        bool                 `json:"end,omitempty"`
 }
 
 const maxWorkerFrame = 8 << 20
@@ -99,7 +104,9 @@ func Worker(ctx context.Context, input io.Reader, output io.Writer) error {
 			return *frame.Result
 		}}
 	}
-	out, err := Run(ctx, RunConfig{Request: initial.Request, Calls: initial.Calls, Reads: reads, Stream: func(_ context.Context, r provider.Request) (provider.Stream, error) {
+	out, err := Run(ctx, RunConfig{RuntimeTools: initial.RuntimeTools, Request: initial.Request, Calls: initial.Calls, Reads: reads, Stream: func(_ context.Context, r provider.Request) (provider.Stream, error) {
+		bridge := r.Bridge
+		r.Bridge = nil
 		if err := enc.Encode(workerFrame{Request: &r}); err != nil {
 			return nil, err
 		}
@@ -108,6 +115,19 @@ func Worker(ctx context.Context, input io.Reader, output io.Writer) error {
 			var f workerFrame
 			if err := readFrame(scan, &f); err != nil {
 				return nil, err
+			}
+			if f.Call != nil {
+				if bridge == nil {
+					return nil, ErrInvalid
+				}
+				result, err := bridge.Call(ctx, *f.Call)
+				if err != nil {
+					return nil, err
+				}
+				if err := enc.Encode(workerFrame{ToolResult: &result}); err != nil {
+					return nil, err
+				}
+				continue
 			}
 			if f.Error != "" {
 				return nil, errors.New("replay_model_failed")
@@ -149,6 +169,11 @@ func Sandboxed(ctx context.Context, cfg SandboxConfig, initial WorkerInput) (out
 	if cfg.Stream == nil {
 		return out, ErrInvalid
 	}
+	all, err := recordedDeclarations(initial.Calls)
+	if err != nil {
+		return out, err
+	}
+	catalog := &toolcatalog.Catalog{First: initial.Request.Tools, All: all, Offset: len(initial.Request.Items)}
 	scratch, err := os.MkdirTemp("", "lina-replay-")
 	if err != nil {
 		return out, err
@@ -211,17 +236,7 @@ func Sandboxed(ctx context.Context, cfg SandboxConfig, initial WorkerInput) (out
 			return *frame.Outcome, nil
 		}
 		if frame.Read != nil {
-			call := *frame.Read
-			tool, ok := cfg.Reads[call.Name]
-			if !ok || tool.Validate == nil || tool.Execute == nil {
-				return out, ErrInvalid
-			}
-			if target, e := tool.Validate(call); e != nil || target != "" {
-				return out, ErrInvalid
-			}
-			result := tool.Execute(ctx, call)
-			result.ID = call.ID
-			if err = enc.Encode(workerFrame{Result: &result}); err != nil {
+			if err = answerRead(ctx, enc, cfg.Reads, *frame.Read); err != nil {
 				return out, err
 			}
 			continue
@@ -230,14 +245,22 @@ func Sandboxed(ctx context.Context, cfg SandboxConfig, initial WorkerInput) (out
 			return out, ErrInvalid
 		}
 		request := *frame.Request
+		if initial.RuntimeTools {
+			request.Bridge = &workerBridge{enc: enc, scan: scan, reads: cfg.Reads}
+		}
 		// The child owns only loop evolution. It cannot change the account, model,
 		// instructions, or offered tools selected by the authenticated operation.
+		// Restore loaded schemas only from that operation's recorded catalog.
 		request.Model = initial.Request.Model
 		request.Effort = initial.Request.Effort
 		request.Instructions = initial.Request.Instructions
 		request.Tools = initial.Request.Tools
 		request.Fields = initial.Request.Fields
 		request.Purpose = provider.Replay
+		request, err = catalog.Transform(ctx, request)
+		if err != nil {
+			return out, err
+		}
 		stream, e := cfg.Stream(ctx, request)
 		if e != nil {
 			return out, e
@@ -269,6 +292,11 @@ type InstructionBuilder func(string, agents.Preparation, []provider.ToolDecl) (s
 
 // Request applies candidate text to pinned layers and the recorded identity.
 func Request(ep Episode, candidates map[string]string, model, effort string, build InstructionBuilder) (provider.Request, error) {
+	switch ep.Evidence.Assembly.RequestLayout {
+	case "", ledger.InputBeforeContextV1:
+	default:
+		return provider.Request{}, Exclusion("missing_assembly")
+	}
 	p := ep.Persona
 	for name, text := range candidates {
 		switch filepath.ToSlash(name) {
@@ -287,7 +315,7 @@ func Request(ep Episode, candidates map[string]string, model, effort string, bui
 	instructions := strings.Join([]string{p.Core, p.DefaultVoice, p.UserVoice, p.GrowthSnapshot}, "\n")
 	switch ep.Evidence.Assembly.InstructionFormat {
 	case "": // Exact legacy layer assembly, still checked against its digest.
-	case "agent-v1", "persona-v1", "persona-tui-v1", "persona-tui-work-method-v1":
+	case "agent-v1", "persona-v1", "persona-tui-v1", "persona-tui-work-method-v1", "persona-tui-work-method-v2":
 		a := ep.Evidence.Assembly
 		if build == nil || a.AgentName == "" || a.OwnerPersonID == "" {
 			return provider.Request{}, Exclusion("missing_assembly")
@@ -300,7 +328,10 @@ func Request(ep Episode, candidates map[string]string, model, effort string, bui
 	default:
 		return provider.Request{}, Exclusion("missing_assembly")
 	}
-	r := provider.Request{Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Instructions: instructions, Items: ep.Items, Tools: ep.Evidence.Tools, Fields: ep.Evidence.Fields, Purpose: provider.Replay}
+	r := provider.Request{CacheIdentity: ep.Evidence.CacheIdentity, Layout: ep.Evidence.Layout.Clone(), Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Instructions: instructions, Items: ep.Items, Tools: ep.Evidence.Tools, Fields: ep.Evidence.Fields, Purpose: provider.Replay}
+	if ep.Evidence.Capabilities != nil {
+		r.Capabilities = ep.Evidence.Capabilities.Clone()
+	}
 	if model != "" {
 		r.Model = provider.ModelRef(model)
 	}
@@ -308,4 +339,49 @@ func Request(ep Episode, candidates map[string]string, model, effort string, bui
 		r.Effort = provider.Effort(effort)
 	}
 	return r, nil
+}
+
+// workerBridge sends runtime calls back to the sandboxed loop's recorded-result
+// admission. The parent has no tool executor or authority to perform effects.
+// A live local read is answered on this same exchange: the sandbox emits it
+// before the runtime result, and the outer broker is blocked inside this call.
+type workerBridge struct {
+	enc   *json.Encoder
+	scan  *bufio.Scanner
+	reads map[string]loop.Tool
+}
+
+func (b *workerBridge) Call(ctx context.Context, call provider.ToolCall) (provider.ToolResult, error) {
+	if err := b.enc.Encode(workerFrame{Call: &call}); err != nil {
+		return provider.ToolResult{}, err
+	}
+	for {
+		var f workerFrame
+		if err := readFrame(b.scan, &f); err != nil {
+			return provider.ToolResult{}, err
+		}
+		if f.Read != nil {
+			if err := answerRead(ctx, b.enc, b.reads, *f.Read); err != nil {
+				return provider.ToolResult{}, err
+			}
+			continue
+		}
+		if f.ToolResult == nil || f.ToolResult.ID != call.ID {
+			return provider.ToolResult{}, ErrInvalid
+		}
+		return *f.ToolResult, nil
+	}
+}
+
+func answerRead(ctx context.Context, enc *json.Encoder, reads map[string]loop.Tool, call provider.ToolCall) error {
+	tool, ok := reads[call.Name]
+	if !ok || !LocalRead(call.Name) || tool.Validate == nil || tool.Execute == nil {
+		return ErrInvalid
+	}
+	if target, err := tool.Validate(call); err != nil || target != "" {
+		return ErrInvalid
+	}
+	result := tool.Execute(ctx, call)
+	result.ID = call.ID
+	return enc.Encode(workerFrame{Result: &result})
 }

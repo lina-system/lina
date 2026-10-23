@@ -41,6 +41,7 @@ func passDB(t *testing.T) (*canon.Store, canon.Config) {
 	return db, cfg
 }
 func TestContinuationLedgerSurvivesOversizeWithoutCopyingInput(t *testing.T) {
+	t.Parallel()
 	db, _ := passDB(t)
 	events := ledger.New(db, nil)
 	now := time.Unix(100, 0)
@@ -96,6 +97,7 @@ func TestContinuationLedgerSurvivesOversizeWithoutCopyingInput(t *testing.T) {
 }
 
 func TestContinuationRecordFailureRollsBackEndedTurn(t *testing.T) {
+	t.Parallel()
 	db, _ := passDB(t)
 	events := ledger.New(db, nil)
 	now := time.Unix(100, 0)

@@ -49,7 +49,7 @@ func manifest(c *conversation) string {
 // Apply callback; the deterministic worker needs no model or writable database.
 func (p *Plan) Apply(ctx context.Context, tx *canon.Tx, index int) (Report, error) {
 	if p.rehearsal || index < 0 || index >= len(p.conversations) {
-		return Report{}, ErrSnapshot
+		return Report{}, invalidSnapshot("apply requires import plan and valid conversation index")
 	}
 	c := p.conversations[index]
 	hash := manifest(c)
@@ -65,16 +65,24 @@ func (p *Plan) Apply(ctx context.Context, tx *canon.Tx, index int) (Report, erro
 		return Report{}, err
 	}
 	at := time.Now().UTC().Format(time.RFC3339Nano)
-	rehearsal, err := p.Rehearse()
+	p.prepareRehearsal()
+	if p.rehearsalErr != nil {
+		return Report{}, p.rehearsalErr
+	}
+	batch, err := tx.ExecContext(ctx, "INSERT INTO import_batch(id,created_at) VALUES(?,?) ON CONFLICT(id) DO NOTHING", p.batch, at)
 	if err != nil {
 		return Report{}, err
 	}
-	encodedReport, _ := json.Marshal(rehearsal)
-	if _, err := tx.ExecContext(ctx, "INSERT INTO import_batch(id,created_at) VALUES(?,?) ON CONFLICT(id) DO NOTHING", p.batch, at); err != nil {
+	added, err := batch.RowsAffected()
+	if err != nil {
 		return Report{}, err
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO import_rehearsal(batch_id,report) VALUES(?,?) ON CONFLICT(batch_id) DO NOTHING", p.batch, string(encodedReport)); err != nil {
-		return Report{}, err
+	// The batch and its report commit together. Avoid passing the full report
+	// through SQLite again for every subsequent conversation.
+	if added != 0 {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO import_rehearsal(batch_id,report) VALUES(?,?)", p.batch, p.rehearsalJSON); err != nil {
+			return Report{}, err
+		}
 	}
 	report := Report{}
 	materials := map[string]assets.Asset{}
@@ -208,7 +216,7 @@ func reverse(ctx context.Context, tx *canon.Tx, key LegacyKey) (Row, error) {
 	}
 	var row Row
 	if err = json.Unmarshal([]byte(fields), &row); err != nil || row == nil {
-		return nil, ErrSnapshot
+		return nil, invalidSnapshot("reverse source row JSON")
 	}
 	if column != "" {
 		v, _ := value(body)

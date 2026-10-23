@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/thisisjun786/lina/internal/core/a2a"
 	"github.com/thisisjun786/lina/internal/core/accounts"
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assets"
@@ -46,8 +47,12 @@ import (
 // conversationRuntime is boot's composition of existing stores and flows. The
 // model and all accepted work belong to Core, independent of client lifetime.
 type conversationRuntime struct {
+	publications       *publicationRuntime
+	externalTask       string
+	summaryPreparation conversationPreparation
 	// Installed only by the isolated intake replay command, never by Core boot.
 	intakeReplay    func(context.Context, ledger.Event) error
+	intakeSnapshot  bool
 	artifactInit    sync.Once
 	artifactMu      *sync.Mutex
 	exchangeStop    context.CancelFunc
@@ -83,6 +88,8 @@ type conversationRuntime struct {
 	coordinator     *conversationRuntime
 
 	materials        *conversationMaterials
+	recallStop       context.CancelFunc
+	recallDone       chan struct{}
 	assets           *assets.Store
 	root             string
 	steering         map[string][]acceptedSteering
@@ -90,6 +97,9 @@ type conversationRuntime struct {
 	db               *canon.Store
 	accounts         *accounts.Store
 	vault            *secrets.Store
+	remoteAgents     *a2a.Service
+	a2aStop          context.CancelFunc
+	a2aDone          chan struct{}
 	webTransport     http.RoundTripper
 	signin           *accounts.SignIn
 	agents           *agents.Store
@@ -111,6 +121,7 @@ type conversationRuntime struct {
 	presets          *presetPublisher
 
 	skillMaintenance            *skillMaintenanceRuntime
+	memoryExtraction            *memoryExtractionRuntime
 	growthMu                    sync.Mutex
 	growth                      *growthRuntime
 	lanes                       *lane.Manager
@@ -230,6 +241,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	r.router = &conversationRouter{root: r, views: map[string]*conversationRuntime{r.agent: r}}
 	r.identity = clientsrv.Identity{PersonID: r.person, Agents: []protocol.Agent{{AgentID: r.agent, Name: first.Agent.Name}}, Topics: r.topics, AuthorizeTopic: r.topicAuthorized, TopicCapabilities: map[string]protocol.Capability{
 		"core": clientsrv.ConversationCapability, "conversation:": clientsrv.ConversationCapability, "results:": clientsrv.ConversationCapability,
+		"launcher": clientsrv.LauncherCapability,
 	}}
 	if r.agent == "" {
 		r.identity.Agents = []protocol.Agent{}
@@ -237,7 +249,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if route == nil {
 		r.identity.Topics = nil
 		r.identity.TopicCapabilities = nil
-	} else if err := addOperations(&r.identity, clientsrv.ConversationOperations(r.router)); err != nil {
+	} else if err := addOperations(&r.identity, clientsrv.ConversationOperations(r.router), clientsrv.LauncherOperations(r.router), r.resultOperations()); err != nil {
 		return nil, err
 	}
 	r.vault, err = secrets.OpenFiles(root)
@@ -253,6 +265,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
+	if err = r.initA2A(relay); err != nil {
+		return nil, err
+	}
 	if err := addOperations(&r.identity, clientsrv.AccountOperations(r.person, r.accounts, relay)); err != nil {
 		return nil, err
 	}
@@ -294,6 +309,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 
+	if err = r.recoverA2A(ctx); err != nil {
+		return nil, err
+	}
 	if r.agent != "" {
 		if err = r.seedHistory(ctx); err != nil {
 			return nil, err
@@ -315,13 +333,20 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startSkillMaintenance(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startMemoryExtraction(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startPlanning(ctx); err != nil {
 		return nil, err
 	}
 	if err = r.startGrowth(ctx, controls); err != nil {
 		return nil, err
 	}
+	r.startA2AObserver(ctx)
 	if err = r.startOwnerViews(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.initPublications(ctx); err != nil {
 		return nil, err
 	}
 	// Producers and the reactor may schedule recovered turns immediately.
@@ -361,11 +386,36 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.resumeWorkerCompletions(ctx); err != nil {
 		return nil, err
 	}
+	r.publications.start(ctx)
 	success = true
 	return r, nil
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.publications != nil && r.publications.stop != nil {
+		r.publications.stop()
+		select {
+		case <-r.publications.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if r.recallStop != nil {
+		r.recallStop()
+		select {
+		case <-r.recallDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if r.a2aStop != nil {
+		r.a2aStop()
+		select {
+		case <-r.a2aDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if r.exchangeStop != nil {
 		r.exchangeStop()
 		select {
@@ -424,6 +474,15 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		}
 	}
 	if m := r.skillMaintenance; m != nil && m.stop != nil {
+		m.stop()
+		select {
+		case <-m.done:
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		}
+		m.stop = nil
+	}
+	if m := r.memoryExtraction; m != nil && m.stop != nil {
 		m.stop()
 		select {
 		case <-m.done:

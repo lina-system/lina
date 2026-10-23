@@ -57,6 +57,7 @@ func fileBytes(t *testing.T, path string) []byte {
 }
 
 func TestSQLiteSnapshotIncludesCommittedWALAndNeverWritesSource(t *testing.T) {
+	t.Parallel()
 	path, db := sourceDB(t)
 	before := fileBytes(t, path)
 	wal := fileBytes(t, path+"-wal")
@@ -97,6 +98,7 @@ func TestSQLiteSnapshotIncludesCommittedWALAndNeverWritesSource(t *testing.T) {
 }
 
 func TestSQLiteGateRefusesUnknownBeforePublishingSnapshot(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, change, difference string }{
 		{"version", "PRAGMA user_version=8", "user_version"},
 		{"column", "ALTER TABLE messages ADD COLUMN extra TEXT", "messages"},
@@ -122,6 +124,7 @@ func TestSQLiteGateRefusesUnknownBeforePublishingSnapshot(t *testing.T) {
 }
 
 func TestSQLiteFailureDoesNotCreateSourceOrOverwriteDestination(t *testing.T) {
+	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "missing.sqlite")
 	dest := filepath.Join(t.TempDir(), "snapshot.sqlite")
 	if err := snapshotSQLite(t.Context(), missing, dest, syntheticSchema()); err == nil {
@@ -151,6 +154,7 @@ func TestSQLiteFailureDoesNotCreateSourceOrOverwriteDestination(t *testing.T) {
 }
 
 func TestHonchoSchemaGateAndRawGETSnapshot(t *testing.T) {
+	t.Parallel()
 	api := fixture(t, "openapi-synthetic.json")
 	raw := []byte("{\"items\": [{\"id\": \"synthetic-1\", \"body\":\"hello\"}], \"next\":null}\n")
 	var calls []string
@@ -196,6 +200,7 @@ func TestHonchoSchemaGateAndRawGETSnapshot(t *testing.T) {
 }
 
 func TestHonchoUnknownSchemaDoesNotReadData(t *testing.T) {
+	t.Parallel()
 	expected := fixture(t, "openapi-synthetic.json")
 	for _, body := range [][]byte{
 		bytes.ReplaceAll(expected, []byte(`"synthetic-1"`), []byte(`"synthetic-2"`)),
@@ -219,6 +224,7 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func TestGETOnlyTransportRejectsMutationsBeforeNetwork(t *testing.T) {
+	t.Parallel()
 	calls := 0
 	tr := GETOnlyTransport{Base: roundTripFunc(func(r *http.Request) (*http.Response, error) { calls++; return nil, fmt.Errorf("reached network") })}
 	for _, method := range []string{"POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "CONNECT", "get", ""} {
@@ -234,6 +240,7 @@ func TestGETOnlyTransportRejectsMutationsBeforeNetwork(t *testing.T) {
 }
 
 func TestHonchoRedirectAndFailureNeverPublish(t *testing.T) {
+	t.Parallel()
 	api := fixture(t, "openapi-synthetic.json")
 	for _, status := range []int{301, 302, 303, 307, 308, 401, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
@@ -268,6 +275,7 @@ func TestHonchoRedirectAndFailureNeverPublish(t *testing.T) {
 }
 
 func TestSidecarCopyVerifiesHashAndLeavesSourceUntouched(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	body := fixture(t, "sidecar.txt")
 	src := filepath.Join(root, "output.txt")
@@ -302,6 +310,7 @@ func TestSidecarCopyVerifiesHashAndLeavesSourceUntouched(t *testing.T) {
 }
 
 func TestSnapshotDestinationMustBeOutsideSource(t *testing.T) {
+	t.Parallel()
 	path, _ := sourceDB(t)
 	destination := filepath.Join(filepath.Dir(path), "new.sqlite")
 	if err := snapshotSQLite(t.Context(), path, destination, syntheticSchema()); !errors.Is(err, ErrReadOnly) {
@@ -329,6 +338,7 @@ func TestSnapshotDestinationMustBeOutsideSource(t *testing.T) {
 }
 
 func TestHonchoTruncatedResponseCleansPartialSnapshot(t *testing.T) {
+	t.Parallel()
 	api := fixture(t, "openapi-synthetic.json")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/openapi.json" {
@@ -354,6 +364,7 @@ func TestHonchoTruncatedResponseCleansPartialSnapshot(t *testing.T) {
 }
 
 func TestSQLiteColumnMetadataGate(t *testing.T) {
+	t.Parallel()
 	for _, mutate := range []func(*Column){
 		func(c *Column) { c.Name = "other" }, func(c *Column) { c.Type = "BLOB" }, func(c *Column) { c.NotNull = false },
 		func(c *Column) { s := "'default'"; c.Default = &s }, func(c *Column) { c.PrimaryKey = 1 }, func(c *Column) { c.Hidden = 2 },
@@ -369,6 +380,7 @@ func TestSQLiteColumnMetadataGate(t *testing.T) {
 }
 
 func TestHonchoRefusesRemotePlaintextBeforeSendingCredential(t *testing.T) {
+	// Not parallel: replaces http.DefaultTransport, which is process-wide.
 	original := http.DefaultTransport
 	transport := original.(*http.Transport).Clone()
 	calls := 0

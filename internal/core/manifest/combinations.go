@@ -70,12 +70,13 @@ func ValidateCombinations(rows []Combination) error {
 				return fmt.Errorf("empty combination evidence")
 			}
 		}
-		caps := make(map[protocol.Capability]bool)
+		caps := make(map[[2]string]bool)
 		for _, capability := range row.Capabilities {
-			if capability.Name == "" || !protocolVersionPattern.MatchString(capability.Version) || caps[capability] {
+			key := [2]string{capability.Name, capability.Version}
+			if capability.Name == "" || !protocolVersionPattern.MatchString(capability.Version) || caps[key] {
 				return fmt.Errorf("invalid or duplicate capability")
 			}
-			caps[capability] = true
+			caps[key] = true
 		}
 	}
 	return nil
@@ -92,7 +93,7 @@ func ClientCombinations() []Combination {
 
 // ClientCombinationsFor describes the target selected by the build writer.
 func ClientCombinationsFor(target string) []Combination {
-	return []Combination{{
+	rows := []Combination{{
 		Connection:      "client",
 		Peer:            TUIPeer,
 		Platform:        target,
@@ -104,6 +105,7 @@ func ClientCombinationsFor(target string) []Combination {
 			{Name: "progress", Version: "1.0"},
 			{Name: "worker_lanes", Version: "1.0"},
 			{Name: "web", Version: "1.0"},
+			{Name: "a2a", Version: "1.0"},
 			{Name: "github_merge", Version: "1.0"},
 			{Name: "github", Version: "1.0"},
 			{Name: "agents", Version: "1.0"},
@@ -114,6 +116,7 @@ func ClientCombinationsFor(target string) []Combination {
 			{Name: "sign_in_relay", Version: "1.0"},
 			{Name: "lifecycle", Version: "1.0"},
 			{Name: "conversation", Version: "1.0"},
+			{Name: "launcher", Version: "1.0"},
 			{Name: "turn_activity", Version: "1.0"},
 			{Name: "replay", Version: "1.0"},
 			{Name: "growth", Version: "1.0"},
@@ -127,11 +130,13 @@ func ClientCombinationsFor(target string) []Combination {
 			"go test ./e2e/m1 -run TestM2ProgressWaitingInstalledCore",
 			"go test ./e2e/m1 -run TestM3WorkerLanes",
 			"go test ./e2e/m1 -run TestM1Web",
+			"go test ./e2e/m1 -run TestM3A2A",
 			"go test ./e2e/m1 -run TestM2GitHubMergeInstalledCore",
 			"go test ./e2e/m1 -run TestM2GitHubCIInstalledCore",
 			"go test ./kit/protocol/conformance",
 			"go test ./e2e/m1 -run TestPlannedRestart",
 			"go test ./e2e/m1 -run TestM1TUIConversationInstalledCore",
+			"go test ./e2e/m1 -run TestM3LauncherInstalledCore",
 			"go test ./e2e/m1 -run TestM1InstalledToolActivity",
 			"go test ./e2e/m1 -run TestM1TUIAccountsInstalledCore",
 			"go test ./e2e/m1 -run TestM1TUIChannel",
@@ -143,4 +148,10 @@ func ClientCombinationsFor(target string) []Combination {
 			"go test ./e2e/m1 -run TestM1TurnBudgetHandoffInstalledCore",
 		},
 	}}
+	modern := rows[0]
+	modern.ProtocolVersion = "1.1"
+	modern.Capabilities = append(append([]protocol.Capability{}, modern.Capabilities...), protocol.SurfaceResultsCapability(), protocol.Capability{Name: "mocks", Version: "1.0"})
+	modern.Evidence = append(append([]string{}, modern.Evidence...), "go test ./e2e/m1 -run TestGeneratedSurfaceInstalledCore", "go test ./e2e/m1 -run TestM3DrawnMocks")
+	return append(rows, modern)
+
 }

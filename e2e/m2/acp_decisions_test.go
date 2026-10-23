@@ -4,7 +4,11 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,6 +16,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -31,6 +37,13 @@ import (
 // This scenario launches the real Core command. Only the model, ACP agent and
 // GitHub boundary are synthetic; dispatch, worktrees, commits and cards are real.
 func TestACPDecisionsThroughRunningCore(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux and bubblewrap binding /proc/loadavg")
+	}
+	bwrap, err := exec.LookPath("bwrap")
+	if err != nil {
+		t.Fatal("worker load fixture requires bubblewrap:", err)
+	}
 	binary := filepath.Join(t.TempDir(), "lina")
 	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-ldflags=-w", "-o", binary, "./cmd/lina")
 	build.Dir = "../.."
@@ -94,6 +107,9 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 			env := []string{"PATH=" + bin, "HOME=" + root, "XDG_CONFIG_HOME=" + root, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "LANG=C", "LINA_ACP_FIXTURE=" + fixture, "LINA_ACP_CASE=" + mode, "LINA_ACP_WORKER=" + scenario.worker}
 			write(filepath.Join(bin, "systemctl"), "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$2\" in show) printf 'not-found\\n';; daemon-reload|enable) exit 0;; *) exit 97;; esac\n", 0700)
 			bundle := makeInstallBundle(t, root, binary, nodeBinary)
+			if scenario.worker == "claude-acp" {
+				syntheticClaudeACPBundle(t, root, bundle, acpDecisionsScript)
+			}
 			setup := exec.CommandContext(ctx, binary, "install", "--state-root", state, "--unit-dir", filepath.Join(root, "units"), "--bundle", bundle)
 			setup.Env = env
 			if out, err := setup.CombinedOutput(); err != nil {
@@ -109,6 +125,9 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 			}
 			h.socket = installed.Socket
 			installedBinary := filepath.Join(state, "system/bin/lina")
+			if scenario.worker == "claude-acp" {
+				seedManagedACPDecisionFixture(t, state)
+			}
 			git := func(args ...string) string {
 				t.Helper()
 				c := exec.CommandContext(ctx, filepath.Join(bin, "git"), args...)
@@ -226,10 +245,16 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				emitResponse(w, "Task accepted.", true)
 			}))
 			defer server.Close()
+			loadfile, pidfile := filepath.Join(fixture, "loadavg"), filepath.Join(fixture, "core.pid")
+			write(loadfile, "0.00 0.00 0.00 1/1 1\n", 0600)
 			var crash func()
 			start := func() func() {
 				t.Helper()
-				c := exec.CommandContext(ctx, installedBinary, "core", "--state-root", state, "--socket", h.socket)
+				// Use the installed-worker load fixture so unrelated host work cannot
+				// park this approval scenario. The real sampler and capacity gate run.
+				// Keep a shell parent alive for bwrap's parent-death signal.
+				args := []string{bwrap, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", loadfile, "/proc/loadavg", "--", "/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; shift; exec "$@"`, "acp-load", pidfile, installedBinary, "core", "--state-root", state, "--socket", h.socket}
+				c := exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", `"$@" & child=$!; wait "$child"`, "acp-load-parent"}, args...)...)
 				c.Env = append(append([]string(nil), env...), "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture", "LINA_RESPONSES_API_KEY=synthetic-core-key")
 				var logs bytes.Buffer
 				c.Stdout = &logs
@@ -240,12 +265,26 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				done := make(chan error, 1)
 				go func() { done <- c.Wait() }()
 				stopped := false
+				signalCore := func(signal syscall.Signal) error {
+					raw, err := os.ReadFile(pidfile)
+					if err != nil {
+						return err
+					}
+					pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+					if err != nil || pid <= 0 {
+						return fmt.Errorf("invalid Core process identity: %q", raw)
+					}
+					return syscall.Kill(pid, signal)
+				}
 				stop := func() {
 					if stopped {
 						return
 					}
 					stopped = true
-					c.Process.Signal(syscall.SIGTERM)
+					if err := signalCore(syscall.SIGTERM); err != nil {
+						t.Error(err)
+						c.Process.Kill()
+					}
 					select {
 					case e := <-done:
 						if e != nil {
@@ -262,7 +301,7 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 						return
 					}
 					stopped = true
-					if err := c.Process.Kill(); err != nil {
+					if err := signalCore(syscall.SIGKILL); err != nil {
 						t.Fatal(err)
 					}
 					<-done
@@ -405,6 +444,7 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				}
 			}
 			noFile()
+			assertACPDecisionViews(t, h, "session:"+record.Thread.ID, record.Thread.TaskID)
 			if mode == "form" {
 				if question.Card == nil || question.ConversationID != conversation || question.Form == nil || len(question.Form.Fields) != 3 || question.Form.PluginName != scenario.worker {
 					t.Fatalf("form lost origin or schema: %+v", question)
@@ -517,9 +557,53 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				Outcome struct{ Outcome, OptionID string }
 				Action  string
 				Content map[string]json.RawMessage
+				Meta    map[string]json.RawMessage `json:"_meta"`
 			}
 			if json.Unmarshal(raw, &answer) != nil {
 				t.Fatalf("invalid answer: %s", raw)
+			}
+			if mode == "once" || mode == "deny" {
+				var proof authority.WorkerApprovalProof
+				if err := json.Unmarshal(answer.Meta["lina/approval"], &proof); err != nil {
+					t.Fatal("worker did not receive signed approval", err)
+				}
+				var saved authority.Approval
+				if err := db.Read(ctx, func(tx *canon.Tx) error {
+					var raw []byte
+					if err := tx.QueryRowContext(ctx, "SELECT record FROM authority_approvals WHERE approval_id=?", approval.Card.ID).Scan(&raw); err != nil {
+						return err
+					}
+					return json.Unmarshal(raw, &saved)
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if saved.WorkerProof == nil || saved.State != authority.Consumed {
+					t.Fatal("approval not durably consumed with proof")
+				}
+				if err := authority.VerifyWorkerApproval(saved.WorkerProof.PublicKey, &proof); err != nil {
+					t.Fatal(err)
+				}
+				if proof.Decision.ApprovalID != approval.Card.ID || proof.Decision.Binding == nil || proof.Decision.Binding.ThreadID != card.Run.ThreadID || proof.Decision.Binding.TurnID != card.Run.TurnID || string(proof.Decision.Request) != string(saved.Arguments) {
+					t.Fatal("signed response lost request or execution binding")
+				}
+				proof.Decision.Choice = authority.Always
+				if err := authority.VerifyWorkerApproval(saved.WorkerProof.PublicKey, &proof); err == nil {
+					t.Fatal("tampered approval verified")
+				}
+			}
+			if mode == "form" {
+				var framed string
+				if err := json.Unmarshal(answer.Meta["lina/message"], &framed); err != nil {
+					t.Fatal("form provenance missing", err)
+				}
+				var frame struct {
+					Kind string `xml:"speaker_kind,attr"`
+					Work string `xml:"work_id,attr"`
+					Text string `xml:"text"`
+				}
+				if err := xml.Unmarshal([]byte(framed), &frame); err != nil || frame.Kind != "person" || frame.Work != card.Task.ID || !json.Valid([]byte(frame.Text)) {
+					t.Fatal("form provenance invalid", err)
+				}
 			}
 			switch mode {
 			case "once":
@@ -566,6 +650,118 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 	}
 }
 
+// Keep the form case on the built-in managed Claude profile. Its ACP program
+// is synthetic, as in the other decision cases; the real pinned npm/SDK chain
+// has its own TestClaudeACPThroughRunningCore acceptance. Seed a sealed cached
+// program so this protocol scenario neither installs packages nor uses a PATH
+// adapter that Core no longer launches.
+func seedManagedACPDecisionFixture(t *testing.T, state string) {
+	t.Helper()
+	source := filepath.Join(state, "system/adapters/claude-acp")
+	manifest := []byte(`{"name":"lina-acp-decision-fixture","version":"1.0.0","private":true}`)
+	packagePath := "node_modules/@agentclientprotocol/claude-agent-acp"
+	integrity := sha512.Sum512([]byte(acpDecisionsScript))
+	lock, err := json.Marshal(map[string]any{"lockfileVersion": 3, "packages": map[string]any{
+		"":          map[string]string{"version": "1.0.0"},
+		packagePath: map[string]string{"version": "1.0.0", "resolved": "https://registry.npmjs.org/@agentclientprotocol/claude-agent-acp/-/claude-agent-acp-1.0.0.tgz", "integrity": "sha512-" + base64.StdEncoding.EncodeToString(integrity[:])},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(path string, data []byte) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(source, "package.json"), manifest)
+	write(filepath.Join(source, "package-lock.json"), lock)
+	digest := fmt.Sprintf("%x", sha256.Sum256(append(append([]byte(nil), manifest...), lock...)))
+	target := filepath.Join(source, "runtime", digest)
+	files := map[string][]byte{
+		packagePath + "/package.json":  []byte(`{"name":"@agentclientprotocol/claude-agent-acp","version":"1.0.0","type":"module"}`),
+		packagePath + "/dist/index.js": []byte(acpDecisionsScript),
+	}
+	seal := map[string]string{}
+	for name, body := range files {
+		write(filepath.Join(target, filepath.FromSlash(name)), body)
+		seal[name] = fmt.Sprintf("%x", sha256.Sum256(body))
+	}
+	raw, err := json.Marshal(seal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(target, ".lina-integrity.json"), raw)
+}
+
+// Read fresh owner views while the worker is blocked on its unanswered request.
+// The fixture cannot finish until the test answers, so this has no duration race.
+func assertACPDecisionViews(t *testing.T, h *harness, runningRef, progressRef string) {
+	t.Helper()
+	for _, topic := range []string{"running", "progress"} {
+		ref := runningRef
+		if topic == "progress" {
+			ref = progressRef
+		}
+		ctx, cancel := context.WithTimeout(h.ctx, 10*time.Second)
+		defer cancel()
+		c, err := clientapi.DialWithCapabilities(ctx, h.socket, "test", []protocol.Capability{{Name: topic, Version: "1.0"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		if _, err = c.Subscribe(ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+			t.Fatal(err)
+		}
+		state := protocol.RunningState("")
+		for state != protocol.RunningStateNeedsInput {
+			frame, err := c.Receive(ctx)
+			if err != nil {
+				t.Fatalf("%s state for %s = %q, want needs_input: %v", topic, ref, state, err)
+			}
+			if frame.Error != nil {
+				t.Fatalf("%s refused: %+v", topic, frame.Error)
+			}
+			var payloads []json.RawMessage
+			if snapshot, ok := frame.Payload.(protocol.Snapshot); ok {
+				if snapshot.Topic != topic {
+					t.Fatalf("unexpected snapshot topic %q", snapshot.Topic)
+				}
+				for _, item := range snapshot.Items {
+					payloads = append(payloads, item.Payload)
+				}
+			} else {
+				raw, err := json.Marshal(frame.Payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				payloads = append(payloads, raw)
+			}
+			for _, raw := range payloads {
+				var update struct {
+					RunID string `json:"run_id"`
+					State protocol.RunningState
+					Rows  []protocol.ProgressRow
+				}
+				if err := json.Unmarshal(raw, &update); err != nil {
+					t.Fatal(err)
+				}
+				if topic == "running" && update.RunID == ref {
+					state = update.State
+				}
+				for _, row := range update.Rows {
+					if topic == "progress" && row.Ref == ref && row.Line.State != nil {
+						state = *row.Line.State
+					}
+				}
+			}
+		}
+	}
+}
+
 const acpDecisionsScript = `#!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 import fs from 'node:fs';
@@ -574,6 +770,7 @@ import readline from 'node:readline';
 const root=process.env.LINA_ACP_FIXTURE, mode=process.env.LINA_ACP_CASE;
 if(path.basename(process.argv[1])==='gh'){console.log('[]');process.exit(0)}
 if(process.argv[2]==='--version'){console.log('fixture-unverified-9');process.exit(0)}
+if(mode==='form'&&(path.basename(process.argv[1])!=='index.js'||!process.env.CLAUDE_CODE_EXECUTABLE))throw Error('managed Claude ACP fixture not selected');
 const send=x=>console.log(JSON.stringify({jsonrpc:'2.0',...x}));
 const reply=(id,result)=>send({id,result});
 let prompt;

@@ -24,8 +24,9 @@ type Adapter struct {
 	Token         secret.Secret
 }
 
-func (*Adapter) Provider() provider.ProviderID { return provider.Claude }
-func (*Adapter) Class() provider.Class         { return provider.AgentRuntime }
+func (*Adapter) Provider() provider.ProviderID                         { return provider.Claude }
+func (*Adapter) Class() provider.Class                                 { return provider.AgentRuntime }
+func (*Adapter) Capabilities(provider.ModelRef) provider.CapabilitySet { return nil }
 func (*Adapter) Models(context.Context, lease.Lease, provider.Credential) (provider.ModelList, error) {
 	return provider.ModelList{}, &provider.Failure{Kind: provider.Unavailable}
 }
@@ -33,13 +34,16 @@ func (*Adapter) Quota(context.Context, provider.Credential) ([]provider.QuotaRow
 	return nil, nil
 }
 func (a *Adapter) Stream(ctx context.Context, l lease.Lease, req provider.Request) (provider.Stream, error) {
+	if err := provider.ValidateUse(req, a.Capabilities(req.Model), provider.Admitted("claude")); err != nil {
+		return nil, err
+	}
 	if !filepath.IsAbs(a.Node) || !filepath.IsAbs(a.Program) || req.Model == "" {
 		return nil, &provider.Failure{Kind: provider.NotAccepted}
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	in, stdin := io.Pipe()
 	stdout, out := io.Pipe()
-	s := &stream{cancel: cancel, stdin: stdin, stdout: stdout, done: make(chan struct{}), request: req, meta: provider.Meta{Class: provider.AgentRuntime}, tools: map[string]bool{}}
+	s := &stream{ctx: ctx, cancel: cancel, stdin: stdin, stdout: stdout, done: make(chan struct{}), request: req, meta: provider.Meta{Class: provider.AgentRuntime}, tools: map[string]bool{}}
 	for _, raw := range req.Tools {
 		var d struct{ Name string }
 		if json.Unmarshal(raw, &d) != nil || d.Name == "" {
@@ -57,8 +61,12 @@ func (a *Adapter) Stream(ctx context.Context, l lease.Lease, req provider.Reques
 		env = append(env, token)
 	}
 	owner := proc.NewOwner()
+	// exec's stdin copier may be blocked reading our pipe after the runtime
+	// exits. Close both stream ends on cancellation without waiting for Run.
+	stop := context.AfterFunc(ctx, s.stop)
 	go func() {
 		defer close(s.done)
+		defer stop()
 		err := owner.Run(ctx, l, proc.Command{Path: a.Node, Args: []string{a.Program}, Env: env, Stdin: in, Stdout: out, Stderr: io.Discard})
 		_ = in.CloseWithError(err)
 		_ = out.CloseWithError(err)
@@ -90,6 +98,7 @@ type frame struct {
 	Cost      *provider.Money                         `json:"cost_estimate"`
 }
 type stream struct {
+	ctx                   context.Context
 	cancel                context.CancelFunc
 	stdin                 *io.PipeWriter
 	stdout                *io.PipeReader
@@ -108,10 +117,26 @@ func (s *stream) Next(ctx context.Context) (provider.Event, error) {
 	if s.terminal {
 		return provider.Event{}, io.EOF
 	}
-	fail := func() (provider.Event, error) { return provider.Event{}, &provider.Failure{Kind: provider.Unavailable} }
-	for s.scanner.Scan() {
+	// Next may have a shorter lifetime than Stream. Its cancellation ends the
+	// request too, including a blocked tool-result write.
+	stop := context.AfterFunc(ctx, s.stop)
+	defer stop()
+	fail := func() (provider.Event, error) {
 		if err := ctx.Err(); err != nil {
+			s.stop()
 			return provider.Event{}, err
+		}
+		if err := s.ctx.Err(); err != nil {
+			return provider.Event{}, err
+		}
+		return provider.Event{}, &provider.Failure{Kind: provider.Unavailable}
+	}
+	if ctx.Err() != nil || s.ctx.Err() != nil {
+		return fail()
+	}
+	for s.scanner.Scan() {
+		if ctx.Err() != nil || s.ctx.Err() != nil {
+			return fail()
 		}
 		var f frame
 		if json.Unmarshal(s.scanner.Bytes(), &f) != nil || f.ID != "turn" {
@@ -202,12 +227,21 @@ func (s *stream) Next(ctx context.Context) (provider.Event, error) {
 	return fail()
 }
 func (s *stream) Meta() provider.Meta { return s.meta }
-func (s *stream) Close() error {
+func (s *stream) stop() {
 	s.once.Do(func() { s.cancel(); s.stdin.Close(); s.stdout.Close() })
+}
+func (s *stream) Close() error {
+	s.stop()
 	select {
 	case <-s.done:
 		return nil
 	case <-time.After(5 * time.Second):
 		return errors.New("adapter shutdown timed out")
 	}
+}
+
+// RequestBudget retains conservative byte accounting until this adapter can
+// pair model context metadata with a tokenizer for its complete wire request.
+func (*Adapter) RequestBudget(provider.ModelRef) (int, func(provider.Request) int) {
+	return 128000, provider.RequestBytes
 }

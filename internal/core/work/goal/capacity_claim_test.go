@@ -62,7 +62,11 @@ func TestClaimRevalidatesQueuedHost(t *testing.T) {
 					t.Fatal(err)
 				}
 				g := revisionSnapshot(t, e).Goals[0]
-				if len(g.Waits) != 1 || g.Waits[0].Reason != "host_capacity" {
+				reason := "host_capacity"
+				if name == "quota" {
+					reason = "worker_quota"
+				}
+				if len(g.Waits) != 1 || g.Waits[0].Reason != reason {
 					t.Fatalf("missing capacity wait: %+v", g)
 				}
 				// A fresh alternative can take an unstarted assignment without

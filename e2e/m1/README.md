@@ -6,6 +6,24 @@ selection runs it once; there is no recursive test runner. Builds are shared,
 state roots are private, children are joined and temporary state is removed.
 Existing persona-growth extensions still use this harness and `../m2/` fixtures.
 
+The shared conversation client checks admission before subscribing, so its
+readiness receive loop cannot consume live conversation events. It still
+correlates each probe reply and retries only an explicit recovery refusal.
+`TestConversationReadinessBeforeSubscription` checks the ordering through the
+real client server after an unavailable probe. `TestM2WorkerFixtureFinishGate`
+waits for the synthetic worker to enter its completion gate before requesting
+a second snapshot, then checks one completion and the result file. The gate
+wait runs outside the worker request loop. `TestM2InstalledWorkerOutcome`
+exercises the corresponding worker, file read-back and restart path in Core.
+
+`TestM2WorkArea` drives Core's workspace allocation and result retention tools,
+commits real worker output, and verifies branch isolation, restart and backup
+after losing the work area. Its completion responder locates the current input
+before the ContextPacket's clock reference. `TestWorkAreaCompletionRequest`
+uses production request assembly to check that trailing evidence cannot hide a
+completion or make an older completion consume a newer input. The installed
+scenario also rejects retention results produced before the retention request.
+
 This map follows the nine acceptance checks and failure injections in
 [LINA 1](../../docs/design/go-roadmap.md#lina-1). External providers and Telegram
 are synthetic wires; the production stores, operations, Core and TUI are real.
@@ -16,17 +34,48 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 
 | Acceptance | Headless observations |
 | --- | --- |
-| 1. Install, crash, corruption, doctor | `TestM1Install`; `TestM1StartupCrashRecovery` SIGKILLs all 13 acknowledged startup boundaries and starts installed Core at a higher epoch with the same identity; `TestM1Doctor`; `TestM1CanonFaultAdmissionAndDoctor` checks refused receipts, rollback, recoverable FULL/write errors and corruption's durable write halt. |
+| 1. Install, crash, corruption, doctor | `TestM1Install`; `TestM1StartupCrashRecovery` SIGKILLs all 13 acknowledged startup boundaries and starts installed Core at a higher epoch with the same identity; `TestM1StartupOrder` checks that the welcome carries the installed main id and durable epoch, that a second installed Core exits 69 without disturbing the first, and that a restart mints a higher durable epoch; `TestM1RecoveringRefusesMutations` holds the installed Core at reconciliation, checks `unavailable` for a mutation and an admitted read while RECOVERING, then admission after READY; `TestM1Doctor`; `TestM1CanonFaultAdmissionAndDoctor` checks refused receipts, rollback, recoverable FULL/write errors and corruption's durable write halt. |
 | 2. No account, sign-in, streaming, immutable owner | `TestM1TUIConversationInstalledCore`, `TestM1TUIAccountsInstalledCore`, `TestM1ChatGPTSignInOwnerBinding`: unconfigured preparation, sign-in controls, recorded issuer responses, streamed/persisted conversation and second-account owner binding. |
 | 3. Reply card, hard budget, boundary notice | `TestM1ReplyShapeLONGQA` and final-item/large-frame cases check sentence cuts and retained ledger data; `TestM1TurnBudgetHandoffInstalledCore` checks gathered state, one run, running UI and no notice inside an active turn; `TestM1RunLandingNotice` and `TestM1RunQuestionNotice` check durable landing. |
 | 4. Forget, restore, Korean, exact expansion | `TestM1MemoryCorrectionForgetRestore` backs up a readable summary before correcting/forgetting its source, restores the old generation into a different root and checks unavailable summaries, empty forgotten recall and absent provider context with a retained-memory positive control. `TestM1KoreanMemoryByID` runs every query in the Korean corpus through installed Core's memory protocol. `TestM1PreparedSummaries` runs the actual worker, checks three depths and exact raw fact bytes. `TestM1MemoryJobs` checks sourced conclusions and excludes automated/replayed person attribution. |
 | 5. Skill learning and undo | `TestM1SkillsInstalledCore` checks instruction-only adoption, its notice, next-turn use and one-action undo, and refuses executable-code adoption. |
-| 6. Hermes import | `TestM1ImportReconciliation`, `TestM1ImportRehearsalPromotion` and `TestM1StagedImportWorker` check table/row reconciliation, reverse hashes, unchanged source, repeat-import zero growth and promotion boundaries. |
+| 6. Hermes import | `TestM1ImportReconciliation`, `TestM1ImportRehearsalPromotion`, `TestM1StagedImportWorker` and `TestM1ImportJSONMasking` check table/row reconciliation, reverse hashes, unchanged source, repeat-import zero growth, promotion boundaries, JSON masking and unavailable-body reporting through installed import and restarted Core memory reads. |
 | 7. Telegram and agent hand-off | `TestM1TUIChannelPairing` checks installed pairing/binding controls; `TestM1TelegramCommitCrash` kills the real adapter/gateway before and after the inbox/cursor transaction, reopens canon and replays the update without duplicate delivery; `TestM1TelegramOwnerButton` checks an outsider's no-op before the owner's authenticated button. `TestM1TUITalkLogInstalledCore` now runs a typed hand-off through the background supervisor, checks its cited answer and one mailbox log row, then displays and expands that row through installed Core and TUI. |
 | 8. Sandbox, tool evidence, idle restart | `TestM1SandboxUnavailable`, `TestM1ClientAdmissionSandbox`, `TestM1ToolEvidenceCannotApprove`, `TestM1RestartWaitsForEffect` and `TestPlannedRestart`: probe/fail-closed causes, protected socket, planted tool-result text with a real authority gate, and protocol-visible restart held by a blocked effect until it finishes. |
 | 9. Waiting, running, cards, unchanged output, spikes | `TestM1WaitingRunningNotices`, `TestM1TUICards`, `TestM1TUIApprovalsInstalledCore`, `TestM1TurnBudgetHandoffInstalledCore` and the TUI stream/recovery/resize fixtures cover ordering, counts and cards. Foundation also runs the recording-writer checks `TestUnchangedConnectionWritesNothing`, `TestConversationDoneReplacesStreamAndUnchangedWritesNothing` and `TestConversationMarkdownProfilesAndUnchangedOutput` in `internal/tui/ui`. They compare exact byte counts synchronously, without idle sleeps. Physical spike evidence remains the prerequisite below. |
 
 Failure coverage also includes:
+
+- `TestM3WorkPanelLiveCodexWorker`: Core starts the worker, routes its approval
+  and question, displays live work-card activity, receives its file result and
+  retains the outcome after restart. The shared model fixture distinguishes
+  the current completion from the ContextPacket that follows it in the
+  [request layout](../../docs/design/conversation-and-memory.md#request-layout).
+  `TestWorkerCompletionFixtureRequestLayout` uses the real assembler to cover
+  trailing context, tool discovery, later inputs and result text that appears
+  only in retrieved context.
+
+- `TestM2WorkerDelayedCompletionOutput`: the model fixture selects the latest
+  scenario input or worker result even when user-role ContextPacket evidence
+  follows it. After recovery, a delayed first-turn completion arrives between
+  the second turn's output and finish. The scenario checks file read-back,
+  both stored outputs, one worker start, two worker turns and result reactions,
+  and a non-live result snapshot after another restart.
+
+- `TestM2TimersInstalledCore`: the scripted provider selects the latest input
+  or tool result, skipping the following ContextPacket instructions and external
+  evidence. Installed Core creates a job result and a reminder, saves changed
+  sensor observations, makes no model call for an unchanged revision, and
+  preserves fire counts across restarts and confirms cancellation. This follows the
+  [request layout](../../docs/design/conversation-and-memory.md#request-layout)
+  and [timer contract](../../docs/design/go-core.md#timers-progress-and-waiting).
+
+- `TestM2InstalledWorkerOutcome`: the pending-at-restart case releases the
+  worker only after Core emits the successful `start-worker` tool activity.
+  The provider continuation waits behind that release, so it cannot supply
+  the barrier. A committed completion with no claimed follow-up gates restart;
+  recovery must read the worker's file, deliver one reply and retain the result
+  without relaunching the worker. The 30-second scenario deadline is unchanged.
 
 - `TestM1TurnBudgetHandoffInstalledCore` keeps the complete long task name
   visible across wrapped rows in the 120-column terminal's running panel.
@@ -102,3 +151,10 @@ credential-free CI.
 
 [lcm]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/compaction.py
 [honcho]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/sdks/python/src/honcho/conclusions.py
+
+`TestM1MemoryQuotesInstalledCore` runs a conversation tool that remembers a
+name from a material-backed Korean event with a secret span. The installed
+Core resolves the quote through memory management before and after restart;
+canon inspection verifies that item/revision evidence contains no quote text.
+The management renderer's synthetic [capture](../../evidence/generated-ui/memory-quotes.png)
+shows a quote and an erased-source status.
