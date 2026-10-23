@@ -45,7 +45,7 @@ Any failed check stops the run before anything is built or published.
 With `--publish`, the script runs two separate stages.
 
 1. **Build:** in a clean worktree of the exact commit, with no credentials in its environment, it builds the release artifacts and their release manifest ([runtime.md](../design/runtime.md#release-manifest)). This stage verifies modules and installs packages as the [dependency policy](dependencies.md) requires.
-2. **Publication:** with the owner's local Git and GitHub credentials, it first fast-forwards `main`, pushes the immutable tag, then creates the GitHub release in this private repository with the notes, artifacts and manifest. This stage fetches no modules and installs no packages.
+2. **Publication:** with the owner's local Git and GitHub credentials, it first fast-forwards `main`, pushes the immutable tag, then creates the GitHub release in this repository with the notes, artifacts and manifest. This stage fetches no modules and installs no packages.
 
 The one-time importer and operational-switch commands in `tools/crw-takeover/`, together with their acceptance scenarios, are excluded from source archives by `.gitattributes` and are never release binaries. Product packages cannot import the tools.
 

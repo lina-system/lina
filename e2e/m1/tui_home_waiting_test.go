@@ -2,6 +2,7 @@
 package e2e_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,12 +18,39 @@ import (
 // TUI to that worker journey. An outside record change appears on Home
 // alongside the worker's authenticated decisions. Resolving the sources clears
 // the summary and preserves the typed draft. The scenario checks parsed
-// terminal cells, the worker-written artifact and cleanup.
+// terminal cells on Home without opening the work panel, the worker-written
+// artifact and cleanup. Each transition waits for its complete Home state.
 func TestM2TUIHomeWaitingInstalledCore(t *testing.T) {
 	t.Parallel()
 	var terminal *terminal
 	var outside, request string
-	runCodexWorkTools(t, "../m2/tui-home-waiting.json", "", func(h *harness, phase string, _ []protocol.Question) {
+	runCodexWorkTools(t, "../m2/tui-home-waiting.json", "", func(h *harness, phase string, questions []protocol.Question) {
+		waitHome := func(requests ...string) {
+			t.Helper()
+			home, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+				text := screenText(s)
+				if !s.AltScreen || s.CursorHidden || !strings.Contains(text, "KEEP-DRAFT") ||
+					!strings.Contains(text, design.Text(design.English, "live")) {
+					return false
+				}
+				waiting := design.Text(design.English, "waiting")
+				if len(requests) == 0 {
+					return !strings.Contains(text, waiting) && !strings.Contains(text, request)
+				}
+				if !strings.Contains(text, fmt.Sprintf("%s %d ", waiting, len(requests))) {
+					return false
+				}
+				for _, request := range requests {
+					if !strings.Contains(text, request) {
+						return false
+					}
+				}
+				return true
+			})
+			if err != nil {
+				t.Fatalf("Home waiting state at %s: %v; %s", phase, err, screenText(home))
+			}
+		}
 		switch phase {
 		case "approval":
 			// Only synthetic records in this harness are changed. Core detects the
@@ -48,7 +76,9 @@ func TestM2TUIHomeWaitingInstalledCore(t *testing.T) {
 			if !ok || overview.Waiting == nil || len(*overview.Waiting) != 2 {
 				t.Fatalf("missing approval/outside-change overview: %+v", frame)
 			}
+			var requests []string
 			for _, row := range *overview.Waiting {
+				requests = append(requests, row.Line.Sentence)
 				if row.Ref.Source == "outside" {
 					request = row.Line.Sentence
 				}
@@ -59,25 +89,11 @@ func TestM2TUIHomeWaitingInstalledCore(t *testing.T) {
 			terminal, _ = h.startConversationTUI(120, 36, "TERM=xterm-256color", "LC_ALL=C")
 			waitComposerReady(t, h, terminal)
 			h.keys(terminal, "KEEP-DRAFT")
-			waitScreen(t, h, terminal, "KEEP-DRAFT")
-			h.keys(terminal, "\x10") // Ctrl+P focuses the live work panel.
-			waitScreen(t, h, terminal, design.Text(design.English, "work.title"))
-			waitScreen(t, h, terminal, request)
-			h.keys(terminal, "\x1b")
-			home := waitComposerReady(t, h, terminal)
-			if !strings.Contains(screenText(home), request) || !strings.Contains(screenText(home), "KEEP-DRAFT") {
-				t.Fatalf("Core waiting request missing from Home: %s", screenText(home))
-			}
-			if !strings.Contains(screenText(home), design.Text(design.English, "waiting")+" 2") {
-				t.Fatalf("Home lost Core's waiting count: %s", screenText(home))
-			}
+			waitHome(requests...)
 		case "question":
 			// The authenticated worker approval was answered by the harness. Its
 			// next question must coexist with the overview-only outside-change row.
-			waitScreen(t, h, terminal, "Which label should the worker use")
-			if !strings.Contains(screenText(terminal.screen.Snapshot()), request) {
-				t.Fatal("worker update hid the outside-change request")
-			}
+			waitHome(questions[0].Card.Summary, request)
 		case "completed":
 			// The real stdio worker has written its verified fixture artifact.
 			// Removing this test-owned file restores the original records tree.
@@ -96,14 +112,7 @@ func TestM2TUIHomeWaitingInstalledCore(t *testing.T) {
 			if _, err = c.Receive(h.ctx); err != nil {
 				t.Fatal(err)
 			}
-			home, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
-				text := screenText(s)
-				return strings.Contains(text, "KEEP-DRAFT") && !strings.Contains(text, request) &&
-					!strings.Contains(text, design.Text(design.English, "waiting")+" 1")
-			})
-			if err != nil {
-				t.Fatalf("resolved source retained on Home: %v; %s", err, screenText(home))
-			}
+			waitHome()
 			h.keys(terminal, "\x04")
 			terminal.process.wait(t, 0)
 			h.expectTerminalRestored(terminal)
