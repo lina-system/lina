@@ -35,6 +35,11 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Report retains the superseded observation; the derivation pass releases
+	// its planning reservation before the current state can be inspected.
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	g := revisionSnapshot(t, e).Goals[0]
 	if b := g.Tasks[1]; b.Stage != TaskQAFailed || b.RepairAsked || b.RepairedBy != "" || b.QA.Ref != "failed-qa" {
 		t.Fatalf("retired assessment stranded or changed its task: %+v", b)
