@@ -36,6 +36,38 @@ func TestUsageUnknownRoundTrip(t *testing.T) {
 	}
 }
 
+func TestQuotaIdentityJSONCompatibility(t *testing.T) {
+	const oldJSON = `{"Provider":"chatgpt","Account":"account","Window":"unknown","UsedPct":100,"ResetsAt":null,"State":"blocked","Source":"endpoint","Observed":"2026-10-01T00:00:00Z"}`
+	var row QuotaRow
+	if err := json.Unmarshal([]byte(oldJSON), &row); err != nil || row.Bucket != "" || row.LimitID != "" || row.State != QuotaBlocked {
+		t.Fatalf("legacy quota changed: %+v %v", row, err)
+	}
+	raw, err := json.Marshal(row)
+	if err != nil || strings.Contains(string(raw), "Bucket") || strings.Contains(string(raw), "LimitID") {
+		t.Fatalf("legacy quota gained an identity: %s %v", raw, err)
+	}
+	row.LimitID, row.Bucket = "codex", "primary"
+	raw, err = json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored QuotaRow
+	if err := json.Unmarshal(raw, &restored); err != nil || restored.LimitID != row.LimitID || restored.Bucket != row.Bucket {
+		t.Fatalf("identity not durable: %+v %v", restored, err)
+	}
+	// The previous reader has no identity fields and must still read the block.
+	var legacy struct {
+		Provider ProviderID
+		Account  AccountID
+		Window   Window
+		UsedPct  *float64
+		State    QuotaState
+	}
+	if err := json.Unmarshal(raw, &legacy); err != nil || legacy.Provider != ChatGPT || legacy.Account != "account" || legacy.Window != UnknownWindow || legacy.State != QuotaBlocked || legacy.UsedPct == nil || *legacy.UsedPct != 100 {
+		t.Fatalf("legacy reader lost quota evidence: %+v %v", legacy, err)
+	}
+}
+
 func TestFailureVocabulary(t *testing.T) {
 	for _, kind := range []FailureKind{NeedsSignIn, NotEligible, UsageCapped, Unavailable, NotAccepted} {
 		b, err := json.Marshal(kind)

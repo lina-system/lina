@@ -25,28 +25,7 @@ func TestM2WorkerQuotaWindows(t *testing.T) {
 func TestM2WorkerQuotaPartialRecovery(t *testing.T) {
 	t.Parallel()
 	runCodexWorkTools(t, "../m2/codex-quota-recovery.json", "", func(h *harness, stage string, _ []protocol.Question) {
-		if stage != "completed" && stage != "restarted" {
-			return
-		}
-		db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer db.Close(context.Background())
-		var raw []byte
-		err = db.Read(h.ctx, func(tx *canon.Tx) error {
-			return tx.QueryRowContext(h.ctx, "SELECT rows FROM worker_quota WHERE worker='codex'").Scan(&raw)
-		})
-		var rows []provider.QuotaRow
-		if err != nil || json.Unmarshal(raw, &rows) != nil {
-			t.Fatalf("quota evidence: %s %v", raw, err)
-		}
-		if len(rows) != 2 || rows[0].State != provider.QuotaOK || rows[1].State != provider.QuotaOK || !rows[0].Observed.After(rows[1].Observed) {
-			t.Fatalf("%s: partial recovery did not reach dispatch: %s", stage, raw)
-		}
-		if work.ChooseWorker([]work.WorkerCandidate{{Name: "codex", Slots: 1, Quota: rows}}, nil, nil, nil, time.Now()) != "codex" {
-			t.Fatalf("%s: recovered worker remains unavailable", stage)
-		}
+		assertRecoveredWorkerQuota(t, h, stage)
 	})
 }
 
@@ -118,5 +97,80 @@ func assertWorkerQuotaWindows(t *testing.T, h *harness, fixture string) {
 	replacement, err := os.ReadFile(filepath.Join(fixture, "packet"))
 	if err != nil || string(first) != string(replacement) {
 		t.Fatal("quota handoff changed the task packet", err)
+	}
+}
+
+func TestM2WorkerQuotaIdentityRecovery(t *testing.T) {
+	t.Parallel()
+	for _, unknownWindow := range []bool{true, false} {
+		name := "unidentified-stop"
+		if unknownWindow {
+			name = "unknown-window"
+		}
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile("../m2/codex-quota-recovery.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fixture codexWorkScenario
+			if err := json.Unmarshal(data, &fixture); err != nil {
+				t.Fatal(err)
+			}
+			fixture.UnknownQuotaWindow = unknownWindow
+			data, err = json.Marshal(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scenario := filepath.Join(t.TempDir(), "quota.json")
+			if err := os.WriteFile(scenario, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			var setup func(*harness)
+			if !unknownWindow {
+				setup = func(h *harness) {
+					// Start from a durable stop left when the worker's quota endpoint was
+					// unavailable. Recovery must come through the running conversation tool.
+					db, close := installedAcceptanceStore(t, h)
+					defer close()
+					service, err := dispatch.Open(h.ctx, dispatch.Config{DB: db})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer service.Close(context.Background())
+					if err := service.ObserveQuota(h.ctx, "codex", []provider.QuotaRow{{Window: provider.UnknownWindow, State: provider.QuotaBlocked, Source: provider.ErrorCode, Observed: time.Now().Add(-time.Minute)}}); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			runCodexWorkToolsWithSetup(t, scenario, "", setup, func(h *harness, stage string, _ []protocol.Question) {
+				assertRecoveredWorkerQuota(t, h, stage)
+			})
+		})
+	}
+}
+
+func assertRecoveredWorkerQuota(t *testing.T, h *harness, stage string) {
+	t.Helper()
+	if stage != "completed" && stage != "restarted" {
+		return
+	}
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	var raw []byte
+	err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, "SELECT rows FROM worker_quota WHERE worker='codex'").Scan(&raw)
+	})
+	var rows []provider.QuotaRow
+	if err != nil || json.Unmarshal(raw, &rows) != nil {
+		t.Fatalf("quota evidence: %s %v", raw, err)
+	}
+	if len(rows) != 2 || rows[0].State != provider.QuotaOK || rows[1].State != provider.QuotaOK || !rows[0].Observed.After(rows[1].Observed) {
+		t.Fatalf("%s: partial recovery did not reach dispatch: %s", stage, raw)
+	}
+	if work.ChooseWorker([]work.WorkerCandidate{{Name: "codex", Slots: 1, Quota: rows}}, nil, nil, nil, time.Now()) != "codex" {
+		t.Fatalf("%s: recovered worker remains unavailable", stage)
 	}
 }

@@ -44,6 +44,20 @@ type translation struct{ en, ko string }
 // Keys are wire codes or local presentation ids, never English source text.
 // Keep both languages together so a new entry cannot omit a translation.
 var catalog = map[string]translation{
+	"usage.unknown":   {"Usage unknown", "사용량 알 수 없음"},
+	"command.unknown": {"Unknown command. Use /help.", "알 수 없는 명령입니다. /help를 확인하세요."},
+	"note.help":       {"Use /note <run> <text>, or choose a run in /board.", "/note <run> <text>를 입력하거나 /board에서 작업을 선택하세요."},
+
+	"board.heading":   {"Board", "보드"},
+	"board.done":      {"Done", "완료"},
+	"board.keys":      {"↑/↓ select · Enter expand · r refresh · Esc close", "↑/↓ 선택 · Enter 펼치기 · r 새로고침 · Esc 돌아가기"},
+	"board.empty":     {"None", "없음"},
+	"board.open":      {"o open", "o 열기"},
+	"board.dismiss":   {"d dismiss", "d 닫기"},
+	"board.stop":      {"s stop", "s 중단"},
+	"board.note":      {"n add note", "n 메모 추가"},
+	"board.decisions": {"F6 decisions", "F6 응답"},
+
 	"agents.role.system":               {"Setup and system health", "설정·시스템 관리"},
 	"agents.role.lina":                 {"Plans and coordination", "계획·업무 조율"},
 	"agents.role.dev":                  {"Development owner", "개발 담당"},
@@ -360,6 +374,17 @@ var catalog = map[string]translation{
 	"readiness_failure":          {"Not ready", "준비되지 않음"},
 	"agent_request":              {"Agent request", "에이전트 요청"},
 	"agent_result":               {"Agent result", "에이전트 결과"},
+	"approve_switch":             {"Approve transfer", "전환 승인"},
+	"activate_switch":            {"Activate transfer", "전환 적용"},
+	"rollback_switch":            {"Request rollback", "되돌리기 요청"},
+	"release_switch":             {"Release control", "지휘권 반환"},
+	"switch_status":              {"Transfer status", "전환 상태"},
+	"approved":                   {"Approved", "승인됨"},
+	"active":                     {"Active", "진행 중"},
+	"rollback_pending":           {"Rollback pending", "되돌리기 대기"},
+	"rolled_back":                {"Rolled back", "되돌림"},
+	"work_switch_request":        {"Work control request", "작업 제어 요청"},
+	"work_switch_result":         {"Work control result", "작업 제어 결과"},
 	"work_request":               {"Work request", "작업 요청"},
 	"work_result":                {"Work result", "작업 결과"},
 	"account_request":            {"Account request", "계정 요청"},
