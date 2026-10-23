@@ -168,7 +168,8 @@ Each case contains:
 - `state`: a fixed RFC3339 `clock`, `focus` and `focus_age_seconds`, `items`,
   `questions` and `surfaces`. Items have id, title, kind, state, last activity,
   optional names and links. Kinds are initiative, project, todo, task or run.
-  Work snapshots include running, waiting and needs-input states. Questions
+  Todo states follow the records store: backlog, open, started, completed and
+  canceled. Work snapshots include running, waiting and needs-input states. Questions
   identify their target and offered labels, optionally `yes_no`. Surface keys
   identify a reply message, card or thread and map to an item id.
 - `input`: text, optional reply/card/thread surface keys, the gap in seconds

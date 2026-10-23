@@ -147,7 +147,7 @@ func TestSetAndDeciderDenominators(t *testing.T) {
 	report := Run(t.Context(), f, func(_ context.Context, c Case, router string) ([]Binding, error) {
 		return Decide(router, *c.State, c.Input), nil
 	})
-	sets := map[string]int{"random": 4, "hard": 24}
+	sets := map[string]int{"random": 4, "hard": 26}
 	deciders := map[string]bool{}
 	for _, s := range report.Summaries {
 		n, ok := sets[s.Set]
@@ -214,6 +214,7 @@ func TestBaselineDeciders(t *testing.T) {
 	wants := map[string]string{
 		"reply": "reply-or-card", "card": "reply-or-card", "thread": "reply-or-card", "reply-precedes-name": "reply-or-card",
 		"exact-id": "exact-reference", "exact-link": "exact-reference", "exact-title-particle": "exact-reference", "normalized-name": "exact-reference", "normalized-nfc": "exact-reference", "name-precedes-option": "exact-reference", "new-under-named-project": "exact-reference", "running-task": "exact-reference", "running-run": "exact-reference",
+		"todo-backlog": "exact-reference", "todo-started": "exact-reference",
 		"option-number": "offered-option", "option-label": "offered-option", "yes-no": "offered-option",
 	}
 	for _, c := range cases {
@@ -228,5 +229,30 @@ func TestBaselineDeciders(t *testing.T) {
 		if bs := Decide("focus-only", *c.State, c.Input); len(bs) != 1 || bs[0].Target != c.State.Focus || bs[0].Decider != "focus" {
 			t.Fatalf("focus baseline: %+v", bs)
 		}
+	}
+}
+
+func TestTodoSnapshotStates(t *testing.T) {
+	raw, err := os.ReadFile("testdata/synthetic.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.Split(strings.TrimSpace(string(raw)), "\n")[0]
+	for _, state := range []string{"backlog", "open", "started", "completed", "canceled", "active", "closed", ""} {
+		t.Run(state, func(t *testing.T) {
+			var c Case
+			if err := json.Unmarshal([]byte(first), &c); err != nil {
+				t.Fatal(err)
+			}
+			item := c.State.Items[1]
+			item.Kind = "todo"
+			item.State = state
+			c.State.Items[1] = item
+			wantValid := state != "active" && state != "closed" && state != ""
+			reason := Validate(c)
+			if (reason == "") != wantValid {
+				t.Fatalf("state=%q validation=%q want valid=%v", state, reason, wantValid)
+			}
+		})
 	}
 }

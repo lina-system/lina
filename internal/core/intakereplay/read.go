@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/lina/internal/core/records"
 )
 
 const maxLine = 1024 * 1024
@@ -126,7 +128,11 @@ func Validate(c Case) string {
 			return "duplicate_item"
 		}
 		switch i.Kind {
-		case "initiative", "project", "todo":
+		case "todo":
+			if i.State == "" || (records.Todo{State: i.State}).Validate() != nil {
+				return "invalid_item"
+			}
+		case "initiative", "project":
 			switch i.State {
 			case "active", "open", "completed", "canceled", "closed":
 			default:

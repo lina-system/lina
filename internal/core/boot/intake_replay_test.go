@@ -27,7 +27,7 @@ func TestIntakeReplayCore(t *testing.T) {
 		t.Fatal(rejected)
 	}
 	for _, c := range cases {
-		if c.ID != "running-task" && c.ID != "option-number" {
+		if c.ID != "running-task" && c.ID != "option-number" && c.ID != "todo-backlog" && c.ID != "todo-started" {
 			continue
 		}
 		for _, router := range intakereplay.Routers {
