@@ -8,8 +8,10 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/doing"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
@@ -78,6 +80,11 @@ func (a *Adapter) read(ctx context.Context, r io.Reader, ready chan<- error) {
 			code = "session_mismatch"
 			return
 		}
+		if initialized {
+			a.mu.Lock()
+			a.doing.Record("claude", scanner.Bytes(), time.Now())
+			a.mu.Unlock()
+		}
 		switch f.Type {
 		case "system":
 			// Hooks and status messages may precede initialization. They cannot
@@ -94,6 +101,9 @@ func (a *Adapter) read(ctx context.Context, r io.Reader, ready chan<- error) {
 			}
 			a.mu.Lock()
 			a.thread = worker.Thread{ID: f.SessionID, TurnID: a.spec.AttemptID, TaskID: a.spec.TaskID, AttemptID: a.spec.AttemptID, ProcessGeneration: 1, BindingEpoch: a.cfg.Epoch}
+
+			a.files = doing.ClaudeFiles{Root: doing.ClaudeRoot(a.cfg.Environment), Session: f.SessionID}
+			a.doing.Busy(true, time.Now())
 			a.mu.Unlock()
 			initialized = true
 			ready <- nil
@@ -157,6 +167,10 @@ func (a *Adapter) read(ctx context.Context, r io.Reader, ready chan<- error) {
 			// process lease until Close has reaped all descendants.
 			_, _ = io.Copy(io.Discard, r)
 			return
+		case "ai-title":
+			if initialized && !a.emit(ctx, worker.Event{Kind: worker.ProgressEvent, Progress: &worker.Progress{Phase: "doing"}}) {
+				return
+			}
 		case "user":
 			// Tool results are evidence of a prior call, even if its start was absent.
 			a.mu.Lock()
