@@ -3,10 +3,14 @@ package dispatch
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
-	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 // ReadinessFailure records a definitive refusal before a worker session exists.
@@ -17,15 +21,73 @@ type ReadinessFailure struct {
 	Code    string `json:"code"`
 }
 
-func (s *Service) needsSignIn(ctx context.Context, r *Record, adapter worker.Adapter) error {
+func (s *Service) needsSignIn(ctx context.Context, r *Record) error {
 	r.Code = "needs_sign_in"
 	r.ReadinessFailures = append(r.ReadinessFailures, ReadinessFailure{Worker: r.Worker, Version: r.Version, Code: r.Code})
-	if err := s.save(ctx, *r); err != nil {
-		return err
+	// Tried already excludes this worker for this task. A refusal before a
+	// prompt says nothing about quota or readiness for a later task: the person
+	// may sign in externally, and ACP has no quota observation to clear a stop.
+	return s.save(ctx, *r)
+}
+
+// recoverReadinessQuota removes the old unmeasured, worker-wide stop only when
+// every recorded attempt at that worker was a definitive readiness refusal.
+// A launched/uncertain attempt or measured quota makes attribution ambiguous;
+// neither is permission to clear a quota block. Run before dispatch starts.
+func (s *Service) recoverReadinessQuota(ctx context.Context, records []Record) error {
+	refused, uncertain := map[string]bool{}, map[string]bool{}
+	for _, r := range records {
+		failures := map[string]bool{}
+		for _, failure := range r.ReadinessFailures {
+			if failure.Code == "needs_sign_in" {
+				failures[failure.Worker] = true
+				refused[failure.Worker] = true
+				// Recovery and correction retain failures while resetting Tried.
+				// That history cannot prove the worker never executed a later turn.
+				if r.Recoveries > 0 || r.ReturnReceipt != "" {
+					uncertain[failure.Worker] = true
+				}
+			}
+		}
+		for _, name := range r.Tried {
+			if !failures[name] {
+				uncertain[name] = true
+			}
+		}
+		if r.Worker != "" && !failures[r.Worker] || r.Thread != nil || r.Snapshot != nil {
+			uncertain[r.WorkerName()] = true
+		}
 	}
-	// Use the same eligibility block and two-worker limit as a login failure
-	// during a turn. Readiness does not grant an extra attempt or a retry.
-	return s.park(ctx, adapter)
+	return s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
+		for name := range refused {
+			if uncertain[name] {
+				continue
+			}
+			var raw []byte
+			err := tx.QueryRowContext(ctx, "SELECT rows FROM worker_quota WHERE worker=?", name).Scan(&raw)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			var rows []provider.QuotaRow
+			if err = json.Unmarshal(raw, &rows); err != nil {
+				return err
+			}
+			if len(rows) != 1 {
+				continue
+			}
+			q := rows[0]
+			if q.Provider != "" || q.Account != "" || q.LimitID != "" || q.Bucket != "" || q.Window != provider.UnknownWindow || q.UsedPct != nil || q.ResetsAt != nil || q.State != provider.QuotaBlocked || q.Source != provider.ErrorCode {
+				continue
+			}
+			if _, err = tx.ExecContext(ctx, "DELETE FROM worker_quota WHERE worker=?", name); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Service) nextRun(ctx context.Context, r Record) (work.Run, error) {

@@ -42,6 +42,9 @@ External components (document parsers, OCR, the local transcription component, t
 LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Cursor, Gemini CLI, Grok or Antigravity, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
 
 - LINA uses the installed tool found on `PATH` or at a path the user configured, and records the version it observed.
+- Grok's installed version is probed with `grok --version`. The worker's separate
+  ACP handshake observation never replaces that CLI version or retains host
+  details from its metadata ([ACP adapter](work-and-delegation.md#acp-adapter)).
 - LINA lists the versions of each such tool that it has verified. A version not on the list is reported to the user as unverified, with the version found and the verified versions, and LINA still uses the tool. A function becomes unsupported only when its tool is missing, can't be started or connected to, or fails its protocol handshake, and LINA says why.
 - LINA never installs, updates or pins the tool on its own, and installs nothing inside it.
 - Nothing in this section applies to the Claude Agent SDK package. LINA installs that package itself, on first use of a Claude account, under Provider adapters.
@@ -308,7 +311,7 @@ A capability is used only under all of these rules:
 
 The rules for each capability:
 
-- **Request order.** Requests follow the [request layout](conversation-and-memory.md#request-layout): fixed parts first, history, the person's input, then the ContextPacket. Within a conversation the tools and tool choice stay unchanged.
+- **Request order.** Requests follow the [request layout](conversation-and-memory.md#request-layout): fixed parts first, history, the person's input, then the ContextPacket. Within a conversation the tools and tool choice stay unchanged, apart from tools loaded on demand. A failed-worker notice retains those declarations while Core disables its tool execution; declaration presence grants no permission. Compaction preserves the input-before-packet order; its summary request excludes both the current input and packet, including the standing profile.
 - **Cache identity.** Core derives one identity per conversation: a digest of the main id, the agent id and the conversation id. A background run uses its run id. The identity holds no name or text, and it stays for the life of the conversation, across compactions.
 - **Cache marks.** Core marks four boundaries of every request:
   - after the fixed part (items 1 to 4 of the request layout, without plugin tools loaded on demand);
@@ -408,6 +411,11 @@ The ChatGPT rows for LINA's own calls and for a Codex worker are two rows, becau
 ### Request regression
 
 A regression test compares LINA's requests with a baseline for each model-API provider: for ChatGPT, the request surface that the issuer documents for Sign in with ChatGPT and the requests recorded from the accepted turns of V1; for Gemini, the shape the Gemini API documents. It compares fields, `include`, the provider-state resend, the cache identity and marks, and the built-in tool declarations. The parts that differ by design are listed with the baseline and left out of the match: Codex's base instructions for coding work, which a LINA request never carries, LINA's developer-role persona and context items, and LINA's own tools ([conversation-and-memory.md](conversation-and-memory.md)). It runs again whenever a provider SDK pin, the request field list or a baseline moves.
+Layout changes move the request-order baseline in the same change. A scripted
+wire through the running Core must compare consecutive turns through the earlier
+person input, keep tools and tool choice stable, and show that a tool follow-up
+appends to its prepared request. Replay and episode export must preserve each
+recorded layout and its digest, including records made before the change.
 
 ## Accounts and sign-in
 

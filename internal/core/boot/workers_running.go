@@ -132,7 +132,7 @@ func observeRunningWorker(ctx context.Context, e *workerSession) (runs.ListItem,
 		// require a person's answer claim attention in the running list.
 		for _, request := range snapshot.Pending {
 			switch request.Method {
-			case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput", "mcpServer/elicitation/request":
+			case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval", "item/tool/requestUserInput", "mcpServer/elicitation/request", "session/request_permission":
 				state = "needs_input"
 			}
 		}

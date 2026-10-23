@@ -1,0 +1,18 @@
+{
+  "kind": "goal",
+  "goal": "Publish a workshop guide",
+  "done": "Guide is available",
+  "invalid": [
+    "{\"title\":\"Guide\",\"summary\":\"Prepare the guide\",\"entries\":[{\"id\":\"p\",\"kind\":\"project\",\"title\":\"Guide\",\"parent\":\"\",\"done\":\"Published\"},{\"id\":\"write\",\"kind\":\"todo\",\"title\":\"Write\",\"parent\":\"p\",\"done\":\"Written\",\"depends_on\":[\"p\"]}]}"
+  ],
+  "valid": {
+    "title": "Guide plan",
+    "summary": "Research and write the guide",
+    "entries": [
+      {"id":"p","kind":"project","title":"Guide","parent":"","done":"Guide written"},
+      {"id":"write","kind":"todo","title":"Write the guide","parent":"p","done":"Guide is written","depends_on":["sources"]},
+      {"id":"research","kind":"project","title":"Research","parent":"","done":"Sources ready"},
+      {"id":"sources","kind":"todo","title":"Gather sources","parent":"research","done":"Sources collected"}
+    ]
+  }
+}

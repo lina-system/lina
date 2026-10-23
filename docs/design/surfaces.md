@@ -264,7 +264,7 @@ A question about progress ("how much is left?") is answered in one line: where i
 
 ### Progress at a glance
 
-Progress at a glance is one screen that shows how far every running 목표 and 일 has come, without the person asking. In a wide TUI the work cards remain beside the conversation as updates arrive; in a narrower terminal Ctrl+P opens the same cards over the conversation and Esc returns to the retained draft. Start time and current activity come from Core. An unobserved start is shown as unknown. LINA Core computes it ([work-and-delegation.md](work-and-delegation.md#progress-line)), and the app and the TUI only draw it. On Home it is the "At a glance" card, and in full it is the sidebar entry Progress.
+Progress at a glance is one screen that shows how far every running 목표 and 일 has come, without the person asking. In a wide TUI the work cards remain beside the conversation as updates arrive; in a narrower terminal Ctrl+P opens the same cards over the conversation and Esc returns to the retained draft. Start time and current activity come from Core. When observed, current activity is the worker’s existing title and current to-do item, defanged and limited to 120 characters; the work card and sidebar draw the same line. An unobserved start is shown as unknown. LINA Core computes it ([work-and-delegation.md](work-and-delegation.md#progress-line)), and the app and the TUI only draw it. On Home it is the "At a glance" card, and in full it is the sidebar entry Progress.
 
 - What needs the person is always on top. The first block holds the rows of "Waiting for me", in the same order, at most five and a count of the rest (see Waiting for me).
 - Below it is one line for each running 목표 and each running 일. A line holds its name; a simple bar and a stage word, by default 설계 (design), 만드는 중 (building), 확인 (checking) or 끝 (done); what just finished, in a phrase; what comes next, in a phrase; and a mark when something waits on the person. An 일 that belongs to a 목표 is a line below it, and an 일 that stands alone is a line of its own.
@@ -335,6 +335,7 @@ Core presents what the person should open and keep, apart from the chat text, as
 
 - A result card is a labeled block: the type icon with the type's name, the title, the summary in at most three lines, and its state, which is preview or saved. While a background run is still making the next revision, the card shows the working indicator. It carries the face and name of the agent that presented it.
 - A card offers Open and at most two other actions.
+- Open reads the complete retained result, including text beyond the card preview. The TUI fetches all text pages at the card's revision when opening a long authored result. Closing or switching the view discards late replies. A revision change requires reopening the card.
 - Open puts the result in the work panel. A short result, such as an outline of a few lines or a plan of a few entries, may expand in place inside its card; a long one opens only in the panel.
 - A result that a background run produces lands as the result card itself, at a turn boundary, and not as a second notice beside it ([work-and-delegation.md](work-and-delegation.md)).
 

@@ -15,6 +15,7 @@ import (
 )
 
 type textPager struct {
+	result                   *resultPager
 	board                    *boardView
 	records                  *recordPager
 	recordID                 string
@@ -51,10 +52,14 @@ func (m *shellModel) pagerText() string {
 	// could outlive authoritative replacements, revocation or a focus change.
 	var messages []string
 	for _, b := range m.content.Blocks {
-		if !conversationBlock(b) {
+		if !m.conversationBlock(b) {
 			continue
 		}
 		text := b.Text
+		if b.Card != nil {
+			// Use the same current card summary as the conversation viewport.
+			text = m.blocks[b.ID].text
+		}
 		if b.Kind == protocol.KindResult && !b.InlineReply {
 			text = design.Text(m.styles.options.Language, "result") + "  " + b.Title + "\n" + text
 		}
@@ -80,12 +85,21 @@ func (m *shellModel) refreshOpenCard() {
 	}
 	for _, card := range m.resultCards() {
 		if card.ID == p.cardID {
+			if p.result != nil {
+				if card.ResultID != p.result.request.ResultID || card.ResultRevision != string(*p.result.request.Revision) {
+					*p = textPager{}
+				}
+				return
+			}
 			p.text = sanitize.Display(resultText(card))
 			if p.followEnd {
 				p.offset = len(m.pagerLines())
 			}
 			return
 		}
+	}
+	if p.result != nil {
+		*p = textPager{}
 	}
 }
 
@@ -234,7 +248,7 @@ func (m *shellModel) pagerRows() []render.StyledRow {
 	}
 	config := render.Config{Width: max(1, width)}
 	stream := m.resultStreams[m.conversation.pager.cardID].stream
-	if stream == nil {
+	if stream == nil || m.conversation.pager.result != nil {
 		stream = render.NewStream("pager", config, nil)
 		stream.Seal(1, m.pagerText())
 	}
