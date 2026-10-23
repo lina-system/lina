@@ -163,9 +163,15 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 					t.Errorf("queued request needs exactly one %q: %s", text, body)
 				}
 			}
-			var current struct{ Role, Content string }
-			if len(request.Input) == 0 || json.Unmarshal(request.Input[len(request.Input)-1], &current) != nil || current.Role != "user" || current.Content != queuedInput {
-				t.Error("queued input is not in the current-input slot")
+			currentIndex := -1
+			for i, raw := range request.Input {
+				var current struct{ Role, Content string }
+				if json.Unmarshal(raw, &current) == nil && current.Role == "user" && current.Content == queuedInput {
+					currentIndex = i
+				}
+			}
+			if currentIndex <= position || currentIndex == len(request.Input)-1 {
+				t.Error("queued input must follow retained history and precede the context packet")
 			}
 			emitResponse(w, queuedReply, true)
 		default:

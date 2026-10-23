@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/e2e/fixture"
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -249,7 +250,7 @@ func last(q modelRequest) lastItem {
 		Output, Content string
 	}
 	if len(q.Input) > 0 {
-		_ = json.Unmarshal(q.Input[len(q.Input)-1], &v)
+		_ = json.Unmarshal(fixture.LastInput(q.Input), &v)
 	}
 	return lastItem{v.Type, v.Role, v.CallID, v.Output, v.Content}
 }

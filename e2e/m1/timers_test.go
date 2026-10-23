@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/e2e/fixture"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
@@ -74,7 +75,7 @@ func TestM2TimersInstalledCore(t *testing.T) {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		}
-		if len(req.Input) == 0 || json.Unmarshal(req.Input[len(req.Input)-1], &wire) != nil {
+		if len(req.Input) == 0 || json.Unmarshal(fixture.LastInput(req.Input), &wire) != nil {
 			t.Error("no current input")
 			return
 		}

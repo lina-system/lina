@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/e2e/fixture"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
@@ -51,7 +52,7 @@ func TestM2TimerRecoveryInstalledCore(t *testing.T) {
 			Output  string `json:"output"`
 			Content string `json:"content"`
 		}
-		if err := json.Unmarshal(req.Input[len(req.Input)-1], &last); err != nil {
+		if err := json.Unmarshal(fixture.LastInput(req.Input), &last); err != nil {
 			t.Error(err)
 			return
 		}

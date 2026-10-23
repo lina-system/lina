@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/e2e/fixture"
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
 
@@ -33,7 +34,7 @@ func TestM2WorkerDelayedCompletionOutput(t *testing.T) {
 			Type, Output, Content string
 			CallID                string `json:"call_id"`
 		}
-		if len(req.Input) == 0 || json.Unmarshal(req.Input[len(req.Input)-1], &last) != nil {
+		if len(req.Input) == 0 || json.Unmarshal(fixture.LastInput(req.Input), &last) != nil {
 			t.Error("missing model input")
 			return
 		}
