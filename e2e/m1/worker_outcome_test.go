@@ -30,13 +30,13 @@ func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 	initialWaiting := make(chan struct{})
 	release := make(chan struct{})
 	var launches atomic.Int32
-	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	gate := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		launches.Add(1)
 		select {
 		case <-release:
 		case <-r.Context().Done():
 		}
-	}))
+	})))
 	defer gate.Close()
 	defer func() {
 		select {
@@ -47,7 +47,7 @@ func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 	}()
 	var restarted, readBack atomic.Bool
 	var followups atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
@@ -116,7 +116,7 @@ func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 			return
 		}
 		emitPersonaCall(w, "start-worker", "worker_start", map[string]any{"workdir": workdir, "task_packet": "Create result.txt with LINA_WORKER_RESULT; report its path."})
-	}))
+	})))
 	defer server.Close()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)
