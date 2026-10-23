@@ -66,7 +66,7 @@ The separate worker has its own downward import layers. Core may import only its
 | Worker layer | Packages |
 | --- | --- |
 | W1 | `internal/moirai/jobapi` (credential-free types and Unix-socket client) |
-| W2 | `internal/moirai/canon` (read-only job snapshots) |
+| W2 | `internal/moirai/canon` (read-only job snapshots), `internal/moirai/planning` (pure proposal validation) |
 | W3 | `internal/moirai` (job execution and scheduling) |
 | W4 | `cmd/moirai-worker` (command and signals) |
 
@@ -81,6 +81,14 @@ The job API increment exposes `Aux`, `Apply` and `Report` over bounded HTTP/JSON
 Core owns a job's kind (memory or planning), interval, deadline (at most two minutes), token allowance, maximum tokens per call, on/off switch and adoption record. It enqueues immutable, consecutive source tasks. The worker reads the epoch, policy, committed watermark and next task in a single `mode=ro` / `query_only` snapshot. Its reader exposes no writer. Jobs have separate deadlines and run independently; a slow or failed job does not hold up another job or the conversation path.
 
 `Aux` binds the source task to an auxiliary model call, reserves both the job allowance and shared main budget, and durably caches the result. Missing usage retains the reservation charge. A disconnected worker does not cancel Core's admitted, bounded call, so a restarted worker can recover its result without another model request. If Core stops before recording a result, the durable reservation reports an unknown outcome and is not automatically retried. This accounting and the cached auxiliary result are Core-owned bookkeeping, not an adopted memory or plan.
+
+For planning, a terminal model response with unusable content is a completed
+call. Core returns the inert `{"rejected":"invalid_plan"}` auxiliary output and
+the call's usage, so the ordinary Aux cache and budget settlement survive a
+restart. The worker forwards that outcome to Apply. Core requires it to match
+the cached output before committing a planning rejection and advancing the
+watermark. Invalid content cannot pin the queue; transport failure before
+completion still keeps the conservative unknown reservation.
 
 `Apply` validates the epoch, job switch, schedule and expected watermark, then invokes the registered write rules. The accepted changes, next schedule, proposal receipt and watermark commit in one fenced canon transaction. Failure rolls all of them back. An identical proposal replay returns the receipt; a changed proposal at the same sequence conflicts. Core persists an explicit `Deterministic` job-policy flag in the read-only work snapshot. When true, the worker submits the Core-supplied task input as the proposal directly to Apply; no model callback, account binding or model allowance is required. Core refuses Aux for that job. When false (including older records without the flag), the worker obtains model output through Aux before applying; it never infers the route from a zero budget. Killing a worker cannot write canon or advance its watermark; a Core transaction already committed remains committed. Core's fenced apply helper is also the only mutation boundary for job administration, Aux accounting and Report. Reports carry only a closed status and the current watermark; they cannot advance progress or change policy. The worker has no credential-loading path, clears inherited environment variables at entry, and never contacts a provider.
 
@@ -518,6 +526,28 @@ The current installed adapter uses Korean counting and the shared TUI renderer a
 - A revision is one ledger event with the whole result.
 - Save is a Core effect with the key of `result_save` (CP-05); destinations are those of the saving section.
 - Summary-first writing is a background run given the latest outline revision.
+- Managed planning previews use the same result ledger and revision checks.
+  Core installs the results and planning receipt schemas in the numbered canon
+  catalog at migration 49, after the published Korean records search migration
+  33, waiting decisions migration 34, preset effects migration 35 and skill
+  maintenance migration 36, work engine migration 37 and to-do records migration
+  38, work event sequence guard migration 39, work completions migration 40
+  timers migration 41, starter/selection migration 42 and worker choice migration
+  43, naming-breach migration 44, record-operation migration 45 and operational
+  switch migration 46, handoffs migration 47 and work-review migration 48. Generic presentation and saving cannot replace or confirm a managed
+  plan. The `planning` capability binds confirmation to the authenticated person,
+  agent, preview revision and accepted root revision. Complete plan bodies carry
+  done conditions, ordered stage labels and dependency ids in addition to card
+  entries. Confirmation removes the confirm action without changing the content
+  revision that the person approved.
+  The records batch validates to-do ownership, parent kinds and dependency cycles
+  against the complete candidate together with published records, allowing new
+  projects and prerequisites within the same atomic publication.
+  Single-record operations retain their admission and undo receipts. Each changed
+  recurring record retains its completion transformation and occurrence in the
+  same publication checkpoint, including recovery of a multi-record batch.
+  A completed invalid draft produces only a durable rejection and conversation
+  outcome, never a result revision or plan records; replay cannot duplicate it.
 
 The #104 increment implements these boundaries in `kit/result`, `internal/core/results` and `internal/core/exec`. Core supplies the trusted person, agent, conversation and turn; none is accepted from tool arguments. `present_result` takes `type`, `title`, `summary` and a complete `body`, with `result_id` and `base_revision` only for replacement. Optional `reply_type` identifies `chat`, `status`, `comparison`, `candidates` or `third_party` for the work-method shape checks; it is stored with the result. A `document_draft` may name a `recipient`, and its blocks may mark `audience` as `recipient` or `person`. These annotations never change the stored or rendered body. `read_result` takes `result_id` and returns the complete current result and its revision. `save_result` takes `result_id`, `revision` and a resolved `destination`; its binding requires an exact matching request from the person in the current turn. A grant alone does not constitute that request. The three operations use the existing tool registry, authority gate and leases, run in Core, and require no network or approval interaction.
 
@@ -531,7 +561,7 @@ Body validation is a closed schema over [the kit types](../../kit/result/body.go
 | `chart` | `kind` is `bar`, `line`, `area`, `pie` or `scatter`; each series has `name` and inline `values` of `{x,y}`. `x` is text or a number, numeric for scatter; `y` is numeric, nonnegative for pie. `x_axis` and `y_axis` each have `label` and `unit`. |
 | `document_draft` | Ordered `blocks` are closed variants: heading (`text`, `level` 1–6), paragraph/quote (`text`), list (`items`), table (`table`), code (`text`, optional `language`), image (`asset`, `text` alternative description), citation (`anchor`, `text`). `from_summary` is null or `{result_id,revision}`. |
 | `comparison` | Each target has `label`, `old`, `new` and `hunks` with zero-based `old_start`, `old_count`, `new_start`, `new_count` within the corresponding text. `apply` is null or an opaque request id. Save is refused; applying is a separate flow. |
-| `plan_view` | Ordered entries have unique `id`, `kind` (`goal`, `project`, `todo`, `area`, `memo`, `resource`), `title`, `state` (`planned`, `active`, `blocked`, `done`, `cancelled`) and nullable `parent`, which must precede the child. `confirm` is null or an opaque confirmation id. Save is refused. |
+| `plan_view` | Ordered entries have unique `id`, `kind` (`goal`, `project`, `todo`, `area`, `memo`, `resource`), `title`, `state` (`planned`, `active`, `blocked`, `done`, `cancelled`) and nullable `parent`, which must precede the child. `confirm` is null or an opaque confirmation id. Optional `done`, `stage` and `depends_on` fields retain the plan details; managed Klotho entries require done conditions. Save is refused. |
 | `file` | `asset` is `{asset_id,revision}`, `name` is nonempty, `size` is nonnegative bytes and `media_type` is PDF, PPTX or ODP. Saving copies verified bytes into an independently owned material. |
 
 Asset and result references have positive revisions. A citation anchor has either `event_id` or `asset`, plus a nonempty half-open `start`/`end` passage range. Strings, including code and links, remain inert data.
@@ -1409,9 +1439,9 @@ for the evidence boundary and account-free acceptance limits.
 
 **C-60 ACP client and ACP workers (new).** Contract: [work-and-delegation.md](work-and-delegation.md#acp-adapter). Evidence: [worker-protocols.md](../research/worker-protocols.md).
 
-- `kit/acp` is the client of Agent Client Protocol version 1 over stdio, one JSON message per line on the `kit/rpc` line peer. Its Go types are generated from the JSON Schema of a pinned ACP release (Apache-2.0) and committed under `third_party/` with the vendoring rules of [dependencies.md](../policy/dependencies.md), as the Codex app-server types are: never edited by hand, regenerated on sync, request ids keep their string or integer identity, and unknown variants keep their wire JSON.
+- `kit/acp` is the client of Agent Client Protocol version 1 over stdio, one JSON message per line on the `kit/rpc` line peer. Its Go types are generated from the JSON Schema of a pinned ACP release (Apache-2.0) and committed under `third_party/` with the vendoring rules of [dependencies.md](../policy/dependencies.md), as the Codex app-server types are: never edited by hand, regenerated on sync, request ids keep their string, integer or null identity, and unknown variants keep their wire JSON.
 - `initialize` sends protocol version 1 and fails the handshake on any other answer. The client declares form elicitation and no `fs` or `terminal` capability; it answers `fs/*` and `terminal/*` with method-not-found. Version 2 changes how a turn ends and is a separate, verified change.
-- The shared client uses the stable `schema-v1.26.0` schema. Its generated baseline in `third_party/acp/upstream/types.go` and kit copy are byte-identical and checked by regeneration. `Start` owns a stdio child through `kit/proc`; `New` accepts a `kit/rpc` transport. Both require `Initialize` before session calls. Updates carry a replay flag, set until the `session/load` response is read. Permission handles are single-use and invalidated when their prompt completes; explicit cancel answers pending requests for that session, including requests already in flight. The client permits one outstanding operation per session. Cancelling a call's wait does not send a protocol cancel or retry work; the session stays busy until its reply arrives. Malformed frames, EOF and overflowing the bounded event queues fail the connection. Consumers drain updates and requests while calls run and apply Core's authorization and approval policy.
+- The shared client uses the stable `schema-v1.26.0` schema. Its generated baseline in `third_party/acp/upstream/types.go` and kit copy are byte-identical and checked by regeneration. `Start` owns a stdio child through `kit/proc`; `New` accepts a `kit/rpc` transport. Both require `Initialize` before session calls. `Close` waits for both the read loop and transport teardown, including owned process cleanup after connection cancellation or a concurrent failure. Updates carry a replay flag, set until the `session/load` response is read. Permission handles are single-use and invalidated when their prompt completes; explicit cancel answers pending requests for that session, including requests already in flight. The client permits one outstanding operation per session. Cancelling a call's wait does not send a protocol cancel or retry work; the session stays busy until its reply arrives. Malformed frames, EOF and overflowing the bounded event queues fail the connection. Consumers drain updates and requests while calls run and apply Core's authorization and approval policy.
 - `internal/core/worker/acp` implements C-29 on that client. A profile holds the worker name, the command and arguments, the environment variables it sets (such as `CLAUDE_CODE_EXECUTABLE`), the version probe and the vendor rate-limit key it may read. Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added profiles come from an editable settings file defined by their own issue.
 - An ACP session id is the thread id. ACP version 1 has no turn id, so Core assigns one per `session/prompt` request and binds every update, request and reply of that request to it, with the process generation and binding epoch.
 
@@ -1446,6 +1476,18 @@ type Definition struct {
 ```
 
 - The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves to a Markdown section in the repository at the base commit before admission. Before invoking the manager, it persists the pinned commit and definition snapshot in a non-runnable `admitting` record. Retries resume that snapshot; only manager success moves it to `queued`. Core renders the task packet with the assignment id, base commit and complete definition. Code examples are not design sections.
+- Klotho drafting runs through Moirai's job API and the Core auxiliary model
+  route. The worker validates the proposed structure and holds no write or
+  confirmation authority. Core writes a full preview revision and its job receipt
+  in one transaction. Obsolete replacements commit a terminal rejection and
+  advance the watermark without replacing the card, so they cannot strand later
+  planning jobs. Their outcome lines are recovered from the same durable receipt.
+  Completed invalid model outputs use the same terminal rejection path after
+  settling their usage, without retrying the completed call.
+  Only the client confirmation creates the corresponding
+  Markdown records, as one recoverable Git publication. Splitting the confirmed
+  work into hand-off tasks uses the existing work ledger, without another plan
+  confirmation or another planning receipt.
 - Core does not split work itself. The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)). Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
 - `Chooser` ranks installed workers by quota, situation rules and measured host capacity. OK quota precedes warning and unknown; absent quota is unknown and usable. Any blocked window excludes the worker until its explicit reset. A quota, rate-limit or login stop parks the worker and permits one replacement with the identical persisted packet, task branch and workspace, after the previous process tree is reaped. Each attempt has a separate ledger generation; restart never repeats an uncertain attempt.
 - #138 connects the chooser to `dispatch_work` with Antigravity and Codex. The optional `system/core/worker-choice.json` table has `provisional: true` and `rules` of `{worker, tags, priority}`; all tags must match the definition's kind or repository. Quota and capacity cannot be overridden. Equal candidates retain installation order (Antigravity, then Codex). Core reads the table at startup and rejects malformed rules. The initial resource estimate is one CPU, 512 MiB memory and 1024 MiB disk per active reservation, deducted from the measured main-host resources. Canon migration 43 replaces the repository-wide unique index with fenced area claims and durable worker quota. A late quota snapshot cannot erase a newer observed stop; admission rechecks quota before reserving the attempt.

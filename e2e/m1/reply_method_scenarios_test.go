@@ -203,7 +203,7 @@ func TestReplyMethodsAgentIsolationAndRestart(t *testing.T) {
 		if tc.inline {
 			want = protocol.KindItemDone
 		}
-		expected["typed-result:"+card.ID] = want
+		expected["result-card:"+card.ID] = want
 		found := false
 		for _, frame := range frames {
 			if value, ok := frame.Payload.(protocol.Result); ok && value.ResultID == card.ID {
@@ -288,7 +288,7 @@ func TestReplyMethodsAgentIsolationAndRestart(t *testing.T) {
 			t.Fatalf("expected snapshot: %T", frame.Payload)
 		}
 		for _, item := range snapshot.Items {
-			if strings.HasPrefix(item.Key, "typed-result:") {
+			if strings.HasPrefix(item.Key, "result-card:") {
 				restored[item.Key] = item.Kind
 			}
 		}

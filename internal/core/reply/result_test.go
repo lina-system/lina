@@ -63,3 +63,23 @@ func TestTypedReplyShapesAndBudgets(t *testing.T) {
 		})
 	}
 }
+
+func TestComparisonCompletionKeepsCard(t *testing.T) {
+	c := config()
+	c.Shapes = &reply.Shapes{Status: "verdict-first", Comparison: "verdict-then-table", Candidates: 1, ThirdParty: "recipient-only"}
+	r := result.Result{
+		Type: result.TableType, Summary: "A fits.",
+		Body:       json.RawMessage(`{"columns":[{"name":"Choice","type":"text","unit":""}],"rows":[["A"]]}`),
+		Completion: &result.Completion{State: "claimed", Label: "not verified"},
+	}
+	view, err := reply.ProjectResult(c, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Inline {
+		t.Fatal("inline comparison hides completion metadata")
+	}
+	if view.Text != r.Summary || r.Completion.Label != "not verified" {
+		t.Fatalf("completion card changed: %+v, %+v", view, r.Completion)
+	}
+}

@@ -61,7 +61,7 @@ func ProjectResult(c Config, r result.Result) (ResultView, error) {
 	case "comparison":
 		assessed = true
 		breach = summary.Count.Lines != 1 || summary.Count.Chars == 0
-		if c.Shapes.Comparison == "verdict-then-table" {
+		if c.Shapes.Comparison == "verdict-then-table" && r.Completion == nil {
 			if table := comparisonTable(body); table != nil {
 				inline, err := NewFilter(c)
 				if err != nil {

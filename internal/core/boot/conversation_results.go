@@ -158,7 +158,7 @@ func (r *conversationRuntime) publishTypedResult(ctx context.Context, source led
 	if err != nil {
 		return err
 	}
-	key := "typed-result:" + value.ID
+	key := "result-card:" + value.ID
 	if view.Inline {
 		speaker := protocol.ConversationSpeakerAgent
 		return r.publish(ctx, protocol.KindItemDone, key, protocol.ItemDone{Text: &view.Text, Speaker: &speaker})
@@ -171,11 +171,15 @@ func (r *conversationRuntime) publishTypedResult(ctx context.Context, source led
 		}
 		text = text[:end] + "\n… " + design.Text(eventLanguage(source), "reply.truncated")
 	}
-	return r.publish(ctx, protocol.KindResult, key, protocol.Result{
+	p := protocol.Result{
 		ResultID: value.ID, Revision: json.Number(strconv.Itoa(value.Revision)), Type: protocol.ResultType(value.Type), Status: protocol.ResultStatus(value.Status),
 		Title: value.Title, Summary: view.Text, Text: &text, RevisedBy: value.RevisedBy,
 		Provenance: protocol.ResultProvenance{AgentID: value.Provenance.AgentID, ConversationID: value.Provenance.ConversationID, TurnID: value.Provenance.TurnID, TaskID: value.Provenance.TaskID},
-	})
+	}
+	if value.Completion != nil {
+		p.Completion = &protocol.CompletionStatus{State: protocol.CompletionState(value.Completion.State), Label: value.Completion.Label}
+	}
+	return r.publish(ctx, protocol.KindResult, key, p)
 }
 
 // A channel uses the same pinned shape as the app. The existing conversation
@@ -198,5 +202,29 @@ func (r *conversationRuntime) typedChannelText(ctx context.Context, source ledge
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(caption.Text + "\n" + "lina://conversation/" + r.conversation), nil
+	label := ""
+	if value.Completion != nil {
+		label = value.Completion.Label + "\n"
+	}
+	return strings.TrimSpace(caption.Text + "\n" + label + "lina://conversation/" + r.conversation), nil
+}
+
+// Planning uses the same stored result boundary, including its records writer.
+func (r *conversationRuntime) resultStore(surface ledger.Surface) (*results.Store, error) {
+	return results.New(r.db, results.Config{Journal: results.LedgerJournal{Surface: surface}, Writer: results.NewRecordsWriter(r.records, r.assets, nil)})
+}
+
+func (r *conversationRuntime) publishResult(ctx context.Context, value result.Result) error {
+	var id string
+	err := r.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT event_id FROM result_heads WHERE id=? AND agent=? AND conversation=? AND revision=?`, value.ID, r.agent, r.conversation, value.Revision).Scan(&id)
+	})
+	if err != nil {
+		return err
+	}
+	source, err := r.journal().Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	return r.publishTypedResult(ctx, source)
 }

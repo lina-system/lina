@@ -1,0 +1,6 @@
+{
+  "goal": "Deliver a community workshop",
+  "done": "Participants complete the workshop",
+  "initial": {"title":"Workshop plan","summary":"Prepare a community workshop.","entries":[{"id":"p","kind":"project","title":"Run workshop","parent":"","done":"Workshop delivered"},{"id":"t","kind":"todo","title":"Discarded venue search","parent":"p","done":"Venue shortlisted"}]},
+  "replacement": {"title":"Updated workshop plan","summary":"Book the room and run the workshop.","entries":[{"id":"p","kind":"project","title":"Run workshop","parent":"","done":"Workshop delivered"},{"id":"t","kind":"todo","title":"Book the room","parent":"p","done":"Reservation received","stage":"Preparation"}]}
+}

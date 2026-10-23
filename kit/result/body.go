@@ -143,11 +143,14 @@ type Plan struct {
 	Confirm *string `json:"confirm"`
 }
 type Entry struct {
-	ID     string  `json:"id"`
-	Kind   string  `json:"kind"`
-	Title  string  `json:"title"`
-	State  string  `json:"state"`
-	Parent *string `json:"parent"`
+	Done      string   `json:"done,omitempty"`
+	Stage     string   `json:"stage,omitempty"`
+	DependsOn []string `json:"depends_on,omitempty"`
+	ID        string   `json:"id"`
+	Kind      string   `json:"kind"`
+	Title     string   `json:"title"`
+	State     string   `json:"state"`
+	Parent    *string  `json:"parent"`
 }
 type File struct {
 	Asset     AssetRef `json:"asset"`

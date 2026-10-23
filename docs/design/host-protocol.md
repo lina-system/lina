@@ -270,7 +270,7 @@ One connection reaches every agent of the main. A conversation kind, and a quest
 | Multi-task control | Control several tasks or background runs at once, including stop all |
 | Lifecycle | With `lifecycle` 1.0 negotiated, request a safe Core restart and read its durable owed/discharged status. |
 | Results | Receive typed results, read one by id, edit, save ([Typed results](#typed-results)) |
-| Progress | Read the progress view: a line for each running 목표 and 일 with its name, its stage and bar, what just finished, what comes next and whether it waits on the person, and the rows that need the person on top; receive changes to it; and ask for its digest, the short form that a channel shows ([surfaces.md](surfaces.md#progress-at-a-glance)). LINA Core computes the view and the digest, and a client only draws them. |
+| Progress | Read the progress view: a line for each running 목표 and 일 with its name, its stage and bar, what it is doing now, when its work started, its stage list ([work-and-delegation.md](work-and-delegation.md#stages)), its rank, pause and queue place, what just finished, what comes next and whether it waits on the person, and the rows that need the person on top; receive changes to it; send the person's move, pause, resume, stop and run-limit commands ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)); and ask for its digest, the short form that a channel shows ([surfaces.md](surfaces.md#progress-at-a-glance)). LINA Core computes the view and the digest, and a client only draws them. |
 | Waiting list | Read the list of what the person must do or decide in the order LINA Core ranks it, receive changes to it, ask for another of its orders, and answer a row |
 | Details | Read the audit trail behind a card, a result or an answer, and the activity log, when the person asks |
 | Channels | List channel connections, bindings and scopes; add a connection (the token passes to LINA Core once and is never returned); show a pairing code; bind an agent to a chat; change a scope; disconnect; receive channel state notices (connected, needs pairing, unreachable, messages possibly missed) |
@@ -570,6 +570,28 @@ commits. Listing and choosing use `none`. Every reply is correlated to its
 request; neither client reconnect nor navigation repeats a mutation. Management
 requests retain conservative mutation admission during Core recovery.
 
+### Planning capability
+
+`planning` version `1.0` adds `plan_request` and `plan_response` to client 1.0.
+Requests name an installed `agent_id`. `accept_goal` and `accept_project` take
+`title` and `done` and return a `record_id` and saved `revision`. They are the
+person's acceptance of a goal or directly handed-over project, not confirmation
+of any proposed children. `get` takes a `result_id` and returns the current typed
+plan. `confirm` takes `result_id` and `revision` and returns the effect state,
+created record ids, saved revision and current plan. Mutating actions require
+an authenticated deciding client; model tools and Moirai cannot invoke them.
+Irrelevant fields, foreign targets and stale confirmations are refused.
+
+Plan result bodies have `entries` and nullable `confirm`. Entries retain the
+existing id/kind/title/state/parent fields and may include `done`, `stage` and
+`depends_on`. Klotho produces only project and to-do children beneath an accepted
+goal or project. Core validates parent order, complete done conditions and
+acyclic dependencies. The result stream replaces the whole card on update;
+`get` and conversation snapshots retain it after restart. A confirmed card has
+`confirm: null`; its original approved revision remains the confirmation key.
+An `unknown` confirmation effect is not success. It is settled only by observing
+the exact saved records, never by automatically repeating publication.
+
 ## Operational work control
 
 The negotiated `work` capability, version `1.0`, installs `work_switch_request` and
@@ -683,3 +705,12 @@ Reconnect never replays it. An uncertain publication is not attempted again.
 Domain refusals include `ambiguous_date`, `records_changed`, `stale_revision`,
 `record_not_found`, `invalid_record` and `preview_expired`. Outside edits are
 never silently adopted. Neither request accepts a person identity or file path.
+
+### Completion labels on results
+
+A client `result` may include `completion: {state, label}`. The state is `done`
+or `claimed`; a claimed completion displays "not verified" separately from
+its unchanged title, summary and body. This does not change the result's
+`preview` or `saved` status. The detailed work kind, policy revision and evidence
+references remain in Core's result record and `read_result` response. The
+field is optional for historical cards and ordinary previews.

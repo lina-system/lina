@@ -1,15 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 package canon
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestNamingMigrationPreservesExistingMemory(t *testing.T) {
 	cfg := storeConfig(t)
-	catalog := Migrations()
-	cfg.Migrations = catalog[:len(catalog)-1]
+	cfg.Migrations = migrationsBefore(t, namingSchema)
 	db := openStore(t, cfg)
 	original := `{"kind":"fact","content":"synthetic"}`
 	if err := db.Write(t.Context(), func(tx *Tx) error {
+		var tables int
+		if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master WHERE type='table' AND name='naming_breaches'`).Scan(&tables); err != nil {
+			return err
+		}
+		if tables != 0 {
+			return errors.New("the starting catalog already includes the naming migration")
+		}
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO memory_item(id,person,holder,subject_kind,subject_id,normalized,content,scope,state,valid_from,valid_until,supersedes,standing,record) VALUES('before','person','all','world','','synthetic','synthetic','local','active',0,0,'',0,?)`, original)
 		return err
 	}); err != nil {
@@ -18,7 +27,7 @@ func TestNamingMigrationPreservesExistingMemory(t *testing.T) {
 	if err := db.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Migrations = catalog
+	cfg.Migrations = Migrations()
 	db = openStore(t, cfg)
 	if err := db.Read(t.Context(), func(tx *Tx) error {
 		var record string

@@ -12,3 +12,22 @@ CREATE TABLE result_saves (
  state TEXT NOT NULL CHECK(state IN ('unknown','applied')), reference BLOB NOT NULL
 );
 `
+
+const PlanningSchema = `
+CREATE TABLE plan_drafts (
+ result_id TEXT PRIMARY KEY REFERENCES result_heads(id),
+ root_id TEXT NOT NULL, root_revision TEXT NOT NULL
+);
+CREATE TABLE plan_confirmations (
+ result_id TEXT PRIMARY KEY REFERENCES result_heads(id), revision INTEGER NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('unknown','applied')),
+ changes BLOB NOT NULL, receipt BLOB NOT NULL
+);
+CREATE TABLE plan_rejections (
+ job TEXT NOT NULL, sequence INTEGER NOT NULL,
+ person TEXT NOT NULL, agent TEXT NOT NULL, conversation TEXT NOT NULL,
+ turn_id TEXT NOT NULL, result_id TEXT NOT NULL,
+ code TEXT NOT NULL CHECK(code IN ('stale_revision','out_of_scope','unavailable','invalid_plan')),
+ PRIMARY KEY(job,sequence)
+);
+`

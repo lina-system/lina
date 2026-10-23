@@ -8,7 +8,7 @@ func TestResultsMigrationKeepsExistingConversation(t *testing.T) {
 	all := Migrations()
 	index := -1
 	for i, m := range all {
-		if m.SQL == ResultsSchema {
+		if m.SQL == ResultsSchema+PlanningSchema {
 			index = i
 			break
 		}
