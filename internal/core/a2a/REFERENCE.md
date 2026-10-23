@@ -100,5 +100,10 @@ Focused tests cover access-token claims, redirects, canonical send deduplication
 caller isolation, protocol version, card filtering, task claims and recovery,
 fixed tool/worker scope, and offline owner configuration.
 The installed-Core scenario is `e2e/m3/a2a-publication.json`, driven by
-`TestM3A2APublicationInstalledCore`. Its execution and remaining adversarial
-coverage are tracked in the issue's worker report until verified.
+`TestM3A2APublicationInstalledCore`. It checks a committed Core record operation,
+a worker's file and Git commit, verified artifacts, isolated reads/downloads,
+duplicate sends, stream loss, owner delivery and restart. Additional cases
+exercise unsupported completion claims, an owner-denied worker approval,
+uncertain cancellation and revocation while a worker is running. The identity
+and provider peers are controlled fixtures; installation, Core, tools, worker
+processes, Git effects and durable result delivery use their ordinary paths.
