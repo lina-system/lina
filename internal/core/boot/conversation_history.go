@@ -130,7 +130,8 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 				return err
 			}
 			var err error
-			if value.Type == result.PlanType {
+			// historyItems gives only managed drafts their bare result ID.
+			if value.Type == result.PlanType && item.key == value.ID {
 				err = r.publish(ctx, protocol.KindResult, value.ID, planWire(value))
 			} else if e.SpeakerKind == guard.Agent {
 				err = r.publishTypedResult(ctx, e)

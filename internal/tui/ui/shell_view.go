@@ -29,7 +29,7 @@ func (m *shellModel) refreshBlocks() {
 			block.Text = m.cardSummary(card)
 		}
 		cached, ok := m.blocks[block.ID]
-		if m.conversation.scroll > 0 && conversationBlock(block) && (!ok || cached.text != block.Text) {
+		if m.conversation.scroll > 0 && m.conversationBlock(block) && (!ok || cached.text != block.Text) {
 			if m.conversation.viewport.changed == nil {
 				m.conversation.viewport.changed = make(map[string]bool)
 			}
