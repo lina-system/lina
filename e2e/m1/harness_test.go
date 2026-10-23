@@ -203,7 +203,11 @@ func (p *process) killAndWait() {
 
 func (p *process) wait(t *testing.T, code int) {
 	t.Helper()
-	timer := time.NewTimer(operationTimeout)
+	p.waitWithin(t, code, operationTimeout)
+}
+func (p *process) waitWithin(t *testing.T, code int, budget time.Duration) {
+	t.Helper()
+	timer := time.NewTimer(budget)
 	defer timer.Stop()
 	select {
 	case <-p.done:
@@ -235,10 +239,9 @@ func (h *harness) connect(core *process) net.Conn {
 	h.t.Helper()
 	return h.connectWithin(core, operationTimeout)
 }
-
-func (h *harness) connectWithin(core *process, timeout time.Duration) net.Conn {
+func (h *harness) connectWithin(core *process, budget time.Duration) net.Conn {
 	h.t.Helper()
-	ctx, cancel := context.WithTimeout(h.ctx, timeout)
+	ctx, cancel := context.WithTimeout(h.ctx, budget)
 	defer cancel()
 	retry := time.NewTicker(5 * time.Millisecond)
 	defer retry.Stop()
