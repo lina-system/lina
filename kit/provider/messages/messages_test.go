@@ -160,6 +160,7 @@ func TestThinkingAndToolLoopRoundTrip(t *testing.T) {
 			case "function_call":
 				call = e.Item
 			}
+		case provider.ToolCallReady, provider.Terminal:
 		}
 	}
 	if thinking == nil || text == nil || call == nil {
