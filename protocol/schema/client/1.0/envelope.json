@@ -6158,6 +6158,12 @@
         "depth": {
           "type": "integer",
           "minimum": 0
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_stage"
+          }
         }
       },
       "required": [
@@ -6168,6 +6174,56 @@
         "next",
         "waiting",
         "depth"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_stage_step"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage_step": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "name",
+        "state"
       ],
       "additionalProperties": false
     },

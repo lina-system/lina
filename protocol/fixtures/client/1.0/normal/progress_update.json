@@ -5,7 +5,7 @@
   },
   "kind": "progress_update",
   "message_id": "progress_update-example",
-  "attempt_id": "progress_update-attempt-1",
+  "attempt_id": "progress_update-example-attempt",
   "reply_to": null,
   "sender": {
     "party": "core",
@@ -18,5 +18,69 @@
   "receipt_ref": null,
   "source_refs": [],
   "error": null,
-  "payload": {}
+  "payload": {
+    "rows": [
+      {
+        "ref": "goal:prepare-workshop",
+        "line": {
+          "started_at": "2026-01-01T00:00:05Z",
+          "now": "Draft workshop",
+          "name": "Prepare workshop",
+          "kind": "goal",
+          "stage": "Draft workshop",
+          "percent": 50,
+          "just_finished": "Choose venue",
+          "next": "Check",
+          "waiting": 0,
+          "depth": 0,
+          "stages": [
+            {
+              "number": 1,
+              "kind": "stage",
+              "label": "Draft workshop",
+              "state": "working",
+              "steps": [
+                {
+                  "name": "Draft workshop",
+                  "state": "working",
+                  "started_at": "2026-01-01T00:00:05Z"
+                }
+              ]
+            },
+            {
+              "number": 2,
+              "kind": "stage",
+              "label": "Choose venue",
+              "state": "next",
+              "steps": [
+                {
+                  "name": "Choose venue",
+                  "state": "next"
+                }
+              ]
+            },
+            {
+              "kind": "checking",
+              "label": "Check",
+              "state": "next"
+            }
+          ]
+        }
+      }
+    ],
+    "card_order": [
+      "goal:prepare-workshop"
+    ],
+    "waiting": [],
+    "waiting_more": 0,
+    "stream": {
+      "topic": "progress",
+      "cursor": {
+        "epoch": "42",
+        "seq": 2
+      },
+      "key": "overview",
+      "revision": 2
+    }
+  }
 }

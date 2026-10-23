@@ -722,22 +722,35 @@ type ProgressGet struct {
 	View  *string `json:"view,omitempty"`
 }
 type ProgressLine struct {
-	Depth        json.Number   `json:"depth"`
-	FinishedAt   *string       `json:"finished_at,omitempty"`
-	JustFinished string        `json:"just_finished"`
-	Kind         string        `json:"kind"`
-	Name         string        `json:"name"`
-	Next         string        `json:"next"`
-	Now          *string       `json:"now,omitempty"`
-	Percent      *json.Number  `json:"percent,omitempty"`
-	Stage        string        `json:"stage"`
-	StartedAt    *string       `json:"started_at,omitempty"`
-	State        *RunningState `json:"state,omitempty"`
-	Waiting      json.Number   `json:"waiting"`
+	Depth        json.Number      `json:"depth"`
+	FinishedAt   *string          `json:"finished_at,omitempty"`
+	JustFinished string           `json:"just_finished"`
+	Kind         string           `json:"kind"`
+	Name         string           `json:"name"`
+	Next         string           `json:"next"`
+	Now          *string          `json:"now,omitempty"`
+	Percent      *json.Number     `json:"percent,omitempty"`
+	Stage        string           `json:"stage"`
+	Stages       *[]ProgressStage `json:"stages,omitempty"`
+	StartedAt    *string          `json:"started_at,omitempty"`
+	State        *RunningState    `json:"state,omitempty"`
+	Waiting      json.Number      `json:"waiting"`
 }
 type ProgressRow struct {
 	Line ProgressLine `json:"line"`
 	Ref  string       `json:"ref"`
+}
+type ProgressStage struct {
+	Kind   string               `json:"kind"`
+	Label  string               `json:"label"`
+	Number *json.Number         `json:"number,omitempty"`
+	State  string               `json:"state"`
+	Steps  *[]ProgressStageStep `json:"steps,omitempty"`
+}
+type ProgressStageStep struct {
+	Name      string  `json:"name"`
+	StartedAt *string `json:"started_at,omitempty"`
+	State     string  `json:"state"`
 }
 type ProgressUpdate struct {
 	CardOrder   *[]string       `json:"card_order,omitempty"`
@@ -8220,6 +8233,12 @@ const clientSchemaJSON = `{
         "depth": {
           "type": "integer",
           "minimum": 0
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_stage"
+          }
         }
       },
       "required": [
@@ -8230,6 +8249,56 @@ const clientSchemaJSON = `{
         "next",
         "waiting",
         "depth"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_stage_step"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage_step": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "name",
+        "state"
       ],
       "additionalProperties": false
     },
