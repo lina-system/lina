@@ -1,4 +1,4 @@
-# Worker e2e stability investigation (#812)
+# Worker e2e CPU budget regression (#812)
 
 This investigation covers `TestM2WorkerQuotaWindows`, `TestM2WorkerChoice`,
 and every other e2e test that failed on at least two distinct branches in a
@@ -10,6 +10,49 @@ cancelled workflow runs. All 33 failed-run logs were inspected. The sample was s
 The sample spans [39887424342](https://github.com/thisisjun786/lina/actions/runs/39887424342)
 (02:03:01 UTC) through [39903513854](https://github.com/thisisjun786/lina/actions/runs/39903513854)
 (05:02:00 UTC).
+
+## Reproduced CPU budget loss
+
+The initial dev baseline passed, but repeating the same four-shard workload
+on the updated dev source (`a76f888b`, plus the evidence-only commit `2f0b14fa`)
+reproduced startup/readiness failures: **331/360 top-level runs passed**.
+The shared harness cleared the child environment without passing the parent's
+Go CPU budget. Although every test process ran with `GOMAXPROCS=2`, each Core
+independently used the host's default instead.
+
+During the failures, 15 test-owned Core processes had no `GOMAXPROCS` setting,
+CPU affinity spanning all 16 host CPUs, and 12–20 OS threads each. Host load was
+37.27, CPU pressure averaged 31.52% over 60 seconds, and I/O pressure averaged
+13.47%; available memory was 23 GiB with no measured memory pressure. Tests
+failed at their existing Core connection or readiness deadlines. These resource
+observations accompany the failures; the deterministic regression below directly
+proves the CPU-budget loss.
+
+`TestHarnessCommandsShareCPUBudget` starts a real Go child through the shared
+harness with parent runtime budgets of 1 and 3. Before the fix, both children
+reported 16:
+
+```text
+child CPU budget = "16\n", want 1: <nil>
+child CPU budget = "16\n", want 3: <nil>
+```
+
+The fix passes the parent's current numeric `runtime.GOMAXPROCS(0)` value into
+the otherwise isolated command environment. Both regression cases then passed.
+The test checks the child's actual runtime setting, without sleeps or a timing
+assertion. The command was:
+
+```sh
+dv heavy -- go test ./e2e/m1 -run '^TestHarnessCommandsShareCPUBudget$' -count=1 -v
+```
+
+It exited 1 before the implementation change and 0 afterwards. Go reported
+package execution times of 0.119 and 0.040 seconds respectively, excluding build
+and heavy-slot waiting time. Scenario deadlines, parallelism and assertions are unchanged.
+In the fixed workload, all 12 sampled Core processes received `GOMAXPROCS=2`
+and used 6–9 OS threads while retaining the same 16-CPU affinity. CPU pressure
+was still 39.94% over 60 seconds at that observation. The fixed branch's repeated
+workload is measured separately below.
 
 ## Historical failure causes
 
@@ -62,24 +105,40 @@ All 43 distinct test/subtest names ran 30 times; none failed, skipped or lacked
 a terminal observation. Shards 0–3 exited 0 in 816.84, 953.14, 906.91 and 631.76
 seconds respectively.
 
-| Test | Starting dev | Final branch |
-| --- | --- | --- |
-| `TestM1BackupInstalledConversation` | 30/30 (100%) | Pending |
-| `TestM1ReplayExportInstalledCore` | 30/30 (100%) | Pending |
-| `TestM1TUIToolRows` | 30/30 (100%) | Pending |
-| `TestM2ClaudeWorkerThroughInstalledCore` | 30/30 (100%) | Pending |
-| `TestM2DispatchedWorkArea` | 30/30 (100%) | Pending |
-| `TestM2WorkCompletions` | 30/30 (100%) | Pending |
-| `TestM2WorkDefinition` | 30/30 (100%) | Pending |
-| `TestM2WorkerChoice` | 30/30 (100%) | Pending |
-| `TestM2WorkerQuotaPartialRecovery` | 30/30 (100%) | Pending |
-| `TestM2WorkerQuotaWindows` | 30/30 (100%) | Pending |
-| `TestM3AntigravityThroughInstalledCore` | 30/30 (100%) | Pending |
-| `TestPersonaReplayExactSources` | 30/30 (100%) | Pending |
+| Test | Initial dev baseline | Updated dev before fix | Fixed branch |
+| --- | --- | --- | --- |
+| `TestM1BackupInstalledConversation` | 30/30 (100%) | 25/30 (83.3%) | 30/30 (100%) |
+| `TestM1ReplayExportInstalledCore` | 30/30 (100%) | 27/30 (90.0%) | 30/30 (100%) |
+| `TestM1TUIToolRows` | 30/30 (100%) | 27/30 (90.0%) | 30/30 (100%) |
+| `TestM2ClaudeWorkerThroughInstalledCore` | 30/30 (100%) | 29/30 (96.7%) | 30/30 (100%) |
+| `TestM2DispatchedWorkArea` | 30/30 (100%) | 26/30 (86.7%) | 30/30 (100%) |
+| `TestM2WorkCompletions` | 30/30 (100%) | 29/30 (96.7%) | 30/30 (100%) |
+| `TestM2WorkDefinition` | 30/30 (100%) | 27/30 (90.0%) | 30/30 (100%) |
+| `TestM2WorkerChoice` | 30/30 (100%) | 27/30 (90.0%) | 30/30 (100%) |
+| `TestM2WorkerQuotaPartialRecovery` | 30/30 (100%) | 30/30 (100.0%) | 30/30 (100%) |
+| `TestM2WorkerQuotaWindows` | 30/30 (100%) | 29/30 (96.7%) | 30/30 (100%) |
+| `TestM3AntigravityThroughInstalledCore` | 30/30 (100%) | 29/30 (96.7%) | 30/30 (100%) |
+| `TestPersonaReplayExactSources` | 30/30 (100%) | 26/30 (86.7%) | 30/30 (100%) |
 
-The final-branch run and full foundation gate are pending.
+The updated-dev trial completed all 12 top-level tests 30 times with no skips.
+Three startup failures prevented `TestM1ReplayExportInstalledCore` from reaching
+its `export` and `replay` subtests, so those subtests ran only 27 times; the three
+parent failures remain in the denominator. Shards 0–3 exited 1 in 1108.16,
+1370.99, 1309.53 and 952.42 seconds respectively. These failures are retained in
+the before-fix column.
 
-## Causal control
+The fixed branch at `04472d1067bbcaed98311cac5f7866fce2238887` passed **360/360**
+top-level runs. All 43 test/subtest names ran and passed 30 times, without skips
+or missing observations. Shards 0–3 exited 0 in 1049.21, 1375.40, 1323.76 and
+940.47 seconds respectively. Both repetition runs use the same updated dev
+source plus this harness change; the earlier initial-dev baseline is retained
+as a separate observation.
+
+Final integration uses `node scripts/foundation.mjs --full --no-note` after
+merging `origin/dev` into the PR branch. The result for that final candidate,
+GitHub CI and the current-head bot review are reported on the pull request.
+
+## Historical Codex control
 
 After completing the unchanged-dev baseline, a temporary diagnostic removed
 only the two existing early-completion binding fixes from
@@ -100,7 +159,8 @@ removal of an existing fix, not a failure of the unchanged starting dev commit.
 The existing declaration round-trip regression also passed:
 `go test ./internal/core/boot -run '^TestExchangeDeclarationsSurviveEvidenceEncoding$' -count=1`.
 
-The measured baseline supports retaining the existing source fixes and documenting
-their provenance. The historical failures include real timing races already fixed
-in dev and distinct branch regressions; a finite repetition run does not establish
+The historical failures include timing races already fixed in dev and distinct
+branch regressions. The later loaded run exposed the additional harness CPU
+budget fault addressed here. The original passing baseline and the failing
+updated-dev trial are both retained; a finite repetition run does not establish
 that every possible schedule is free of failures.
