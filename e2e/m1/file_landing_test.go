@@ -107,7 +107,7 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		t.Helper()
 		sequence++
 		calls <- call{name, args}
-		admittedTurn(t, h, client, conversation, fmt.Sprint("files-", sequence), "Continue the file task.")
+		queuedWorkTurn(t, h, client, conversation, fmt.Sprint("files-", sequence), "Continue the file task.")
 		select {
 		case result := <-results:
 			if (result.Code == "ok") != ok {

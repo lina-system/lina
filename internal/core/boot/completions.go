@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
@@ -69,7 +68,7 @@ func (r *conversationRuntime) reactCompletion(ctx context.Context, e work.Comple
 	if r.route == nil {
 		return work.ErrState
 	}
-	view, err := r.router.channelView(ctx, channels.Binding{Person: r.person, Agent: card.Task.AgentID, Conversation: card.Task.ConversationID})
+	view, err := r.completionRunner(ctx, card)
 	if err != nil {
 		return err
 	}
@@ -84,7 +83,7 @@ func (r *conversationRuntime) reactCompletion(ctx context.Context, e work.Comple
 		if err != nil {
 			return err
 		}
-		if current.Run == nil || current.Run.ID != e.Attempt || current.Head != e.Head {
+		if current.Run == nil || current.Run.ID != e.Attempt || current.Head != e.Head || current.Receipt == nil || current.Receipt.EventID != e.ReceiptID || current.FileSnapshot != nil && current.FileSnapshot.Fingerprint != e.Revision {
 			return nil
 		}
 		id := "work-completion:" + e.ID

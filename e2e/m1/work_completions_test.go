@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 func TestM2WorkCompletions(t *testing.T) {
@@ -146,4 +148,50 @@ func scriptedWorkCompletion(w http.ResponseWriter, input []json.RawMessage) bool
 		return true
 	}
 	return false
+}
+
+// Queue a manual request behind any completion turn and wait for that exact
+// durable input's turn, so another turn's idle frame cannot settle this one.
+func queuedWorkTurn(t *testing.T, h *harness, c *clientapi.Client, conversation, key, text string) {
+	t.Helper()
+	mode := protocol.InputModeQueue
+	id, err := c.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &key, Text: &text, Mode: &mode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		e, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.ReplyTo != nil && *e.ReplyTo == id {
+			if e.Error != nil {
+				t.Fatal(e.Error)
+			}
+			break
+		}
+	}
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var n int
+		if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(h.ctx, `SELECT count(*) FROM inbox i JOIN turn_runs t ON t.inbox_id=i.id WHERE i.conversation=? AND i.source='client' AND i.native_id=? AND t.state='completed'`, conversation, key).Scan(&n)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if n == 1 {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-h.ctx.Done():
+			t.Fatal("manual work turn did not settle", h.ctx.Err())
+		}
+	}
 }

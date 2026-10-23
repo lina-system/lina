@@ -2,6 +2,7 @@
 package canon
 
 const WorkCompletionsSchema = `
+CREATE TABLE work_completion_origins (task_id TEXT PRIMARY KEY, record BLOB NOT NULL);
 CREATE TABLE work_completions (
  id TEXT PRIMARY KEY,
  task_id TEXT NOT NULL,
