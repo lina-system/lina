@@ -50,11 +50,16 @@ func TestM2IntakeReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	run := func(path string, wantExit int) intakereplay.Report {
+	run := func(path string, wantExit int, core ...bool) intakereplay.Report {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(t.Context(), 180*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, binary, "intake-replay", path)
+		args := []string{"intake-replay"}
+		if len(core) > 0 && core[0] {
+			args = append(args, "--core")
+		}
+		args = append(args, path)
+		cmd := exec.CommandContext(ctx, binary, args...)
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + scratch, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
 		raw, err := cmd.Output()
 		if wantExit == 0 && err != nil {
@@ -87,6 +92,25 @@ func TestM2IntakeReplay(t *testing.T) {
 		c, ok := expected[r.ID]
 		if !ok || r.Score == nil || !reflect.DeepEqual(*r.Score, c.Expected[r.Router]) {
 			t.Fatalf("wrong score: %+v", r)
+		}
+	}
+	production := run(fixture, 0, true)
+	if production.Scored != len(cases) || production.Excluded != 0 {
+		t.Fatalf("incomplete production replay: %+v", production)
+	}
+	rules := map[string]int{}
+	for _, summary := range production.Summaries {
+		if summary.Router != "core-rules" {
+			t.Fatal("wrong production router", summary)
+		}
+		rules[summary.Decider] += summary.Metrics.Picks
+		if (summary.Decider == "reply-or-card" || summary.Decider == "offered-option") && summary.Metrics.Passed != summary.Metrics.Cases {
+			t.Fatalf("inexact Core rule: %+v", summary)
+		}
+	}
+	for _, rule := range []string{"reply-or-card", "exact-reference", "offered-option", "no-rule"} {
+		if rules[rule] == 0 {
+			t.Fatal("missing production rule coverage", rule)
 		}
 	}
 	// The same ids are seeded on every case and every router. A shared database
