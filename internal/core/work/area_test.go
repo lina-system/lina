@@ -94,6 +94,103 @@ func TestAreaRegisteredWorktreeUsesConfiguredGit(t *testing.T) {
 	}
 }
 
+// A worker pushes its own assigned branch with a normal `git push`. Git may
+// update the remote-tracking ref that mirrors that branch, by remote name and,
+// from 2.56, by a URL that matches one configured remote.
+func TestAreaRegisteredWorktreePushesAssignedBranch(t *testing.T) {
+	a, spec, source := areaFixture(t)
+	l := lease.New(func() {})
+	defer l.Release()
+	dir := filepath.Join(a.path, "tasks", "task-1")
+	remote := t.TempDir()
+	areaGit(t, source, "init", "--bare", remote)
+	areaGit(t, source, "remote", "add", "origin", remote)
+	areaGit(t, source, "worktree", "add", "-b", spec.Branch, dir, spec.Base)
+	if err := a.ProtectLinkedWorktree(t.Context(), l, a.git, "task-1", source, spec.Branch); err != nil {
+		t.Fatal(err)
+	}
+	areaGit(t, dir, "commit", "--allow-empty", "-m", "own assigned branch")
+	head := areaGit(t, dir, "rev-parse", "HEAD")
+	url := areaGit(t, dir, "remote", "get-url", "origin")
+	for _, target := range []string{"origin", url} {
+		areaGit(t, dir, "push", target, "HEAD:refs/heads/"+spec.Branch)
+		if got := areaGit(t, remote, "rev-parse", spec.Branch); got != head {
+			t.Fatalf("push to %s did not publish the assigned branch: %s", target, got)
+		}
+	}
+	if got := areaGit(t, dir, "rev-parse", "--verify", "refs/remotes/origin/"+spec.Branch); got != head {
+		t.Fatalf("own branch mirror not updated: %s", got)
+	}
+}
+
+// The mirror allowance covers only the task's own branch name.
+func TestAreaRegisteredWorktreeRejectsOtherRemoteTrackingRefs(t *testing.T) {
+	a, spec, source := areaFixture(t)
+	l := lease.New(func() {})
+	defer l.Release()
+	dir := filepath.Join(a.path, "tasks", "task-1")
+	areaGit(t, source, "worktree", "add", "-b", spec.Branch, dir, spec.Base)
+	if err := a.ProtectLinkedWorktree(t.Context(), l, a.git, "task-1", source, spec.Branch); err != nil {
+		t.Fatal(err)
+	}
+	areaGit(t, dir, "commit", "--allow-empty", "-m", "own assigned branch")
+	head := areaGit(t, dir, "rev-parse", "HEAD")
+	for _, ref := range []string{"refs/remotes/origin/task/task-2", "refs/remotes/origin/dev"} {
+		c := exec.Command("git", "update-ref", ref, head)
+		c.Dir = dir
+		c.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+		if out, err := c.CombinedOutput(); err == nil || !strings.Contains(string(out), "LINA protected ref") {
+			t.Fatalf("worker changed %s: %v %s", ref, err, out)
+		}
+	}
+}
+
+// The guard of an earlier Core still protects every ref, so an upgrade keeps
+// serving that clone and replaces the guard in place.
+const previousRefGuard = `#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+[ "$1" = prepared ] || exit 0
+assigned=
+binding=$(git rev-parse --git-path lina-task-ref) || exit 1
+if [ -f "$binding" ]; then
+ IFS= read -r assigned < "$binding" || exit 1
+fi
+while read -r old new ref; do
+ case "$ref" in
+ refs/heads/main|refs/heads/master|refs/heads/dev|refs/remotes/*|refs/lina/*)
+  echo 'LINA protected ref' >&2
+  exit 1;;
+ esac
+done
+`
+
+func TestAreaRegisteredWorktreeReplacesEarlierGuard(t *testing.T) {
+	a, spec, source := areaFixture(t)
+	l := lease.New(func() {})
+	defer l.Release()
+	areaGit(t, source, "worktree", "add", "-b", spec.Branch, filepath.Join(a.path, "tasks", "task-1"), spec.Base)
+	if err := a.ProtectLinkedWorktree(t.Context(), l, a.git, "task-1", source, spec.Branch); err != nil {
+		t.Fatal(err)
+	}
+	guard := filepath.Join(source, ".git", "lina-hooks", "reference-transaction")
+	if err := os.WriteFile(guard, []byte(previousRefGuard), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ProtectLinkedWorktree(t.Context(), l, a.git, "task-1", source, spec.Branch); err != nil {
+		t.Fatalf("refused an earlier Core guard: %v", err)
+	}
+	if body, err := os.ReadFile(guard); err != nil || string(body) != refGuard {
+		t.Fatalf("kept the earlier guard: %v", err)
+	}
+	// A hook this package did not write is still refused, not replaced.
+	if err := os.WriteFile(guard, []byte("#!/bin/sh\necho 'LINA protected ref'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ProtectLinkedWorktree(t.Context(), l, a.git, "task-1", source, spec.Branch); err == nil {
+		t.Fatal("accepted a foreign hook")
+	}
+}
+
 func TestAreaRegisteredWorktreePreservesUnrelatedHooks(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "default", true: "configured"}[explicit], func(t *testing.T) {
