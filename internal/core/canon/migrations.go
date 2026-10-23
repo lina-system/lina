@@ -53,7 +53,8 @@ func Migrations() []Migration {
 		{Version: 39, SQL: workEventSequenceSchema},
 		{Version: 40, SQL: WorkCompletionsSchema},
 		{Version: 41, SQL: TimersSchema},
-		{Version: 42, SQL: ResultsSchema + PlanningSchema},
+		{Version: 42, SQL: startersSchema},
+		{Version: 43, SQL: ResultsSchema + PlanningSchema},
 	}
 }
 
@@ -90,7 +91,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{31, "worker_dispatch"},
 		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {40, "work_completions"}, {40, "work_completion_claims"},
 		{34, "waiting_decisions"},
-		{42, "result_heads"}, {42, "plan_drafts"}, {42, "plan_confirmations"}, {42, "plan_rejections"},
+		{43, "result_heads"}, {43, "plan_drafts"}, {43, "plan_confirmations"}, {43, "plan_rejections"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{38, "records_todo"},
 		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
@@ -99,6 +100,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
 		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
 		{37, "work_events"}, {37, "work_records"},
+		{42, "agent_starters"}, {42, "agent_selection"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {

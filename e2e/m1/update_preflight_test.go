@@ -79,6 +79,14 @@ func TestM2UpdatePreflight(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
+			controls, err := ctlfiles.Open(h.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { controls.Close() })
+			if err := controls.Acquire(); err != nil {
+				t.Fatal(err)
+			}
 			path := filepath.Join(h.root, "canon/canon.sqlite")
 			code := 0
 			rows := manifest.ClientCombinations()
@@ -115,21 +123,11 @@ func TestM2UpdatePreflight(t *testing.T) {
 					t.Fatal(err)
 				}
 				if name == "older" {
-					controls, err := ctlfiles.Open(h.root)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err := controls.Acquire(); err != nil {
-						t.Fatal(err)
-					}
 					db, err := canon.Open(t.Context(), canon.Config{Path: path, Epoch: 1, Controls: controls, Migrations: canon.Migrations()[:14]})
 					if err != nil {
 						t.Fatal(err)
 					}
 					if err := db.Close(t.Context()); err != nil {
-						t.Fatal(err)
-					}
-					if err := controls.Close(); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -153,13 +151,8 @@ func TestM2UpdatePreflight(t *testing.T) {
 			}
 			// Even a held Core lock must not block preflight. Do not create it in
 			// the candidate process, and compare every source byte and metadata.
-			controls, err := ctlfiles.Open(h.root)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := controls.Acquire(); err != nil {
-				t.Fatal(err)
-			}
+			// Retain the fixture's fence through setup and preflight instead of
+			// closing and immediately reacquiring it between those phases.
 			before := doctorState(t, h.root)
 			args := []string{"core", "--preflight", "--state-root", h.root, "--manifest", metadata}
 			if name == "unimplemented peers" {

@@ -32,19 +32,28 @@ func (p *Persona) FillWorkMethod(ctx context.Context, scope PersonaScope, in Wor
 	if agents.StateRevision(state) != scope.StateRevision {
 		return SettingReceipt{}, agents.ErrConflict
 	}
+	// Match ParseWorkMethod's decode/marshal canonicalization before writing.
+	// UseNumber keeps integer counts exact, including values above 2^53.
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(in.Value))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return SettingReceipt{}, agents.ErrInvalid
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return SettingReceipt{}, agents.ErrInvalid
+	}
 	filled, err := p.agents.FillWorkMethod(ctx, scope.Agent, scope.Revision, scope.StateRevision, in.Key, in.Value, scope.Input, scope.Person)
 	if err != nil {
 		return SettingReceipt{}, err
 	}
 	if filled {
-		// Canonicalization matches the store without reading a later state revision.
-		var canonical bytes.Buffer
-		_ = json.Compact(&canonical, in.Value)
-		raw := canonical.Bytes()
+		// Reconstruct this commit without reading a later state revision.
 		if state.WorkMethodFills == nil {
 			state.WorkMethodFills = map[string]agents.WorkMethodFill{}
 		}
-		state.WorkMethodFills[in.Key] = agents.WorkMethodFill{Value: raw, Source: scope.Input}
+		state.WorkMethodFills[in.Key] = agents.WorkMethodFill{Value: canonical, Source: scope.Input}
 	}
 	return SettingReceipt{Filled: filled, Revision: agents.StateRevision(state)}, nil
 }

@@ -23,3 +23,13 @@ The requested Hermes source and plugins are unavailable in this environment.
 Their DST, recurrence and crash semantics have not been observed. No upstream
 calendar algorithm is copied. The CRW documents establish neither DST handling
 nor an exactly-once model or external-effect guarantee.
+
+## Failure recovery follow-up
+
+Seen at CRW commit `821d6453aacfc9053b17c3b24a134c0ce4077f80`: the same
+schedule contract still computes no dates; the DAG scheduler retains an
+`effect_unknown` result and treats duplicate wakes as hints, not permission to
+repeat execution. Inferred for C-26: live failures should share the existing
+bounded read-only replacement budget; acknowledgement retries should retain
+the action result. Upstream recurrence-horizon and live timer retry semantics
+remain unknown. This follow-up changes LINA's native scheduler only.

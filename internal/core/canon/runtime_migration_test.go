@@ -440,3 +440,42 @@ INSERT INTO timer(id,person,agent,conversation,authored,next_at) VALUES('existin
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedStarters(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:41]...), Migration{Version: 42, SQL: startersSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO agent_starters(preset,agent_id) VALUES('fixture','starter'); INSERT INTO agent_selection(person_id,agent_id) VALUES('person','selected');`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var starter, selected string
+		if err := tx.QueryRowContext(t.Context(), "SELECT agent_id FROM agent_starters WHERE preset='fixture'").Scan(&starter); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(t.Context(), "SELECT agent_id FROM agent_selection WHERE person_id='person'").Scan(&selected); err != nil {
+			return err
+		}
+		if starter != "starter" || selected != "selected" {
+			t.Fatal("published starter or selection changed")
+		}
+		var n int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&n); err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatal("upgrade created a plan")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

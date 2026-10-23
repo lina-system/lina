@@ -219,3 +219,64 @@ func TestConcurrentDueClaimsAndDST(t *testing.T) {
 		})
 	}
 }
+
+func TestFailedClaimFencingAndCancellation(t *testing.T) {
+	s, _ := openTimers(t, t.TempDir(), 1)
+	ctx := t.Context()
+	at := instant("2026-01-01T12:00:00Z")
+	tm := timerFixture("failure", "sensor")
+	if _, err := s.Create(ctx, tm, at); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.ClaimDue(ctx, at.Add(time.Minute), "1")
+	if err != nil || len(first) != 1 {
+		t.Fatal(first, err)
+	}
+	if changed, err := s.Observe(ctx, first[0], "revision"); err != nil || !changed {
+		t.Fatal(changed, err)
+	}
+	if err := s.Fail(ctx, first[0]); err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.ClaimDue(ctx, at.Add(time.Minute), "1")
+	if err != nil || len(second) != 1 || second[0].ID != first[0].ID || second[0].Attempt != 2 {
+		t.Fatal(second, err)
+	}
+	if err := s.Fail(ctx, first[0]); !errors.Is(err, ErrClaim) {
+		t.Fatalf("stale failure changed replacement: %v", err)
+	}
+	if err := s.Finish(ctx, first[0]); !errors.Is(err, ErrClaim) {
+		t.Fatalf("stale acknowledgement changed replacement: %v", err)
+	}
+	if changed, err := s.Observe(ctx, second[0], "revision"); err != nil || !changed {
+		t.Fatal("lost frozen observation", changed, err)
+	}
+	if err := s.Recover(ctx, "2"); err != nil {
+		t.Fatal(err)
+	}
+	if third, err := s.ClaimDue(ctx, at.Add(time.Minute), "2"); err != nil || len(third) != 0 {
+		t.Fatalf("restart renewed retry budget: %v %v", third, err)
+	}
+
+	tm = timerFixture("cancelled-failure", "reminder")
+	if _, err := s.Create(ctx, tm, at); err != nil {
+		t.Fatal(err)
+	}
+	fires, err := s.ClaimDue(ctx, at.Add(time.Minute), "2")
+	if err != nil || len(fires) != 1 {
+		t.Fatal(fires, err)
+	}
+	if err := s.Cancel(ctx, tm.ID, tm.Person, tm.Agent, tm.Conversation); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Fail(ctx, fires[0]); err != nil {
+		t.Fatal(err)
+	}
+	status, err := s.Get(ctx, tm.ID, tm.Person, tm.Agent, tm.Conversation)
+	if err != nil || len(status.Fires) != 1 || status.Fires[0].State != "cancelled" {
+		t.Fatal(status, err)
+	}
+	if retry, err := s.ClaimDue(ctx, at.Add(time.Minute), "2"); err != nil || len(retry) != 0 {
+		t.Fatal("cancelled fire retried", retry, err)
+	}
+}

@@ -4,9 +4,11 @@ package boot
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
@@ -41,7 +43,23 @@ func (s *conversationRouter) view(ctx context.Context, session clientsrv.Session
 	return view, nil
 }
 func (s *conversationRouter) History(ctx context.Context, session clientsrv.Session, p protocol.HistoryGet) (protocol.History, error) {
+	if err := s.root.authorize(session, nil); err != nil {
+		return protocol.History{}, err
+	}
 	agent := s.root.agent
+	if p.AgentID == nil && p.ConversationID == nil {
+		selected, err := s.root.agents.Selected(ctx, session.PersonID)
+		if errors.Is(err, agents.ErrNotFound) {
+			selected, err = s.root.agents.Default(ctx)
+		}
+		if err == nil {
+			agent = selected.ID
+		} else if !errors.Is(err, agents.ErrNotFound) {
+			return protocol.History{}, managementError(err)
+		} else {
+			agent = ""
+		}
+	}
 	if p.AgentID != nil {
 		agent = *p.AgentID
 	} else if p.ConversationID != nil {
