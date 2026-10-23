@@ -36,9 +36,7 @@ func (s *Service) finish(ctx context.Context, r Record, runID, status string, re
 				return err
 			}
 		}
-		// Restart observation must settle effects even when the turn succeeded.
-		// Live successful delivery retains its process/result validation path.
-		if r.Snapshot != nil && r.Snapshot.Finish != nil && (r.ObserveEpoch != 0 || r.Snapshot.Finish.Status != worker.Done) {
+		if r.Snapshot != nil {
 			var raw []byte
 			var card work.Card
 			if err := tx.QueryRowContext(ctx, "SELECT record FROM work_cards WHERE task_id=?", r.ID).Scan(&raw); err != nil {
@@ -54,7 +52,9 @@ func (s *Service) finish(ctx context.Context, r Record, runID, status string, re
 		if err := work.FinishIn(ctx, tx, r.ID, runID, status, head); err != nil {
 			return err
 		}
-		if r.Snapshot != nil {
+		// Restart observation must settle effects even when the turn succeeded.
+		// Live successful delivery retains its process/result validation path.
+		if r.Snapshot != nil && r.Snapshot.Finish != nil && (r.ObserveEpoch != 0 || r.Snapshot.Finish.Status != worker.Done) {
 			r = recoveryRecord(r)
 		}
 		if r.State != "unknown" {
