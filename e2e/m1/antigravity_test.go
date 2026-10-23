@@ -29,7 +29,10 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 		t.Fatal(err)
 	}
 	var scenario struct {
-		Cases            []struct{ Name, Expected, Preset string }
+		Cases []struct {
+			Name, Expected, Preset string
+			LegacyAdmission        bool `json:"legacy_admission"`
+		}
 		What, Done       string
 		WorkArea         bool `json:"work_area"`
 		CompletionEvents bool `json:"completion_events"`
@@ -54,7 +57,7 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 		t.Run(test.Name, func(t *testing.T) {
 			t.Parallel()
 			workerCase := test.Name
-			if test.Preset != "" {
+			if test.Preset != "" || test.LegacyAdmission {
 				workerCase = "success"
 			}
 			var err error
@@ -137,6 +140,13 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			t.Cleanup(cancel)
 			h.ctx = ctx
+			managerTurns := 2
+			var checkLegacy func()
+			if test.LegacyAdmission {
+				checkLegacy = seedLegacyDispatch(t, h, ids["dev"], repo, scenario.What, scenario.Done)
+				// The old manager decision is seeded; only delivery runs here.
+				managerTurns = 1
+			}
 			start := func() *process {
 				p := h.command("core", "--state-root", h.root, "--socket", h.socket)
 				p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+workerCase, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
@@ -146,6 +156,11 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 				return p
 			}
 			core := start()
+			if test.LegacyAdmission {
+				if _, err = os.Stat(filepath.Join(fixture, "workdir")); !os.IsNotExist(err) {
+					t.Fatal("legacy admission ran before its conversation receipt", err)
+				}
+			}
 			c, conversation := conversationClient(t, h)
 			events := admittedTurn(t, h, c, conversation, "delegate", "Create result.txt through the installed worker and submit its PR.")
 			if !offered.Load() || t.Failed() {
@@ -177,9 +192,12 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			}
 			c.Close()
 			h.stopCore(core)
-			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success")
+			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success", managerTurns)
 			if scenario.CompletionEvents {
 				assertWorkCompletion(t, h)
+			}
+			if checkLegacy != nil {
+				checkLegacy()
 			}
 			if git("rev-parse", "dev") != base {
 				t.Fatal("worker changed protected base")
@@ -228,6 +246,12 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			}
 			if calls.Load() != 2 {
 				t.Fatalf("restart replayed provider: %d", calls.Load())
+			}
+			if test.LegacyAdmission {
+				launches, err := os.ReadFile(filepath.Join(fixture, "launches"))
+				if err != nil || string(launches) != "worker\n" {
+					t.Fatalf("legacy admission did not execute exactly once: %q %v", launches, err)
+				}
 			}
 		})
 	}

@@ -1289,7 +1289,9 @@ current head, checks and review, with a head recheck after inline comments.
 
 `internal/core/worker/dispatch` wires the adapter into installed Core's `dispatch_work`
 tool and existing work ledger. Migration 31 adds the dispatch journal; a committed
-conversation tool receipt gates execution. The journal reserves each repository
+conversation tool receipt gates execution. Identical retries load the durable
+admission before any manager handoff, preserving older manager definitions and
+ownership without resetting execution state. The journal reserves each repository
 through queued/running/unknown states. Core allocates through its shared
 `work.Area`, records the pinned workspace on the task and starts the worker in
 `work/tasks/<task-id>` from the detached base. The independent parent clone
@@ -1370,7 +1372,7 @@ restrictions use their ordinary OR rule. Civil-time resolution includes
 non-hour transitions: a gap maps to its first valid instant and a fold uses its
 first occurrence. Colliding gap candidates share the same fire identity.
 
-Canon migration 40 adds authored timer rows and scheduler-owned next instants,
+Canon migration 41 adds authored timer rows and scheduler-owned next instants,
 signatures and fire claims after completion events. One transaction commits a
 unique `(timer, instant)` fire and its next instant before any dispatch. One
 sleeper and four bounded delivery workers serve the scheduler. A timer's next
