@@ -2614,6 +2614,8 @@ path and a five-minute safety sweep share this reconciliation. The sweep makes
 no model call. A transport-loss notice has a separate durable identity from the
 authoritative terminal result. Each is deduplicated independently, and a late
 transport-loss notice cannot replace an already recorded terminal result.
+Previously stored connection-loss notices remain immutable when a confirmed
+success is admitted under a separate result identity.
 Confirmed successful completion evidence enters the normal result inbox;
 its conversation response is a separate reaction and never starts a worker turn. A continuation intent commits before input; an uncertain send is
 never repeated, including after restart. The same task, thread, directory and

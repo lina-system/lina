@@ -2,11 +2,15 @@
 package boot
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
@@ -21,6 +25,16 @@ type disconnectedResultProbe struct {
 func (p *disconnectedResultProbe) Events() <-chan worker.Event { return p.events }
 
 func TestWorkerRecoveredSuccessAfterTransportLossIsDeliveredOnce(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		name := "separate_notice"
+		if legacy {
+			name = "published_notice"
+		}
+		t.Run(name, func(t *testing.T) { testRecoveredSuccessAfterTransportLoss(t, legacy) })
+	}
+}
+
+func testRecoveredSuccessAfterTransportLoss(t *testing.T, legacy bool) {
 	r := controlRuntime(t)
 	ctx, now := t.Context(), time.Now()
 	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "recover-output", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Produce the result"})
@@ -38,7 +52,27 @@ func TestWorkerRecoveredSuccessAfterTransportLossIsDeliveredOnce(t *testing.T) {
 	probe.events <- lost
 	close(probe.events)
 	entry := &workerSession{origin: r, input: input, thread: thread, adapter: probe, workdir: t.TempDir(), packet: "Produce the result", output: "Partial output", active: map[string]lease.Lease{}, done: make(chan struct{}), close: func() error { return nil }, recovery: recovery.Record{ID: thread.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: input.ID, Thread: thread, State: "running"}}
-	entry.observe()
+	if legacy {
+		// The published implementation used the terminal key for transport loss.
+		// Seed that immutable record and its inbox entry before reconciliation.
+		digest := sha256.Sum256([]byte(input.ID + "\x00" + thread.AttemptID + "\x00" + thread.ID + "\x00" + thread.TurnID))
+		id := "worker-finish:" + hex.EncodeToString(digest[:])
+		body, err := json.Marshal(workerCompletion{workerResult: workerResult{Owner: r.agent, Manager: r.conversation, Session: thread.ID, Turn: thread.TurnID, Generation: thread.ProcessGeneration, Binding: thread.BindingEpoch, State: worker.Dead, Worker: "codex", Output: entry.output}, Workdir: entry.workdir, TaskPacket: entry.packet, Status: worker.Failed, Failure: worker.ConnectionFailure})
+		if err != nil {
+			t.Fatal(err)
+		}
+		admission := &conversationAdmission{db: r.db, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "worker-finish", NativeID: id}, Body: body}}
+		if _, err := ledger.New(admission, r.materials).Admit(ctx, guard.EntryTool, ledger.Input{ID: id, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, ScaffoldKind: "worker_completion", Locator: "worker-session:" + thread.ID, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: string(body)}); err != nil {
+			t.Fatal(err)
+		}
+		entry.recovery.State = "unknown"
+		entry.recovery.Finish = lost.Finish
+		if err := (recovery.Recovery{DB: r.db}).Put(ctx, entry.recovery); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		entry.observe()
+	}
 	assertWorkerCompletionCounts(t, r, 1)
 	if entry.recovery.State != "unknown" {
 		t.Fatalf("transport loss settled execution: %s", entry.recovery.State)
