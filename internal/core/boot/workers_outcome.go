@@ -106,7 +106,8 @@ func (r *conversationRuntime) recordedWorker(ctx context.Context, session string
 	return result, err
 }
 
-// Recover only admitted, unclaimed follow-ups. Turn recovery already sealed any
+// Recover admitted, unclaimed worker completions and question-card answers.
+// Turn recovery already sealed any
 // interrupted model calls; replaying those could repeat an effect.
 func (r *conversationRuntime) resumeWorkerCompletions(ctx context.Context) error {
 	if r.route == nil {
@@ -117,7 +118,7 @@ func (r *conversationRuntime) resumeWorkerCompletions(ctx context.Context) error
 		inbox int64
 	}
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT e.id,i.id FROM inbox i JOIN conv_event e ON e.id=i.native_id LEFT JOIN turn_runs t ON t.inbox_id=i.id WHERE i.source='worker-finish' AND e.scaffold_kind='worker_completion' AND t.id IS NULL ORDER BY i.id`)
+		rows, err := tx.QueryContext(ctx, `SELECT e.id,i.id FROM inbox i JOIN conv_event e ON e.id=i.native_id LEFT JOIN turn_runs t ON t.inbox_id=i.id WHERE ((i.source='worker-finish' AND e.scaffold_kind='worker_completion') OR (i.source='question-answer' AND e.scaffold_kind='question_answer')) AND t.id IS NULL ORDER BY i.id`)
 		if err != nil {
 			return err
 		}

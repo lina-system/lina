@@ -3,6 +3,10 @@ package boot
 
 import (
 	"encoding/json"
+	coreexec "github.com/thisisjun786/lina/internal/core/exec"
+	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/retract"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,6 +127,28 @@ func TestQuestionRelatedDefault(t *testing.T) {
 	}); err != nil || notices != 1 {
 		t.Fatalf("notices=%d err=%v", notices, err)
 	}
+	history, err := r.historyItems(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := false
+	for _, item := range history {
+		restored = restored || item.eventID == q.ID+":default:"+unrelated.ID
+	}
+	if !restored {
+		t.Error("default notice absent from durable display history")
+	}
+	events, err := r.events(t.Context(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained := false
+	for _, event := range events {
+		retained = retained || event.ScaffoldKind == "question_default"
+	}
+	if !retained {
+		t.Error("default decision absent from model history")
+	}
 	card, err := (workerQuestions{r}).Question(t.Context(), r.person, q.ID)
 	if err != nil || card.Card.Outcome == nil {
 		t.Fatalf("card not closed: %+v %v", card, err)
@@ -149,6 +175,23 @@ func TestQuestionCardAnswers(t *testing.T) {
 				t.Fatalf("answer: %s %v", outcome, err)
 			}
 			q, err := waiting.NewConversationQuestions(r.db).Get(t.Context(), q.ID)
+			var deliveries int
+			if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM inbox i JOIN conv_event e ON e.id=i.native_id WHERE i.source='question-answer' AND e.id=?", q.ID+":answer").Scan(&deliveries)
+			}); err != nil || deliveries != 1 {
+				t.Errorf("answer has no durable conversation delivery: %d %v", deliveries, err)
+			}
+			events, err := r.events(t.Context(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			retained := false
+			for _, event := range events {
+				retained = retained || event.ScaffoldKind == "question_answer"
+			}
+			if !retained {
+				t.Error("card answer absent from model history")
+			}
 			kind := "answered"
 			if action == protocol.QuestionAnswerActionDecline {
 				kind = "declined"
@@ -158,5 +201,31 @@ func TestQuestionCardAnswers(t *testing.T) {
 				t.Fatalf("answer receipt: %+v %v", q, err)
 			}
 		})
+	}
+}
+
+func TestQuestionForgottenInput(t *testing.T) {
+	r := controlRuntime(t)
+	input := questionPersonInput(t, r, "ask-private", "Prepare a private draft")
+	method := agents.ProjectWorkMethod(agents.Preparation{}, agents.State{})
+	b, _ := questionBindings(t, r, input, method)
+	if result := questionCall(t, b, "ask_question", "private", waiting.QuestionDraft{Question: "Private topic?", Recommendation: "Private default", Default: "Private default"}); result.Code != loop.OK {
+		t.Fatal(result)
+	}
+	remembered, err := coreexec.NewMemory(r.db, r.materials, nil).Remember(t.Context(), memory.Write{Agent: r.agent, Person: r.person, Item: memory.Item{Kind: memory.Preference, Content: input.Body.Text(), Subject: memory.Subject{Kind: memory.Person, ID: r.person}, Basis: memory.Stated, Standing: true, Evidence: []memory.Evidence{{Kind: memory.Event, ID: input.ID, Precision: memory.Exact}}}})
+	if err != nil || !remembered.Remembered() {
+		t.Fatalf("remember fixture: %+v %v", remembered, err)
+	}
+	if err := r.removals.Forget(t.Context(), retract.Request{Person: r.person, Targets: []retract.Ref{{Kind: retract.Memory, ID: remembered.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	next := questionPersonInput(t, r, "next", "New topic")
+	gate := &questionTurn{}
+	packet, err := r.prepareQuestionTool(t.Context(), "next-turn", next, method, map[string]loop.Tool{}, gate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(packet.Text, "Private topic") || gate.check(t.Context()) != nil {
+		t.Fatal("forgotten question returned to the model")
 	}
 }

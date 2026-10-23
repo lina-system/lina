@@ -16,7 +16,10 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/retract"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -60,6 +63,19 @@ func (r *conversationRuntime) prepareQuestionTool(ctx context.Context, turnID st
 	if err != nil {
 		return assemble.ContextItem{}, err
 	}
+	visibility, err := r.removals.Snapshot(ctx, r.person, r.agent)
+	if err != nil {
+		return assemble.ContextItem{}, err
+	}
+	visible := pending[:0]
+	var evidence []assemble.Ref
+	for _, q := range pending {
+		if visibility.Visible(retract.Ref{Kind: retract.Event, ID: q.Input}) {
+			visible = append(visible, q)
+			evidence = append(evidence, assemble.Ref{ID: q.Input})
+		}
+	}
+	pending = visible
 	gate.init(r, input, pending)
 	bindings["resolve_question"] = gate.tool()
 	body, err := json.Marshal(struct {
@@ -98,7 +114,7 @@ func (r *conversationRuntime) prepareQuestionTool(ctx context.Context, turnID st
 			return loop.Result{ID: c.ID, Code: loop.OK, Output: raw}
 		},
 	}
-	return assemble.ContextItem{ID: "working-preference:" + r.agent, AgentID: r.agent, Kind: assemble.Commitments, Origin: "conversation-questions:" + r.agent, Text: string(body)}, nil
+	return assemble.ContextItem{ID: "working-preference:" + r.agent, AgentID: r.agent, Kind: assemble.Commitments, Origin: "conversation-questions:" + r.agent, Text: string(body), Evidence: evidence}, nil
 }
 func askQuestionDeclaration() provider.ToolDecl {
 	return provider.ToolDecl(`{"type":"function","name":"ask_question","description":"Ask one question that changes the result, with a recommendation and the default you will use if the person moves on. Follow the working_preference ask form and per-turn limit. Optional choices are short situational alternatives. This records a conversation question, never an approval or permission for external effects. Return to the conversation while it is pending.","parameters":{"type":"object","properties":{"question":{"type":"string"},"recommendation":{"type":"string"},"choices":{"type":"array","items":{"type":"string"},"minItems":2,"maxItems":5},"default":{"type":"string"}},"required":["question","recommendation","default"],"additionalProperties":false}}`)
@@ -165,11 +181,13 @@ func (r *conversationRuntime) answerConversationQuestion(ctx context.Context, pe
 	default:
 		return protocol.DecisionOutcomeRefused, nil
 	}
+	input, err := r.journal().Get(ctx, q.Input)
+	if err != nil {
+		return "", err
+	}
+	var answerEvent ledger.Event
+	var receipt inbox.Receipt
 	if err = s.ResolveWith(ctx, person, q.Agent, q.ID, d, func(ctx context.Context, tx *canon.Tx, q waiting.ConversationQuestion, d waiting.QuestionResolution) error {
-		input, err := ledger.New(questionTransaction{tx}, nil).Get(ctx, q.Input)
-		if err != nil {
-			return err
-		}
 		value := d.Value
 		if d.Kind == "declined" {
 			value = design.Text(eventLanguage(input), "decline")
@@ -177,13 +195,31 @@ func (r *conversationRuntime) answerConversationQuestion(ctx context.Context, pe
 		if d.Kind == "cancelled" {
 			value = design.Text(eventLanguage(input), "notice.run_cancelled")
 		}
-		_, err = ledger.New(questionTransaction{tx}, nil).Admit(ctx, guard.EntrySystem, ledger.Input{ID: q.ID + ":answer", ConversationID: q.Conversation, ParentID: q.Input, AgentID: q.Agent, Surface: input.Surface, ScaffoldKind: "question_answer", OccurredAt: d.At, RecordedAt: d.At, TimeQuality: "observed", Body: design.Text(eventLanguage(input), "notice.question_answer") + value})
+		body := q.Question + "\n" + design.Text(eventLanguage(input), "notice.question_answer") + value
+		masked, err := secrets.Mask(body)
+		if err != nil {
+			return err
+		}
+		receipt, err = inbox.Insert(ctx, tx, inbox.Input{Key: inbox.Key{Conversation: q.Conversation, Source: "question-answer", NativeID: q.ID + ":answer"}, Body: []byte(masked.Text())})
+		if err != nil {
+			return err
+		}
+		answerEvent, err = ledger.New(questionTransaction{tx}, nil).Admit(ctx, guard.EntrySystem, ledger.Input{ID: q.ID + ":answer", ConversationID: q.Conversation, ParentID: q.Input, AgentID: q.Agent, Surface: input.Surface, ScaffoldKind: "question_answer", OccurredAt: d.At, RecordedAt: d.At, TimeQuality: "observed", Body: body})
 		return err
 	}); err != nil {
 		if errors.Is(err, waiting.ErrInvalid) || errors.Is(err, waiting.ErrAnswered) {
 			return protocol.DecisionOutcomeRefused, nil
 		}
 		return "", err
+	}
+	if receipt.Inserted && r.route != nil {
+		view, err := r.workerCompletionView(ctx, answerEvent)
+		if err != nil {
+			return "", err
+		}
+		if err = view.submitWorkerCompletion(answerEvent, receipt.ID); err != nil {
+			return "", err
+		}
 	}
 	return protocol.DecisionOutcomeResolved, nil
 }

@@ -3,6 +3,7 @@ package e2e_test
 
 import (
 	"encoding/json"
+	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -190,6 +191,31 @@ func TestAskSettingsInstalledCore(t *testing.T) {
 	c.Close()
 	h.stopCore(core)
 	core = start(true)
+	// Read a fresh subscription directly to inspect the restored default notice.
+	restored, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "question-history", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	historyTopic := "conversation:" + conversation
+	if _, err = restored.Subscribe(h.ctx, protocol.Subscribe{Topic: &historyTopic}); err != nil {
+		t.Fatal(err)
+	}
+	frame, err = restored.Receive(h.ctx)
+	snapshot, ok = frame.Payload.(protocol.Snapshot)
+	if err != nil || !ok {
+		t.Fatalf("restored history: %+v %v", frame, err)
+	}
+	found = false
+	for _, entry := range snapshot.Items {
+		var item protocol.ItemDone
+		if entry.Kind == protocol.KindItemDone && json.Unmarshal(entry.Payload, &item) == nil && item.Speaker != nil && *item.Speaker == protocol.ConversationSpeakerSystem && item.Text != nil && strings.Contains(*item.Text, "table") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("default notice lost after restart")
+	}
 	assertQuestionState(true)
 	if calls.Load() != 10 {
 		t.Fatalf("requests=%d, want 10", calls.Load())
@@ -228,4 +254,94 @@ func assertAskResult(t *testing.T, items []json.RawMessage, id, code, detail str
 	}
 	t.Errorf("missing tool result %s", id)
 	return nil
+}
+
+func TestQuestionAnswerInstalledCore(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	questions := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct{ Input []json.RawMessage }
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		switch calls.Add(1) {
+		case 1:
+			emitPersonaCall(w, "ask", "ask_question", map[string]any{"question": "Which format?", "recommendation": "Use a table", "choices": []string{"table", "list"}, "default": "table"})
+		case 2:
+			var q waiting.ConversationQuestion
+			_ = json.Unmarshal(assertAskResult(t, request.Input, "ask", "ok", ""), &q)
+			questions <- q.ID
+			emitResponse(w, "I recommend a table.", true)
+		case 3:
+			found := false
+			for _, raw := range request.Input {
+				var item struct{ Content string }
+				if json.Unmarshal(raw, &item) == nil && strings.Contains(item.Content, "Which format?") && strings.Contains(item.Content, "list") {
+					found = true
+				}
+			}
+			if !found {
+				t.Error("card answer did not reach resumed model turn")
+			}
+			emitPersonaCall(w, "save-answer", "write_record", map[string]any{"id": "", "revision": "", "kind": "memo", "title": "Chosen format", "note": "list"})
+		case 4:
+			assertAskResult(t, request.Input, "save-answer", "ok", "")
+			emitResponse(w, "The list draft is saved.", true)
+		default:
+			t.Error("duplicate answer delivery")
+			emitResponse(w, "Failed.", true)
+		}
+	}))
+	defer server.Close()
+	h, start := installedConversationHarness(t, server.URL)
+	core := start(true)
+	defer func() { h.stopCore(core) }()
+	c, conversation := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
+	defer c.Close()
+	admittedTurn(t, h, c, conversation, "draft", "Prepare a draft")
+	id := <-questions
+	if id == "" {
+		t.Fatal("no question identity")
+	}
+	revision, value := "1", "list"
+	values := protocol.FormValues{"answer": {String: &value}}
+	answer := protocol.QuestionAnswer{CardID: &id, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}
+	if _, err := c.AnswerQuestion(h.ctx, answer); err != nil {
+		t.Fatal(err)
+	}
+	answered, finished := false, false
+	for !answered || !finished {
+		frame, err := c.Receive(h.ctx)
+		if err != nil || frame.Error != nil {
+			t.Fatalf("answer delivery: %+v %v", frame, err)
+		}
+		if a, ok := frame.Payload.(protocol.QuestionAnswer); ok {
+			answered = a.Outcome != nil && *a.Outcome == protocol.DecisionOutcomeResolved
+		}
+		if turn, ok := frame.Payload.(protocol.TurnState); ok && turn.Active != nil && !*turn.Active {
+			finished = true
+		}
+	}
+	if calls.Load() != 4 {
+		t.Fatalf("resumed requests=%d", calls.Load())
+	}
+	c.Close()
+	h.stopCore(core)
+	core = start(true)
+	c, conversation = conversationClient(t, h)
+	defer c.Close()
+	if calls.Load() != 4 {
+		t.Fatal("completed answer replayed after restart")
+	}
+	db, err := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var deliveries int
+	if err = db.QueryRowContext(h.ctx, "SELECT count(*) FROM inbox i JOIN turn_runs t ON t.inbox_id=i.id WHERE i.source='question-answer' AND t.state='completed'").Scan(&deliveries); err != nil || deliveries != 1 {
+		t.Fatalf("durable answered turn=%d %v", deliveries, err)
+	}
 }
