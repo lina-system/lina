@@ -398,11 +398,16 @@ func recordPanelStageViews(t *testing.T, h *harness, c *panelCase, projection []
 		env = append(env, "LINA_GLYPHS=ascii")
 	}
 	terminal := h.startTerminalSize(env, false, true, c.Width, c.Height)
+	wait := func(predicate func(tuiterm.Snapshot) bool) (tuiterm.Snapshot, error) {
+		ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+		defer cancel()
+		return terminal.screen.Wait(ctx, predicate)
+	}
 	x, width := 80, 40
 	if c.Width < 120 {
 		x, width = 0, c.Width
 	}
-	_, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+	_, err := wait(func(s tuiterm.Snapshot) bool {
 		return s.AltScreen && !s.CursorHidden && strings.Contains(screenText(s), design.Text(c.Language, "live"))
 	})
 	if err != nil {
@@ -421,7 +426,7 @@ func recordPanelStageViews(t *testing.T, h *harness, c *panelCase, projection []
 			if expanded {
 				h.keys(terminal, "\r")
 			}
-			snap, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+			snap, err := wait(func(s tuiterm.Snapshot) bool {
 				panel := panelCellRows(s, x, width)
 				back := "‹ "
 				if c.ASCII {
@@ -491,8 +496,20 @@ func recordPanelStageViews(t *testing.T, h *harness, c *panelCase, projection []
 		// The last single-step goal has no open steps once it enters checking.
 		if panelRowHasWorker(row) {
 			h.keys(terminal, "\x1b")
+			if _, err := wait(func(s tuiterm.Snapshot) bool {
+				panel := panelCellRows(s, x, width)
+				return !strings.Contains(strings.Join(panel[2:c.Height-4], "\n"), "[stub]")
+			}); err != nil {
+				t.Fatal("collapse", err)
+			}
 		}
 		h.keys(terminal, "\x1b")
+		if _, err := wait(func(s tuiterm.Snapshot) bool {
+			panel := panelCellRows(s, x, width)
+			return panel[1] == design.Text(c.Language, "work.title")
+		}); err != nil {
+			t.Fatal("return to cards", err)
+		}
 	}
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
