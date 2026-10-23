@@ -42,6 +42,10 @@ type PullRequest struct {
 	Comments []ReviewComment `json:"inline_comments,omitempty"`
 }
 
+// ErrPullRequestNotReady means the read succeeded but its observed PR does
+// not satisfy readiness. Callers still validate identity before consuming it.
+var ErrPullRequestNotReady = errors.New("pull request not ready")
+
 var blocking = regexp.MustCompile(`(?im)(\[\s*P[01](\s+Badge)?\s*\]|^[#* \t-]*P[01]\s*[:—-])`)
 var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
@@ -128,7 +132,7 @@ func ReadPullRequest(ctx context.Context, reader PullRequestReader, repository, 
 		p.Comments = append(p.Comments, page...)
 	}
 	if err = p.Verify(repository, branch, base, head); err != nil {
-		return p, err
+		return p, fmt.Errorf("%w: %v", ErrPullRequestNotReady, err)
 	}
 	// Re-read after the paginated review read so a moved head cannot inherit
 	// checks/comments from the earlier head.
@@ -137,5 +141,8 @@ func ReadPullRequest(ctx context.Context, reader PullRequestReader, repository, 
 		return p, err
 	}
 	current.Comments = p.Comments
-	return current, current.Verify(repository, branch, base, head)
+	if err = current.Verify(repository, branch, base, head); err != nil {
+		return current, fmt.Errorf("%w: %v", ErrPullRequestNotReady, err)
+	}
+	return current, nil
 }
