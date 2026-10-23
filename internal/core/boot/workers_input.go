@@ -23,8 +23,9 @@ func (e *workerSession) inputWorker(ctx context.Context, snap worker.ThreadSnaps
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.scheduled {
-		// Scheduled input may only steer, even if completion races the snapshot.
+	if e.taskControlled() {
+		// Scheduled and dispatched input may only steer, even if completion
+		// races the snapshot. Their task owner controls fresh-turn admission.
 		steerer, ok := e.adapter.(interface {
 			Steer(context.Context, worker.Thread, worker.Input) error
 		})
