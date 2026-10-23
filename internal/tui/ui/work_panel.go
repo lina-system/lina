@@ -142,6 +142,10 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 		start = max(start, m.conversation.workIndex-shown+1)
 	}
 	m.conversation.workOffset = start
+	marker := m.styles.tokens.GlyphUnicodeAction
+	if m.styles.options.ASCII {
+		marker = m.styles.tokens.GlyphAsciiAction
+	}
 	now := m.now().Add(m.content.Offset)
 	for _, c := range active[start : start+shown] {
 		elapsed := text("unknown")
@@ -152,7 +156,14 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 			}
 			elapsed = workElapsed(end.Sub(c.Started))
 		}
-		name := panelClip(c.Name, max(0, width-(render.Unicode{}).Width(elapsed)-1), ellipsis)
+		prefix := ""
+		if m.conversation.workFocused {
+			prefix = strings.Repeat(" ", (render.Unicode{}).Width(marker)+1)
+			if c.ID == m.conversation.workSelected {
+				prefix = marker + " "
+			}
+		}
+		name := prefix + panelClip(c.Name, max(0, width-(render.Unicode{}).Width(prefix)-(render.Unicode{}).Width(elapsed)-1), ellipsis)
 		first := name + strings.Repeat(" ", max(1, width-(render.Unicode{}).Width(name)-(render.Unicode{}).Width(elapsed))) + elapsed
 		activity := c.Now
 		if activity == "" {
