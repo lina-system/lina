@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from '../test-fixture.mjs';
-import { checkComponents, execute, componentsTimeoutMs } from './check-components.mjs';
+import { checkComponents, createGoContext, execute, componentsTimeoutMs } from './check-components.mjs';
 
 const source = fileURLToPath(new URL('../../', import.meta.url));
 function fixture(t) {
@@ -247,16 +247,23 @@ test('an exhausted components budget stops before starting another command', t =
 
 test('a hung test command is capped by the remaining components budget', t => {
   const sb = fixture(t);
+  // Cache discovery is fixture setup, not the hung command under test. It must
+  // not compete with the deliberately tiny execution budget on a busy host.
+  const context = createGoContext(sb.dir);
+  t.after(() => context.close());
+  let suppliedContext = false;
   sb.write(sb.dir, 'hung.mjs', `// SPDX-License-Identifier: Apache-2.0
 process.on('SIGTERM', () => {});
 setInterval(() => {}, 1000);
 `);
   const result = checkComponents({ cwd: sb.dir, components: [kit], timeoutMs: 500,
+    createContext() { suppliedContext = true; return context; },
     execute(command, args, options) {
       if (args[0] === 'test') return execute(process.execPath, ['hung.mjs'], { ...options, cwd: sb.dir });
       return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
     } });
   assert.equal(result.status, 1);
+  assert.equal(suppliedContext, true);
   assert.match(result.output, /\$ go test -count=1 -timeout=6m -mod=readonly \.\/\.\.\./);
   assert.match(result.output, /command timed out after [\d.]+ s \(budget 0\.\d+ s\): .*hung\.mjs/);
 });
@@ -381,7 +388,8 @@ test('acceptance batches run every enumerated test once within the shared budget
   assert.deepEqual(runs.flatMap(run => run.selected).sort(), [...names].sort());
   const batches = runs.filter(run => run.selected.length > 0);
   assert.equal(batches.length, 4);
-  assert.ok(batches.every((batch, i) => i === 0 || batch.budget < batches[i - 1].budget));
+  assert.ok(batches.every(batch => batch.selected.length * 80_000 < 360_000));
+  assert.ok(batches.slice(1).every((batch, i) => batch.budget < batches[i].budget));
   assert.ok(elapsed < componentsTimeoutMs);
   const timings = [...result.output.matchAll(/^ok\s+example\.invalid\/e2e\s+(\d+\.\d+)s$/gm)].map(match => Number(match[1]));
   assert.deepEqual(timings, [160, 80, 80, 80], 'publish measured batch durations, excluding enumeration');

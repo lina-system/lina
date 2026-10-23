@@ -1,206 +1,128 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
-// Foundation verification in one process: selection (path classification and the whitespace check),
-// then the docs, automation, dependencies and Go components checks in parallel, then the gate. A passing run on a clean
-// checkout of the exact candidate commit leaves its evidence as a Git note in refs/notes/foundation.
-//
-//   node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note]
-//
-// --range  measures the change from <base> to <head>; <head> must be the checked-out commit.
-//          The default measures the checked-out commit
-//          from the commit it was developed on: the merge base with dev, or the first parent when
-//          the checkout is dev itself (the previous dev head).
-// --full   runs every check regardless of the changed paths and checks the whitespace of HEAD.
-// --no-note  skips writing the evidence note.
-import { existsSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+// One entry point for local verification and CI selection, shard execution and aggregation.
 import { parseArgs } from 'node:util';
-import {
-  cleanEnv, git, gitOut, identityEnv, resolveCommit, runAsync, stripGitEnv, toplevel,
-} from './git.mjs';
+import { pathToFileURL } from 'node:url';
+import { git, gitOut, identityEnv, resolveCommit, stripGitEnv, toplevel } from './git.mjs';
 import { evaluateGate } from './verify/gate.mjs';
 import { scopeFor } from './verify/scope.mjs';
-import { componentsTimeoutMs } from './verify/check-components.mjs';
+import { aggregate, executeTask, makePlan, readPlan, readResults, runPipeline, sealPlan, writeJSON } from './verify/pipeline.mjs';
 
 stripGitEnv();
-
-const scriptsDir = dirname(fileURLToPath(import.meta.url));
 export const notesRef = 'refs/notes/foundation';
+const seconds = since => Math.round((Date.now() - since) / 100) / 10;
+const cleanTree = root => git(root, ['status', '--porcelain', '--untracked-files=normal']).stdout.trim() === '';
 
-function sourceFiles(directory, pattern) {
-  return readdirSync(directory, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && pattern.test(entry.name)).map((entry) => join(directory, entry.name)).sort();
-}
-
-function automationFiles() {
-  const directories = [scriptsDir, join(scriptsDir, 'verify')];
-  return {
-    scripts: directories.flatMap((directory) => sourceFiles(directory, /\.mjs$/)),
-    tests: directories.flatMap((directory) => sourceFiles(directory, /\.test\.mjs$/)),
-  };
-}
-
-// The commit the change is measured from when no --range is given.
 function defaultBase(root, head) {
   const dev = resolveCommit(root, 'refs/heads/dev');
   if (dev && dev !== head) {
     const mergeBase = git(root, ['merge-base', dev, head]).stdout.trim();
     if (mergeBase && mergeBase !== head) return mergeBase;
   }
-  return resolveCommit(root, `${head}^1`) ?? '';
+  return resolveCommit(root, head + '^1') ?? '';
 }
 
 function parseRange(range) {
   if (!range) return { base: undefined, head: 'HEAD' };
   const split = range.indexOf('..');
-  if (split <= 0 || range[split + 2] === '.') throw new Error(`--range must look like <base>..<head>: ${range}`);
+  if (split <= 0 || range[split + 2] === '.') throw new Error('--range must look like <base>..<head>: ' + range);
   return { base: range.slice(0, split), head: range.slice(split + 2) || 'HEAD' };
 }
 
-function whitespaceCheck(root, scope) {
-  const result = scope.base
-    ? git(root, ['diff', '--check', scope.base, scope.head])
-    : git(root, ['show', '--format=', '--check', scope.head]);
-  return { result: result.status === 0 ? 'success' : 'failure', output: `${result.stdout}${result.stderr}`.trim() };
-}
-
-const seconds = (since) => Math.round((Date.now() - since) / 100) / 10;
-
-// Every check is bounded: a check that hangs fails instead of holding the run.
-const timeouts = { docs: 120_000, automation: 600_000, dependencies: 600_000, components: componentsTimeoutMs };
-
-async function runChecks(root, scope, log) {
-  const env = cleanEnv();
-  const timed = async (name, work) => {
-    const started = Date.now();
-    const outcome = await work();
-    return { name, ...outcome, seconds: seconds(started) };
-  };
-  const docs = scope.docs ? timed('docs', () => runAsync(process.execPath,
-    [join(scriptsDir, 'verify/check-docs.mjs')], { cwd: root, env, timeoutMs: timeouts.docs })) : null;
-  const automation = scope.automation ? timed('automation', async () => {
-    const { scripts, tests } = automationFiles();
-    let output = '';
-    const workflowDir = join(root, '.github/workflows');
-    const workflows = existsSync(workflowDir) ? sourceFiles(workflowDir, /\.ya?ml$/) : [];
-    if (workflows.length) {
-      const lint = await runAsync('actionlint', workflows, { cwd: root, env, timeoutMs: timeouts.automation });
-      output += lint.output;
-      if (lint.status !== 0) return { status: 1, output: `actionlint failed:\n${output}` };
-    }
-    for (const file of scripts) {
-      const syntax = await runAsync(process.execPath, ['--check', file], { cwd: root, env, timeoutMs: timeouts.automation });
-      output += syntax.output;
-      if (syntax.status !== 0) return { status: 1, output };
-    }
-    if (!tests.length) return { status: 0, output: `${output}no test files\n` };
-    const suite = await runAsync(process.execPath, ['--test', ...tests], { cwd: root, env, timeoutMs: timeouts.automation });
-    return { status: suite.status, output: output + suite.output };
-  }) : null;
-  const dependencies = scope.dependencies ? timed('dependencies', () => runAsync(process.execPath,
-    [join(scriptsDir, 'verify/check-dependencies.mjs')],
-    { cwd: root, env, timeoutMs: timeouts.dependencies })) : null;
-  const components = scope.components ? timed('components', () => runAsync(process.execPath,
-    [join(scriptsDir, 'verify/check-components.mjs'), ...scope.selectedComponents],
-    { cwd: root, env, timeoutMs: timeouts.components })) : null;
-  const finished = await Promise.all([docs, automation, dependencies, components]);
-  const results = {};
-  for (const [name, run] of [['docs', finished[0]], ['automation', finished[1]], ['dependencies', finished[2]], ['components', finished[3]]]) {
-    if (!run) results[name] = { result: 'skipped' };
-    else {
-      results[name] = { result: run.status === 0 ? 'success' : 'failure', seconds: run.seconds };
-      if (name === 'components' || name === 'dependencies') results[name].toolchain = run.output.match(/^go1\.\d+\.\d+$/m)?.[0];
-      if (run.status !== 0) log(`${name} failed:\n${run.output.trim()}`);
-      else if (name === 'components') {
-        // Keep measured acceptance-batch durations visible in successful
-        // CI logs too. Listing tests is not an executed acceptance batch.
-        let listing = false;
-        for (const line of run.output.split('\n')) {
-          if (line.startsWith('$ ')) listing = line.includes(' -list ') || line.includes(' -test.list ');
-          if (!listing && /^ok\s+\S+\/e2e(?:\/\S+)?\s+\d+\.\d+s$/.test(line)) log(line);
-        }
-      }
-    }
-  }
-  return results;
-}
-
-/**
- * Runs foundation for the repository that contains `cwd` and returns the evidence object. The
- * evidence note is written only when the work tree is clean and the candidate is the checked-out
- * commit, because only then do the checks speak for that exact commit.
- */
-export async function foundation({ cwd = process.cwd(), range, full = false, note = true, log = console.error } = {}) {
+export function selectFoundation({ cwd = process.cwd(), range, full = false, log = console.error } = {}) {
   const started = Date.now();
   const root = toplevel(cwd);
+  const clean = cleanTree(root);
   if (full && range) throw new Error('--full and --range cannot be combined');
-  const { base: requestedBase, head: requestedHead } = parseRange(range);
-  const resolvedHead = resolveCommit(root, requestedHead);
-
-  const results = {};
-  let scope = {};
-  let selectionOutput = '';
+  const requested = parseRange(range);
+  const head = resolveCommit(root, requested.head);
+  let scope = { head };
   try {
-    if (!resolvedHead) throw new Error(`Unknown candidate revision: ${requestedHead}`);
-    if (resolvedHead !== resolveCommit(root, 'HEAD')) {
-      throw new Error(`Candidate ${resolvedHead} is not the checked-out HEAD; check out the candidate first.`);
-    }
-    const base = full ? '' : requestedBase ?? defaultBase(root, resolvedHead);
-    scope = scopeFor({ base, head: resolvedHead, full, cwd: root });
-    const whitespace = whitespaceCheck(root, scope);
-    results.selection = { result: whitespace.result, seconds: seconds(started) };
-    selectionOutput = whitespace.output;
+    if (!head) throw new Error('Unknown candidate revision: ' + requested.head);
+    if (head !== resolveCommit(root, 'HEAD')) throw new Error('Candidate ' + head + ' is not the checked-out HEAD; check out the candidate first.');
+    scope = scopeFor({ base: full ? '' : requested.base ?? defaultBase(root, head), head, full, cwd: root });
+    const whitespace = scope.base ? git(root, ['diff', '--check', scope.base, scope.head])
+      : git(root, ['show', '--format=', '--check', scope.head]);
+    if (whitespace.status !== 0) throw new Error((whitespace.stdout + whitespace.stderr).trim());
+    const plan = makePlan({ root, scope, selection: { result: 'success' }, started, clean });
+    return { root, plan: sealPlan({ ...plan, selection: { result: 'success', seconds: seconds(started) } }) };
   } catch (error) {
-    results.selection = { result: 'failure', seconds: seconds(started) };
-    selectionOutput = error.message;
+    log('selection failed:\n' + error.message);
+    return { root, plan: makePlan({ root, scope, selection: { result: 'failure', seconds: seconds(started) }, started, clean }) };
   }
-  if (results.selection.result === 'success') {
-    Object.assign(results, await runChecks(root, scope, log));
-  } else {
-    log(`selection failed:\n${selectionOutput}`);
-  }
+}
 
-  const gate = evaluateGate(scope, results);
+export function finishFoundation(root, plan, outcomes, { note = true } = {}) {
+  const gate = evaluateGate(plan.scope, outcomes.checks);
+  const failures = [...gate.failures, ...outcomes.failures];
+  if (plan.selection.result === 'success' && (resolveCommit(root, 'HEAD') !== plan.head
+      || gitOut(root, ['rev-parse', 'HEAD^{tree}']) !== plan.tree)) {
+    failures.push('The checked-out candidate changed during verification');
+  }
   const evidence = {
-    schema: 1, result: gate.result, mode: scope.mode ?? null, reason: scope.reason ?? null,
-    base: scope.base ?? null, head: scope.head ?? resolvedHead ?? null,
-    selectedComponents: scope.selectedComponents ?? [],
-    tree: resolvedHead ? gitOut(root, ['rev-parse', `${resolvedHead}^{tree}`]) : null,
-    checks: results, failures: gate.failures,
-    tools: { node: process.version, git: git(root, ['--version']).stdout.trim().replace(/^git version /, ''), go: results.components?.toolchain ?? results.dependencies?.toolchain },
-    finished: new Date().toISOString(), seconds: Math.round((Date.now() - started) / 100) / 10,
+    schema: 1, result: failures.length ? 'failure' : 'success', mode: plan.scope.mode ?? null,
+    reason: plan.scope.reason ?? null, base: plan.scope.base ?? null, head: plan.head, tree: plan.tree,
+    selectedComponents: plan.scope.selectedComponents ?? [], selectedShards: plan.scope.componentShards ?? [],
+    e2eReason: plan.e2eReason, selectedScenarios: [...new Set(plan.scenarios.flatMap(scenario => scenario.files ?? [scenario.file]))].sort(),
+    checks: outcomes.checks, failures,
+    tools: { node: process.version, git: git(root, ['--version']).stdout.trim().replace(/^git version /, ''),
+      go: outcomes.checks.components?.toolchain ?? outcomes.checks.dependencies?.toolchain },
+    finished: new Date().toISOString(), seconds: seconds(plan.started), note: 'not written',
   };
-
-  const clean = git(root, ['status', '--porcelain', '--untracked-files=normal']).stdout.trim() === '';
-  const checkedOut = resolvedHead !== null && resolveCommit(root, 'HEAD') === resolvedHead;
-  evidence.note = 'not written';
-  if (gate.result === 'success' && note) {
-    if (clean && checkedOut) {
-      const written = git(root, ['notes', `--ref=${notesRef}`, 'add', '-f', '-m', JSON.stringify({ ...evidence, note: undefined }), evidence.head],
-        { env: identityEnv(root) });
-      if (written.status !== 0) throw new Error(`Could not write the evidence note: ${written.stderr.trim()}`);
+  if (evidence.result === 'success' && note) {
+    if (plan.clean && cleanTree(root) && resolveCommit(root, 'HEAD') === plan.head
+        && gitOut(root, ['rev-parse', 'HEAD^{tree}']) === plan.tree) {
+      const written = git(root, ['notes', '--ref=' + notesRef, 'add', '-f', '-m',
+        JSON.stringify({ ...evidence, note: undefined }), plan.head], { env: identityEnv(root) });
+      if (written.status !== 0) throw new Error('Could not write the evidence note: ' + written.stderr.trim());
       evidence.note = 'written';
-    } else {
-      evidence.note = 'not written: the work tree is not a clean checkout of the candidate commit';
-    }
+    } else evidence.note = 'not written: the work tree is not a clean checkout of the candidate commit';
   }
   return evidence;
+}
+
+export async function foundation({ cwd = process.cwd(), range, full = false, note = true, jobs, log = console.error } = {}) {
+  const { root, plan } = selectFoundation({ cwd, range, full, log });
+  return finishFoundation(root, plan, await runPipeline(root, plan, { jobs, log }), { note });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const { values } = parseArgs({ options: {
       range: { type: 'string' }, full: { type: 'boolean', default: false }, 'no-note': { type: 'boolean', default: false },
+      select: { type: 'string' }, plan: { type: 'string' }, shard: { type: 'string' }, out: { type: 'string' },
+      results: { type: 'string' }, upstream: { type: 'string' }, jobs: { type: 'string' },
     } });
-    const evidence = await foundation({ range: values.range, full: values.full, note: !values['no-note'] });
-    console.log(JSON.stringify(evidence));
-    if (evidence.result !== 'success') {
-      console.error(`foundation: failure\n${evidence.failures.join('\n')}`);
+    let result;
+    if (values.plan) {
+      if (values.range || values.full || values.select || values.jobs) throw new Error('A saved plan cannot be reselected');
+      const root = toplevel(process.cwd());
+      const plan = readPlan(values.plan, root);
+      if (values.shard) {
+        if (!values.out || values.results || values.upstream) throw new Error('--shard requires --out and cannot aggregate results');
+        const record = await executeTask(root, plan, values.shard);
+        writeJSON(values.out, record);
+        result = { id: record.id, result: record.result, seconds: record.seconds };
+      } else {
+        if (!values.results || values.out) throw new Error('Aggregation requires --results');
+        result = finishFoundation(root, plan, aggregate(plan, readResults(values.results), values.upstream ?? 'success'), { note: !values['no-note'] });
+      }
+    } else if (values.select) {
+      if (values.shard || values.results || values.out || values.upstream || values.jobs) throw new Error('Selection cannot execute or aggregate shards');
+      const { plan } = selectFoundation({ range: values.range, full: values.full });
+      writeJSON(values.select, plan);
+      result = { head: plan.head, result: plan.selection.result, tasks: plan.tasks.map(task => ({ id: task.id, kind: task.kind })) };
+    } else {
+      if (values.shard || values.results || values.out || values.upstream) throw new Error('Shard options require --plan');
+      result = await foundation({ range: values.range, full: values.full, note: !values['no-note'], jobs: values.jobs === undefined ? undefined : Number(values.jobs) });
+    }
+    console.log(JSON.stringify(result));
+    if (result.result !== 'success') {
+      console.error('foundation: failure\n' + (result.failures ?? []).join('\n'));
       process.exitCode = 1;
     }
   } catch (error) {
-    console.error(`foundation: ${error.message}`);
+    console.error('foundation: ' + error.message);
     process.exitCode = 1;
   }
 }

@@ -12,7 +12,7 @@ const documents = new Set([
 const configuration = new Set(['.editorconfig', '.gitattributes', '.gitignore', '.node-version', '.npmrc', 'package.json', 'package-lock.json', '.devflow']);
 const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.mod', 'kit/go.sum']);
 
-function registryFor(cwd) {
+export function registryFor(cwd) {
   // Older trees and minimal verification fixtures may not have these packages yet.
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
@@ -98,6 +98,7 @@ function componentOf(path) {
 const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{')}]`);
 
 export function kind(path) {
+  if (['scripts/verify/test-times.json', 'scripts/verify/bwrap.apparmor'].includes(path)) return 'automation';
   if (path.startsWith('adapters/claude/')) return 'automation';
   if (path.startsWith('third_party/')) return 'dependencies';
   if (path === 'packaging/README.md') return 'docs';
@@ -111,7 +112,7 @@ export function kind(path) {
   if (documents.has(path) || /^docs\/(?:policy|design|research)\/[^/]+\.md$/.test(path)
       || /^evidence\/.+\.(?:json|md)$/.test(path)) return 'docs';
   if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return 'automation';
-  if (configuration.has(path) || /^scripts\/(?:verify\/)?[^/]+\.(?:mjs|sh)$/.test(path)) return 'automation';
+  if (configuration.has(path) || /^scripts\/(?:verify\/)?[^/]+\.(?:mjs|sh|go)$/.test(path)) return 'automation';
   return 'unmapped';
 }
 
