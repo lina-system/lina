@@ -28,6 +28,7 @@ type SearchQuery struct {
 // proving ownership, and refuse ambiguous conversations. This also scopes
 // agent/tool replies, whose own rows deliberately have no person_id.
 const searchScope = `e.agent_id=?
+ AND coalesce(e.scaffold_kind,'')<>'reply_check'
  AND NOT (coalesce(e.scaffold_kind,'')='result' AND EXISTS(SELECT 1 FROM ev_rel view WHERE view.event_id=e.id AND view.kind='view_of'))
  AND EXISTS(SELECT 1 FROM conv_event owner WHERE owner.conversation_id=e.conversation_id
   AND owner.agent_id=e.agent_id AND owner.speaker_kind='person' AND owner.person_id=?)
