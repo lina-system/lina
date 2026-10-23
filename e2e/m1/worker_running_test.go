@@ -141,7 +141,7 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 			if failure {
 				return strings.Contains(s, "Delegate a small file job.") && strings.Contains(s, design.Text(design.English, "running.state.failed"))
 			}
-			return strings.Contains(s, design.Text(design.English, "progress.empty"))
+			return strings.Contains(s, design.Text(design.English, "work.title")) && !strings.Contains(s, "Delegate a small file job.")
 		})
 		h.keys(terminal, "\x1b")
 		waitComposerReady(t, h, terminal)
@@ -160,7 +160,9 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 		h.keys(terminal, "\x1b")
 		waitComposerReady(t, h, terminal)
 		h.keys(terminal, "\x10")
-		wait(func(s string) bool { return strings.Contains(s, design.Text(design.English, "progress.empty")) })
+		wait(func(s string) bool {
+			return strings.Contains(s, design.Text(design.English, "work.title")) && !strings.Contains(s, "Delegate a small file job.")
+		})
 	}
 	if calls.Load() != 4 {
 		t.Fatalf("worker rounds=%d", calls.Load())
