@@ -173,16 +173,12 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 	defer activity.Release()
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	denied := []string{r.replaySocket}
-	for _, name := range []string{"canon", "secrets", "system/core", "versions", "materials", "derived", "staging", "backups"} {
-		denied = append(denied, filepath.Join(r.root, name))
-	}
 	reads, err := r.replayReads(source, ep)
 	if err != nil {
 		return protocol.ReplayResult{}, replayFailure(err)
 	}
 	usage := []provider.Meta{}
-	out, err := replay.Sandboxed(ctx, replay.SandboxConfig{Reads: reads, Executable: executable, Denied: denied, Environment: []string{"PATH=" + os.Getenv("PATH")}, Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
+	out, err := replay.Sandboxed(ctx, replay.SandboxConfig{Reads: reads, Executable: executable, Denied: r.replayDenied(), Environment: []string{"PATH=" + os.Getenv("PATH")}, Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
 		if err := source.ValidateEpisode(ctx, ep); err != nil {
 			return nil, err
 		}
@@ -216,6 +212,20 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 	}
 	text := string(raw)
 	return protocol.ReplayResult{Output: &text}, nil
+}
+
+func (r *conversationRuntime) replayDenied() []string {
+	// Startup creates agent views before Boot publishes the listening socket.
+	// Read the shared runtime's final configuration rather than a view's copy.
+	socket := r.replaySocket
+	if r.router != nil {
+		socket = r.router.root.replaySocket
+	}
+	denied := []string{socket}
+	for _, name := range []string{"canon", "secrets", "system/core", "versions", "materials", "derived", "staging", "backups"} {
+		denied = append(denied, filepath.Join(r.root, name))
+	}
+	return denied
 }
 
 type replayUsageStream struct {

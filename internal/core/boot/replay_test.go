@@ -3,6 +3,7 @@ package boot
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
@@ -12,7 +13,6 @@ import (
 
 func TestReplayExportRoutesAuthorizedAgent(t *testing.T) {
 	r := controlRuntime(t)
-	r.replaySocket = "/synthetic/core.sock"
 	other, err := r.agents.Create(t.Context(), agents.Create{Name: "Other", PersonID: r.person, Preset: "lina"})
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +26,9 @@ func TestReplayExportRoutesAuthorizedAgent(t *testing.T) {
 		t.Fatalf("authorized agent export refused: %+v %v", out, err)
 	}
 	view, err := r.router.view(t.Context(), owner, other.ID)
-	if err != nil || view.replaySocket != r.replaySocket {
+	// Boot sets the listening socket after startup services create agent views.
+	r.replaySocket = "/synthetic/core.sock"
+	if err != nil || !slices.Contains(view.replayDenied(), r.replaySocket) || slices.Contains(view.replayDenied(), "") {
 		t.Fatalf("routed replay lost its sandbox socket restriction: %v", err)
 	}
 	for _, tc := range []struct {
