@@ -22,7 +22,7 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-func TestDelegationKeepsRecordedConversation(t *testing.T) {
+func TestDelegationRejectsUnretainedChannel(t *testing.T) {
 	r, _, agent, other := managementFixture(t)
 	r.agent, r.conversation = agent, "main:"+agent
 	channel := &conversationRuntime{db: r.db, person: r.person, agent: agent, conversation: "channel-fixture"}
@@ -34,9 +34,8 @@ func TestDelegationKeepsRecordedConversation(t *testing.T) {
 	}
 	d := &delegationRuntime{root: r}
 	task := work.Task{PersonID: r.person, AgentID: agent, ConversationID: channel.conversation, Schedule: &work.Schedule{InputID: input.ID}}
-	origin, recorded, err := d.origin(t.Context(), task)
-	if err != nil || origin != channel || recorded.ID != input.ID {
-		t.Fatalf("scheduled replies moved out of their conversation: origin=%+v err=%v", origin, err)
+	if _, _, err := d.origin(t.Context(), task); err == nil {
+		t.Fatal("unretained channel input acquired the cached conversation's permissions")
 	}
 	for _, foreign := range []work.Task{
 		{PersonID: "another", AgentID: agent, ConversationID: channel.conversation, Schedule: task.Schedule},

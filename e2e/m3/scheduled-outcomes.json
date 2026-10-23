@@ -1,0 +1,4 @@
+{
+  "a": {"status": "completed", "output": "SCHEDULED_RESULT: wrote the requested artifact; acceptance is still unverified."},
+  "c": {"status": "failed", "output": "SCHEDULED_FAILURE: wrote a partial artifact; the required check failed."}
+}

@@ -197,28 +197,6 @@ func goalTask(g *Goal, id string) *Task {
 	return nil
 }
 
-// A goal revision invalidates undispatched actions, including their reservations and
-// one-shot planning/recovery counters. They have never been dispatched. Claimed
-// actions retain their receipts and reservations until their effects settle.
-func retireUndispatchedActions(v *View, g *Goal) error {
-	for _, r := range v.Records("action") {
-		var a Action
-		if err := json.Unmarshal(r.Body, &a); err != nil {
-			return err
-		}
-		if a.GoalID != g.ID || a.ObserveActionID != "" || (a.State != "queued" && a.State != "awaiting_authorization") || a.GoalRevision == g.Revision {
-			continue
-		}
-		restoreUndispatchedTask(g, a)
-		a.State = "finished"
-		a.Superseded, a.RetirementReconciled = true, true
-		if err := put(v, "action", a.ID, a); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // restoreUndispatchedTask refunds only work that never reached execution.
 func restoreUndispatchedTask(g *Goal, a Action) {
 	t := goalTask(g, a.TaskID)
@@ -593,30 +571,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		a.Receipt = encode(o)
 		a.Deadline = e.cfg.Now().Add(SafetySweep).Unix()
 		if stale {
-			// Retain the obsolete response as history, never as current evidence
-			// or a plan for this revision. A late result is not a Core failure.
-			a.State = "finished"
-			a.Superseded = true
-			if a.Kind == PlanGoal && !a.RetirementReconciled {
-				// Clear the assessment with its receipt. Reconciliation finishes
-				// retirement before deriving a replacement; later reports must
-				// not clear that replacement's marker.
-				if t != nil && t.RepairedBy == "" {
-					t.RepairAsked = false
-					if err = put(v, "goal", g.ID, g); err != nil {
-						return err
-					}
-				}
-			}
-			if !a.RetirementReconciled && hasExternalEffect(a) && !currentActionTarget(g, a) && !effectSettled(a, o) {
-				// A different target cannot inherit this effect. Retain its
-				// lease and bounded observation wait until its outcome is known.
-				a.State = "unknown"
-				if o.Handle != "" {
-					a.Handle = o.Handle
-				}
-			}
-			return put(v, "action", id, a)
+			return retireReportedAction(v, g, a, o)
 		}
 		if a.State == "finished" {
 			return ErrConflict

@@ -937,6 +937,23 @@ remaining uncertainty. This is an ordinary conversation continuation, not a new
 worker review loop or an automatic worker retry. Raw worker output is evidence
 for the persona, not a second system-speaker result in the conversation.
 
+Scheduled workers use this same completion path, including failed or interrupted
+turns and observed connection loss. Core retains the last completed assistant
+message only from the bound task, session, turn, attempt, process generation and
+binding. It commits the report and follow-up before releasing the execution,
+clears the prior turn's output, and deduplicates repeated completion events.
+Connection loss retains the uncertain reservation. The report remains untrusted
+evidence; it creates no receipt, verdict, merge or verified task completion.
+Before attaching a scheduled session, Core resolves a channel task's retained
+input to its current most-specific binding and address. Its follow-up keeps that
+channel's memory and tool limits and revalidates them before running; another
+channel sharing the same conversation cannot replace a revoked source binding.
+If channel tools were disabled while the task waited, queued dispatch refuses
+the start before allocating its worktree or opening a worker session.
+Authenticated owner follow-ups may steer an active scheduled turn after the
+current handle checks. Starting another turn remains the scheduler's operation;
+model input and owner input to idle or unknown scheduled sessions are refused.
+
 `worker_read_file` reads a relative file in the owned session's work directory
 through the existing sandboxed file executor, returning its content and revision.
 It grants no writes or network access and refuses paths outside that directory.
@@ -1080,6 +1097,22 @@ One adapter drives every worker that speaks the Agent Client Protocol, version 1
 - **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of a request (-32000 is login expiry); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
 - **Never sent.** `authenticate` and `logout`, because the person signs in to a worker in the worker itself; `session/delete`; and `session/set_mode`. `session/close` is sent only on an explicit close.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
+
+The lifecycle adapter in #747 registers `claude-acp`, `cursor`, `gemini` and
+`grok` with `dispatch_work`; `claude` retains the headless adapter pending the
+worker evaluation. Each attempt records its version again after session
+initialization and reports an unverified version while continuing the task.
+Synthetic protocol tests do not add vendor versions to the verified list.
+Progress is masked and recorded on the active work card as `worker_report`,
+using the existing ledger. Stream fragments retain their masking context in
+bounded memory; possible credential prefixes wait until they can be masked.
+Card observations are coalesced at 250 ms intervals, with a final flush before
+the receipt. They neither submit a receipt nor end the run.
+A cancelled prompt records an interrupted turn and receipt; an open prompt lost
+with its process remains an uncertain failed execution without a receipt.
+This lifecycle slice advertises progress and completion. Approval/question
+routing, work-tool MCP, steering, quota and recovery remain separate integrations;
+requesting a capability that is not implemented fails before dispatch.
 
 #### Claude Code through ACP
 
@@ -1240,6 +1273,7 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 ### Approvals
 
 - When the worker asks for an approval (for Codex: a command, a file change or permissions; for an ACP worker: `session/request_permission`), the adapter routes the request to the originating conversation, and the person's answer goes back to the worker. On a remote device the Node relays both.
+- Scheduled workers use the same conversation bridge. A worker's request withdrawal stops its matching question or approval card. Later answers cannot reach the worker, and other tasks keep their pending decisions. The scheduled task returns to working only when no request remains pending; withdrawal does not release its execution capacity or write-area lease.
 - For an ACP worker, the person's once maps to the worker's `allow_once` option and deny to `reject_once`. LINA never selects `allow_always` or `reject_always`, because they change the rules the worker remembers in the person's setup. A cancel answers every pending request of the turn with `cancelled`, as the protocol requires.
 - The worker's own sandbox and approval mode decide what it asks. LINA imposes no sandbox or approval policy of its own on a worker.
 - Arguments of the worker's tools are never rewritten (`updatedInput` is never used).
@@ -1250,6 +1284,7 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 - LINA's work tools reach a worker through its adapter: for Codex, `thread/start.dynamicTools` in the namespace `lina`. LINA Core identifies the caller by thread, turn and call ids. For an ACP worker, it is one stdio MCP server that `session/new` names for that session only (see ACP adapter). For another worker, the adapter uses the per-run mechanism of that tool that installs nothing in the user's setup. Where a tool has no such channel, the adapter builds the receipt from the tool's final result and the pull request it opened, and marks it adapter-derived.
 - The tools are: submit a completion receipt; ask a question; send a coordination request (to LINA Core only, never to another worker); read the task projection, which is the LINA materials and memory projections the task may read. GitHub work and other integrations need no LINA tool; the worker uses its own setup.
 - LINA Core declares the tools and handles `item/tool/call`, or the MCP tool calls of an ACP worker's session server. The receipt and question schemas are LINA's own and are versioned with the worker adapter.
+- Scheduled `ask` calls and native worker questions retain the originating person, agent and conversation. Answers use the recorded request and thread/turn binding. Foreign and stale answers are refused; repeated answers return their recorded outcome without a second send.
 - Only the worker thread itself submits receipts.
 - A projection read returns only the scope the task allows, carries a revision, and never returns a revoked item. A write happens only on an explicit request and passes the grant check.
 

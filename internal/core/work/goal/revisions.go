@@ -95,25 +95,6 @@ func correctedLibraryTarget(g Goal) string {
 	return target
 }
 
-// The correction barrier has settled these effects. Keep their receipts, but
-// exclude them from the replacement's evidence without scheduling another read.
-func retireCorrectedTaskReceipts(v *View, goalID string, changed map[string]bool) error {
-	for _, row := range v.Records("action") {
-		var a Action
-		if err := json.Unmarshal(row.Body, &a); err != nil {
-			return err
-		}
-		if a.GoalID != goalID || !changed[a.TaskID] || a.State != "finished" {
-			continue
-		}
-		a.Superseded, a.RetirementReconciled = true, true
-		if err := put(v, "action", a.ID, a); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func settledRefusal(a Action) bool {
 	var receipt Observation
 	return json.Unmarshal(a.Receipt, &receipt) == nil && receipt.Status == OutcomeNeedsPerson && receipt.EffectsSettled

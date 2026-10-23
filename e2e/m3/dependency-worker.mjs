@@ -31,6 +31,17 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         // Follow Core's packet: publish without updating protected tracking refs.
         git(thread.cwd,'push',git(thread.cwd,'remote','get-url','origin'),`HEAD:refs/heads/lina/${thread.id}`);
         writeFileSync(join(root,`${thread.id}.started`),String(thread.count));
+        if (cfg.outcomes) {
+          const outcome = cfg.outcomes[definition.key];
+          if (!outcome) throw new Error('dependent started without a merge');
+          const item = {type:'agentMessage',id:'final-report',text:outcome.output};
+          thread.turn.items.push(item);
+          send({method:'item/completed',params:{threadId:thread.id,turnId:thread.turn.id,item}});
+          thread.turn.status=outcome.status;thread.status={type:'idle'};
+          if(outcome.status==='failed')thread.turn.error={message:outcome.output,additionalDetails:null,codexErrorInfo:null};
+          send({method:'turn/completed',params:{threadId:thread.id,turn:thread.turn}});
+          return;
+        }
         const path=join(thread.cwd,folder,`${definition.key}.txt`), sha256=hash(readFileSync(path));
         const revision=hash(`${path}:${sha256}`), emitted=new Date().toISOString();
         const receipt={schema_version:1,relationshipId:thread.id,executionGeneration:1,attempt:1,revisionHash:revision,outcome:'ready_for_review',producer:'child',turnRef:{threadId:thread.id,turnId:thread.turn.id,turnStatus:'completed'},emittedAt:emitted,manifest:[{path,sha256}],provenance:[{artifact_id:`artifact-${definition.key}`,task_id:thread.id,node_id:thread.projection.node_id,path,sha256,observed_at:emitted}]};
@@ -50,7 +61,12 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         if(kind==='read_projection') {
           if(result.assignment_id!==thread.id||!result.task_packet.includes('Work definition:'))throw new Error('foreign projection');
           thread.projection=result;
-          if(cfg.requests&&thread.definition.key==='a')callTool(thread,'ask',{question:'Confirm the work-tool result.'});
+          if(cfg.requests&&thread.definition.key==='a') {
+            send({id:`${thread.id}:withdrawn-question`,method:'item/tool/requestUserInput',params:{threadId:thread.id,turnId:thread.turn.id,itemId:'withdrawn',questions:[{id:'withdrawn',header:'Fixture',question:'Withdraw this request.'}]}});
+            send({id:`${thread.id}:withdrawn-approval`,method:'item/commandExecution/requestApproval',params:{threadId:thread.id,turnId:thread.turn.id,itemId:'withdrawn',startedAtMs:1800000000000,command:'withdrawn',cwd:thread.cwd,availableDecisions:['accept','decline']}});
+            for(const kind of ['question','approval'])send({method:'serverRequest/resolved',params:{threadId:thread.id,requestId:`${thread.id}:withdrawn-${kind}`}});
+            callTool(thread,'ask',{question:'Confirm the work-tool result.'});
+          }
           else callTool(thread,'coordinate',{request:'Record this scheduled result.'});
         } else if(kind==='ask') {
           if(result.answer!=='confirmed')throw new Error('work-tool answer not delivered');
@@ -96,7 +112,14 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         thread.turns.push(thread.turn);thread.status={type:'active'};
         send({method:'turn/started',params:{threadId:thread.id,turn:{...thread.turn,status:'inProgress'}}});
         send({id,result:{turn:{...thread.turn,status:'inProgress'}}});
-        if (!cfg.stop) callTool(thread,'read_projection',{});
+        if (!cfg.stop && !cfg.outcomes) callTool(thread,'read_projection',{});
+        return;
+      }
+      case 'turn/steer': {
+        const thread=threads.get(p.threadId);
+        if(!cfg.outcomes || thread.turn.id!==p.expectedTurnId || thread.turn.status!=='inProgress' || p.input[0].text!=='Report the outcome.')throw new Error('invalid owner follow-up');
+        send({id,result:{turnId:thread.turn.id}});
+        callTool(thread,'read_projection',{});
         return;
       }
       case 'turn/interrupt': {
