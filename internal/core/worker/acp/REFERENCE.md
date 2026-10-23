@@ -144,10 +144,30 @@ It prefers advertised resume, otherwise load, otherwise a new session, with a
 fresh session tool server. A restore error never falls back to another session.
 Recovery uses `LoadSessionWithoutReplay` to exclude history before queue admission;
 the ordinary shared-client load API still publishes tagged replay. Suppression
-ends when the read loop consumes the load response, preserving live updates.
+ends when the read loop consumes the load response, preserving live updates:
+restore keeps every non-replay update it receives and the first prompt drains
+them before the turn's own events, so post-response session metadata, progress
+and tool evidence still reach the adapter and the work card.
 Terminal snapshots retain a copy of the finish and conservatively keep effects
 unknown after tool activity, unknown update types or unfinished requests. Core
 MCP admission latches tool activity even when an answered call is no longer pending.
+A prompt failure marks the attempt settled only when the prompt error itself is
+the end of the stream (EOF or a closed pipe) and the connection ended the same
+way; a malformed completion reply that races the end, or a truncated stream,
+leaves effects unknown.
+
+## Review follow-ups (#1174)
+
+- **Seen:** Codex reviewed the recovery change in PR #1131 and raised two P2
+  findings: death-only recovery was authorized from the connection error alone,
+  and the restore loop discarded live updates that arrived after the load
+  response.
+- **Inferred:** Both are ordering defects inside one adapter, not contract
+  changes. Recovery eligibility needs the prompt's own error to be a stream
+  end, and the restore boundary needs to hand live updates to the next turn
+  rather than drop them.
+- **Unknown:** Vendor agents were not observed emitting live updates between a
+  restore response and the first prompt; the synthetic fixtures do.
 
 ## Pinned Claude ACP program (#752)
 
