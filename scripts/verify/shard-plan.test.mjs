@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
-import { balance, selectScenarios, planComponents, distinctScenarios } from './shard-plan.mjs';
+import { balance, selectScenarios, planComponents, distinctScenarios, shardCountFor, shardBudgetSeconds } from './shard-plan.mjs';
 import { scopeFor } from './scope.mjs';
 import { sandbox } from '../test-fixture.mjs';
 
@@ -15,6 +15,16 @@ test('package timings balance deterministic shards without omissions or duplicat
   assert.equal(Math.max(...shards.map(shard => shard.reduce((sum, item) => sum + item.seconds, 0))), 13);
   assert.deepEqual(balance([...items].reverse(), 3), shards);
   assert.deepEqual(items.map(item => item.id), ['a', 'b', 'c', 'd', 'e', 'f'], 'planning does not mutate its inventory');
+});
+
+test('measured work above the shard budget adds a shard to the milestone minimum', () => {
+  const files = seconds => seconds.map((value, index) => ({ id: `f${index}`, seconds: value }));
+  assert.equal(shardCountFor(files([60, 60]), 2), 2, 'light work keeps the milestone minimum');
+  assert.equal(shardCountFor(files([200, 200, 200]), 2), 3, 'three budget-sized files need three shards');
+  assert.equal(shardCountFor(files([shardBudgetSeconds * 3]), 2), 3);
+  const shards = balance(files([200, 200, 200]), shardCountFor(files([200, 200, 200]), 2));
+  assert.deepEqual(shards.map(shard => shard.map(item => item.id)), [['f0'], ['f1'], ['f2']]);
+  assert.ok(shards.every(shard => shard.reduce((sum, item) => sum + item.seconds, 0) <= shardBudgetSeconds));
 });
 
 test('new packages receive a default weight and empty shards are omitted', () => {
