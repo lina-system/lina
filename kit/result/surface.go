@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -256,26 +258,49 @@ func (s *Surface) check() error {
 				if err != nil {
 					return err
 				}
-				var v any
-				if json.Unmarshal(resolved, &v) != nil {
-					return surfaceError("action context")
-				}
-				switch x := v.(type) {
-				case string, bool, float64:
-				case []any:
-					for _, item := range x {
-						if _, ok := item.(string); !ok {
-							return surfaceError("action context")
-						}
-					}
-				default:
-					return surfaceError("action context")
+				if err := checkActionValue(resolved); err != nil {
+					return err
 				}
 			}
 		}
 	}
 	return nil
 }
+
+// Action values use the wire surface_value limits so a resolved binding cannot
+// carry more than a client is allowed to submit.
+const (
+	surfaceValueLength = 8192
+	surfaceValueItems  = 256
+)
+
+func checkActionValue(raw json.RawMessage) error {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return surfaceError("action context")
+	}
+	switch x := value.(type) {
+	case string:
+		if utf8.RuneCountInString(x) > surfaceValueLength {
+			return surfaceError("action context")
+		}
+	case bool, float64:
+	case []any:
+		if len(x) > surfaceValueItems {
+			return surfaceError("action context")
+		}
+		for _, item := range x {
+			text, ok := item.(string)
+			if !ok || utf8.RuneCountInString(text) > surfaceValueLength {
+				return surfaceError("action context")
+			}
+		}
+	default:
+		return surfaceError("action context")
+	}
+	return nil
+}
+
 func checkSurfaceValue(c SurfaceComponent, raw json.RawMessage) error {
 	switch c.Component {
 	case "CheckBox":
@@ -403,14 +428,8 @@ func (s *Surface) ValidateAction(name string, values map[string]json.RawMessage)
 				}
 			}
 			if !bound {
-				actual, _ := s.resolve(expected)
-				var a, b any
-				if json.Unmarshal(raw, &a) != nil || json.Unmarshal(actual, &b) != nil {
-					return nil, surfaceError("action value")
-				}
-				x, _ := json.Marshal(a)
-				y, _ := json.Marshal(b)
-				if string(x) != string(y) {
+				actual, err := s.resolve(expected)
+				if err != nil || !sameActionValue(raw, actual) {
 					return nil, surfaceError("constant action value")
 				}
 			}
@@ -419,6 +438,44 @@ func (s *Surface) ValidateAction(name string, values map[string]json.RawMessage)
 		return out, nil
 	}
 	return nil, surfaceError("unknown action")
+}
+
+// sameActionValue compares constant context without narrowing numbers to
+// float64, so adjacent large integers stay distinct.
+func sameActionValue(left, right json.RawMessage) bool {
+	a, err := decodeNumberValue(left)
+	if err != nil {
+		return false
+	}
+	b, err := decodeNumberValue(right)
+	if err != nil {
+		return false
+	}
+	if number, ok := a.(json.Number); ok {
+		other, ok := b.(json.Number)
+		if !ok {
+			return false
+		}
+		x, ok := new(big.Rat).SetString(string(number))
+		if !ok {
+			return false
+		}
+		y, ok := new(big.Rat).SetString(string(other))
+		return ok && x.Cmp(y) == 0
+	}
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return bytes.Equal(x, y)
+}
+
+func decodeNumberValue(raw json.RawMessage) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return value, nil
 }
 
 func (s *Surface) plainText() string {
