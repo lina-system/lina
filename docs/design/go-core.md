@@ -1367,7 +1367,11 @@ lists, ranges and steps), or a minute-resolution RRULE with an explicit IANA
 zone and start instant. RRULE supports MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY
 and YEARLY frequencies; INTERVAL; COUNT or UTC UNTIL; BYMINUTE, BYHOUR, BYDAY
 (weekday names), BYMONTHDAY (including negative days) and BYMONTH. Unsupported
-fields and impossible schedules are refused. Cron day-of-month and weekday
+fields and impossible schedules are refused. The next-instant search covers
+400 civil years, excluding its last day. RRULE intervals must be below 400
+years, 4,800 months or 20,871 weeks; shorter frequencies retain the 100,000
+interval limit. These limits are checked before admitting even a future start.
+Cron day-of-month and weekday
 restrictions use their ordinary OR rule. Civil-time resolution includes
 non-hour transitions: a gap maps to its first valid instant and a fold uses its
 first occurrence. Colliding gap candidates share the same fire identity.
@@ -1381,6 +1385,15 @@ or sensor claim is replaced at most once; an interrupted effect-capable job or
 second interrupted claim becomes `unknown` and remains inspectable. This is
 one durable fire per instant, not an exactly-once external-effect promise.
 
+A delivery error uses the same attempt budget within the running Core:
+read-only work gets one replacement after a one-second delay; a job or second
+failed attempt becomes `unknown`. A cancelled read-only fire is not requeued.
+Claim epoch and attempt fence both failure and success acknowledgements. If
+acknowledgement storage fails, the worker retains the outcome and retries only
+that write with exponential backoff from one second to one minute, until it
+commits, loses the claim or Core stops. It does not rerun the action for an
+acknowledgement error. Settled failures permit later occurrences to proceed.
+
 Reminders append one system message without a model. Jobs enter the shared
 inbox and conversation lane to perform the saved request under ordinary tool
 authority. The initial deterministic sensor reads a saved record's revision;
@@ -1392,6 +1405,9 @@ from starting the same turn again. Internal scheduling input stays out of the
 display history; reminders and resulting replies remain in the conversation.
 The installed-Core scenario `e2e/m2/timers.json` covers real record tool results,
 reminder delivery, unchanged and changed observations, cancellation and restart.
+`e2e/m2/timer-recovery.json` also refuses an oversized interval through the
+installed tools and verifies a failed record sensor settles and produces a saved
+result on a later occurrence in the same Core process after its source returns.
 Package tests cover civil-time transitions, concurrent claims and SIGKILL at
 both sides of the claim commit.
 
