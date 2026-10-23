@@ -18,8 +18,10 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/addons/importer/hermes"
+	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 // TestM1ImportReconciliation (m1/import-reconciliation.json) runs the installed
@@ -43,8 +45,9 @@ func TestM1ImportReconciliation(t *testing.T) {
 		ExpectedEvents     int `json:"expected_events"`
 		ExpectedPromoted   int `json:"expected_promoted"`
 		Sources            []struct {
-			Kind, Setup string
-			Keys        map[string][]string
+			Kind, Setup  string
+			ExtraFixture string `json:"extra_fixture"`
+			Keys         map[string][]string
 		}
 	}
 	raw, err := os.ReadFile("import-reconciliation.json")
@@ -88,7 +91,11 @@ func TestM1ImportReconciliation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = srcDB.ExecContext(h.ctx, string(ddl)+"\n"+src.Setup); err != nil {
+		extra, err := os.ReadFile("../../testdata/hermes/" + src.ExtraFixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = srcDB.ExecContext(h.ctx, string(ddl)+"\n"+src.Setup+";\n"+string(extra)); err != nil {
 			t.Fatal(err)
 		}
 		names, err := srcDB.QueryContext(h.ctx, `SELECT name FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name`)
@@ -204,6 +211,15 @@ func TestM1ImportReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkCounts(rehearsal.Rehearsal.Tables)
+	kinds := map[string]int{}
+	for _, table := range rehearsal.Rehearsal.Inventory {
+		for kind, count := range table.Kinds {
+			kinds[table.Table+"/"+kind] = count
+		}
+	}
+	if kinds["host_uid_bindings/alias_candidate"] != 1 || kinds["message_relations/composite"] != 2 {
+		t.Fatalf("new kinds missing from rehearsal inventory: %+v", kinds)
+	}
 	if !reflect.DeepEqual(initial, importCanonCounts(t, h.ctx, path)) {
 		t.Fatal("rehearsal wrote canon rows")
 	}
@@ -239,12 +255,34 @@ func TestM1ImportReconciliation(t *testing.T) {
 	// A positive control makes an always-empty recall implementation fail too.
 	run(0, "--confirm-import", "--promote", "all")
 	checkRecall(fixture.ExpectedPromoted)
+	// Restart the installed Core and read the imported result over its public
+	// memory protocol, proving this state is usable beyond the importer process.
+	core = start(false)
+	client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "memory", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	op := "list"
+	if _, err = client.Memory(h.ctx, protocol.MemoryRequest{Operation: &op, AgentID: &agent, Text: &fixture.Statement}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := client.Receive(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, ok := reply.Payload.(protocol.MemoryResult)
+	if !ok || result.Items == nil || len(*result.Items) != fixture.ExpectedPromoted {
+		t.Fatalf("Core memory result: %+v", reply)
+	}
+	client.Close()
+	h.stopCore(core)
 	// Change only the synthetic schema. Failure must precede any destination row.
 	srcDB, err := canon.OpenSQLite(h.ctx, filepath.Join(source, "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = srcDB.ExecContext(h.ctx, "ALTER TABLE messages ADD COLUMN unknown_field TEXT"); err != nil {
+	if _, err = srcDB.ExecContext(h.ctx, "CREATE TABLE unknown_table(id INTEGER)"); err != nil {
 		t.Fatal(err)
 	}
 	if err = srcDB.Close(); err != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
 type PromotionPolicy struct {
@@ -57,6 +58,12 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 			if superseded[r.id] || hasFlag(r, "retracted") || strings.TrimSpace(r.body) == "" || len(ScanSecrets([]byte(r.body))) > 0 {
 				continue
 			}
+			// Unavailable bodies and secrets recognized only after JSON decoding
+			// cannot become verbatim promotion drafts or memory evidence.
+			masked, err := secrets.Mask(r.body)
+			if err != nil || len(masked.Spans()) != 0 {
+				continue
+			}
 			person := p.people[c.report.Profile]
 			precision := memory.Session
 			var occurred int64
@@ -97,7 +104,7 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 				continue
 			}
 			if person == "" {
-				return nil, ErrSnapshot
+				return nil, invalidSnapshot("promotion person mapping required")
 			}
 			key := opaque(r.agent, person, strings.Join(strings.Fields(strings.ToLower(r.body)), " "), string(precision))
 			g := groups[key]
@@ -136,7 +143,7 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 // not a worker echo or text found in source data.
 func (p *Plan) Promote(ctx context.Context, db Canon, policy PromotionPolicy, accepted []string, confirmation string) (int, error) {
 	if strings.TrimSpace(confirmation) == "" {
-		return 0, ErrSnapshot
+		return 0, invalidSnapshot("promotion confirmation required")
 	}
 	batches, err := p.PromotionBatches(policy)
 	if err != nil {
@@ -156,7 +163,7 @@ func (p *Plan) Promote(ctx context.Context, db Canon, policy PromotionPolicy, ac
 	for _, id := range accepted {
 		b, ok := byID[id]
 		if !ok || b.PersonaProposal || seen[id] {
-			return 0, ErrSnapshot
+			return 0, invalidSnapshot("promotion batch selection")
 		}
 		seen[id] = true
 	}
@@ -173,7 +180,7 @@ func (p *Plan) Promote(ctx context.Context, db Canon, policy PromotionPolicy, ac
 					return err
 				}
 				if generation == "" {
-					return ErrSnapshot
+					return invalidSnapshot("promotion requires sealed backup")
 				}
 			}
 			var previous string
