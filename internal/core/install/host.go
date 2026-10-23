@@ -10,22 +10,26 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
+	"github.com/thisisjun786/lina/kit/acp"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
 )
 
 // ProcessHost uses kit/proc for every installer command. No shell interprets
-// installer arguments, and inherited provider credentials are filtered there.
+// installer arguments. ACP probes preserve the worker's own setup and filter
+// LINA's model credential; ordinary commands use the installer environment.
 type ProcessHost struct {
-	owner    *proc.Owner
-	env      []string
-	activity *lifecycle.ActivityRegistry
+	owner     *proc.Owner
+	env       []string
+	workerEnv []string
+	activity  *lifecycle.ActivityRegistry
 }
 
 func NewProcessHost() *ProcessHost {
-	return &ProcessHost{owner: proc.NewOwner(), env: proc.InheritedEnvironment("LINA_RESPONSES_API_KEY"), activity: lifecycle.NewRegistry(nil)}
+	return &ProcessHost{owner: proc.NewOwner(), env: proc.InheritedEnvironment("LINA_RESPONSES_API_KEY"), workerEnv: proc.WorkerEnvironment(), activity: lifecycle.NewRegistry(nil)}
 }
 func (h *ProcessHost) Close(ctx context.Context) error { return h.owner.Close(ctx) }
 func (h *ProcessHost) LookPath(name string) (string, error) {
@@ -71,6 +75,33 @@ func (h *ProcessHost) RunWithContext(ctx context.Context, path string, args ...s
 		err = errors.Join(err, errors.New("command output exceeds 4096 bytes"))
 	}
 	return output.buffer.Bytes(), err
+}
+
+// ACPVersion reads only initialize metadata through the shared ACP client.
+// Closing the client joins its owned child before releasing the activity lease.
+func (h *ProcessHost) ACPVersion(ctx context.Context, path string, args ...string) (string, error) {
+	l, err := h.activity.Acquire(ctx, lease.Activity{Class: lease.Hard, Reason: "installed ACP worker version"})
+	if err != nil {
+		return "", err
+	}
+	defer l.Release()
+	client, err := acp.Start(ctx, l, proc.Command{Path: path, Args: args, Env: h.workerEnv})
+	if err != nil {
+		return "", err
+	}
+	defer client.Close()
+	initialized, err := client.Initialize(ctx, acp.Implementation{Name: "lina", Version: "1"})
+	if err != nil {
+		return "", err
+	}
+	if initialized.AgentInfo == nil || initialized.AgentInfo.Version == "" {
+		return "unknown", nil
+	}
+	version := initialized.AgentInfo.Version
+	if len(version) > 4096 || strings.TrimSpace(version) == "" || strings.IndexFunc(version, unicode.IsControl) >= 0 {
+		return "", errors.New("invalid ACP worker version")
+	}
+	return version, nil
 }
 
 type boundedOutput struct {

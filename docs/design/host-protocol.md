@@ -855,6 +855,31 @@ work completion. Empty/malformed requests are refused and no control is inferred
 from forwarded channel text.
 
 
+### Mini apps
+
+The `mini_apps` capability, version 1.0 on client 1.1, provides
+`mini_app_request` and `mini_app_result`. A request carries `operation` — `list`,
+`open`, `allow`, `deny`, `keep`, `undo`, `restore`, `remove` or `history` — and,
+except for `list`, the app id. `allow`, `deny` and `restore` also carry the
+revision they decide. Core binds the person from the connection; a request never
+names one.
+
+The result carries `operation`, `apps`, and optional `app`, `url`, `tailnet`,
+`revisions` and `code`. An app row holds its id, name, owner agent, the request
+it came from, the current and allowed revision, whether it is allowed, and its
+declared reads, requests, hosts and schedule. `open` returns the frame address
+with a one-time code and, when the tailnet is configured, the same frame on the
+tailnet; before the person allows the current revision it returns no address.
+The one-time code is exchanged for the app's own HttpOnly cookie on the app's
+origin, never on the frame origin. `list`, `open` and `history` are reads; the
+other operations are mutations and report the closed error code in `code`. Only
+this authenticated operation records the person's allow, deny, keep, undo,
+restore and remove; the agent's own tool cannot.
+
+A gateway request is not this capability. The app talks to its own origin, and
+Core admits it only with that app's token and only for its declared reads,
+requests, store and hosts.
+
 ### Direct record views and capture
 
 The `records` 1.0 capability provides `record_request` and `record_result`.

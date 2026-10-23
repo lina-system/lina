@@ -43,6 +43,7 @@ func restoreTarget(t *testing.T, root string, epoch string) {
 }
 
 func TestRestoreWholeGenerationToSameAndDifferentRoot(t *testing.T) {
+	t.Parallel()
 	for _, same := range []bool{true, false} {
 		t.Run(map[bool]string{true: "same", false: "other"}[same], func(t *testing.T) {
 			cfg, assets := fixture(t)
@@ -146,6 +147,7 @@ func TestRestoreWholeGenerationToSameAndDifferentRoot(t *testing.T) {
 }
 
 func TestRestoreRejectsCorruptionAndIncompatibleReleaseWithoutChangingTarget(t *testing.T) {
+	t.Parallel()
 	cfg, assets := fixture(t)
 	a := material(t, assets)
 	m, err := Create(t.Context(), cfg)
@@ -179,6 +181,7 @@ func TestRestoreRejectsCorruptionAndIncompatibleReleaseWithoutChangingTarget(t *
 }
 
 func TestRestoreZeroExposureAfterLosingSourceCanon(t *testing.T) {
+	t.Parallel()
 	for _, same := range []bool{true, false} {
 		t.Run(map[bool]string{true: "same", false: "other"}[same], func(t *testing.T) {
 			cfg, assetStore := fixture(t)
@@ -272,6 +275,7 @@ func TestRestoreZeroExposureAfterLosingSourceCanon(t *testing.T) {
 }
 
 func TestRestoreRejectsLinkedTargetBeforePublication(t *testing.T) {
+	t.Parallel()
 	cfg, store := fixture(t)
 	material(t, store)
 	m, err := Create(t.Context(), cfg)
@@ -295,6 +299,7 @@ func TestRestoreRejectsLinkedTargetBeforePublication(t *testing.T) {
 }
 
 func TestRestoreResumeAppliesRemovalsRecordedDuringInterruption(t *testing.T) {
+	t.Parallel()
 	cfg, store := fixture(t)
 	_, err := ledger.New(cfg.Canon, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "source", ConversationID: "conversation", AgentID: "agent", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: "synthetic violet"})
 	if err != nil {

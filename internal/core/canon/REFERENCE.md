@@ -90,7 +90,7 @@ event ids from `cite`, so it no longer decodes the JSON of every private or
 
 ### Messenger store
 
-Migration 64 adds the messenger source registry, its chats with their sync,
+Migration 65 adds the messenger source registry, its chats with their sync,
 learn and embed switches, the cursor, the coverage of each complete read, the
 unique legacy reference of each record with its revision chain, and the writes
 LINA made in the person's name. Record text stays in `conv_event`; the new

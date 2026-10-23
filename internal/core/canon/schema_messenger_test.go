@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Migration 64 adds the messenger source registry and widens the ledger's
+// Migration 65 adds the messenger source registry and widens the ledger's
 // relation kinds. A published install keeps its events and relations.
 func TestMessengerUpgradeKeepsLedgerRelationsAndAddsKinds(t *testing.T) {
 	cfg := storeConfig(t)

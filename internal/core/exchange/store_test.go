@@ -234,27 +234,27 @@ func TestRoundLimitAndDeadlineStopWithoutPersonFlag(t *testing.T) {
 
 type rollback struct{ *canon.Store }
 
-var rollbackError = errors.New("injected rollback")
+var errRollback = errors.New("injected rollback")
 
 func (r rollback) Write(ctx context.Context, fn func(*canon.Tx) error) error {
 	return r.Store.Write(ctx, func(tx *canon.Tx) error {
 		if err := fn(tx); err != nil {
 			return err
 		}
-		return rollbackError
+		return errRollback
 	})
 }
 func TestFailedCommitReturnsNoReceiptOrDelivery(t *testing.T) {
 	db := database(t)
 	s := exchange.New(rollback{db})
 	r, err := s.Start(t.Context(), request(), now)
-	if !errors.Is(err, rollbackError) || r.ID != "" {
+	if !errors.Is(err, errRollback) || r.ID != "" {
 		t.Fatalf("start: %+v %v", r, err)
 	}
 	good := exchange.New(db)
 	r = start(t, good)
 	receipt, err := s.Deliver(t.Context(), r.DeliveryID, now)
-	if !errors.Is(err, rollbackError) || receipt.ID != "" {
+	if !errors.Is(err, errRollback) || receipt.ID != "" {
 		t.Fatalf("deliver: %+v %v", receipt, err)
 	}
 	if record(t, good, r.ID).State != exchange.Queued {
