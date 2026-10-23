@@ -174,6 +174,11 @@ func (h *coreHarness) await(query string, want int, args ...any) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		// The read runs under h.ctx, so a spent deadline would otherwise
+		// surface as an interrupted query instead of the failed condition.
+		if err := h.ctx.Err(); err != nil {
+			h.t.Fatalf("condition timed out: %s want=%d", query, want)
+		}
 		var n int
 		h.read(func(tx *canon.Tx) error { return tx.QueryRowContext(h.ctx, query, args...).Scan(&n) })
 		if n == want {
@@ -242,34 +247,29 @@ func reply(w http.ResponseWriter, text string) {
 
 type lastItem struct{ Type, Role, CallID, Output, Content string }
 
+// last returns the item the fixture has to answer: the newest tool result once
+// tools ran, otherwise the input of this turn. Core places the input before
+// retrieved context, and context evidence reaches the model as a wrapped user
+// message, so the input is the newest unwrapped user item.
 func last(q modelRequest) lastItem {
-	type inputItem struct {
-		Type, Role      string
-		CallID          string `json:"call_id"`
-		Output, Content string
-	}
-	var v inputItem
-	if len(q.Input) > 0 {
-		_ = json.Unmarshal(q.Input[len(q.Input)-1], &v)
-	}
-	// Conversation packets follow the triggering event. Exchange requests
-	// have no such packet; their final item remains the active input.
-	if v.Type != "function_call_output" {
-		for i := len(q.Input) - 1; i > 0; i-- {
-			var item struct{ Role, Content string }
-			if json.Unmarshal(q.Input[i], &item) != nil || item.Role != "developer" {
-				continue
-			}
-			_, references, ok := strings.Cut(item.Content, "\nReferences: ")
-			var refs []struct{ ID string }
-			if ok && json.Unmarshal([]byte(references), &refs) == nil && len(refs) > 0 && strings.HasPrefix(refs[0].ID, "clock:") {
-				v = inputItem{}
-				_ = json.Unmarshal(q.Input[i-1], &v)
-				break
-			}
+	for i := len(q.Input) - 1; i >= 0; i-- {
+		var v struct {
+			Type, Role      string
+			CallID          string `json:"call_id"`
+			Output, Content string
+		}
+		if json.Unmarshal(q.Input[i], &v) != nil {
+			continue
+		}
+		item := lastItem{v.Type, v.Role, v.CallID, v.Output, v.Content}
+		switch {
+		case item.Type == "function_call_output" || item.Type == "custom_tool_call_output":
+			return item
+		case item.Role == "user" && !strings.HasSuffix(item.Content, "</external_evidence>"):
+			return item
 		}
 	}
-	return lastItem{v.Type, v.Role, v.CallID, v.Output, v.Content}
+	return lastItem{}
 }
 
 // This in-process Core uses the test executable. Pin its actual bytes through

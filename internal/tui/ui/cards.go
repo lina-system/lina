@@ -195,7 +195,11 @@ func (m *shellModel) cardRows(c state.Card) ([]string, int) {
 			if i == m.cardField {
 				prefix = "> "
 			}
-			add(prefix + field.Name + " (" + string(field.Type) + "): " + m.content.CardView.Fields[field.Name])
+			kind := string(field.Type)
+			if field.Optional != nil && *field.Optional {
+				kind += ", optional"
+			}
+			add(prefix + field.Name + " (" + kind + "): " + m.content.CardView.Fields[field.Name])
 			if field.Choices != nil {
 				add(strings.Join(*field.Choices, " / "))
 			}
@@ -224,6 +228,9 @@ func (m *shellModel) cardRows(c state.Card) ([]string, int) {
 		}
 		add(design.Text(m.styles.options.Language, id))
 	} else {
+		if m.content.CardView.ID == c.ID && m.content.CardView.Notice != "" {
+			add(design.Text(m.styles.options.Language, m.content.CardView.Notice))
+		}
 		add(design.Text(m.styles.options.Language, "card.question_keys"))
 	}
 	add(design.Text(m.styles.options.Language, "card.escape"))
@@ -338,6 +345,11 @@ func (m *shellModel) cardReply(envelope protocol.Envelope) bool {
 		if p.Outcome != nil {
 			outcome = state.CardOutcome(*p.Outcome)
 		}
+	}
+	if envelope.Error != nil && request.QuestionAction != "" && envelope.Error.Code == protocol.ErrorMalformed {
+		m.content, _ = state.Reduce(m.content, state.CardAnswerInvalid{Request: request})
+		m.refreshBlocks()
+		return true
 	}
 	if envelope.Error != nil {
 		switch envelope.Error.Code {

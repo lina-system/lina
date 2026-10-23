@@ -5,7 +5,9 @@ package ui
 import (
 	tea "charm.land/bubbletea/v2"
 	"context"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"strings"
 	"testing"
 )
 
@@ -78,4 +80,22 @@ func TestMemoryNextPreservesQueryAndAgentScope(t *testing.T) {
 	if _, cmd = m.managementCommand("/memory next"); cmd != nil {
 		t.Fatal("cursor crossed agent focus")
 	}
+}
+
+func TestMemoryEvidenceDetailsDisplay(t *testing.T) {
+	m := conversationShell()
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	op, agent, id := "list", "a", "request"
+	request := protocol.MemoryRequest{Operation: &op, AgentID: &agent}
+	session := managementSession{model: m, pending: map[string]protocol.Payload{id: request}}
+	quote, status := "The desk computer is Birch.", "tombstone"
+	details := []protocol.MemoryEvidence{{Reference: "event:source", Quote: &quote}, {Reference: "event:erased", Status: &status}}
+	items := []protocol.MemorySummary{{ItemID: "memory:device", Holder: "all", Scope: "local", Revision: "1", Content: "Device name: Birch", Evidence: []string{"event:source", "event:erased"}, EvidenceDetails: &details}}
+	if _, err := session.response(context.Background(), nil, protocol.Envelope{ReplyTo: &id, Payload: protocol.MemoryResult{Operation: &op, Items: &items}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.conversation.pager.text, quote) || !strings.Contains(m.conversation.pager.text, "event:erased  "+status) {
+		t.Fatal("missing evidence projection")
+	}
+	t.Logf("screen capture:\n%s", ansi.Strip(m.View().Content))
 }

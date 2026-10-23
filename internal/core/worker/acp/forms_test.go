@@ -49,6 +49,50 @@ func TestFormPreservesTypesAndValidatesBeforeAnswer(t *testing.T) {
 		}
 	}
 }
+func TestRefusedFieldNamesAreNotProjected(t *testing.T) {
+	for _, name := range []string{"api_key", "api-key", "API Key", "token", "password", "credit_card"} {
+		raw := json.RawMessage(`{"mode":"form","requestedSchema":{"type":"object","properties":{"` + name + `":{"type":"string"}}}}`)
+		if _, err := ParseForm(raw); err == nil {
+			t.Fatal("refused field projected", name)
+		}
+	}
+}
+
+func TestOptionalFieldsStayOmittedAndMultiSelectShowsChoices(t *testing.T) {
+	raw := json.RawMessage(`{"mode":"form","message":"Settings","requestedSchema":{"type":"object","properties":{"label":{"type":"string","minLength":2},"limit":{"type":"integer"},"tags":{"type":"array","title":"Tags","items":{"type":"string","enum":["a","b"]}},"themes":{"type":"array","items":{"anyOf":[{"const":"dark","title":"Dark"},{"const":"light","title":"Light"}]}}},"required":["label"]}}`)
+	form, err := ParseForm(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	optional := map[string]bool{}
+	for _, field := range form.Fields {
+		optional[field.Name] = field.Optional != nil && *field.Optional
+	}
+	if !optional["limit"] || !optional["tags"] || !optional["themes"] || optional["label"] {
+		t.Fatalf("required distinction lost: %+v", form.Fields)
+	}
+	var shown string
+	for _, target := range form.Targets {
+		if target.Name == "tags" || target.Name == "themes" {
+			shown += target.Value + "\n"
+		}
+	}
+	for _, want := range []string{"a", "b", "dark", "Dark", "light", "Light"} {
+		if !strings.Contains(shown, want) {
+			t.Fatalf("question omitted %q from %s", want, shown)
+		}
+	}
+	label := "ok"
+	values := protocol.FormValues{"label": {String: &label}}
+	reply, err := form.Reply(protocol.QuestionAnswer{Answer: protocol.QuestionAnswerActionAccept, Values: &values})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(reply), "limit") || strings.Contains(string(reply), "tags") || !strings.Contains(string(reply), `"label":"ok"`) {
+		t.Fatalf("optional values were invented: %s", reply)
+	}
+}
+
 func TestSecretAndUnsupportedFormsAreRefused(t *testing.T) {
 	for _, property := range []string{`{"type":"string","format":"password"}`, `{"type":"string","isSecret":true}`, `{"type":"string","writeOnly":true}`, `{"type":"object"}`, `{"type":"array","items":{"$ref":"file:///not-readable"}}`} {
 		raw := json.RawMessage(`{"mode":"form","requestedSchema":{"type":"object","properties":{"value":` + property + `}}}`)

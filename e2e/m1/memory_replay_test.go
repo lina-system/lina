@@ -171,8 +171,12 @@ func TestM1MemoryReplayInstalledCore(t *testing.T) {
 				}
 				evidence := legacyEvidence
 				evidence.Assembly.RequestLayout = ""
-				evidence.CacheIdentity, evidence.Layout, evidence.Capabilities = "", nil, nil
-				evidence.Hash = assemble.Digest(provider.Request{Model: evidence.Model, Effort: evidence.Effort, Purpose: provider.Turn, Instructions: original.Instructions, Items: original.Input, Tools: evidence.Tools, Fields: evidence.Fields})
+				legacyRequest := provider.Request{Model: evidence.Model, Effort: evidence.Effort, Purpose: provider.Turn, Instructions: original.Instructions, Items: original.Input, Tools: evidence.Tools, Fields: evidence.Fields,
+					CacheIdentity: evidence.CacheIdentity, Layout: evidence.Layout.Clone()}
+				if evidence.Capabilities != nil {
+					legacyRequest.Capabilities = evidence.Capabilities.Clone()
+				}
+				evidence.Hash = assemble.Digest(legacyRequest)
 				raw, err := json.Marshal(evidence)
 				if err != nil {
 					db.Close()
@@ -264,7 +268,7 @@ func TestM1MemoryReplayInstalledCore(t *testing.T) {
 				Instructions: original.Instructions, Items: ep.Items, Tools: ep.Evidence.Tools, Fields: ep.Evidence.Fields,
 				CacheIdentity: ep.Evidence.CacheIdentity, Layout: ep.Evidence.Layout.Clone()}
 			if ep.Evidence.Capabilities != nil {
-				rebuilt.Capabilities = *ep.Evidence.Capabilities
+				rebuilt.Capabilities = ep.Evidence.Capabilities.Clone()
 			}
 			if assemble.Digest(rebuilt) != ep.Evidence.Hash {
 				t.Fatal("reconstructed request differs from the recorded digest")

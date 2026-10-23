@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/e2e/fixture"
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -239,6 +240,10 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			}
 			return
 		}
+		if scriptedWorkCompletion(w, request.Input) {
+			// Manager reports must not consume the person's forge refresh.
+			return
+		}
 		if preset != "" {
 			if calls.Add(1) == 1 {
 				declared := false
@@ -264,7 +269,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			Role, Type, Content, Output string
 			CallID                      string `json:"call_id"`
 		}
-		_ = json.Unmarshal(fixtureLatestInput(request.Input), &current)
+		_ = json.Unmarshal(fixture.LastInput(request.Input), &current)
 		if current.Role == "user" && current.Content == "Observe the landed foundation." {
 			// Worker notices and question answers add model turns. The explicit
 			// observation request must not depend on their arrival count. Only
@@ -660,7 +665,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			}
 			select {
 			case <-deadline.C:
-				t.Fatalf("task state not reached: %+v %v", c, err)
+				t.Fatalf("task state not reached: card=%+v wait=%+v provider_rounds=%d error=%v", c, c.WaitReason, calls.Load(), err)
 			case <-retry.C:
 			}
 		}

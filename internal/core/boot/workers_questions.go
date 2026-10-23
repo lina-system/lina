@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	acpadapter "github.com/thisisjun786/lina/internal/core/worker/acp"
@@ -192,14 +194,17 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 	var raw json.RawMessage
 	if item.kind == "acp" {
 		form, parseErr := acpadapter.ParseForm(item.event.Question.Params)
-		if parseErr == nil {
-			raw, parseErr = form.Reply(answer)
-		}
 		if parseErr != nil {
 			e.mu.Unlock()
 			return protocol.DecisionOutcomeRefused, nil
 		}
-
+		var replyErr error
+		raw, replyErr = form.Reply(answer)
+		if replyErr != nil {
+			// Leave the card open. A schema miss is not a decision.
+			e.mu.Unlock()
+			return "", &clientsrv.OperationError{Code: protocol.ErrorMalformed}
+		}
 	}
 	// Claim before sending: loss of the RPC is not permission to replay an answer.
 	outcome := protocol.DecisionOutcomeResolved
@@ -249,7 +254,24 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 	}
 	if err == nil {
 		sendCtx, cancel := context.WithTimeout(e.origin.ctx, 10*time.Second)
-		err = e.adapter.Answer(sendCtx, event.Thread, worker.Answer{RequestID: requestID, Result: raw})
+		if kind == "tool" {
+			e.control.Lock()
+			var messages []work.SteeringMessage
+			raw, messages, err = e.mailboxReply(sendCtx, event, raw)
+			if err == nil {
+				err = e.adapter.Answer(sendCtx, event.Thread, worker.Answer{RequestID: requestID, Result: raw})
+			}
+			if err == nil {
+				for _, m := range messages {
+					if err = e.steeringState(sendCtx, m, "delivered", ""); err != nil {
+						break
+					}
+				}
+			}
+			e.control.Unlock()
+		} else {
+			err = e.adapter.Answer(sendCtx, event.Thread, worker.Answer{RequestID: requestID, Result: raw})
+		}
 		cancel()
 	}
 	if err != nil {

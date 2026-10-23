@@ -60,18 +60,14 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 			c, conversation := conversationClient(t, h)
 			frames := admittedTurn(t, h, c, conversation, "authored-result", "Present the result.")
 			var live protocol.Result
-			diagnostics := map[string]bool{}
 			for _, frame := range frames {
-				if card, ok := frame.Payload.(protocol.Result); ok {
-					if card.Stream != nil && card.Stream.Key == "result-card:"+card.ResultID {
-						live = card
-					} else if strings.HasPrefix(card.ResultID, "result:turn-failure-") {
-						// The authored content survives even when the next model
-						// request exceeds its budget and produces a separate card.
-						diagnostics[card.ResultID] = true
-					} else {
-						t.Fatalf("unexpected live result: %+v", card)
+				// A later context-limit diagnostic is a separate result. Keep
+				// the authored card's identity rather than the last card seen.
+				if card, ok := frame.Payload.(protocol.Result); ok && card.Stream != nil && card.Stream.Key == "result-card:"+card.ResultID {
+					if live.ResultID != "" {
+						t.Fatal("authored result published twice")
 					}
+					live = card
 				}
 			}
 			providerCalls := calls.Load()
@@ -119,6 +115,9 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 			if live.Stream == nil {
 				t.Fatal("no live result stream")
 			}
+			if tc.kind != result.PlanType && live.Next == nil {
+				t.Fatal("large authored result did not require pagination")
+			}
 			provePager := func() {
 				t.Helper()
 				if tc.kind != result.DraftType {
@@ -128,7 +127,8 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 				waitComposerReady(t, h, terminal)
 				waitScreen(t, h, terminal, design.Text(design.English, "live"))
 				waitScreen(t, h, terminal, "Authored result")
-				h.keys(terminal, "\t\x1b[A\x0f\x1b[F") // Select the authored card, then follow its paged end.
+				// Select the authored card before a possible request-limit card.
+				h.keys(terminal, "\t\x1b[A\x0f\x1b[F")
 				waitScreen(t, h, terminal, "RESULT-END")
 				h.keys(terminal, "\x04")
 				terminal.process.wait(t, 0)
@@ -169,8 +169,7 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 				if err := json.Unmarshal(row.Payload, &restored); err != nil {
 					t.Fatal(err)
 				}
-				if diagnostics[restored.ResultID] {
-					delete(diagnostics, restored.ResultID)
+				if restored.ResultID != live.ResultID {
 					continue
 				}
 				count++
@@ -182,7 +181,7 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 				}
 			}
 			provePager()
-			if count != 1 || len(diagnostics) != 0 || calls.Load() != providerCalls {
+			if count != 1 || calls.Load() != providerCalls {
 				t.Errorf("restored cards=%d, provider calls=%d", count, calls.Load())
 			}
 			c.Close()

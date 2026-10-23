@@ -20,7 +20,7 @@ var layers = func() map[string]int {
 	result := make(map[string]int)
 	for i, names := range []string{
 		"canon eventstore secrets ctlfiles guard ids",
-		"authority lifecycle budget manifest binding toolcatalog",
+		"authority lifecycle budget manifest binding toolcatalog recall",
 		"ledger inbox agents memory retract skills records assets work timers plugins channels accounts",
 		"a2a lane assemble compaction turn runs replay intakereplay reply results modelpath exec exchange gateway worker reactor review ghclient progress waiting backup update recover clientsrv jobs mcphost install",
 		"boot supervise",
