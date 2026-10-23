@@ -13,6 +13,9 @@ const tracked = new Set(execFileSync('git', ['ls-files', '--cached', '-z'], { cw
 const documents = [...tracked].filter((name) => /\.md$/i.test(name) || name === 'LICENSE').sort();
 const failures = [];
 const anchorCache = new Map();
+// A link reference definition is not paragraph text, so a setext underline after one belongs to the remaining lines.
+const referenceDefinition = /^ {0,3}\[([^\]]+)\]:\s*(<[^>]+>|\S+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/;
+const referenceDefinitions = new RegExp(referenceDefinition.source, 'gm');
 
 function insideRoot(target) {
   const relative = path.relative(root, target);
@@ -93,17 +96,25 @@ function headingAnchors(text) {
   const anchors = new Set();
   const lines = visibleMarkdown(text.replace(/<!--[\s\S]*?-->/g, ''), true).split('\n');
   let paragraph = [];
+  let definitions = true;
   for (const line of lines) {
     const atx = /^ {0,3}#{1,6}(?:[\t ]+(.*)|$)/.exec(line);
     let title;
     if (atx) title = (atx[1] ?? '').replace(/[\t ]+#+[\t ]*$/, '').trim();
     else if (paragraph.length && /^ {0,3}(?:=+|-+)[\t ]*$/.test(line)) title = paragraph.join('\n');
     else {
-      if (!line.trim() || /^ {0,3}(?:(?:-[\t ]*){3,}|(?:\*[\t ]*){3,}|(?:_[\t ]*){3,})$/.test(line)) paragraph = [];
-      else paragraph.push(line.trim());
+      if (!line.trim() || /^ {0,3}(?:(?:-[\t ]*){3,}|(?:\*[\t ]*){3,}|(?:_[\t ]*){3,})$/.test(line)) {
+        paragraph = [];
+        definitions = true;
+      } else if (definitions && referenceDefinition.test(line)) continue;
+      else {
+        paragraph.push(line.trim());
+        definitions = false;
+      }
       continue;
     }
     paragraph = [];
+    definitions = true;
     // GitHub lowercases heading text, removes punctuation and replaces spaces.
     const base = headingText(title).toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\- ]/gu, '').replace(/ /g, '-');
     let anchor = base;
@@ -115,7 +126,7 @@ function headingAnchors(text) {
 
 function links(text) {
   const refs = new Map();
-  const body = visibleMarkdown(text).replace(/^ {0,3}\[([^\]]+)\]:\s*(<[^>]+>|\S+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/gm, (_, label, url) => {
+  const body = visibleMarkdown(text).replace(referenceDefinitions, (_, label, url) => {
     refs.set(label.trim().replace(/\s+/g, ' ').toLowerCase(), url.replace(/^<|>$/g, ''));
     return '';
   });
