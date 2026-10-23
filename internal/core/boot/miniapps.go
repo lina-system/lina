@@ -50,7 +50,7 @@ type miniAppRuntime struct {
 // startMiniApps constructs the registry, binds the frame origin and installs
 // the pre-live check that renders a revision in a headless browser. An app
 // origin binds on the person's first open, never before.
-func (r *conversationRuntime) startMiniApps(ctx context.Context, tailnetIP string) error {
+func (r *conversationRuntime) startMiniApps(ctx context.Context, tailnet string) error {
 	svc, err := miniapps.New(miniapps.Config{
 		DB: r.db, Root: r.root, Now: time.Now,
 		Reads:   miniAppReads{r: r},
@@ -60,7 +60,7 @@ func (r *conversationRuntime) startMiniApps(ctx context.Context, tailnetIP strin
 	if err != nil {
 		return err
 	}
-	host, err := miniapps.NewHost(svc, miniapps.HostConfig{TailnetIP: tailnetIP, Browser: miniapps.Browser{Leaser: r.activities}})
+	host, err := miniapps.NewHost(svc, miniapps.HostConfig{TailnetIP: tailnet, Browser: miniapps.Browser{Leaser: r.activities}})
 	if err != nil {
 		return err
 	}
@@ -322,7 +322,7 @@ func decodeMiniAppCall(call provider.ToolCall) (miniAppCall, error) {
 		if p.Revision < 1 {
 			return p, result.ErrMalformed
 		}
-	case "history", "keep", "undo", "remove", "open":
+	case "list", "history", "keep", "undo", "remove", "open":
 		if p.Revision != 0 || p.Name != "" || p.Request != "" || len(p.Files) != 0 || p.Manifest != nil || len(p.Checklist) != 0 || len(p.StoreShape) != 0 {
 			return p, result.ErrMalformed
 		}
@@ -384,7 +384,10 @@ func (r *conversationRuntime) miniAppOp(ctx context.Context, p miniAppCall, key 
 	case "restore":
 		return r.miniApps.svc.Restore(ctx, person, p.App, p.Revision)
 	case "remove":
-		return nil, r.miniApps.svc.Remove(ctx, person, p.App)
+		if err := r.miniApps.svc.Remove(ctx, person, p.App); err != nil {
+			return nil, err
+		}
+		return map[string]string{"removed": p.App}, nil
 	case "open":
 		return r.miniApps.host.Open(ctx, person, p.App)
 	}
