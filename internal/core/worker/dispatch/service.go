@@ -475,6 +475,12 @@ func (s *Service) sync() {
 			}
 		}
 		if r.State == "queued" {
+			if r.Canceled {
+				r.State = "finished"
+				r.Code = "cancelled"
+				_ = s.save(s.ctx, r)
+				continue
+			}
 			if s.cfg.AuthorizeExecution != nil {
 				allowed, err := s.cfg.AuthorizeExecution(s.ctx, r)
 				if err != nil {
@@ -486,12 +492,6 @@ func (s *Service) sync() {
 					_ = s.save(s.ctx, r)
 					continue
 				}
-			}
-			if r.Canceled {
-				r.State = "finished"
-				r.Code = "cancelled"
-				_ = s.save(s.ctx, r)
-				continue
 			}
 			if r.Recoveries > 0 && s.cfg.AuthorizeRecovery != nil {
 				allowed, err := s.cfg.AuthorizeRecovery(s.ctx, r)

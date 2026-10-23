@@ -128,9 +128,14 @@ func (p *publicationRuntime) sweep(ctx context.Context) {
 		}
 
 		var pending int
-		if p.root.db.Read(ctx, func(tx *canon.Tx) error {
+
+		pendingErr := p.root.db.Read(ctx, func(tx *canon.Tx) error {
 			return tx.QueryRowContext(ctx, "SELECT count(*) FROM authority_approvals WHERE json_extract(record,'$.State')='pending' AND json_extract(record,'$.TaskID') IN (?,?)", "turn:a2a-input:"+rec.Task.ID, rec.LocalWork).Scan(&pending)
-		}) == nil && pending > 0 {
+		})
+		if pendingErr != nil {
+			continue
+		}
+		if pending > 0 || p.waitingQuestion(rec) {
 			rec, _ = p.store.Update(ctx, rec.Task.ID, func(current *a2a.Record) error {
 				if !a2a.Terminal(current.Task.Status.State) {
 					a2a.SetState(current, a2a.InputRequired, time.Now())
@@ -338,4 +343,24 @@ func a2aPublished(view *conversationRuntime, key string) bool {
 func publicationInput(rec a2a.Record, now time.Time) ledger.Input {
 	body, _ := json.Marshal(rec.Task.History[0])
 	return ledger.Input{ID: "a2a-input:" + rec.Task.ID, Locator: "a2a:" + rec.Publication + ":" + rec.Task.ID, ConversationID: "a2a:" + rec.Task.ID, AgentID: rec.Agent, Surface: ledger.Surface{Kind: "a2a"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: string(body)}
+}
+
+func (p *publicationRuntime) waitingQuestion(rec a2a.Record) bool {
+	for _, session := range p.root.workers.entries() {
+		session.mu.Lock()
+		waiting := false
+		if session.origin.externalTask == rec.Task.ID && session.thread.TaskID == rec.LocalWork {
+			for _, question := range session.questions {
+				if question.card.Card != nil && question.card.Card.Outcome == nil {
+					waiting = true
+					break
+				}
+			}
+		}
+		session.mu.Unlock()
+		if waiting {
+			return true
+		}
+	}
+	return false
 }

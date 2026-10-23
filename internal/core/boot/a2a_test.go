@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/secret"
 	"io"
@@ -120,5 +122,25 @@ func TestPublishedTurnExecutesToolButCannotCompleteWithoutWorker(t *testing.T) {
 		if name != "write_record" && name != "dispatch_work" {
 			t.Fatalf("unapproved tool offered: %s", name)
 		}
+	}
+}
+
+func TestPublishedWorkerQuestionRequiresInput(t *testing.T) {
+	rec := a2a.Record{Task: a2a.Task{ID: "external"}, LocalWork: "worker-task"}
+	session := &workerSession{origin: &conversationRuntime{externalTask: "external"}, thread: worker.Thread{TaskID: "worker-task"}, questions: map[string]*workerQuestion{"q": {card: protocol.Question{Card: &protocol.DecisionCard{ID: "q"}}}}}
+	root := &conversationRuntime{workers: &workerRuntime{sessions: map[string]*workerSession{"thread": session}}}
+	p := &publicationRuntime{root: root}
+	if !p.waitingQuestion(rec) {
+		t.Fatal("pending worker question was not projected as input required")
+	}
+	other := rec
+	other.Task.ID = "another"
+	if p.waitingQuestion(other) {
+		t.Fatal("another task inherited the question")
+	}
+	outcome := protocol.DecisionOutcomeResolved
+	session.questions["q"].card.Card.Outcome = &outcome
+	if p.waitingQuestion(rec) {
+		t.Fatal("resolved question still requires input")
 	}
 }
