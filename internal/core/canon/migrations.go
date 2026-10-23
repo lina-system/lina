@@ -71,7 +71,8 @@ func Migrations() []Migration {
 		{Version: 57, SQL: A2ASchema},
 		{Version: 58, SQL: recallSchema},
 		{Version: 59, SQL: steeringSchema},
-		{Version: 60, SQL: a2aSchema},
+		{Version: 60, SQL: recallScopeSchema},
+		{Version: 61, SQL: a2aSchema},
 	}
 }
 
@@ -91,7 +92,7 @@ var publishedMigrationTables = []struct {
 	{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
 	{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
 	{57, "a2a_connections"}, {57, "a2a_calls"},
-	{60, "a2a_tasks"}, {60, "a2a_messages"},
+	{61, "a2a_tasks"}, {61, "a2a_messages"},
 	{31, "worker_dispatch"}, {52, "worker_recovery"},
 	{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 	{34, "waiting_decisions"},
@@ -114,6 +115,7 @@ var publishedMigrationTables = []struct {
 	{54, "cite"},
 	{55, "records_activity"},
 	{58, "recall_doc"}, {58, "recall_text"}, {58, "recall_pair"}, {58, "recall_pending"},
+	{60, "recall_conversation_scope"},
 	{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
 }
 
