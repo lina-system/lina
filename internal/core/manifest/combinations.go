@@ -150,8 +150,7 @@ func ClientCombinationsFor(target string) []Combination {
 	}}
 	modern := rows[0]
 	modern.ProtocolVersion = "1.1"
-	modern.Capabilities = append(append([]protocol.Capability{}, modern.Capabilities...), protocol.SurfaceResultsCapability(), protocol.Capability{Name: "mocks", Version: "1.0"})
-	modern.Evidence = append(append([]string{}, modern.Evidence...), "go test ./e2e/m1 -run TestGeneratedSurfaceInstalledCore", "go test ./e2e/m1 -run TestM3DrawnMocks")
+	modern.Capabilities = append(append([]protocol.Capability{}, modern.Capabilities...), protocol.SurfaceResultsCapability(), protocol.Capability{Name: "mocks", Version: "1.0"}, protocol.Capability{Name: "mini_apps", Version: "1.0"})
+	modern.Evidence = append(append([]string{}, modern.Evidence...), "go test ./e2e/m1 -run TestGeneratedSurfaceInstalledCore", "go test ./e2e/m1 -run TestM3DrawnMocks", "go test ./e2e/m4 -run TestMiniAppsThroughRunningCore")
 	return append(rows, modern)
-
 }

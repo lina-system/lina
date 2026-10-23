@@ -199,8 +199,8 @@ The review follows the security-safety-review method, applied to the design and 
 | Generated code runs with app rights | PLASMA, Baby Menu, Canopy | Cards carry no code. Mocks run in a display-only frame. Mini apps run on their own origin with no bridge. | Spike D4: parent, host and network blocked |
 | Data leaves the device | PLASMA (CDN scripts), Aglet (undeclared `fetch`) | Connections to the app's own origin only; LINA Core fetches declared hosts | Policy blocked; the negative control reached |
 | Token theft | none observed | HttpOnly cookie from a one-time code; revoked on removal | `document.cookie` was empty |
-| One app replaces or uses another app's token | Found in review of this design | Cookies are scoped by host, not port, so ports do not separate them. Each app's cookie has its own name, and each app's gateway accepts only its own app's token. | Not measured: the spike ran one app |
-| Data carried out by navigating away | Found in review of this design | The policy does not stop navigation, so the frame refuses navigation away from the app's origin. The system browser cannot do that, which leaves a gap for the browser link. | Not measured |
+| One app replaces or uses another app's token | Found in review of this design | Cookies are scoped by host, not port, so ports do not separate them. Each app's cookie has its own name, and each app's gateway accepts only its own app's token. | Measured on two apps: opening the second kept the first's cookie, each gateway refused the other's cookie, and a request with no cookie was refused |
+| Data carried out by navigating away | Found in review of this design | The policy does not stop navigation, so the frame returns the app to its origin after any navigation. The system browser cannot do that, which leaves a gap for the browser link. | Measured in Chromium: the frame navigated to an outside address and was back on the app's origin. What the browser link cannot stop is stated in [surfaces.md](../design/surfaces.md#mini-apps) |
 | Reads beyond purpose | Baby Menu (raw SQL) | Declared reads only, shown before the first open | 403 on `memories` |
 | Writes without the person | Baby Menu (auto-approve) | The owner agent's effect under normal posture; never counts as the person's decision or an approval | The write waited, then applied once |
 | A card that impersonates LINA or an approval | A2UI theme fields | The app draws the frame and the agent's face; cards cannot set them or look like approvals | Design only |
@@ -216,17 +216,17 @@ The review follows the security-safety-review method, applied to the design and 
 
 No terminal command needs a deny rule, because a mini app runs none.
 
-**Verdict: HOLD for implementation.** The design closes every risk seen in the references, and the spike shows the controls work for one app on the loopback. Missing evidence:
+**Verdict: PROCEED.** The design closes every risk seen in the references. The spike showed the controls work for one app on the loopback; the implementation closed the evidence it left open, in `internal/core/miniapps` and `e2e/m4`:
 
-- per-port origins on the tailnet
-- two apps on one host: separate cookie names, and each gateway accepting only its own app's token
-- the frame refusing navigation away from the app's origin, and what the browser link can do about it
-- token lifetime and rotation
-- rate limits on the gateway
-- frame isolation in each platform's web view
-- prompt injection from an app's data into the worker that changes it
+- **Two apps on one host.** Measured: opening one app does not replace the other's cookie, each gateway refuses the other app's cookie and refuses a request with none.
+- **The frame and navigation.** Measured in Chromium: an app that navigates away is returned to its own origin; the policy blocks an undeclared address and another app's gateway, and a negative control without the policy reaches both, so the policy is what blocks. The system-browser link cannot refuse navigation, because the browser owns that frame; it carries the same one-time code, spent on first use and expiring within a minute ([surfaces.md](../design/surfaces.md#mini-apps)).
+- **Token lifetime and rotation.** Measured: the cookie is HttpOnly, SameSite=Strict and lasts a day; opening an app, or a revision that widens or narrows it, replaces the token, so an earlier cookie is refused; removing the app revokes it.
+- **Gateway rate limits.** Measured: each route has a per-minute limit and the next call is refused with `429`.
+- **Tailnet origins per port.** Measured only as address pairing: with a tailnet address configured, the app's tailnet listener is bound to the app's own loopback port and the frame advertises that address. A real tailnet, a phone and a second device were not exercised.
+- **Frame isolation per platform.** Not measured. Only Chromium was exercised; the iOS and macOS web views, the launcher panel and the menu bar were not.
+- **Injection from an app's data into change requests.** Design only. App data reaches the page through typed reads and never enters the conversation: a change request is the person's text plus files the worker wrote, and an app's store is never read by the agent to make one. The worker's own model still sees the person's request, so its usual untrusted-content rules apply.
 
-The implementation issues carry these.
+What is still unmeasured is the platform side: real tailnet devices, each platform's web view and the launcher surfaces.
 
 ## Decisions and open points
 

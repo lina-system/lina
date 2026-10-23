@@ -11,6 +11,7 @@ import (
 )
 
 func TestOutcomeMigrationSupportsFreshAndPreBudgetDatabases(t *testing.T) {
+	t.Parallel()
 	for _, upgrade := range []bool{false, true} {
 		t.Run(map[bool]string{false: "fresh", true: "upgrade"}[upgrade], func(t *testing.T) {
 			var db *canon.Store

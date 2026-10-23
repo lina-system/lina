@@ -162,9 +162,16 @@ remain unchanged. Existing unrelated executable hooks or a custom hooks path
 refuse the allocation rather than being disabled; a guard failure is a known
 pre-dispatch failure. Core's fixed Git administration can still fetch the next
 landed base and create a dependent worktree under the shared guard.
-Scheduled workers publish to origin's URL directly: a named-remote push also
-updates local tracking refs, which remain protected. The target remote and
-assigned branch are unchanged, and publication never disables the guard.
+A worker pushes its assigned branch with an ordinary `git push`, naming either
+the remote or its URL. Any supported Git version may then update the
+remote-tracking ref that mirrors that branch, so the guard permits exactly
+`refs/remotes/<remote>/<assigned branch name>` and nothing else under
+`refs/remotes/`. Every other remote-tracking ref, the protected heads and
+`refs/lina/*` stay closed, and publication never disables the guard.
+A clone that already holds a guard written by an earlier Core keeps serving its
+worktrees: Core recognizes its own guard by its header and binding use and
+replaces it in place on the next allocation. A hook Core did not write still
+refuses the allocation.
 The installed-Core [headless work-area scenario](../../e2e/m2/work-area.json)
 allocates two real linked worktrees, rejects cross-task branch updates, deletion
 and renaming into a reserved branch, commits on each assigned branch, and retains
@@ -1239,6 +1246,11 @@ The lifecycle adapter in #747 registers `claude-acp`, `cursor`, `gemini` and
 `grok` with `dispatch_work`; `claude` retains the headless adapter pending the
 worker evaluation. Each attempt records its version again after session
 initialization and reports an unverified version while continuing the task.
+Gemini CLI installation reads its version through `gemini --acp` and
+`initialize`, without opening a session or requiring sign-in. Dispatch uses the
+same profile and shared ACP adapter. A `session/new` authentication refusal
+reports Gemini as needing sign-in; a successful prompt still needs observed
+Git and PR evidence before Core derives a completion receipt.
 Synthetic protocol tests do not add vendor versions to the verified list.
 Progress is masked and recorded on the active work card as `worker_report`,
 using the existing ledger. Stream fragments retain their masking context in

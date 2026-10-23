@@ -10,6 +10,7 @@ import (
 )
 
 func TestPromotionRequiresConfirmationAndPreservesSessionPrecision(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	in := proposal("A", "prefers synthetic tea")
 	in.Item.Basis = Imported
