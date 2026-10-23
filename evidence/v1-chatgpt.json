@@ -40,6 +40,10 @@
     "service_tier": {
       "accepted": null,
       "observation": null
+    },
+    "prompt_cache_key": {
+      "accepted": null,
+      "observation": null
     }
   },
   "accepted_request_fields": null,

@@ -34,6 +34,10 @@ type v1ResponsesReport struct {
 
 var v1RequestFields = provider.FieldList{"model", "input", "store", "stream", "instructions", "reasoning", "include"}
 
+// v1ProbeCacheIdentity is a fixed probe-only value in the shape a conversation's
+// cache identity takes. It is never a conversation's identity.
+var v1ProbeCacheIdentity = provider.RunCacheIdentity("v1-probe-identity")
+
 // The current adapter accepts opaque additional_tools input, the tool form
 // supported by the sign-in surface. These tools return synthetic results only;
 // acceptance never executes model-supplied code or writes a proposed patch.
@@ -104,16 +108,15 @@ func probeV1Responses(ctx context.Context, credential provider.Credential, model
 			}
 		}
 	}
-	for _, field := range []string{"parallel_tool_calls", "service_tier"} {
-		var value any = true
-		if field == "service_tier" {
-			value = "auto"
-		}
-		accepted, err := probeV1Field(ctx, credential, model, field, value, transport)
+	for _, probe := range []struct {
+		field string
+		value any
+	}{{"parallel_tool_calls", true}, {"service_tier", "auto"}, {"prompt_cache_key", v1ProbeCacheIdentity}} {
+		accepted, err := probeV1Field(ctx, credential, model, probe.field, probe.value, transport)
 		if err == nil || errors.Is(err, errV1Rejected) {
-			report.Fields[field] = accepted
+			report.Fields[probe.field] = accepted
 			if accepted {
-				report.RequestFields = append(report.RequestFields, field)
+				report.RequestFields = append(report.RequestFields, probe.field)
 			}
 		}
 		if err != nil && !errors.Is(err, errV1Rejected) {
@@ -177,8 +180,16 @@ func v1Failure(err error) error {
 // The production adapter assembles and consumes the stream. Only this explicit
 // acceptance probe inserts the one field being measured into the HTTP body.
 func probeV1Field(ctx context.Context, credential provider.Credential, model provider.ModelRef, field string, value any, transport http.RoundTripper) (bool, error) {
-	if field != "parallel_tool_calls" && field != "service_tier" {
+	if field != "parallel_tool_calls" && field != "service_tier" && field != "prompt_cache_key" {
 		return false, errV1Incomplete
+	}
+	// A cache identity has one accepted shape; a probe that sent anything else
+	// would measure the surface's rejection of a malformed value instead.
+	if field == "prompt_cache_key" {
+		identity, ok := value.(string)
+		if !ok || !provider.ValidCacheIdentity(identity) {
+			return false, errV1Incomplete
+		}
 	}
 	if transport == nil {
 		transport = http.DefaultTransport

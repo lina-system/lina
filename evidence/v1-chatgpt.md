@@ -31,9 +31,12 @@ It then runs three completed Responses turns with `store=false`, `stream=true`,
 encrypted reasoning retained in the next request, and two synthetic parallel
 function calls including the one-string `apply_patch` function. These tools
 return fixed results and never execute a proposed patch. Separate probes record
-acceptance or rejection of `parallel_tool_calls` and `service_tier`; the three
-turns test `include: ["reasoning.encrypted_content"]`. Probes do not expand the
-production manifest's request-field list.
+acceptance or rejection of `parallel_tool_calls`, `service_tier` and
+`prompt_cache_key`; the three turns test `include: ["reasoning.encrypted_content"]`.
+The cache-identity probe sends a fixed probe-only value in the shape a
+conversation's identity takes, never a conversation's identity, and records
+acceptance only for that shape. Probes do not expand the production manifest's
+request-field list.
 
 Exercise the no-listener path separately:
 

@@ -63,8 +63,12 @@ func TestV1ProbeRequiresCompletedTurnsAndPreservesReasoning(t *testing.T) {
 				t.Fatal("parallel-call field probe was not isolated")
 			}
 		case 5:
-			if string(request["service_tier"]) != `"auto"` || request["parallel_tool_calls"] != nil {
+			if string(request["service_tier"]) != `"auto"` || request["parallel_tool_calls"] != nil || request["prompt_cache_key"] != nil {
 				t.Fatal("service-tier field probe was not isolated")
+			}
+		case 6:
+			if string(request["prompt_cache_key"]) != `"`+v1ProbeCacheIdentity+`"` || request["parallel_tool_calls"] != nil || request["service_tier"] != nil {
+				t.Fatal("cache-identity field probe was not isolated")
 			}
 		}
 		return v1SSE(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}`), nil
@@ -73,11 +77,14 @@ func TestV1ProbeRequiresCompletedTurnsAndPreservesReasoning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.CompletedTurns != 3 || !result.EncryptedRoundTrip || !result.ParallelCalls || !result.ApplyPatch || calls != 5 {
+	if result.CompletedTurns != 3 || !result.EncryptedRoundTrip || !result.ParallelCalls || !result.ApplyPatch || calls != 6 {
 		t.Fatalf("incomplete acceptance: %+v calls=%d", result, calls)
 	}
-	if !reflect.DeepEqual(result.Fields, map[string]bool{"include": true, "parallel_tool_calls": true, "service_tier": true}) {
+	if !reflect.DeepEqual(result.Fields, map[string]bool{"include": true, "parallel_tool_calls": true, "service_tier": true, "prompt_cache_key": true}) {
 		t.Fatalf("field observations: %v", result.Fields)
+	}
+	if !reflect.DeepEqual(result.RequestFields, []string{"model", "input", "store", "stream", "include", "reasoning", "parallel_tool_calls", "service_tier", "prompt_cache_key"}) {
+		t.Fatalf("accepted request fields: %v", result.RequestFields)
 	}
 	if strings.Contains(fmt.Sprintf("%+v", result), "synthetic-token") || strings.Contains(fmt.Sprintf("%+v", result), "synthetic-encrypted-state") {
 		t.Fatal("acceptance record contains credentials or opaque state")
@@ -106,6 +113,53 @@ func TestV1ProbeDoesNotTurnPartialEvidenceIntoAcceptance(t *testing.T) {
 				t.Fatalf("accepted incomplete result: %+v %v", result, err)
 			}
 		})
+	}
+}
+
+func TestV1ProbeRecordsCacheIdentityAcceptance(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+	}{
+		{"accepted", 200},
+		{"rejected", 400},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sent := ""
+			accepted, err := probeV1Field(t.Context(), provider.NewCredential("synthetic", provider.LoopbackOAuth, "synthetic-token"), "synthetic-model", "prompt_cache_key", v1ProbeCacheIdentity, v1Script(func(r *http.Request) (*http.Response, error) {
+				raw, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var body map[string]json.RawMessage
+				if json.Unmarshal(raw, &body) != nil {
+					t.Fatal("unreadable probe request")
+				}
+				_ = json.Unmarshal(body["prompt_cache_key"], &sent)
+				if test.status == 400 {
+					return &http.Response{StatusCode: 400, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":"unsupported_parameter"}}`))}, nil
+				}
+				return v1SSE(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}`), nil
+			}))
+			if err != nil && !errors.Is(err, errV1Rejected) {
+				t.Fatal(err)
+			}
+			if accepted != (test.status == 200) {
+				t.Fatalf("accepted=%v for status %d", accepted, test.status)
+			}
+			if !provider.ValidCacheIdentity(sent) || sent != v1ProbeCacheIdentity {
+				t.Fatalf("probe did not send its cache identity: %q", sent)
+			}
+		})
+	}
+}
+
+func TestV1ProbeRefusesToRecordAcceptanceForAMalformedCacheIdentity(t *testing.T) {
+	if accepted, err := probeV1Field(t.Context(), provider.NewCredential("synthetic", provider.LoopbackOAuth, "synthetic-token"), "synthetic-model", "prompt_cache_key", "conversation-identity", v1Script(func(*http.Request) (*http.Response, error) {
+		t.Fatal("malformed identity reached the wire")
+		return nil, nil
+	})); accepted || !errors.Is(err, errV1Incomplete) {
+		t.Fatalf("malformed identity: %v %v", accepted, err)
 	}
 }
 
