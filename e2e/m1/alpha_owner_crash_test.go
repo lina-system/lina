@@ -24,7 +24,7 @@ func TestAlphaOwnerWorkerCrash(t *testing.T) {
 	h, start := alphaOwnerHarness(t, true)
 	workdir := t.TempDir()
 	core := start()
-	c, _ := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
+	c, conversation := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
 	terminal, _ := h.startConversationTUI(120, 34, "TERM=xterm-256color", "LC_ALL=ko")
 	alphaScreen(t, h, terminal, "fresh", func(s string) bool { return strings.Contains(s, "Ctrl+D") }, "")
 	input := fmt.Sprintf("Codex 작업자에게 문서 검토를 맡겨 줘. 작업 폴더는 %s야. 주제는 '소규모 텃밭의 물 관리'이고, 서로 다른 상황 40개를 번호 순서대로 각각 세 문장으로 분석하게 해. 파일이나 명령 실행은 필요 없고 도구 없이 답변 텍스트만 작성해. 추가 질문 없이 바로 시작해. 결과는 네가 한국어로 전달해 줘.", workdir)
@@ -78,7 +78,17 @@ func TestAlphaOwnerWorkerCrash(t *testing.T) {
 		t.Fatalf("real worker did not recover successfully: state=%s retries=%d", after.State, after.Retries)
 	}
 	alphaWaitOwnerRecovery(t, h, func(_ []recovery.Record) bool { return workerRecoveryReactions(t, h) == 1 })
-	alphaScreen(t, h, terminal, "recovered-result", func(s string) bool { return alphaRecoveredReplyVisible(input, "", s) }, "")
+	reply := alphaOwnerRecoveredReply(t, h, conversation, after)
+	alphaScreen(t, h, terminal, "recovered-result", func(s string) bool { return alphaRecoveredReplyVisible(input, reply.Body, s) }, "")
+	if directory := os.Getenv("LINA_ALPHA_CAPTURES"); directory != "" {
+		raw, err := json.MarshalIndent(reply, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, t.Name(), "recovered-reply.json"), append(raw, '\n'), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	output, sessions := alphaLastWorkerOutput(t, h)
 	if strings.TrimSpace(output) == "" || sessions != 1 {
 		t.Fatal("recovery omitted the real result or started a second worker session")
@@ -95,36 +105,30 @@ func TestAlphaOwnerWorkerCrash(t *testing.T) {
 	if workerRecoveryReactions(t, h) != 1 {
 		t.Fatal("second restart duplicated result delivery")
 	}
+	if restoredReply := alphaOwnerRecoveredReply(t, h, conversation, after); restoredReply != reply {
+		t.Fatal("second restart changed the delivered result")
+	}
 	terminal = h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=ko"}, false, true, 120, 34)
-	alphaScreen(t, h, terminal, "recovery-restored", func(s string) bool { return alphaRecoveredReplyVisible(input, "", s) }, "")
+	alphaScreen(t, h, terminal, "recovery-restored", func(s string) bool { return alphaRecoveredReplyVisible(input, reply.Body, s) }, "")
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
 }
 
-func alphaRecoveredReplyVisible(request, reply, screen string) bool {
-	return strings.Contains(screen, "연결됨") && strings.Contains(screen, "텃밭")
-}
-
-func TestAlphaRecoveredReplyRequiresResultText(t *testing.T) {
-	request := "텃밭의 물 관리 검토를 맡겨 줘."
-	reply := "검토가 끝났습니다. 흙이 마른 정도와 작물 상태에 따라 물을 주는 기준을 정리했습니다."
-	live := design.Text(design.Korean, "live")
-	for _, tc := range []struct {
-		name, screen string
-		want         bool
-	}{
-		{"request-only", request + "\n" + live, false},
-		{"unrelated-reply", request + "\n아직 결과가 없습니다.\n" + live, false},
-		{"streaming", request + "\n" + reply + "\n" + design.Text(design.Korean, "activity.stop") + "\n" + live, false},
-		{"delivered", request + "\n" + reply + "\n" + live, true},
-		{"restored", reply + "\n" + live, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := alphaRecoveredReplyVisible(request, reply, tc.screen); got != tc.want {
-				t.Fatalf("result visible=%t, want %t", got, tc.want)
-			}
-		})
+func alphaOwnerRecoveredReply(t *testing.T, h *harness, conversation string, attempt recovery.Record) alphaRecoveryReply {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer db.Close(context.Background())
+	reply, err := alphaRecoveredReply(h.ctx, db, conversation, attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.ID == "" || strings.TrimSpace(reply.Body) == "" {
+		t.Fatal("recovered result has no completed reply in the originating conversation")
+	}
+	return reply
 }
 
 func alphaOwnerRecoveryRecords(t *testing.T, h *harness) []recovery.Record {
