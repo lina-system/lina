@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
@@ -212,6 +213,11 @@ func installedCodeGoal(t *testing.T, mode string) {
 		p := h.command("core", "--state-root", h.root, "--socket", h.socket)
 		h.ctx = operation
 		p.command.Env = append(p.command.Env, "PATH="+workerPath, "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE=success", "LINA_GOAL_FIXTURE_URL="+service.URL, "LINA_GOAL_MODE="+mode, "LINA_RESPONSES_BASE_URL="+model.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+		if strings.HasPrefix(mode, "worker-recovery") {
+			// Recovery uses dispatch's real capacity gate as well as the goal
+			// host report. Keep its sampled load private to this scenario.
+			newWorkerLoad(t, fixture).wrap(t, p)
+		}
 		p.start(t)
 		h.connectWithin(p, time.Minute).Close()
 		waitCoreReady(t, h)
@@ -304,10 +310,16 @@ func installedCodeGoal(t *testing.T, mode string) {
 	if strings.HasPrefix(mode, "worker-recovery") {
 		// Observe an actual recovered result before restarting. Startup reads
 		// the durable goal action without waiting for the periodic sweep.
+		lastRecovery := ""
 		waitCodeGoalState(t, h, func(tx *canon.Tx) (bool, error) {
-			var state string
+			var state, code, wait string
 			var attempt int
-			err := tx.QueryRowContext(h.ctx, "SELECT state, COALESCE(json_extract(record,'$.attempt'),0) FROM worker_dispatch").Scan(&state, &attempt)
+			err := tx.QueryRowContext(h.ctx, "SELECT state, COALESCE(json_extract(record,'$.attempt'),0), COALESCE(json_extract(record,'$.code'),''), COALESCE(json_extract(record,'$.wait'),'') FROM worker_dispatch").Scan(&state, &attempt, &code, &wait)
+			observation := fmt.Sprintf("state=%s attempt=%d code=%s wait=%s err=%v", state, attempt, code, wait, err)
+			if observation != lastRecovery {
+				t.Log(observation)
+				lastRecovery = observation
+			}
 			return attempt == 2 && (state == "finished" || state == "decision"), err
 		})
 		c.Close()
