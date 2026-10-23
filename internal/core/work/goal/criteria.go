@@ -53,6 +53,9 @@ func goalCriteria(g Goal) []Criterion {
 		}
 	}
 	for _, t := range g.Tasks {
+		if stepKind(t.Kind) != TaskStep {
+			continue
+		}
 		out = append(out, Criterion{ID: "code:merge:" + t.ID, Statement: "Task merged", Check: CriterionCheck{Kind: ReadEvidence, Method: "merge.read", Target: t.Repository, TaskID: t.ID}}, Criterion{ID: "code:qa:" + t.ID, Statement: "QA passed on current merged result", Check: CriterionCheck{Kind: RunEvidence, Method: "qa.read", Target: t.Repository, TaskID: t.ID}})
 	}
 	if g.ServiceTarget != "" {
@@ -66,9 +69,15 @@ func goalCriteria(g Goal) []Criterion {
 	return out
 }
 func criterionRevision(g Goal, c Criterion) string {
+	if c.Check.Method == "steps.read" {
+		return targetRevision(g)
+	}
 	if c.Check.TaskID != "" {
 		for _, t := range g.Tasks {
 			if t.ID == c.Check.TaskID {
+				if stepKind(t.Kind) != TaskStep {
+					return t.Result.Revision
+				}
 				if c.Check.Method == "qa.read" {
 					return taskResultRevision(t)
 				}
@@ -171,8 +180,11 @@ func taskResultRevision(t Task) string {
 	return t.Merge.Revision
 }
 func taskDone(t Task) bool {
+	if stepKind(t.Kind) != TaskStep {
+		return stepLanded(t)
+	}
 	return t.Stage == TaskDone && t.Merge.proves(t.Merge.Revision) && t.QA.proves(taskResultRevision(t))
 }
 func freshTask(t Task) bool {
-	return t.PRGeneration == 0 && t.Continuations == 0 && t.ThreadHandle == "" && t.Stage == TaskReady && t.Attempt == 0 && t.Head == "" && t.NodeID == "" && t.Merge == (Proof{}) && t.QA == (Proof{}) && t.PR == (PRState{}) && t.Recoveries == 0 && t.Conflicts == 0 && t.QARepairs == 0 && !t.EffectsSettled && t.RepairedBy == "" && t.ResultRevision == "" && !t.RepairAsked
+	return t.Result == (Proof{}) && t.PRGeneration == 0 && t.Continuations == 0 && t.ThreadHandle == "" && t.Stage == TaskReady && t.Attempt == 0 && t.Head == "" && t.NodeID == "" && t.Merge == (Proof{}) && t.QA == (Proof{}) && t.PR == (PRState{}) && t.Recoveries == 0 && t.Conflicts == 0 && t.QARepairs == 0 && !t.EffectsSettled && t.RepairedBy == "" && t.ResultRevision == "" && !t.RepairAsked
 }
