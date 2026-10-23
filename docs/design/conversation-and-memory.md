@@ -324,6 +324,25 @@ It asks one question, with its recommended pick first and the tied targets as on
 
 **Record and measurement.** The binding is a system event linked to the input event. It holds the target, the candidates offered, the rule or judge that decided, the judge's probabilities when it answered, and any later move. Every input of the person gets one, so an input that was never answered shows. Core counts moves per 100 bindings by who decided. The [intake replay](../research/message-intake.md#replay-evaluation) scores every change to the rules, the candidate ranking, a judge or the instructions before it enters use: right item, right new or existing, and asked when it should and not otherwise. A change that raises silent wrong picks on running work does not ship.
 
+The development command `lina intake-replay <cases.jsonl>` accepts an explicit
+case path outside the repository and prints JSON counts and rates, separately
+for random and hard sets and each decider. Each case/router pair starts a fresh,
+private Core conversation runtime, seeds records, work and run snapshots plus
+ledger context and open questions, admits the person's input through Core, and
+reads the linked system binding event back before scoring. No provider or worker
+is launched. Temporary state is removed after each pair. The replay-only
+baselines do not change ordinary conversation intake.
+
+The two baselines are **focus-only** (always the recorded focus, including an
+aged focus) and **rules-then-focus** (the three explicit-fact rules above, then
+that same focus). They deliberately do not interpret new children, split
+requests or ask questions. Their failures on those cases measure the work left
+for the model. Public synthetic fixtures pin every case's score for both
+baselines; they are not an estimate of accuracy on the person's messages.
+Missing or malformed cases and runtime failures are counted by reason and never
+enter a success numerator. The command exits nonzero on exclusions. See the
+[case format and scoring definitions](../research/message-intake.md#replay-file-format).
+
 Implementation: #785 (the intake replay), #786 (the binding event, candidates and Core rules), #787 (the model's part, asking and the duplicate check) and #788 (showing and moving).
 
 ### Request assembly

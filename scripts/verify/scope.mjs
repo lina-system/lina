@@ -40,6 +40,7 @@ export function registryFor(cwd) {
     'internal/core/guard/',
     'internal/core/inbox/',
     'internal/core/install/',
+    'internal/core/intakereplay/',
     'internal/core/jobs/',
     'internal/core/lane/',
     'internal/core/ledger/',
