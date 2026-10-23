@@ -633,6 +633,19 @@ evaluations remain with their corresponding implementation issues.
 
 **Views.** Ctrl+P on the focused panel switches between cards and a compact view of one row per 일: the name, then Now, then the elapsed time right-aligned; Now shrinks first. Left and Right change the state filter: all, needs you, running, waiting, done. The title shows the filter when it is not all, and fold and count rows then count only that state.
 
+The filter keys wrap in both directions. A person-wait count or Core's needs-input
+state belongs to needs you; the other filters match Core's state and exclude
+person waits. Unknown, failed, stopped and ready-for-review states stay in all
+without being relabeled. Done cards remain folded, including in the done filter.
+An empty filter shows only its title. The status line keeps the totals for all work.
+Both views retain the selected ID when it still matches, otherwise its former
+position in the filtered sequence. They retain the draft and conversation anchor,
+and keep the selection visible after a view change, resize or live update.
+Compact rows reserve up to eight cells for Now before shortening a long name;
+elapsed time stays intact. View and filter choices last for the conversation view,
+including after Esc and reopening, and apply to both the sidebar and overlay.
+The focused footer and shortcut sheet list the view, filter and navigation keys.
+
 **Adjusting.** On a selected card, Shift+Up and Shift+Down move the 일 up or down in priority, Space pauses or resumes it, and Delete asks to stop it: the card's second row asks for Enter to confirm, and any other key cancels. `-` and `+` lower and raise the run limit by one, and `0` returns it to automatic; the title shows the limit only when the person set one. These keys are not letters, so they work while a Korean input method is on. The TUI sends each choice to Core and changes nothing locally: a card moves, pauses or shows its place only when Core's update arrives ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)). While the panel has focus, the footer shows these keys as whole hints (T-10).
 
 **Stage list.** Enter on a card opens the 일 view in the panel: a row with the 일's name and a back mark (`‹`, or `<` in ASCII), then one row per entry of its stage list ([work-and-delegation.md](work-and-delegation.md#stages)):
@@ -657,7 +670,7 @@ evaluations remain with their corresponding implementation issues.
 **Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place. In the focused card view, the selected name starts with the action mark (`›`, or `>` in ASCII); its width comes from the name budget so elapsed time stays intact.
 
 In both the sidebar and overlay, card navigation scrolls just enough to keep
-both rows of the selected card visible, including after a resize or progress
+all rows of the selected card visible, including after a resize or progress
 update. Folded done cards are skipped. The overflow row counts all cards outside
 the visible window, before and after it, including those waiting on the person.
 The initial window starts at the top of Core's order; scrolling never changes
@@ -685,6 +698,12 @@ that order, the conversation's reading position or the draft.
 | E14 shortage | When a stub worker reports its quota exhausted, or the host report shows no free capacity, the next pass lowers the automatic limit and starts no step past it, healthy running steps continue, and each card past the limit with no step in progress shows the quota or load reason with its place. |
 
 E11 to E14 read the pass from Core's ledger, not from timing. The run records N, the frames, the measured times and each result. A miss is investigated before a bound changes. The evaluation does not establish whether Core's Now lines and the manager's step names are good words for the person, which needs a check against human labels, or whether the person asks "what is running" less often; the research note names the field measurement for that.
+
+E10 also uses `e2e/m3/work-panel-views.json` and
+`TestM3WorkPanelViewsInstalledCore`: installed Core replays a mixed-state work
+ledger and supplies the card fields to the real TUI at 120x34 and 100x34, with
+20 and 50 cards in both languages and glyph modes. The driver checks every
+filter in both views, physical row counts, elapsed time and the retained draft.
 
 ## Results, cards and the pager (T-13)
 

@@ -95,6 +95,9 @@ func workElapsed(d time.Duration) string {
 // when that card leaves the sequence.
 func (m *shellModel) selectableWorkCards() (active []state.WorkCard, done int) {
 	for _, c := range m.workCards() {
+		if !matchesWorkFilter(c, m.conversation.workFilter) {
+			continue
+		}
 		if c.State == protocol.RunningStateDone && c.Waiting == 0 {
 			done++
 			continue
@@ -117,6 +120,18 @@ func (m *shellModel) selectableWorkCards() (active []state.WorkCard, done int) {
 	return active, done
 }
 
+var workFilters = []protocol.RunningState{"", protocol.RunningStateNeedsInput, protocol.RunningStateInProgress, protocol.RunningStateWaiting, protocol.RunningStateDone}
+
+func matchesWorkFilter(c state.WorkCard, filter protocol.RunningState) bool {
+	if filter == "" {
+		return true
+	}
+	if c.Waiting > 0 || c.State == protocol.RunningStateNeedsInput {
+		return filter == protocol.RunningStateNeedsInput
+	}
+	return c.State == filter
+}
+
 func (m *shellModel) workPanelRows(width, height int) []string {
 	if width <= 0 || height <= 0 {
 		return nil
@@ -126,15 +141,26 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 	if m.styles.options.ASCII {
 		ellipsis = "..."
 	}
-	rows := []string{text("work.title")}
+	title := text("work.title")
+	if m.conversation.workFilter != "" {
+		title += " · " + text("work.filter."+string(m.conversation.workFilter))
+		if m.styles.options.ASCII {
+			title = strings.ReplaceAll(title, " · ", " - ")
+		}
+	}
+	rows := []string{panelClip(title, width, ellipsis)}
 	active, done := m.selectableWorkCards()
 	available := height - 1
 	if done > 0 {
 		available--
 	}
-	shown := min(len(active), max(0, available/2))
+	cardRows := 2
+	if m.conversation.workCompact {
+		cardRows = 1
+	}
+	shown := min(len(active), max(0, available/cardRows))
 	if shown < len(active) {
-		shown = min(len(active), max(0, (available-1)/2))
+		shown = min(len(active), max(0, (available-1)/cardRows))
 	}
 	start := min(m.conversation.workOffset, max(0, len(active)-shown))
 	if shown > 0 {
@@ -163,13 +189,27 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 				prefix = marker + " "
 			}
 		}
-		name := prefix + panelClip(c.Name, max(0, width-(render.Unicode{}).Width(prefix)-(render.Unicode{}).Width(elapsed)-1), ellipsis)
-		first := name + strings.Repeat(" ", max(1, width-(render.Unicode{}).Width(name)-(render.Unicode{}).Width(elapsed))) + elapsed
 		activity := c.Now
 		if activity == "" {
 			activity = text("unknown")
 		}
-		rows = append(rows, first, "  "+panelClip(activity, max(0, width-2), ellipsis))
+		u := render.Unicode{}
+		budget := max(0, width-u.Width(prefix)-u.Width(elapsed)-1)
+		nameBudget := budget
+		if m.conversation.workCompact {
+			// Preserve a readable piece of Now even for a very long name.
+			minimumNow := min(u.Width(activity), 8, max(0, (budget-1)/2))
+			nameBudget = min(u.Width(c.Name), max(0, budget-minimumNow-1))
+		}
+		body := prefix + panelClip(c.Name, nameBudget, ellipsis)
+		if m.conversation.workCompact {
+			body += " " + panelClip(activity, max(0, budget-nameBudget-1), ellipsis)
+		}
+		first := body + strings.Repeat(" ", max(1, width-u.Width(body)-u.Width(elapsed))) + elapsed
+		rows = append(rows, first)
+		if !m.conversation.workCompact {
+			rows = append(rows, "  "+panelClip(activity, max(0, width-2), ellipsis))
+		}
 	}
 	if done > 0 && len(rows) < height {
 		rows = append(rows, fmt.Sprintf(text("work.done"), done))
@@ -177,7 +217,7 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 	if shown < len(active) && len(rows) < height {
 		waiting := 0
 		for i, c := range active {
-			if (i < start || i >= start+shown) && c.Waiting > 0 {
+			if (i < start || i >= start+shown) && (c.Waiting > 0 || c.State == protocol.RunningStateNeedsInput) {
 				waiting++
 			}
 		}
@@ -218,6 +258,21 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 		return m.controlC()
 	case "esc":
 		m.conversation.workFocused = false
+	case "ctrl+p":
+		m.conversation.workCompact = !m.conversation.workCompact
+	case "left", "right":
+		for i, filter := range workFilters {
+			if filter == m.conversation.workFilter {
+				delta := 1
+				if key == "left" {
+					delta = -1
+				}
+				m.conversation.workFilter = workFilters[(i+delta+len(workFilters))%len(workFilters)]
+				m.conversation.workOffset = 0
+				m.selectableWorkCards()
+				break
+			}
+		}
 	case "up", "down":
 		cards, _ := m.selectableWorkCards()
 		index := m.conversation.workIndex
