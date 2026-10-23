@@ -252,6 +252,9 @@ func (s *Service) Rebuild(ctx context.Context) error {
 			if err = advance(&c, e); err != nil {
 				break
 			}
+			if e.Kind == "record_occurrence" {
+				continue
+			}
 			cards[id] = c
 		}
 		err = errors.Join(err, rows.Err(), rows.Close())

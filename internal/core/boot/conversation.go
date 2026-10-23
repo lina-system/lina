@@ -216,6 +216,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
+	r.records.ReadCandidateMaterial = func(ctx context.Context, id string, revision int64) (string, error) {
+		return r.materials.Read(ctx, ledger.Material{ID: id, Revision: revision})
+	}
 	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
 	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant,
 		CanPresent: func() bool { return r.decisions != nil && r.decisions.CanPresent() || r.channelSurfaces.Load() > 0 },
@@ -939,7 +942,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			if err := r.prepareRecordTools(turnID, bindings); err != nil {
+			if err := r.prepareRecordTools(turnID, input.ID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
 			workDeclarations, err := r.prepareGoalWorkTools(turnID, bindings)
@@ -1115,7 +1118,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			Tools:        bindings,
 			Before:       questions.before,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
-				return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
+				return r.recordNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result)))
 			},
 			Inputs: inputQueue,
 			Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
