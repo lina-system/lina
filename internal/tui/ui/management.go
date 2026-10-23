@@ -36,6 +36,12 @@ func cutCommand(s string) (string, string) {
 	first, rest, _ := strings.Cut(strings.TrimSpace(s), " ")
 	return first, strings.TrimSpace(rest)
 }
+
+// The list shows each agent's id and its main conversation id. Accept either,
+// so a value copied from the list always names the agent.
+func agentID(arg string) string {
+	return strings.TrimPrefix(arg, "main:")
+}
 func (m *shellModel) managementCommand(text string) (bool, tea.Cmd) {
 	head, rest := cutCommand(text)
 	if head != "/memory" && head != "/agents" {
@@ -72,10 +78,12 @@ func (m *shellModel) managementCommand(text string) (bool, tea.Cmd) {
 			p.Name = &args
 			valid = args != ""
 		case "choose", "delete":
-			p.AgentID = &args
-			valid = args != "" && !strings.Contains(args, " ")
+			id := agentID(args)
+			p.AgentID = &id
+			valid = id != "" && !strings.Contains(id, " ")
 		case "rename":
 			id, name := cutCommand(args)
+			id = agentID(id)
 			p.AgentID, p.Name = &id, &name
 			valid = id != "" && name != ""
 		default:
@@ -321,7 +329,11 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 					source = role + " (" + source + ")"
 				}
 			}
-			lines = append(lines, a.Name+"  "+source, "  main:"+a.AgentID)
+			lines = append(lines,
+				a.Name+"  "+source,
+				"  "+design.Text(m.styles.options.Language, "agents.id")+": "+a.AgentID,
+				"  main:"+a.AgentID,
+			)
 			found = found || a.AgentID == active
 		}
 		m.openPager(strings.Join(lines, "\n"))
