@@ -1,0 +1,8 @@
+{
+ "memo": "Plan the observatory visit",
+ "note": "Keep the telescope checklist.",
+ "recurring": "Check the weather station",
+ "overdue": "Inspect the spare lens",
+ "rule": "FREQ=MONTHLY",
+ "first": "2020-01-31"
+}
