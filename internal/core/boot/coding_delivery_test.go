@@ -114,18 +114,7 @@ func TestCodingInterruptedCloseObservesWithoutRepeatingWrite(t *testing.T) {
 	if err = r.saveClose(t.Context(), a, rr, "closing", rr.Evidence); err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	binary := filepath.Join(dir, "gh")
-	response, _ := json.Marshal(map[string]any{"number": 7, "state": "closed", "merged": false, "head": map[string]string{"sha": rr.Head}, "base": map[string]any{"ref": "dev", "repo": map[string]string{"full_name": "owner/repo"}}})
-	script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n[ \"$1\" = api ] || exit 99\nprintf 'HTTP/2.0 200 OK\\r\\n\\r\\n%s\\n' '" + string(response) + "'\n"
-	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	r.workerGitHub, err = ghclient.New(t.Context(), ghclient.Config{Path: binary, Leaser: lifecycle.NewRegistry(nil)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.workerGitHub.Close(context.Background())
+	closedGitHubFixture(t, r, rr.Head, rr.Evidence)
 	for i := 0; i < 2; i++ {
 		state, err := r.deliverCoding(t.Context(), a, d)
 		if err != nil || state != "closed" {
@@ -146,4 +135,84 @@ func TestCodingInterruptedCloseObservesWithoutRepeatingWrite(t *testing.T) {
 	if err != nil || saved.Verdict != "needs_changes" {
 		t.Fatal("original finding evidence lost", saved, err)
 	}
+}
+
+func TestCodingUnchangedCorrectionCloses(t *testing.T) {
+	r, a, d := conformanceFixture(t)
+	rr, err := r.beginConformance(t.Context(), a, &d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr.State, rr.Verdict, rr.Evidence = "complete", "needs_changes", "P1 gap: Missing behavior."
+	if err := r.finishConformance(t.Context(), a, rr); err != nil {
+		t.Fatal(err)
+	}
+	card, err := r.work.Get(t.Context(), a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.ReturnReceipt = card.Receipt.EventID
+	run := *card.Run
+	run.ID = "correction"
+	run.Generation++
+	run.TurnID = "correction-turn"
+	if err := r.work.Start(t.Context(), run); err != nil {
+		t.Fatal(err)
+	}
+	receipt := *card.Receipt
+	receipt.ExecutionGeneration = run.Generation
+	receipt.Attempt++
+	receipt.TurnRef.TurnID = run.TurnID
+	receipt.EventID = work.ReceiptID(receipt)
+	if err := r.work.Submit(t.Context(), run.ID, receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error { return work.FinishIn(t.Context(), tx, a.ID, run.ID, "completed", d.PR.Head) }); err != nil {
+		t.Fatal(err)
+	}
+	closedGitHubFixture(t, r, rr.Head, rr.Evidence)
+	state, err := r.deliverCoding(t.Context(), a, d)
+	if err != nil || state != "closed" {
+		t.Fatalf("unchanged corrected head not closed: %s %v", state, err)
+	}
+	card, err = r.work.Get(t.Context(), a.ID)
+	if err != nil || card.Verdict != "" || card.State != "input_needed" {
+		t.Fatalf("residual not blocked: %+v %v", card, err)
+	}
+}
+
+func TestCodingFreshFailureOverridesSavedVerifiedJudgment(t *testing.T) {
+	r, a, d := conformanceFixture(t)
+	rr, err := r.beginConformance(t.Context(), a, &d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr.State, rr.Verdict, rr.Evidence = "complete", "verified", "Definition met."
+	if err := r.finishConformance(t.Context(), a, rr); err != nil {
+		t.Fatal(err)
+	}
+	d.FailureReason = "P1 later-finding: Required behavior regressed."
+	d.Code = "pr_unverified"
+	closedGitHubFixture(t, r, rr.Head, d.FailureReason)
+	state, err := r.deliverCoding(t.Context(), a, d)
+	if err != nil || state != "closed" {
+		t.Fatalf("fresh failure lost behind old verdict: %s %v", state, err)
+	}
+}
+
+func closedGitHubFixture(t *testing.T, r *conversationRuntime, head, reason string) {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "gh")
+	pr, _ := json.Marshal(map[string]any{"number": 7, "state": "closed", "merged": false, "head": map[string]string{"sha": head}, "base": map[string]any{"ref": "dev", "repo": map[string]string{"full_name": "owner/repo"}}})
+	comments, _ := json.Marshal([]map[string]string{{"body": reason}})
+	script := "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n[ \"$1\" = api ] || exit 99\ncase \"$*\" in *'/issues/7/comments'*) printf 'HTTP/2.0 200 OK\\r\\n\\r\\n%s\\n' '" + string(comments) + "';; *) printf 'HTTP/2.0 200 OK\\r\\n\\r\\n%s\\n' '" + string(pr) + "';; esac\n"
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	r.workerGitHub, err = ghclient.New(t.Context(), ghclient.Config{Path: binary, Leaser: lifecycle.NewRegistry(nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.workerGitHub.Close(context.Background()) })
 }

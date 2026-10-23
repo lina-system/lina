@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/review"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 )
@@ -15,13 +14,10 @@ import (
 func TestReturnDefinitionOncePreservesAssignment(t *testing.T) {
 	db := store(t)
 	ctx := t.Context()
-	rr := review.Record{Key: review.Key{Repository: "o/r", Number: 7, Head: strings.Repeat("a", 40)}, Task: "task", Receipt: "receipt", Generation: 2, State: "complete", Verdict: "needs_changes", Evidence: "Missing behavior.", Findings: []review.Finding{{ID: "major", Severity: "P1", File: "result.txt", Claim: "Missing result."}, {ID: "minor", Severity: "P2", File: "result.txt", Claim: "Optional cleanup."}}}
+	rr := Correction{Task: "task", Receipt: "receipt", Generation: 2, Head: strings.Repeat("a", 40), Payload: json.RawMessage(`{"evidence":"Missing behavior.","findings":[{"id":"major","severity":"P1","file":"result.txt","claim":"Missing result."}]}`)}
 	r := Record{ID: "task", State: "finished", Owner: "dev", Origin: Origin{Person: "person"}, Worker: "codex", Tried: []string{"antigravity", "codex"}, Packet: "original packet", BaseCommit: strings.Repeat("b", 40), Branch: "task.branch", PR: &antigravity.PullRequest{Head: rr.Head}, Definition: Definition{Repository: "/repo"}}
 	card := work.Card{Task: work.Task{ID: r.ID, AgentID: r.Owner, PersonID: r.Origin.Person}, Run: &work.Run{Generation: 2, Worker: "codex"}, Receipt: &work.Receipt{EventID: rr.Receipt}, Head: rr.Head, CompletionHead: rr.Head, Verdict: "needs_changes"}
 	if err := db.Write(ctx, func(tx *canon.Tx) error {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO work_reviews(repository,pr_number,head,record) VALUES(?,?,?,?)", rr.Repository, rr.Number, rr.Head, mustJSON(rr)); err != nil {
-			return err
-		}
 		if _, err := tx.ExecContext(ctx, "INSERT INTO worker_dispatch(id,turn_id,repository,state,record) VALUES(?,?,?,?,?)", r.ID, "turn", "/repo", r.State, mustJSON(r)); err != nil {
 			return err
 		}

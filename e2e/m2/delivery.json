@@ -1,6 +1,7 @@
 {
   "cases": [
     {"name":"corrected","expected":"ready_for_review"},
+    {"name":"unchanged","expected":"ready_for_review"},
     {"name":"residual","expected":"ready_for_review"},
     {"name":"failed-check","expected":"pr_unverified"},
     {"name":"residual-review","expected":"pr_unverified"}

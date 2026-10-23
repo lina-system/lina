@@ -4,6 +4,7 @@ package boot
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -47,14 +48,31 @@ func (r *conversationRuntime) deliverCoding(ctx context.Context, a codingAssignm
 		return "unverified", err
 	}
 	card, err := r.work.Get(ctx, a.ID)
-	if err != nil || card.Receipt == nil || card.Receipt.EventID != rr.Receipt || card.Head != rr.Head || rr.Task != a.ID || card.Active {
+	if err != nil || card.Receipt == nil || card.Head != rr.Head || card.CompletionHead != rr.Head || rr.Task != a.ID || card.Active {
 		return "unverified", work.ErrState
+	}
+	if card.Receipt.EventID != rr.Receipt {
+		// Returning the identical commit cannot resolve its previously observed
+		// definition miss. Keep that review intact and close against the new
+		// receipt, without a second review request for the same head.
+		if d.ReturnReceipt != rr.Receipt || rr.Verdict != "needs_changes" || card.Run == nil || card.Run.Generation <= rr.Generation {
+			return "unverified", work.ErrState
+		}
+		rr.Receipt, rr.Generation = card.Receipt.EventID, card.Run.Generation
+	}
+	if card.Applied {
+		return "merged", nil
 	}
 	if a.Delivery.State == "closed" && a.Delivery.Receipt == rr.Receipt {
 		return "closed", nil
 	}
 	if a.Delivery.State == "closing" && a.Delivery.Receipt == rr.Receipt {
 		return r.closeCoding(ctx, a, d, rr, a.Delivery.Reason)
+	}
+	// A later terminal failure at this head is current evidence even when a
+	// previous manager judgment passed before the interrupted merge.
+	if d.FailureReason != "" {
+		return r.closeCoding(ctx, a, d, rr, d.FailureReason)
 	}
 	if rr.State == "complete" && rr.Verdict == "needs_changes" {
 		payload, err := review.Return(rr)
@@ -65,15 +83,14 @@ func (r *conversationRuntime) deliverCoding(ctx context.Context, a codingAssignm
 			if r.workerDispatch == nil {
 				return "unverified", work.ErrState
 			}
-			if err := r.workerDispatch.ReturnDefinition(ctx, d, rr); err != nil {
+			body, _ := json.Marshal(payload)
+			correction := dispatch.Correction{Task: rr.Task, Receipt: rr.Receipt, Head: rr.Head, Generation: rr.Generation, Payload: body}
+			if err := r.workerDispatch.ReturnDefinition(ctx, d, correction); err != nil {
 				return "unverified", err
 			}
 			return "returned", nil
 		}
 		return r.closeCoding(ctx, a, d, rr, payload.Reason())
-	}
-	if rr.State == "blocked" && d.FailureReason != "" {
-		return r.closeCoding(ctx, a, d, rr, d.FailureReason)
 	}
 	if rr.State != "complete" || rr.Verdict != "verified" {
 		return "unverified", nil
@@ -82,9 +99,6 @@ func (r *conversationRuntime) deliverCoding(ctx context.Context, a codingAssignm
 	// settled; its existing merge action owns the subsequent external write.
 	if d.Goal {
 		return "verified", nil
-	}
-	if card.Applied {
-		return "merged", nil
 	}
 	observation, err := r.mergeGoalPR(ctx, d, repo, goal.Action{Revision: rr.Head}, false)
 	if err != nil {
@@ -111,7 +125,7 @@ func (r *conversationRuntime) closeCoding(ctx context.Context, a codingAssignmen
 	ref := ghclient.Ref{Repository: rr.Repository, Number: rr.Number}
 	var result ghclient.CloseResult
 	if a.Delivery.State == "closing" {
-		result, err = r.workerGitHub.ObserveClosed(ctx, ref, d.Definition.Base, rr.Head)
+		result, err = r.workerGitHub.ObserveClosed(ctx, ref, d.Definition.Base, rr.Head, reason)
 	} else {
 		result, err = r.workerGitHub.ClosePR(ctx, ref, d.Definition.Base, rr.Head, reason, func(ctx context.Context) error {
 			return r.saveClose(ctx, a, rr, "closing", reason)

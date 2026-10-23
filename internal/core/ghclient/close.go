@@ -3,7 +3,9 @@ package ghclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -35,6 +37,9 @@ func (c *Client) ClosePR(ctx context.Context, ref Ref, base, head, reason string
 	}
 	defer release()
 	r, err := c.readClosed(ctx, ref, base, head)
+	if err == nil && r.State == "closed" {
+		return c.closeReason(ctx, ref, r, reason)
+	}
 	if err != nil || r.State != "open" {
 		return r, err
 	}
@@ -55,12 +60,12 @@ func (c *Client) ClosePR(ctx context.Context, ref Ref, base, head, reason string
 		return r, errors.Join(runErr, err)
 	}
 	if observed.State == "closed" {
-		return observed, runErr
+		return c.closeReason(ctx, ref, observed, reason)
 	}
 	return r, runErr
 }
 
-func (c *Client) ObserveClosed(ctx context.Context, ref Ref, base, head string) (CloseResult, error) {
+func (c *Client) ObserveClosed(ctx context.Context, ref Ref, base, head, reason string) (CloseResult, error) {
 	ref, err := normalize(ref)
 	if err != nil || !validBranch(base) || !shaPattern.MatchString(head) {
 		return CloseResult{}, errors.New("invalid_close_request")
@@ -70,7 +75,38 @@ func (c *Client) ObserveClosed(ctx context.Context, ref Ref, base, head string) 
 		return CloseResult{}, err
 	}
 	defer done()
-	return c.readClosed(ctx, ref, base, head)
+	r, err := c.readClosed(ctx, ref, base, head)
+	if err == nil && r.State == "closed" {
+		return c.closeReason(ctx, ref, r, reason)
+	}
+	return r, err
+}
+
+// A closed state alone does not establish that a multi-step CLI call posted
+// its reason. Observe the exact saved comment before acknowledging delivery.
+func (c *Client) closeReason(ctx context.Context, ref Ref, r CloseResult, reason string) (CloseResult, error) {
+	r.State, r.Cause = "unknown", "close_reason_missing"
+	cache := &observation{}
+	for page := 1; page <= maxPages; page++ {
+		body, _, err := c.request(ctx, fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100&page=%d", ref.Repository, ref.Number, page), "", cache)
+		if err != nil {
+			return r, err
+		}
+		var comments []struct{ Body string }
+		if err := json.Unmarshal(body, &comments); err != nil {
+			return r, err
+		}
+		for _, comment := range comments {
+			if comment.Body == reason {
+				r.State, r.Cause = "closed", ""
+				return r, nil
+			}
+		}
+		if len(comments) < 100 {
+			return r, nil
+		}
+	}
+	return r, nil
 }
 
 func (c *Client) readClosed(ctx context.Context, ref Ref, base, head string) (CloseResult, error) {

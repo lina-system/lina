@@ -7,8 +7,13 @@ const args = process.argv.slice(2);
 const root = process.env.LINA_WORKER_FIXTURE;
 const file = path.join(root, 'pr.json');
 if (args[0] === 'pr' && args[1] === 'create') {
+  const mapFile = path.join(root,'created-prs.json');
+  const allocated = fs.existsSync(mapFile) ? JSON.parse(fs.readFileSync(mapFile,'utf8')) : {};
+  const task = path.basename(process.cwd());
+  allocated[task] ??= 17 + Object.keys(allocated).length;
+  fs.writeFileSync(mapFile,JSON.stringify(allocated));
   fs.writeFileSync(path.join(root, 'created'), '1');
-  console.log('https://github.com/fixture/project/pull/17');
+  console.log(`https://github.com/fixture/project/pull/${allocated[task]}`);
   process.exit(0);
 }
 const pr = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -30,8 +35,9 @@ if (args[0] === 'pr') {
 } else if (args[0] === 'api') {
   const endpoint = (args.find(value => value.startsWith('repos/')) || '').split('?')[0];
   if (args.includes('graphql')) respond({data:{repository:{pullRequest:{headRefOid:pr.headRefOid,reviewThreads:{nodes:[],pageInfo:{hasNextPage:false}}}}}});
+  else if (endpoint.includes('/issues/') && endpoint.endsWith('/comments')) respond(fs.existsSync(path.join(root,'closes')) ? [{body:fs.readFileSync(path.join(root,'closes'),'utf8').slice(0,-1)}] : []);
   else if (endpoint.endsWith('/comments')) respond([[]]);
-  else if (endpoint.endsWith('/pulls/17')) respond({number:17,state:pr.state==='OPEN'?'open':'closed',merged:pr.state==='MERGED',head:{sha:pr.headRefOid},base:{ref:'dev',repo:{full_name:'fixture/project'}},merge_commit_sha:pr.headRefOid});
+  else if (endpoint.endsWith(`/pulls/${pr.number}`)) respond({number:pr.number,state:pr.state==='OPEN'?'open':'closed',merged:pr.state==='MERGED',head:{sha:pr.headRefOid},base:{ref:'dev',repo:{full_name:'fixture/project'}},merge_commit_sha:pr.headRefOid});
   else if (endpoint.endsWith('/check-runs')) respond({total_count:1,check_runs:[{name:'foundation',status:'completed',conclusion:'success'}]});
   else if (endpoint.endsWith('/status')) respond({sha:pr.headRefOid,total_count:0,statuses:[]});
   else if (endpoint.endsWith('/git/ref/heads/dev')) respond({ref:'refs/heads/dev',object:{type:'commit',sha:pr.headRefOid}});

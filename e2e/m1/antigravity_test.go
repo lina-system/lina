@@ -173,7 +173,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					}
 					if manager && strings.Contains(string(encoded), "coding_delivery") && last.Type != "function_call_output" {
 						generation := deliveryCalls.Add(1)
-						if scenario.Delivery && (test.Name == "residual" || test.Name == "corrected" && generation == 1) {
+						if scenario.Delivery && (test.Name == "residual" || test.Name == "unchanged" || test.Name == "corrected" && generation == 1) {
 							emitPersonaCall(w, fmt.Sprintf("delivery-%d", generation), "coding_decision", map[string]any{"decision": "needs_changes", "evidence": "The result misses the done condition.", "findings": []map[string]string{
 								{"id": "major", "severity": "P1", "file": "result.txt", "claim": "Missing required behavior."},
 								{"id": "minor", "severity": "P2", "file": "result.txt", "claim": "Optional improvement."},
@@ -346,6 +346,10 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					t.Fatal("worker result missing", err)
 				}
 				inspect(e)
+			}
+			if test.Choice == "overlap" {
+				waitForAreaRelease(t, h)
+				managerTurns++
 			}
 			if scenario.CompletionEvents {
 				waitCompletionHandled(t, h)

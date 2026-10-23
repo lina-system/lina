@@ -41,11 +41,15 @@ func assertWorkerChoice(t *testing.T, h *harness, fixture, mode string) {
 		return
 	}
 	if mode == "blocked" || mode == "overlap" {
-		if got := read("launches"); got != "worker\n" {
+		want := "worker\n"
+		if mode == "overlap" {
+			want += "worker\n"
+		}
+		if got := read("launches"); got != want {
 			t.Fatalf("extra worker launch: %q", got)
 		}
 		if mode == "overlap" {
-			waitForAreaClaim(t, h, fixture)
+			waitForAreaRelease(t, h)
 		}
 		return
 	}
@@ -90,6 +94,35 @@ func assertWorkerChoice(t *testing.T, h *harness, fixture, mode string) {
 	}
 	if mode != "double-quota" && !strings.Contains(read("workdir"), record.ID) {
 		t.Fatal("fallback changed task workspace")
+	}
+}
+
+// The first confirmed merge releases the queued task. Wait for both durable
+// applications and notices so restart cannot race unfinished delivery.
+func waitForAreaRelease(t *testing.T, h *harness) {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	deadline := time.NewTimer(20 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var applied int
+		err = db.Read(h.ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(h.ctx, `SELECT count(*) FROM worker_dispatch d JOIN work_cards c ON d.id=c.task_id WHERE json_extract(c.record,'$.applied')=1 AND json_extract(d.record,'$.announced')=1`).Scan(&applied)
+		})
+		if err == nil && applied == 2 {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("confirmed merge did not release queued work: applied=%d error=%v", applied, err)
+		case <-tick.C:
+		}
 	}
 }
 

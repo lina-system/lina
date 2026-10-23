@@ -48,7 +48,7 @@ func assertDelivery(t *testing.T, h *harness, fixture, mode string) {
 		t.Fatal(err)
 	}
 	wantGenerations := 1
-	if mode == "corrected" || mode == "residual" {
+	if mode == "corrected" || mode == "residual" || mode == "unchanged" {
 		wantGenerations = 2
 		packet, err := os.ReadFile(filepath.Join(fixture, "return-packet"))
 		if err != nil || !strings.Contains(string(packet), `"id":"major"`) || strings.Contains(string(packet), `"id":"minor"`) || strings.Contains(string(packet), `"id":"nit"`) || d.ReturnReceipt == "" {
@@ -75,7 +75,7 @@ func assertDelivery(t *testing.T, h *harness, fixture, mode string) {
 		if err != nil || card.Applied || card.Verdict != "" || card.State != "input_needed" {
 			t.Fatalf("failure did not close and block: %+v reason=%s err=%v", card, reason, err)
 		}
-		if mode == "residual" && (!strings.Contains(string(reason), "P1 major") || strings.Contains(string(reason), "minor") || strings.Contains(string(reason), "nit")) {
+		if (mode == "residual" || mode == "unchanged") && (!strings.Contains(string(reason), "P1 major") || strings.Contains(string(reason), "minor") || strings.Contains(string(reason), "nit")) {
 			t.Fatal("wrong close findings", string(reason))
 		}
 		if mode == "residual-review" && !strings.Contains(string(reason), "residual-id") {
