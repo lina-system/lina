@@ -145,6 +145,15 @@ func (s *Service) observeThread(ctx context.Context, l lease.Lease, r *Record, d
 }
 
 func (s *Service) startAttempt(ctx context.Context, l lease.Lease, adapter worker.Adapter, r Record, attemptID, dir string) (worker.Thread, error) {
+	if s.cfg.AuthorizeExecution != nil {
+		allowed, err := s.cfg.AuthorizeExecution(ctx, r)
+		if err != nil {
+			return worker.Thread{}, err
+		}
+		if !allowed {
+			return worker.Thread{}, work.ErrState
+		}
+	}
 	if r.ReturnReceipt != "" {
 		if err := worker.ResetMessages(ctx, s.cfg.DB, r.ID, "manager-return:"+r.ReturnReceipt); err != nil {
 			return worker.Thread{}, err

@@ -204,6 +204,33 @@ An incoming request, OAuth scope, Agent Card or remote result cannot enlarge it.
 Changing or revoking the binding fences subsequent execution and disclosure,
 including an already open stream.
 
+Published admissions retain the issuer/subject/client identity, definition and
+binding fingerprint, expiry and deadline with the local task. Core checks that
+fingerprint before model/tool work, worker launch or recovery, an owner approval
+reply to the worker, and every externally visible projection. The incoming
+access token is introspected for each request and before stream updates; it is
+not retained as a credential for later execution. Token expiry bounds the
+admission's execution authority. A fresh access token may read a retained result
+only through the still-current binding and its original output scope.
+
+Only the existing authenticated owner surfaces answer local approvals. A2A
+follow-ups are forwarded task data, never owner answers. A cancellation request
+is durable before Core interrupts work. An interrupt acknowledgment without
+terminal execution evidence leaves the task unknown; it cannot produce a
+canceled or completed claim or authorize a replacement worker. The dispatcher
+observes durable cancellation even if no owner-session bridge is registered.
+An owner denial is persisted as a stop before it is relayed to a published
+worker, preventing an interrupted receipt from authorizing recovery.
+
+The publication binding alone cannot activate an installed worker with the
+owner's permissions. Core requires a separate one-time owner execution decision
+over the exact incoming message and fixed task definition before sending that
+input to a provider or tool. The decision explicitly names the worker's existing
+access to owner files, login and integrations. It is checked again at model/tool
+execution, worker launch/recovery and approval relay, and expires at epoch change.
+This is explicit owner delegation of an installed worker, not confinement of the
+worker's process. A missing, denied or stale decision cannot start execution.
+
 A Core-executed outgoing call records the grant fields on the main: owner,
 requesting agent, task, command, epoch, host, OS user, exact scope and expiry;
 Node/boot/session fields are none. This is local authority for Core's A2A

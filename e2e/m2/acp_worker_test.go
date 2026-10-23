@@ -742,12 +742,6 @@ func seedMethodologyAgents(t *testing.T, h *harness, person, selected string) ma
 	return ids
 }
 
-type methodologyRequest struct {
-	Instructions string
-	Tools        []struct{ Name string }
-	Input        []json.RawMessage
-}
-
 func makeInstallBundle(t *testing.T, base, lina, node string) string {
 	t.Helper()
 	bundle := filepath.Join(base, "bundle")

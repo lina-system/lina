@@ -314,7 +314,7 @@ func TestMigrationsAreNumberedAtomicAndForwardOnly(t *testing.T) {
 	s := openStore(t, cfg)
 	s.Close(context.Background())
 	// Opening an already migrated store must not replay CREATE TABLE.
-	s = openStore(t, cfg)
+	_ = openStore(t, cfg)
 	if version, epoch, err := Inspect(t.Context(), cfg.Path); err != nil || version != 2 || epoch != cfg.Epoch {
 		t.Fatalf("inspect=%d,%d,%v", version, epoch, err)
 	}
