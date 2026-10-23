@@ -36,7 +36,7 @@ func TestStaleCriterionResultDoesNotStopEngine(t *testing.T) {
 		if a.Kind == CheckCriterion {
 			started <- a
 			<-release
-			return Observation{Status: OutcomeSucceeded, Criterion: &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: "old-check-output", Passed: true}}, nil
+			return Observation{Status: OutcomeSucceeded, Criterion: &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "old-check-output", Passed: true}}, nil
 		}
 		if a.Kind != PlanGoal {
 			t.Errorf("unexpected action: %+v", a)

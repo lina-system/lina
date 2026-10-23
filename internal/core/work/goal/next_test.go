@@ -114,7 +114,7 @@ func TestDeriveRequiresQADeployAndVerificationBeforeClose(t *testing.T) {
 	s.Goals[0].Revision = 1
 	s.Goals[0].CheckRound = 1
 	for _, c := range goalCriteria(s.Goals[0]) {
-		s.Goals[0].Checks = append(s.Goals[0].Checks, CriterionEvidence{Criterion: c.ID, GoalRevision: 1, Round: 1, Target: c.Check.Target, Revision: criterionRevision(s.Goals[0], c), Kind: c.Check.Kind, Ref: "read", Passed: true})
+		s.Goals[0].Checks = append(s.Goals[0].Checks, CriterionEvidence{Criterion: c.ID, GoalRevision: 1, Round: 1, Target: c.Check.Target, Revision: criterionRevision(s.Goals[0], c), Kind: c.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "read", Passed: true})
 	}
 	p, _ = Derive(s, time.Unix(100, 0))
 	if len(p.Close) != 1 || p.Close[0] != "g" {

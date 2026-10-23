@@ -49,6 +49,9 @@ type Definition struct {
 	Provider        provider.ProviderID
 	Model           func(context.Context, Call) (Result, error)
 	Apply           func(context.Context, *canon.Tx, jobapi.Task, json.RawMessage) error
+	// PrepareApply loads immutable material bytes before taking the writer.
+	// The returned callback must recheck canonical metadata inside Apply.
+	PrepareApply func(context.Context, jobapi.Task) (func(context.Context, *canon.Tx, jobapi.Task, json.RawMessage) error, error)
 }
 type Config struct {
 	Store       *canon.Store
@@ -317,6 +320,26 @@ func (s *Service) Apply(ctx context.Context, p jobapi.Proposal) (jobapi.Applied,
 	}
 	if !d.validPayload(p.Output) || p.From < 0 || p.From == math.MaxInt64 || p.Through != p.From+1 {
 		return jobapi.Applied{}, jobapi.ErrInvalid
+	}
+	if p.Epoch != s.cfg.Epoch {
+		return jobapi.Applied{}, jobapi.ErrEpoch
+	}
+	if d.PrepareApply != nil {
+		var task jobapi.Task
+		task.Sequence = p.Through
+		err := s.cfg.Store.Read(ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT input FROM moirai_tasks WHERE job=? AND sequence=?", p.JobID, p.Through).Scan(&task.Input)
+		})
+		if err != nil {
+			return jobapi.Applied{}, err
+		}
+		d.Apply, err = d.PrepareApply(ctx, task)
+		if err != nil {
+			return jobapi.Applied{}, err
+		}
+		if d.Apply == nil {
+			return jobapi.Applied{}, jobapi.ErrInvalid
+		}
 	}
 	err := s.apply(ctx, p.Epoch, func(tx *canon.Tx) error { return s.applyProposal(ctx, tx, d, p) })
 	if err != nil {
