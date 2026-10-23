@@ -21,3 +21,35 @@ Event writer, read-only canon peek, canon open/probe/migrate, epoch mirror and r
 In this increment the CLI has no event writer or canon implementation and serves only the handshake; an absent or empty canon directory is allowed, but an existing canon store without its service is refused before minting an epoch.
 The coordinator passes a null epoch to startup events by leaving the event writer unbound until step 5; it supplies the new epoch only after the file and directory fsyncs succeed.
 Canon's writer cannot open before that boundary.
+
+### Live conversation compaction (#1114)
+
+The turn owns `compaction.Session`; its resolver checks appended provider items
+against `turn_items`, `turn_calls` and admitted steering. Builder callbacks remove
+only the protected items still owned by the turn journal from the conversation
+ledger frontier. Completed events keep their existing atomic publication path.
+The adapter's window/counter pair drives assembly, fitting and hard admission.
+
+After delivery, `conversation_preparation.go` enqueues a snapshot through the
+existing Core jobs service. The private worker socket resolves conversation jobs
+and retains at most eight volatile builder snapshots. Aux/Apply receipts contain
+only tickets. Foreground publication rechecks configuration, sources and epoch;
+restart discards speculative text. No periodic producer or extra process starts.
+
+Request-size audits and an oversized turn's continuation marker contain no
+conversation text. The marker, diagnostic sizes and terminal outcome commit in
+one transaction. The existing ordered-prefix contract rejects summarizing items
+after a retained input; that case remains a recorded refusal, with no fabricated
+summary or incomplete reasoning round trip. Its size card restores from canon.
+
+`e2e/m2/conversation_compaction_test.go` exercises the installed Core, real tools,
+the worker socket, summary publication, the retained tail and restart using a
+synthetic provider. Focused boot regressions cover follow-up fitting, adapter
+budgets, committed preparation adoption and refused continuation diagnostics.
+
+After integrating provider capability selection, live fitting recomputes cache
+boundaries from retained ledger records. Auxiliary preparation fingerprints
+exclude foreground input positions. Steering's input-binding evidence remains
+protected transient context and cannot become summary source text. A summary's
+bounded value-condensation call contributes to the same preparation's reported
+usage; missing usage remains unknown.

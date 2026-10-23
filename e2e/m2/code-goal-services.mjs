@@ -3,6 +3,7 @@
 // Local vendor/service fixtures; the installed Core owns every driver action.
 import fs from 'node:fs';
 import path from 'node:path';
+import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 const args=process.argv.slice(2);
 const name=path.basename(process.argv[1]);
@@ -73,8 +74,26 @@ if(name==='host-report') {
 } else {
  const revision=process.env.LINA_GOAL_REVISION, target=process.env.LINA_GOAL_TARGET;
  if(process.env.LINA_RESPONSES_API_KEY) throw Error('Core credential leaked');
- let passed=false, evidence='';
- if(name==='qa' || name==='acceptance') {
+ let passed=false, evidence='', collected;
+ const calendar=path.join(root,'calendar.json');
+ if(name==='calendar') {
+  // A plugin's success claim is intentionally independent of the real fields.
+  // Core must compare readback against the criterion's requested record.
+  collected={record:JSON.parse(fs.readFileSync(calendar,'utf8'))};
+  passed=true;evidence='Read calendar event';
+ } else if(name==='citations' || name==='rubric') {
+  const wd=fs.readFileSync(path.join(root,'workdir'),'utf8');
+  const content=fs.readFileSync(path.join(wd,'result.txt'),'utf8');
+  const revision=createHash('sha256').update(content).digest('hex');
+  const reads=[{target:'document',revision,content}];
+  passed=content==='worker produced this result\n';
+  collected=name==='citations'?{reads,output:'Cited passage: '+content}:{reads,rubric:JSON.parse(process.env.LINA_GOAL_CHECK).rubric,judgment:'The document contains the requested result'};
+  evidence='Read the document';
+  if(name==='rubric' && process.env.LINA_GOAL_MODE==='evidence-changed') {
+   // Calendar was checked earlier; mutate it before Core's closing readback.
+   fs.writeFileSync(calendar,JSON.stringify({id:'event',time:'10:00',place:'A'}));
+  }
+ } else if(name==='qa' || name==='acceptance') {
   passed=git('rev-parse','HEAD')===revision && revision===merged() && fs.readFileSync('result.txt','utf8')==='worker produced this result\n';
   evidence='Read result.txt from the merged commit';
  } else if(name==='deploy') {
@@ -83,6 +102,11 @@ if(name==='host-report') {
   const response=await fetch(process.env.LINA_GOAL_FIXTURE_URL,{method:'POST',body:JSON.stringify({revision,body:fs.readFileSync('result.txt','utf8')})});
   if(process.env.LINA_GOAL_MODE?.startsWith('restart-')){setInterval(()=>{},1000);await new Promise(()=>{});}
   passed=response.ok && process.env.LINA_GOAL_MODE!=='failed-deploy';evidence='Service accepted the merged artifact';
+  if(process.env.LINA_GOAL_MODE?.startsWith('evidence-')) {
+   // Stub plugin effect: its receipt says only that the request was accepted.
+   fs.writeFileSync(path.join(root,'effect-receipt.json'),JSON.stringify({accepted:true}));
+   fs.writeFileSync(calendar,JSON.stringify({id:'event',time:process.env.LINA_GOAL_MODE==='evidence-mismatch'?'10:00':'09:00',place:'A'}));
+  }
  } else if(name==='probe') {
   const response=await fetch(process.env.LINA_GOAL_FIXTURE_URL);
   const result=await response.json();
@@ -90,6 +114,6 @@ if(name==='host-report') {
   evidence='Read the running service revision and response';
  } else throw Error('unexpected check '+name);
  if(name!=='deploy') event(name);
- console.log(JSON.stringify({revision,target,passed,evidence}));
+ console.log(JSON.stringify({revision,target,passed,evidence,collected}));
  if(!passed) process.exitCode=1;
 }
