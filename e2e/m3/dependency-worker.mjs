@@ -87,7 +87,8 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
           send({method:'turn/completed',params:{threadId:thread.id,turn:thread.turn}});
         }
       } else if(kind==='question') {
-        if(message.result?.answers?.answer?.answers?.[0]!=='confirmed')throw new Error('question answer did not reach worker');
+        const answer=message.result?.answers?.answer?.answers?.[0]??'';
+        if(!answer.startsWith('<lina-message ')||!answer.includes('speaker_kind="person"')||messageText(answer)!=='confirmed')throw new Error('question answer did not reach worker');
         send({id:`${thread.id}:approval`,method:'item/commandExecution/requestApproval',params:{threadId:thread.id,turnId:thread.turn.id,itemId:'write',startedAtMs:1800000000000,command:'write scheduled artifact',cwd:thread.cwd,availableDecisions:['accept','decline']}});
       } else if(kind==='approval') {
         if(message.result?.decision!=='accept')throw new Error('approval did not reach worker');
