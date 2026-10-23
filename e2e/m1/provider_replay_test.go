@@ -25,8 +25,6 @@ func TestM2ProviderReplay(t *testing.T) {
 	t.Run("loopback", func(t *testing.T) {
 		var calls atomic.Int64
 		server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			n := int(calls.Add(1))
-			round := (n-1)%6 + 1
 			var request struct {
 				Input, Tools []json.RawMessage
 				Instructions string
@@ -54,6 +52,10 @@ func TestM2ProviderReplay(t *testing.T) {
 				fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":101,\"input_tokens_details\":{\"cached_tokens\":70},\"output_tokens\":3}}}\n\n")
 				return
 			}
+			// The summary is not a fixture turn; counting it would shift the
+			// tool-loop cycle of the next arm.
+			n := int(calls.Add(1))
+			round := (n-1)%6 + 1
 			if n <= 12 && (len(request.Input) < 82 || len(request.Tools) < 40 || request.Instructions == "") {
 				t.Error("fixture lost persona/history/tools")
 			}
