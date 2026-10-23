@@ -101,7 +101,8 @@ ORDER BY CASE type WHEN 'trigger' THEN 0 WHEN 'view' THEN 1 WHEN 'index' THEN 2 
 			legacy.Close()
 			t.Fatal(err)
 		}
-		if retained == 0 {
+		// Canon creates its epoch fence outside the application migrations.
+		if retained == 0 && name != "canon_meta" {
 			removals = append(removals, "DROP "+kind+" IF EXISTS \""+strings.ReplaceAll(name, "\"", "\"\"")+"\";")
 		}
 	}
