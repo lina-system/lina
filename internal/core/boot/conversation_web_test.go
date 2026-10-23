@@ -36,7 +36,7 @@ func TestConversationWebWaitsForNetworkApproval(t *testing.T) {
 			r := controlRuntime(t)
 			p := &conversationWebStub{}
 			bindings := map[string]loop.Tool{}
-			decl, err := r.prepareWebTools("web-turn", p, bindings)
+			decl, err := r.bindWebTools("web-turn", p, bindings)
 			if err != nil || len(decl) != 2 {
 				t.Fatal(decl, err)
 			}
@@ -112,7 +112,7 @@ func TestConversationWebWaitsForNetworkApproval(t *testing.T) {
 func TestConversationWebMissingProviderOffersNoTools(t *testing.T) {
 	r := controlRuntime(t)
 	bindings := map[string]loop.Tool{}
-	decl, err := r.prepareWebTools("turn", nil, bindings)
+	decl, err := r.bindWebTools("turn", nil, bindings)
 	if err != nil || len(decl) != 0 || len(bindings) != 0 {
 		t.Fatal("unconfigured web tools offered", err)
 	}

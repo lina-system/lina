@@ -90,7 +90,7 @@ func TestDelegationManagerJudgmentPrecedesDispatch(t *testing.T) {
 		},
 	})
 	bindings := map[string]loop.Tool{}
-	view.prepareDelegationTools("turn:managed-input", bindings)
+	view.prepareDelegationTools("turn:managed-input", nil, bindings)
 	call := provider.ToolCall{ID: "graph", Name: "schedule_work", Arguments: policyGraph}
 	for range 2 {
 		if result := bindings[call.Name].Execute(t.Context(), call); result.Code != loop.OK {
@@ -112,7 +112,7 @@ func TestDelegationWithoutDevHasNoWorkerEffect(t *testing.T) {
 	view := newConversationView(r, origin.ID, "main:"+origin.ID)
 	view.delegation = d
 	bindings := map[string]loop.Tool{}
-	view.prepareDelegationTools("turn:no-dev-input", bindings)
+	view.prepareDelegationTools("turn:no-dev-input", nil, bindings)
 	result := bindings["schedule_work"].Execute(t.Context(), provider.ToolCall{ID: "graph", Name: "schedule_work", Arguments: policyGraph})
 	var body struct{ Code string }
 	_ = json.Unmarshal(result.Output, &body)
@@ -135,7 +135,7 @@ func TestDelegationManagerRefusalDoesNotAdmitGraph(t *testing.T) {
 	view := newConversationView(r, r.agent, r.conversation)
 	view.delegation = d
 	bindings := map[string]loop.Tool{}
-	view.prepareDelegationTools("turn:refused-input", bindings)
+	view.prepareDelegationTools("turn:refused-input", nil, bindings)
 	result := bindings["schedule_work"].Execute(t.Context(), provider.ToolCall{ID: "graph", Name: "schedule_work", Arguments: policyGraph})
 	cards, err := r.work.Cards(t.Context())
 	if result.Code != loop.Failed || adapter.calls != 1 || len(cards) != 0 || *starts != 0 || err != nil {

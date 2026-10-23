@@ -170,13 +170,13 @@ func (r *conversationRuntime) queuePlan(ctx context.Context, turnID string, p co
 	err = g.jobs.Enqueue(ctx, g.id, jobapi.Task{Sequence: last + 1, Input: raw})
 	return coreexec.QueuedPlan{JobID: g.id, Sequence: last + 1}, err
 }
-func (r *conversationRuntime) preparePlanningTools(turnID string, bindings map[string]loop.Tool) error {
+func (r *conversationRuntime) preparePlanningTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	spec, err := coreexec.RegisterPlanning(registry, func(ctx context.Context, p coreexec.PlanDraftRequest) (coreexec.QueuedPlan, error) {
 		return r.queuePlan(ctx, turnID, p)
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	reads, err := coreexec.RegisterPlanReads(registry, func(ctx context.Context) (json.RawMessage, error) {
 		roots, err := r.plans.Index(ctx, r.planScope(turnID))
@@ -195,7 +195,7 @@ func (r *conversationRuntime) preparePlanningTools(turnID string, bindings map[s
 		return json.Marshal(item)
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, spec := range append(reads, spec) {
 		validated := turn.Tool(registry, spec, tools.Call{}, turnID)
@@ -214,7 +214,7 @@ func (r *conversationRuntime) preparePlanningTools(turnID string, bindings map[s
 		}}
 	}
 
-	return nil
+	return coreexec.PlanningDeclarations(), nil
 }
 func planWire(r result.Result) protocol.Result {
 	body := json.RawMessage(r.Body)
