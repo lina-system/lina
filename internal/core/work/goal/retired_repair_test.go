@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	e := revisionEngine(t, readyTask("a"), readyTask("b"))
@@ -32,15 +35,24 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 		t.Fatal("definition refresh cleared the claimed assessment before reconciliation")
 	}
 	repair.ID, repair.Repairs, repair.DependsOn = "obsolete-repair-b", "b", []string{"b"}
+	late := Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}
 	for range 2 {
-		if err := e.Report(t.Context(), managers[1].ID, managers[1].Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
+		if err := e.Report(t.Context(), managers[1].ID, managers[1].Epoch, late); err != nil {
 			t.Fatal(err)
 		}
 	}
+	found := false
 	for _, a := range revisionSnapshot(t, e).Actions {
-		if a.ID == managers[1].ID && (a.State != "finished" || !a.Superseded || a.RetirementReconciled) {
-			t.Fatalf("old report did not retain pending retirement: %+v", a)
+		if a.ID != managers[1].ID {
+			continue
 		}
+		found = true
+		if a.State != "finished" || !a.Superseded || a.RetirementReconciled || !bytes.Equal(a.Receipt, encode(late)) {
+			t.Fatalf("retired assessment lost its pending retirement or late receipt: %+v", a)
+		}
+	}
+	if !found {
+		t.Fatal("retired assessment disappeared")
 	}
 	if !revisionSnapshot(t, e).Goals[0].Tasks[1].RepairAsked {
 		t.Fatal("obsolete report cleared the assessment before reconciliation")
@@ -65,8 +77,8 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 		t.Fatalf("retired assessment stranded or changed its task: %+v", b)
 	}
 	for _, a := range revisionSnapshot(t, e).Actions {
-		if a.ID == managers[1].ID && !a.RetirementReconciled {
-			t.Fatal("reconciliation did not commit the completed retirement")
+		if a.ID == managers[1].ID && (!a.RetirementReconciled || !bytes.Equal(a.Receipt, encode(late))) {
+			t.Fatal("reconciliation did not preserve the completed retirement and late receipt")
 		}
 	}
 	// Accept the clarification, then require a new assessment of the same b.
