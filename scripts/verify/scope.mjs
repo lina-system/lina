@@ -60,6 +60,9 @@ export function kind(path) {
   if (path.startsWith('third_party/')) return 'dependencies';
   if (path === 'packaging/README.md') return 'docs';
   if (path === 'packaging/sqlite-vec/build.sh') return 'automation';
+  // The macOS package is prose; anything else under it is a build or a test
+  // input the automation check reads.
+  if (path.startsWith('packaging/macos/')) return /\.md$/.test(path) ? 'docs' : 'automation';
   if (/^packaging\/sqlite-vec\/(?:README|NOTICE)\.md$/.test(path)) return 'docs';
   if (path === 'scripts/verify/dependency-exceptions.json' || path === 'THIRD-PARTY-NOTICES.md') return 'dependencies';
   if (modules.has(path)) return 'modules';
