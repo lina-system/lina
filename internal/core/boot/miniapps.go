@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
@@ -142,7 +143,7 @@ func (m miniAppEffects) Run(ctx context.Context, req miniapps.EffectRequest) (mi
 		return miniapps.EffectResult{State: "refused", Code: "unavailable"}, nil
 	}
 	key := "mini-app:" + req.AppID + ":" + req.RequestID
-	auth := grant.Request{GrantID: key, MainID: m.r.main, Epoch: m.r.epoch, TaskID: "mini-app:" + req.AppID, Host: m.r.main, OSUser: "core", Person: req.Person, Agent: req.Agent, Profile: "miniapps", Revision: revision}
+	auth := grant.Request{GrantID: key, MainID: m.r.main, Epoch: m.r.epoch, TaskID: "mini-app:" + req.AppID, Host: m.r.main, OSUser: "core", Person: req.Person, Agent: req.Agent, Profile: "records", Revision: revision}
 	g := grant.Grant{Identity: auth, Expires: time.Now().Add(time.Hour), Scope: []grant.Permission{{Tool: spec.Name, Target: target, Write: true}}, Revisions: map[string]string{target: revision}}
 	m.r.personaMu.Lock()
 	m.r.personaGrants[key] = g
@@ -290,8 +291,10 @@ func decodeMiniAppCall(call provider.ToolCall) (miniAppCall, error) {
 	if call.Name != "mini_app" || call.ID == "" || call.Custom || len(call.Arguments) > 512<<10 {
 		return p, result.ErrMalformed
 	}
-	if err := result.Decode([]byte(call.Arguments), &p); err != nil {
-		return p, err
+	decoder := json.NewDecoder(strings.NewReader(string(call.Arguments)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&p); err != nil || decoder.More() {
+		return p, result.ErrMalformed
 	}
 	known := false
 	for _, op := range miniAppOps {
@@ -341,7 +344,7 @@ func (r *conversationRuntime) miniAppTool(turnID string) loop.Tool {
 		}
 		out, err := r.miniAppOp(ctx, p, call.ID)
 		if err != nil {
-			raw, _ := json.Marshal(map[string]string{"code": miniAppCode(err)})
+			raw, _ := json.Marshal(map[string]string{"code": miniAppCode(err), "reason": errReason(err)})
 			return loop.Result{ID: call.ID, Code: loop.Denied, Output: raw}
 		}
 		raw, _ := json.Marshal(out)
@@ -513,11 +516,32 @@ func miniAppView(app miniapps.App) protocol.MiniApp {
 		Revision: json.Number(itoa(app.Revision)), AllowedRevision: json.Number(itoa(app.AllowedRevision)),
 		Reads: app.Manifest.Reads, Requests: app.Manifest.Requests, Hosts: app.Manifest.Hosts,
 	}
+	// The protocol requires every list, so an empty declaration still travels
+	// as an empty array instead of null.
+	if view.Reads == nil {
+		view.Reads = []string{}
+	}
+	if view.Requests == nil {
+		view.Requests = []string{}
+	}
+	if view.Hosts == nil {
+		view.Hosts = []string{}
+	}
 	if app.Manifest.Schedule != "" {
 		schedule := app.Manifest.Schedule
 		view.Schedule = &schedule
 	}
 	return view
+}
+
+// errReason reports the check dimension that stopped a revision and nothing
+// else; model text and file contents never reach the person through it.
+func errReason(err error) string {
+	message := err.Error()
+	if _, reason, ok := strings.Cut(message, ": "); ok && len(reason) < 64 {
+		return reason
+	}
+	return ""
 }
 
 // miniAppCode keeps the closed error vocabulary out of client text.

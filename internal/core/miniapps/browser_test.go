@@ -4,11 +4,14 @@ package miniapps
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -245,6 +248,21 @@ func TestFrameRefusesNavigationAway(t *testing.T) {
 	}
 }
 
+// A browser-only dimension is only reported once the browser measured it.
+// Filling it in from the static map reported every revision as overflowing.
+func TestUnmeasuredDimensionsStayOutOfTheStaticResult(t *testing.T) {
+	static := mergeChecks(nil, map[string]bool{"size": true, "tokens": true, "network": true, "elements": true, "controls": true, "errors": true})
+	for _, check := range static {
+		if check.ID == "layout_390" || check.ID == "layout_1280" {
+			t.Fatalf("static checks reported an unmeasured dimension: %+v", static)
+		}
+	}
+	merged := mergeChecks(static, map[string]bool{"elements": true, "controls": true, "errors": true, "layout_390": true, "layout_1280": true})
+	if !allPassed(merged) {
+		t.Fatalf("a measured pass became a failure: %+v", merged)
+	}
+}
+
 func TestPreLiveCheckFailsWithoutABrowser(t *testing.T) {
 	f := newFixture(t)
 	host, err := NewHost(f.svc, HostConfig{Browser: Browser{Leaser: testLeaser{}, Executable: "/nonexistent/chrome"}})
@@ -276,5 +294,103 @@ func TestStaticChecksNameTheFailingDimension(t *testing.T) {
 		if !failed[id] {
 			t.Fatalf("%s did not fail on a raw color, an extra marker and a missing control: %+v", id, checks)
 		}
+	}
+}
+
+// The tailnet listener reuses the app's loopback port, so an app's tailnet
+// origin is the same origin shape as its loopback one and never a public
+// address. This measures the address pairing; a real tailnet is not involved.
+func TestTailnetOriginReusesTheAppPort(t *testing.T) {
+	f := newFixture(t)
+	change := create(t, f)
+	if _, err := f.svc.Allow(t.Context(), "owner", change.App.ID, change.App.Revision); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	bound := map[string]string{}
+	// A second loopback address stands in for the tailnet address, so the same
+	// port can be joined twice on this host.
+	host, err := NewHost(f.svc, HostConfig{TailnetIP: "127.0.0.2", Listen: func(_ context.Context, network, address string) (net.Listener, error) {
+		l, err := (&net.ListenConfig{}).Listen(context.Background(), network, address)
+		if err != nil {
+			return nil, err
+		}
+		mu.Lock()
+		bound[address] = l.Addr().String()
+		mu.Unlock()
+		return l, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = host.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close()
+	view, err := host.Open(t.Context(), "owner", change.App.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Tailnet == "" {
+		t.Fatal("an allowed app had no tailnet address")
+	}
+	tailnet, err := url.Parse(view.Tailnet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := url.Parse(view.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tailnet.Hostname() != "127.0.0.2" || tailnet.Port() != frame.Port() {
+		t.Fatalf("the tailnet address did not join the frame port: %s vs %s", view.Tailnet, view.URL)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	paired := false
+	for requested, actual := range bound {
+		if requested == net.JoinHostPort("127.0.0.2", tailnet.Port()) {
+			paired = true
+			if !strings.HasPrefix(actual, "127.0.0.2:") {
+				t.Fatalf("the tailnet listener bound %s", actual)
+			}
+		}
+	}
+	if !paired {
+		t.Fatalf("no listener bound the tailnet address: %v", bound)
+	}
+}
+
+// Every gateway route has a fixed rate limit, and the app's own gateway is the
+// only place it can spend it.
+func TestGatewayRateLimitsRefuseTheNextCall(t *testing.T) {
+	f := newFixture(t)
+	change := create(t, f)
+	if _, err := f.svc.Allow(t.Context(), "owner", change.App.ID, change.App.Revision); err != nil {
+		t.Fatal(err)
+	}
+	origin, token := f.openApp(t, change.App.ID)
+	origin = strings.TrimSuffix(origin, "/")
+	client := &http.Client{Timeout: 10 * time.Second}
+	call := func(path string) int {
+		req, err := http.NewRequest(http.MethodGet, origin+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(&http.Cookie{Name: cookieName(change.App.ID), Value: token})
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	for i := 0; i < 240; i++ {
+		if status := call("/__lina/read?name=todos"); status != http.StatusOK {
+			t.Fatalf("declared read %d failed early: %d", i, status)
+		}
+	}
+	if status := call("/__lina/read?name=todos"); status != http.StatusTooManyRequests {
+		t.Fatalf("the gateway did not rate limit reads: %d", status)
 	}
 }

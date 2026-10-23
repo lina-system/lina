@@ -295,16 +295,11 @@ func TestHostServesEachAppOnItsOwnOriginAndRefusesOtherCookies(t *testing.T) {
 	}
 	firstURL, _ := openFrame(first.App.ID)
 	origin := originOfURL(t, firstURL)
-	appURL := regexp.MustCompile(`src="(http://127\.0\.0\.1:[0-9]+/\?code=[0-9a-f]+)"`).FindStringSubmatch("")
-	_ = appURL
 	resp, err := client.Get(firstURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	appOrigin := originOfURL(t, firstURL)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("app page status %d", resp.StatusCode)
 	}
@@ -608,3 +603,4 @@ func TestManifestRejectsUnboundedDeclarations(t *testing.T) {
 		t.Fatal("a valid manifest was refused")
 	}
 }
+

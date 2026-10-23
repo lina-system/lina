@@ -187,6 +187,25 @@ func (s *Service) writeRevision(appID string, revision int64, files map[string][
 	return os.Rename(tmp, final)
 }
 
+// captureDir keeps the desktop capture the pre-live check made of one revision.
+// A capture never renders as an app file, so it cannot be served on the origin.
+func (s *Service) captureDir(appID string) string {
+	return filepath.Join(s.cfg.Root, "miniapps", appID, "captures")
+}
+
+// writeCapture stores the checked render beside the revision. No capture means
+// the check did not run a browser, which is not an error here.
+func (s *Service) writeCapture(appID string, revision int64, png []byte) error {
+	if len(png) == 0 {
+		return nil
+	}
+	dir := s.captureDir(appID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return writeAtomic(filepath.Join(dir, fmt.Sprintf("%d.png", revision)), png)
+}
+
 func (s *Service) readRevision(appID string, revision int64) (map[string][]byte, error) {
 	dir := s.revisionDir(appID, revision)
 	entries, err := os.ReadDir(dir)

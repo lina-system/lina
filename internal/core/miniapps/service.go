@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -303,7 +304,7 @@ func (s *Service) Create(ctx context.Context, person, agent string, req CreateRe
 		return Change{}, err
 	}
 	if !checked.Passed {
-		return Change{}, ErrCheck
+		return Change{}, checkFailure(checked)
 	}
 	id, err := s.newAppID()
 	if err != nil {
@@ -314,6 +315,10 @@ func (s *Service) Create(ctx context.Context, person, agent string, req CreateRe
 		return Change{}, err
 	}
 	if err = s.writeRevision(id, 1, req.Files); err != nil {
+		return Change{}, err
+	}
+	if err = s.writeCapture(id, 1, checked.Capture); err != nil {
+		_ = s.removeAppDir(id)
 		return Change{}, err
 	}
 	if err = s.writeRecipe(id, 1, manifest, req.Checklist, sortedUnique(req.StoreShape)); err != nil {
@@ -410,6 +415,15 @@ func (s *Service) check(ctx context.Context, files map[string][]byte, manifest M
 	return checked, nil
 }
 
+// checkFailure names the dimension that stopped a revision, so the worker and
+// the person can see what to fix. errors.Is still matches ErrCheck.
+func checkFailure(checked CheckResult) error {
+	if checked.Reason == "" {
+		return ErrCheck
+	}
+	return fmt.Errorf("%w: %s", ErrCheck, checked.Reason)
+}
+
 func (s *Service) revision(ctx context.Context, appID string, number int64) (Revision, error) {
 	var rev Revision
 	var files []byte
@@ -500,7 +514,7 @@ func (s *Service) Change(ctx context.Context, person, appID string, req ChangeRe
 		return Change{}, err
 	}
 	if !checked.Passed {
-		return Change{}, ErrCheck
+		return Change{}, checkFailure(checked)
 	}
 	next := app.Revision + 1
 	shape := sortedUnique(req.StoreShape)
@@ -511,6 +525,9 @@ func (s *Service) Change(ctx context.Context, person, appID string, req ChangeRe
 		}
 	}
 	if err := s.writeRevision(appID, next, req.Files); err != nil {
+		return Change{}, err
+	}
+	if err := s.writeCapture(appID, next, checked.Capture); err != nil {
 		return Change{}, err
 	}
 	if err := s.writeRecipe(appID, next, manifest, req.Checklist, shape); err != nil {
@@ -698,7 +715,7 @@ func (s *Service) restore(ctx context.Context, person, appID string, revision in
 		return Change{}, err
 	}
 	if !checked.Passed {
-		return Change{}, ErrCheck
+		return Change{}, checkFailure(checked)
 	}
 	next := app.Revision + 1
 	shape := sortedUnique(recipe.Shape)

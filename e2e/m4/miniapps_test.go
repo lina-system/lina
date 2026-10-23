@@ -2,6 +2,7 @@
 package m4_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -39,7 +41,11 @@ func miniAppHTML(extra string) string {
 func miniAppFiles(extra string) map[string]string {
 	return map[string]string{
 		"index.html": miniAppHTML(extra),
-		"app.js":     "// SPDX-License-Identifier: Apache-2.0\ndocument.getElementById('app').dataset.ready=String(true);\n",
+		"app.js": `// SPDX-License-Identifier: Apache-2.0
+document.getElementById('app').dataset.ready=String(true);
+const done=document.querySelector('[data-action="toggle"]');
+if(done){done.addEventListener('click',()=>{const row=document.getElementById(done.dataset.target);row.hidden=!row.hidden})}
+`,
 	}
 }
 
@@ -57,23 +63,40 @@ func TestMiniAppsThroughRunningCore(t *testing.T) {
 		t.Skip("no installed Chromium")
 	}
 	var mu sync.Mutex
-	appID := ""
+	appID, todoID, todoRevision := "", "", ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := decodeRequest(t, r)
 		item := last(q)
 		if item.Type == "function_call_output" {
+			switch item.CallID {
+			case "record":
+				var answer struct {
+					Code   string
+					Output struct{ ID, Revision string }
+				}
+				if err := json.Unmarshal([]byte(item.Output), &answer); err != nil || answer.Output.ID == "" {
+					t.Errorf("record receipt %q: %v", item.Output, err)
+				}
+				receipt := answer.Output
+				mu.Lock()
+				todoID, todoRevision = receipt.ID, receipt.Revision
+				mu.Unlock()
+				// The app is built on the person's request in the same turn.
+				toolCall(w, "create", "mini_app", map[string]any{
+					"op": "create", "name": "Open to-dos",
+					"request":   "a page that shows open to-dos and lets me finish one",
+					"manifest":  map[string]any{"name": "Open to-dos", "reads": []string{"todos"}, "requests": []string{"todo.done"}},
+					"checklist": miniAppChecklist(),
+					"files":     miniAppFiles(""),
+				})
+				return
+			}
 			reply(w, "Done.")
 			return
 		}
 		switch {
 		case strings.Contains(item.Content, "open to-dos"):
-			toolCall(w, "create", "mini_app", map[string]any{
-				"op": "create", "name": "Open to-dos",
-				"request": "a page that shows open to-dos and lets me finish one",
-				"manifest": map[string]any{"name": "Open to-dos", "reads": []string{"todos"}, "requests": []string{"todo.done"}},
-				"checklist": miniAppChecklist(),
-				"files":     miniAppFiles(""),
-			})
+			toolCall(w, "record", "write_record", map[string]any{"id": "", "revision": "", "kind": "todo", "title": "Buy milk", "note": "", "todo": map[string]any{"state": "open"}})
 		case strings.Contains(item.Content, "오늘만"):
 			mu.Lock()
 			id := appID
@@ -102,6 +125,16 @@ func TestMiniAppsThroughRunningCore(t *testing.T) {
 	if !strings.Contains(first, `data-check="done"`) {
 		t.Fatalf("served files lost the control: %s", first)
 	}
+	// The pre-live check keeps a desktop capture of the checked revision.
+	capture, err := os.ReadFile(filepath.Join(h.root, "miniapps", id, "captures", "1.png"))
+	if err != nil || !bytes.HasPrefix(capture, []byte("\x89PNG\r\n\x1a\n")) {
+		t.Fatalf("the checked revision kept no capture: %v", err)
+	}
+	if dir := os.Getenv("LINA_CAPTURE_DIR"); dir != "" {
+		if err := os.WriteFile(filepath.Join(dir, "miniapps_running_core.png"), capture, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	mu.Lock()
 	appID = id
 	mu.Unlock()
@@ -112,30 +145,16 @@ func TestMiniAppsThroughRunningCore(t *testing.T) {
 	if got := miniAppCommand(t, c, protocol.MiniAppRequest{Operation: "allow", App: &id, Revision: revisionNumber(1)}); got.Code != nil {
 		t.Fatalf("allow refused: %s", *got.Code)
 	}
-	opened := miniAppCommand(t, c, protocol.MiniAppRequest{Operation: "open", App: &id})
-	if opened.URL == nil {
-		t.Fatalf("an allowed app did not open: %+v", opened)
-	}
-	frame := httpGet(t, *opened.URL, nil)
-	if !strings.Contains(frame.body, `id="app"`) {
-		t.Fatalf("frame page is not the mini app frame: %s", frame.body)
-	}
-	src := between(frame.body, `src="`, `"`)
-	if !strings.Contains(src, "/?code=") {
-		t.Fatalf("frame carried no one-time code: %s", src)
-	}
-	app := httpGet(t, src, nil)
+	origin, cookie := openMiniApp(t, c, id)
+	app := httpGet(t, origin+"/", cookie)
 	if app.status != http.StatusOK || !strings.Contains(app.body, "Open to-dos") {
 		t.Fatalf("app origin did not serve the app: %d %s", app.status, app.body)
-	}
-	if !strings.Contains(app.cookie, "lina_app_"+id) {
-		t.Fatalf("app origin did not set its own cookie: %q", app.cookie)
 	}
 
 	// The person asks for a change. A widening re-asks before it goes live.
 	h.turn(lina, "app-change", "위에 '오늘만' 필터 넣어 줘")
 	_, revision, allowed = miniAppRow(t, h)
-	if revision != 2 || allowed != 1 {
+	if revision != 2 || allowed != 0 {
 		t.Fatalf("a widened revision did not wait for the person: revision=%d allowed=%d", revision, allowed)
 	}
 	second := miniAppFile(t, h, id, 2, "index.html")
@@ -148,6 +167,43 @@ func TestMiniAppsThroughRunningCore(t *testing.T) {
 	}
 	if got := miniAppCommand(t, c, protocol.MiniAppRequest{Operation: "allow", App: &id, Revision: revisionNumber(2)}); got.Code != nil {
 		t.Fatalf("allow refused the second revision: %s", *got.Code)
+	}
+	// Allowing a widened revision rotates the token, so the earlier cookie is
+	// refused and the page opens again with a fresh one.
+	if stale := httpGet(t, origin+"/__lina/read?name=todos", cookie); stale.status != http.StatusUnauthorized {
+		t.Fatalf("the earlier cookie still reached the gateway: %d %s", stale.status, stale.body)
+	}
+	origin, cookie = openMiniApp(t, c, id)
+	if served := httpGet(t, origin+"/", cookie); served.status != http.StatusOK || !strings.Contains(served.body, "오늘만") {
+		t.Fatalf("the new revision was not served: %d %s", served.status, served.body)
+	}
+
+	// The page's script sends a declared request through its gateway. Core runs
+	// it as the owner agent's effect under the ordinary posture.
+	mu.Lock()
+	target, targetRevision := todoID, todoRevision
+	mu.Unlock()
+	if target == "" || targetRevision == "" {
+		t.Fatal("the to-do the app finishes was not created")
+	}
+	requestBody := `{"id":"finish-1","name":"todo.done","arguments":{"id":"` + target + `","revision":"` + targetRevision + `"}}`
+	written := httpPost(t, origin+"/__lina/request", cookie, requestBody)
+	if written.status != http.StatusOK || !strings.Contains(written.body, `"state":"applied"`) {
+		t.Fatalf("the gateway did not run the declared request: %d %s", written.status, written.body)
+	}
+	var fields string
+	h.read(func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, `SELECT fields FROM records_todo WHERE id=?`, target).Scan(&fields)
+	})
+	var todo struct {
+		State      string
+		Completion *struct{ State, AgentID string }
+	}
+	if err := json.Unmarshal([]byte(fields), &todo); err != nil {
+		t.Fatal(err)
+	}
+	if todo.State != "claimed" || todo.Completion == nil || todo.Completion.State != "claimed" {
+		t.Fatalf("the effect did not report a claimed completion for the to-do: %s", fields)
 	}
 
 	// Undo returns to the previous revision as a new one.
@@ -180,7 +236,33 @@ func miniAppClient(t *testing.T, h *coreHarness) *clientapi.Client {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { c.Close() })
+	t.Logf("welcome version=%s capabilities=%+v", c.Welcome.ProtocolVersion, c.Welcome.Capabilities)
 	return c
+}
+
+// openMiniApp opens an allowed app, follows its frame to the one-time code and
+// exchanges that code for the app's own cookie.
+func openMiniApp(t *testing.T, c *clientapi.Client, id string) (string, *http.Cookie) {
+	t.Helper()
+	opened := miniAppCommand(t, c, protocol.MiniAppRequest{Operation: "open", App: &id})
+	if opened.URL == nil {
+		t.Fatalf("an allowed app did not open: %+v", opened)
+	}
+	frame := httpGet(t, *opened.URL, nil)
+	if !strings.Contains(frame.body, `id="app"`) {
+		t.Fatalf("frame page is not the mini app frame: %s", frame.body)
+	}
+	src := between(frame.body, `src="`, `"`)
+	if !strings.Contains(src, "/?code=") {
+		t.Fatalf("frame carried no one-time code: %s", src)
+	}
+	exchange := httpGet(t, src, nil)
+	if exchange.status != http.StatusSeeOther || !strings.Contains(exchange.cookie, "lina_app_"+id) {
+		t.Fatalf("app origin did not exchange the code for its own cookie: %d %q", exchange.status, exchange.cookie)
+	}
+	name, value, _ := strings.Cut(exchange.cookie, "=")
+	origin := "http://" + strings.SplitN(strings.TrimPrefix(src, "http://"), "/", 2)[0]
+	return origin, &http.Cookie{Name: name, Value: value}
 }
 
 func miniAppCommand(t *testing.T, c *clientapi.Client, p protocol.MiniAppRequest) protocol.MiniAppResult {
@@ -192,7 +274,7 @@ func miniAppCommand(t *testing.T, c *clientapi.Client, p protocol.MiniAppRequest
 	for {
 		frame, err := c.Receive(t.Context())
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("receive after %s: %v", p.Operation, err)
 		}
 		if frame.Error != nil {
 			t.Fatalf("%s: %+v", p.Operation, frame.Error)
@@ -242,7 +324,8 @@ func httpGet(t *testing.T, url string, cookie *http.Cookie) httpResult {
 	if cookie != nil {
 		request.AddCookie(cookie)
 	}
-	response, err := http.DefaultClient.Do(request)
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,4 +348,27 @@ func between(text, start, end string) string {
 	}
 	value, _, _ := strings.Cut(tail, end)
 	return value
+}
+
+func httpPost(t *testing.T, url string, cookie *http.Cookie, body string) httpResult {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if cookie != nil {
+		request.AddCookie(cookie)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return httpResult{status: response.StatusCode, body: string(raw)}
 }

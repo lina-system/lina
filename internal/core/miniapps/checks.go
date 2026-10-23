@@ -163,8 +163,14 @@ func mergeChecks(base []result.MockCheck, extra map[string]bool) []result.MockCh
 			values[id] = passed
 		}
 	}
+	// A dimension nobody measured stays out of the list, so an intermediate
+	// result cannot report a browser-only dimension as a failure.
 	for _, id := range CheckDimensions {
-		out = append(out, result.MockCheck{ID: id, Passed: values[id]})
+		value, ok := values[id]
+		if !ok {
+			continue
+		}
+		out = append(out, result.MockCheck{ID: id, Passed: value})
 	}
 	return out
 }
