@@ -1,0 +1,15 @@
+{
+  "cases": [
+    {"name": "missing-done", "omit": "done", "tool_code": "invalid_arguments"},
+    {"name": "missing-write-area", "omit": "write_area", "tool_code": "invalid_arguments"},
+    {"name": "missing-file", "design_ref": "missing.md#result", "tool_code": "invalid_arguments"},
+    {"name": "missing-section", "design_ref": "design.md#missing", "tool_code": "invalid_arguments"},
+    {"name": "code-example", "design_ref": "design.md#example", "tool_code": "invalid_arguments"},
+    {"name": "success", "expected": "ready_for_review"},
+    {"name": "pinned-base", "move_base": true, "expected": "ready_for_review"}
+  ],
+  "what": "Produce a file from a validated work definition",
+  "done": "The committed result has a current PR and a replayable task receipt",
+  "work_area": true,
+  "definition": true
+}

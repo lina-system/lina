@@ -167,8 +167,28 @@ func TestOldRepairPlanCannotReenterAfterDefinitionAssessment(t *testing.T) {
 	if g.DefinitionPending || len(g.Tasks) != 2 || g.Tasks[0].RepairAsked || g.Tasks[0].RepairedBy != "" {
 		t.Fatalf("obsolete repair changed the assessed definition: %+v", g)
 	}
+	fresh, err := e.Claim(t.Context(), revisionAction(t, e, "a", PlanGoal).ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A different late receipt bypasses exact-delivery deduplication, but the
+	// old assessment's completed retirement cannot clear the fresh one's marker.
+	if err = e.Report(t.Context(), a.ID, a.Epoch, Observation{Status: OutcomeNeedsPerson}); err != nil {
+		t.Fatal(err)
+	}
+	if !revisionSnapshot(t, e).Goals[0].Tasks[0].RepairAsked {
+		t.Fatal("late obsolete report cleared the current assessment marker")
+	}
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !revisionSnapshot(t, e).Goals[0].Tasks[0].RepairAsked {
+		t.Fatal("repeated retirement cleared the current assessment marker")
+	}
 	repair.ID = "current-repair"
-	revisionReport(t, e, "a", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}})
+	if err = e.Report(t.Context(), fresh.ID, fresh.Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
+		t.Fatal(err)
+	}
 	if revisionSnapshot(t, e).Goals[0].Tasks[0].RepairedBy != repair.ID {
 		t.Fatal("discarded plan prevented a current repair")
 	}
