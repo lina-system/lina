@@ -126,19 +126,23 @@ export function goTestOutcomes(output) {
     let event;
     try { event = JSON.parse(line); } catch { continue; }
     if (!event?.Package) continue;
-    if (!packages.has(event.Package)) packages.set(event.Package, { output: '', pending: new Map() });
+    if (!packages.has(event.Package)) packages.set(event.Package, { output: '', states: new Map() });
     const pkg = packages.get(event.Package);
     if (event.Output) pkg.output = (pkg.output + event.Output).slice(-16000);
     if (!event.Test) {
       // Timeouts and panics can end a package without test-level fail events.
-      // Attribute through unfinished children: a resumed parent can be waiting
-      // for paused parallel children rather than executing scenario code.
+      // A parallel test may have emitted run but still be waiting for a slot.
+      // Attribute the package failure only to an active leaf or an explicit
+      // nested failure; a parent waiting on paused children is inconclusive.
       if (event.Action === 'fail') {
-        const pending = [...pkg.pending.keys()];
-        for (const [name, running] of pkg.pending) {
-          if (!running || pending.some(child => child.startsWith(name + '/'))) continue;
-          const record = tests.get(event.Package + ':' + name.split('/')[0]);
+        for (const record of tests.values()) {
+          if (record.package !== event.Package) continue;
           if (record.result !== 'unknown') continue;
+          const states = [...pkg.states].filter(([name]) => name === record.test || name.startsWith(record.test + '/'));
+          const unfinished = states.filter(([, state]) => ['run', 'cont', 'pause'].includes(state));
+          const active = unfinished.some(([name, state]) => state !== 'pause'
+            && !unfinished.some(([child]) => child.startsWith(name + '/')));
+          if (!active && !states.some(([, state]) => state === 'fail')) continue;
           record.result = 'fail';
           record.output = (record.output + pkg.output).slice(-16000);
         }
@@ -149,12 +153,9 @@ export function goTestOutcomes(output) {
     const key = event.Package + ':' + name;
     if (!tests.has(key)) tests.set(key, { package: event.Package, test: name, result: 'unknown', output: '' });
     const record = tests.get(key);
-    if (['run', 'cont'].includes(event.Action)) pkg.pending.set(event.Test, true);
-    if (event.Action === 'pause') pkg.pending.set(event.Test, false);
-    if (['pass', 'fail', 'skip'].includes(event.Action)) pkg.pending.delete(event.Test);
+    if (['run', 'pause', 'cont', 'pass', 'fail', 'skip'].includes(event.Action)) pkg.states.set(event.Test, event.Action);
     if (event.Output) record.output = (record.output + event.Output).slice(-16000);
-    // An explicit child failure is evidence even if its parent never finishes.
-    if (event.Action === 'fail' || event.Test === name && ['pass', 'skip'].includes(event.Action)) record.result = event.Action;
+    if (event.Test === name && ['pass', 'fail', 'skip'].includes(event.Action)) record.result = event.Action;
   }
   return [...tests.values()];
 }

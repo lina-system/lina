@@ -728,4 +728,4 @@ A number marked (P) is a starting value of this design. The others come from the
 
 ## Not scheduled here
 
-The LINA app (a private repository), the library viewers and meeting notes, the Google plugin, Jev, Klotho supervision and the QA product map, the news feed, LIFE, the launcher, OpenViking and the mobile host. The development-time improvement loop is not a product feature; only G1-39 serves it.
+The LINA app (its own repository), the library viewers and meeting notes, the Google plugin, Jev, Klotho supervision and the QA product map, the news feed, LIFE, the launcher, OpenViking and the mobile host. The development-time improvement loop is not a product feature; only G1-39 serves it.

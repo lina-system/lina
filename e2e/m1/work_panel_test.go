@@ -153,6 +153,48 @@ func TestM3WorkPanelInstalledCoreMatrix(t *testing.T) {
 							t.Fatalf("E5 status mismatch:\n%s", screenText(snap))
 						}
 						t.Logf("E1-E5 %s ascii=%t %dx%d N=%d shown=%d\n%s", language, ascii, width, fixture.Height, n, shown, screenText(snap))
+						// Keep every card reachable through the real input decoder and
+						// renderer, including the cards below the initial window.
+						if width >= 120 {
+							h.keys(terminal, "\x10")
+						}
+						selectionMark := design.Dark().GlyphUnicodeAction
+						if ascii {
+							selectionMark = design.Dark().GlyphAsciiAction
+						}
+						waitSelection := func(index int) {
+							t.Helper()
+							line := expected[index].Line
+							started, err := time.Parse(time.RFC3339Nano, *line.StartedAt)
+							if err != nil {
+								t.Fatal(err)
+							}
+							before := time.Now()
+							selected, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+								count := 0
+								matched := false
+								for _, row := range panelCellRows(s, x, panelWidth) {
+									if !strings.HasPrefix(row, selectionMark+" ") {
+										continue
+									}
+									count++
+									prefix := selectionMark + " " + render.Truncate(line.Name, 6, render.Unicode{})
+									matched = strings.HasPrefix(row, prefix) && (strings.HasSuffix(row, panelElapsed(time.Now().Sub(started))) || strings.HasSuffix(row, panelElapsed(before.Sub(started))))
+								}
+								return count == 1 && matched
+							})
+							if err != nil {
+								t.Fatalf("selected card %d unreachable: %v\n%s", index, err, screenText(selected))
+							}
+						}
+						waitSelection(0)
+						if n > 1 {
+							h.keys(terminal, strings.Repeat("\x1b[B", n-1))
+							waitSelection(n - 1)
+							h.keys(terminal, strings.Repeat("\x1b[A", n-1))
+							waitSelection(0)
+						}
+						t.Logf("selection navigation %s ascii=%t %dx%d N=%d: first/last/first visible", language, ascii, width, fixture.Height, n)
 						h.keys(terminal, "\x04")
 						terminal.process.wait(t, 0)
 						h.expectTerminalRestored(terminal)
