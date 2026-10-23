@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+// The plug-in's engine, built from the engine callbacks macOS hands the
+// plug-in. Only SetResult is taken from that table; the authorization engine
+// has no log callback, so every answer goes to the system log through os_log.
 #include <Security/AuthorizationPlugin.h>
+#include <os/log.h>
 
 #include "engine_callbacks.h"
 #include "lina_unlock.h"
@@ -10,8 +14,10 @@ static void set_result(void *context, bool allow) {
 }
 
 static void write_log(void *context, const char *line) {
-  struct lina_callback_engine *state = context;
-  state->callbacks->WriteLog(state->engine, "%s", line);
+  (void)context;
+  // Public so the ticket id and the reason stay readable in the system log;
+  // the line carries no credential by construction.
+  os_log_with_type(OS_LOG_DEFAULT, OS_LOG_TYPE_DEFAULT, "%{public}s", line);
 }
 
 void lina_engine_from_callbacks(const AuthorizationCallbacks *callbacks, AuthorizationEngineRef engine,
