@@ -62,6 +62,7 @@ func Migrations() []Migration {
 		{Version: 48, SQL: workReviewsSchema},
 		{Version: 49, SQL: ResultsSchema + PlanningSchema},
 		{Version: 50, SQL: doneEvidenceSchema},
+		{Version: 51, SQL: conversationQuestionsSchema},
 	}
 }
 
@@ -97,6 +98,7 @@ var publishedMigrationTables = []struct {
 	{50, "done_completions"}, {49, "result_saves"},
 	{42, "agent_starters"}, {42, "agent_selection"},
 	{45, "record_operations"}, {45, "record_candidates"},
+	{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is
