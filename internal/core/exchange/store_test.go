@@ -440,3 +440,20 @@ func TestCheckbackDisabledAndConcurrentArtifactClaims(t *testing.T) {
 		t.Fatalf("deadline stole ownership: %+v %v", lease, err)
 	}
 }
+
+func TestRedirectedFirstChangeReservesReceiverOwnership(t *testing.T) {
+	s := exchange.New(database(t))
+	req := request()
+	req.DeliveryID = "new-change"
+	req.From = "answerer"
+	req.To = "asker"
+	req.Origin = &exchange.Origin{Person: "person", Conversation: "main:answerer", CheckBack: true, NextCheck: now.Add(time.Minute)}
+	got, err := s.BeginChange(t.Context(), exchange.Change{Person: "person", Artifact: exchange.Artifact{Kind: "wiki", ID: "record:draft"}, Owner: "asker", WorkID: "work-first", Done: "Draft updated"}, req, now)
+	if err != nil || got.Handoff == nil || got.Change != nil {
+		t.Fatalf("redirect: %+v %v", got, err)
+	}
+	held, err := s.Change(t.Context(), "person", "record:draft")
+	if err != nil || held.Owner != "asker" {
+		t.Fatalf("receiver has no reserved ownership: %+v %v", held, err)
+	}
+}

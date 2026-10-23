@@ -132,6 +132,20 @@ func TestArtifactOwnerRoutesSecondRecordWrite(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].To != r.agent {
 		t.Fatalf("handoffs: %+v %v", rows, err)
 	}
+	channel := newConversationView(r, owner, "channel:shared")
+	channelBindings := map[string]loop.Tool{}
+	if err := channel.prepareRecordTools("channel-edit", channelBindings); err != nil {
+		t.Fatal(err)
+	}
+	redirected := channelBindings[call.Name].Execute(t.Context(), call)
+	var channelResult struct{ Handoff exchange.Status }
+	if redirected.Code != loop.OK || json.Unmarshal(redirected.Output, &channelResult) != nil {
+		t.Fatalf("channel route: %+v", redirected)
+	}
+	origin, err := r.exchangeStore().Origin(t.Context(), channelResult.Handoff.DeliveryID)
+	if err != nil || origin.Conversation != "main:"+owner {
+		t.Fatalf("undeliverable check-back lane: %+v %v", origin, err)
+	}
 	if err := r.exchangeStore().EndChange(t.Context(), r.person, owner, lease.Change.WorkID); err == nil {
 		t.Fatal("foreign close")
 	}
@@ -141,5 +155,22 @@ func TestArtifactOwnerRoutesSecondRecordWrite(t *testing.T) {
 	result := otherBindings[call.Name].Execute(t.Context(), provider.ToolCall{ID: "after-release", Name: call.Name, Arguments: call.Arguments})
 	if result.Code != loop.OK {
 		t.Fatalf("release did not unblock write: %+v", result)
+	}
+}
+
+func TestExchangeDeclarationsSurviveEvidenceEncoding(t *testing.T) {
+	declarations := exchangeDeclarations()
+	raw, err := json.Marshal(declarations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored []provider.ToolDecl
+	if err = json.Unmarshal(raw, &restored); err != nil {
+		t.Fatal(err)
+	}
+	for i := range declarations {
+		if string(declarations[i]) != string(restored[i]) {
+			t.Fatalf("declaration %d changes bytes in the durable request evidence", i)
+		}
 	}
 }

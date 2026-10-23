@@ -137,13 +137,13 @@ the sender checks it.
 stable identity and end condition. Core resolves the owning agent from the
 published `handoff.owns` records, retaining an existing open owner. A missing
 or ambiguous owner refuses admission. A second agent receives a queued
-hand-off instead of another lease. `finish_artifact_change` releases only the
+hand-off instead of another lease. If no lease exists, Core reserves it for the owning agent in the same transaction as the hand-off. `finish_artifact_change` releases only the
 calling agent's work; a reply deadline never releases ownership. Record
 identities are `record:<id>`. The installed record writer also checks these
 leases, so a second agent cannot bypass the hand-off by writing directly.
-The receiver can read and revise that named record through the usual authority
+The receiver sees the permitted artifact identity in its request and can read and revise that named record through the usual authority
 and revision checks. Other personal records and private knowledge are absent
-from the exchange request. These leases and sender waiting items survive Core
+from the exchange request. An automatic hand-off from a shared-channel record write raises its check-back in the sender’s private main conversation; it grants no delayed channel-posting authority. These leases and sender waiting items survive Core
 restart and belong to the agent, independently of a client's lifetime.
 
 Ownership of artifact and work kinds across the eight starters:

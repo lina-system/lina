@@ -217,6 +217,9 @@ func (r *conversationRuntime) routeArtifactWrite(ctx context.Context, turnID str
 	if err != nil {
 		return nil, err
 	}
+	// A shared-channel write must not strand its check-back or grant delayed
+	// channel posting authority. The sender's private lane owns this item.
+	origin.Conversation = "main:" + r.agent
 	origin.Artifact = owned.Artifact
 	receipt, err := r.exchangeStore().Start(ctx, exchange.Request{DeliveryID: "handoff:" + codingID(turnID, c.Name, c.ID), From: r.agent, To: owned.Owner, Origin: origin, HandOff: exchange.HandOff{Subject: owned.Done, Wanted: c.Name + "\n" + c.Arguments, OutOfScope: "Only the named artifact; no external effects.", Done: owned.Done, Check: "artifact-result", Deadline: time.Now().Add(24 * time.Hour)}}, time.Now())
 	if err != nil {

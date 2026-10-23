@@ -50,6 +50,20 @@ func TestHandoffReceiptsAndSingleArtifactOwner(t *testing.T) {
 		receiver := strings.Contains(q.Instructions, "Return a short report of what you observed")
 		if receiver {
 			receiverCalls.Add(1)
+			if item.CallID == "" {
+				mu.Lock()
+				artifact := "record:" + doc.ID
+				mu.Unlock()
+				visible := false
+				for _, raw := range q.Input {
+					if strings.Contains(string(raw), artifact) {
+						visible = true
+					}
+				}
+				if !visible {
+					t.Error("receiver request omitted the permitted artifact identity")
+				}
+			}
 			for _, raw := range q.Tools {
 				var v struct{ Name string }
 				_ = json.Unmarshal(raw, &v)

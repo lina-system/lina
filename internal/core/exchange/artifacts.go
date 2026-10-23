@@ -66,14 +66,12 @@ func (s *Store) BeginChange(ctx context.Context, c Change, request Request, at t
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if c.Owner == request.From {
-			if err == nil {
-				out.Change = &c
-				return nil
-			}
+		if errors.Is(err, sql.ErrNoRows) {
 			if _, err = tx.ExecContext(ctx, `INSERT INTO artifact_changes(person,kind,artifact,owner,work_id,done) VALUES(?,?,?,?,?,?)`, c.Person, c.Artifact.Kind, c.Artifact.ID, c.Owner, c.WorkID, c.Done); err != nil {
 				return err
 			}
+		}
+		if c.Owner == request.From {
 			out.Change = &c
 			return nil
 		}

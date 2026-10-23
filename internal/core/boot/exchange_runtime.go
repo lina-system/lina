@@ -161,6 +161,17 @@ func (r *conversationRuntime) receiveHandoff(ctx context.Context, receipt exchan
 			}
 		}
 		req := prepared.Request
+		if origin.Artifact.ID != "" {
+			contextBody, err := json.Marshal(map[string]any{"artifact": origin.Artifact})
+			if err != nil {
+				return err
+			}
+			block, err := json.Marshal(map[string]string{"role": "developer", "content": "Core's permitted artifact for this hand-off: " + string(contextBody)})
+			if err != nil {
+				return err
+			}
+			req.Items = append(req.Items, block)
+		}
 		req.Tools = declarations
 		req.Model = r.route.Model
 		req.Credential = r.route.Request(nil).Credential
