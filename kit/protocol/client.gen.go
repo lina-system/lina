@@ -18,6 +18,9 @@ const (
 	KindConversationStart    Kind = "conversation_start"
 	KindInput                Kind = "input"
 	KindInterrupt            Kind = "interrupt"
+	KindLauncherRequest      Kind = "launcher_request"
+	KindLauncherResult       Kind = "launcher_result"
+	KindLauncherReply        Kind = "launcher_reply"
 	KindHistoryGet           Kind = "history_get"
 	KindHistory              Kind = "history"
 	KindSubscribe            Kind = "subscribe"
@@ -562,6 +565,25 @@ type ItemDone struct {
 	Speaker  *ConversationSpeaker `json:"speaker,omitempty"`
 	Stream   *StreamMetadata      `json:"stream,omitempty"`
 	Text     *string              `json:"text,omitempty"`
+}
+type LauncherReply struct {
+	AgentID        string          `json:"agent_id"`
+	ConversationID string          `json:"conversation_id"`
+	Done           bool            `json:"done"`
+	MessageID      *string         `json:"message_id,omitempty"`
+	RequestID      string          `json:"request_id"`
+	Stream         *StreamMetadata `json:"stream,omitempty"`
+	Text           string          `json:"text"`
+}
+type LauncherRequest struct {
+	AgentID   *string `json:"agent_id,omitempty"`
+	RequestID string  `json:"request_id"`
+	Text      string  `json:"text"`
+}
+type LauncherResult struct {
+	AgentID        string `json:"agent_id"`
+	ConversationID string `json:"conversation_id"`
+	RequestID      string `json:"request_id"`
 }
 type MemoryEvidence struct {
 	Quote     *string          `json:"quote,omitempty"`
@@ -1208,6 +1230,9 @@ func (ErrorPayload) isPayload()         {}
 func (ConversationStart) isPayload()    {}
 func (Input) isPayload()                {}
 func (Interrupt) isPayload()            {}
+func (LauncherRequest) isPayload()      {}
+func (LauncherResult) isPayload()       {}
+func (LauncherReply) isPayload()        {}
 func (HistoryGet) isPayload()           {}
 func (History) isPayload()              {}
 func (Subscribe) isPayload()            {}
@@ -1337,6 +1362,18 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		return p, err
 	case KindInterrupt:
 		var p Interrupt
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindLauncherRequest:
+		var p LauncherRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindLauncherResult:
+		var p LauncherResult
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindLauncherReply:
+		var p LauncherReply
 		err := json.Unmarshal(data, &p)
 		return p, err
 	case KindHistoryGet:
@@ -1725,6 +1762,9 @@ const clientSchemaJSON = `{
         "conversation_start",
         "input",
         "interrupt",
+        "launcher_request",
+        "launcher_result",
+        "launcher_reply",
         "history_get",
         "history",
         "subscribe",
@@ -1989,6 +2029,54 @@ const clientSchemaJSON = `{
         "properties": {
           "payload": {
             "$ref": "#/$defs/interrupt"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "launcher_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/launcher_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "launcher_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/launcher_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "launcher_reply"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/launcher_reply"
           }
         }
       }
@@ -3786,6 +3874,92 @@ const clientSchemaJSON = `{
         }
       },
       "required": [],
+      "additionalProperties": false
+    },
+    "launcher_request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "launcher_request": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/launcher_request_id"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "request_id",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "launcher_result": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/launcher_request_id"
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "request_id",
+        "conversation_id",
+        "agent_id"
+      ],
+      "additionalProperties": false
+    },
+    "launcher_reply": {
+      "type": "object",
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "request_id": {
+          "$ref": "#/$defs/launcher_request_id"
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "done": {
+          "type": "boolean"
+        },
+        "message_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "request_id",
+        "conversation_id",
+        "agent_id",
+        "text",
+        "done"
+      ],
       "additionalProperties": false
     },
     "history_get": {
@@ -5839,7 +6013,7 @@ const clientSchemaJSON = `{
     },
     "stream_topic": {
       "type": "string",
-      "pattern": "^(conversation:[\\s\\S]+|results:[\\s\\S]+|running|progress|waiting|exchanges|accounts|channels|core)$"
+      "pattern": "^(conversation:[\\s\\S]+|results:[\\s\\S]+|running|progress|waiting|exchanges|accounts|channels|launcher|core)$"
     },
     "stream_cursor": {
       "type": "object",
@@ -5893,6 +6067,7 @@ const clientSchemaJSON = `{
           "type": "string",
           "enum": [
             "output_delta",
+            "launcher_reply",
             "item_done",
             "turn_state",
             "tool_activity",
@@ -5947,6 +6122,22 @@ const clientSchemaJSON = `{
             "properties": {
               "payload": {
                 "$ref": "#/$defs/output_delta"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "launcher_reply"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/launcher_reply"
               }
             }
           }
