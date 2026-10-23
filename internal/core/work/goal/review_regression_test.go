@@ -132,8 +132,8 @@ func TestReviewScopeCorrectionReachesManagerAndPreservesOtherGoals(t *testing.T)
 				if g.DefinitionPending || len(g.Tasks) != 1 || g.Tasks[0].ID != "new" || g.Tasks[0].Repository != "new-repo" {
 					t.Fatalf("settled removed tasks prevented scoped replanning: %+v", g)
 				}
-			} else if g.State != GoalBlocked || !g.DefinitionPending || g.AttentionID == "" {
-				t.Fatalf("empty correction plan cleared the fence: %+v", g)
+			} else if g.State != GoalBlocked || g.DefinitionPending || len(g.Tasks) != 0 || g.AttentionID == "" {
+				t.Fatalf("empty full plan failed to retire tasks and expose the gap: %+v", g)
 			}
 			restart, err := NewEngine(e.cfg)
 			if err != nil {
@@ -300,7 +300,12 @@ func TestReviewRevisionReopensBlockedGoalWithoutAuthorizingEffects(t *testing.T)
 			if g.State == GoalBlocked || g.AttentionID != "" || g.BlockedReason != "" {
 				t.Errorf("old attention kept the revision blocked: %+v", g)
 			}
-			if err := e.Report(t.Context(), plan.ID, cfg.Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("additional")}}); err != nil {
+			if err := e.Report(t.Context(), plan.ID, cfg.Epoch, Observation{Status: OutcomeSucceeded, Tasks: append(func() []Task {
+				if kind == Assign {
+					return []Task{readyTask("a")}
+				}
+				return nil
+			}(), readyTask("additional"))}); err != nil {
 				t.Fatal(err)
 			}
 			reviewReconcile(t, e)

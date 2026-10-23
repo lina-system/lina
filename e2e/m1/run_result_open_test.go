@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -86,7 +87,17 @@ func runResultOpenLocalized(t *testing.T, language design.Language) {
 		locale = "ko_KR.UTF-8"
 	}
 	terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=" + locale}, false, true, 100, 32)
-	strip := waitScreen(t, h, terminal, design.Text(language, "running")+" 1")
+	// The running projection can arrive before the connection is mutable.
+	// Wait for the localized live composer before sending navigation keys.
+	strip, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+		text := screenText(s)
+		return s.AltScreen && !s.CursorHidden && renderedFrame(terminal, s) &&
+			strings.Contains(text, design.Text(language, "live")) &&
+			strings.Contains(text, design.Text(language, "running")+" 1")
+	})
+	if err != nil {
+		t.Fatalf("localized running composer not ready: %v; cells=%s", err, screenText(strip))
+	}
 	assertLocalizedRun := func(surface, text string) {
 		t.Helper()
 		if strings.Contains(text, "ready_for_review:") {
@@ -98,8 +109,6 @@ func runResultOpenLocalized(t *testing.T, language design.Language) {
 		}
 	}
 	assertLocalizedRun("running strip", screenText(strip))
-	// Restored rows can arrive before the connection permits opening a result.
-	waitScreen(t, h, terminal, design.Text(language, "live"))
 	h.keys(terminal, "\x12") // Running: the owner opens a landed row.
 	list := waitScreen(t, h, terminal, design.Text(language, "running.keys"))
 	assertLocalizedRun("running list", screenText(list))
