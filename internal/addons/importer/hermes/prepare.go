@@ -155,15 +155,7 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 		k := s.row.text("lineage_key") + "\x00" + s.row.text("uid")
 		bindings[k] = append(bindings[k], s)
 	}
-	type uidGroup struct {
-		lineage string
-		rows    []sourceRow
-	}
-	bindingsByUID := map[string][]uidGroup{}
 	for _, ss := range bindings {
-		first := ss[0].row
-		uid := first.text("uid")
-		bindingsByUID[uid] = append(bindingsByUID[uid], uidGroup{first.text("lineage_key"), ss})
 		var original *record
 		for _, s := range ss {
 			if s.row.text("kind") == "canonical" {
@@ -191,6 +183,16 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 			}
 		}
 	}
+	// Index within this profile, so each host row considers only its UID's
+	// lineages instead of scanning every binding in the snapshot.
+	byUID := map[string]map[string][]sourceRow{}
+	for _, ss := range bindings {
+		uid, lineage := ss[0].row.text("uid"), ss[0].row.text("lineage_key")
+		if byUID[uid] == nil {
+			byUID[uid] = map[string][]sourceRow{}
+		}
+		byUID[uid][lineage] = ss
+	}
 	hostUID := map[string]*record{}
 	for _, s := range b.tables[HermesState]["messages"] {
 		row := s.row
@@ -204,19 +206,10 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 		}
 		uid := row.text("message_uid")
 		var target *record
+		var mapping *UIDLineageMapping
 		if uid != "" {
 			var candidates []sourceRow
-			lineage := ""
-			for _, group := range bindingsByUID[uid] {
-				lk := group.lineage
-				if lk == root || strings.HasSuffix(lk, ":"+root) {
-					if lineage != "" && lineage != lk {
-						return nil, fmt.Errorf("%w: ambiguous UID lineage", ErrSnapshot)
-					}
-					lineage = lk
-					candidates = group.rows
-				}
-			}
+			candidates, mapping = selectUIDLineage(byUID[uid], root)
 			for _, binding := range candidates {
 				r := b.lcm[binding.row.integer("store_id")]
 				if binding.row.text("kind") == "canonical" {
@@ -244,11 +237,15 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 					target = version
 				}
 			}
-			if target == nil {
+			if target == nil && mapping == nil {
 				target = hostUID[root+"\x00"+uid]
 			}
 		}
 		if target == nil {
+			if mapping != nil && mapping.Lineage != "" {
+				mapping.Lineage = ""
+				mapping.Reason = "no_matching_message"
+			}
 			c := b.sessionConversations[session]
 			if c == nil {
 				c = b.conversation("host:" + root)
@@ -257,6 +254,10 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 			target = b.message(c, s, 4)
 		} else {
 			b.attach(target, s)
+		}
+		if mapping != nil {
+			mapping.Source, mapping.EventID = s.key, target.id
+			p.uidLineages = append(p.uidLineages, *mapping)
 		}
 		if b.sessionConversations[session] == nil {
 			b.sessionConversations[session] = b.byID(target.conversation)
@@ -350,6 +351,37 @@ func newProfile(ctx context.Context, p *Plan, profile Profile) (*profileBuilder,
 		}
 	}
 	return b, nil
+}
+
+// The original home path is not available in a staged snapshot. Match the
+// compression root only when it identifies one lineage; never guess between
+// two home tags or follow a binding across a fork/reset boundary.
+func selectUIDLineage(lineages map[string][]sourceRow, root string) ([]sourceRow, *UIDLineageMapping) {
+	var names, matching []string
+	for lineage := range lineages {
+		names = append(names, lineage)
+		if lineage == root || strings.HasSuffix(lineage, ":"+root) {
+			matching = append(matching, lineage)
+		}
+	}
+	var candidates []sourceRow
+	if len(matching) == 1 {
+		candidates = lineages[matching[0]]
+	}
+	if len(names) <= 1 {
+		return candidates, nil
+	}
+	sort.Strings(names)
+	mapping := &UIDLineageMapping{SessionRoot: root, CandidateLineages: names}
+	switch len(matching) {
+	case 0:
+		mapping.Reason = "no_root_lineage"
+	case 1:
+		mapping.Lineage, mapping.Reason = matching[0], "session_root"
+	default:
+		mapping.Reason = "multiple_root_lineages"
+	}
+	return candidates, mapping
 }
 func samePayload(a, b Row) bool {
 	for _, f := range []string{"role", "content", "tool_calls", "tool_call_id", "tool_name"} {

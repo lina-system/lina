@@ -1369,6 +1369,12 @@ The importer separately references `gateway/delivery_ledger.py` at
 `944c3a434071f43e64b443d033f3eba30c64434c` for the delivery-obligation
 column layouts and their operational-state meaning; no implementation is copied.
 
+The Hermes importer also references revision
+`cb757fac59c92b49e9b8f2910e5cd7ab75efffdd` for gateway delivery tokens, display
+kinds and local session identities. Its observations and limits are in
+[the import reference](internal/addons/importer/hermes/REFERENCE.md). No upstream
+implementation is copied or bundled.
+
 The Go Telegram adapter derives behavior and structure from Hermes Agent's
 Telegram adapter and gateway: protected code formatting, fence-aware message
 splitting, flood-wait/backoff handling, idempotent edits, callback authorization

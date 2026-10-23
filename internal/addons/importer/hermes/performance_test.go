@@ -163,52 +163,70 @@ func TestRehearsalPreviewDoesNotChangeInventoryKinds(t *testing.T) {
 	}
 }
 
-func TestImportUIDLookupPreservesLineage(t *testing.T) {
-	for _, tc := range []struct {
-		name, lineage, extra string
-		matched, ambiguous   bool
-	}{
-		{"exact", "synthetic-session", "", true, false},
-		{"qualified", "home:synthetic-session", "", true, false},
-		{"nested-prefix", "home:profile:synthetic-session", "", true, false},
-		{"unrelated", "other-session", "", false, false},
-		{"suffix-without-separator", "notsynthetic-session", "", false, false},
-		{"same-uid-other-lineage", "synthetic-session", "other-session", true, false},
-		{"ambiguous", "synthetic-session", "home:synthetic-session", false, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			req := importRequest(t)
-			sqlSource(t, req.Profiles[0].LCMPath, "UPDATE host_uid_bindings SET lineage_key='"+tc.lineage+"'")
-			if tc.extra != "" {
-				sqlSource(t, req.Profiles[0].LCMPath, "INSERT INTO host_uid_bindings(store_id,uid,lineage_key,kind,binding_version) VALUES(1,'synthetic-message-1','"+tc.extra+"','canonical',1)")
-			}
-			p, err := Prepare(t.Context(), req)
-			if tc.ambiguous {
-				if !errors.Is(err, ErrSnapshot) {
-					t.Fatalf("ambiguous lineage: %v", err)
-				}
-				return
-			}
+func TestRehearsalPreviewPreservesMappingDetails(t *testing.T) {
+	for _, field := range []string{"owner_candidates", "uid_mapping", "uid_candidate_lineages"} {
+		t.Run(field, func(t *testing.T) {
+			p, err := Prepare(t.Context(), uidLineagesRequest(t))
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { p.Close() })
+			preview, err := p.Rehearse()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(preview.Mappings[0].CandidateOwnerChannels) == 0 || preview.AmbiguousUIDRows != 6 || len(preview.UIDLineageMappings) != 6 || len(preview.UIDLineageMappings[0].CandidateLineages) != 2 {
+				t.Fatal("fixture must include owner candidates and ambiguous UID mappings")
+			}
+			want, err := json.Marshal(preview)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch field {
+			case "owner_candidates":
+				preview.Mappings[0].CandidateOwnerChannels[0].SessionID = "changed"
+			case "uid_mapping":
+				preview.UIDLineageMappings[0].Reason = "changed"
+			case "uid_candidate_lineages":
+				preview.UIDLineageMappings[0].CandidateLineages[0] = "changed"
+			}
+			again, err := p.Rehearse()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := json.Marshal(again)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != string(want) {
+				t.Error("preview mutation changed cached mapping details")
+			}
+			// Recompute independently to detect aliases into the prepared plan.
+			snapshot, err := p.rehearseSnapshot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err = json.Marshal(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != string(want) {
+				t.Error("preview mutation changed the prepared plan")
+			}
 			db := importStore(t)
 			if _, err := p.Import(t.Context(), db); err != nil {
 				t.Fatal(err)
 			}
-			lcm, err := Resolve(t.Context(), db, LegacyKey{string(HermesLCM), "profile", "messages", "1"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			host, err := Resolve(t.Context(), db, LegacyKey{string(HermesState), "profile", "messages", "1"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if (lcm.RecordID == host.RecordID) != tc.matched {
-				t.Fatalf("matched = %v, want %v", lcm.RecordID == host.RecordID, tc.matched)
-			}
-			if _, err := p.Verify(t.Context(), db); err != nil {
+			if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+				var stored string
+				if err := tx.QueryRowContext(t.Context(), "SELECT report FROM import_rehearsal WHERE batch_id=?", p.batch).Scan(&stored); err != nil {
+					return err
+				}
+				if stored != string(want) {
+					t.Error("retained report changed mapping details")
+				}
+				return nil
+			}); err != nil {
 				t.Fatal(err)
 			}
 		})

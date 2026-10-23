@@ -143,7 +143,11 @@ func (r *Store) readTree(hash, prefix string, files map[string]string, depth int
 func (s *Store) makeCommit(tree, parent string, a Actor) (string, error) {
 	person, _ := json.Marshal(a.Person)
 	agent, _ := json.Marshal(a.Agent)
-	stamp := strconv.FormatInt(time.Now().Unix(), 10)
+	now := time.Now()
+	if s.Now != nil {
+		now = s.Now()
+	}
+	stamp := strconv.FormatInt(now.Unix(), 10)
 	text := "tree " + tree + "\n"
 	if parent != "" {
 		text += "parent " + parent + "\n"
@@ -152,7 +156,10 @@ func (s *Store) makeCommit(tree, parent string, a Actor) (string, error) {
 	return s.object("commit", []byte(text))
 }
 
-type gitCommit struct{ parent string }
+type gitCommit struct {
+	parent string
+	at     time.Time
+}
 
 func (s *Store) commitFiles(hash string) (gitCommit, map[string]string, error) {
 	data, err := s.readObject(hash, "commit")
@@ -166,6 +173,17 @@ func (s *Store) commitFiles(hash string) (gitCommit, map[string]string, error) {
 	var c gitCommit
 	tree := ""
 	for _, line := range strings.Split(header, "\n") {
+		if value, ok := strings.CutPrefix(line, "committer "); ok {
+			fields := strings.Fields(value)
+			if len(fields) < 2 {
+				return c, nil, ErrRecordsChanged
+			}
+			seconds, err := strconv.ParseInt(fields[len(fields)-2], 10, 64)
+			if err != nil {
+				return c, nil, ErrRecordsChanged
+			}
+			c.at = time.Unix(seconds, 0).UTC()
+		}
 		if value, ok := strings.CutPrefix(line, "tree "); ok {
 			if tree != "" {
 				return c, nil, ErrRecordsChanged
@@ -226,6 +244,7 @@ func (s *Store) revision(ctx context.Context, head, name, blob string) (Rev, err
 
 type indexRow struct {
 	id, path, blob, revision string
+	at                       time.Time
 	doc                      document
 }
 
@@ -291,6 +310,7 @@ func (s *Store) indexRows(ctx context.Context, head string) ([]indexRow, error) 
 		for name, i := range pending {
 			if before[name] != rows[i].blob {
 				rows[i].revision = current
+				rows[i].at = c.at
 				delete(pending, name)
 			}
 		}

@@ -109,6 +109,13 @@ type resumable interface {
 	Reconcile(context.Context, worker.Thread) (worker.ThreadSnapshot, error)
 }
 
+// A settled-attempt restarter must not be used to observe an unknown attempt.
+// ACP can restore a session, but its protocol cannot read an exact prior turn.
+type attemptRecoverer interface {
+	worker.Adapter
+	RecoverAttempt(context.Context, lease.Lease, worker.StartSpec, worker.Thread) (worker.Thread, error)
+}
+
 func (s *Service) observeThread(ctx context.Context, l lease.Lease, r *Record, dir string) (worker.ThreadSnapshot, error) {
 	for _, f := range s.workersFor(*r) {
 		if f.Name != r.WorkerName() {
@@ -138,6 +145,10 @@ func (s *Service) observeThread(ctx context.Context, l lease.Lease, r *Record, d
 }
 
 func (s *Service) startAttempt(ctx context.Context, l lease.Lease, adapter worker.Adapter, r Record, attemptID, dir string) (worker.Thread, error) {
+	spec := worker.StartSpec{TaskID: r.ID, AttemptID: attemptID, Workdir: dir, TaskPacket: r.Packet}
+	if reader, ok := adapter.(attemptRecoverer); ok && r.Recoveries == 1 && r.RecoveryThread != nil && r.RecoveryWorker == adapter.Name() && len(r.Tried) == 1 {
+		return reader.RecoverAttempt(ctx, l, spec, *r.RecoveryThread)
+	}
 	if reader, ok := adapter.(resumable); ok && r.RecoveryThread != nil && r.RecoveryWorker == adapter.Name() && len(r.Tried) == 1 {
 		old := *r.RecoveryThread
 		old.AttemptID = attemptID
@@ -158,5 +169,5 @@ func (s *Service) startAttempt(ctx context.Context, l lease.Lease, adapter worke
 		current, err := adapter.Snapshot(ctx, th)
 		return current.Thread, err
 	}
-	return adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: attemptID, Workdir: dir, TaskPacket: r.Packet})
+	return adapter.Start(ctx, l, spec)
 }

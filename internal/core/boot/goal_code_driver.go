@@ -58,6 +58,14 @@ func (d *codeGoalDriver) resolveInputs(ctx context.Context, a goal.Action, obser
 			return s, g, task, codeRepository{}, nil
 		}
 		name := task.Repository
+		if a.Check != nil {
+			if connection, ok := d.connections.EvidenceChecks[a.Check.Method]; ok {
+				if connection.Kind != a.Check.Kind || connection.Target != a.Check.Target || a.Check.TaskID != "" || connection.Kind == goal.ReadEvidence && len(a.Check.Expected) == 0 {
+					break
+				}
+				name = connection.Repository
+			}
+		}
 		if name == "" && a.Check != nil && a.Check.Method != "deploy.read" && a.Check.Method != "runtime.probe" {
 			name = a.Check.Target
 		}
@@ -68,7 +76,7 @@ func (d *codeGoalDriver) resolveInputs(ctx context.Context, a goal.Action, obser
 			name = g.Scope.Repositories[0]
 		}
 		repo, ok := d.connections.Repositories[name]
-		if !ok || !observe && !slices.Contains(g.Scope.Repositories, name) || (task.ID != "" && (task.Base != repo.Base || task.Worker != "antigravity")) {
+		if !ok || !observe && !slices.Contains(g.Scope.Repositories, name) || (task.ID != "" && (task.Kind == "" || task.Kind == goal.TaskStep) && (task.Base != repo.Base || task.Worker != "antigravity")) {
 			break
 		}
 		if observe {
@@ -97,7 +105,7 @@ func (d *codeGoalDriver) Authorize(ctx context.Context, a goal.Action) error {
 	if err != nil {
 		return err
 	}
-	if g.State == goal.GoalStopped || g.State == goal.GoalDone || a.Epoch != d.runtime.epoch || a.GoalRevision != g.Revision {
+	if g.State == goal.GoalStopped || g.State == goal.GoalDone && a.Kind != goal.CheckCriterion || a.Epoch != d.runtime.epoch || a.GoalRevision != g.Revision {
 		return goal.ErrNeedsPerson
 	}
 	if (a.Kind == goal.InspectPR || a.Kind == goal.Merge) && a.Revision != t.Head || a.Kind == goal.RunQA && a.Revision != t.Merge.Revision || (a.Kind == goal.Deploy || a.Kind == goal.Verify) && a.Revision != codeGoalRevision(g) {
@@ -115,6 +123,13 @@ func (d *codeGoalDriver) Authorize(ctx context.Context, a goal.Action) error {
 	}
 	class := tools.LocalWrite
 	switch {
+	case t.Kind == goal.WaitStep && goal.WorkerAction(a.Kind):
+		class = tools.Research
+	case t.Kind == goal.BackgroundStep && goal.WorkerAction(a.Kind):
+		class = tools.WorkerEffect
+		if d.runtime.background == nil || a.NodeID != d.runtime.main {
+			return goal.ErrNeedsPerson
+		}
 	case goal.WorkerAction(a.Kind):
 		class = tools.WorkerEffect
 		if d.runtime.workerDispatch == nil || a.NodeID != d.runtime.main {
@@ -145,6 +160,14 @@ func (d *codeGoalDriver) Execute(ctx context.Context, a goal.Action) (goal.Obser
 	s, g, t, repo, err := d.inputs(ctx, a)
 	if err != nil {
 		return goal.Observation{}, err
+	}
+	if a.Kind == goal.Assign {
+		if t.Kind == goal.BackgroundStep {
+			return d.backgroundStep(ctx, g, t, a, false)
+		}
+		if t.Kind == goal.WaitStep {
+			return d.waitStep(ctx, g, t, a)
+		}
 	}
 	switch a.Kind {
 	case goal.Assign:
@@ -185,6 +208,10 @@ func (d *codeGoalDriver) Observe(ctx context.Context, a goal.Action) (goal.Obser
 		return goal.Observation{}, err
 	}
 	switch {
+	case a.Kind == goal.Assign && t.Kind == goal.BackgroundStep:
+		return d.backgroundStep(ctx, g, t, a, true)
+	case a.Kind == goal.Assign && t.Kind == goal.WaitStep:
+		return d.waitStep(ctx, g, t, a)
 	case goal.WorkerAction(a.Kind):
 		return d.runtime.observeGoalWorker(ctx, g, a)
 	case a.Kind == goal.Merge:
@@ -234,7 +261,15 @@ func (d *codeGoalDriver) Observe(ctx context.Context, a goal.Action) (goal.Obser
 }
 func (d *codeGoalDriver) libraryProof(ctx context.Context, s goal.State, g goal.Goal, a goal.Action) (goal.Observation, error) {
 	var current goal.Proof
+	onlyResults := len(g.Tasks) > 0
 	for _, t := range g.Tasks {
+		if t.Kind == goal.BackgroundStep || t.Kind == goal.WaitStep {
+			if _, err := d.readStepResult(ctx, s, g, t); err != nil {
+				return goal.Observation{}, err
+			}
+			continue
+		}
+		onlyResults = false
 		repo, ok := d.connections.Repositories[t.Repository]
 		if !ok || !t.QA.Passed {
 			return goal.Observation{}, goal.ErrNeedsPerson
@@ -247,6 +282,9 @@ func (d *codeGoalDriver) libraryProof(ctx context.Context, s goal.State, g goal.
 			current = check
 		}
 	}
+	if onlyResults {
+		current = goal.Proof{Revision: a.Revision, Ref: "steps:" + g.ID, Passed: a.Revision != ""}
+	}
 	if current.Ref == "" {
 		return goal.Observation{}, goal.ErrNeedsPerson
 	}
@@ -258,7 +296,18 @@ func (d *codeGoalDriver) checkCriterion(ctx context.Context, s goal.State, g goa
 	}
 	var o goal.Observation
 	var err error
+	var collected *goal.CollectedEvidence
 	switch a.Check.Method {
+	case "steps.read":
+		if a.Check.Kind != goal.ReadEvidence || a.Check.TaskID != "" {
+			return o, goal.ErrInvalid
+		}
+		o, err = d.libraryProof(ctx, s, g, a)
+	case "step.read":
+		if a.Check.Kind != goal.ReadEvidence || a.Check.TaskID == "" || a.Check.Target != t.ID {
+			return o, goal.ErrInvalid
+		}
+		o.Proof, err = d.readStepResult(ctx, s, g, t)
 	case "merge.read":
 		record, e := d.runtime.goalTaskReceipt(ctx, s, g, t)
 		if e != nil {
@@ -269,6 +318,8 @@ func (d *codeGoalDriver) checkCriterion(ctx context.Context, s goal.State, g goa
 			return o, e
 		}
 		o = goal.Observation{Status: goal.OutcomeSucceeded, Proof: goal.Proof{Revision: merge.Commit, Ref: record.PR.URL, Passed: merge.State == "merged" && merge.Commit == a.Revision && merge.Head == t.Head}}
+		raw, _ := json.Marshal(merge)
+		collected = &goal.CollectedEvidence{Record: raw}
 	case "qa.read":
 		o.Proof, err = d.readProof(t.QA.Ref, repo.QA, t.Repository, a.Revision)
 	case "deploy.read", "runtime.probe":
@@ -278,11 +329,18 @@ func (d *codeGoalDriver) checkCriterion(ctx context.Context, s goal.State, g goa
 			o, err = d.libraryProof(ctx, s, g, a)
 		}
 	default:
-		command, ok := repo.Checks[a.Check.Method]
-		if !ok || a.Check.Kind != goal.RunEvidence || !slices.Contains(g.Scope.Repositories, a.Check.Target) {
-			return o, goal.ErrNeedsPerson
+		if connection, ok := d.connections.EvidenceChecks[a.Check.Method]; ok {
+			if connection.Target != a.Check.Target || connection.Kind != a.Check.Kind || !slices.Contains(g.Scope.Repositories, connection.Repository) || connection.Kind == goal.ReadEvidence && len(a.Check.Expected) == 0 {
+				return o, goal.ErrNeedsPerson
+			}
+			o, err = d.runCheck(ctx, g, a, repo, connection.Command, a.Check.Target, false)
+		} else {
+			command, ok := repo.Checks[a.Check.Method]
+			if !ok || a.Check.Kind != goal.RunEvidence || !slices.Contains(g.Scope.Repositories, a.Check.Target) {
+				return o, goal.ErrNeedsPerson
+			}
+			o, err = d.runCheck(ctx, g, a, repo, command, a.Check.Target, true)
 		}
-		o, err = d.runCheck(ctx, g, a, repo, command, a.Check.Target, true)
 	}
 	if err != nil {
 		return o, err
@@ -290,8 +348,17 @@ func (d *codeGoalDriver) checkCriterion(ctx context.Context, s goal.State, g goa
 	if o.Proof.Ref == "" || o.Proof.Revision != a.Revision {
 		return o, fmt.Errorf("code goal evidence revision mismatch")
 	}
+	if collected == nil {
+		collected, err = d.collectedCheck(o.Proof.Ref, *a.Check)
+		if err != nil {
+			return o, err
+		}
+	}
+	if !collected.Valid(*a.Check) {
+		return o, goal.ErrInvalid
+	}
 	o.Status = goal.OutcomeSucceeded
-	o.Criterion = &goal.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: o.Proof.Ref, Passed: o.Proof.Passed}
+	o.Criterion = &goal.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: o.Proof.Ref, Passed: o.Proof.Passed && collected.Matches(*a.Check), Collected: collected}
 	return o, nil
 }
 

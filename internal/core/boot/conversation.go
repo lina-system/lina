@@ -46,8 +46,10 @@ import (
 // conversationRuntime is boot's composition of existing stores and flows. The
 // model and all accepted work belong to Core, independent of client lifetime.
 type conversationRuntime struct {
+	summaryPreparation conversationPreparation
 	// Installed only by the isolated intake replay command, never by Core boot.
 	intakeReplay    func(context.Context, ledger.Event) error
+	intakeSnapshot  bool
 	artifactInit    sync.Once
 	artifactMu      *sync.Mutex
 	exchangeStop    context.CancelFunc
@@ -111,6 +113,7 @@ type conversationRuntime struct {
 	presets          *presetPublisher
 
 	skillMaintenance            *skillMaintenanceRuntime
+	memoryExtraction            *memoryExtractionRuntime
 	growthMu                    sync.Mutex
 	growth                      *growthRuntime
 	lanes                       *lane.Manager
@@ -315,6 +318,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startSkillMaintenance(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startMemoryExtraction(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startPlanning(ctx); err != nil {
 		return nil, err
 	}
@@ -424,6 +430,15 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		}
 	}
 	if m := r.skillMaintenance; m != nil && m.stop != nil {
+		m.stop()
+		select {
+		case <-m.done:
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		}
+		m.stop = nil
+	}
+	if m := r.memoryExtraction; m != nil && m.stop != nil {
 		m.stop()
 		select {
 		case <-m.done:
