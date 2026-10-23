@@ -11,6 +11,7 @@ import (
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/internal/tui/term"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 type conversationView struct {
@@ -18,6 +19,8 @@ type conversationView struct {
 	workSelected string
 	workIndex    int
 	workOffset   int
+	workCompact  bool
+	workFilter   protocol.RunningState
 	undo         []state.Draft
 	history      *inputHistory
 	scroll       int

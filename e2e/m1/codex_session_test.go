@@ -511,14 +511,22 @@ func TestM2InstalledCodexLive(t *testing.T) {
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	// Discovery adds call/results after the current input. Classify the latest
-	// user input, rather than mistaking a load_tools receipt for a new request.
+	// History has no developer messages. The first developer item after the
+	// current input begins Core's ContextPacket, which can also contain user
+	// evidence. Classify the last user input before that packet, not retrieved
+	// context or the discovery call/results appended after it.
 	var item struct{ Role, Content string }
 	found := false
-	for i := len(inputs) - 1; i >= 0; i-- {
-		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
-			found = true
+	for _, raw := range inputs {
+		var next struct{ Role, Content string }
+		if json.Unmarshal(raw, &next) != nil {
+			continue
+		}
+		if next.Role == "developer" && found {
 			break
+		}
+		if next.Role == "user" {
+			item, found = next, true
 		}
 	}
 	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
