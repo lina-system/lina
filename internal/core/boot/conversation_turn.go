@@ -397,6 +397,11 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	s.items = s.items[:len(s.items)-1]
 	at := time.Now().UTC()
 	minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
+	bound, err := r.inputBindingPacket(ctx, input)
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	minimum = append(minimum, bound...)
 	settings, err := r.agents.State(ctx, r.agent)
 	if err != nil {
 		return turn.PreparedRequest{}, err
