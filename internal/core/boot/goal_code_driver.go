@@ -51,15 +51,11 @@ func (d *codeGoalDriver) resolveInputs(ctx context.Context, a goal.Action, obser
 				break
 			}
 		}
-		if observe {
-			switch a.Kind {
-			case goal.Assign, goal.Resume, goal.RepairConflict, goal.RepairQA, goal.ContinueWorker:
-				// GoalRecord verifies the original conversation/action binding.
-				// Its retained receipt needs neither a current repository grant
-				// nor an installed connection to observe a completed worker.
-				return s, g, task, codeRepository{}, nil
-			case goal.InspectPR, goal.Merge, goal.RunQA, goal.Deploy, goal.Verify, goal.Observe, goal.Decide, goal.PlanGoal, goal.CheckCriterion:
-			}
+		if observe && goal.WorkerAction(a.Kind) {
+			// GoalRecord verifies the original conversation/action binding.
+			// Its retained receipt needs neither a current repository grant
+			// nor an installed connection to observe a completed worker.
+			return s, g, task, codeRepository{}, nil
 		}
 		name := task.Repository
 		if name == "" && a.Check != nil && a.Check.Method != "deploy.read" && a.Check.Method != "runtime.probe" {
@@ -118,23 +114,22 @@ func (d *codeGoalDriver) Authorize(ctx context.Context, a goal.Action) error {
 		}
 	}
 	class := tools.LocalWrite
-	switch a.Kind {
-	case goal.Assign, goal.Resume, goal.RepairConflict, goal.RepairQA, goal.ContinueWorker:
+	switch {
+	case goal.WorkerAction(a.Kind):
 		class = tools.WorkerEffect
 		if d.runtime.workerDispatch == nil || a.NodeID != d.runtime.main {
 			return goal.ErrNeedsPerson
 		}
-	case goal.Merge:
+	case a.Kind == goal.Merge:
 		class = tools.BindingExecution
-	case goal.Deploy:
+	case a.Kind == goal.Deploy:
 		if repo.Service == nil {
 			return goal.ErrNeedsPerson
 		}
 		if repo.Service.Public {
 			class = tools.ExternalEffect
 		}
-	case goal.InspectPR, goal.RunQA, goal.Verify, goal.CheckCriterion:
-	case goal.Observe, goal.Decide, goal.PlanGoal:
+	case a.Kind == goal.Observe || a.Kind == goal.Decide || a.Kind == goal.PlanGoal:
 		return goal.ErrNeedsPerson
 	}
 	raw, _ := json.Marshal(a)
@@ -189,18 +184,18 @@ func (d *codeGoalDriver) Observe(ctx context.Context, a goal.Action) (goal.Obser
 	if err != nil {
 		return goal.Observation{}, err
 	}
-	switch a.Kind {
-	case goal.Assign, goal.Resume, goal.RepairConflict, goal.RepairQA, goal.ContinueWorker:
+	switch {
+	case goal.WorkerAction(a.Kind):
 		return d.runtime.observeGoalWorker(ctx, g, a)
-	case goal.Merge:
+	case a.Kind == goal.Merge:
 		record, err := d.runtime.goalTaskReceipt(ctx, s, g, t)
 		if err != nil {
 			return goal.Observation{}, err
 		}
 		return d.runtime.mergeGoalPR(ctx, record, t.Repository, a, true)
-	case goal.RunQA:
+	case a.Kind == goal.RunQA:
 		return d.readCheck(a, repo.QA, t.Repository)
-	case goal.Deploy:
+	case a.Kind == goal.Deploy:
 		// An interrupted deploy is settled only by the installed read-only probe.
 		if repo.Service == nil {
 			return goal.Observation{}, goal.ErrNeedsPerson
@@ -228,11 +223,11 @@ func (d *codeGoalDriver) Observe(ctx context.Context, a goal.Action) (goal.Obser
 			return goal.Observation{}, err
 		}
 		return observation, nil
-	case goal.InspectPR, goal.Verify, goal.CheckCriterion:
+	case a.Kind == goal.InspectPR || a.Kind == goal.Verify || a.Kind == goal.CheckCriterion:
 		// Recovered reads use the new Core epoch without redispatching an effect.
 		a.Epoch = d.runtime.epoch
 		return d.Execute(ctx, a)
-	case goal.Observe, goal.Decide, goal.PlanGoal:
+	case a.Kind == goal.Observe || a.Kind == goal.Decide || a.Kind == goal.PlanGoal:
 		return goal.Observation{}, goal.ErrNeedsPerson
 	}
 	return goal.Observation{}, goal.ErrInvalid
