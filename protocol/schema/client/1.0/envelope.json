@@ -2244,6 +2244,11 @@
         },
         "completion": {
           "$ref": "#/$defs/completion_status"
+        },
+        "next": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -2304,6 +2309,15 @@
         },
         "revision": {
           "$ref": "#/$defs/result_revision"
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [

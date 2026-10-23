@@ -465,3 +465,23 @@ test('build validates shipped persona pairs before producing release artifacts',
   assert.equal(validated, true);
   assert.equal(existsSync(join(f.out, 'manifest.json')), false);
 });
+
+test('build includes pinned Claude ACP inputs and their artifact digests', t => {
+  const f = fixture(t);
+  const result = build({cwd:f.cwd,out:f.out,execute:(_command,args,options)=>{
+    if(args[0]==='env')return {status:0,stdout:options.env.GOTOOLCHAIN,stderr:''};
+    if(args[0]==='build'){
+      const binary=args[args.indexOf('-o')+1];
+      f.write(dirname(binary),binary.split(/[\\/]/).at(-1),'synthetic binary');
+    }
+    return {status:0,stdout:args[0]==='run'?(args.includes('./internal/core/manifest/clientinfo')?'[]':'{}'):'',stderr:''};
+  }});
+  const names=['adapters/claude-acp/package.json','adapters/claude-acp/package-lock.json'];
+  assert.deepEqual(result.installFiles?.map(file=>file.name),names);
+  for(const file of result.installFiles){
+    const bytes=readFileSync(join(f.out,file.name));
+    assert.deepEqual(bytes,readFileSync(join(f.cwd,file.name)));
+    assert.equal(file.size,bytes.length);
+    assert.equal(file.sha256,createHash('sha256').update(bytes).digest('hex'));
+  }
+});
