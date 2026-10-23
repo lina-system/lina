@@ -420,7 +420,12 @@ The completion guard applies to transitions into `completed`; preserving that
 state does not permit changing an execution observation.
 
 The current conversation path accepts exact ISO dates and offset-bearing
-RFC 3339 times. Natural-language dates, ambiguous numeric dates, nonexistent
+RFC 3339 times with two-digit time components and an optional dot-separated
+fraction. Numeric offsets have hours from 00 to 14 and minutes from 00 to 59,
+and the resulting UTC instant must fit SQLite's date range. These checks apply
+to `when`, `deadline`, `repeat.next`, `waiting_on.since` and
+`waiting_on.next_check`; accepted text is preserved. Noncanonical or unsupported
+timestamps, natural-language dates, ambiguous numeric dates, nonexistent
 calendar dates and times without an offset return `ambiguous_date` before any
 saved version. The agent asks the person to resolve the date and then supplies
 the exact value; it must not invent a resolution. Natural-language parsing and
@@ -764,6 +769,9 @@ Every worker adapter offers the work engine the same operations:
 - Methods used: `thread/start`, `thread/resume`, `thread/read`, `thread/list`, `thread/loaded/list`, `thread/archive` (explicit close only), `turn/start`, `turn/steer` (`expectedTurnId` required), `turn/interrupt`, `skills/list`, `account/rateLimits/read`.
 - Server requests handled: `item/tool/call`, `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval`, `item/tool/requestUserInput`, `mcpServer/elicitation/request`.
 - Notifications consumed: `turn/*`, `item/*`, `thread/tokenUsage/updated`, `account/rateLimits/updated`, `serverRequest/resolved`, `error`, `hook/*`.
+- A completion may arrive before the `turn/start` reply without a preceding
+  `turn/started` notification. The returned handle retains that completed turn's
+  id and terminal status so Core can record its outcome, including quota stops.
 - The adapter calls no other method. LINA never changes the user's Codex settings or plugins.
 - The same JSON-RPC shape never implies the same capability. `turn/completed` is never evidence of a product effect.
 - LINA Core starts the installed Codex as `codex app-server --listen stdio://`, a stdio child with LINA Core's environment and the user's own Codex home. On a remote device the registered Node starts it. When its standard input closes, the child exits normally. The only client is LINA Core, or on a remote device that device's registered Node.
@@ -1511,6 +1519,10 @@ Antigravity worker runs through the existing dispatch service, with its own
 credentials, a separate worktree and the dev manager's assignment and delivery
 judgments. An adapter without resume support preserves interrupted work and asks
 for attention; it never starts a duplicate execution to imitate a resume.
+The host reports Antigravity ready only when that adapter is registered; a
+dispatcher serving another worker is insufficient. An unavailable worker leaves
+the task waiting without allocating a workspace. Dispatch pins the task's
+selected worker.
 
 The owner registers repository connections in `system/code-work.json` under the
 installed state root. This is a private regular file with mode `0600`, outside
@@ -1573,6 +1585,16 @@ receipt and releases that effect's target reservation in one transaction. It
 checks the original actor, target and action binding, refuses a live invocation,
 and cannot release a subsequent writer's reservation. The deployment is not
 issued again.
+
+If another actor merges after inspection and before Core creates its merge
+binding, observation restores that binding from the retained dispatch and
+confirms the exact PR head and landed commit. It issues no merge command or new
+merge authorization. A scope correction does not prevent observation of an
+already dispatched worker: Core reads its original person, agent, conversation,
+turn and action receipt even when the repository has left the scope or its
+connection is no longer installed. New execution still requires the current
+scope. Settling the old receipt releases its reservation so the corrected plan
+can proceed.
 
 The installed-binary acceptance uses fixture worker and GitHub executables, real
 Git commits, registered check commands and a local HTTP service. It proves one

@@ -4,9 +4,12 @@ package e2e_test
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,6 +22,17 @@ import (
 
 func TestM1EightStartersHeadless(t *testing.T) {
 	t.Parallel()
+	if err := persona.Validate(persona.Shipped()); err != nil {
+		t.Fatal("starter release values", err)
+	}
+	methods := map[string]string{}
+	for _, starter := range persona.Starters() {
+		record, missing, err := persona.LoadWorkMethod(persona.Shipped(), starter.Key)
+		if err != nil || missing {
+			t.Fatal("missing starter work method", starter.Key, err)
+		}
+		methods[starter.Key] = record
+	}
 	calls := map[string]int{}
 	observations := make(chan string, 16)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +74,40 @@ func TestM1EightStartersHeadless(t *testing.T) {
 		}
 		if identity.Layers != want {
 			t.Errorf("wrong working layers for %s: %+v", key, identity.Layers)
+		}
+		// Observe the shipped records at the provider boundary on both requests
+		// of each real tool turn, including the identity-only persona fallback.
+		foundMethod := false
+		for _, raw := range body.Input {
+			var item struct{ Role, Content string }
+			if json.Unmarshal(raw, &item) != nil || !strings.Contains(item.Content, "persona_settings") {
+				continue
+			}
+			var evidence struct {
+				Origin string `xml:"origin,attr"`
+				Text   string `xml:",chardata"`
+			}
+			start := strings.Index(item.Content, "<external_evidence ")
+			if start < 0 || xml.Unmarshal([]byte(item.Content[start:]), &evidence) != nil || item.Role != "user" || evidence.Origin != "persona-record:"+identity.AgentID {
+				t.Error("work-method settings lost their evidence boundary")
+				continue
+			}
+			var settings struct {
+				Kind       string                    `json:"kind"`
+				WorkMethod agents.WorkMethodSettings `json:"work_method"`
+			}
+			if err := json.NewDecoder(strings.NewReader(evidence.Text)).Decode(&settings); err != nil || settings.Kind != "persona_settings" {
+				t.Errorf("invalid starter settings: %v", err)
+				continue
+			}
+			foundMethod = true
+			method := settings.WorkMethod
+			if method.Revision != persona.WorkMethodRevision(methods[key]) || !reflect.DeepEqual(method.Values, persona.WorkMethodValues(methods[key])) || !slices.Equal(method.Fill, persona.WorkMethodFillKeys(methods[key])) || len(method.Filled) != 0 {
+				t.Errorf("%s did not prepare its shipped work method: %+v", key, method)
+			}
+		}
+		if !foundMethod {
+			t.Errorf("%s request omitted its work method", key)
 		}
 		calls[key]++
 		if calls[key] == 1 {

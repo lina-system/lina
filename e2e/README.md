@@ -315,6 +315,13 @@ creates its assigned branch at the detached base, produces a real commit and
 attempts ordinary writes to protected refs. Assertions check the shared
 `work/tasks` allocation, independent parent clone, unchanged source checkout,
 clean result, artifact provenance and live-card equivalence to ledger replay.
+The shared installed-worker harness gives each Linux Core a private loadavg
+fixture through a Bubblewrap read-only bind mount. Its default is idle, so host
+load cannot park unrelated worker scenarios. The capacity case first observes
+`queued / host_capacity` with no attempt or launch, then lowers load and sends
+a new conversation input. The same work produces its result once and is not
+replayed after restart. Failures include dispatch state, wait, attempts and
+worker launch observations. Production sampling, limits and timeouts are unchanged.
 Run it with `go test -count=1 ./e2e/m1 -run '^TestM2DispatchedWorkArea$'`.
 
 `m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
