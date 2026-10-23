@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/lina/internal/core/install"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/lease"
 	"math"
@@ -34,7 +35,9 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	binary, _ := proc.LookPath("agy")
 	codexBinary, _ := proc.LookPath("codex")
 	claude, _ := proc.LookPath("claude")
-	acpFactories := dispatch.InstalledACPFactories(dispatch.Config{Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities})
+	acpFactories := dispatch.InstalledACPFactories(dispatch.Config{Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities, PrepareClaudeACP: func(ctx context.Context, l lease.Lease) (string, error) {
+		return install.ClaudeACP(ctx, l, filepath.Join(r.root, "system/adapters/claude-acp"))
+	}})
 	if binary == "" && codexBinary == "" && claude == "" && len(acpFactories) == 0 {
 		return nil
 	}

@@ -318,7 +318,7 @@ Verification runs in a clean worktree without credentials: no Git or GitHub cred
 
 ### External Claude program
 
-Changes under `adapters/claude/`, root npm manifests, `.npmrc` and `.node-version`
+Changes under `adapters/claude/`, `adapters/claude-acp/`, root npm manifests, `.npmrc` and `.node-version`
 select automation, dependencies and Core acceptance. The dependencies check
 validates exact npm versions, public registry sources, SHA-512 integrity and
 install-script exceptions, then copies each npm project to a disposable directory
@@ -326,7 +326,7 @@ with an isolated home and no inherited credentials or npm configuration. It runs
 `npm ci --ignore-scripts`, `npm audit signatures` and `npm test`. Adapter tests
 use scripted runtime events and the real SDK's MCP registration without model
 calls. Every command must succeed; missing signatures and invalid attestations
-fail the check. The root and adapter npm projects have independent lockfiles.
+fail the check. The root and external program npm projects have independent lockfiles. The Claude ACP project runs `npm ci --ignore-scripts --omit=dev --omit=optional` and signature audit; its integration tests live in Go under `e2e/m2/`.
 
 PR #523's [CI run 39785658738](https://github.com/thisisjun786/lina/actions/runs/39785658738)
 reached the six-minute package limit while the current TUI lifecycle scenario

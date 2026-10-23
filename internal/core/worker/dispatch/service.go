@@ -142,6 +142,7 @@ type Config struct {
 	PR                antigravity.PullRequestReader
 	Environment       []string
 	Activities        lease.Leaser
+	PrepareClaudeACP  func(context.Context, lease.Lease) (string, error)
 	Publish           func(context.Context, Record) error
 	ClaudeBinary      string
 }
@@ -306,6 +307,9 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 				body["boundary"] = "This work is limited to advice or private drafts; unrestricted worker execution is unavailable."
 			}
 			return loop.Result{ID: c.ID, Code: loop.Denied, Output: mustJSON(body)}
+		}
+		if d.Worker == "claude-acp" && !s.WorkerAvailable(d.Worker) {
+			return loop.Result{ID: c.ID, Code: loop.Unavailable, Output: mustJSON(map[string]string{"worker": d.Worker, "cause": "Claude ACP requires the person's claude and node on PATH."})}
 		}
 		if !replay {
 			base, repositoryKey, err := s.baseForAdmission(ctx, origin, c.ID, d)
