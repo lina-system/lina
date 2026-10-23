@@ -24,7 +24,8 @@ func (e *workerSession) bindRecovery(ctx context.Context, th worker.Thread) erro
 	e.recoveryMu.Lock()
 	defer e.recoveryMu.Unlock()
 	rec := e.recovery
-	if rec.ID == "" {
+	fresh := rec.ID == ""
+	if fresh {
 		packet, err := secrets.Mask(e.packet)
 		if err != nil {
 			return err
@@ -36,7 +37,14 @@ func (e *workerSession) bindRecovery(ctx context.Context, th worker.Thread) erro
 	if th.TurnID != priorTurn || rec.RetryFrom != "" && th.TurnID != rec.RetryFrom {
 		rec.State = "running"
 	}
-	if err := (reactor.Recovery{DB: e.origin.db}).Put(ctx, rec); err != nil {
+	store := reactor.Recovery{DB: e.origin.db}
+	var err error
+	if fresh {
+		err = store.Bind(ctx, rec)
+	} else {
+		err = store.Put(ctx, rec)
+	}
+	if err != nil {
 		return err
 	}
 	e.recovery = rec

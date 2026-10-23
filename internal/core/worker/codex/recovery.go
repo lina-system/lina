@@ -3,6 +3,7 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 
@@ -97,7 +98,13 @@ func (s *Session) Reconcile(ctx context.Context, t worker.Thread) (worker.Thread
 				continue
 			}
 			result.Finish = terminal(turn)
-			result.EffectsKnown = result.Finish != nil && turn.Items != nil && (turn.ItemsView == nil || string(*turn.ItemsView) == string(full))
+			if turn.Items == nil || turn.ItemsView != nil && string(*turn.ItemsView) != string(full) {
+				turn.Items, err = s.reconcileItems(ctx, t)
+				if err != nil {
+					return result, err
+				}
+			}
+			result.EffectsKnown = result.Finish != nil && turn.Items != nil
 			for _, item := range turn.Items {
 				switch {
 				case item.AgentMessage != nil:
@@ -137,4 +144,45 @@ func (s *Session) Reconcile(ctx context.Context, t worker.Thread) (worker.Thread
 		params.Cursor = turns.NextCursor
 	}
 	return result, errors.New("Codex turns page limit")
+}
+
+// This response's entries are not exported by the pinned generated graph.
+// Its fields follow ThreadItemsListResponse/ThreadItemEntry in that same schema.
+func (s *Session) reconcileItems(ctx context.Context, t worker.Thread) ([]wire.V2ThreadItem, error) {
+	direction := wire.V2SortDirectionAsc
+	params := wire.V2ThreadItemsListParams{ThreadId: t.ID, TurnId: &t.TurnID, SortDirection: &direction}
+	items := []wire.V2ThreadItem{}
+	cursors := map[string]bool{}
+	for page := 0; page < 1000; page++ {
+		var response struct {
+			Data []struct {
+				TurnID string            `json:"turnId"`
+				Item   wire.V2ThreadItem `json:"item"`
+			} `json:"data"`
+			NextCursor *string `json:"nextCursor"`
+		}
+		if err := s.call(ctx, "thread/items/list", params, &response); err != nil {
+			return nil, err
+		}
+		if response.Data == nil {
+			return nil, errors.New("Codex omitted item page")
+		}
+		for _, entry := range response.Data {
+			if entry.TurnID != t.TurnID {
+				return nil, errors.New("Codex item turn mismatch")
+			}
+			items = append(items, entry.Item)
+		}
+		if response.NextCursor == nil || *response.NextCursor == "" {
+			return items, nil
+		}
+		if cursors[*response.NextCursor] {
+			return nil, errors.New("Codex repeated items cursor")
+		}
+		cursors[*response.NextCursor] = true
+		raw, _ := json.Marshal(*response.NextCursor)
+		cursor := wire.V2ThreadItemsListCursor(raw)
+		params.Cursor = &cursor
+	}
+	return nil, errors.New("Codex items page limit")
 }

@@ -4,6 +4,7 @@ package reactor
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 
@@ -29,9 +30,10 @@ type Record struct {
 	DecidedAt                                               int64
 }
 
-func (s Recovery) Put(ctx context.Context, r Record) error   { return s.save(ctx, r, true) }
-func (s Recovery) Admit(ctx context.Context, r Record) error { return s.save(ctx, r, false) }
-func (s Recovery) save(ctx context.Context, r Record, replace bool) error {
+func (s Recovery) Put(ctx context.Context, r Record) error   { return s.save(ctx, r, "replace") }
+func (s Recovery) Admit(ctx context.Context, r Record) error { return s.save(ctx, r, "admit") }
+func (s Recovery) Bind(ctx context.Context, r Record) error  { return s.save(ctx, r, "bind") }
+func (s Recovery) save(ctx context.Context, r Record, mode string) error {
 	if r.ID == "" || r.Thread.ID != r.ID || r.Person == "" || r.Agent == "" || r.Input == "" {
 		return errors.New("invalid recovery binding")
 	}
@@ -40,11 +42,27 @@ func (s Recovery) save(ctx context.Context, r Record, replace bool) error {
 		return err
 	}
 	return s.DB.Write(ctx, func(tx *canon.Tx) error {
+		var prior []byte
+		err := tx.QueryRowContext(ctx, "SELECT record FROM worker_recovery WHERE id=?", r.ID).Scan(&prior)
+		if err == nil {
+			var old Record
+			if err = json.Unmarshal(prior, &old); err != nil {
+				return err
+			}
+			if mode == "bind" || old.Person != r.Person || old.Agent != r.Agent || old.Conversation != r.Conversation || old.Input != r.Input || old.Thread.TaskID != r.Thread.TaskID {
+				return errors.New("worker recovery binding conflict")
+			}
+			if mode == "replace" && r.Retries < old.Retries {
+				return errors.New("worker recovery allowance cannot reset")
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		query := `INSERT INTO worker_recovery(id,record) VALUES(?,?) ON CONFLICT(id) DO NOTHING`
-		if replace {
+		if mode == "replace" {
 			query = `INSERT INTO worker_recovery(id,record) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record`
 		}
-		_, err := tx.ExecContext(ctx, query, r.ID, raw)
+		_, err = tx.ExecContext(ctx, query, r.ID, raw)
 		return err
 	})
 }

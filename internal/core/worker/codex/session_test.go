@@ -128,13 +128,24 @@ func fixture() {
 			if mode == "recover-missing-items" {
 				delete(result, "items")
 			}
-			if mode == "recover-truncated" {
+			if mode == "recover-truncated" || mode == "recover-items" {
 				result["itemsView"] = "summary"
 			}
 			if mode == "recover-paged" && r.Params["cursor"] == nil {
 				reply(map[string]any{"data": []any{map[string]any{"id": "unrelated", "status": "completed", "items": []any{}}}, "nextCursor": "next"})
 			} else {
 				reply(map[string]any{"data": []any{result}})
+			}
+		case "thread/items/list":
+			mode := os.Getenv("LINA_CODEX_FIXTURE")
+			if mode != "recover-items" {
+				reply(map[string]any{})
+				continue
+			}
+			if r.Params["cursor"] == nil {
+				reply(map[string]any{"data": []any{map[string]any{"turnId": turn, "item": map[string]any{"type": "agentMessage", "id": "m1", "text": "first"}}}, "nextCursor": "next-item"})
+			} else {
+				reply(map[string]any{"data": []any{map[string]any{"turnId": turn, "item": map[string]any{"type": "agentMessage", "id": "m2", "text": "last"}}}})
 			}
 		case "thread/read":
 			if strings.HasPrefix(os.Getenv("LINA_CODEX_FIXTURE"), "recover-") {
@@ -484,7 +495,7 @@ func TestSnapshotReconcilesExactTurnAfterLostFinish(t *testing.T) {
 }
 
 func TestReconcileRequiresCompleteEffectEvidence(t *testing.T) {
-	for _, mode := range []string{"recover-empty", "recover-paged", "recover-command", "recover-missing-items", "recover-truncated"} {
+	for _, mode := range []string{"recover-empty", "recover-paged", "recover-items", "recover-command", "recover-missing-items", "recover-truncated"} {
 		t.Run(mode, func(t *testing.T) {
 			s, ctx, l := openFixture(t, mode)
 			th, err := s.Start(ctx, l, worker.StartSpec{TaskID: "task", AttemptID: "attempt", Workdir: t.TempDir(), TaskPacket: "hold"})
@@ -492,10 +503,16 @@ func TestReconcileRequiresCompleteEffectEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 			snap, err := s.Reconcile(ctx, th)
+			if mode == "recover-truncated" || mode == "recover-missing-items" {
+				if err == nil || snap.EffectsKnown {
+					t.Fatalf("missing item page settled: %+v %v", snap, err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			known := mode == "recover-empty" || mode == "recover-paged"
+			known := mode == "recover-empty" || mode == "recover-paged" || mode == "recover-items"
 			if snap.Thread != th || snap.Finish == nil || snap.Finish.Status != worker.Failed || snap.EffectsKnown != known {
 				t.Fatalf("reconcile=%+v want effects known=%v", snap, known)
 			}

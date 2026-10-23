@@ -30,6 +30,7 @@ func TestRecoveryAllowanceSurvivesStoreReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Close(context.Background())
 	rec := Record{ID: "thread", Person: "person", Agent: "agent", Input: "input", State: "unknown", Thread: worker.Thread{ID: "thread", TurnID: "turn"}}
 	snap := worker.ThreadSnapshot{Thread: rec.Thread, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure}, EffectsKnown: true}
 	rec, send := Observe(rec, snap)
@@ -39,6 +40,17 @@ func TestRecoveryAllowanceSurvivesStoreReopen(t *testing.T) {
 	if err = (Recovery{DB: db}).Put(t.Context(), rec); err != nil {
 		t.Fatal(err)
 	}
+	foreign := rec
+	foreign.Person = "other-person"
+	if err = (Recovery{DB: db}).Put(t.Context(), foreign); err == nil {
+		t.Fatal("foreign task replaced recovery binding")
+	}
+	replay := rec
+	replay.Retries = 0
+	if err = (Recovery{DB: db}).Put(t.Context(), replay); err == nil {
+		t.Fatal("stored recovery allowance reset")
+	}
+
 	if err = db.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
