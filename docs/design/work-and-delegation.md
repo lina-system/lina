@@ -1360,12 +1360,17 @@ message and tier, explicitly as a worker claim. Acknowledgements cannot name
 another session's messages or precede delivery.
 
 Known-unsent messages wait while the session is down or waiting for an answer
-and are delivered under the same session key after resume. A new session does
-not inherit another session's mail. Core claims a delivery before sending; an
-uncertain send stays held for reconciliation and is never automatically replayed.
-A task session that ends for good refuses its remaining unsent mail and tells
-the sender. Closing work preserves its receipts. These receipts neither accept
-a task result nor authorize new work.
+and are delivered under the same session key after that wait ends. Answering
+the pending question or approval is that resume for push mail: Core retries
+known-unsent push mail once the thread is active and no request remains,
+without waiting for another turn start or `check_inbox`. Turn and pull mail
+still leave at the next supported tool boundary, and only after those pending
+requests have cleared. A new session does not inherit another session's mail.
+Core claims a delivery before sending; an uncertain send stays held for
+reconciliation and is never automatically replayed. A task session that ends
+for good, including a scheduled task that completes or is interrupted, refuses
+its remaining unsent mail and tells the sender. Closing work preserves its
+receipts. These receipts neither accept a task result nor authorize new work.
 
 ### Completion signals
 

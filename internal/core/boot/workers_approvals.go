@@ -191,10 +191,9 @@ func (e *workerSession) bridgeFailure(err error) {
 }
 
 // A scheduled task resumes only after all pending requests have been answered.
+// Clearing that wait also retries known-unsent push mail. The turn continues
+// in place, so there is no later started event to carry the retry.
 func (e *workerSession) answerDelivered(ctx context.Context, thread worker.Thread) {
-	if e.answered == nil {
-		return
-	}
 	e.mu.Lock()
 	pending := len(e.approvals) > 0
 	for _, q := range e.questions {
@@ -202,6 +201,11 @@ func (e *workerSession) answerDelivered(ctx context.Context, thread worker.Threa
 	}
 	e.mu.Unlock()
 	if !pending {
-		e.answered(ctx, thread)
+		if e.answered != nil {
+			e.answered(ctx, thread)
+		}
+		if err := e.resumeSteering(ctx); err != nil {
+			e.bridgeFailure(err)
+		}
 	}
 }
