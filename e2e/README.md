@@ -417,6 +417,10 @@ Installed-Core fixtures wait for command admission after connecting the socket.
 An empty input must be refused as malformed (or capability-not-negotiated for an
 unconfigured Core), rather than unavailable during recovery, before the scenario
 continues. This probe cannot create a conversation event or model request.
+
+The process harness keeps the spawning OS thread alive until the child is
+reaped. `TestWorkerLoadParentThread` retires the caller thread after Bubblewrap
+is ready and requires a normal child exit, with parent-death cleanup enabled.
 Restored-memory and replay startup paths use the same readiness check as installs.
 
 `go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs

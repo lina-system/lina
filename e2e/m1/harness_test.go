@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -165,13 +166,25 @@ func (h *harness) command(args ...string) *process {
 
 func (p *process) start(t *testing.T) {
 	t.Helper()
-	if err := p.command.Start(); err != nil {
-		t.Fatalf("start %s: %v", p.command.Args[1], err)
-	}
+	started := make(chan error, 1)
 	go func() {
+		// Linux parent-death signals track the spawning OS thread. A
+		// Bubblewrap child must outlive the goroutine that requested it,
+		// while still dying if this test process exits. Keep its parent
+		// thread alive through Wait instead of relying on Go's thread pool.
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		err := p.command.Start()
+		started <- err
+		if err != nil {
+			return
+		}
 		p.err = p.command.Wait()
 		close(p.done)
 	}()
+	if err := <-started; err != nil {
+		t.Fatalf("start %s: %v", p.command.Args[1], err)
+	}
 	t.Cleanup(func() { p.killAndWait() })
 }
 
