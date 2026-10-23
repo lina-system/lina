@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"net/http"
@@ -129,18 +128,11 @@ func TestM3OperationalSwitch(t *testing.T) {
 		if scriptedCodingManager(t, w, req) {
 			return
 		}
-		// Completed worker turns can arrive independently of the person's
-		// control sequence. Acknowledge that typed evidence without consuming
-		// a scripted tool-response step or depending on delivery timing.
+		// Worker finishes are separate, source-labeled inputs. They can arrive
+		// after the command turn and must not advance its tool-response script.
 		if len(req.Input) > 0 {
-			var current struct{ Role, Content string }
-			_ = json.Unmarshal(req.Input[len(req.Input)-1], &current)
-			_, body, wrapped := strings.Cut(current.Content, "\n")
-			var evidence struct {
-				XMLName xml.Name `xml:"external_evidence"`
-				Origin  string   `xml:"origin,attr"`
-			}
-			if current.Role == "user" && wrapped && xml.Unmarshal([]byte(body), &evidence) == nil && strings.HasPrefix(evidence.Origin, "worker-session:") {
+			var notice struct{ Role, Content string }
+			if json.Unmarshal(req.Input[len(req.Input)-1], &notice) == nil && notice.Role == "user" && strings.Contains(notice.Content, `<external_evidence origin="worker-session:fixture-thread">`) {
 				emitResponse(w, "Worker outcome recorded.", true)
 				return
 			}
@@ -158,7 +150,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 			}
 			_ = json.Unmarshal(req.Input[len(req.Input)-1], &item)
 			if err := json.Unmarshal([]byte(item.Output), &result); err != nil {
-				t.Error(err)
+				t.Errorf("worker step %d received non-tool input %s: %v", n, req.Input[len(req.Input)-1], err)
 				return
 			}
 			expected := "ok"

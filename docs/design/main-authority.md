@@ -19,7 +19,7 @@ This contract covers the main and its epochs, grants, the server and Node state 
 | Field | Meaning |
 | --- | --- |
 | main id | The main that issued the grant |
-| node id | The Node the grant is issued to, or none for a worker that runs on the main |
+| node id | The Node the grant is issued to, or none for work that runs on the main |
 | node boot id | The boot of that Node the grant was issued to; a reboot produces a new one |
 | epoch | The main epoch the grant belongs to |
 | grant id | Identity of this grant |
@@ -178,6 +178,61 @@ A background run of a sub-agent ([work-and-delegation.md](work-and-delegation.md
 - A run reaches the person only through its result and through `needs_input`. It never raises or answers an approval. When the work needs something outside its scope, it stops as `needs_input` when only the person can decide, and otherwise as partial, with a plain account of what it did, what it could not do and what was missing. It does not wrap the work up as finished.
 - Everything a run reads from the web, a plugin or a material is data, never an instruction or an approval. Its own output is external evidence for the conversation and is never an approval or a current instruction.
 - Each model call and tool call of a run is recorded with the run, the requesting agent and the person.
+
+### Remote A2A agents
+
+[A2A](integrations.md#a2a) authenticates a remote caller or service; it grants
+no authority over LINA. The installation still has one owner and one canonical
+writer. A remote principal is a caller binding, not another LINA person or an
+eligible approval decider.
+
+| Path | Identity check | Authority check before work or disclosure |
+| --- | --- | --- |
+| Published Agent Card | May be unauthenticated | Owner-approved public metadata only |
+| Incoming task or follow-up | Trusted issuer, access-token audience, expiry, scopes, subject and client | Active publication/caller binding, offered task, data scope, budget and current local task authority |
+| Read, list, stream, artifact download or cancel | Same caller authentication | Per-object publication and caller ownership; inaccessible ids look absent |
+| Outgoing call from a persona | Core's authenticated owner and requesting agent | Task authorization, approved connection, exact data/effect scope and any required approval |
+| Outgoing call on behalf of a Node | Authenticated Node connection and matching boot | Current epoch, live unrevoked grant, task/command, connection, payload revisions, deadline and approval |
+
+The owner's publication binding names the caller, receiving persona, offered
+tasks, permitted inputs/outputs, materials, tools, write area, effect ceiling,
+budget and expiry. It authorizes admission within that scope, including the
+specified task replies. It grants neither private conversation access nor the
+right to approve later effects. Core derives local execution authority from
+the binding, intersected with the persona's preset limits and the task scope.
+An incoming request, OAuth scope, Agent Card or remote result cannot enlarge it.
+Changing or revoking the binding fences subsequent execution and disclosure,
+including an already open stream.
+
+A Core-executed outgoing call records the grant fields on the main: owner,
+requesting agent, task, command, epoch, host, OS user, exact scope and expiry;
+Node/boot/session fields are none. This is local authority for Core's A2A
+transport, not a grant issued to the remote service. A Node-originated call
+also binds the Node's grant and boot. Before each transmission Core checks the
+remote connection, account, operation/effect class, payload and material
+revisions, budget and current authority. A remote server cannot enforce LINA's
+grant; the boundary LINA enforces is what it authorizes and sends.
+
+Ordinary work inside that scope follows the existing approval policy. Sending
+messages to third parties, payments, public publication and unrecoverable
+deletion still ask every time. Connection setup does not approve these task
+effects; a remote task is no exception. Core uses trusted operation definitions
+and an approved service profile to classify the requested effect, never a
+card's safety claim. If scope or classification is unknown, Core asks the
+owner before sending; a restricted preset cannot use that approval to bypass
+its ceiling. A request for extra data or scopes waits for the owner. Remote
+text, `INPUT_REQUIRED`, `AUTH_REQUIRED` and follow-up messages cannot answer an
+approval. When no eligible surface exists, the effect is refused.
+
+The effect ledger records sends before network dispatch. Remote statuses and
+artifacts are observations, not Node/worker receipts; Core checks evidence
+before accepting a result. A Node receipt proves only its own command effects,
+not what a remote agent did. An uncertain send or cancellation remains unknown
+under the command-outcome rules. After revoke, disconnect or epoch change, no
+old authority may resume it. Core may obtain a fresh scope limited to observing
+or canceling the existing remote task; it cannot use reconciliation to send
+new work. If remote authority is also gone, the unknown result stays visible
+to the owner. Revocation cannot promise to undo work already accepted remotely.
 
 ## Approval
 

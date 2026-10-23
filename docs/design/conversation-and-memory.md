@@ -314,7 +314,9 @@ Word lists and timing do not bind. In the owner's data, status, memory and new-w
 - two targets still tie after the rules and its own reading;
 - a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, or send, pay or delete.
 
-It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. A question the person passes over closes at their next unrelated turn, and the recommended pick applies. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
+It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
+
+When it asks, Core keeps the instruction pending until the person explicitly selects a target or cancels it. Passing over the question, an unrelated turn or a deadline never applies the recommended pick. While the target is unresolved, Core does not deliver the instruction as a steer, start its work, or perform its send, payment or deletion. Unrelated conversation and independent work continue. Selecting a target resolves only the binding; execution still requires the usual state and authorization checks ([main-authority.md](main-authority.md#approval)). This exception also applies to the general skipped-question rule in [Applying the record](preset-work-methods.md#applying-the-record).
 
 **Showing and moving.**
 

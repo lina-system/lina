@@ -18,6 +18,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/records"
+	"github.com/thisisjun786/lina/internal/core/review"
+	"github.com/thisisjun786/lina/internal/core/work"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
@@ -210,10 +212,49 @@ esac
 		t.Fatal(err)
 	}
 	defer r.workerGitHub.Close(context.Background())
-	assignment := codingAssignment{ID: delivered.ID, Manager: "manager", Verdict: "verified"}
+	// Seed a previously accepted head through the work receipt and review
+	// boundaries; an unbound legacy "verified" string is not merge evidence.
+	assignment := codingAssignment{ID: delivered.ID, Manager: "manager", Owner: g.Agent, Origin: goalOrigin(g), Verdict: "verified", VerdictHead: pr.Head}
+	r.work = work.New(r.db)
+	workTask := work.Task{ID: delivered.ID, PersonID: g.Person, AgentID: g.Agent, ConversationID: g.Conversation, Title: "Accepted replacement", Done: task.Done, ArtifactRoots: []string{clone}, RequiresApply: true}
+	if err = r.work.Create(t.Context(), workTask); err != nil {
+		t.Fatal(err)
+	}
+	run := work.Run{ID: delivered.ID + ":run", TaskID: delivered.ID, Generation: 1, Worker: "fixture", ThreadID: "thread", TurnID: "turn", NodeID: r.main}
+	if err = r.work.Start(t.Context(), run); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	artifact := filepath.Join(clone, "result.txt")
+	hash := strings.Repeat("a", 64)
+	receipt := work.Receipt{SchemaVersion: 1, RelationshipID: delivered.ID, ExecutionGeneration: 1, Attempt: 1, Outcome: "ready_for_review", Producer: "child", TurnRef: work.TurnRef{ThreadID: run.ThreadID, TurnID: run.TurnID, TurnStatus: "completed"}, EmittedAt: now, Manifest: []work.Artifact{{Path: artifact, SHA256: hash}}, Provenance: []work.Provenance{{ArtifactID: "result", TaskID: delivered.ID, NodeID: r.main, Path: artifact, SHA256: hash, ObservedAt: now}}}
+	receipt.RevisionHash = work.ManifestHash(receipt.Manifest)
+	receipt.EventID = work.ReceiptID(receipt)
+	if err = r.work.Submit(t.Context(), run.ID, receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		return work.FinishIn(t.Context(), tx, delivered.ID, run.ID, "completed", pr.Head)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	judgment := review.Record{Key: review.Key{Repository: "fixture/project", Number: pr.Number, Head: pr.Head}, Task: delivered.ID, Receipt: receipt.EventID, Generation: 1}
+	if err = review.New(r.db).Claim(t.Context(), judgment); err != nil {
+		t.Fatal(err)
+	}
+	judgment.State = "complete"
+	judgment.Verdict = "verified"
+	judgment.Evidence = "Accepted replacement matches the definition."
+	assignment.VerdictReceipt = receipt.EventID
 	raw, _ = json.Marshal(assignment)
 	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
 		if _, err := tx.ExecContext(t.Context(), "INSERT INTO coding_managers(id,person,owner,unit,conversation) VALUES(?,?,?,?,?)", "manager", g.Person, g.Agent, clone, g.Conversation); err != nil {
+			return err
+		}
+		if err := review.FinishIn(t.Context(), tx, judgment); err != nil {
+			return err
+		}
+		if err := work.ConformanceIn(t.Context(), tx, judgment.Task, judgment.Receipt, judgment.Head, judgment.Verdict, judgment.Evidence); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(t.Context(), "INSERT INTO coding_assignments(id,manager,record) VALUES(?,?,?)", assignment.ID, assignment.Manager, raw)

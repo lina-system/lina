@@ -59,7 +59,8 @@ func Migrations() []Migration {
 		{Version: 45, SQL: recordOperationsSchema},
 		{Version: 46, SQL: WorkSwitchSchema},
 		{Version: 47, SQL: handoffsSchema},
-		{Version: 48, SQL: ResultsSchema},
+		{Version: 48, SQL: workReviewsSchema},
+		{Version: 49, SQL: ResultsSchema},
 	}
 }
 
@@ -102,12 +103,13 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
 		{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
 		{30, "authority_merges"},
+		{48, "work_reviews"},
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
 		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
 		{37, "work_events"}, {37, "work_records"},
 		{44, "naming_breaches"},
 		{47, "exch_origins"}, {47, "exch_notices"}, {47, "artifact_changes"},
-		{48, "result_heads"}, {48, "result_saves"},
+		{49, "result_heads"}, {49, "result_saves"},
 		{42, "agent_starters"}, {42, "agent_selection"},
 		{45, "record_operations"}, {45, "record_candidates"},
 	} {

@@ -11,7 +11,7 @@ This contract covers two connections:
 | `client` | The TUI and the LINA app on every platform, with LINA Core | A stream: the LINA Core local socket, or the tailnet for a remote client. A mobile app host may use a WebSocket on LINA Core's tailnet address (see Client connection). |
 | `node` | Node, with LINA Core | A stream: local, or over the tailnet |
 
-It does not cover the protocols of workers, such as the Codex app-server protocol that the Codex worker adapter uses ([work-and-delegation.md](work-and-delegation.md)), the MCP protocol of plugins and the platform protocols of external channels ([integrations.md](integrations.md)), the wires of the model providers ([runtime.md](runtime.md#model-path)), or user-facing rendering ([surfaces.md](surfaces.md)). Product boundaries, people and agents are in [product-families.md](product-families.md). Grants, epochs, receipts and the main's command outcomes are in [main-authority.md](main-authority.md). This contract proves nothing about an implementation. Runtime proof belongs to the implementation issues that consume it.
+It does not cover the protocols of workers, such as the Codex app-server protocol that the Codex worker adapter uses ([work-and-delegation.md](work-and-delegation.md)), the MCP protocol of plugins, A2A remote-agent traffic and the platform protocols of external channels ([integrations.md](integrations.md)), the wires of the model providers ([runtime.md](runtime.md#model-path)), or user-facing rendering ([surfaces.md](surfaces.md)). Product boundaries, people and agents are in [product-families.md](product-families.md). Grants, epochs, receipts and the main's command outcomes are in [main-authority.md](main-authority.md). This contract proves nothing about an implementation. Runtime proof belongs to the implementation issues that consume it.
 
 ## Schema and generated types
 
@@ -500,6 +500,44 @@ Rules:
 
 - Every `node` message carries the epoch. A message from an earlier epoch is refused with `stale_epoch` by whichever side sees it first.
 - LINA Core never connects to a worker on another device. The Node on that device owns the worker process and relays it.
+
+### A2A and the Node connection
+
+An [A2A remote agent](integrations.md#a2a) speaks its own HTTPS protocol. It
+never sends `hello`, receives a LINA grant or becomes a Node. Publishing a
+persona exposes a separate Core A2A listener on the tailnet, not the `client`
+or `node` listener. Core alone maps authenticated incoming work and remote observations
+to canonical local tasks and results.
+
+A Node can call a remote agent as part of a task the main dispatched. Its
+grant must name the approved remote connection and allowed call/data scope.
+Core carries the HTTP call so the Node receives no remote credential. The
+planned `a2a` 1.0 Node capability relays the call and its outcome over the
+existing authenticated `node` connection:
+
+- The Node request names the local task, command, grant, stable call id,
+  approved connection id, operation, bounded input or material references and
+  expected revisions. Sender/boot and epoch are checked against the connection
+  and grant; payloads cannot select a different owner, persona or credential.
+- Core persists the call binding before sending and returns admission,
+  progress, input-needed, terminal result or unknown outcome for that call id.
+  Equal retries reuse the binding; changed input under that id is refused.
+  Admission is not a receipt for remote work. All relayed result references
+  are scoped to the local task and carry source and revision/hash provenance.
+- On loss of the main connection the Node enters its existing BLOCKED and
+  cancellation path. It cannot continue by contacting the remote directly.
+  Core fences new transmissions for the old grant and reconciles any accepted
+  remote task. Reconnect reports outstanding local commands and reconciles
+  under fresh authority; it never replays the A2A send.
+- Core sends owner questions and results through the originating conversation's
+  existing `client` projections. A remote question or a Node message is not an
+  approval answer. Only a permitted owner surface can answer one.
+
+The Node implementation issue must add closed schema payloads, generated
+types, version/capability negotiation and conformance fixtures together with
+the running handlers. This design registers no kind or supported combination;
+peers without that implemented capability must refuse the operation. A2A
+messages are never inserted wholesale into a host envelope to bypass validation.
 
 ## Deferred
 

@@ -53,6 +53,7 @@ else {
     const partial=fs.existsSync('result.txt')?fs.readFileSync('result.txt','utf8'):'';
     fs.writeFileSync('result.txt', partial+'worker produced this result\n');
     git('add','result.txt');
+    if (mode === 'scope') { fs.writeFileSync('outside.txt','outside declared area\n'); git('add','outside.txt'); }
     git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Produce result');
     execFileSync('gh',['pr','create']);
     const head=git('rev-parse','HEAD');
@@ -63,7 +64,7 @@ else {
     if (!allocation.Protected) throw Error('worker changed a protected ref');
     fs.writeFileSync(path.join(root,'allocation.json'),JSON.stringify(allocation));
     fs.writeFileSync(path.join(root,'workdir'),process.cwd());
-    fs.writeFileSync(path.join(root,'pr.json'),JSON.stringify({number:17,url:'https://github.com/fixture/project/pull/17',state:'OPEN',isDraft:false,headRefName:git('branch','--show-current'),baseRefName:'dev',headRefOid:head,statusCheckRollup:[{__typename:'CheckRun',name:'foundation',status:mode==='pending'?'IN_PROGRESS':'COMPLETED',conclusion:mode==='pending'?'':'SUCCESS'}],reviews:[{state:'COMMENTED',body:'No blocking findings.',commit:{oid:head}}]}));
+    fs.writeFileSync(path.join(root,'pr.json'),JSON.stringify({number:17,url:'https://github.com/fixture/project/pull/17',state:'OPEN',isDraft:false,headRefName:git('branch','--show-current'),baseRefName:'dev',headRefOid:head,statusCheckRollup:[{__typename:'CheckRun',name:'foundation',status:mode==='pending'?'IN_PROGRESS':'COMPLETED',conclusion:mode==='pending'?'':mode==='failed-check'?'FAILURE':'SUCCESS'}],reviews:[{state:'COMMENTED',body:'No blocking findings.',commit:{oid:head}}]}));
     console.log(JSON.stringify({event:'step_update',step_update:{conversation_id:'fixture',step_index:1,state:'DONE',tool_name:'run_command'}}));
     console.log(JSON.stringify({event:'result',result:{conversation_id:'fixture',status:'SUCCESS',response:'Work submitted.'}}));
   }
