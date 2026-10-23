@@ -115,9 +115,20 @@ func TestM3LauncherInstalledCore(t *testing.T) {
 		t.Fatalf("duplicate launcher line started %d model calls", got)
 	}
 
-	open := launcherOpenConversation(t, h, protocol.HistoryGet{})
+	// A retry after the person selects another agent still resolves to the
+	// agent that first admitted the line, and still starts no second turn.
+	receiveSetup(setup.Agent(h.ctx, protocol.AgentRequest{Operation: &choose, AgentID: &named}))
+	retried := receiveLauncher(launcher.Launcher(h.ctx, protocol.LauncherRequest{RequestID: requestID, Text: line})).Payload.(protocol.LauncherResult)
+	if retried.AgentID != last || retried.ConversationID != "main:"+last {
+		t.Fatalf("retry moved to another agent: %+v", retried)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("retry after a selection change started %d model calls", got)
+	}
+
+	open := launcherOpenConversation(t, h, protocol.HistoryGet{AgentID: &last})
 	if open.ConversationID == nil || *open.ConversationID != "main:"+last {
-		t.Fatalf("last conversation did not open: %+v", open)
+		t.Fatalf("the first agent's conversation did not open: %+v", open)
 	}
 	items := launcherSnapshot(t, h, open.ConversationID, line, *final.MessageID)
 	if items != 1 {
@@ -247,4 +258,106 @@ func launcherSnapshot(t *testing.T, h *harness, conversation *string, line, mess
 		t.Fatalf("locator %q opens no message in %s", messageID, *conversation)
 	}
 	return count
+}
+
+// TestM3LauncherLineKeepsItsOwnTurn proves a launcher line that arrives while
+// its agent already runs a turn is admitted as its own follow-up, so the panel
+// receives a short reply under its own request id. A steered line is absorbed
+// by the running turn and publishes nothing here.
+func TestM3LauncherLineKeepsItsOwnTurn(t *testing.T) {
+	t.Parallel()
+
+	const (
+		held   = "Hold the turn."
+		queued = "Queued launcher line."
+		answer = "Answer for the queued line."
+	)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct{ Input []json.RawMessage }
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		input := string(mustJSON(t, body.Input))
+		if calls.Add(1) == 1 {
+			if !strings.Contains(input, held) {
+				t.Error("the held turn did not carry its line")
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintf(w, "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":%q}\n\n", "Working.")
+			w.(http.Flusher).Flush()
+			close(started)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+			emitResponse(w, "Held turn finished.", true)
+			return
+		}
+		if !strings.Contains(input, queued) {
+			t.Errorf("the follow-up call did not carry the queued line")
+		}
+		emitResponse(w, answer, true)
+	}))
+	t.Cleanup(provider.Close)
+
+	h, start := installedConversationHarness(t, provider.URL)
+	start(true)
+
+	c, conversation := conversationClient(t, h)
+	inputID, heldText := "hold-input", held
+	mode := protocol.InputModeQueue
+	if _, err := c.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &inputID, Text: &heldText, Mode: &mode}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-h.ctx.Done():
+		t.Fatal("the held turn never reached the model")
+	}
+
+	launcher, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "launcher", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer launcher.Close()
+	receiveLauncher := launcherCorrelated(t, h, launcher)
+	topic := "launcher"
+	receiveLauncher(launcher.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}))
+
+	requestID := "launcher-queued-1"
+	sent, err := launcher.Launcher(h.ctx, protocol.LauncherRequest{RequestID: requestID, Text: queued})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := receiveLauncher(sent, nil).Payload.(protocol.LauncherResult)
+	if want := strings.TrimPrefix(conversation, "main:"); result.AgentID != want || result.ConversationID != conversation {
+		t.Fatalf("queued line landed elsewhere: %+v", result)
+	}
+	close(release)
+
+	var replies []protocol.LauncherReply
+	for len(replies) == 0 || !replies[len(replies)-1].Done {
+		frame, err := launcher.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reply, ok := frame.Payload.(protocol.LauncherReply); ok && reply.RequestID == requestID {
+			replies = append(replies, reply)
+		}
+	}
+	final := replies[len(replies)-1]
+	if final.Text != answer || final.MessageID == nil || *final.MessageID == "" {
+		t.Fatalf("queued short reply = %+v, want %q with a locator", final, answer)
+	}
+	if final.ConversationID != conversation {
+		t.Fatalf("queued reply lost its conversation: %+v", final)
+	}
+	if got := launcherSnapshot(t, h, &conversation, queued, *final.MessageID); got != 1 {
+		t.Fatalf("queued launcher line appears %d times in the conversation", got)
+	}
 }
