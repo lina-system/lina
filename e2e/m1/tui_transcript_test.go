@@ -101,7 +101,7 @@ func testTUITranscriptInstalledCore(t *testing.T, language design.Language) {
 		for j, message := range []string{input, scenario.Replies[i]} {
 			speaker := design.Text(language, "person")
 			if j == 1 {
-				speaker = "LINA"
+				speaker = observer.Welcome.Agents[0].Name
 			}
 			// Names are words on a separate line; terminal padding is irrelevant.
 			lines := strings.Split(text, "\n")

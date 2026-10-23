@@ -5,9 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -28,13 +28,23 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	// Shutdown does not replay a possibly effective dispatch. Recovery marks the
 	// running record unknown and retains the task's active reservation.
 	admitted, settled := false, false
+	deliverySaved := false
+	queued := false
 	defer func() {
-		if ctx.Err() == nil && !settled {
+		if ctx.Err() == nil && !deliverySaved {
 			r.State = "finished"
-			if admitted && !settled {
+			if queued {
+				r.State = "queued"
+			} else if admitted && !settled {
 				r.State = "unknown"
 			}
 			_ = s.save(ctx, r)
+		}
+		s.mu.Lock()
+		delete(s.running, r.ID)
+		s.mu.Unlock()
+		if !queued {
+			s.Wake()
 		}
 	}()
 	r.Code = "start_failed"
@@ -95,7 +105,12 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			return
 		}
 	}
-	base, err := git(repo, "rev-parse", "--verify", d.Base+"^{commit}")
+	baseRef := r.BaseCommit
+	if baseRef == "" {
+		// Legacy queued records predate admission pinning.
+		baseRef = d.Base
+	}
+	base, err := git(repo, "rev-parse", "--verify", baseRef+"^{commit}")
 	if err != nil {
 		return
 	}
@@ -152,7 +167,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		refs, err := git(workdir, protectedArgs...)
 		var protected []string
 		for _, ref := range strings.Split(refs, "\n") {
-			if !strings.HasPrefix(ref, "refs/heads/"+d.Branch+" ") {
+			if protectedTaskRef(ref, r.ID) {
 				protected = append(protected, ref)
 			}
 		}
@@ -162,49 +177,99 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err != nil {
 		return
 	}
-	adapter, observation, err := s.attempt(r.WorkerName())
-	if err != nil {
-		r.Code = "worker_unavailable"
-		return
-	}
-	defer adapter.Close(context.Background())
-	r.Version, err = adapter.Version(ctx)
-	if err != nil {
-		return
-	}
-	packet, err := taskPacket(r)
-	if err != nil {
-		return
-	}
-	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: r.ID + ":1", Workdir: workdir, TaskPacket: packet})
-	if err != nil {
-		return
-	}
-	run := work.Run{ID: r.ID + ":1", TaskID: r.ID, Generation: 1, Worker: adapter.Name(), ThreadID: thread.ID, TurnID: thread.TurnID, NodeID: s.cfg.Main}
-	if err = service.Start(ctx, run); err != nil {
-		return
-	}
-	admitted = true
-	var finish worker.Finish
-	waiting := true
-	for waiting {
-		select {
-		case event := <-adapter.Events():
-			if event.Thread != thread || event.Validate() != nil {
-				r.Code = "worker_protocol_error"
-				return
-			}
-			if event.Finish != nil {
-				finish = *event.Finish
-				waiting = false
-			}
-		case <-ctx.Done():
+	if r.Packet == "" {
+		r.Packet, err = taskPacket(r)
+		if err != nil || s.save(ctx, r) != nil {
 			return
 		}
 	}
-	// End the task process tree even if it kept stdout open after its result.
-	if err = adapter.Close(ctx); err != nil {
-		return
+	var thread worker.Thread
+	var run work.Run
+	var finish worker.Finish
+	var observation observation
+	for len(r.Tried) < 2 {
+		adapter, closeAdapter, selectErr := s.selectWorker(ctx, l, r)
+		if selectErr != nil {
+			return
+		}
+		if adapter == nil {
+			r.Wait = "worker_quota"
+			queued = true
+			return
+		}
+		observation = observeAdapter(adapter)
+		r.Version, err = adapter.Version(ctx)
+		if err != nil {
+			closeAdapter(context.Background())
+			return
+		}
+		if err = s.reserveWorker(ctx, &r, adapter.Name()); err != nil {
+			closeAdapter(context.Background())
+			if errors.Is(err, errWorkerParked) {
+				continue
+			}
+			return
+		}
+		generation := len(r.Tried)
+		run = work.Run{ID: fmt.Sprintf("%s:%d", r.ID, generation), TaskID: r.ID, Generation: generation, Worker: r.Worker, NodeID: s.cfg.Main}
+		// reserveWorker persisted this attempt before any launch. A crash is
+		// uncertain, never permission to consume another replacement.
+		thread, err = adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: run.ID, Workdir: workdir, TaskPacket: r.Packet})
+		if err != nil {
+			admitted = true
+			closeAdapter(context.Background())
+			return
+		}
+		run.ThreadID, run.TurnID = thread.ID, thread.TurnID
+		admitted, settled = true, false
+		if err = service.Start(ctx, run); err != nil {
+			closeAdapter(context.Background())
+			return
+		}
+		handle, unbind := func(worker.Event) {}, func() {}
+		if s.cfg.Bind != nil {
+			handle, unbind = s.cfg.Bind(r, adapter, thread, r.Packet, workdir)
+		}
+		observed := false
+		for !observed {
+			select {
+			case event, ok := <-adapter.Events():
+				if !ok || event.Thread != thread || event.Validate() != nil {
+					r.Code = "worker_protocol_error"
+					unbind()
+					closeAdapter(context.Background())
+					return
+				}
+				handle(event)
+				if event.Finish != nil {
+					finish = *event.Finish
+					observed = true
+				}
+			case <-ctx.Done():
+				unbind()
+				closeAdapter(context.Background())
+				return
+			}
+		}
+		quotaStop := finish.Status == worker.Failed && (finish.Failure == worker.QuotaFailure || finish.Failure == worker.RateLimitFailure || finish.Failure == worker.LoginFailure)
+		if quotaStop {
+			err = s.park(ctx, adapter)
+		}
+		unbind()
+		// No second worker may touch this worktree until the first process
+		// and all of its descendants have been reaped.
+		closeErr := closeAdapter(ctx)
+		if err != nil || closeErr != nil {
+			return
+		}
+		if quotaStop && len(r.Tried) == 1 {
+			if err = service.Finish(ctx, r.ID, run.ID, "failed"); err != nil {
+				return
+			}
+			settled = true
+			continue
+		}
+		break
 	}
 	r.State = "finished"
 	rawResult, denied := observation()
@@ -274,7 +339,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256(evidence))
 	now := time.Now()
-	receipt := work.Receipt{SchemaVersion: 1, RelationshipID: r.ID, ExecutionGeneration: 1, Attempt: 1, Outcome: outcome, Producer: "child", TurnRef: work.TurnRef{ThreadID: thread.ID, TurnID: thread.TurnID, TurnStatus: status}, EmittedAt: now,
+	receipt := work.Receipt{SchemaVersion: 1, RelationshipID: r.ID, ExecutionGeneration: run.Generation, Attempt: run.Generation, Outcome: outcome, Producer: "child", TurnRef: work.TurnRef{ThreadID: thread.ID, TurnID: thread.TurnID, TurnStatus: status}, EmittedAt: now,
 		Manifest: []work.Artifact{{Path: artifact, SHA256: hash}}, Provenance: []work.Provenance{{ArtifactID: "adapter-derived:" + r.ID, TaskID: r.ID, NodeID: s.cfg.Main, Path: artifact, SHA256: hash, ObservedAt: now}}}
 	receipt.RevisionHash = work.ManifestHash(receipt.Manifest)
 	receipt.EventID = work.ReceiptID(receipt)
@@ -285,7 +350,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err = s.finish(ctx, r, run.ID, status); err != nil {
 		r.Code = "receipt_failed"
 	} else {
-		settled = true
+		settled, deliverySaved = true, true
 	}
 }
 func taskPacket(r Record) (string, error) {
@@ -293,20 +358,7 @@ func taskPacket(r Record) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return skills.MethodPacket("Implement this task definition in this worktree using your own setup. Create the named task branch from the detached base. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n"+string(definition), r.Method)
-}
-func hasHeading(body, anchor string) bool {
-	for _, line := range strings.Split(body, "\n") {
-		if !strings.HasPrefix(line, "#") {
-			continue
-		}
-		title := strings.TrimSpace(strings.TrimLeft(line, "#"))
-		slug := strings.ToLower(strings.ReplaceAll(title, " ", "-"))
-		if slug == anchor && anchor != "" {
-			return true
-		}
-	}
-	return false
+	return skills.MethodPacket(fmt.Sprintf("Assignment: %s\nBase commit: %s\nCompletion: report the final worker result and PR; Core derives an adapter receipt from observed evidence. No additional material or memory projections are granted.\n", r.ID, r.BaseCommit)+"Implement this task definition in this worktree using your own setup. Create the named task branch from the detached base, or continue it if an earlier attempt already created it. Preserve partial work from an earlier attempt. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n"+string(definition), r.Method)
 }
 func allowedFiles(files string, patterns []string) bool {
 	if files == "" {
@@ -315,7 +367,7 @@ func allowedFiles(files string, patterns []string) bool {
 	for _, file := range strings.Split(files, "\n") {
 		allowed := false
 		for _, pattern := range patterns {
-			ok, _ := path.Match(pattern, file)
+			ok := work.AreaContains(pattern, file)
 			allowed = allowed || ok
 		}
 		if !allowed {

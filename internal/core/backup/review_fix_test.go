@@ -42,7 +42,11 @@ func TestPublishedPersonaCommitInManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m.Repositories) != 1 || m.Repositories[0].Head != published.Commit {
+	found := false
+	for _, repo := range m.Repositories {
+		found = found || repo.Path == "versions/agents/"+first.Agent.ID && repo.Head == published.Commit
+	}
+	if len(m.Repositories) != 8 || !found {
 		t.Fatalf("manifest head=%+v want published %s", m.Repositories, published.Commit)
 	}
 	if _, err = Verify(t.Context(), filepath.Join(cfg.Root, "backups", m.GenerationID)); err != nil {
