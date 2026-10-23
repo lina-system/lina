@@ -55,6 +55,14 @@ Failure coverage also includes:
   trailing context, tool discovery, later inputs and result text that appears
   only in retrieved context.
 
+- `TestM3WorkPanelEvaluation` records the fixed T-16 corpus
+  ([`work-panel.json`](../m3/work-panel.json)) through installed Core and the
+  real TUI at 120x34 in both languages and glyph modes, then reports E1 to E14
+  from the frames and Core's own card order. `TestM3WorkPanelChecksRejectWrongFrames`
+  is its self-test: it breaks one thing per check and requires that check to
+  fail. A check whose input the build does not publish yet reports missing
+  input, never a pass.
+
 - `TestM2WorkerDelayedCompletionOutput`: the model fixture selects the latest
   scenario input or worker result even when user-role ContextPacket evidence
   follows it. After recovery, a delayed first-turn completion arrives between

@@ -702,6 +702,19 @@ that order, the conversation's reading position or the draft.
 
 E11 to E14 read the pass from Core's ledger, not from timing. The run records N, the frames, the measured times and each result. A miss is investigated before a bound changes. The evaluation does not establish whether Core's Now lines and the manager's step names are good words for the person, which needs a check against human labels, or whether the person asks "what is running" less often; the research note names the field measurement for that.
 
+The harness and its self-test live in `TestM3WorkPanelEvaluation` and
+`TestM3WorkPanelChecksRejectWrongFrames`. The fixture carries the fixed cases,
+the graph corpus and the name corpus; the driver seeds each case into installed
+Core's ledger as a fixture manager's recorded work with stub worker sessions,
+reads Core's own card order and fields as its oracle, and records every settled
+120x34 frame in both languages and glyph modes. A check whose input the build
+does not publish yet is reported as missing and never as a pass: E4 and E8 to
+E9 need the injected step transitions of #771, E6 and E7 the opened 일 view of
+#770, and E11 to E14 the scheduling passes of #772 and #773. The self-test
+builds a well-formed recording, changes one thing per check, and requires that
+check to fail and the others to stay green except where they read the same
+evidence.
+
 E10 also uses `e2e/m3/work-panel-views.json` and
 `TestM3WorkPanelViewsInstalledCore`: installed Core replays a mixed-state work
 ledger and supplies the card fields to the real TUI at 120x34 and 100x34, with
