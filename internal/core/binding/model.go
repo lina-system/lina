@@ -3,11 +3,53 @@ package binding
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 )
 
 var ErrChoice = errors.New("invalid_input_binding")
+
+// ChoiceError gives the caller a correction without echoing untrusted values.
+type ChoiceError struct {
+	Field              string   `json:"field"`
+	Reason             string   `json:"reason"`
+	Allowed            []string `json:"allowed,omitempty"`
+	AllowedParentKinds []string `json:"allowed_parent_kinds,omitempty"`
+}
+
+func (e *ChoiceError) Error() string { return ErrChoice.Error() + ": " + e.Field + ": " + e.Reason }
+func (e *ChoiceError) Unwrap() error { return ErrChoice }
+
+var newTargetKinds = []string{"initiative", "project", "todo", "task", "run"}
+
+func validateTarget(s State, target Target, field string) error {
+	if target.Class == "new" {
+		if target.ID != "" {
+			return &ChoiceError{Field: field + ".id", Reason: "must_be_empty"}
+		}
+		if !slices.Contains(newTargetKinds, target.Kind) {
+			return &ChoiceError{Field: field + ".kind", Reason: "unsupported_kind", Allowed: slices.Clone(newTargetKinds)}
+		}
+		if target.Parent != "" {
+			var parents []string
+			for _, item := range s.Items {
+				if Open(item) && (item.Kind == "initiative" || item.Kind == "project") {
+					parents = append(parents, item.ID)
+				}
+			}
+			if !slices.Contains(parents, target.Parent) {
+				slices.Sort(parents)
+				return &ChoiceError{Field: field + ".parent", Reason: "invalid_parent", Allowed: parents, AllowedParentKinds: []string{"initiative", "project"}}
+			}
+		}
+		return nil
+	}
+	if !ValidTarget(s, target) {
+		return &ChoiceError{Field: field, Reason: "invalid_target"}
+	}
+	return nil
+}
 
 // Choice names one request, in message order. Tied is ordered with the
 // recommended target first. Confidence is deliberately not an ask signal.
@@ -31,7 +73,7 @@ func ValidTarget(s State, target Target) bool {
 	case "none":
 		return target == (Target{Class: "none"})
 	case "new":
-		return target.ID == "" && slices.Contains([]string{"initiative", "project", "todo", "task", "run"}, target.Kind) && (target.Parent == "" || slices.ContainsFunc(s.Items, func(i Item) bool {
+		return target.ID == "" && slices.Contains(newTargetKinds, target.Kind) && (target.Parent == "" || slices.ContainsFunc(s.Items, func(i Item) bool {
 			return i.ID == target.Parent && Open(i) && (i.Kind == "initiative" || i.Kind == "project")
 		}))
 	case "existing":
@@ -40,8 +82,11 @@ func ValidTarget(s State, target Target) bool {
 	return false
 }
 func ValidateChoice(s State, text string, c Choice) error {
-	if c.Request < 0 || c.Request >= 32 || strings.TrimSpace(c.Quote) == "" || !strings.Contains(text, c.Quote) || len(c.Difference) > 4096 || !ValidTarget(s, c.Target) {
+	if c.Request < 0 || c.Request >= 32 || strings.TrimSpace(c.Quote) == "" || !strings.Contains(text, c.Quote) || len(c.Difference) > 4096 {
 		return ErrChoice
+	}
+	if err := validateTarget(s, c.Target, "target"); err != nil {
+		return err
 	}
 	if c.Action != "" && !slices.Contains([]string{"read", "edit", "steer", "start", "send", "pay", "delete"}, c.Action) {
 		return ErrChoice
@@ -50,9 +95,12 @@ func ValidateChoice(s State, text string, c Choice) error {
 		return ErrChoice
 	}
 	seen := map[Target]bool{}
-	for _, target := range c.Tied {
-		if seen[target] || !ValidTarget(s, target) {
+	for n, target := range c.Tied {
+		if seen[target] {
 			return ErrChoice
+		}
+		if err := validateTarget(s, target, fmt.Sprintf("tied[%d]", n)); err != nil {
+			return err
 		}
 		seen[target] = true
 	}

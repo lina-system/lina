@@ -28,8 +28,9 @@ type bindingBatch struct {
 	Bindings []binding.Choice `json:"bindings"`
 }
 type bindingRequest struct {
-	Input    string           `json:"input,omitempty"`
-	Bindings []binding.Choice `json:"bindings"`
+	InputEventID string           `json:"input_event_id,omitempty"`
+	Input        string           `json:"input,omitempty"`
+	Bindings     []binding.Choice `json:"bindings"`
 }
 
 func readInputChoices(ctx context.Context, tx *canon.Tx, input ledger.Event) ([]binding.Choice, error) {
@@ -99,10 +100,10 @@ func (r *conversationRuntime) currentInputChoices(ctx context.Context, input led
 // The input identity is supplied by the live turn or its consumed steering,
 // never by an arbitrary ledger id the model invents.
 func (s *turnState) bindingInput(id string) (ledger.Event, *conversationRuntime, error) {
-	if s.bindingSource != nil && (id == "" || id == s.bindingSource.ID) {
+	if s.bindingSource != nil && (id == "" || id == s.bindingSource.ID || id == s.bindingSource.Body.Text()) {
 		return *s.bindingSource, s.runtime, nil
 	}
-	if id == "" || id == s.input.ID {
+	if id == "" || id == s.input.ID || id == s.input.Body.Text() {
 		return s.input, s.runtime, nil
 	}
 	if s.bindingInputs != nil {
@@ -114,7 +115,33 @@ func (s *turnState) bindingInput(id string) (ledger.Event, *conversationRuntime,
 			return a.event, r, nil
 		}
 	}
-	return ledger.Event{}, nil, binding.ErrChoice
+	return ledger.Event{}, nil, &binding.ChoiceError{Field: "input_event_id", Reason: "unknown_input_event"}
+}
+
+// Keep the old input spelling readable for in-flight calls. Both selectors must
+// resolve to the same admitted event if a caller supplies both.
+func (s *turnState) selectedBindingInput(id, legacy string) (ledger.Event, *conversationRuntime, error) {
+	if id == "" {
+		return s.bindingInput(legacy)
+	}
+	input, r, err := s.bindingInput(id)
+	if err != nil {
+		return input, r, err
+	}
+	if legacy != "" {
+		old, _, err := s.bindingInput(legacy)
+		if err != nil {
+			return ledger.Event{}, nil, err
+		}
+		if old.ID != input.ID {
+			return ledger.Event{}, nil, &binding.ChoiceError{Field: "input_event_id", Reason: "conflicting_input_selectors"}
+		}
+	}
+	return input, r, nil
+}
+
+func inputEventIDSchema() map[string]string {
+	return map[string]string{"type": "string", "description": "Omit for the current input. To select consumed steering, use its admitted input event ID, never message text. Only input events available to this turn are accepted."}
 }
 func (s *turnState) prepareInputBinding(declarations []provider.ToolDecl) []provider.ToolDecl {
 	if s.input.SpeakerKind != guard.Person {
@@ -147,7 +174,7 @@ func (s *turnState) prepareInputBinding(declarations []provider.ToolDecl) []prov
 			if decodeQuestionJSON(c.Arguments, &in) != nil || len(in.Bindings) == 0 || len(in.Bindings) > 32 {
 				return bindingFailure(c.ID, binding.ErrChoice)
 			}
-			input, r, err := s.bindingInput(in.Input)
+			input, r, err := s.selectedBindingInput(in.InputEventID, in.Input)
 			if err != nil {
 				return bindingFailure(c.ID, err)
 			}
@@ -180,7 +207,19 @@ func bindingFailure(id string, err error) loop.Result {
 		code = "input_target_pending"
 		result = loop.Denied
 	}
-	raw, _ := json.Marshal(map[string]string{"code": code})
+	body := map[string]any{"code": code}
+	var detail *binding.ChoiceError
+	if errors.As(err, &detail) {
+		body["field"], body["reason"] = detail.Field, detail.Reason
+		if detail.Allowed != nil {
+			body["allowed"] = detail.Allowed
+		}
+		if detail.AllowedParentKinds != nil {
+			body["allowed_parent_kinds"] = detail.AllowedParentKinds
+			body["parent_optional"] = true
+		}
+	}
+	raw, _ := json.Marshal(body)
 	return loop.Result{ID: id, Code: result, Output: raw}
 }
 
@@ -293,9 +332,9 @@ func (r *conversationRuntime) saveModelBinding(ctx context.Context, input ledger
 	return
 }
 func bindInputDeclaration() provider.ToolDecl {
-	target := map[string]any{"type": "object", "properties": map[string]any{"class": map[string]any{"type": "string", "enum": []string{"existing", "new", "none"}}, "id": map[string]string{"type": "string"}, "kind": map[string]string{"type": "string"}, "parent": map[string]string{"type": "string"}}, "required": []string{"class"}, "additionalProperties": false}
+	target := map[string]any{"type": "object", "properties": map[string]any{"class": map[string]any{"type": "string", "enum": []string{"existing", "new", "none"}}, "id": map[string]string{"type": "string", "description": "Required for existing: copy the candidate ID. Omit for new or none."}, "kind": map[string]string{"type": "string", "description": "For existing: copy the candidate kind. For new: initiative, project, todo, task or run. Omit for none."}, "parent": map[string]string{"type": "string", "description": "For new only: optional ID of an open initiative or project; omit for no parent."}}, "required": []string{"class"}, "additionalProperties": false}
 	properties := map[string]any{"request": map[string]any{"type": "integer", "minimum": 0, "maximum": 31}, "quote": map[string]string{"type": "string"}, "target": target, "tied": map[string]any{"type": "array", "items": target, "minItems": 2, "maxItems": 5}, "action": map[string]any{"type": "string", "enum": []string{"read", "edit", "steer", "start", "send", "pay", "delete"}}, "close_matches": map[string]any{"type": "array", "items": map[string]string{"type": "string"}}, "difference": map[string]string{"type": "string"}}
-	raw, _ := json.Marshal(map[string]any{"type": "function", "name": "bind_input", "description": "Bind each request in the current input, in order from zero, using an exact quote and an authorized candidate, new (with kind and optional parent), or none. Split multiple requests even when a Core rule picked their parent. Use tied only when two targets remain equally plausible after reading the input and context, recommended first, and name the intended action. Core holds irreversible ties for a target question; never execute a held request. Otherwise pick the most likely target without asking. For new work mark close existing matches and record why it differs, or bind to that existing item. This grants no authority. Optional input names consumed steering.", "parameters": map[string]any{"type": "object", "properties": map[string]any{"input": map[string]string{"type": "string"}, "bindings": map[string]any{"type": "array", "minItems": 1, "maxItems": 32, "items": map[string]any{"type": "object", "properties": properties, "required": []string{"request", "quote", "target"}, "additionalProperties": false}}}, "required": []string{"bindings"}, "additionalProperties": false}})
+	raw, _ := json.Marshal(map[string]any{"type": "function", "name": "bind_input", "description": "Bind each request in the current input, in order from zero, using an exact quote and an authorized candidate, new (with kind and optional parent), or none. Split multiple requests even when a Core rule picked their parent. Use tied only when two targets remain equally plausible after reading the input and context, recommended first, and name the intended action. Core holds irreversible ties for a target question; never execute a held request. Otherwise pick the most likely target without asking. For new work mark close existing matches and record why it differs, or bind to that existing item. This grants no authority. Omit input_event_id for the current input; it selects an admitted event only when binding consumed steering.", "parameters": map[string]any{"type": "object", "properties": map[string]any{"input_event_id": inputEventIDSchema(), "bindings": map[string]any{"type": "array", "minItems": 1, "maxItems": 32, "items": map[string]any{"type": "object", "properties": properties, "required": []string{"request", "quote", "target"}, "additionalProperties": false}}}, "required": []string{"bindings"}, "additionalProperties": false}})
 	return raw
 }
 

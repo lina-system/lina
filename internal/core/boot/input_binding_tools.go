@@ -20,8 +20,9 @@ import (
 )
 
 type toolBindingRef struct {
-	Input   string `json:"input,omitempty"`
-	Request int    `json:"request"`
+	InputEventID string `json:"input_event_id,omitempty"`
+	Input        string `json:"input,omitempty"`
+	Request      int    `json:"request"`
 }
 
 func stripToolBinding(c provider.ToolCall) (provider.ToolCall, toolBindingRef, error) {
@@ -62,7 +63,7 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 		if !ok {
 			continue
 		}
-		properties["input_binding"] = map[string]any{"type": "object", "description": "Request ordinal from bind_input, default 0. Optional input is a consumed person input; use this when acting on a later request or steering.", "properties": map[string]any{"input": map[string]string{"type": "string"}, "request": map[string]any{"type": "integer", "minimum": 0, "maximum": 31}}, "required": []string{"request"}, "additionalProperties": false}
+		properties["input_binding"] = map[string]any{"type": "object", "description": "Request ordinal from bind_input, default 0. Omit input_event_id for the current input; use an admitted event ID to act on consumed steering.", "properties": map[string]any{"input_event_id": inputEventIDSchema(), "request": map[string]any{"type": "integer", "minimum": 0, "maximum": 31}}, "required": []string{"request"}, "additionalProperties": false}
 		declarations[n], _ = json.Marshal(d)
 		s.bindings[name] = loop.Tool{
 			Validate: func(c provider.ToolCall) (string, error) {
@@ -80,10 +81,10 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				if _, err = tool.Validate(clean); err != nil {
 					return loop.Result{ID: c.ID, Code: loop.Invalid}
 				}
-				if s.bindingSource != nil && ref.Input == "" {
+				if s.bindingSource != nil && ref.Input == "" && ref.InputEventID == "" {
 					ref.Request = s.bindingRequest
 				}
-				input, r, err := s.bindingInput(ref.Input)
+				input, r, err := s.selectedBindingInput(ref.InputEventID, ref.Input)
 				if err != nil {
 					return bindingFailure(c.ID, err)
 				}

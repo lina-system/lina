@@ -374,6 +374,12 @@ Word lists and timing do not bind. In the owner's data, status, memory and new-w
 `bind_input` records request ordinals and exact input excerpts. Choices append
 system events to the admission binding; retries retain the same event and question.
 A work tool may name `input_binding` to select a request or consumed steering input.
+Both tools use optional `input_event_id`: omit it for the current input, or name
+an admitted event consumed by this turn. It is never an arbitrary ledger lookup.
+The legacy `input` field remains readable; an exact copy of the current input's
+text means that current input. Conflicting selectors are rejected. Invalid new
+targets return the field and reason, allowed kinds, and for a parent error the
+authorized open initiative/project IDs, so the model can correct the next call.
 Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
 permissions. Reading a tied candidate does not resolve the original ambiguity.

@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/thisisjun786/lina/internal/core/binding"
+	"github.com/thisisjun786/lina/internal/core/intakereplay"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/kit/lease"
@@ -53,9 +54,12 @@ func (r *conversationRuntime) replayModelBinding(ctx context.Context, event ledg
 	_, err = loop.Run(ctx, loop.Config{Request: request, Tools: turn.bindings, Parallel: 1, Stream: func(ctx context.Context, req provider.Request) (provider.Stream, error) {
 		rounds++
 		if rounds > 4 {
-			return nil, errors.New("intake model round limit")
+			return nil, intakereplay.ErrModelRoundLimit
 		}
 		return route.Adapter.Stream(ctx, activity, req)
 	}})
+	if err != nil {
+		return errors.Join(intakereplay.ErrModelReplay, err)
+	}
 	return err
 }
