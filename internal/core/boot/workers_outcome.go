@@ -207,6 +207,12 @@ func (r *conversationRuntime) resumeWorkerCompletions(ctx context.Context) error
 }
 
 func (r *conversationRuntime) workerCompletionView(ctx context.Context, event ledger.Event) (*conversationRuntime, error) {
+	if event.Surface.Kind == "a2a" {
+		if r.publications == nil {
+			return nil, channels.ErrDenied
+		}
+		return r.publications.view(ctx, strings.TrimPrefix(event.ConversationID, "a2a:"))
+	}
 	if event.Surface.Kind != "channel" {
 		return r.router.view(ctx, clientsrv.Session{PersonID: r.person}, event.AgentID)
 	}

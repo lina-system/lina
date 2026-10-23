@@ -1107,7 +1107,7 @@ Each complete result revision is one append-only `conv_event`; even a preview ab
 A rejected body or stale replacement appends nothing.
 `present_result` returns only the card fields and an initial text excerpt (2,048 Unicode scalar values by default); `read_result` is the explicit body-reading operation.
 A saved result keeps its revision and appends a status event pointing to `saved_as`.
-Request assembly skips every `result` scaffold (creation, replacement and saved-status events), so these storage bodies never become model messages.
+Request assembly skips every `result` scaffold (creation, replacement and saved-status events), so these storage bodies never become model messages. It also projects a completed `present_result` call with a bounded reference in place of its arguments, while a refused or unfinished call keeps them; the recorded call keeps its bytes.
 The separate `provider_item` tool acknowledgement remains byte-for-byte history; only an explicit `read_result` output includes the body.
 
 Save resolves and authorizes its destination without publishing, then commits its CP-05 claim and allocated record id, creates the record outside the canon transaction using that same resolved destination, and finally commits the receipt and saved status.

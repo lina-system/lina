@@ -156,7 +156,7 @@ func (s *managementSession) request(ctx context.Context, c shellClient, p protoc
 	var id string
 	var err error
 	switch p := p.(type) {
-	case protocol.ProgressDigestGet, protocol.Stop, protocol.FollowUp, protocol.MultiTaskControl:
+	case protocol.SurfaceAction, protocol.ProgressDigestGet, protocol.Stop, protocol.FollowUp, protocol.MultiTaskControl:
 		id, err = c.Control(ctx, p)
 	case protocol.ProgressGet:
 		id, err = c.Progress(ctx, p)
@@ -236,6 +236,13 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 			text += "\n" + design.Text(m.styles.options.Language, "note.help")
 		}
 		m.openPager(text)
+		return true, nil
+	}
+	if _, ok := request.(protocol.SurfaceAction); ok {
+		if e.Kind != protocol.KindItemDone {
+			return true, errStream
+		}
+		m.conversation.pager = textPager{}
 		return true, nil
 	}
 	switch p := e.Payload.(type) {

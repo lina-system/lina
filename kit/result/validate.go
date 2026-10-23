@@ -41,6 +41,8 @@ func Validate(kind Type, raw json.RawMessage, lim Limits) (Body, error) {
 	}
 	var b Body
 	switch kind {
+	case SurfaceType:
+		return validateSurface(raw)
 	case SummaryType:
 		b = &Summary{}
 	case TableType:

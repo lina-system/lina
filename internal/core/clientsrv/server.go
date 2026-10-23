@@ -206,6 +206,7 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 	}
 	// A manifest row cannot enable versions absent from the generated codec.
 	identity.Supported = slices.DeleteFunc(slices.Clone(identity.Supported), func(row Combination) bool { return !implementedClientVersion(row.ProtocolVersion) })
+
 	if identity.PersonID == "" {
 		identity.PersonID = personID
 	}
@@ -258,8 +259,9 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 	legacy := legacyActivity{}
 	topics := newTopicSession(ctx, identity, identity.Topics,
 		func(id json.RawMessage, envelope protocol.Envelope) error {
-			envelope = projectMocks(envelope, c.session)
-			if !slices.Contains(c.session.Capabilities, TurnActivityCapability) {
+			envelope = projectMocks(projectResults(envelope, c.session), c.session)
+			if !protocol.HasCapability(c.session.Capabilities, TurnActivityCapability) {
+
 				envelope = legacy.project(envelope)
 			}
 			if id != nil {
@@ -273,7 +275,7 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 		},
 		func(topic string) bool {
 			capability, installed := identity.topicCapability(topic)
-			return installed && slices.Contains(c.session.Capabilities, capability) && (identity.AuthorizeTopic == nil || identity.AuthorizeTopic(ctx, topic))
+			return installed && protocol.HasCapability(c.session.Capabilities, capability) && (identity.AuthorizeTopic == nil || identity.AuthorizeTopic(ctx, topic))
 		}, func() { conn.Close() })
 	defer func() { conn.Close(); topics.Close() }()
 	for {
@@ -322,7 +324,7 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 		case welcomed && !c.admit(envelope, &answer):
 			// Admission has already populated the refusal.
 		case welcomed && (envelope.Kind == protocol.KindRestartRequest || envelope.Kind == protocol.KindRestartGet):
-			if identity.Restart == nil || !slices.Contains(c.session.Capabilities, lifecycleCapability) {
+			if identity.Restart == nil || !protocol.HasCapability(c.session.Capabilities, lifecycleCapability) {
 				refuse(&answer, protocol.ErrorCapabilityNotNegotiated, "lifecycle capability was not negotiated")
 			} else {
 				finishReply = restartReply(ctx, identity, envelope, &answer)
@@ -341,7 +343,8 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 				identity.DecisionPresence(c.facts(), true)
 			}
 		}
-		answer = projectMocks(answer, c.session)
+		answer = projectMocks(projectResults(answer, c.session), c.session)
+
 		err = conn.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
 		finishReply()
 		if err != nil || closeAfter {
@@ -383,13 +386,13 @@ func (c *clientConnection) negotiateHello(envelope protocol.Envelope, answer *pr
 		}
 		if c.identity.Topics != nil {
 			for _, installed := range c.identity.TopicCapabilities {
-				if installed == capability {
+				if protocol.CapabilityIdentity(installed, capability) {
 					return false
 				}
 			}
 		}
 		for _, operation := range c.identity.Operations {
-			if operation.Handle != nil && (operation.Capability == capability || slices.Contains(operation.AdditionalCapabilities, capability)) {
+			if operation.Handle != nil && (protocol.CapabilityIdentity(operation.Capability, capability) || protocol.HasCapability(operation.AdditionalCapabilities, capability) || protocol.HasCapability(operation.Alternatives, capability)) {
 				return false
 			}
 		}
@@ -406,6 +409,7 @@ func (c *clientConnection) negotiateHello(envelope protocol.Envelope, answer *pr
 	}
 	c.session.ProtocolVersion = selected
 	answer.Protocol.Version = selected
+
 	c.session.ClientID = hello.ID
 	c.session.Capabilities = granted
 	return true
@@ -441,7 +445,11 @@ func (c *clientConnection) dispatch(ctx context.Context, topics *topicSession, i
 	if operation.CapabilityFor != nil {
 		required = operation.CapabilityFor(envelope)
 	}
-	if !exists || operation.Handle == nil || !slices.Contains(c.session.Capabilities, required) {
+	granted := protocol.HasCapability(c.session.Capabilities, required)
+	for _, alternative := range operation.Alternatives {
+		granted = granted || protocol.HasCapability(c.session.Capabilities, alternative)
+	}
+	if !exists || operation.Handle == nil || !granted {
 		refuse(answer, protocol.ErrorCapabilityNotNegotiated, "capability not negotiated")
 	} else {
 		result, err := operation.Handle(ctx, c.facts(), envelope)
@@ -483,6 +491,7 @@ func unsupportedHello(method string, data json.RawMessage) (string, bool) {
 	}
 	if method != "hello" || offer.Kind != protocol.KindHello || offer.Protocol.Name != "client" ||
 		implementedClientVersion(offer.Protocol.Version) || !versionPattern.MatchString(offer.Protocol.Version) ||
+
 		offer.MessageID == "" || offer.Sender.Party != protocol.PartyClient ||
 		offer.Payload.Party != protocol.PartyClient || offer.Payload.ID == "" || offer.Sender.ID != offer.Payload.ID ||
 		len(offer.Payload.ProtocolVersions) == 0 {

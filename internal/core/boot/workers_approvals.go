@@ -119,6 +119,18 @@ func (b *workerRuntime) deliverAnswers(ctx context.Context) {
 			e.mu.Lock()
 			delete(e.approvals, id)
 			e.mu.Unlock()
+			if e.origin.validateA2A(ctx) != nil {
+				answer.Choice = authority.Deny
+			}
+			// An owner denial ends this external task's execution authority. Persist
+			// the stop before the reply can produce an interrupted receipt, so the
+			// ordinary worker recovery policy cannot retry the denied operation.
+			if answer.Choice == authority.Deny && e.origin.externalTask != "" && e.cancelTask != nil {
+				if err := e.cancelTask(ctx); err != nil {
+					e.bridgeFailure(err)
+					continue
+				}
+			}
 			raw, err := approvalReply(*event.Approval, answer.Choice)
 			if err == nil {
 				sendCtx, cancel := context.WithTimeout(e.origin.ctx, 10*time.Second)
