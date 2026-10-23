@@ -51,6 +51,7 @@ func (m AdapterModel) Complete(ctx context.Context, l lease.Lease, call Call) (C
 	}
 	defer stream.Close()
 	var deltas, itemText strings.Builder
+	terminal := false
 	for {
 		event, err := stream.Next(ctx)
 		if err == io.EOF {
@@ -59,6 +60,9 @@ func (m AdapterModel) Complete(ctx context.Context, l lease.Lease, call Call) (C
 		if err != nil {
 			return Completion{}, err
 		}
+		if terminal {
+			return Completion{}, &provider.Failure{Kind: provider.NotAccepted}
+		}
 		switch event.Kind {
 		case provider.Delta:
 			deltas.WriteString(event.Delta)
@@ -66,6 +70,8 @@ func (m AdapterModel) Complete(ctx context.Context, l lease.Lease, call Call) (C
 			itemText.WriteString(textFromItem(event.Item))
 		case provider.ToolCallReady:
 			return Completion{}, applefm.ErrSchemaMiss
+		case provider.Terminal:
+			terminal = true
 		}
 	}
 	text := deltas.String()
