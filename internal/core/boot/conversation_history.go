@@ -111,6 +111,19 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			return err
 		}
 		text := e.Body.Text()
+		if e.ScaffoldKind == "failure" {
+			var turnID string
+			err := r.db.Read(ctx, func(tx *canon.Tx) error {
+				return tx.QueryRowContext(ctx, "SELECT turn_id FROM turn_control WHERE notice_event=?", e.ID).Scan(&turnID)
+			})
+			if err == nil {
+				if shown, err := r.publishCompactionFailure(ctx, e, turnID); err != nil {
+					return err
+				} else if shown {
+					continue
+				}
+			}
+		}
 		if e.ScaffoldKind == "result" {
 			var value result.Result
 			if err := json.Unmarshal([]byte(text), &value); err != nil {

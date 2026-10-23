@@ -46,6 +46,7 @@ import (
 // conversationRuntime is boot's composition of existing stores and flows. The
 // model and all accepted work belong to Core, independent of client lifetime.
 type conversationRuntime struct {
+	summaryPreparation conversationPreparation
 	// Installed only by the isolated intake replay command, never by Core boot.
 	intakeReplay    func(context.Context, ledger.Event) error
 	artifactInit    sync.Once
