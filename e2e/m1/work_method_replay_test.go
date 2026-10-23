@@ -40,6 +40,7 @@ func TestM4LoadedToolsReplayThroughInstalledCore(t *testing.T) {
 			emitPersonaCall(w, "load", "load_tools", map[string]any{"tools": []string{"worker_snapshot", "worker_read_file"}})
 		} else {
 			methodologyOutput(t, methodologyRequest{Input: req.Input}, "ok", nil)
+			assertEnabledToolNames(t, req.Instructions, req.Tools)
 			for _, name := range []string{"worker_snapshot", "worker_read_file"} {
 				found := false
 				for _, raw := range req.Tools {
@@ -47,7 +48,7 @@ func TestM4LoadedToolsReplayThroughInstalledCore(t *testing.T) {
 					_ = json.Unmarshal(raw, &d)
 					found = found || d.Name == name
 				}
-				if !found || !strings.Contains(req.Instructions, `"name":"`+name+`"`) {
+				if !found {
 					t.Errorf("loaded declaration missing: %s", name)
 				}
 			}
