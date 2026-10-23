@@ -12,6 +12,12 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM2ClaudeAdapterThroughInstalledCore (m2/claude-adapter.json) starts
+// installed Core with the external TypeScript adapter and a test-only vendor
+// runtime. The runtime calls Core's real skill_index tool, checks its receipt,
+// streams an assistant result, and the scenario reopens Core to verify durable
+// history. It uses Node but no SDK installation, external service or personal
+// credential; the SDK boundary has its own npm suite.
 func TestM2ClaudeAdapterThroughInstalledCore(t *testing.T) {
 	t.Parallel()
 

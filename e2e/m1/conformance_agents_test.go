@@ -23,6 +23,13 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol/conformance"
 )
 
+// TestM1AgentLifecycleConformance (m1/conformance-agents.json) runs every
+// shared application/agents/ fixture against installed Core over its public
+// socket. It checks refusals for missing and deleted agents in conversation and
+// management requests, plus channel binding/scope replacement. A paired
+// synthetic channel and an existing binding exercise the actual target-agent
+// checks. Read-only canon snapshots prove that refused requests preserve agent
+// revisions, actions, conversations and bindings.
 func TestM1AgentLifecycleConformance(t *testing.T) {
 	t.Parallel()
 

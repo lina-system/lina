@@ -22,6 +22,14 @@ import (
 	"github.com/thisisjun786/lina/internal/core/memory"
 )
 
+// TestM1ImportReconciliation (m1/import-reconciliation.json) runs the installed
+// lina import-hermes command on synthetic LCM and host databases. It reconciles
+// every source table, including explicitly omitted indexes and operational
+// state, and checks each retained row against both legacy-reference directions
+// and the reverse mapper's hash. It also checks rehearsal, repeat-import row
+// counts, source bytes and metadata, unknown schema refusal, and empty recall
+// before promotion with a positive control after promotion.
+//
 // Exercise the installed command, with expectations read directly from synthetic
 // sources rather than Plan.Keys, the import report, or stored legacy_ref fields.
 func TestM1ImportReconciliation(t *testing.T) {

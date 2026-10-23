@@ -15,6 +15,11 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM2TUIComposerIdentityInstalledCore (m2/tui-composer-identity.json)
+// installs Core/TUI into a temporary root and creates and chooses another agent
+// through the real TUI. It checks that the empty composer, header and reply
+// speaker name that agent before and after Core reconnect, using a loopback
+// Responses fixture and a real PTY.
 func TestM2TUIComposerIdentityInstalledCore(t *testing.T) {
 	t.Parallel()
 

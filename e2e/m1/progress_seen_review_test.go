@@ -27,6 +27,13 @@ type progressSeenScenario struct {
 	Actions       []string
 }
 
+// TestM2ProgressSeenReviewInstalledCore (m2/progress-seen-review.json) checks
+// the installed Core's progress and running views with work-service records and
+// content-checked fixture artifacts. Opening or dismissing a ready-for-review
+// result removes its progress line and publishes the change. Restart preserves
+// the acknowledgement without changing the work card, marking it applied or
+// deleting the artifact.
+//
 // Real work-ledger records enter through the service while Core is stopped.
 // The installed Core owns recovery, acknowledgement and live publication.
 func TestM2ProgressSeenReviewInstalledCore(t *testing.T) {

@@ -23,6 +23,13 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM3DelegationUnavailableLeavesConversation (m3/delegation-readiness.json)
+// exercises absent executables, failed worker handshakes and unavailable or
+// unanswered quota observations. Installed Core keeps conversation available,
+// omits unavailable graph tools and reaps partial worker processes. The
+// unanswered-quota case exercises the startup readiness deadline with a worker
+// that stays connected but never replies, then verifies conversation and worker
+// process cleanup. The scenario uses the shared acceptance harness in e2e/m1/.
 func TestM3DelegationUnavailableLeavesConversation(t *testing.T) {
 	raw, err := os.ReadFile("../m3/delegation-readiness.json")
 	if err != nil {

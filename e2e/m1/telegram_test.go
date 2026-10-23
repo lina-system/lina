@@ -40,6 +40,13 @@ func (u unavailableTelegram) RoundTrip(r *http.Request) (*http.Response, error) 
 	return nil, r.Context().Err()
 }
 
+// TestM1TelegramUnreachable (m1/telegram.json) starts production boot in
+// process against a saved channel and secret, without a model route. Only the
+// platform HTTP transport is replaced: the restored bot's identity lookup stays
+// blocked until shutdown. READY and a socket channel listing must succeed while
+// it is blocked, the channel must show unavailable without exposing the token,
+// and Core must cancel and join the request before stopping.
+//
 // Serial: Telegram polling is guarded process-wide by the shared bot ID.
 func TestM1TelegramUnreachable(t *testing.T) {
 	data, err := os.ReadFile("telegram.json")

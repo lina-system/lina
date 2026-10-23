@@ -16,6 +16,12 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM1TUIStoppedNoticeOrder (m1/tui-stopped-order.json) stops a held
+// Responses stream with /stop, completes a second turn, and keeps the 120x60
+// TUI open across an installed Core restart. The stopped outcome must remain
+// between the first input and the second input after reconnect, a resize to
+// 121x60 and a fresh TUI. A direct Core snapshot checks the authoritative order
+// independently; exactly two provider calls rule out replay.
 func TestM1TUIStoppedNoticeOrder(t *testing.T) {
 	t.Parallel()
 
