@@ -189,7 +189,7 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 			if err != nil {
 				continue
 			}
-			adapter, err := codex.Open(ctx, process, codex.Config{Bind: e.bindRecovery})
+			adapter, err := codex.Open(ctx, process, codex.Config{Bind: e.bindRecovery, ApprovalKey: e.origin.personaAuthority.WorkerApprovalKey()})
 			if err != nil {
 				process.Release()
 				continue
@@ -340,7 +340,7 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 	e.active["recovery:"+next.RetryFrom] = activity
 	e.mu.Unlock()
 	sendCtx, stop := context.WithTimeout(ctx, 30*time.Second)
-	err = e.adapter.Input(sendCtx, snap.Thread, worker.Input{Text: recoveryContinuation})
+	err = e.adapter.Input(sendCtx, snap.Thread, worker.Input{Text: worker.FrameMessage("core", "system", snap.Thread.TaskID, "", recoveryContinuation)})
 	stop()
 	if err != nil {
 		return

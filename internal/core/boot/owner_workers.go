@@ -3,6 +3,7 @@ package boot
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -104,7 +105,11 @@ func (r *conversationRuntime) ownerWorkerControl(ctx context.Context, s clientsr
 	if err != nil {
 		return malformedManagement()
 	}
-	result, err := entry.origin.workerOperationWithOwner(ctx, name, "", ledger.Event{}, in, true)
+	decision := key
+	if decision == "" {
+		decision = rand.Text()
+	}
+	result, err := entry.origin.workerOperationWithOwner(ctx, name, decision, ledger.Event{}, in, true)
 	if err != nil {
 		return err
 	}

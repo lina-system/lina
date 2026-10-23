@@ -126,6 +126,7 @@ func taskBranch(requested, id string) string {
 }
 
 type Config struct {
+	ApprovalKey       []byte
 	AuthorizeRecovery func(context.Context, Record) (bool, error)
 	Workers           []Factory
 	Rules             []work.ChoiceRule

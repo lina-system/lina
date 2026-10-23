@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -373,7 +374,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 			return tools.Result{State: tools.Failed}, err
 		}
 		entry := &workerSession{origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, started: time.Now(), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
-		adapter, err := codex.Open(r.ctx, process, codex.Config{Bind: entry.bindRecovery})
+		adapter, err := codex.Open(r.ctx, process, codex.Config{Bind: entry.bindRecovery, ApprovalKey: r.personaAuthority.WorkerApprovalKey()})
 		if err != nil {
 			process.Release()
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
@@ -532,7 +533,30 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 		}
 	}
 	if name == "worker_input" {
-		state, inputErr := entry.inputWorker(ctx, snap, a.Text, activity)
+		if owner && snap.Thread.TaskID != "" {
+			if err := worker.ResetMessages(ctx, r.db, snap.Thread.TaskID, "owner:"+turnID); err != nil {
+				activity.Release()
+				return tools.Result{State: tools.Failed}, err
+			}
+		} else if input.SpeakerKind == guard.Person && input.ID != "" && snap.Thread.TaskID != "" {
+			if err := worker.ResetMessages(ctx, r.db, snap.Thread.TaskID, "person:"+input.ID); err != nil {
+				activity.Release()
+				return tools.Result{State: tools.Failed}, err
+			}
+		}
+		sender, kind := r.agent, "agent"
+		if owner {
+			sender, kind = r.person, "person"
+		}
+		id := fmt.Sprintf("input:%s:%x", turnID, sha256.Sum256([]byte(a.Text)))
+		if !owner && snap.Thread.TaskID != "" {
+			if err := worker.AdmitMessage(ctx, r.db, snap.Thread.TaskID, id, a.Text); err != nil {
+				activity.Release()
+				return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+			}
+		}
+		text := worker.FrameMessage(sender, kind, snap.Thread.TaskID, id, a.Text)
+		state, inputErr := entry.inputWorker(ctx, snap, text, activity)
 		if inputErr != nil {
 			result := tools.Result{State: state, Body: workerError(inputErr)}
 			if state == tools.Unknown {
@@ -563,6 +587,8 @@ func (e *workerSession) result(ctx context.Context, t worker.Thread) (tools.Resu
 	return e.encode(snap), nil
 }
 func (e *workerSession) start(ctx context.Context, spec worker.StartSpec) (worker.Thread, error) {
+	spec.TaskPacket = worker.FrameMessage(e.origin.agent, "agent", spec.TaskID, spec.AttemptID+":start", spec.TaskPacket)
+	spec.ApprovalKey = e.origin.personaAuthority.WorkerApprovalKey()
 	thread, err := e.adapter.Start(ctx, e.process, spec)
 	if err != nil {
 		closeErr := e.close()
