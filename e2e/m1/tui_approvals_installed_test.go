@@ -134,9 +134,12 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 	terminal := h.startScreenTUI("TERM=xterm-256color")
 	waitComposerReady(t, h, terminal)
 	// The overview can show this request before its decision card arrives.
-	// Wait for the actual pending card before F6 tries to open it.
+	// Require the actual pending card and live input in the same frame.
 	pending := "[" + design.Text(design.English, string(protocol.KindApprovalRequest)) + "] " + approval.What
-	screen, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+	readyScreen, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+		if !s.AltScreen || s.CursorHidden || !strings.Contains(screenText(s), design.Text(design.English, "live")) {
+			return false
+		}
 		for _, row := range screenRows(s) {
 			if strings.HasSuffix(strings.TrimSpace(row), pending) {
 				return true
@@ -145,7 +148,7 @@ func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 		return false
 	})
 	if err != nil {
-		t.Fatalf("pending approval card missing: %v; cells=%s", err, screenText(screen))
+		t.Fatalf("pending TUI approval not ready: %v; cells=%s", err, screenText(readyScreen))
 	}
 	h.keys(terminal, "\x1b[?3u\x1b[17~")
 	waitScreen(t, h, terminal, fixture.Target)

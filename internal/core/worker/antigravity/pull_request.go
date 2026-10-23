@@ -26,9 +26,40 @@ type Review struct {
 	} `json:"commit"`
 }
 type ReviewComment struct {
+	ID       int64  `json:"id,omitempty"`
 	CommitID string `json:"commit_id"`
 	Body     string `json:"body"`
 }
+
+// FailureReason reports terminal negative evidence only. Missing or pending
+// checks/reviews are waits, and must never authorize closing a pull request.
+func (p PullRequest) FailureReason() string {
+	var reasons []string
+	for _, c := range p.Checks {
+		failed := c.Type == "StatusContext" && (c.State == "FAILURE" || c.State == "ERROR")
+		if c.Type == "CheckRun" && c.Status == "COMPLETED" {
+			switch c.Conclusion {
+			case "FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE", "STARTUP_FAILURE":
+				failed = true
+			}
+		}
+		if failed {
+			reasons = append(reasons, "Required check failed: "+c.Name)
+		}
+	}
+	for _, r := range p.Reviews {
+		if r.Commit.OID == p.Head && r.State != "DISMISSED" && (r.State == "CHANGES_REQUESTED" || blocking.MatchString(r.Body)) {
+			reasons = append(reasons, "Unresolved review: "+r.Body)
+		}
+	}
+	for _, c := range p.Comments {
+		if c.CommitID == p.Head && blocking.MatchString(c.Body) {
+			reasons = append(reasons, fmt.Sprintf("Unresolved finding %d: %s", c.ID, c.Body))
+		}
+	}
+	return strings.Join(reasons, "\n")
+}
+
 type PullRequest struct {
 	Number   int             `json:"number"`
 	URL      string          `json:"url"`

@@ -24,6 +24,7 @@ const conversationHistorySources = `
         CASE WHEN json_valid(e.body) THEN json_type(e.body,'$.body')='object' ELSE 0 END
         AND EXISTS(SELECT 1 FROM result_heads h WHERE h.event_id=e.id)
         AND NOT EXISTS(SELECT 1 FROM plan_drafts p JOIN result_heads h ON h.id=p.result_id WHERE h.event_id=e.id)))
+
  UNION ALL
  SELECT e.conversation_id,h.id,e.id,'','',e.rowid,1,0
  FROM result_heads h JOIN plan_drafts p ON p.result_id=h.id JOIN conv_event e ON e.id=h.event_id

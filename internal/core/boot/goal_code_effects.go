@@ -3,6 +3,7 @@ package boot
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -45,7 +46,7 @@ func (r *conversationRuntime) runGoalWorker(ctx context.Context, g goal.Goal, a 
 	if err != nil {
 		return goal.Observation{}, err
 	}
-	return goalWorkerObservation(record), nil
+	return r.goalDeliveryObservation(ctx, record)
 }
 
 func (r *conversationRuntime) observeGoalWorker(ctx context.Context, g goal.Goal, a goal.Action) (goal.Observation, error) {
@@ -56,7 +57,32 @@ func (r *conversationRuntime) observeGoalWorker(ctx context.Context, g goal.Goal
 	if err != nil {
 		return goal.Observation{}, err
 	}
-	return goalWorkerObservation(record), nil
+	return r.goalDeliveryObservation(ctx, record)
+}
+
+// Keep the original goal worker action open while the single definition
+// correction runs. Only its final receipt/head crosses the goal input fence.
+func (r *conversationRuntime) goalDeliveryObservation(ctx context.Context, record dispatch.Record) (goal.Observation, error) {
+	observation := goalWorkerObservation(record)
+	if record.State != "finished" || record.PR == nil || record.Owner == "" {
+		return observation, nil
+	}
+	var a codingAssignment
+	if err := r.db.Read(ctx, func(tx *canon.Tx) error { var err error; a, err = readCoding(ctx, tx, record.ID); return err }); err != nil {
+		return goal.Observation{}, err
+	}
+	state, err := r.deliverCoding(ctx, a, record)
+	if err != nil {
+		return goal.Observation{}, err
+	}
+	switch state {
+	case "returned":
+		return goal.Observation{Status: goal.OutcomeRunning, Handle: record.ID, Code: "definition_returned"}, nil
+	case "verified":
+		return observation, nil
+	default:
+		return goal.Observation{Status: goal.OutcomeNeedsPerson, Handle: record.ID, Code: state, EffectsSettled: true}, nil
+	}
 }
 
 // Only a receipt accepted through the input fence can supply the task's current
@@ -136,6 +162,19 @@ func (r *conversationRuntime) mergeGoalPR(ctx context.Context, record dispatch.R
 	binding := authority.MergeBinding{ID: record.ID, Person: record.Origin.Person, Agent: record.Owner, Repository: repository, Number: ref.Number, Base: record.Definition.Base, Clone: record.Definition.Repository, Protected: record.Protected}
 	var result ghclient.MergeResult
 	var err error
+	// An interrupted write must be observed before an OPEN-only preflight.
+	// GitHub may already have merged the pinned head while application is still
+	// absent from our ledger. A new binding still follows the fresh preflight.
+	current, err := merges.Get(ctx, record.ID, record.Origin.Person)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return goal.Observation{}, err
+	}
+	if current.State == "unknown" || current.State == "queued" || current.State == "merged" {
+		if current.Head != "" && current.Head != a.Revision {
+			return goal.Observation{}, authority.ErrMergeState
+		}
+		observe = true
+	}
 	if observe {
 		// Another actor may have merged before our preflight created a row.
 		// Recover bookkeeping from the retained dispatch, without Accept/Begin
@@ -152,7 +191,7 @@ func (r *conversationRuntime) mergeGoalPR(ctx context.Context, record dispatch.R
 		if err = merges.Bind(ctx, binding); err != nil {
 			return goal.Observation{}, err
 		}
-		current, err := merges.Get(ctx, record.ID, record.Origin.Person)
+		current, err = merges.Get(ctx, record.ID, record.Origin.Person)
 		if err != nil {
 			return goal.Observation{}, err
 		}

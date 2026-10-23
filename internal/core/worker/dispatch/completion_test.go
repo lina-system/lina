@@ -22,7 +22,11 @@ func (p completionPR) ReadComments(context.Context, string, int) ([]byte, error)
 	return []byte(`[[]]`), nil
 }
 
-func TestCompletionDeliversNegativePRObservation(t *testing.T) {
+func TestCompletionDeliversNegativePRObservation(t *testing.T) { testCompletion(t, false) }
+
+func TestCompletionPreservesQueuedCorrection(t *testing.T) { testCompletion(t, true) }
+
+func testCompletion(t *testing.T, correction bool) {
 	db := store(t)
 	w := work.New(db)
 	ctx := t.Context()
@@ -51,6 +55,11 @@ func TestCompletionDeliversNegativePRObservation(t *testing.T) {
 		if r.Code != "pr_unverified" || r.PR == nil || r.PR.Checks[0].Conclusion != "FAILURE" || r.ChangeEvidence != "" {
 			t.Errorf("negative evidence treated as verified: %+v", r)
 		}
+		if correction {
+			r.State = "queued"
+			r.ReturnReceipt = receipt.EventID
+			return db.Write(ctx, func(tx *canon.Tx) error { return saveRecord(ctx, tx, r) })
+		}
 		return nil
 	}}}
 	must(s.finish(ctx, record, "run", "completed"))
@@ -67,5 +76,11 @@ func TestCompletionDeliversNegativePRObservation(t *testing.T) {
 	found, err := s.React(ctx, event, card)
 	if !found || err != nil || published != 1 {
 		t.Fatalf("observed failing check withheld from manager: found=%v published=%d error=%v", found, published, err)
+	}
+	if correction {
+		records, err := s.records(ctx)
+		if err != nil || len(records) != 1 || records[0].State != "queued" || records[0].ReturnReceipt != receipt.EventID || records[0].Announced {
+			t.Fatalf("old completion overwrote correction: %+v %v", records, err)
+		}
 	}
 }

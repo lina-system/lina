@@ -80,4 +80,48 @@ func TestBootPublishesToolApprovalAfterCommitToLiveClient(t *testing.T) {
 	if _, err = registry.Dispatch(ctx, call); err != nil || runs != 1 {
 		t.Fatalf("approved dispatch runs=%d err=%v", runs, err)
 	}
+
+	// A different intent waits for its own answer. Losing the last eligible
+	// surface and retrying must retire that card through the boot callback.
+	call.Key = "disconnected-client"
+	if _, err = registry.Dispatch(ctx, call); !errors.Is(err, tools.ErrApprovalRequired) {
+		t.Fatal(err)
+	}
+	cards, err := r.decisions.ApprovalCards(ctx)
+	if err != nil || len(cards) != 1 {
+		t.Fatalf("pending card: %+v %v", cards, err)
+	}
+	card := cards[0].Card
+	r.identity.DecisionPresence(session, false)
+	if _, err = registry.Dispatch(ctx, call); !errors.Is(err, authority.ErrNoSurface) {
+		t.Fatal(err)
+	}
+	for {
+		frame, err := subscription.Next(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var update protocol.ApprovalRequest
+		if err = json.Unmarshal(frame.Event.Data, &update); err != nil {
+			t.Fatal(err)
+		}
+		if update.Card != nil && update.Card.ID == card.ID && update.Card.Outcome != nil {
+			if *update.Card.Outcome != protocol.DecisionOutcomeStopped {
+				t.Fatalf("refused card outcome: %+v", update)
+			}
+			break
+		}
+	}
+	r.identity.DecisionPresence(session, true)
+	answer := protocol.Envelope{Payload: protocol.ApprovalAnswer{CardID: &card.ID, Revision: &card.Revision, Choice: protocol.ApprovalChoiceOnce}}
+	result, err = r.identity.Operations[protocol.KindApprovalAnswer].Handle(ctx, session, answer)
+	if err != nil || *result.Payload.(protocol.ApprovalAnswer).Outcome != protocol.DecisionOutcomeStopped {
+		t.Fatalf("late answer: %+v %v", result, err)
+	}
+	if _, err = registry.Dispatch(ctx, call); !errors.Is(err, authority.ErrNoSurface) || runs != 1 {
+		t.Fatalf("refused replay ran: runs=%d err=%v", runs, err)
+	}
+	if cards, err = r.decisions.ApprovalCards(ctx); err != nil || len(cards) != 0 {
+		t.Fatalf("refused card still visible: %+v %v", cards, err)
+	}
 }
