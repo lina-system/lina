@@ -422,7 +422,7 @@ func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err er
 			if noticeErr != nil {
 				return errors.Join(err, noticeErr)
 			}
-			if shown, showErr := r.publishCompactionFailure(context.WithoutCancel(ctx), notice, turnID); shown || showErr != nil {
+			if shown, showErr := r.publishCompactionFailure(ctx, notice, turnID); shown || showErr != nil {
 				return errors.Join(err, showErr)
 			}
 			text := notice.Body.Text()

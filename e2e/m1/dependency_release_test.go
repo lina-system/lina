@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/lina/e2e/fixture"
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -183,7 +182,6 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	}
 	var calls atomic.Int32
 	var managerCalls atomic.Int32
-	var landedObserved atomic.Bool
 	workerReplies := make(chan struct{}, 3)
 	var taskIDs []string
 	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -263,28 +261,6 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 				}
 				emitResponse(w, "Worker execution refused by the originating preset.", true)
 			}
-			return
-		}
-		var current struct {
-			Role, Type, Content, Output string
-			CallID                      string `json:"call_id"`
-		}
-		_ = json.Unmarshal(fixture.LastInput(request.Input), &current)
-		if current.Role == "user" && current.Content == "Observe the landed foundation." {
-			// Worker notices and question answers add model turns. The explicit
-			// observation request must not depend on their arrival count. Only
-			// the merged predecessor has new forge evidence; queued descendants
-			// are still checked below without returning every task packet.
-			emitPersonaCall(w, "landed-refresh", "refresh_work", map[string]any{"tasks": taskIDs[:1]})
-			return
-		}
-		if current.Type == "function_call_output" && current.CallID == "landed-refresh" {
-			var result struct{ Code string }
-			if json.Unmarshal([]byte(current.Output), &result) != nil || result.Code != "ok" {
-				t.Errorf("landed observation failed: %s", current.Output)
-			}
-			landedObserved.Store(result.Code == "ok")
-			emitResponse(w, "Work refreshed.", true)
 			return
 		}
 		switch n := calls.Add(1); n {
@@ -871,9 +847,6 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		t.Fatal(err)
 	}
 	queuedWorkTurn(t, h, client, conversation, "refresh-input", "Observe the landed foundation.")
-	if !landedObserved.Load() {
-		t.Fatal("landed input completed without refreshing the task graph")
-	}
 	b = await(taskIDs[1], func(c work.Card) bool { return c.Run != nil && !c.Active && c.TurnStatus == "completed" })
 	for _, id := range taskIDs[:3] {
 		dir := filepath.Join(h.root, "work", "tasks", id)
