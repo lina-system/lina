@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -42,11 +43,15 @@ import (
 // the helper then kills the coalition and removes the job itself.
 
 const (
-	jobHelper    = "proc-job"
-	eventStart   = "started"
-	eventExit    = "exit"
-	eventFailed  = "error"
-	startTimeout = 30 * time.Second
+	jobHelper = "proc-job"
+	// JobDepthVariable marks a process that launchd started as a job. A job
+	// that would itself start a job is refused, so a host that loses the helper
+	// dispatch cannot turn every command into a nested run of jobs.
+	JobDepthVariable = "LINA_PROC_JOB_DEPTH"
+	eventStart       = "started"
+	eventExit        = "exit"
+	eventFailed      = "error"
+	startTimeout     = 30 * time.Second
 	// launchctl calls are serialized: each one changes launchd's job table,
 	// and a burst of concurrent bootstraps is what makes a loaded host
 	// misbehave.
@@ -211,6 +216,7 @@ func jobPlist(label, exe, request, dir string, background bool) []byte {
 		// The user domain exists without a GUI login; the GUI domain does not.
 		body.WriteString("<key>LimitLoadToSessionType</key><string>Background</string>\n")
 	}
+	body.WriteString("<key>EnvironmentVariables</key><dict><key>" + JobDepthVariable + "</key><string>" + strconv.Itoa(jobDepth()+1) + "</string></dict>\n")
 	body.WriteString("</dict></plist>\n")
 	return []byte(body.String())
 }
@@ -565,6 +571,10 @@ func JobMain(args []string, diagnostic io.Writer) int {
 		fmt.Fprintln(diagnostic, "proc-job:", err)
 		return 70
 	}
+	if depth := jobDepth(); depth > 1 {
+		fmt.Fprintf(diagnostic, "proc-job: a job cannot start another job (depth %d)\n", depth)
+		return 70
+	}
 	ctl, err := net.Dial("unix", request.Ctl)
 	if err != nil {
 		fmt.Fprintln(diagnostic, "proc-job:", err)
@@ -677,6 +687,18 @@ func endJob(domain, label, dir string) {
 	if err := command.Start(); err == nil {
 		_ = command.Process.Release()
 	}
+}
+
+// jobDepth reads the nesting this process was started at. launchd gives every
+// job the marker, so a job launched from inside a job reports a depth above 1
+// and refuses to run, and a job definition always names one level deeper than
+// the process writing it.
+func jobDepth() int {
+	depth, err := strconv.Atoi(os.Getenv(JobDepthVariable))
+	if err != nil || depth < 0 {
+		return 0
+	}
+	return depth
 }
 
 func readJobRequest(path string) (jobRequest, error) {
