@@ -600,6 +600,26 @@ The completion receipt is how a worker reports back, and the only receipt a work
 - For coding work, the Node creates the worktree in the device clone, records the protected refs and reports them. The worker on the device pushes its branch and opens the pull request with that device's own GitHub setup, and its receipt names the pull request and its head SHA. LINA Core reads the pull request from GitHub. No commit travels between the Node and the main.
 - Remote coding work is unsupported until the Node's relay of the worker is verified and listed in the supported-combination table.
 
+The repository-cache primitive in `internal/node/repocache` clones GitHub
+repositories on demand into private cache directories and creates a distinct
+worktree for each task attempt. Only a fully cloned repository is published in
+the cache. Fetches update remote-tracking refs; they do not reset another task's
+branch or worktree. An existing attempt, including one left by a killed process,
+is preserved and refused by preparation until its owner reconciles it.
+
+Cleanup requires Core's observation that the matching pull request merged,
+bound to its repository, branch and head. A worker's completion receipt is not
+that observation. Cleanup checks the worktree's current head and branch and
+uses non-forced Git removal, preserving uncommitted work and all other tasks.
+The clone remains reusable. Repository bytes travel through the Git remote;
+this primitive has no Core commit-transfer operation.
+
+This is a package boundary, not an installed remote-coding capability. Node
+transport, Core's merge observation, task-unknown reconciliation and per-task
+credential delivery still require their runtime composition. The primitive
+currently runs Git without inherited Git configuration, credential helpers or
+interactive authentication and accepts only canonical GitHub HTTPS origins.
+
 ## Event-driven flow
 
 LINA Core reacts to a finished worker within seconds and does not poll for it. The reaction is one path whatever the worker: a completion event is recorded, claimed and acted on.
