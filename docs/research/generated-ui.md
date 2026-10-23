@@ -75,7 +75,7 @@ Clones are read-only and nothing was pushed. No code from any project is in LINA
 | --- | --- |
 | Which model fits each part | Mock: a static page in a display-only frame. Card: A2UI data from LINA's catalog. Mini app: template code on its own origin. |
 | How a mini app reads and writes | It reads through the client API's read requests, limited by its token to its declared reads. A write is a request that LINA Core runs as the owner agent's effect, under the same grants, posture and approvals as a tool call. |
-| Sandbox and permissions | Its own origin per app, a strict content security policy and an HttpOnly token. Reads, requests, fetched hosts and schedule are declared and shown before the first open. LINA Core fetches declared hosts; the page reaches only its own origin. |
+| Sandbox and permissions | Its own origin per app, a strict content security policy, a frame that refuses navigation away, and an HttpOnly token whose cookie name is the app's own and which only that app's gateway accepts. Reads, requests, fetched hosts and schedule are declared and shown before the first open. LINA Core fetches declared hosts; the page reaches only its own origin. |
 | Keep/Undo and history | Every change is a revision with the request that made it. Keep/Undo appears only on a real diff. Any revision can be restored as a new one. |
 | Editing by talking | In the conversation or from the app's change line, to the owner agent, one change at a time. |
 | How the TUI degrades | Cards: LINA Core's text with keys. Mocks: the PNG or the checklist. Mini apps: a one-time link to the system browser. |
@@ -199,6 +199,8 @@ The review follows the security-safety-review method, applied to the design and 
 | Generated code runs with app rights | PLASMA, Baby Menu, Canopy | Cards carry no code. Mocks run in a display-only frame. Mini apps run on their own origin with no bridge. | Spike D4: parent, host and network blocked |
 | Data leaves the device | PLASMA (CDN scripts), Aglet (undeclared `fetch`) | Connections to the app's own origin only; LINA Core fetches declared hosts | Policy blocked; the negative control reached |
 | Token theft | none observed | HttpOnly cookie from a one-time code; revoked on removal | `document.cookie` was empty |
+| One app replaces or uses another app's token | Found in review of this design | Cookies are scoped by host, not port, so ports do not separate them. Each app's cookie has its own name, and each app's gateway accepts only its own app's token. | Not measured: the spike ran one app |
+| Data carried out by navigating away | Found in review of this design | The policy does not stop navigation, so the frame refuses navigation away from the app's origin. The system browser cannot do that, which leaves a gap for the browser link. | Not measured |
 | Reads beyond purpose | Baby Menu (raw SQL) | Declared reads only, shown before the first open | 403 on `memories` |
 | Writes without the person | Baby Menu (auto-approve) | The owner agent's effect under normal posture; never counts as the person's decision or an approval | The write waited, then applied once |
 | A card that impersonates LINA or an approval | A2UI theme fields | The app draws the frame and the agent's face; cards cannot set them or look like approvals | Design only |
@@ -217,6 +219,8 @@ No terminal command needs a deny rule, because a mini app runs none.
 **Verdict: HOLD for implementation.** The design closes every risk seen in the references, and the spike shows the controls work for one app on the loopback. Missing evidence:
 
 - per-port origins on the tailnet
+- two apps on one host: separate cookie names, and each gateway accepting only its own app's token
+- the frame refusing navigation away from the app's origin, and what the browser link can do about it
 - token lifetime and rotation
 - rate limits on the gateway
 - frame isolation in each platform's web view
@@ -232,7 +236,7 @@ The implementation issues carry these.
 - LINA Core folds messages into whole revisions, so typed bodies never stream and a client never draws a partial card.
 - A mini app's write is the owner agent's effect, not the person's, because its code can send a request without a press.
 - Asking for another change keeps the one shown. History makes that safe, and talking stays fluent.
-- Each app gets its own origin by port, because path-scoped cookies do not separate apps on one origin.
+- Each app gets its own origin by port, which keeps scripts and storage apart. Cookies are scoped by host, not port, so ports do not keep tokens apart. Each app's cookie has its own name, and each gateway accepts only its own app's token (found in review).
 - Where no web view exists, the system browser opens the app through a one-time link.
 
 **Open points.**
