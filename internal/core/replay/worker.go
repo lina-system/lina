@@ -25,19 +25,22 @@ import (
 // child. The same kit loop runs inside the OS sandbox, with model transport
 // brokered by Core over inherited pipes and no network in the child.
 type WorkerInput struct {
-	Request   provider.Request
-	Calls     []Call
-	ReadNames []string
+	RuntimeTools bool
+	Request      provider.Request
+	Calls        []Call
+	ReadNames    []string
 }
 type workerFrame struct {
-	Read    *provider.ToolCall `json:"read,omitempty"`
-	Result  *loop.Result       `json:"result,omitempty"`
-	Request *provider.Request  `json:"request,omitempty"`
-	Event   *provider.Event    `json:"event,omitempty"`
-	Meta    *provider.Meta     `json:"meta,omitempty"`
-	Outcome *loop.Outcome      `json:"outcome,omitempty"`
-	Error   string             `json:"error,omitempty"`
-	End     bool               `json:"end,omitempty"`
+	Call       *provider.ToolCall   `json:"call,omitempty"`
+	ToolResult *provider.ToolResult `json:"tool_result,omitempty"`
+	Read       *provider.ToolCall   `json:"read,omitempty"`
+	Result     *loop.Result         `json:"result,omitempty"`
+	Request    *provider.Request    `json:"request,omitempty"`
+	Event      *provider.Event      `json:"event,omitempty"`
+	Meta       *provider.Meta       `json:"meta,omitempty"`
+	Outcome    *loop.Outcome        `json:"outcome,omitempty"`
+	Error      string               `json:"error,omitempty"`
+	End        bool                 `json:"end,omitempty"`
 }
 
 const maxWorkerFrame = 8 << 20
@@ -101,7 +104,9 @@ func Worker(ctx context.Context, input io.Reader, output io.Writer) error {
 			return *frame.Result
 		}}
 	}
-	out, err := Run(ctx, RunConfig{Request: initial.Request, Calls: initial.Calls, Reads: reads, Stream: func(_ context.Context, r provider.Request) (provider.Stream, error) {
+	out, err := Run(ctx, RunConfig{RuntimeTools: initial.RuntimeTools, Request: initial.Request, Calls: initial.Calls, Reads: reads, Stream: func(_ context.Context, r provider.Request) (provider.Stream, error) {
+		bridge := r.Bridge
+		r.Bridge = nil
 		if err := enc.Encode(workerFrame{Request: &r}); err != nil {
 			return nil, err
 		}
@@ -110,6 +115,19 @@ func Worker(ctx context.Context, input io.Reader, output io.Writer) error {
 			var f workerFrame
 			if err := readFrame(scan, &f); err != nil {
 				return nil, err
+			}
+			if f.Call != nil {
+				if bridge == nil {
+					return nil, ErrInvalid
+				}
+				result, err := bridge.Call(ctx, *f.Call)
+				if err != nil {
+					return nil, err
+				}
+				if err := enc.Encode(workerFrame{ToolResult: &result}); err != nil {
+					return nil, err
+				}
+				continue
 			}
 			if f.Error != "" {
 				return nil, errors.New("replay_model_failed")
@@ -237,6 +255,9 @@ func Sandboxed(ctx context.Context, cfg SandboxConfig, initial WorkerInput) (out
 			return out, ErrInvalid
 		}
 		request := *frame.Request
+		if initial.RuntimeTools {
+			request.Bridge = &workerBridge{enc: enc, scan: scan}
+		}
 		// The child owns only loop evolution. It cannot change the account, model,
 		// instructions, or offered tools selected by the authenticated operation.
 		// Restore loaded schemas only from that operation's recorded catalog.
@@ -328,4 +349,25 @@ func Request(ep Episode, candidates map[string]string, model, effort string, bui
 		r.Effort = provider.Effort(effort)
 	}
 	return r, nil
+}
+
+// workerBridge sends runtime calls back to the sandboxed loop's recorded-result
+// admission. The parent has no tool executor or authority to perform effects.
+type workerBridge struct {
+	enc  *json.Encoder
+	scan *bufio.Scanner
+}
+
+func (b *workerBridge) Call(_ context.Context, call provider.ToolCall) (provider.ToolResult, error) {
+	if err := b.enc.Encode(workerFrame{Call: &call}); err != nil {
+		return provider.ToolResult{}, err
+	}
+	var f workerFrame
+	if err := readFrame(b.scan, &f); err != nil {
+		return provider.ToolResult{}, err
+	}
+	if f.ToolResult == nil || f.ToolResult.ID != call.ID {
+		return provider.ToolResult{}, ErrInvalid
+	}
+	return *f.ToolResult, nil
 }

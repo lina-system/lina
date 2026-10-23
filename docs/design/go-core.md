@@ -2404,6 +2404,31 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   Malformed frames, EOF and overflowing the bounded event queues fail the connection.
   Consumers drain updates and requests while calls run and apply Core's authorization and approval policy.
 - Implementation notes: [C-60 worker profiles](../../internal/core/worker/acp/REFERENCE.md#c-60-worker-profiles).
+- Added worker settings are read once at Core startup from
+  `system/core/worker-profiles.json` under the state root:
+
+  ```json
+  {"version":1,"profiles":[{"name":"my-agent","command":"my-acp-agent","args":["acp"]}]}
+  ```
+
+  Version 1 accepts only `version` and `profiles`; each profile accepts only
+  `name`, `command` and optional `args` (an array of strings, empty by default).
+  Names match `[a-z][a-z0-9-]{0,63}`. All built-in worker names are reserved even
+  when absent, and every entry sharing a duplicate added name is refused.
+  A command is an executable on PATH or an absolute executable path; Core
+  resolves it at startup and passes arguments directly, without a shell.
+  The file is a regular file of at most 64 KiB with at most 128 profiles;
+  commands and each argument have at most 4096 bytes, with at most 128 arguments
+  and no NUL bytes. Commands cannot be blank or have outer whitespace.
+  Missing settings add no workers. Invalid JSON, envelope fields or version
+  refuse the added file; an invalid profile or unavailable executable refuses
+  only that entry. Startup reports the file, entry number or valid worker name, and cause
+  without echoing commands or arguments. Other workers remain available.
+  Valid added profiles follow installed built-ins in the chooser and are also
+  explicit selections in that Core's `dispatch_work` declaration and admission.
+  Changes take effect on restart. Settings confer no execution authority and
+  cannot supply environment, model, login, version probes or verified versions.
+  Each attempt uses `agentInfo.version` or `unknown` and remains unverified.
 - `kit/acp.StartPrompt` returns after writing `session/prompt` and supplies one buffered result.
   The adapter starts each turn through that barrier, so an immediate `session/cancel` cannot precede the prompt.
   `Prompt` retains its blocking convenience API; cancelling its wait sends no protocol cancel.
