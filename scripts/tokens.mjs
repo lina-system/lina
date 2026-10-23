@@ -80,7 +80,7 @@ function validate(path, token) {
   if (type !== token.$type) fail();
 }
 export function loadTokens(root) {
-  return names.map(name => {
+  const themes = names.map(name => {
     const data = JSON.parse(readFileSync(join(root, `design/tokens/${name}.json`), 'utf8'));
     if (data.$extensions?.['lina.theme'] !== name) throw new Error(`Invalid theme: ${name}`);
     const tokens = flatten(data);
@@ -108,6 +108,16 @@ export function loadTokens(root) {
     }
     return { name, tokens };
   });
+  // The launcher Swift file holds one value per spacing, radius and motion role,
+  // so those roles must not differ between themes.
+  for (const path of Object.keys(themes[0].tokens).filter(path => /^(space|radius|motion)\./.test(path))) {
+    for (const theme of themes.slice(1)) {
+      if (JSON.stringify(theme.tokens[path].$value) !== JSON.stringify(themes[0].tokens[path].$value)) {
+        throw new Error(`${theme.name}: ${path} must match the light theme; the launcher Swift file holds one value`);
+      }
+    }
+  }
+  return themes;
 }
 function goType(token) {
   return { color: 'Color', dimension: 'Dimension', duration: 'float64', fontFamily: 'string',

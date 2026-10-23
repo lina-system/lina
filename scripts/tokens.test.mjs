@@ -56,17 +56,19 @@ test('Swift output has dynamic AppKit colors and layout constants from the sourc
   const dir = fixture(t);
   generate(dir);
   const swift = readFileSync(join(dir, 'design/tokens/tokens.swift'), 'utf8');
+  const themes = Object.fromEntries(loadTokens(dir).map(theme => [theme.name, theme.tokens]));
+  const hex = (name, role) => `0x${themes[name][`color.${role}`].$value.hex.slice(1).toUpperCase()}`;
   assert.match(swift, /^\/\/ SPDX-License-Identifier: Apache-2\.0\n/);
   assert.match(swift, /import AppKit/);
   for (const role of ['canvas', 'surface', 'text', 'muted', 'accent', 'line']) {
-    assert.match(swift, new RegExp(`static let ${role}: NSColor = dynamic\\(light: 0x[\\dA-F]{6}, dark: 0x[\\dA-F]{6}, highContrast: 0x[\\dA-F]{6}\\)`));
+    assert.match(swift, new RegExp(`static let ${role}: NSColor = dynamic\\(light: ${hex('light', role)}, `
+      + `dark: ${hex('dark', role)}, highContrast: ${hex('high-contrast', role)}\\)`));
   }
-  assert.match(swift, /light: 0xF8F9FC, dark: 0x17191F, highContrast: 0x000000/);
-  assert.match(swift, /light: 0x2F4BDB, dark: 0x5685FF, highContrast: 0x6795FF/);
-  for (const [name, value] of [['inline', '8'], ['gutter', '24'], ['section', '24'], ['page', '32']]) {
-    assert.match(swift, new RegExp(`static let ${name}: CGFloat = ${value}\\b`));
+  for (const name of ['inline', 'gutter', 'section', 'page']) {
+    assert.match(swift, new RegExp(`static let ${name}: CGFloat = ${themes.light[`space.${name}`].$value.value}\\b`));
   }
-  assert.match(swift, /static let card: CGFloat = 12\b/);
+  assert.match(swift, new RegExp(`static let card: CGFloat = ${themes.light['radius.card'].$value.value}\\b`));
+  // Durations arrive as milliseconds and leave as seconds.
   for (const [name, value] of [['settle', '0.16'], ['reduced', '0'], ['activityFrame', '0.1'], ['activityElapsed', '1']]) {
     assert.match(swift, new RegExp(`static let ${name}: TimeInterval = ${value}\\b`));
   }
@@ -93,6 +95,15 @@ test('a light high-contrast set fails because the launcher needs a dark one', t 
   set('line', '#000000', 16, 0);
   writeFileSync(path, JSON.stringify(data));
   assert.throws(() => generate(dir), /high-contrast.*dark/i);
+});
+
+test('spacing, radius and motion must match across themes because the Swift file holds one value', t => {
+  const dir = fixture(t);
+  const path = join(dir, 'design/tokens/dark.json');
+  const data = JSON.parse(readFileSync(path, 'utf8'));
+  data.space.gutter.$value.value = 16;
+  writeFileSync(path, JSON.stringify(data));
+  assert.throws(() => generate(dir), /dark: space\.gutter must match the light theme/);
 });
 
 test('low contrast, absent roles and missing terminal fallbacks fail closed', t => {

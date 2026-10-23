@@ -56,7 +56,9 @@ The launcher's Swift file holds the six colors as dynamic `NSColor` values that
 pick light, dark or high contrast from the panel's appearance, plus spacing,
 radius and motion constants. Glass, materials and corner shape stay the
 system's. The high-contrast set is dark, reaches 7:1 against canvas and surface,
-and applies in either appearance while Increase Contrast is on.
+and applies in either appearance while Increase Contrast is on. Spacing, radius
+and motion are the same in every theme, and the loader rejects a theme where
+they differ, because the Swift file holds one value per role.
 
 All text roles (text, muted and accent) must reach 4.5:1 on both canvas and
 surface, including the standard 16-colour and 256-colour fallback palettes.
