@@ -16,6 +16,7 @@ This contract covers:
 - results: their cards, how each type is drawn in the work panel, the TUI and external channels, the summary-first flow and saving
 - agents on screen: choosing, creating, tuning and deleting agents, the channels they are dispatched to and the log of their talk with each other
 - the work and knowledge records, intent cards and work cards; the library; the today feed, the news feed and the LIFE feed; settings, including the connected accounts, the plugin catalog, the plugin list, the channel connections and reporting a problem
+- generated UI: drawn mocks, generated cards and mini apps that LINA builds on request
 - the launcher and its clipboard history
 - Korean input and accessibility acceptance
 
@@ -184,7 +185,7 @@ The LINA app on every platform meets one quality bar: no web feel. The bar judge
 
 - The LINA app is a React application in a shell that is bundled with the app (see App front end). Web technology is allowed as the rendering technology. The web is not a runtime of the app: the app loads only its own bundled files from a custom scheme, loads no remote page for its interface, and shows no address bar, tab, page-load state or browser navigation. The person signs in to a service only in the system browser ([integrations.md](integrations.md#consent-through-the-client)), never in a page embedded in the app. The app is not offered as a hosted website. The TUI uses no web technology.
 - Whichever shell hosts it, the interface runs with the fewest rights the shell can give it, and the shell follows its vendor's security guidance: no Node.js and no direct file or process access in the interface, the interface isolated from the shell's own code, a content security policy, navigation and new windows limited to the bundled origin, permission requests denied unless a handler for a feature the person started allows them (recording, for example), and every message from the interface to the shell validated by the shell.
-- Content that the app renders from a model, a connected source or a plugin is data. The app's own components render it, from LINA's typed results where they exist. Content that must run as HTML runs in a sandboxed frame with no network by default and no access to the shell's bridge, and it never reaches LINA Core directly.
+- Content that the app renders from a model, a connected source or a plugin is data. The app's own components render it, from LINA's typed results where they exist. Content that must run as HTML runs in a sandboxed frame with no network by default and no access to the shell's bridge, and it never reaches LINA Core directly. A drawn mock is such content. A mini app is the one exception that reaches LINA Core, and only through its own scoped gateway (see Generated UI).
 - An app has no web feel when nothing in normal use reveals a web page. Text input and input methods, selection, scrolling, focus, menus, keyboard shortcuts, drag and drop, windows and notifications behave as in the platform's own apps. No screen shows a page load, a blank frame, a browser context menu or browser-style navigation. These web tells do not show: text selection on interface chrome (conversation text, documents and fields stay selectable), pull-to-refresh and rubber-band overscroll on mobile, pinch and Ctrl-wheel page zoom (the app's own text size setting replaces them), a file drop that navigates the window (a drop imports the file, see [filesystem.md](filesystem.md)), link previews and tap highlights, and default focus rings that differ from the platform's.
 - The app draws its kept display state, such as the reading position and unsent drafts, in its first frame. The window is shown after its first paint, with the background of the design token, so no white frame appears. No control shows a hover state that the platform's own apps don't show.
 - macOS comes first. On a real Mac the app has the system menu bar and its shortcuts, text input through the system Korean input with its candidate window at the caret, the platform's scrolling, and the launcher panel (see Launcher). A fault on macOS blocks the release of the app before a fault on another platform does.
@@ -328,6 +329,8 @@ Core presents what the person should open and keep, apart from the chat text, as
 | `comparison` | Side by side or unified; the person accepts or rejects each hunk when an apply request exists | A colored unified diff, with accept or reject for each hunk when an apply request exists | Apply, when an apply request exists |
 | `plan_view` | The plan as an ordered, nested list with the state of each entry | A checklist | Confirm |
 | `file` | The viewer for its media type | An export action that writes the file | Save |
+| `surface` (later version) | The card, drawn by the app's own widgets (see Generated UI) | Core's text form, with a key for each action | The card's own actions |
+| `mock` (later version) | The mock in a sandboxed frame, revisions side by side | The PNG where the terminal shows images, otherwise the checklist and an export action | Build this |
 
 **Result cards.**
 
@@ -341,7 +344,7 @@ Core presents what the person should open and keep, apart from the chat text, as
 - The panel shows one result at a time. Opening another result replaces it. A direct edit is a request to LINA Core, like every other edit in the app, so nothing is held back in the panel when it is replaced or closed.
 - In the first version the person edits directly only a `summary` (the outline and the answers) and the blocks of a `document_draft`. Every other type is changed by telling the agent. A direct edit or an edit by chat of a preview makes the next revision. An edit of a saved result is an edit of the saved material and a saved version, as under Threads on screen.
 - Sorting, hiding columns, zoom and collapsed branches belong to the viewer, are display state, and are never saved.
-- The app draws a result from its typed body with its own components. It never renders HTML that a model or a connected source supplied. If a plugin's own view is ever shown (the reserved `app` type), it runs in a sandbox with no network and never reaches LINA Core directly.
+- The app draws a result from its typed body with its own components. It never renders HTML that a model or a connected source supplied, except a drawn mock or a mini app in its sandboxed frame (see Generated UI). If a plugin's own view is ever shown (the reserved `app` type), it runs in a sandbox with no network and never reaches LINA Core directly.
 - A type the app does not know shows the summary and the text. Text in a result is selectable, and the person copies it with the platform's own copy.
 
 **Summary first.** For a document expected to run longer than about two screens, the agent first presents a `summary` result: the outline, the key points, what the document will cover and what it will not, the open questions and a length estimate. The person edits the outline in the work panel or by chat and answers the questions. The card's action, or a sentence in the conversation, then starts the writing, which is background work that the agent does not wait for ([conversation-and-memory.md](conversation-and-memory.md#results)). The finished `document_draft` arrives as a result card. The step is skipped when the request is one page or less, or when the person asks to have it written at once.
@@ -604,12 +607,64 @@ Agents talk to each other in the background ([conversation-and-memory.md](conver
 - In an external channel the person can ask for the log; the answer is a short list of the same one-line entries, not the content.
 - The log is a view of the ledger. It holds no state of its own, and the TUI shows the same entries as lines with a key to expand.
 
+## Generated UI
+
+LINA can show UI it makes from the person's words, in three parts, built in this order. Each part trusts what the model writes less than the one before it. The evidence is in [the generated UI research](../research/generated-ui.md).
+
+| Part | What the agent or a worker makes | Code on the client | Reaches LINA Core | Shown as |
+| --- | --- | --- | --- | --- |
+| Drawn mock | A static page in LINA's design system, and a PNG of it | Only inside its sandboxed frame | No | A `mock` result |
+| Generated card | A2UI messages that pick and fill widgets from LINA's catalog | None | Only as a request from the app's own widgets | A `surface` result |
+| Mini app | A small web app from LINA's fixed template | Yes, on its own origin | Only its declared reads and requests | A tool in "내 도구" |
+
+`mock` and `surface` are result types of a later protocol version ([host-protocol.md](host-protocol.md#typed-results)). A client that does not render them gets their `text`.
+
+### Drawn mocks
+
+- When the person describes a screen or how something should work, the agent may answer with a drawn mock: a clickable static page and a PNG of it, made by a background run. It is a draft to react to, never code that ships.
+- A mock uses the mini app template's tokens, base styles and fonts (see Mini apps), so it looks like LINA. It has no network, no access to LINA Core and no data except what the run wrote into it.
+- The body of a `mock` result holds the request, the checklist it was scored on, and references to the page bundle and the PNG as assets. It never holds HTML.
+- The app opens the page in a sandboxed frame (see No web feel) at phone and desktop widths. The TUI and channels show the PNG where they can show images, and otherwise the checklist as text with an export action.
+- "Make this part smaller" redraws from the current revision. Every revision is kept, and the work panel steps between them.
+- "Build this" hands the mock and its checklist to the work engine as the reference for a screen or a mini app.
+- The scoring is set before drawing. The run first writes the request as a checklist: what must be on screen and what each control does. A revision is shown only when executable checks pass: every checklist item is there, no control does something that was not asked, only design tokens are used, no remote resource is named, and the page draws without an error or sideways scrolling at 390 and 1280 points wide. A failing draw is redrawn at most three times without new input from the person. It stops early when every check passes, and stops when a redraw passes no more checks than the one before. A model's judgment of how well a mock matches is not a check until it agrees with the owner's labels on at least 50 cases.
+
+### Generated cards
+
+- An agent may answer with a card so that a reply that asks the person to pick or fill in something is not a wall of text: a few choices, a short form, a date, a few progress rows. The app draws the card with its own widgets from A2UI messages.
+- LINA pins A2UI v0.9: the 0.9.1 specification, with `"v0.9"` as the wire version. The app draws cards with an A2UI renderer for its toolkit, such as the Flutter GenUI SDK or the A2UI React renderer, and registers only LINA's catalog. Moving to A2UI 1.0 is a protocol change.
+- LINA's catalog, `lina.cards`, has a version and holds these widgets, each with its data schema: Text, Column, Row, List, Card, Divider, Button, CheckBox, ChoicePicker, TextField, DateTimeInput, and LINA's WorkRow, one line of running work. It leaves out the widgets that fetch a URL (Image, Video, AudioPlayer), Modal, and the `openUrl` function. A table, chart, diagram, plan or document is a typed result, never a card.
+- LINA Core checks every message against the catalog and its schemas before anything reaches a client. An unknown widget, field, catalog or version refuses the whole card. The refusal goes to the agent in A2UI's `VALIDATION_FAILED` form, never to the person. A client never relies on its renderer's own tolerance.
+- LINA Core folds an agent's messages into whole revisions of one `surface` result, whose body is the components and the data model. A client never receives a partial or invalid card. LINA Core also writes the result's `text`.
+- The app draws the card's frame and the face and name of the agent that sent it. A card cannot set its own name, icon or colors, and cannot look like an approval, a question from LINA or a sign-in.
+- What the person types or picks in a card is display state until they press one of its buttons. The app then sends `surface_action` with the result, the revision, the action name and the values it carries. LINA Core checks it against the action's schema, records it as the person's input, and gives it to the agent at the next turn boundary. A press is never lost when no turn is running. An effect that follows from it has the same posture and approvals as any tool call ([main-authority.md](main-authority.md#approval)). An action never carries an approval, and an action on an old revision is refused as stale.
+- In the TUI the `text` lists the card in reading order, numbers each choice and gives each action a key. The TUI sends the same `surface_action`. A channel shows the `text` with a link to open the card in the app.
+- A card is a result in the ledger, so it comes back in the same revision after a restart or a reconnect.
+
+### Mini apps
+
+- "Make me a page that shows X and lets me do Y" becomes a mini app: a small web app that a worker builds and LINA Core hosts, listed as the person's own tool. A work board, a markdown viewer over a folder and a used-price tracker are examples. An agent offers one when a card is not enough: the person wants a page to come back to, with its own layout, filters or a live view.
+- The owner agent hands the build to a worker under a work definition ([work-and-delegation.md](work-and-delegation.md#work-definition)). The app's recipe is kept with it: the request, the checklist, its reads, its requests and the hosts it fetches. The worker writes only the app's own files. The template (tokens, base styles, fonts and the `lina.js` client) is fixed, and the worker does not edit it.
+- Before a revision goes live, LINA Core checks it: the files fit the size limit; they hold no raw color, font or remote address; the page draws without an error or sideways scrolling at phone and desktop widths; and every checklist item is there, scored as for mocks.
+- Each app declares its name, its owner agent, the reads it uses (named LINA Core reads such as the person's 할 일, the running list, or a folder inside a grant, read only), the requests it may send, the hosts LINA Core may fetch for it, and any schedule. The app shows this list in one view before the first open, and again after a revision that widens it. The person allows it or not. Allowing it is a standing choice that the person can revoke.
+- LINA Core serves each mini app on its own origin, its own port, on the loopback address, and on the tailnet for the person's other devices. It is never public. Every response carries a content security policy: nothing by default; scripts, styles, fonts and images only from the app's own origin; connections only to that origin; framing only by LINA's surfaces. The frame refuses any navigation away from the app's origin, because the policy does not stop a page from navigating.
+- Each app has one token, limited to what it declared. The frame's address carries a one-time code that LINA Core exchanges for an HttpOnly cookie. Cookies are scoped by host, not port, so every app on one host shares one cookie jar and the port alone keeps no token apart. Each app's cookie therefore has a name of its own, and each app's gateway accepts only the token issued for that app on that port: it ignores the cookies of other apps and refuses another app's token. The page's script never sees a token. Removing the app, or narrowing what it may do, revokes its token.
+- The app reads through its gateway: the client API's read requests, limited to its declared reads. A read outside them is refused and recorded. The app never reaches the client connection, the shell's bridge, another app or the page that frames it.
+- A write is a request with a kind and arguments. LINA Core treats it as an effect of the owner agent on the person's behalf, under that agent's grants and preset limits, with the same posture as a tool call: an effect inside the grant is done and reported in one line with one action to undo it, and one that reaches outside the person or is hard to reverse asks every time ([main-authority.md](main-authority.md#approval)). The approval names the mini app. A mini app's request is never the person's own decision and never answers an approval, because the app's code can send it without a press.
+- The page has no network beyond its own origin. LINA Core fetches a declared host for it under the web tools rules ([web-tools.md](web-tools.md)). Any other address is blocked by the policy and refused by LINA Core.
+- An app may keep a small store in LINA Core, within a size limit. Its own requests write that store without asking. A declared schedule runs as a background run of the owner agent and writes only that store.
+- Every change makes a new revision of the app's files, recorded with the request that made it. After a change the app shows Keep and Undo only when the files really changed, with the change in words, such as "added a filter · 2 files". A change that alters nothing says so and records nothing. Undo returns to the previous revision. Asking for another change keeps the one shown. The history lists every revision, and restoring one makes a new revision. Undo restores the files, not the store; a revision that changes the shape of the store snapshots the store first.
+- The person changes an app by talking: in the conversation, or from the change line in the app's frame. The request goes to the owner agent, and an app takes one change at a time.
+- The app lists mini apps in "내 도구" and opens one in its frame; on macOS the launcher panel and a menu bar widget open the same app (see Launcher). The phone app opens it in its frame over the tailnet. Where the app has no web view, and from the TUI, a mini app opens in the system browser through a one-time link. A channel lists mini apps by name only. The frame passes the app's theme, text size, reduced motion and high contrast to the mini app, which follows them instead of the system's.
+- Removing a mini app revokes its token at once and moves its files and store to the trash, as other deletions do ([main-authority.md](main-authority.md#approval)).
+
 ## Launcher
 
 - On macOS, LINA's launcher does what the person uses Raycast for, without copying Raycast's structure. Which Raycast features it covers is filled in a feature map during implementation.
 - The launcher opens from a global shortcut. Whatever the person says from the launcher goes into the main conversation of the agent the person talked with last, or of another agent the person names in the launcher, and the answer continues there.
 - The launcher includes clipboard history. Items marked concealed, as password managers mark them, are never stored. The history stays on that Mac. It never goes to LINA Core and never becomes memory or material.
 - A clipboard item reaches LINA only when the person explicitly puts it into a message, like typed text.
+- The launcher lists the person's mini apps and opens one in its panel, and a menu bar widget shows a mini app's small view (see Generated UI). In the feature map, Raycast's extensions are replaced by mini apps that LINA builds on request.
 - The person turns the launcher and clipboard history on. Because the person turns them on, they are the only exception to the clipboard rule in [non-competition.md](non-competition.md); nothing else LINA does reads or writes the person's clipboard.
 - The launcher is part of the LINA app on macOS. The app's interface draws it with the app's design tokens. The shell gives it, through the bridge, its global shortcut and its non-activating panel that floats above the person's apps, and a small native module owns its clipboard access, because the history must skip concealed items. The launcher is one of the macOS checks, the first gate of the app milestone (see Platform adaptation); if the shell fails it, the shortcut, panel and clipboard use native code behind the same design tokens.
 - On Omarchy, launching LINA belongs to the Omarchy shell's launcher.
@@ -666,6 +721,9 @@ The TUI accepts the committed text the terminal's input method delivers, renders
 - Exact sizes and motion of the screen skeleton: tuned during implementation and recorded in the token source.
 - Menu placement of the today feed, and the screen design of the today feed, meeting notes, the plugin catalog, the connect card and the plugin list: set during their implementation.
 - The launcher's feature map: filled in during launcher implementation.
+- Sharing a mini app with other people: private only for now. A later design may publish an app as an immutable, pinned package after a human review.
+- Image widgets in cards, drawn from material assets rather than URLs, and the move to A2UI 1.0: set when the catalog first needs them.
+- Which headless engine draws a mock's PNG on the main: set during mock implementation, under the same question as charts for channels.
 - The layout of the agents screen, the agent picker in the conversation header and the creation flow: set during their implementation.
 - How often LINA promotes, archives and proposes splitting: set by measurement during development and recorded in the implementation issue.
 - The views of the plan map (structure, execution and gap): the UI choice is set during implementation of the plan screen.

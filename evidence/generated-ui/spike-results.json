@@ -1,0 +1,146 @@
+{
+  "issue": 946,
+  "observed": "2026-10-23",
+  "note": "Scratch spike outside the repository. Fixtures are hand-written, not model output, so this measures the pipeline, not model quality. Scored against the plan in docs/research/generated-ui.md, written before the spike was built.",
+  "tools": {
+    "flutter": "3.47.7",
+    "dart": "3.13.5",
+    "genui": "0.10.4",
+    "a2ui_core": "0.1.1",
+    "json_schema_builder": "0.1.7",
+    "go": "1.27.3",
+    "playwright": "1.63.0",
+    "chromium_headless_shell": "153.0.8010.12",
+    "font": "Pretendard 1.3.9"
+  },
+  "cards": {
+    "command": "flutter test (test/spike_test.dart)",
+    "first_run": "6 failed: 5 golden files missing, 1 action context mismatch (single choice returned as a one-item list)",
+    "final_run": "6 passed",
+    "observed": {
+      "single_choice_context": {
+        "slot": [
+          "wed-1500"
+        ]
+      },
+      "out_of_catalog_client": "genui draws an error box with the raw text 'CatalogItemNotFoundException: Item \"WebView\" was not found in catalog \"lina.cards.v0\"' and reports VALIDATION_FAILED plus an INTERNAL_ERROR to the agent",
+      "glyph": "Pretendard has no U+25D0; the app uses icons, the TUI uses glyphs"
+    },
+    "captures": [
+      "c1_choice_light.png",
+      "c1_choice_sent.png",
+      "c1_choice_dark.png",
+      "c2_progress_light.png",
+      "c3_out_of_catalog.png"
+    ]
+  },
+  "core_check_and_text": {
+    "command": "go test -v ./... (scratch fallback package)",
+    "result": "3 passed: choice text has every element and key; progress text has every row and key; out-of-catalog refused at /components/2/component"
+  },
+  "mini_app": {
+    "command": "node check.mjs against the stub Core (Playwright, Chromium headless)",
+    "result": "17 of 17 checks passed",
+    "checks": {
+      "D1": [
+        {
+          "name": "title and every open to-do with a done control",
+          "ok": true
+        },
+        {
+          "name": "filter shows only today's open to-dos",
+          "ok": true
+        }
+      ],
+      "D2": [
+        {
+          "name": "no control beyond done",
+          "ok": true
+        }
+      ],
+      "D5": [
+        {
+          "name": "390 px wide without horizontal scroll",
+          "ok": true
+        }
+      ],
+      "D4": [
+        {
+          "name": "token not readable by page script",
+          "ok": true
+        },
+        {
+          "name": "read outside declared reads refused",
+          "ok": true
+        },
+        {
+          "name": "undeclared network blocked",
+          "ok": true
+        },
+        {
+          "name": "app cannot call the host's own endpoints",
+          "ok": true
+        },
+        {
+          "name": "app cannot read the host page",
+          "ok": true
+        },
+        {
+          "name": "write waits for the person and does not apply",
+          "ok": true
+        },
+        {
+          "name": "approved write applies once",
+          "ok": true
+        },
+        {
+          "name": "CSP reported the blocked request",
+          "ok": true
+        }
+      ],
+      "D7": [
+        {
+          "name": "no-op change shows no Keep/Undo",
+          "ok": true
+        },
+        {
+          "name": "real change shows Keep/Undo with the diff",
+          "ok": true
+        },
+        {
+          "name": "Undo serves the previous revision",
+          "ok": true
+        },
+        {
+          "name": "Keep keeps both revisions in history",
+          "ok": true
+        }
+      ],
+      "D3": [
+        {
+          "name": "app files hold no raw colour or remote URL",
+          "ok": true
+        }
+      ]
+    },
+    "negative_control": "With the content security policy turned off, 3 checks failed as expected: undeclared network reached, host endpoint reached, no policy report",
+    "stub_posture": "The stub asks for every write so the waiting path can be seen. LINA Core decides by its normal posture.",
+    "ledger": [
+      "read \"memories\" refused: outside this app's reads",
+      "request c9df7b7c todo.done map[id:t1]: waiting for the person",
+      "request c9df7b7c approved and applied",
+      "change \"색은 그대로 둬\": no difference, nothing to keep or undo",
+      "change \"위에 '오늘만' 필터 넣어 줘\": revision 2, [{app.js 8 1} {index.html 1 0}]",
+      "undo revision 2, back to 1",
+      "change \"위에 '오늘만' 필터 넣어 줘\": revision 2, [{app.js 8 1} {index.html 1 0}]",
+      "keep revision 2"
+    ],
+    "csp_report": "Connecting to 'https://example.com/' violates the following Content Security Policy directive: \"connect-src 'self'\". The action has been blocked.",
+    "captures": [
+      "miniapp_phone_waiting.png",
+      "miniapp_desktop_keep_undo.png",
+      "miniapp_phone_dark.png"
+    ],
+    "observed_gap": "In dark mode the frame stayed light while the mini app followed the system: the frame must pass its theme"
+  }
+}

@@ -132,7 +132,7 @@ The executable path map is `scripts/verify/scope.mjs`. All paths under `internal
 
 | Change | Selection |
 | --- | --- |
-| Only explicitly listed root documents, Markdown directly under `docs/policy/`, `docs/design/` or `docs/research/`, or JSON and Markdown records under `evidence/` | `docs`; no automation installation or test run. |
+| Only explicitly listed root documents, Markdown directly under `docs/policy/`, `docs/design/` or `docs/research/`, JSON and Markdown records under `evidence/`, or PNG captures directly under `evidence/brand/` or `evidence/generated-ui/` | `docs`; no automation installation or test run. |
 | A verification script, `.github/workflows/*.yml` or `*.yaml`, `.node-version`, or shared repository configuration | `docs`, `automation`, and every registered Go component. |
 | Empty or unavailable diff | `docs`, `automation`, and every registered Go component; never assume documentation-only. |
 | An unmapped path in the changed paths or candidate tree | `docs`, `automation`, and every registered Go component, but the gate refuses to pass until its verification is registered. |
@@ -225,7 +225,7 @@ Diagnostics name the source file, line and violated rule. Behavioral fixtures ex
 
 [V7](../../evidence/v7-dev-loop.json) records budgets declared before measurement, an edit followed by `go build`, `go vet` and uncached `go test` for the affected Go package, and `node scripts/foundation.mjs --full`. The initial budgets are 20 seconds for the affected-package loop and 60 seconds for full verification including vulnerability and license scans. Records identify the source, tool versions, cache conditions, commands, durations and outcomes. An over-budget measurement remains a failure; it is not hidden by raising the budget after the run.
 
-JSON and Markdown under `evidence/` are documents paths. Updating an evidence record alone selects `docs`; the record is historical evidence, not a replacement for running checks on a changed candidate. Executable files in that directory remain unmapped.
+JSON and Markdown under `evidence/`, and PNG captures directly under `evidence/brand/` and `evidence/generated-ui/`, are documents paths. Updating an evidence record alone selects `docs`; the record is historical evidence, not a replacement for running checks on a changed candidate. Executable files in that directory remain unmapped.
 
 ### Path mapping
 

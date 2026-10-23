@@ -653,6 +653,12 @@ test('brand tokens and generated data select verification while PNGs remain evid
   assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
 });
 
+test('generated UI captures are evidence and other evidence images stay unmapped', () => {
+  assert.equal(kind('evidence/generated-ui/c1_choice_light.png'), 'docs');
+  assert.equal(kind('evidence/generated-ui/nested/c1.png'), 'unmapped');
+  assert.equal(kind('evidence/other/capture.png'), 'unmapped');
+});
+
 test('vector rebuilds select automation and their notices remain documents', () => {
   assert.equal(kind('packaging/sqlite-vec/build.sh'), 'automation');
   assert.equal(kind('packaging/sqlite-vec/NOTICE.md'), 'docs');
