@@ -33,6 +33,9 @@ func (r *conversationRuntime) startDecisions(ctx context.Context) error {
 	r.identity.TopicCapabilities["waiting"] = clientsrv.DecisionsCapability
 	r.identity.RefreshTopic = func(ctx context.Context, topic string) error {
 		if topic == "waiting" {
+			if err := r.restoreConversationQuestions(ctx); err != nil {
+				return err
+			}
 			if err := d.PublishApprovals(ctx); err != nil {
 				return err
 			}
