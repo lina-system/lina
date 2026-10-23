@@ -1303,7 +1303,7 @@ The reducer, render, layout and `clientapi` packages are Charm-free, so a fallba
 - Terminal probes are skipped over SSH and in Apple Terminal. LINA sends its own DECRQM probe with a deadline, so a late reply cannot leak to the shell.
 - Tab stops are reset on start, paste buffering has no cap, and the flush ticker runs when idle.
 
-**The spike gate** runs on real terminals: at least one on macOS, the default terminal of LINA OS, and one reached over SSH. The owner confirms the list. The bounds below are LINA's proposals (P), derived from perception limits (one 60 Hz frame, key echo, first paint). They are written into the spike issue before the run. A miss selects a fallback and never loosens a bound.
+**The spike gate** runs on real terminals: at least one on macOS, one on Linux (Omarchy), and one reached over SSH. The owner confirms the list. The bounds below are LINA's proposals (P), derived from perception limits (one 60 Hz frame, key echo, first paint). They are written into the spike issue before the run. A miss selects a fallback and never loosens a bound.
 
 | Id | Question | Proposed bound (P) |
 | --- | --- | --- |
@@ -1525,7 +1525,7 @@ rendering checks; they do not replace the physical terminal and IME spike.
 - Contrast checks require at least 4.5:1 for text, muted text and accent on canvas and surface, in light, dark and high contrast. The source also specifies tested 256-colour and 16-colour mappings. Dark ANSI16 uses bright white for the accent where standard blue cannot pass; user-redefined ANSI palettes can change physical contrast. Hairlines are decorative, never the only state indicator.
 - No state is shown by colour alone: each has a mark and a word. Glyph sets are tokens, in plain Unicode and ASCII, and none needs a private-use glyph.
 - Connection-screen display overrides are `LINA_THEME=light|dark|high-contrast` and `LINA_GLYPHS=ascii`. Otherwise `COLORFGBG` selects a light or dark background (dark by default); terminal capability selects RGB, 256 or 16 colours. Nonempty `NO_COLOR` preserves the layout, marks, labels and actions without escapes; subsequent states append compact lines. These overrides persist no preferences.
-- On LINA OS the complete TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)); theme-file discovery remains part of platform preferences work.
+- On Linux (Omarchy) the complete TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)); theme-file discovery remains part of platform preferences work.
 - Every code in the closed lists has an entry in both the Korean and English catalogs, checked by id and never by wording.
 
 Core's TUI turn instructions describe the surface's rendered Markdown: paragraphs, headings, bold, italic, inline code, links, ordered and unordered lists, block quotes and fenced code. They request simple formatting, short lists, prose or code for wide tables, and no HTML or terminal escapes. The `persona-tui-v1` instruction format records this prefix for exact replay; older `persona-v1` turns retain their original prefix.
@@ -1575,7 +1575,7 @@ removed and requires connection-only startup.
 
 Withdrawn without an id: the hand-off pane, which the agent talk log replaces, and the work-panel worker mirror, which no contract defines.
 
-Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; locales beyond Korean and English; and non-competition evidence for the TUI on a device-OS install ([non-competition.md](non-competition.md)).
+Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; locales beyond Korean and English; and non-competition evidence for the TUI on a Linux main install ([non-competition.md](non-competition.md)).
 
 ### Memory and agent command requests
 
