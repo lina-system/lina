@@ -79,7 +79,7 @@ func (r *conversationRuntime) surfaceAction(ctx context.Context, session clients
 	inputID := "surface:" + p.InputID
 	// The inbox, owner ledger event and revision check commit together. Queue mode
 	// deliberately waits for the next turn boundary instead of steering a turn.
-	answer, err := view.admitInput(ctx, session, protocol.Input{ConversationID: &conversation, InputID: &inputID, Text: &text, Mode: &mode, Card: &p.ResultID, ReplyTo: &sourceEvent}, "tui", func(ctx context.Context, tx *canon.Tx) error {
+	answer, err := view.admitInput(ctx, session, protocol.Input{ConversationID: &conversation, InputID: &inputID, Text: &text, Mode: &mode, Card: &p.ResultID, ReplyTo: &sourceEvent}, "tui", clientInputSource, func(ctx context.Context, tx *canon.Tx) error {
 		var current int64
 		if err := tx.QueryRowContext(ctx, `SELECT revision FROM result_heads WHERE id=? AND person=? AND agent=? AND conversation=?`, p.ResultID, session.PersonID, agent, conversation).Scan(&current); err != nil {
 			return outsideManagement()

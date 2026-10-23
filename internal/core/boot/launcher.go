@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
+	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -32,18 +33,9 @@ func (s *conversationRouter) Launcher(ctx context.Context, session clientsrv.Ses
 	if err := s.root.authorize(session, nil); err != nil {
 		return protocol.LauncherResult{}, err
 	}
-	agent := ""
-	if p.AgentID != nil {
-		agent = *p.AgentID
-	} else {
-		selected, err := s.root.agents.Selected(ctx, session.PersonID)
-		if errors.Is(err, agents.ErrNotFound) {
-			selected, err = s.root.agents.Default(ctx)
-		}
-		if err != nil {
-			return protocol.LauncherResult{}, managementError(err)
-		}
-		agent = selected.ID
+	agent, err := s.root.launcherAgent(ctx, session, p)
+	if err != nil {
+		return protocol.LauncherResult{}, err
 	}
 	view, err := s.view(ctx, session, agent)
 	if err != nil {
@@ -55,12 +47,81 @@ func (s *conversationRouter) Launcher(ctx context.Context, session clientsrv.Ses
 	return protocol.LauncherResult{RequestID: p.RequestID, ConversationID: view.conversation, AgentID: view.agent}, nil
 }
 
-// launcherInput keeps the same durable input, deduplication and turn flow.
-// The request id is the input id, so a repeated line admits once.
+// launcherSources lists every inbox source a launcher line has been admitted
+// under. Releases before the capability used the shared client source; the
+// first launcher build used one of its own. A retry must find either.
+var launcherSources = []string{clientInputSource, launcherInputSource}
+
+// launcherAdmission returns the earliest admission of this request, so a retry
+// keeps the agent, conversation and inbox source it already committed.
+func (r *conversationRuntime) launcherAdmission(ctx context.Context, requestID string) (inbox.Record, bool, error) {
+	thread := launcherThreadPrefix + requestID
+	var (
+		found  inbox.Record
+		exists bool
+	)
+	for _, source := range launcherSources {
+		record, err := inbox.New(r.db).Find(ctx, source, thread)
+		switch {
+		case errors.Is(err, inbox.ErrNotFound):
+			continue
+		case err != nil:
+			return inbox.Record{}, false, managementError(err)
+		}
+		if !exists || record.ID < found.ID {
+			found, exists = record, true
+		}
+	}
+	return found, exists, nil
+}
+
+// launcherSource reuses the source that already holds this request, so a retry
+// dedupes on its own inbox row instead of inserting a second one beside it.
+func (r *conversationRuntime) launcherSource(ctx context.Context, requestID string) (string, error) {
+	first, exists, err := r.launcherAdmission(ctx, requestID)
+	if err != nil || !exists {
+		return clientInputSource, err
+	}
+	return first.Source, nil
+}
+
+// launcherAgent keeps a repeated request with the agent that first admitted it.
+// Admission deduplication is per conversation, so resolving the retry from the
+// person's current selection could admit the same line in a second agent.
+func (r *conversationRuntime) launcherAgent(ctx context.Context, session clientsrv.Session, p protocol.LauncherRequest) (string, error) {
+	first, exists, err := r.launcherAdmission(ctx, p.RequestID)
+	if err != nil {
+		return "", err
+	}
+	if exists {
+		return strings.TrimPrefix(first.Conversation, "main:"), nil
+	}
+	if p.AgentID != nil {
+		return *p.AgentID, nil
+	}
+	selected, err := r.agents.Selected(ctx, session.PersonID)
+	if errors.Is(err, agents.ErrNotFound) {
+		selected, err = r.agents.Default(ctx)
+	}
+	if err != nil {
+		return "", managementError(err)
+	}
+	return selected.ID, nil
+}
+
+// launcherInput keeps the same durable input and deduplication. The request id
+// is the input id, so a repeated line admits once. Queue mode is required: a
+// steered line would be absorbed by a running turn that publishes no reply
+// under this request id, and the panel would wait forever.
 func (r *conversationRuntime) launcherInput(ctx context.Context, s clientsrv.Session, p protocol.LauncherRequest) (protocol.ItemDone, error) {
 	thread := launcherThreadPrefix + p.RequestID
-	input := protocol.Input{ConversationID: &r.conversation, InputID: &thread, Text: &p.Text, Thread: &thread}
-	return r.admitInput(ctx, s, input, "launcher", nil)
+	mode := protocol.InputModeQueue
+	input := protocol.Input{ConversationID: &r.conversation, InputID: &thread, Text: &p.Text, Thread: &thread, Mode: &mode}
+	source, err := r.launcherSource(ctx, p.RequestID)
+	if err != nil {
+		return protocol.ItemDone{}, err
+	}
+	return r.admitInput(ctx, s, input, "launcher", source, nil)
 }
 
 // publishLauncherReply streams the visible short form, never the full reply.

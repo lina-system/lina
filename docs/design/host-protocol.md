@@ -449,9 +449,16 @@ opaque `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`, `text` (1–16,384 Unicode character
 and an optional `agent_id`. Core resolves the named agent, otherwise the person's
 last selected agent and then the default agent, and admits the line through the
 existing conversation input path into that agent's `main:<agent>` conversation.
-There is no launcher-only conversation. The request id is the input id, so a
-repeated request returns the original admission and starts no second turn. The
-result names the request, the conversation and the agent with an `applied` effect.
+There is no launcher-only conversation. The line is admitted as a follow-up, never
+as steering, so a line that arrives while the agent already runs a turn keeps its
+own turn and its replies always carry its request id. The request id is the input
+id, so a repeated request returns the original admission and starts no second
+turn; Core keeps the agent that first admitted the line, even after the person
+selects another agent, and accepts the inbox source either release used, so a
+line admitted before this capability shipped stays retryable. The request id is
+reserved for the launcher, so an `input` with an id in that namespace is refused
+as malformed. The result names the request, the conversation and the agent with
+an `applied` effect.
 
 The short form streams on the `launcher` topic keyed by `request_id`. Each
 `launcher_reply` carries the request, conversation and agent, the visible short
