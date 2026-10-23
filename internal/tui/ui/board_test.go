@@ -85,3 +85,32 @@ func TestBoardClosedOrReplacedReadCannotReopen(t *testing.T) {
 		}
 	}
 }
+
+func TestBoardRefreshesFullWaitingAfterProgressEvent(t *testing.T) {
+	m := conversationShell()
+	m.Update(shellData{Generation: 1, Message: workListWelcome(t, "conversation", "running", "waiting", "progress")})
+	m.boardCommand("/board")
+	board := m.conversation.pager.board
+	board.waiting = []protocol.WaitingRow{{Ref: protocol.WaitingRef{Source: "outside", Key: "records"}, Line: protocol.WaitingLine{Sentence: "OLD-REQUEST"}}}
+	m.refreshBoard()
+	_, cmd := m.Update(shellData{Generation: 1, Message: homeWaitingFrame(t, "1", true, nil, "0")})
+	if cmd == nil {
+		t.Fatal("progress event did not refresh full board waiting rows")
+	}
+	request, ok := cmd().(shellManagement)
+	if !ok {
+		t.Fatalf("unexpected refresh effect: %T", cmd())
+	}
+	if _, ok := request.Request.(protocol.WaitingGet); !ok {
+		t.Fatal("board did not query Core waiting")
+	}
+	board.requestID = "fresh"
+	session := managementSession{model: m, pending: map[string]protocol.Payload{"fresh": request.Request}, boardPending: map[string]*boardView{"fresh": board}}
+	rows := []protocol.WaitingRow{}
+	if handled, err := session.response(t.Context(), nil, protocol.Envelope{ReplyTo: stringPointer("fresh"), Payload: protocol.Waiting{Rows: &rows}}); !handled || err != nil {
+		t.Fatalf("waiting response: %v", err)
+	}
+	if strings.Contains(m.conversation.pager.text, "OLD-REQUEST") {
+		t.Fatal("resolved source survived Core response")
+	}
+}
