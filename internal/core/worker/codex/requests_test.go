@@ -30,7 +30,6 @@ func newAdapterPeer(t *testing.T, quota string, beforeTurnReply ...frame) *adapt
 }
 
 func newAdapterPeerScript(t *testing.T, quota string, beforeTurnReply, beforeQuotaReply []frame) *adapterPeer {
-	t.Helper()
 	return newAdapterPeerTurnScript(t, quota, beforeTurnReply, beforeQuotaReply, true)
 }
 
