@@ -189,7 +189,7 @@ func (r *conversationRuntime) ownerWaiting(ctx context.Context, names map[string
 		}
 		sources["outside"] = outsideWaitingSource{r.person, r.agent, name(r.agent)}
 	}
-	return waiting.NewWithLive(r.db, sources, map[string]waiting.LiveSource{"worker": workerWaitingSource{r, names}}).Build(ctx, r.person, opts)
+	return waiting.NewWithLive(r.db, sources, map[string]waiting.LiveSource{"worker": workerWaitingSource{r, names}, "a2a": a2aWaitingSource{r, names}}).Build(ctx, r.person, opts)
 }
 func waitingRows(list waiting.List) []protocol.WaitingRow {
 	rows := []protocol.WaitingRow{}

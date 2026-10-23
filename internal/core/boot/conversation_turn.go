@@ -419,6 +419,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		r.preparePlanningTools,
 		r.prepareRunTools,
 		r.prepareWebTools,
+		r.prepareA2ATools,
 		r.prepareDispatchTools,
 		r.prepareWorkTools,
 		r.prepareWorkerTools,

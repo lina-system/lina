@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/thisisjun786/lina/internal/core/a2a"
 	"github.com/thisisjun786/lina/internal/core/accounts"
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assets"
@@ -90,6 +91,7 @@ type conversationRuntime struct {
 	db               *canon.Store
 	accounts         *accounts.Store
 	vault            *secrets.Store
+	remoteAgents     *a2a.Service
 	webTransport     http.RoundTripper
 	signin           *accounts.SignIn
 	agents           *agents.Store
@@ -253,6 +255,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
+	if err = r.initA2A(relay); err != nil {
+		return nil, err
+	}
 	if err := addOperations(&r.identity, clientsrv.AccountOperations(r.person, r.accounts, relay)); err != nil {
 		return nil, err
 	}
@@ -294,6 +299,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 
+	if err = r.recoverA2A(ctx); err != nil {
+		return nil, err
+	}
 	if r.agent != "" {
 		if err = r.seedHistory(ctx); err != nil {
 			return nil, err
