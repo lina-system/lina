@@ -140,8 +140,9 @@ func (m *shellModel) managementCommand(text string) (bool, tea.Cmd) {
 }
 
 type managementSession struct {
-	model   *shellModel
-	pending map[string]protocol.Payload
+	model        *shellModel
+	pending      map[string]protocol.Payload
+	boardPending map[string]*boardView
 }
 
 func (s *managementSession) request(ctx context.Context, c *clientapi.Client, p protocol.Payload) error {
@@ -157,6 +158,13 @@ func (s *managementSession) request(ctx context.Context, c *clientapi.Client, p 
 		}
 	case protocol.WaitingGet:
 		id, err = c.Waiting(ctx, p)
+		if err == nil && s.model.conversation.pager.board != nil {
+			s.model.conversation.pager.board.requestID = id
+			if s.boardPending == nil {
+				s.boardPending = map[string]*boardView{}
+			}
+			s.boardPending[id] = s.model.conversation.pager.board
+		}
 	case protocol.RunningGet:
 		id, err = c.Running(ctx, p)
 	case protocol.RecordRequest:
@@ -184,6 +192,12 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 	}
 	delete(s.pending, *e.ReplyTo)
 	m := s.model
+	if board, tracked := s.boardPending[*e.ReplyTo]; tracked {
+		delete(s.boardPending, *e.ReplyTo)
+		if !m.conversation.pager.open || m.conversation.pager.board != board || board.requestID != *e.ReplyTo {
+			return true, nil
+		}
+	}
 	if _, records := request.(protocol.RecordRequest); records {
 		p := &m.conversation.pager
 		if !p.open || p.records == nil || p.recordID != *e.ReplyTo {
@@ -199,7 +213,11 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		p.developerBusy = false
 	}
 	if e.Error != nil {
-		m.openPager(design.Text(m.styles.options.Language, string(e.Error.Code)))
+		text := design.Text(m.styles.options.Language, string(e.Error.Code))
+		if _, note := request.(protocol.FollowUp); note {
+			text += "\n" + design.Text(m.styles.options.Language, "note.help")
+		}
+		m.openPager(text)
 		return true, nil
 	}
 	switch p := e.Payload.(type) {
@@ -226,6 +244,10 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 	case protocol.Waiting:
 		if _, ok := request.(protocol.WaitingGet); !ok || p.Rows == nil {
 			return true, errStream
+		}
+		if b := m.conversation.pager.board; m.conversation.pager.open && b != nil && b.requestID == *e.ReplyTo {
+			b.waiting = *p.Rows
+			m.refreshBoard()
 		}
 		if m.conversation.pager.open && m.conversation.pager.waiting {
 			m.conversation.pager.text = m.waitingText(*p.Rows)
