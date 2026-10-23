@@ -528,11 +528,12 @@ The current installed adapter uses Korean counting and the shared TUI renderer a
 - Summary-first writing is a background run given the latest outline revision.
 - Managed planning previews use the same result ledger and revision checks.
   Core installs the results and planning receipt schemas in the numbered canon
-  catalog at migration 43, after the published Korean records search migration
+  catalog at migration 44, after the published Korean records search migration
   33, waiting decisions migration 34, preset effects migration 35 and skill
   maintenance migration 36, work engine migration 37 and to-do records migration
   38, work event sequence guard migration 39, work completions migration 40
-  timers migration 41 and starter/selection migration 42. Generic presentation and saving cannot replace or confirm a managed
+  timers migration 41, starter/selection migration 42 and worker choice migration
+  43. Generic presentation and saving cannot replace or confirm a managed
   plan. The `planning` capability binds confirmation to the authenticated person,
   agent, preview revision and accepted root revision. Complete plan bodies carry
   done conditions, ordered stage labels and dependency ids in addition to card
@@ -1334,8 +1335,8 @@ current head, checks and review, with a head recheck after inline comments.
 tool and existing work ledger. Migration 31 adds the dispatch journal; a committed
 conversation tool receipt gates execution. Identical retries load the durable
 admission before any manager handoff, preserving older manager definitions and
-ownership without resetting execution state. The journal reserves each repository
-through queued/running/unknown states. Core allocates through its shared
+ownership without resetting execution state. The journal admits queued work independently and reserves intersecting write
+areas transactionally at handoff; unknown execution retains its reservation. Core allocates through its shared
 `work.Area`, records the pinned workspace on the task and starts the worker in
 `work/tasks/<task-id>` from the detached base. The independent parent clone
 keeps the GitHub origin for worker publishing and the local allocation source
@@ -1363,7 +1364,7 @@ type Definition struct {
 }
 ```
 
-- The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves in the repository at the base commit, and renders the task packet.
+- The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves to a Markdown section in the repository at the base commit before admission. It pins that commit for queued execution and retries, and renders the task packet with the assignment id, base commit and complete definition. Code examples are not design sections.
 - Klotho drafting runs through Moirai's job API and the Core auxiliary model
   route. The worker validates the proposed structure and holds no write or
   confirmation authority. Core writes a full preview revision and its job receipt
@@ -1377,7 +1378,9 @@ type Definition struct {
   work into hand-off tasks uses the existing work ledger, without another plan
   confirmation or another planning receipt.
 - Core does not split work itself. The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)). Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
-- `Chooser` ranks workers from situation tags, quota rows and host capacity, using an editable rule table marked provisional. A quota or login stop hands the same packet to the next worker.
+- `Chooser` ranks installed workers by quota, situation rules and measured host capacity. OK quota precedes warning and unknown; absent quota is unknown and usable. Any blocked window excludes the worker until its explicit reset. A quota, rate-limit or login stop parks the worker and permits one replacement with the identical persisted packet, task branch and workspace, after the previous process tree is reaped. Each attempt has a separate ledger generation; restart never repeats an uncertain attempt.
+- #138 connects the chooser to `dispatch_work` with Antigravity and Codex. The optional `system/core/worker-choice.json` table has `provisional: true` and `rules` of `{worker, tags, priority}`; all tags must match the definition's kind or repository. Quota and capacity cannot be overridden. Equal candidates retain installation order (Antigravity, then Codex). Core reads the table at startup and rejects malformed rules. The initial resource estimate is one CPU, 512 MiB memory and 1024 MiB disk per active reservation, deducted from the measured main-host resources. Canon migration 43 replaces the repository-wide unique index with fenced area claims and durable worker quota. A late quota snapshot cannot erase a newer observed stop; admission rechecks quota before reserving the attempt.
+- Dispatch compares glob intersections before launch, including directory descendants and `**`, and validates result files with the same path language. A terminal worker event does not free the area. Applied work releases it; uncertain effects retain it through restart. Canon commit notifications, quota updates and explicit reset timers wake selection, with a one-minute safety sweep for host changes. A queued record retains one wait reason: area, quota or capacity. `e2e/m2/worker-choice.json` exercises the installed Core path with real file and Git effects and synthetic worker/GitHub streams.
 - `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency is the free slots that the reported load and resources of the main host and each Node allow, with no fixed count per repository ([work-and-delegation.md](work-and-delegation.md#capacity)). A task that cannot start shows exactly one reason.
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`. #127 wires `prepare_work` and `retain_work_result` into the running conversation tool registry. `work.Area` owns leased Git subprocesses through `kit/proc`, detached allocation at the pinned base, protected refs and branch bundles. Core closes its process owner during shutdown.
 - The developer lane projection reads current `work_cards` in a canon snapshot through `internal/core/progress`. Installed Core registers read-only `progress_get` under `worker_lanes` 1.0, independently of a provider route. `after` is an opaque source/id cursor; `progress.lanes` contains up to 32 current worker sessions and `next_cursor` only when another visible session exists. Rows carry run/task/persona identity, persona name, worker, thread, turn, node, generation, task state/title and source-labeled stage details. Display fields are bounded before transport. Core authorizes the installation's person and excludes explicitly foreign-person tasks and deleted personas; legacy unowned records belong to the installation. Tasks without a run and superseded generations do not create lanes. A finished worker turn remains distinct from Core-verified task completion. Refresh rereads authoritative state; this view neither dispatches work nor infers scheduler transitions. Boot appends the installed worker runtime's sessions after durable work pages, using their adapter snapshots and masking output before display. Idle means only the worker turn ended; it is not a work verdict.

@@ -54,7 +54,8 @@ func Migrations() []Migration {
 		{Version: 40, SQL: WorkCompletionsSchema},
 		{Version: 41, SQL: TimersSchema},
 		{Version: 42, SQL: startersSchema},
-		{Version: 43, SQL: ResultsSchema + PlanningSchema},
+		{Version: 43, SQL: WorkerChoiceSchema},
+		{Version: 44, SQL: ResultsSchema + PlanningSchema},
 	}
 }
 
@@ -89,9 +90,9 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
 		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
 		{31, "worker_dispatch"},
-		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {40, "work_completions"}, {40, "work_completion_claims"},
+		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 		{34, "waiting_decisions"},
-		{43, "result_heads"}, {43, "plan_drafts"}, {43, "plan_confirmations"}, {43, "plan_rejections"},
+		{44, "result_heads"}, {44, "plan_drafts"}, {44, "plan_confirmations"}, {44, "plan_rejections"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{38, "records_todo"},
 		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},

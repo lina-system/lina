@@ -479,3 +479,46 @@ func TestPlanningUpgradePreservesPublishedStarters(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedWorkerChoice(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:42]...), Migration{Version: 43, SQL: WorkerChoiceSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO worker_quota(worker,rows) VALUES('fixture',X'01');`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var quota []byte
+		if err := tx.QueryRowContext(t.Context(), "SELECT rows FROM worker_quota WHERE worker='fixture'").Scan(&quota); err != nil {
+			return err
+		}
+		if !bytes.Equal(quota, []byte{1}) {
+			t.Fatal("published quota changed")
+		}
+		var unique int
+		if err := tx.QueryRowContext(t.Context(), `SELECT "unique" FROM pragma_index_list('worker_dispatch') WHERE name='worker_dispatch_repository'`).Scan(&unique); err != nil {
+			return err
+		}
+		if unique != 0 {
+			t.Fatal("upgrade restored the obsolete unique repository index")
+		}
+		var n int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&n); err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatal("upgrade created a plan")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

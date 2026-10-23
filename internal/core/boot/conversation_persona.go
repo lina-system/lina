@@ -42,7 +42,7 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	if !ok {
 		return grant.Grant{}, grant.Environment{}, grant.ErrGrant
 	}
-	if g.Identity.Profile == "coding-manager" {
+	if g.Identity.Profile == "coding-manager" || g.Identity.Profile == "code-goal" {
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: g.Identity.Revision}, nil
 	}
 	if g.Identity.Profile == "methodology" {

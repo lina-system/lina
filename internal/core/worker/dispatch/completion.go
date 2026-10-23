@@ -47,6 +47,11 @@ func (s *Service) React(ctx context.Context, event work.Completion, card work.Ca
 	if err != nil {
 		return true, err
 	}
+	// Goal execution observes this durable receipt through GoalRecord. Its
+	// engine owns judgment and continuation; do not also publish a task result.
+	if r.Goal {
+		return true, nil
+	}
 	if r.Announced {
 		return true, nil
 	}
