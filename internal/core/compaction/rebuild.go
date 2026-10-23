@@ -123,6 +123,11 @@ func (s *Store) Rebuild(ctx context.Context, conversation string, summarize Summ
 				}
 			}
 		}
+		for _, id := range changed {
+			if err := canon.WriteSummaryCitations(ctx, tx, id, nodes[id].Revision); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
