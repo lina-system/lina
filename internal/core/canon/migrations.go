@@ -57,7 +57,8 @@ func Migrations() []Migration {
 		{Version: 43, SQL: WorkerChoiceSchema},
 		{Version: 44, SQL: namingSchema},
 		{Version: 45, SQL: recordOperationsSchema},
-		{Version: 46, SQL: workerRecoverySchema},
+		{Version: 46, SQL: WorkSwitchSchema},
+		{Version: 47, SQL: workerRecoverySchema},
 	}
 }
 
@@ -91,10 +92,11 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{20, "conversation_order"},
 		{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
 		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
-		{31, "worker_dispatch"}, {46, "worker_recovery"},
+		{31, "worker_dispatch"}, {47, "worker_recovery"},
 		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 
 		{34, "waiting_decisions"},
+		{46, "work_worker_reservations"}, {46, "work_switches"}, {46, "work_switch_tasks"}, {46, "work_switch_events"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{38, "records_todo"},
 		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},

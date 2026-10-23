@@ -32,10 +32,13 @@ func (e *workerSession) bindRecovery(ctx context.Context, th worker.Thread) erro
 		if err != nil {
 			return err
 		}
-		rec = recovery.Record{Worker: "codex", ID: th.ID, Person: e.origin.person, Agent: e.origin.agent, Conversation: e.origin.conversation, Input: e.input.ID, Workdir: e.workdir, Packet: packet.Text(), State: "running", Epoch: e.origin.epoch}
+		rec = recovery.Record{Reservation: e.reservation, Worker: "codex", ID: th.ID, Person: e.origin.person, Agent: e.origin.agent, Conversation: e.origin.conversation, Input: e.input.ID, Workdir: e.workdir, Packet: packet.Text(), State: "running", Epoch: e.origin.epoch}
 	}
 	priorTurn := rec.Thread.TurnID
 	rec.Thread = th
+	e.mu.Lock()
+	rec.Reservation = e.reservation
+	e.mu.Unlock()
 	if th.TurnID != priorTurn || rec.RetryFrom != "" && th.TurnID != rec.RetryFrom {
 		rec.State = "running"
 	}
@@ -139,7 +142,7 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 			}
 			owner := newConversationView(r, rec.Agent, rec.Conversation)
 			owner.codingDelivery = delivery
-			e = &workerSession{origin: owner, input: input, packet: rec.Packet, workdir: rec.Workdir, thread: rec.Thread, recovery: rec, done: make(chan struct{}), active: map[string]lease.Lease{}, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, started: time.Now()}
+			e = &workerSession{reservation: rec.Reservation, reservationTurn: rec.Thread.TurnID, origin: owner, input: input, packet: rec.Packet, workdir: rec.Workdir, thread: rec.Thread, recovery: rec, done: make(chan struct{}), active: map[string]lease.Lease{}, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, started: time.Now()}
 			retained := &retainedWorker{snapshot: worker.ThreadSnapshot{Thread: rec.Thread, State: worker.Unknown, Worker: rec.Worker, Workdir: rec.Workdir}}
 			e.adapter = retained
 			e.close = func() error { return nil }
@@ -155,7 +158,7 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 				continue
 			} // no exact turn: never guess or launch again
 			// Publish a new immutable entry only after its live binding is ready.
-			e = &workerSession{origin: owner, input: input, packet: rec.Packet, workdir: rec.Workdir, thread: rec.Thread, recovery: rec, done: make(chan struct{}), active: map[string]lease.Lease{}, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, started: time.Now()}
+			e = &workerSession{reservation: rec.Reservation, reservationTurn: rec.Thread.TurnID, origin: owner, input: input, packet: rec.Packet, workdir: rec.Workdir, thread: rec.Thread, recovery: rec, done: make(chan struct{}), active: map[string]lease.Lease{}, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, started: time.Now()}
 			process, err := r.activities.Acquire(ctx, lease.Activity{Class: lease.Reported, Reason: "worker reconciliation"})
 			if err != nil {
 				continue
@@ -234,6 +237,28 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 		}
 	}
 
+	// Only an exact, settled terminal observation can release the prior
+	// directory fence. A new continuation must acquire admission again.
+	if e.origin.work != nil && (send || next.State == "finished" || next.State == "decision" || next.State == "parked") {
+		if rec.Reservation != "" {
+			if err := e.origin.work.ReleaseWorker(ctx, rec.Reservation); err != nil {
+				return
+			}
+		}
+		next.Reservation = ""
+		e.mu.Lock()
+		e.reservation, e.reservationTurn = "", ""
+		e.mu.Unlock()
+	}
+	reservationCreated, intentPersisted := false, false
+	defer func() {
+		if reservationCreated && !intentPersisted {
+			_ = e.origin.work.ReleaseWorker(context.WithoutCancel(ctx), next.Reservation)
+			e.mu.Lock()
+			e.reservation, e.reservationTurn = "", ""
+			e.mu.Unlock()
+		}
+	}()
 	var activity lease.Lease
 	if send {
 		source := e.origin.workerDelivery()
@@ -249,6 +274,17 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 		if err = authority.CheckPreset(ctx, e.origin.db, e.origin.epoch, authority.PolicyRequest{Key: "worker-recovery:" + next.ID, Person: next.Person, Agent: next.Agent, TaskID: next.Thread.TaskID, Tool: "worker_input", Target: next.Workdir, Class: tools.WorkerEffect, Arguments: arguments}); err != nil {
 			return
 		}
+		if e.origin.work != nil {
+			next.Reservation = next.ID + ":recovery:" + fmt.Sprint(next.Retries)
+			if err = e.origin.work.ReserveWorker(ctx, next.Reservation, next.Workdir); err != nil {
+				return
+			}
+			reservationCreated = true
+			e.mu.Lock()
+			e.reservation = next.Reservation
+			e.reservationTurn = ""
+			e.mu.Unlock()
+		}
 		activity, err = e.origin.activities.Acquire(ctx, lease.Activity{Class: lease.Hard, Reason: "worker recovery turn"})
 		if err != nil {
 			return
@@ -258,6 +294,7 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 		activity.Release()
 		return
 	}
+	intentPersisted = true
 	e.recovery = next
 	if next.State == "decision" {
 		e.recoveryDecision(next)
@@ -286,6 +323,9 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 		return
 	}
 	e.recovery = next
+	e.mu.Lock()
+	e.reservationTurn = current.Thread.TurnID
+	e.mu.Unlock()
 	e.transferRecoveryLease(current.Thread.TurnID)
 	e.origin.notifyWorkerRunning()
 }

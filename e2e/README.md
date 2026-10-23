@@ -23,7 +23,14 @@ state: a completed turn on an observer socket does not prove the TUI has
 rendered it. LONG-QA waits for the idle viewport before stitching PgUp pages.
 
 The suite builds each command once per test run and removes the shared binaries
-after all scenarios finish. Foundation enumerates the acceptance tests and runs
+after all scenarios finish. These test binaries omit DWARF debugger data to reduce
+bundle copying and archiving. Test helper processes share a private SQLite Wasm
+compilation cache, with the default runtime limits and canon's digest verification.
+Only compiled code is shared; databases and results remain private to each scenario.
+The parent removes the cache after all helpers join. Installed command binaries
+and release builds retain their ordinary SQLite initialization.
+
+Foundation enumerates the acceptance tests and runs
 three disjoint batches under its shared components budget. This keeps a growing
 corpus from exhausting one package watchdog while preserving every scenario,
 assertion and operation deadline. Independent scenarios call `t.Parallel()` and
@@ -371,6 +378,18 @@ and deleted agents in conversation and management requests, plus channel
 binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
+
+`m3/operational-switch.json` exercises the owner-only switch on the real Core
+socket: missing approval, a failed transfer with explicit service restoration,
+a held external task, successful transfer, and a real Core-launched fixture
+worker output and receipt. It covers locally refused worker input, a confirmed
+terminal provider connection failure, restart with an outstanding execution,
+rollback refusal until drain, and preservation of originals, Git branches,
+worktree registrations, receipts and journals after explicit rollback. The
+external coordinator is synthetic; its call log checks that approval precedes
+stop and durable LINA release precedes external restart. Imported tasks and receipt facts use the engine API while Core is stopped,
+as in the M2 ledger scenario; worker start, interrupt, resume and result
+observation use the running Core tool registry and a separate stdio process.
 
 Installed-Core fixtures wait for command admission after connecting the socket.
 An empty input must be refused as malformed (or capability-not-negotiated for an

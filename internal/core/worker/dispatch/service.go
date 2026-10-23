@@ -310,8 +310,15 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 			r.BaseCommit, r.RepositoryKey = base, repositoryKey
 		}
 		r.Definition = d
-		// An existing admission already passed its manager decision.
-		if !replay && s.cfg.Manage != nil {
+		if !replay {
+			r, err = s.pinAdmission(ctx, r)
+			if err != nil {
+				return loop.Result{ID: c.ID, Code: loop.Denied}
+			}
+		}
+		// Pending admissions resume the manager using the durable snapshot.
+		// Queued and later records have already passed their manager decision.
+		if r.State == "admitting" && s.cfg.Manage != nil {
 			r, err = s.cfg.Manage(ctx, r)
 			if err != nil {
 				return loop.Result{ID: c.ID, Code: loop.Denied, Output: mustJSON(map[string]string{"code": err.Error()})}
@@ -319,20 +326,20 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		}
 		err = s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
 			var prior []byte
-			readErr := tx.QueryRowContext(ctx, "SELECT record FROM worker_dispatch WHERE id=?", r.ID).Scan(&prior)
-			if readErr == nil {
-				var saved Record
-				if json.Unmarshal(prior, &saved) != nil || saved.Origin != origin || !reflect.DeepEqual(saved.Definition, d) {
-					return work.ErrState
-				}
+			if err := tx.QueryRowContext(ctx, "SELECT record FROM worker_dispatch WHERE id=?", r.ID).Scan(&prior); err != nil {
+				return err
+			}
+			var saved Record
+			if json.Unmarshal(prior, &saved) != nil || saved.Origin != origin || !reflect.DeepEqual(saved.Definition, d) {
+				return work.ErrState
+			}
+			if saved.State != "admitting" {
+				// Another retry may have admitted or even finished this work.
 				r = saved
 				return nil
 			}
-			if !errors.Is(readErr, sql.ErrNoRows) {
-				return readErr
-			}
-			_, err := tx.ExecContext(ctx, "INSERT INTO worker_dispatch(id,turn_id,repository,state,record) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING", r.ID, origin.Turn, d.Repository, r.State, mustJSON(r))
-			return err
+			r.State = "queued"
+			return saveRecord(ctx, tx, r)
 		})
 		if err != nil {
 			return loop.Result{ID: c.ID, Code: loop.Denied}
@@ -342,6 +349,27 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 }
 func admissionID(origin Origin, callID string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(origin.Turn+"\x00"+callID)))
+}
+
+// The first snapshot wins even when identical calls resolve a moving branch
+// concurrently. An incomplete admission is never eligible for a worker claim.
+func (s *Service) pinAdmission(ctx context.Context, r Record) (Record, error) {
+	r.State = "admitting"
+	var saved Record
+	err := s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO worker_dispatch(id,turn_id,repository,state,record) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING", r.ID, r.Origin.Turn, r.Definition.Repository, r.State, mustJSON(r)); err != nil {
+			return err
+		}
+		var raw []byte
+		if err := tx.QueryRowContext(ctx, "SELECT record FROM worker_dispatch WHERE id=?", r.ID).Scan(&raw); err != nil {
+			return err
+		}
+		if json.Unmarshal(raw, &saved) != nil || saved.Origin != r.Origin || !reflect.DeepEqual(saved.Definition, r.Definition) {
+			return work.ErrState
+		}
+		return nil
+	})
+	return saved, err
 }
 
 func (s *Service) recordForAdmission(ctx context.Context, origin Origin, callID string, d Definition) (Record, bool, error) {

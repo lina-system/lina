@@ -48,12 +48,13 @@ func (s *Service) RunGoal(ctx context.Context, origin Origin, action string, d D
 		if !reflect.DeepEqual(r.Definition, d) {
 			return Record{}, work.ErrState
 		}
-		if r.State != "queued" {
+		if r.State != "queued" && r.State != "admitting" {
 			return r, nil
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return Record{}, err
-	} else {
+	}
+	if errors.Is(err, sql.ErrNoRows) || r.State == "admitting" {
 		result := s.Tool(origin).Execute(ctx, provider.ToolCall{ID: action, Name: "dispatch_work", Arguments: string(mustJSON(d))})
 		if result.Code != loop.OK {
 			return Record{}, work.ErrInvalid

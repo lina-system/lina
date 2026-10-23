@@ -15,6 +15,7 @@ import (
 type Recovery struct{ DB *canon.Store }
 
 type Record struct {
+	Reservation                                             string
 	PendingRequests                                         map[string]bool
 	Worker                                                  string
 	ID, Person, Agent, Conversation, Input, Workdir, Packet string

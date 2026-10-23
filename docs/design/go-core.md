@@ -953,8 +953,11 @@ there is no separate client endpoint.
   and the proposed title must match its action after whitespace/case normalization.
   Other wording and sources stay candidates. This does not treat a model's
   interpretation or confidence as a source fact. Existing open titles and source
-  links prevent duplicate additions. An undone source hash cannot be reintroduced
-  through a replay alias. Three rejected additions in one recognized class is
+  links prevent duplicate additions. For the same person and normalized action,
+  an adopted or rejected source hash cannot be reintroduced through a replay or
+  view alias, even after completion or cancellation without undo and after restart.
+  An independent source remains eligible when no open equivalent exists.
+  Three rejected additions in one recognized class is
   the initial fallback threshold; further items remain candidates. Numbered
   pages retain unanswered proposals and define an explicit scope for presenting
   a group, without automatically accepting it.
@@ -964,6 +967,9 @@ there is no separate client endpoint.
   reclassifying source text. The headless `e2e/m2/record-candidates.json` scenario
   covers verified admission, forged and missing evidence, duplicate refusal,
   notices, undo, and pending/rejected persistence after restart.
+  `e2e/m2/record-candidate-replay.json` covers replay/view suppression after
+  completion and cancellation through installed Core tools and a restart,
+  preserving the saved version without another record, notice or undo operation.
 
 `promote_memo` and `undo_record` use the existing authenticated record-tool
 registry. Promotion preserves the memo's id, path, title and note, sets its kind
@@ -1393,7 +1399,7 @@ See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-a
 for the evidence boundary and account-free acceptance limits.
 
 The #135 recovery path persists worker bindings and the one continuation allowance
-in canon migration 46. Installed Core marks unfinished sessions unknown before
+in canon migration 47. Installed Core marks unfinished sessions unknown before
 admission, resumes their existing Codex thread and reads the exact turn, paging
 its history without starting another turn. Missing or incomplete items, lost
 requests, failed reads and effects without independent evidence remain unknown.
@@ -1431,7 +1437,7 @@ type Definition struct {
 }
 ```
 
-- The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves to a Markdown section in the repository at the base commit before admission. It pins that commit for queued execution and retries, and renders the task packet with the assignment id, base commit and complete definition. Code examples are not design sections.
+- The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves to a Markdown section in the repository at the base commit before admission. Before invoking the manager, it persists the pinned commit and definition snapshot in a non-runnable `admitting` record. Retries resume that snapshot; only manager success moves it to `queued`. Core renders the task packet with the assignment id, base commit and complete definition. Code examples are not design sections.
 - Core does not split work itself. The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)). Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
 - `Chooser` ranks installed workers by quota, situation rules and measured host capacity. OK quota precedes warning and unknown; absent quota is unknown and usable. Any blocked window excludes the worker until its explicit reset. A quota, rate-limit or login stop parks the worker and permits one replacement with the identical persisted packet, task branch and workspace, after the previous process tree is reaped. Each attempt has a separate ledger generation; restart never repeats an uncertain attempt.
 - #138 connects the chooser to `dispatch_work` with Antigravity and Codex. The optional `system/core/worker-choice.json` table has `provisional: true` and `rules` of `{worker, tags, priority}`; all tags must match the definition's kind or repository. Quota and capacity cannot be overridden. Equal candidates retain installation order (Antigravity, then Codex). Core reads the table at startup and rejects malformed rules. The initial resource estimate is one CPU, 512 MiB memory and 1024 MiB disk per active reservation, deducted from the measured main-host resources. Canon migration 43 replaces the repository-wide unique index with fenced area claims and durable worker quota. A late quota snapshot cannot erase a newer observed stop; admission rechecks quota before reserving the attempt.
