@@ -98,6 +98,7 @@ func ClientCombinationsFor(target string) []Combination {
 		Platform:        target,
 		ProtocolVersion: "1.0",
 		Capabilities: []protocol.Capability{
+			{Name: "results", Version: "1.0"},
 			{Name: "planning", Version: "1.0"},
 			{Name: "work", Version: "1.0"},
 			{Name: "records", Version: "1.0"},
@@ -121,6 +122,7 @@ func ClientCombinationsFor(target string) []Combination {
 			{Name: "running", Version: "1.0"},
 		},
 		Evidence: []string{
+			"go test ./e2e/m1 -run TestM1TypedResultOpenInstalledCore",
 			"go test ./e2e/m1 -run TestM3PlanDrafting",
 			"go test ./e2e/m1 -run TestM3OperationalSwitch",
 			"go test ./e2e/m1 -run TestM2TUIRecordsInstalledCore",
