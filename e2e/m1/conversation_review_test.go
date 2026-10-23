@@ -3,6 +3,7 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,25 +24,6 @@ func conversationClient(t *testing.T, h *harness, extra ...protocol.Capability) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { c.Close() })
-	// Probe before subscribing: a recovering worker can publish turn events
-	// immediately after the snapshot. Those events are not input refusals and
-	// must remain available to the caller. Only recovery's explicit refusal
-	// permits another empty input probe.
-	for {
-		if _, err = c.Input(h.ctx, protocol.Input{}); err != nil {
-			t.Fatal(err)
-		}
-		ready, err := c.Receive(h.ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ready.Error != nil && ready.Error.Code == protocol.ErrorMalformed {
-			break
-		}
-		if ready.Error == nil || ready.Error.Code != protocol.ErrorUnavailable {
-			t.Fatal("unexpected readiness refusal")
-		}
-	}
 	if _, err = c.History(h.ctx, protocol.HistoryGet{}); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +42,44 @@ func conversationClient(t *testing.T, h *harness, extra ...protocol.Capability) 
 	if snapshot, err := c.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
 		t.Fatal("no history snapshot")
 	}
+	if err := awaitConversationAdmission(h.ctx, c); err != nil {
+		t.Fatal(err)
+	}
 	return c, *history.ConversationID
+}
+
+type admissionClient interface {
+	Input(context.Context, protocol.Input) (string, error)
+	Receive(context.Context) (protocol.Envelope, error)
+}
+
+func awaitConversationAdmission(ctx context.Context, c admissionClient) error {
+	// Empty input probes admission without creating a message. Only recovery's
+	// explicit refusal permits another probe.
+	for {
+		id, err := c.Input(ctx, protocol.Input{})
+		if err != nil {
+			return err
+		}
+		for {
+			ready, err := c.Receive(ctx)
+			if err != nil {
+				return err
+			}
+			// Worker notices can arrive on the subscribed conversation while
+			// admission is probed; only this request's reply proves readiness.
+			if ready.ReplyTo == nil || *ready.ReplyTo != id {
+				continue
+			}
+			if ready.Error != nil && ready.Error.Code == protocol.ErrorMalformed {
+				return nil
+			}
+			if ready.Error == nil || ready.Error.Code != protocol.ErrorUnavailable {
+				return fmt.Errorf("unexpected readiness refusal: %+v", ready)
+			}
+			break
+		}
+	}
 }
 func admittedTurn(t *testing.T, h *harness, c *clientapi.Client, conversation, key, text string) []protocol.Envelope {
 	t.Helper()

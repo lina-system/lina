@@ -19,6 +19,14 @@ function fixture(t) {
 }
 const kit = { name: 'kit', module: 'kit', packages: ['./...'] };
 
+// Feed both go-test and compiled-test invocations to the same simulated clock.
+function testingArgs(args) {
+  if (args.includes('-c')) return ['compile', ...args.slice(1)];
+  if (args.some(arg => arg.startsWith('-test.'))) return ['test', ...args.map(arg => arg.replace(/^-test\./, '-'))];
+  return args;
+}
+const acceptanceListing = sb => `example.invalid/e2e\t${join(sb.dir, 'e2e')}\ttests\n`;
+
 test('cold compilation leaves enough shared budget for the module test suite', t => {
   const sb = fixture(t);
   let elapsed = 0;
@@ -84,8 +92,9 @@ test('the growing e2e suite can finish beyond six minutes within the component d
   const ran = [];
   t.mock.method(performance, 'now', () => elapsed);
   const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }], execute(command, args, options) {
+    args = testingArgs(args);
     if (args[0] === 'build') elapsed += 200_000;
-    if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+    if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
     if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: names.join('\n')+'\n', stderr: '' };
     if (args[0] === 'test') {
       const minutes = Number(args.find(arg => arg.startsWith('-timeout='))?.match(/^\-timeout=(\d+)m$/)?.[1]);
@@ -123,6 +132,40 @@ test('commands across modules share a deadline instead of resetting the budget',
   assert.deepEqual(budgets, Array.from({ length: 11 }, (_, i) => 20_000 - i * 1000));
 });
 
+test('a growing acceptance corpus fits each diagnostic deadline within the original 895-second budget', t => {
+  const sb = fixture(t);
+  const names = Array.from({ length: 12 }, (_, i) => `TestScenario${String(i).padStart(2, '0')}`);
+  const ran = [];
+  const durations = [];
+  let elapsed = 0;
+  t.mock.method(performance, 'now', () => elapsed);
+  const result = checkComponents({ cwd: sb.dir, timeoutMs: 895_000, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
+    execute(command, args, options) {
+      args = testingArgs(args);
+      if (args[0] === 'build') elapsed += 150_000;
+      if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
+      if (args.includes('-list')) return { status: 0, stdout: names.join('\n')+'\n', stderr: '' };
+      if (args[0] === 'test') {
+        const index = args.indexOf('-run');
+        const selected = names.filter(name => new RegExp(args[index + 1]).test(name));
+        const duration = selected.length * 60_000;
+        const minutes = Number(args.find(arg => arg.startsWith('-timeout='))?.match(/^\-timeout=(\d+)m$/)?.[1]);
+        assert.equal(minutes, 6, 'retain Go timeout diagnostics');
+        ran.push(...selected);
+        durations.push(duration);
+        elapsed += duration;
+        return { status: duration >= minutes * 60_000 || duration >= options.timeoutMs ? 1 : 0,
+          stdout: '', stderr: 'modeled acceptance batch duration\n' };
+      }
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(ran.sort(), names, 'every enumerated test executes once');
+  assert.ok(Math.max(...durations) <= 240_000, 'batches retain headroom below six minutes');
+  assert.equal(elapsed, 870_000);
+  assert.ok(elapsed < 895_000, 'batch division does not need the later dev budget increase');
+});
+
 test('uneven acceptance durations fit the package deadline without dropping scenarios', t => {
   const sb = fixture(t);
   const names = Array.from({ length: 8 }, (_, i) => `TestScenario${i}`);
@@ -130,8 +173,9 @@ test('uneven acceptance durations fit the package deadline without dropping scen
   const ran = [];
   t.mock.method(performance, 'now', () => elapsed);
   const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }], execute(command, args, options) {
+    args = testingArgs(args);
     if (args[0] === 'build') elapsed += 200_000;
-    if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+    if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
     if (args.includes('-list')) return { status: 0, stdout: names.join('\n') + '\n', stderr: '' };
     if (args[0] === 'test') {
       const pattern = new RegExp(args[args.indexOf('-run') + 1]);
@@ -160,10 +204,11 @@ test('cold setup and three passing acceptance batches share enough command budge
   const ran = [];
   t.mock.method(performance, 'now', () => elapsed);
   const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }], execute(command, args, options) {
+    args = testingArgs(args);
     // The failed CI run consumed about 300 s before acceptance, then passed
     // batches taking 251.7 s and 234.3 s. The last batch received only 103.9 s.
     if (args[0] === 'build') elapsed += 300_000;
-    if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+    if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
     if (args.includes('-list')) return { status: 0, stdout: [...durations.keys()].join('\n') + '\n', stderr: '' };
     if (args[0] === 'test') {
       const pattern = new RegExp(args[args.indexOf('-run') + 1]);
@@ -321,8 +366,9 @@ test('acceptance batches run every enumerated test once within the shared budget
   t.mock.method(performance, 'now', () => elapsed);
   const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }],
     execute(command, args, options) {
-      if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
-      if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: `${names.join('\n')}\nok example.invalid/e2e 0.01s\n`, stderr: '' };
+      args = testingArgs(args);
+      if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
+      if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: `${names.join('\n')}\nfixture enumeration banner\n`, stderr: '' };
       if (args[0] === 'test') {
         assert.ok(args.includes('-count=1'));
         assert.ok(args.includes('-timeout=6m'));
@@ -330,8 +376,8 @@ test('acceptance batches run every enumerated test once within the shared budget
         const selected = index < 0 ? (args.includes('./e2e/...') ? names : []) : names.filter(name => new RegExp(args[index + 1]).test(name));
         runs.push({ selected, budget: options.timeoutMs });
         if (selected.length) assert.ok(args.includes('-parallel=4'), 'each acceptance batch retains bounded Core concurrency');
-        // The growing package exceeds six minutes; each batch finishes within
-        // that bound and all share the outer components deadline.
+        // The growing package exceeds six minutes; each disjoint batch fits
+        // that bound while all batches share the outer components deadline.
         const duration = selected.length * 80_000;
         elapsed += duration;
         return { status: duration >= 360_000 || duration >= options.timeoutMs ? 1 : 0, stdout: '', stderr: '' };
@@ -341,10 +387,12 @@ test('acceptance batches run every enumerated test once within the shared budget
   assert.equal(result.status, 0, result.output);
   assert.deepEqual(runs.flatMap(run => run.selected).sort(), [...names].sort());
   const batches = runs.filter(run => run.selected.length > 0);
-  assert.ok(batches.length > 1);
+  assert.equal(batches.length, 4);
   assert.ok(batches.every(batch => batch.selected.length * 80_000 < 360_000));
   assert.ok(batches.slice(1).every((batch, i) => batch.budget < batches[i].budget));
   assert.ok(elapsed < componentsTimeoutMs);
+  const timings = [...result.output.matchAll(/^ok\s+example\.invalid\/e2e\s+(\d+\.\d+)s$/gm)].map(match => Number(match[1]));
+  assert.deepEqual(timings, [160, 80, 80, 80], 'publish measured batch durations, excluding enumeration');
 });
 
 test('acceptance concurrency is bounded independently of host CPU count', t => {
@@ -352,8 +400,9 @@ test('acceptance concurrency is bounded independently of host CPU count', t => {
   const runs = [];
   const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }],
     execute(command, args) {
-      if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\nexample.invalid/e2e/empty\n', stderr: '' };
-      if (args.includes('-list')) return { status: 0, stdout: args.at(-1).endsWith('/empty') ? '' : 'TestOne\nTestTwo\n', stderr: '' };
+      args = testingArgs(args);
+      if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb)+`example.invalid/e2e/empty\t${join(sb.dir, 'e2e/empty')}\ttests\n`, stderr: '' };
+      if (args.includes('-list')) return { status: 0, stdout: command.includes('acceptance-1.test') ? '' : 'TestOne\nTestTwo\n', stderr: '' };
       if (args[0] === 'test') runs.push(args);
       return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
     } });
@@ -373,7 +422,8 @@ test('an acceptance batch failure stops the gate without running later batches',
   let batches = 0;
   const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
     execute(command, args) {
-      if (args[0] === 'list') return { status: 0, stdout: 'example.invalid/e2e\n', stderr: '' };
+      args = testingArgs(args);
+      if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
       if (args[0] === 'test' && args.includes('-list')) return { status: 0, stdout: 'TestOne\nTestTwo\n', stderr: '' };
       if (args[0] === 'test' && args.includes('-run')) {
         batches++;
@@ -388,6 +438,7 @@ test('an acceptance batch failure stops the gate without running later batches',
 
 test('real acceptance batches preserve examples, fuzz seeds and ordinary tests', t => {
   const sb = fixture(t);
+  sb.write(sb.dir, 'e2e/support/doc.go', '// SPDX-License-Identifier: Apache-2.0\npackage support\n');
   sb.write(sb.dir, 'ordinary_test.go', `// SPDX-License-Identifier: Apache-2.0
 package lina
 import ("os"; "testing")
@@ -404,10 +455,41 @@ func Example() { mark("example");fmt.Println("ok")
 }
 func FuzzInput(f *testing.F) { f.Add("seed");f.Fuzz(func(t *testing.T,s string){mark("fuzz:"+s)}) }
 `);
-  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }] });
+  const acceptanceBuilds = [];
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['.', './e2e/...'] }],
+    execute(command, args, options) {
+      if (command === 'go' && args[0] === 'test' && args.at(-1).endsWith('/e2e')) acceptanceBuilds.push(args);
+      return execute(command, args, options);
+    } });
   assert.equal(result.status, 0, result.output);
   assert.equal(readFileSync(join(sb.dir, 'ordinary-ran'), 'utf8'), 'yes');
   assert.deepEqual(readFileSync(join(sb.dir, 'e2e/ran'), 'utf8').trim().split('\n').sort(), ['child', 'example', 'fuzz:seed', 'one', 'two']);
+  assert.equal(acceptanceBuilds.length, 1, 'compile acceptance once for enumeration and all batches');
+  assert.ok(acceptanceBuilds[0].includes('-c'));
+});
+
+test('failed acceptance compilation stops before enumeration or execution', t => {
+  const sb = fixture(t);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
+    execute(command, args) {
+      assert.equal(command, 'go', 'a failed build cannot run a test binary');
+      if (args[0] === 'list') return { status: 0, stdout: acceptanceListing(sb), stderr: '' };
+      if (args.includes('-c')) return { status: 1, stdout: '', stderr: 'acceptance compilation failed\n' };
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 1);
+  assert.match(result.output, /acceptance compilation failed/);
+});
+
+test('an abrupt zero exit cannot hide unexecuted acceptance checks', t => {
+  const sb = fixture(t);
+  sb.write(sb.dir, 'e2e/exit_test.go', `// SPDX-License-Identifier: Apache-2.0
+package e2e
+import ("os"; "testing")
+func TestAbruptExit(t *testing.T) { os.Exit(0) }
+`);
+  const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }] });
+  assert.equal(result.status, 1, 'an abrupt exit must fail acceptance, as go test does');
 });
 
 test('failed acceptance enumeration never becomes an empty successful suite', t => {
@@ -415,7 +497,8 @@ test('failed acceptance enumeration never becomes an empty successful suite', t 
   for (const failing of ['list', 'tests']) {
     const result = checkComponents({ cwd: sb.dir, components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
       execute(command, args) {
-        if (args[0] === 'list') return { status: failing === 'list' ? 1 : 0, stdout: 'example.invalid/e2e\n', stderr: failing === 'list' ? 'listing failed\n' : '' };
+        args = testingArgs(args);
+        if (args[0] === 'list') return { status: failing === 'list' ? 1 : 0, stdout: acceptanceListing(sb), stderr: failing === 'list' ? 'listing failed\n' : '' };
         if (args.includes('-list')) return { status: 1, stdout: 'TestOne\n', stderr: 'enumeration failed\n' };
         assert.ok(!args.includes('-run'));
         return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };

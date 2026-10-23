@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/clientapi"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/design"
+	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -166,7 +167,23 @@ func TestM2TUIRecordsInstalledCore(t *testing.T) {
 	if preview.Token == nil || len(preview.Rows) != 1 {
 		t.Fatal("no preview", preview)
 	}
-	waitScreen(t, h, terminal, "2026-10-25")
+	waitPreview := func(date string) {
+		t.Helper()
+		if len(preview.Rows) != 1 {
+			t.Fatal("missing preview row", preview)
+		}
+		// The input line already contains the date before the preview arrives.
+		// Observe the actionable preview in a complete frame before pressing keys.
+		screen, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+			cells := screenText(s)
+			return renderedFrame(terminal, s) && strings.Contains(cells, preview.Rows[0].Title) &&
+				strings.Contains(cells, design.Text(design.English, "records.confirm")) && strings.Contains(cells, date)
+		})
+		if err != nil {
+			t.Fatalf("record preview not ready: %v; cells=%s", err, screenText(screen))
+		}
+	}
+	waitPreview("2026-10-25")
 	if len(todos()) != 0 {
 		t.Fatal("preview saved before confirmation")
 	}
@@ -177,7 +194,7 @@ func TestM2TUIRecordsInstalledCore(t *testing.T) {
 	}
 	h.keys(terminal, "/add "+scenario.Capture+"\r")
 	preview = nextRecord("preview")
-	waitScreen(t, h, terminal, design.Text(design.English, "records.confirm"))
+	waitPreview("")
 	if len(todos()) != 0 {
 		t.Fatal("second preview saved early")
 	}

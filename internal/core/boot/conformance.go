@@ -34,12 +34,17 @@ func (r *conversationRuntime) beginConformance(ctx context.Context, a codingAssi
 	if err = review.New(r.db).Claim(ctx, rr); err != nil {
 		return rr, err
 	}
-	result := review.Assess(d.PR.Verify(repo, d.TaskDefinition().Branch, d.Definition.Base, d.PR.Head), d.ChangedFiles, d.Definition.WriteArea)
+	// Resolve readiness and evidence blocks before selecting a scope verdict:
+	// an unavailable-evidence receipt cannot accept a judgment.
+	result := review.Assess(d.PR.Verify(repo, d.TaskDefinition().Branch, d.Definition.Base, d.PR.Head), nil, nil)
 	if result.State == "" && d.Code == "pr_unverified" {
 		result = review.Record{State: "blocked", Cause: "merge_precondition", Evidence: "The delivered head does not satisfy GitHub merge prerequisites."}
 	}
 	if result.State == "" && (d.Code != "ready_for_review" || d.BaseCommit == "" || d.ChangeEvidence == "" || len(d.DesignText) == 0 || len(d.ChangedFiles) == 0) {
 		result = review.Record{State: "blocked", Cause: "change_evidence_unavailable", Evidence: "The delivered diff and base design are unavailable."}
+	}
+	if result.State == "" {
+		result = review.Assess(nil, d.ChangedFiles, d.Definition.WriteArea)
 	}
 	if result.State != "" {
 		rr.State, rr.Cause, rr.Verdict, rr.Evidence = result.State, result.Cause, result.Verdict, result.Evidence
