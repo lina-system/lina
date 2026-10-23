@@ -40,3 +40,16 @@ func TestBoardPreservesCoreOrderAndReconcilesIdentities(t *testing.T) {
 		t.Fatal("removed identities survived replacement")
 	}
 }
+
+func TestBoardWaitingTaskUsesCurrentGenerationReference(t *testing.T) {
+	waiting := []protocol.WaitingRow{{Ref: protocol.WaitingRef{Source: "work", Key: "task:with:colons"}}}
+	running := []Block{{ID: "current", RunID: "task:task:with:colons:7", RunState: protocol.RunningStateNeedsInput}}
+	board := (Board{}).Replace(running, waiting)
+	if len(board.Rows) != 1 || board.Rows[0].RunID != running[0].RunID || !board.Rows[0].CanNote() {
+		t.Fatalf("waiting task lost generation-bound control identity: %+v", board.Rows)
+	}
+	board = board.Replace(nil, waiting)
+	if len(board.Rows) != 1 || board.Rows[0].RunID != "" || board.Rows[0].CanStop() {
+		t.Fatal("missing execution exposed a fabricated control reference")
+	}
+}

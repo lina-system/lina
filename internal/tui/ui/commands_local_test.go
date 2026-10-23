@@ -88,3 +88,17 @@ func TestNoteAmbiguityAndMissingTargetsStayLocal(t *testing.T) {
 		}
 	}
 }
+
+func TestNotePreservesExplicitTaskReference(t *testing.T) {
+	m := conversationShell()
+	m.content.Capabilities = append(m.content.Capabilities, protocol.Capability{Name: "running", Version: "1.0"})
+	m.content.Blocks = []state.Block{{ID: "task", Topic: "running", RunID: "task:fixture:7", RunState: protocol.RunningStateNeedsInput}}
+	handled, cmd := m.ownerCommand("/note task:fixture:7 Inspect appendix")
+	if !handled || cmd == nil {
+		t.Fatal("explicit delegated task note was refused locally")
+	}
+	p := cmd().(shellManagement).Request.(protocol.FollowUp)
+	if p.RunID != "task:fixture:7" || p.Text != "Inspect appendix" {
+		t.Fatalf("changed explicit follow-up: %+v", p)
+	}
+}

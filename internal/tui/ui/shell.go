@@ -239,7 +239,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ConnectionStatus{State: Resyncing}
 		}
 		var effects []tea.Cmd
-		if projected != nil && (projected.topic == "progress" || projected.topic == "waiting" && m.conversation.pager.board != nil) && m.conversation.pager.open && (m.conversation.pager.waiting || m.conversation.pager.board != nil) {
+		if projected != nil && (projected.topic == "progress" || (projected.topic == "waiting" || projected.topic == "running") && m.conversation.pager.board != nil) && m.conversation.pager.open && (m.conversation.pager.waiting || m.conversation.pager.board != nil) {
 			effects = append(effects, m.waitingRequest())
 		}
 		for _, command := range commands {

@@ -39,7 +39,16 @@ func (v Board) Replace(running []Block, waiting []protocol.WaitingRow) Board {
 		case "run":
 			entry.RunID = row.Ref.Key
 		case "work":
-			entry.RunID = "task:" + row.Ref.Key
+			// The waiting source carries a task ID, while running controls
+			// require the exact execution generation supplied by Core.
+			for _, run := range running {
+				ref, task := strings.CutPrefix(run.RunID, "task:")
+				end := strings.LastIndexByte(ref, ':')
+				if task && end > 0 && ref[:end] == row.Ref.Key && !run.Removed {
+					entry.RunID = run.RunID
+					break
+				}
+			}
 		}
 		if entry.RunID != "" {
 			entry.ID = "run:" + entry.RunID
@@ -113,5 +122,5 @@ func (row BoardRow) CanStop() bool {
 	return row.RunID != "" && row.Group != 2
 }
 func (row BoardRow) CanNote() bool {
-	return row.CanStop() && !strings.HasPrefix(row.RunID, "task:")
+	return row.CanStop()
 }

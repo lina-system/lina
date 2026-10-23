@@ -44,7 +44,7 @@ func (m *shellModel) noteCommand(text string) (bool, tea.Cmd) {
 	request := protocol.FollowUp{}
 	for _, row := range rows {
 		if row.RunID == target {
-			if body == "" || row.RunState == protocol.RunningStateDone || row.RunState == protocol.RunningStateReadyForReview || row.RunState == protocol.RunningStateFailed || row.RunState == protocol.RunningStateStopped || strings.HasPrefix(target, "task:") {
+			if body == "" || row.RunState == protocol.RunningStateDone || row.RunState == protocol.RunningStateReadyForReview || row.RunState == protocol.RunningStateFailed || row.RunState == protocol.RunningStateStopped {
 				return help("")
 			}
 			request = protocol.FollowUp{RunID: target, Text: body}

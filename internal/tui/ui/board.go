@@ -28,6 +28,9 @@ func (m *shellModel) boardCommand(text string) (bool, tea.Cmd) {
 	m.openPager("")
 	m.conversation.pager.board = &boardView{}
 	m.refreshBoard()
+	if m.hasCapability("progress") {
+		return true, tea.Batch(m.waitingRequest(), m.subscribeSnapshot("progress"))
+	}
 	return true, m.waitingRequest()
 }
 
@@ -82,7 +85,7 @@ func (m *shellModel) refreshBoard() {
 					actions = append(actions, text("board.decisions"))
 				}
 				if len(actions) > 0 {
-					lines = append(lines, "    "+strings.Join(actions, " · "))
+					lines = append(lines, "    "+strings.Join(actions, " / "))
 				}
 			}
 		}

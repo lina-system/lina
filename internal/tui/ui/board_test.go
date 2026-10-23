@@ -114,3 +114,13 @@ func TestBoardRefreshesFullWaitingAfterProgressEvent(t *testing.T) {
 		t.Fatal("resolved source survived Core response")
 	}
 }
+
+func TestBoardRefreshesWaitingAfterRunLanding(t *testing.T) {
+	m := conversationShell()
+	m.Update(shellData{Generation: 1, Message: workListWelcome(t, "conversation", "running", "waiting", "progress")})
+	m.boardCommand("/board")
+	_, cmd := m.Update(shellData{Generation: 1, Message: runningRefreshFrame(t, "Landed", "1", true)})
+	if cmd == nil {
+		t.Fatal("running snapshot did not reconcile board waiting rows")
+	}
+}
