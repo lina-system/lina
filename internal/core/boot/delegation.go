@@ -48,7 +48,7 @@ type delegationRepository struct {
 type delegationRuntime struct {
 	root          *conversationRuntime
 	config        delegationConfig
-	reactor       *reactor.Reactor
+	reactor       *reactor.Scheduler
 	adapter       *codex.Session
 	processes     *proc.Owner
 	cancel        context.CancelFunc
@@ -118,7 +118,7 @@ func (r *conversationRuntime) startDelegation(ctx context.Context) error {
 		d.connection.Release()
 		return err
 	}
-	d.reactor = reactor.New(r.work, reactor.Hooks{Availability: d.availability, Start: d.start, ReadPR: d.readPR, Return: d.returnConflict, Changed: func(ctx context.Context) { _ = r.publishRunning(ctx) }})
+	d.reactor = reactor.NewScheduler(r.work, reactor.Hooks{Availability: d.availability, Start: d.start, ReadPR: d.readPR, Return: d.returnConflict, Changed: func(ctx context.Context) { _ = r.publishRunning(ctx) }})
 	r.delegation = d
 	go d.events(runctx)
 	// Recovery never repeats an armed dispatch. Queued tasks can run immediately;

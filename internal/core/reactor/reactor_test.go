@@ -6,14 +6,16 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/work"
 )
 
-func fixture(t *testing.T) *work.Service {
+func fixture(t *testing.T) (*Reactor, func()) {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
@@ -32,199 +34,130 @@ func fixture(t *testing.T) *work.Service {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close(context.Background()) })
-	return work.New(db)
-}
-func task(id string, deps ...string) work.Task {
-	return work.Task{ID: id, AgentID: "agent", ConversationID: "conversation", Title: id, Done: "checked", Schedule: &work.Schedule{Group: "g", Repository: "owner/repo", Worker: "worker", Host: "local", Areas: []string{id + "/**"}, DependsOn: deps}}
-}
-func TestEventsDispatchAndMergeReadRelease(t *testing.T) {
-	s := fixture(t)
-	starts := []string{}
-	reads := 0
-	returns := 0
-	merged := false
-	r := New(s, Hooks{Availability: func(context.Context) (work.Availability, error) {
-		return work.Availability{Hosts: map[string]int{"local": 5}}, nil
-	},
-		Start: func(_ context.Context, c work.Card) (work.Run, error) {
-			starts = append(starts, c.Task.ID)
-			return work.Run{ID: "run:" + c.Task.ID, TaskID: c.Task.ID, Worker: "worker", NodeID: "local", ThreadID: "thread:" + c.Task.ID, TurnID: "turn", Generation: 1}, nil
-		},
-		ReadPR: func(_ context.Context, c work.Card) (work.PullRequest, error) {
-			reads++
-			pr := work.PullRequest{Number: 1, Head: "head", State: "OPEN", Mergeable: "CONFLICTING"}
-			if merged {
-				pr.State = "MERGED"
-				pr.MergeCommit = "merge"
-			}
-			return pr, nil
-		},
-		Return: func(_ context.Context, c work.Card) (work.Run, error) {
-			returns++
-			run := *c.Run
-			run.ID += "-return"
-			run.TurnID = "return"
-			run.Generation++
-			return run, nil
-		},
-	})
-	if err := r.Schedule(t.Context(), []work.Task{task("a"), task("b", "a"), task("c")}); err != nil {
+	w := work.New(db)
+	if err = w.Create(t.Context(), work.Task{ID: "task", AgentID: "agent", ConversationID: "conversation", Title: "Result", Done: "result received"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(starts) != 2 {
-		t.Fatalf("starts %v", starts)
-	}
-	if err := r.Wake(t.Context()); err != nil {
+	if err = w.Start(t.Context(), work.Run{ID: "attempt", TaskID: "task", Generation: 1, Worker: "fixture", ThreadID: "thread", TurnID: "turn", NodeID: "node"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(starts) != 2 {
-		t.Fatal("duplicate dispatch")
-	}
-	if err := r.Finished(t.Context(), "a", "run:a", "completed"); err != nil {
+	receipt := work.Receipt{SchemaVersion: 1, RelationshipID: "task", ExecutionGeneration: 1, Attempt: 1, RevisionHash: strings.Repeat("0", 64), Outcome: "failed", Producer: "child", TurnRef: work.TurnRef{ThreadID: "thread", TurnID: "turn", TurnStatus: "failed"}, EmittedAt: time.Now()}
+	receipt.EventID = work.ReceiptID(receipt)
+	if err = w.Submit(t.Context(), "attempt", receipt); err != nil {
 		t.Fatal(err)
 	}
-	if returns != 1 || reads != 1 || len(starts) != 2 {
-		t.Fatalf("return=%d reads=%d starts=%v", returns, reads, starts)
-	}
-	// A duplicated old completion cannot end the correction's new turn.
-	if err := r.Finished(t.Context(), "a", "run:a", "completed"); !errors.Is(err, work.ErrState) {
-		t.Fatalf("old completion %v", err)
-	}
-	merged = true
-	if err := r.Finished(t.Context(), "a", "run:a-return", "completed"); err != nil {
-		t.Fatal(err)
-	}
-	if len(starts) != 3 || starts[2] != "b" || returns != 1 {
-		t.Fatalf("release starts=%v returns=%d", starts, returns)
-	}
-}
-func TestFailedForgeReadAndUnknownDispatchKeepLeases(t *testing.T) {
-	s := fixture(t)
-	attempts := 0
-	r := New(s, Hooks{Availability: func(context.Context) (work.Availability, error) {
-		return work.Availability{Hosts: map[string]int{"local": 2}}, nil
-	}, Start: func(context.Context, work.Card) (work.Run, error) {
-		attempts++
-		return work.Run{}, errors.New("connection lost")
-	}})
-	if err := r.Schedule(t.Context(), []work.Task{task("a")}); err == nil {
-		t.Fatal("unknown start hidden")
-	}
-	if err := r.Wake(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if attempts != 1 {
-		t.Fatal("unknown start retried")
-	}
-	c, _ := s.Get(t.Context(), "a")
-	if !c.Scheduling.AreaHeld || !c.Scheduling.CapacityHeld {
-		t.Fatal("unknown outcome released")
-	}
-}
-
-func TestKnownPreDispatchFailureReleasesReservations(t *testing.T) {
-	s := fixture(t)
-	starts := map[string]int{}
-	a, b, dependent := task("a"), task("b"), task("dependent", "a")
-	b.Schedule.Group = "other"
-	b.Schedule.Areas = a.Schedule.Areas
-	r := New(s, Hooks{Availability: func(context.Context) (work.Availability, error) {
-		return work.Availability{Hosts: map[string]int{"local": 1}}, nil
-	}, Start: func(_ context.Context, c work.Card) (work.Run, error) {
-		starts[c.Task.ID]++
-		if c.Task.ID == "a" {
-			return work.Run{}, errors.Join(ErrNotStarted, errors.New("fetch failed"))
+	r := &Reactor{DB: db, Work: w, Epoch: "1"}
+	finish := func() {
+		t.Helper()
+		if err := w.Finish(t.Context(), "task", "attempt", "failed"); err != nil {
+			t.Fatal(err)
 		}
-		return work.Run{ID: "run:" + c.Task.ID, TaskID: c.Task.ID, Worker: "worker", NodeID: "local", ThreadID: "thread:" + c.Task.ID, TurnID: "turn", Generation: 1}, nil
-	}})
-	if err := r.Schedule(t.Context(), []work.Task{a, b, dependent}); !errors.Is(err, ErrNotStarted) {
-		t.Fatalf("known failure hidden: %v", err)
 	}
-	failed, err := s.Get(t.Context(), "a")
-	if err != nil || failed.Run != nil || failed.Scheduling.AreaHeld || failed.Scheduling.CapacityHeld || failed.State != "failed" {
-		t.Fatalf("pre-dispatch failure kept reservations: %+v %v", failed, err)
+	return r, finish
+}
+
+func TestCommittedWakeupAndLostSignal(t *testing.T) {
+	r, finish := fixture(t)
+	observed := make(chan work.Completion, 2)
+	r.On = func(ctx context.Context, e work.Completion, c work.Card) error {
+		var count int
+		err := r.DB.Read(ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT count(*) FROM work_completions WHERE id=?", e.ID).Scan(&count)
+		})
+		if err != nil || count != 1 || c.Active || c.Receipt == nil {
+			t.Errorf("reaction preceded durable state: %d %+v %v", count, c, err)
+		}
+		observed <- e
+		return nil
 	}
-	if starts["b"] != 1 || starts["dependent"] != 0 {
-		t.Fatalf("released work: %v", starts)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); r.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	finish()
+	select {
+	case <-observed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("commit did not wake reactor")
 	}
-	if err := s.Recover(t.Context(), "restart"); err != nil {
+	// Observe the committed acknowledgement before cancellation/fault injection.
+	wait, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	for {
+		changed := r.DB.Changed()
+		var n int
+		if err := r.DB.Read(wait, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(wait, "SELECT count(*) FROM work_completion_claims WHERE state='handled'").Scan(&n)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if n == 1 {
+			break
+		}
+		select {
+		case <-changed:
+		case <-wait.Done():
+			t.Fatal(wait.Err())
+		}
+	}
+	cancel()
+	<-done
+	if err := r.DB.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "DELETE FROM work_completions")
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Wake(t.Context()); err != nil {
+	for i := 0; i < 2; i++ {
+		if err := r.Sweep(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(observed) != 0 {
+		t.Fatal("sweep invoked a reaction")
+	}
+	r.Epoch = "2"
+	if err := r.Drain(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	failed, err = s.Get(t.Context(), "a")
-	if err != nil || starts["a"] != 1 || starts["b"] != 1 || starts["dependent"] != 0 || failed.Scheduling.AreaHeld || failed.Scheduling.CapacityHeld || failed.State != "failed" {
-		t.Fatalf("recovery replayed or lost failure: starts=%v failed=%+v err=%v", starts, failed, err)
+	if len(observed) != 0 {
+		t.Fatal("lost handled signal replayed")
 	}
 }
 
-func TestImmediateCompletionWaitsForAdmission(t *testing.T) {
-	s := fixture(t)
-	completed := make(chan error, 1)
-	entered := make(chan struct{})
-	var r *Reactor
-	r = New(s, Hooks{Availability: func(context.Context) (work.Availability, error) {
-		return work.Availability{Hosts: map[string]int{"local": 1}}, nil
-	}, Start: func(ctx context.Context, c work.Card) (work.Run, error) {
-		go func() { close(entered); completed <- r.Completed(ctx, c.Task.ID, "thread", "turn", "completed") }()
-		<-entered
-		return work.Run{ID: "run", TaskID: c.Task.ID, Worker: "worker", NodeID: "local", ThreadID: "thread", TurnID: "turn", Generation: 1}, nil
-	}})
-	if err := r.Schedule(t.Context(), []work.Task{task("a")}); err != nil {
+func TestLostUnclaimedSignalAndRetry(t *testing.T) {
+	r, finish := fixture(t)
+	finish()
+	ctx := t.Context()
+	if err := r.DB.Write(ctx, func(tx *canon.Tx) error { _, err := tx.ExecContext(ctx, "DELETE FROM work_completions"); return err }); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-completed; err != nil {
+	calls := 0
+	failed := errors.New("consumer unavailable")
+	r.On = func(context.Context, work.Completion, work.Card) error { calls++; return failed }
+	for i := 0; i < 2; i++ {
+		if err := r.Sweep(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 0 {
+		t.Fatal("sweep called consumer")
+	}
+	if err := r.Drain(ctx); !errors.Is(err, failed) {
 		t.Fatal(err)
 	}
-	c, _ := s.Get(t.Context(), "a")
-	if c.Active || c.TurnStatus != "completed" {
-		t.Fatalf("completion lost: %+v", c)
+	if err := r.Drain(ctx); err != nil || calls != 1 {
+		t.Fatalf("busy retry: %d %v", calls, err)
 	}
-}
-func TestConflictReturnWaitsForCapacity(t *testing.T) {
-	s := fixture(t)
-	returns := 0
-	conflict := false
-	r := New(s, Hooks{Availability: func(context.Context) (work.Availability, error) {
-		return work.Availability{Hosts: map[string]int{"local": 1}}, nil
-	},
-		Start: func(_ context.Context, c work.Card) (work.Run, error) {
-			return work.Run{ID: "run:" + c.Task.ID, TaskID: c.Task.ID, Worker: "worker", NodeID: "local", ThreadID: "thread:" + c.Task.ID, TurnID: "turn", Generation: 1}, nil
-		},
-		ReadPR: func(context.Context, work.Card) (work.PullRequest, error) {
-			pr := work.PullRequest{Number: 1, Head: "head", State: "OPEN", Mergeable: "MERGEABLE"}
-			if conflict {
-				pr.Mergeable = "CONFLICTING"
-			}
-			return pr, nil
-		},
-		Return: func(_ context.Context, c work.Card) (work.Run, error) {
-			returns++
-			run := *c.Run
-			run.ID += "-return"
-			run.TurnID = "correction"
-			run.Generation++
-			return run, nil
-		}})
-	if err := r.Schedule(t.Context(), []work.Task{task("a"), task("b")}); err != nil {
+	if err := r.Work.RetryCompletions(ctx, r.Epoch); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Finished(t.Context(), "a", "run:a", "completed"); err != nil {
+	r.On = func(context.Context, work.Completion, work.Card) error { calls++; return nil }
+	if err := r.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
-	conflict = true
-	if err := r.Observe(t.Context(), "a"); err != nil {
-		t.Fatal(err)
-	}
-	if returns != 0 {
-		t.Fatal("conflict correction exceeded host capacity")
-	}
-	conflict = false
-	if err := r.Finished(t.Context(), "b", "run:b", "completed"); err != nil {
-		t.Fatal(err)
-	}
-	if returns != 1 {
-		t.Fatalf("correction not released on capacity event: %d", returns)
+	r.Epoch = "2"
+	if err := r.Drain(ctx); err != nil || calls != 2 {
+		t.Fatalf("handled event replayed: %d %v", calls, err)
 	}
 }

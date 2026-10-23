@@ -47,6 +47,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/skills"
+	"github.com/thisisjun786/lina/internal/core/timers"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -71,6 +72,11 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	timers          *timers.Store
+	timerStop       context.CancelFunc
+	timerDone       chan struct{}
+	completionStop  context.CancelFunc
+	completionDone  chan struct{}
 	workEngine      *workRuntime
 	coding          *codingTurn
 	codingDelivery  *conversationRuntime
@@ -277,20 +283,10 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startWorkWaiting(ctx); err != nil {
 		return nil, err
 	}
-	if err = r.startWorkerDispatch(ctx); err != nil {
-		return nil, err
-	}
 	if err = r.startRuns(ctx); err != nil {
 		return nil, err
 	}
-	if delegationErr := r.startDelegation(ctx); delegationErr != nil {
-		// Optional worker readiness cannot take down conversation or channels.
-		if r.delegation != nil {
-			_ = r.delegation.close(ctx)
-			r.delegation = nil
-		}
-		fmt.Fprintln(os.Stderr, "Delegation is unavailable; other Core capabilities remain available.")
-	}
+
 	if r.agent != "" {
 		if err = r.seedHistory(ctx); err != nil {
 			return nil, err
@@ -318,11 +314,38 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startOwnerViews(ctx); err != nil {
 		return nil, err
 	}
+	// Producers and the reactor may schedule recovered turns immediately.
+	// Start them only after background services and the final lanes are ready.
+	if err = r.startWorkerDispatch(ctx); err != nil {
+		return nil, err
+	}
+	if delegationErr := r.startDelegation(ctx); delegationErr != nil {
+		// Optional worker readiness cannot take down conversation or channels.
+		if r.delegation != nil {
+			_ = r.delegation.close(ctx)
+			r.delegation = nil
+		}
+		fmt.Fprintln(os.Stderr, "Delegation is unavailable; other Core capabilities remain available.")
+	}
+	if err = r.startCompletions(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startTimers(ctx); err != nil {
+		return nil, err
+	}
 	success = true
 	return r, nil
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.timerStop != nil {
+		r.timerStop()
+		select {
+		case <-r.timerDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if r.ownerViews != nil && r.ownerViews.stop != nil {
 		r.ownerViews.stop()
 		select {
@@ -334,6 +357,14 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	if r.delegation != nil {
 		err = errors.Join(err, r.delegation.close(ctx))
 		r.delegation = nil
+	}
+	if r.completionStop != nil {
+		r.completionStop()
+		select {
+		case <-r.completionDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	if r.workEngine != nil {
 		if err = r.workEngine.close(ctx); err != nil {
@@ -513,7 +544,7 @@ func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, ste
 		r.steering[string(body)] = append(r.steering[string(body)], acceptedSteering{event: event, inboxID: inboxID, runner: runner})
 		return nil
 	}
-	_, err = r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error { return runner.run(ctx, inputs, event, inboxID) })
+	_, err = r.queueReaction(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error { return runner.run(ctx, inputs, event, inboxID) })
 	return err
 }
 
@@ -681,7 +712,7 @@ func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID stri
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff'))`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind NOT IN ('person','forwarded') OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
@@ -927,6 +958,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.WorkDeclarations()...)
 			declarations = append(declarations, workerDeclarations()...)
 			declarations = append(declarations, r.prepareDelegationTools(turnID, bindings)...)
+			declarations = append(declarations, r.prepareTimerTools(turnID, bindings)...)
 			if r.coding != nil {
 				clear(bindings)
 				catalog = nil
@@ -1193,7 +1225,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	// and binding checks even when the preceding turn began in the app.
 	for _, body := range out.FollowUps {
 		if pending, ok := r.takeSteering(body); ok {
-			_, submitErr := r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error {
+			_, submitErr := r.queueReaction(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error {
 				return pending.runner.run(ctx, inputs, pending.event, pending.inboxID)
 			})
 			err = errors.Join(err, submitErr)

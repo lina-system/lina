@@ -74,7 +74,7 @@ func TestDelegationDistinguishesTerminalConnectionFailure(t *testing.T) {
 			t.Cleanup(func() { db.Close(context.Background()) })
 			service := work.New(db)
 			changed := make(chan struct{}, 4)
-			reaction := reactor.New(service, reactor.Hooks{Availability: func(context.Context) (work.Availability, error) {
+			reaction := reactor.NewScheduler(service, reactor.Hooks{Availability: func(context.Context) (work.Availability, error) {
 				return work.Availability{Hosts: map[string]int{"local": 1}}, nil
 			}, Start: func(context.Context, work.Card) (work.Run, error) {
 				return work.Run{ID: "run", TaskID: "task", Generation: 1, Worker: "codex", NodeID: "local", ThreadID: "thread", TurnID: "turn"}, nil

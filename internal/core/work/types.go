@@ -90,25 +90,27 @@ type GoalDecision struct {
 	Decision QuestionDecision
 }
 type Card struct {
-	Scheduling   Scheduling      `json:"scheduling,omitempty"`
-	WaitReason   *ScheduleWait   `json:"wait_reason,omitempty"`
-	FileSnapshot *FileSnapshot   `json:"file_snapshot,omitempty"`
-	FileEvidence *FileEvidence   `json:"file_evidence,omitempty"`
-	FileCopies   []FileCopy      `json:"file_copies,omitempty"`
-	Materials    []Material      `json:"materials,omitempty"`
-	ResultHead   string          `json:"result_head,omitempty"`
-	Revision     uint64          `json:"revision"`
-	Waits        map[string]Wait `json:"waits,omitempty"`
-	Decisions    []GoalDecision  `json:"decisions,omitempty"`
-	Task         Task            `json:"task"`
-	State        string          `json:"state"`
-	Run          *Run            `json:"run,omitempty"`
-	Active       bool            `json:"active"`
-	TurnStatus   string          `json:"turn_status,omitempty"`
-	Receipt      *Receipt        `json:"receipt,omitempty"`
-	Verdict      string          `json:"verdict,omitempty"`
-	Applied      bool            `json:"applied"`
-	Stages       []Stage         `json:"stages"`
+	Scheduling     Scheduling      `json:"scheduling,omitempty"`
+	WaitReason     *ScheduleWait   `json:"wait_reason,omitempty"`
+	Head           string          `json:"head,omitempty"`
+	CompletionHead string          `json:"completion_head,omitempty"`
+	FileSnapshot   *FileSnapshot   `json:"file_snapshot,omitempty"`
+	FileEvidence   *FileEvidence   `json:"file_evidence,omitempty"`
+	FileCopies     []FileCopy      `json:"file_copies,omitempty"`
+	Materials      []Material      `json:"materials,omitempty"`
+	ResultHead     string          `json:"result_head,omitempty"`
+	Revision       uint64          `json:"revision"`
+	Waits          map[string]Wait `json:"waits,omitempty"`
+	Decisions      []GoalDecision  `json:"decisions,omitempty"`
+	Task           Task            `json:"task"`
+	State          string          `json:"state"`
+	Run            *Run            `json:"run,omitempty"`
+	Active         bool            `json:"active"`
+	TurnStatus     string          `json:"turn_status,omitempty"`
+	Receipt        *Receipt        `json:"receipt,omitempty"`
+	Verdict        string          `json:"verdict,omitempty"`
+	Applied        bool            `json:"applied"`
+	Stages         []Stage         `json:"stages"`
 }
 
 // Event has one payload selected by Kind. Events are admitted by Service only;
@@ -116,6 +118,7 @@ type Card struct {
 type Event struct {
 	Scheduling   *Scheduling   `json:"scheduling,omitempty"`
 	WaitReason   *ScheduleWait `json:"wait_reason,omitempty"`
+	Head         string        `json:"head,omitempty"`
 	FileSnapshot *FileSnapshot `json:"file_snapshot,omitempty"`
 	FileEvidence *FileEvidence `json:"file_evidence,omitempty"`
 	FileCopy     *FileCopy     `json:"file_copy,omitempty"`

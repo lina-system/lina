@@ -1,220 +1,69 @@
 // SPDX-License-Identifier: Apache-2.0
-// Package reactor releases delegated work when authoritative observations change.
+// Package reactor delivers committed work signals through Core's reaction path.
 package reactor
 
 import (
 	"context"
 	"errors"
-	"sync"
+	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 )
 
-// ErrNotStarted marks a failure observed before any worker start was sent.
-// All other start errors retain reservations because their outcome is unknown.
-var ErrNotStarted = errors.New("worker start was not sent")
+const SweepInterval = 5 * time.Minute
 
-// Hooks are bound by boot to worker and forge adapters. Unless a start error
-// wraps ErrNotStarted, its durable reservation remains held for reconciliation.
-type Hooks struct {
-	Availability func(context.Context) (work.Availability, error)
-	Start        func(context.Context, work.Card) (work.Run, error)
-	ReadPR       func(context.Context, work.Card) (work.PullRequest, error)
-	Return       func(context.Context, work.Card) (work.Run, error)
-	Changed      func(context.Context)
-}
 type Reactor struct {
-	mu    sync.Mutex
-	store *work.Service
-	hooks Hooks
+	DB    *canon.Store
+	Work  *work.Service
+	Epoch string
+	On    func(context.Context, work.Completion, work.Card) error
 }
 
-func New(s *work.Service, h Hooks) *Reactor { return &Reactor{store: s, hooks: h} }
-func (r *Reactor) Schedule(ctx context.Context, tasks []work.Task) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err := r.store.Schedule(ctx, tasks); err != nil {
-		return err
-	}
-	return r.release(ctx)
-}
-func (r *Reactor) Wake(ctx context.Context) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.release(ctx)
-}
+// Sweep only repairs durable signals. It has no model or worker dependency.
+func (r *Reactor) Sweep(ctx context.Context) error { return r.Work.ReconcileCompletions(ctx) }
 
-// Stop serializes durable cancellation with starts and completions. Callers
-// interrupt workers only after every selected card has been closed.
-func (r *Reactor) Stop(ctx context.Context, person, conversation, reference string) (int, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	count, err := r.store.StopScheduled(ctx, person, conversation, reference)
-	if err == nil && r.hooks.Changed != nil {
-		r.hooks.Changed(ctx)
-	}
-	return count, err
-}
-func (r *Reactor) release(ctx context.Context) error {
-	if r.hooks.Changed != nil {
-		defer r.hooks.Changed(ctx)
-	}
-	if r.hooks.Availability == nil || r.hooks.Start == nil {
-		return errors.New("work execution unavailable")
-	}
-	av, err := r.hooks.Availability(ctx)
+func (r *Reactor) Drain(ctx context.Context) error {
+	pending, err := r.Work.PendingCompletions(ctx, r.Epoch)
 	if err != nil {
 		return err
 	}
-	pending, err := r.store.Cards(ctx)
-	if err != nil {
-		return err
-	}
-	var result error
-	for _, c := range pending {
-		if !c.Scheduling.ReturnRequested || c.Scheduling.ReturnSent || c.Scheduling.Landed || c.Scheduling.Closed || r.hooks.Return == nil {
-			continue
-		}
-		claimed, e := r.store.ClaimReturn(ctx, c.Task.ID, av)
-		if e != nil {
-			result = errors.Join(result, e)
-			continue
+	var failures []error
+	for _, candidate := range pending {
+		event, card, claimed, err := r.Work.ClaimCompletion(ctx, candidate.ID, r.Epoch)
+		if err != nil {
+			return err
 		}
 		if !claimed {
 			continue
 		}
-		run, e := r.hooks.Return(ctx, c)
-		if e == nil {
-			e = r.store.Start(ctx, run)
+		if err = r.On(ctx, event, card); err == nil {
+			err = r.Work.AcknowledgeCompletion(ctx, event.ID, r.Epoch)
 		}
-		result = errors.Join(result, e)
-	}
-	for {
-		cards, err := r.store.Release(ctx, av)
 		if err != nil {
-			return errors.Join(result, err)
+			failures = append(failures, err)
 		}
-		freed := false
-		for _, c := range cards {
-			run, e := r.hooks.Start(ctx, c)
-			if errors.Is(e, ErrNotStarted) {
-				settled := r.store.StartFailed(ctx, c.Task.ID)
-				freed = freed || settled == nil
-				e = errors.Join(e, settled)
-			} else if e == nil {
-				e = r.store.Start(ctx, run)
+	}
+	return errors.Join(failures...)
+}
+
+// Run subscribes before reading so committed completions wake it immediately.
+// Unsuccessful deliveries retry at the slow reconciliation boundary; their
+// downstream inbox/turn identities survive crashes and prevent duplicate work.
+func (r *Reactor) Run(ctx context.Context) {
+	ticker := time.NewTicker(SweepInterval)
+	defer ticker.Stop()
+	for {
+		changed := r.DB.Changed()
+		_ = r.Drain(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-changed:
+		case <-ticker.C:
+			if r.Sweep(ctx) == nil {
+				_ = r.Work.RetryCompletions(ctx, r.Epoch)
 			}
-			result = errors.Join(result, e)
 		}
-		if !freed {
-			break
-		}
-		// Known failures settle durably and never retry here. Reconsider other
-		// tasks immediately using the slots and areas they just freed.
 	}
-	return result
-}
-func (r *Reactor) Finished(ctx context.Context, id, run, status string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	c, err := r.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if c.Run == nil || c.Run.ID != run {
-		return work.ErrState
-	}
-	return r.finished(ctx, c, status)
-}
-
-// Completed serializes even a completion that precedes the Start reply behind
-// admission, then checks the actual worker turn rather than a caller guess.
-func (r *Reactor) Completed(ctx context.Context, id, thread, turn, status string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	c, err := r.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if c.Run == nil || c.Run.ThreadID != thread || c.Run.TurnID != turn {
-		return work.ErrState
-	}
-	return r.finished(ctx, c, status)
-}
-func (r *Reactor) finished(ctx context.Context, c work.Card, status string) error {
-	if err := r.store.Finish(ctx, c.Task.ID, c.Run.ID, status); err != nil {
-		return err
-	}
-	observation := r.observe(ctx, c.Task.ID)
-	return errors.Join(observation, r.release(ctx))
-}
-func (r *Reactor) Observe(ctx context.Context, id string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return errors.Join(r.observe(ctx, id), r.release(ctx))
-}
-func (r *Reactor) observe(ctx context.Context, id string) error {
-	c, err := r.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if c.Active || c.Scheduling.Landed || c.Scheduling.Closed || c.Run == nil {
-		return nil
-	}
-	if r.hooks.ReadPR == nil {
-		return nil
-	}
-	pr, err := r.hooks.ReadPR(ctx, c)
-	if err != nil {
-		return err
-	}
-	if pr.Number == 0 {
-		return nil
-	} // no pull request is not a merge
-	_, err = r.store.ObservePullRequest(ctx, id, c.Run.ID, pr)
-	return err
-}
-
-func (r *Reactor) Unknown(ctx context.Context, id, thread, turn string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	c, err := r.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if c.Run == nil || c.Run.ThreadID != thread || c.Run.TurnID != turn {
-		return work.ErrState
-	}
-	err = r.store.UnknownExecution(ctx, id, c.Run.ID)
-	if r.hooks.Changed != nil {
-		r.hooks.Changed(ctx)
-	}
-	return err
-}
-
-func (r *Reactor) InputNeeded(ctx context.Context, id, thread, turn string) error {
-	return r.inputState(ctx, id, thread, turn, false)
-}
-func (r *Reactor) Answered(ctx context.Context, id, thread, turn string) error {
-	return r.inputState(ctx, id, thread, turn, true)
-}
-func (r *Reactor) inputState(ctx context.Context, id, thread, turn string, answered bool) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	c, err := r.store.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if c.Run == nil || c.Run.ThreadID != thread || c.Run.TurnID != turn {
-		return work.ErrState
-	}
-	if answered {
-		err = r.store.WorkerInputAnswered(ctx, id, c.Run.ID)
-	} else {
-		err = r.store.WorkerInputNeeded(ctx, id, c.Run.ID)
-	}
-	if r.hooks.Changed != nil {
-		r.hooks.Changed(ctx)
-	}
-	return err
 }

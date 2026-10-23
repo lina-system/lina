@@ -42,7 +42,7 @@ func delegationPolicyRuntime(t *testing.T) (*conversationRuntime, *delegationRun
 	d := &delegationRuntime{root: r, processes: proc.NewOwner(), config: delegationConfig{Git: git, Repositories: map[string]delegationRepository{"fixture/repo": {Clone: clone, Base: "dev"}}}}
 	t.Cleanup(func() { _ = d.processes.Close(context.Background()) })
 	started := 0
-	d.reactor = reactor.New(r.work, reactor.Hooks{
+	d.reactor = reactor.NewScheduler(r.work, reactor.Hooks{
 		Availability: func(context.Context) (work.Availability, error) {
 			return work.Availability{Hosts: map[string]int{"local": 4}}, nil
 		},
@@ -117,7 +117,7 @@ func TestDelegationBindsOriginPolicyBeforeDispatch(t *testing.T) {
 	view := newConversationView(r, r.agent, r.conversation)
 	view.delegation = d
 	var started bool
-	d.reactor = reactor.New(r.work, reactor.Hooks{
+	d.reactor = reactor.NewScheduler(r.work, reactor.Hooks{
 		Availability: func(context.Context) (work.Availability, error) {
 			return work.Availability{Hosts: map[string]int{"local": 1}}, nil
 		},

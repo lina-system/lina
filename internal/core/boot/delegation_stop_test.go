@@ -38,7 +38,7 @@ func TestScheduledStopAllPreventsCompletionRelease(t *testing.T) {
 	r.delegation = d
 	t.Cleanup(func() { r.delegation = nil; r.workers = nil })
 	var started []string
-	d.reactor = reactor.New(r.work, reactor.Hooks{
+	d.reactor = reactor.NewScheduler(r.work, reactor.Hooks{
 		Availability: func(context.Context) (work.Availability, error) {
 			return work.Availability{Hosts: map[string]int{"local": 1}}, nil
 		},

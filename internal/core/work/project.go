@@ -105,6 +105,7 @@ func advance(c *Card, e Event) error {
 		if e.Run.Generation != generation {
 			return ErrState
 		}
+		c.Head, c.CompletionHead = "", ""
 		c.Run = e.Run
 		c.Active = true
 		c.State = "working"
@@ -149,6 +150,16 @@ func advance(c *Card, e Event) error {
 		c.Materials = e.Materials
 		c.ResultHead = e.Value
 
+	case "completion_head":
+		if c.Run == nil || c.Run.ID != e.RunID || c.Active || c.TurnStatus == "" || c.Receipt == nil || c.Head != "" || c.CompletionHead != "" {
+			return ErrState
+		}
+		c.Head, c.CompletionHead = e.Head, e.Head
+	case "head_observed":
+		if c.Run == nil || c.Run.ID != e.RunID {
+			return ErrState
+		}
+		c.Head = e.Head
 	case "finished":
 		if c.Run == nil || c.Run.ID != e.RunID {
 			return ErrState
@@ -162,6 +173,7 @@ func advance(c *Card, e Event) error {
 		if c.Receipt != nil && c.Receipt.TurnRef.TurnStatus != e.Value {
 			return ErrState
 		}
+		c.Head, c.CompletionHead = e.Head, e.Head
 		c.Active = false
 		c.Scheduling.CapacityHeld = false
 		if c.Scheduling.Closed {
