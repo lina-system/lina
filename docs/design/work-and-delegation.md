@@ -1085,7 +1085,10 @@ worker evaluation. Each attempt records its version again after session
 initialization and reports an unverified version while continuing the task.
 Synthetic protocol tests do not add vendor versions to the verified list.
 Progress is masked and recorded on the active work card as `worker_report`,
-using the existing ledger. It neither submits a receipt nor ends the run.
+using the existing ledger. Stream fragments retain their masking context in
+bounded memory; possible credential prefixes wait until they can be masked.
+Card observations are coalesced at 250 ms intervals, with a final flush before
+the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
 This lifecycle slice advertises progress and completion. Approval/question

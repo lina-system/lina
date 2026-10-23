@@ -321,6 +321,16 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		}
 		observed := false
 		var progressSequence uint64
+		var progress progressBuffer
+		progressTick := time.NewTicker(progressInterval)
+		defer progressTick.Stop()
+		recordProgress := func(summary string, progressErr error) error {
+			if progressErr != nil || summary == "" {
+				return progressErr
+			}
+			progressSequence++
+			return service.ReportProgress(ctx, r.ID, run.ID, progressSequence, summary)
+		}
 		for !observed {
 			select {
 			case event, ok := <-adapter.Events():
@@ -330,23 +340,28 @@ func (s *Service) execute(ctx context.Context, r Record) {
 					closeAdapter(context.Background())
 					return
 				}
-				if event.Progress != nil && strings.TrimSpace(event.Progress.Text) != "" {
-					masked, maskErr := secrets.Mask(event.Progress.Text)
-					progressSequence++
-					if maskErr == nil {
-						maskErr = service.ReportProgress(ctx, r.ID, run.ID, progressSequence, masked.Text())
-					}
-					if maskErr != nil {
-						r.Code = "progress_failed"
-						unbind()
-						closeAdapter(context.Background())
-						return
-					}
+				if event.Progress != nil {
+					err = recordProgress(progress.Observe(*event.Progress, time.Now()))
+				} else if event.Finish != nil {
+					err = recordProgress(progress.Flush(time.Now(), true))
+				}
+				if err != nil {
+					r.Code = "progress_failed"
+					unbind()
+					closeAdapter(context.Background())
+					return
 				}
 				handle(event)
 				if event.Finish != nil {
 					finish = *event.Finish
 					observed = true
+				}
+			case now := <-progressTick.C:
+				if err = recordProgress(progress.Flush(now, false)); err != nil {
+					r.Code = "progress_failed"
+					unbind()
+					closeAdapter(context.Background())
+					return
 				}
 			case <-ctx.Done():
 				unbind()
@@ -354,6 +369,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 				return
 			}
 		}
+		progressTick.Stop()
 		quotaStop := finish.Status == worker.Failed && (finish.Failure == worker.QuotaFailure || finish.Failure == worker.RateLimitFailure || finish.Failure == worker.LoginFailure)
 		if quotaStop {
 			err = s.park(ctx, adapter)
