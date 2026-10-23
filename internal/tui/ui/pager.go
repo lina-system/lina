@@ -244,7 +244,7 @@ func (m *shellModel) pagerRows() []render.StyledRow {
 	}
 	config := render.Config{Width: max(1, width)}
 	stream := m.resultStreams[m.conversation.pager.cardID].stream
-	if stream == nil {
+	if stream == nil || m.conversation.pager.result != nil {
 		stream = render.NewStream("pager", config, nil)
 		stream.Seal(1, m.pagerText())
 	}

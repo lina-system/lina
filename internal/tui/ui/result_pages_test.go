@@ -36,6 +36,7 @@ func TestAuthoredResultPagerReadsAllPages(t *testing.T) {
 	projectConversationBlock(&block, card)
 	m.content.Blocks = []state.Block{block}
 	m.content.Draft.Text = "Retained draft"
+	m.refreshResultStreams(state.Snapshot{})
 	command := m.conversationKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
 	if command == nil {
 		t.Fatal("Ctrl+O did not request the retained result")
@@ -60,6 +61,9 @@ func TestAuthoredResultPagerReadsAllPages(t *testing.T) {
 	card.Text, card.Next = &last, nil
 	reply("page-2", card)
 	m.refreshOpenCard()
+	if !strings.Contains(strings.Join(m.pagerLines(), "\n"), last) {
+		t.Fatal("rendered pager still uses the cached first-page preview")
+	}
 	if m.conversation.pager.offset == 0 {
 		t.Fatal("End did not follow the completed result")
 	}
