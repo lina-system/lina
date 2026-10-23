@@ -379,6 +379,25 @@ func (f *Files) Execute(ctx context.Context, req FileRequest) (FileResult, error
 
 const recoveryPrefix = ".lina-recovery-"
 
+func recoveryMarker(slotDir string) string {
+	sum := sha256.Sum256([]byte(slotDir))
+	return "capture-" + hex.EncodeToString(sum[:])
+}
+
+func (f *Files) markRecovery(recovery string) error {
+	name := recoveryMarker(path.Dir(recovery))
+	file, err := f.versions.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	err = errors.Join(file.Sync(), file.Close())
+	if err != nil {
+		_ = f.versions.Remove(name)
+		return err
+	}
+	return nil
+}
+
 // Capture is a same-filesystem rename. The durable version record identifies
 // its slot before the first rename, even when the private version store is on
 // another filesystem. Do not unlink captures: an editor may still hold the inode.
@@ -395,7 +414,12 @@ func (f *Files) reserveRecovery(name string) (string, error) {
 	if err := syncDir(dir); err != nil {
 		return "", err
 	}
-	return path.Join(path.Dir(name), slot, "file"), nil
+	recovery := path.Join(path.Dir(name), slot, "file")
+	if err := f.markRecovery(recovery); err != nil {
+		_ = dir.Remove(slot)
+		return "", err
+	}
+	return recovery, nil
 }
 
 func (f *Files) replace(name string, old, next snapshot, recovery string) error {
