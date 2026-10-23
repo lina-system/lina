@@ -72,6 +72,13 @@ func TestOlderSchemaClientReceivesPresentationAdditions(t *testing.T) {
 	running["properties"], _ = json.Marshal(runningFields)
 	delete(running, "allOf")
 	defs["running_update"], _ = json.Marshal(running)
+	var progress map[string]json.RawMessage
+	_ = json.Unmarshal(defs["progress_line"], &progress)
+	var progressFields map[string]json.RawMessage
+	_ = json.Unmarshal(progress["properties"], &progressFields)
+	delete(progressFields, "state")
+	progress["properties"], _ = json.Marshal(progressFields)
+	defs["progress_line"], _ = json.Marshal(progress)
 	defs["stream_item"] = removeKind(defs["stream_item"])
 	for _, name := range []string{"turn_phase", "tool_activity", "tool_activity_status", "tool_activity_outcome", "running_state", "running_reason"} {
 		delete(defs, name)
@@ -125,6 +132,7 @@ func TestOldClient(t *testing.T) {
  for _, name := range []string{"State", "Summary", "Reason"} {
   if _, present := reflect.TypeFor[RunningUpdate]().FieldByName(name); present { t.Fatalf("test client knows running %s", name) }
  }
+ if _, present := reflect.TypeFor[ProgressLine]().FieldByName("State"); present { t.Fatal("test client knows progress state") }
  if slices.Contains(clientSchema.Properties["kind"].Enum, "tool_activity") { t.Fatal("test client knows tool_activity") }
  var client ClientDecoder
  for _, name := range []string{"phase_tool", "tool_started", "tool_finished_ok", "activity_snapshot", "phase_snapshot", "phase_streaming", "item_done", "running_localized", "running_snapshot"} {
@@ -159,6 +167,15 @@ func TestOldClient(t *testing.T) {
   }
   if _, err := json.Marshal(got); err != nil { t.Fatalf("old decoded envelope cannot be encoded: %v", err) }
  }
+ data, err := os.ReadFile(filepath.Join(os.Getenv("PROTOCOL_FIXTURES"), "normal", "progress_update.json")); if err != nil { t.Fatal(err) }
+ var envelope map[string]any
+ if err := json.Unmarshal(data, &envelope); err != nil { t.Fatal(err) }
+ envelope["payload"] = map[string]any{"rows": []any{map[string]any{"ref":"session:fixture", "line":map[string]any{"name":"Fixture job", "kind":"project", "state":"failed", "stage":"unknown", "just_finished":"unknown", "next":"unknown", "waiting":0, "depth":0}}}}
+ data, err = json.Marshal(envelope); if err != nil { t.Fatal(err) }
+ var progressClient ClientDecoder
+ got, err := progressClient.Decode(data); if err != nil { t.Fatal(err) }
+ update := got.Payload.(ProgressUpdate)
+ if update.Rows == nil || len(*update.Rows) != 1 || (*update.Rows)[0].Line.Stage != "unknown" { t.Fatalf("old client lost progress row: %+v", update) }
  if client.Stats() != (DecodeStats{Accepted:7, UnknownKinds:2}) { t.Fatalf("stats: %+v", client.Stats()) }
 }
 `

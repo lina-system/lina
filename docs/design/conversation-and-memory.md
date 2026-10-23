@@ -8,7 +8,7 @@ This contract covers:
 
 - the conversation engine, the conversation ledger, conversation participants and conversation threads, channel conversations, agent exchanges, the typed results a conversation presents and the export of recorded turns as episodes
 - deleting a conversation or a part of it
-- turn preparation, request assembly and the evidence chain from LINA state to a delivered answer
+- turn preparation, binding each input to what it is about, request assembly and the evidence chain from LINA state to a delivered answer
 - reply shape: how long a reply is, when a card replaces text, and what a reply leaves out
 - compaction and resume of a conversation, and the summary tree built over it
 - agents and personas: presets, creating, changing and deleting agents, persona layers and revisions, each agent's emotional state and the first run
@@ -60,6 +60,10 @@ It builds on these documents and does not repeat them:
 **Legacy reference.** A source system's own key for something that was imported, such as an old message or summary node id. It resolves to the LINA record that holds the imported content.
 
 **Turn.** One input from the person and everything the agent does to answer it: preparation, model requests, tool calls and the delivered answer. A turn whose follow-up request stays at or above the compaction threshold after earlier turns are compacted continues in a continuation turn that answers the same input ([Compaction and resume](#compaction-and-resume)). A turn records the person id of the person whose input it answers and the agent id of the agent that answers it ([product-families.md](product-families.md)). Report turns and manager turns answer no new input from the person: a report turn answers a background notice, and a manager turn answers its project's event batch. They record the person the work is done for without attributing the triggering input to that person (see [Background results](#background-results) and [Manager session context](#manager-session-context)).
+
+**Binding.** What one input of the person is about: the focus, another 목표, 일 or 할 일, a task or background run, a new item, or none. It is recorded with the rule or judge that decided it ([What a message is about](#what-a-message-is-about)).
+
+**Focus.** The target of the conversation's latest binding, or the artifact of a thread.
 
 **Background run.** One execution of one of LINA's own sub-agents for one brief, started from a conversation and run in the background by LINA Core. Its record and rules are in [work-and-delegation.md](work-and-delegation.md#background-runs).
 
@@ -166,7 +170,7 @@ The #104 package implementation validates all eight result kinds before creating
 
 - Each person has one main conversation with each agent, and there are any number of threads. Each thread is attached to one artifact, such as a document, a 목표 (goal) or an 일, and one agent. An imported conversation is neither the main conversation nor a thread.
 - Every thread of an agent is a conversation with that agent and reads the same memory: that agent's personal knowledge and common knowledge. A thread is a window for dividing talk, not a memory partition. Threads of different agents share common knowledge.
-- When the main conversation turns to a specific artifact, the agent moves to that artifact's thread and says so in one line; one action returns to the main conversation.
+- When the main conversation turns to a specific artifact, the agent moves to that artifact's thread and says so in one line; one action returns to the main conversation. Binding one message to an item does not move the conversation by itself ([What a message is about](#what-a-message-is-about)).
 - Between the threads of one agent, sourced facts, decisions and materials are shared, and the results of that agent's ledger search (see "Recall with evidence") read what was said in any of its threads, with their ledger event ids. A search result never becomes an instruction or an approval. Follow-up instructions, approvals, cancellations and control handovers are bound to the id of their target task or thread and never become permission anywhere else.
 - A conversation thread is not a work thread. Work threads belong to the work engine ([work-and-delegation.md](work-and-delegation.md)). How threads appear on screen is defined in [surfaces.md](surfaces.md).
 
@@ -215,7 +219,7 @@ An agent exchange is a conversation between exactly two agents, one that asks an
 
 The initial mailbox implementation uses four request/answer rounds. A checked answer can be followed by another typed request between the same agents; an acknowledgement closes the exchange without a model turn and cannot be continued. On a missed reply deadline, the implementation chooses the flag-and-stop path: the log shows `expired`, with no automatic model retry and no new "needs the person" flag. An accepted exchange turn is never replayed after a crash. Duplicate delivery retains the original content even when the retry arrives after expiry. An already committed delivery receipt remains retrievable after the deadline while the exchange is pending; retrieving it starts no work and adds no event. First delivery and new preparation or completion remain subject to the deadline, and a terminal exchange remains closed.
 
-The mailbox's native events are appended to the conversation ledger under the exchange's own conversation id, with fixed agent provenance and no person id. Mailbox state and ledger admission commit atomically; large bodies use pinned material revisions. Preparation has only persona, common-knowledge and named-material readers, strips secret spans from their model-bound projections, and supplies a fresh background model request with no personal-knowledge tools. Secret-shaped identifiers and evidence references are refused before mailbox persistence. The waiting flag is created only by a trusted ownership lookup for the exact typed decision in the same transaction as the waiting row; an agent's claim of person ownership is not sufficient. The package exposes a log and expansion for later surface adapters; client protocol, notifications and conversation result notices are not wired by this increment. See [C-25](go-core.md#plugins-channels-and-exchanges) for the storage and run-coordinator boundaries.
+The mailbox's native events are appended to the conversation ledger under the exchange's own conversation id, with fixed agent provenance and no person id. Mailbox state and ledger admission commit atomically; large bodies use pinned material revisions. Preparation has only persona, common-knowledge and named-material readers, strips secret spans from their model-bound projections, and supplies a fresh background model request with no personal-knowledge tools. Secret-shaped identifiers and evidence references are refused before mailbox persistence. The waiting flag is created only by a trusted ownership lookup for the exact typed decision in the same transaction as the waiting row; an agent's claim of person ownership is not sufficient. Core exposes the log and expansion through the agent-talk protocol. Private conversation hand-off tools queue tracked exchanges, and Core runs the receiver in a separate background lane without either private conversation. Every receiver model dispatch revalidates the prepared common-memory revisions and removal epoch under the same dispatch fence as conversation turns. Only a named artifact record may supply read/write, memo-promotion and undo tools; their ordinary authority and revision checks still apply. Sender check-back items are durable and enter the sender’s conversation lane as system notices on a report or next-check date. Each notice is admitted once across restart; an accepted receiver turn is never replayed. Missed deadlines remain visible without creating a person decision. See [Hand-offs](preset-work-methods.md#hand-offs) for artifact ownership and the sender waiting state. See [C-25](go-core.md#plugins-channels-and-exchanges) for the storage and run-coordinator boundaries.
 
 ### Episode export
 
@@ -284,6 +288,44 @@ Preparation never waits on background work. A background run that is running or 
 
 Mandatory retraction checks and permission checks finish during preparation, before the request is assembled. Model and effort selection, model switching and the rule that an accepted turn is never replayed are defined in [runtime.md](runtime.md).
 
+### What a message is about
+
+Every input of the person is bound to one target: the focus, another 목표, 일 or 할 일, a task or background run, a new item, or none. The binding decides where an answer, a change or a steer lands. Core decides what a surface fact settles, the model decides the rest, and the person sees every pick that leaves the focus and can move it with one tap. In the owner's messages to his agents, about one in five referred to running or earlier work, and the agents picked the wrong target for about one in fifty ([research](../research/message-intake.md)).
+
+**Focus and candidates.**
+
+- The focus ages. After 60 minutes without an exchange (a starting value) it is no longer the default and is offered as one candidate among the rest. In the owner's data a message sent within ten minutes continued the current topic about 70 percent of the time; after an hour, about 20 percent.
+- Core ranks at most eight candidates: the focus; items with a question to the person open in this conversation; tasks and runs started from it that are running or waiting; items the message names; then the person's most recently active 목표, 일 and 할 일. Each carries its id, title, kind, state and last activity, and they enter item 6.3 of the request layout.
+
+**Core rules.** The first rule that holds decides, and the binding records it. Rules read surface facts and state, never meaning.
+
+1. **Reply or card.** Input sent as a reply to a message, notice or card that belongs to an item, or typed in an item's thread or card, binds to that item.
+2. **Exact reference.** The message holds the id or link of exactly one open candidate, or its exact title or one of the person's names for it ([Names](preset-work-methods.md#names)), matched after NFC and case folding with Korean particles allowed. When two or more match, or the match is a finished item, the model chooses.
+3. **Offered option.** Exactly one open question to the person offered options, and the message is one of them by number or label, or a yes or no to a yes-or-no question. The binding goes to that question's item.
+
+A rule decides the item, not what the message does to it. Whether the message answers, changes or steers the item, or adds a new 할 일 under it, stays the model's reading; three of the four rule misses in the owner's data were new work under the item the rule found.
+
+Word lists and timing do not bind. In the owner's data, status, memory and new-work words decided the target poorly, and so did arrival while the agent was busy: about four in ten of those messages were not steers. Input that arrives during a turn still reaches that turn as steering input ([runtime.md](runtime.md#conversation-loop)) and is bound like any other.
+
+**The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
+
+**When to ask.** The agent asks which item only when both hold:
+
+- two targets still tie after the rules and its own reading;
+- a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, or send, pay or delete.
+
+It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. A question the person passes over closes at their next unrelated turn, and the recommended pick applies. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
+
+**Showing and moving.**
+
+- A binding that leaves the focus, returns to an aged focus or creates an item shows as a one-line chip on the person's message, naming the item. A binding to a fresh focus shows nothing.
+- One tap on the chip lists the other candidates, "new" and "none". Choosing one moves the binding: Core appends a rebinding event and moves what the turn did to the right item ([work-and-delegation.md](work-and-delegation.md#messages-about-work)). The move is the label of that choice in Jev's material and in the replay set.
+- An effect that already left the person cannot be moved, which is why the agent asks first for those.
+
+**Record and measurement.** The binding is a system event linked to the input event. It holds the target, the candidates offered, the rule or judge that decided, the judge's probabilities when it answered, and any later move. Every input of the person gets one, so an input that was never answered shows. Core counts moves per 100 bindings by who decided. The [intake replay](../research/message-intake.md#replay-evaluation) scores every change to the rules, the candidate ranking, a judge or the instructions before it enters use: right item, right new or existing, and asked when it should and not otherwise. A change that raises silent wrong picks on running work does not ship.
+
+Implementation: #785 (the intake replay), #786 (the binding event, candidates and Core rules), #787 (the model's part, asking and the duplicate check) and #788 (showing and moving).
+
 ### Request assembly
 
 - LINA Core assembles every instruction in a request. A request carries no base instructions of a coding worker; LINA Core puts the agent's persona and the context in directly.
@@ -309,7 +351,7 @@ A request is laid out from what changes least to what changes most, so the prefi
 6. **ContextPacket** (input items), from the most binding to the most optional:
    1. the current time and the agent's present emotional state
    2. commitments, decisions, the person's standing preferences about how the agent talks and works with them, the reasons for corrections that apply, the person's names in scope (see [Names](preset-work-methods.md#names)), and the reply budget of the surface the turn answers on (see Reply shape)
-   3. state that waits on the person: open questions, pending approvals, the state of active tasks and plans, and one short line for each background run of this conversation that is running, waiting, or landed and not yet delivered (what it does, its state and when it started)
+   3. state that waits on the person: open questions, pending approvals, the state of active tasks and plans, one short line for each background run of this conversation that is running, waiting, or landed and not yet delivered (what it does, its state and when it started), and the binding of the current input with its candidates (see [What a message is about](#what-a-message-is-about))
    4. the skill bodies this request needs
    5. the standing profile, recalled memory items and the person brief, with their evidence ids
    6. material passages, with their asset ids and revisions
@@ -858,6 +900,7 @@ Memory has two layers. Personal knowledge is held by one agent and known only to
 - Moving an item between layers is a recorded act. The person does it, or an agent does it when the person asks or under a grant the person gave ([main-authority.md](main-authority.md)).
 - The same fact learned in conversations with two agents is one common item with two pieces of evidence.
 - When the evidence of a common item is a turn in one agent's conversation, another agent sees the source agent, the time and the event id of that evidence. The turn itself is shown to the person and to the source agent. This reference counts as evidence: the item is still a sourced item for every agent.
+- Replaying a turn with a common name validates each source event under its source agent for the same person. Evidence accumulated from several agents remains valid without revealing their conversation text. Private, never-leaves, removed or unavailable sources still exclude the replay; shared names grant no access to another agent's raw history.
 - Correcting or forgetting a common item applies to every agent. Correcting or forgetting a personal item applies to its holder.
 - The standing profile and the person model are views over these layers, not a layer of their own. An agent has no profile or card of its own.
 
