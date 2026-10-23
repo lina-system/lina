@@ -729,6 +729,15 @@ resets the reservation or the number of attempted workers.
 
 The worker owns its pull request to green. Inside the work thread it waits for CI and the review bots, fixes every CI failure and the P0 and P1 review findings once, and waits for the checks at the resulting head before reporting done. P2 and P3 findings are reported with the result and do not block the merge. The review and CI fix loop belongs to the worker's turn; it never goes through LINA Core as a round trip.
 
+In this repository, the PR foundation gate includes the applicable docs,
+automation, dependencies, build/analysis and unit checks. E2e runs after merge
+on every `dev` push and nightly; the `e2e` PR label opts into reached scenarios
+before merge. Post-merge test failures become deduplicated `qa` issues in the
+current milestone, with the tested head, first failing range and diagnostics.
+An explicit pass on a later head closes the matching finding. They do not block
+unrelated pull requests. The [foundation policy](../policy/foundation.md)
+defines this repository's selection and automated QA evidence.
+
 At merge the manager session checks the result against the work definition's done condition, scope and design reference, then asks Core to merge or close. It sends work back only when the result misses that definition, never to triage review findings or CI failures. The steps are in Judgment and delivery, and the only GitHub writes LINA Core makes on delegated work are merging and closing (see GitHub writes and merges).
 
 **Prose polish.** Once a worker has opened a pull request, a polish step runs beside the review and CI and never gates them. It rewrites only person-facing prose: the pull request body here, and likewise the issue bodies LINA drafts and release notes. Facts, code, paths and links stay unchanged, which LINA checks mechanically by comparing them before and after; when the check fails, or the polish fails, the original stays. Changes to UI copy get a polish suggestion attached to the pull request and are never committed automatically. The polish model is a provider setting: by default Argon through the person's Antigravity when they have it, and the step is skipped otherwise. It never blocks a merge.
