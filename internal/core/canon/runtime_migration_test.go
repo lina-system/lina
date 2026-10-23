@@ -675,3 +675,39 @@ func TestPlanningUpgradePreservesPublishedHandoffs(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedWorkReviews(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:47]...), Migration{Version: 48, SQL: workReviewsSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_reviews(repository,pr_number,head,record) VALUES('fixture/project',212,'published',X'01');`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var receipt []byte
+		if err := tx.QueryRowContext(t.Context(), "SELECT record FROM work_reviews WHERE repository='fixture/project' AND pr_number=212 AND head='published'").Scan(&receipt); err != nil {
+			return err
+		}
+		if !bytes.Equal(receipt, []byte{1}) {
+			t.Fatal("published review receipt changed")
+		}
+		var n int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&n); err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatal("upgrade created a plan")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
