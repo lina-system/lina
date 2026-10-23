@@ -109,7 +109,7 @@ func TestOldManagerCannotAssessCorrectedDefinition(t *testing.T) {
 	}
 }
 
-func TestClaimedSiblingRepairsSurviveExecutionRevision(t *testing.T) {
+func TestClaimedSiblingRepairsRederiveAfterExecutionRevision(t *testing.T) {
 	e := revisionEngine(t, readyTask("a"), readyTask("b"))
 	var actions []Action
 	for _, id := range []string{"a", "b"} {
@@ -128,6 +128,16 @@ func TestClaimedSiblingRepairsSurviveExecutionRevision(t *testing.T) {
 		repair.Repairs, repair.DependsOn = a.TaskID, []string{a.TaskID}
 		if err := e.Report(t.Context(), a.ID, a.Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
 			t.Fatal(err)
+		}
+		if a.TaskID == "b" {
+			if len(revisionSnapshot(t, e).Goals[0].Tasks) != 3 {
+				t.Fatal("stale sibling plan bypassed the dispatch-version fence")
+			}
+			fresh := revisionAction(t, e, "b", PlanGoal)
+			if fresh.ID == a.ID || fresh.GoalRevision <= a.GoalRevision {
+				t.Fatal("sibling repair did not get a current-input planning turn")
+			}
+			revisionReport(t, e, "b", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}})
 		}
 	}
 	g := revisionSnapshot(t, e).Goals[0]
@@ -285,6 +295,7 @@ func TestRevisionCancelsOnlyUndispatchedWorkerReservations(t *testing.T) {
 			if err = e.Report(t.Context(), live.ID, cfg.Epoch, Observation{Status: OutcomeSucceeded, Head: "live-head", EffectsSettled: true}); err != nil {
 				t.Fatal(err)
 			}
+			observeRevisedWorker(t, e, live, Observation{Status: OutcomeSucceeded, Head: "live-head", EffectsSettled: true})
 			revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("extra")}})
 			replacement := revisionAction(t, e, "a", kind)
 			if replacement.ID == old.ID || replacement.Attempt != old.Attempt {
@@ -294,6 +305,23 @@ func TestRevisionCancelsOnlyUndispatchedWorkerReservations(t *testing.T) {
 				t.Fatalf("restored action cannot dispatch: %v", err)
 			}
 		})
+	}
+}
+
+// A late receipt is history only. The same external effect must be read with a
+// fresh action token before its result can release a correction's effect wait.
+func observeRevisedWorker(t *testing.T, e *Engine, original Action, receipt Observation) {
+	t.Helper()
+	fresh := revisionAction(t, e, original.TaskID, original.Kind)
+	if fresh.ID == original.ID || fresh.ObserveActionID != original.ID || fresh.Attempt != original.Attempt {
+		t.Fatalf("revised worker would be redispatched instead of observed: %+v", fresh)
+	}
+	claimed, err := e.Claim(t.Context(), fresh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Report(t.Context(), claimed.ID, e.cfg.Epoch, receipt); err != nil {
+		t.Fatal(err)
 	}
 }
 
