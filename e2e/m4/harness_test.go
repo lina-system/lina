@@ -248,8 +248,22 @@ func last(q modelRequest) lastItem {
 		CallID          string `json:"call_id"`
 		Output, Content string
 	}
-	if len(q.Input) > 0 {
-		_ = json.Unmarshal(q.Input[len(q.Input)-1], &v)
+	// The ContextPacket follows the current input. A follow-up appends tool
+	// output after that packet, so walk back to the newest tool output or the
+	// person's input and skip trailing packet evidence.
+	for i := len(q.Input) - 1; i >= 0; i-- {
+		var item struct {
+			Type, Role      string
+			CallID          string `json:"call_id"`
+			Output, Content string
+		}
+		if json.Unmarshal(q.Input[i], &item) != nil {
+			continue
+		}
+		if item.Type == "function_call_output" || item.Role == "user" && !strings.Contains(item.Content, "<external_evidence ") {
+			v = item
+			break
+		}
 	}
 	return lastItem{v.Type, v.Role, v.CallID, v.Output, v.Content}
 }
