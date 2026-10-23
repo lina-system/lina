@@ -6,6 +6,52 @@ import (
 	"time"
 )
 
+func TestQARepairPlanningFailureBlocksOnlyAffectedGoal(t *testing.T) {
+	g := finishedGoal()
+	g.Tasks[0].Stage = TaskQAFailed
+	g.Tasks[0].QA.Passed = false
+	g.Verification = Proof{}
+	other := oneGoal(readyTask("independent"))
+	other.ID = "other"
+	e := reviewEngine(t, g, other)
+	if err := e.NodeChanged(t.Context(), readyNode("n")); err != nil {
+		t.Fatal(err)
+	}
+	e.cfg.Driver = &fixtureDriver{run: func(a Action) (Observation, error) {
+		if a.Kind == PlanGoal {
+			return Observation{Status: OutcomeFailed}, nil
+		}
+		return Observation{Status: OutcomeSucceeded, Head: "other-head", EffectsSettled: true}, nil
+	}}
+	if err := e.step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	e.wg.Wait()
+	select {
+	case err := <-e.failures:
+		t.Fatalf("failed repair planning stopped the engine: %v", err)
+	default:
+	}
+	for range 2 {
+		reviewReconcile(t, e)
+		blocked := reviewGoal(t, e, "g")
+		if blocked.State != GoalBlocked || blocked.AttentionID == "" || blocked.Tasks[0].Stage != TaskQAFailed || blocked.Tasks[0].QA.Passed {
+			t.Fatalf("repair failure lost its decision row or failed QA evidence: %+v", blocked)
+		}
+		if got := reviewGoal(t, e, "other").Tasks[0]; got.Stage != TaskDelivered || got.Head != "other-head" {
+			t.Fatalf("unrelated work stopped: %+v", got)
+		}
+		reviewAction(t, e, "other", InspectPR)
+		cfg := e.cfg
+		cfg.Epoch++
+		var err error
+		e, err = NewEngine(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestQAFailureBecomesManagerRepairTask(t *testing.T) {
 	g := finishedGoal()
 	g.Tasks[0].Stage = TaskQAFailed

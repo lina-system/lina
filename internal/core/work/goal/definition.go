@@ -261,10 +261,42 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 			current.Revision++
 			current.DefinitionPending = true
 			current.State = GoalRunning
+			current.AttentionID = ""
+			current.BlockedReason = ""
+			current.AssessedFailure = ""
+			current.Waits = nil
 			current.Checks = nil
 			current.CheckRound++
 			if err = retireUndispatchedActions(v, &current); err != nil {
 				return err
+			}
+			for _, r := range v.Records("action") {
+				var a Action
+				if err = json.Unmarshal(r.Body, &a); err != nil {
+					return err
+				}
+				if a.GoalID != g.ID || a.State == "finished" {
+					continue
+				}
+				retire := a.State == "queued" || revisionJudgment(a)
+				if a.State == "needs_person" {
+					if revisionJudgment(a) || settledRefusal(a) {
+						restoreDeniedAssignment(goalTask(&current, a.TaskID), a)
+						retire = true
+					} else {
+						// An operation may already have started before asking for
+						// help. Revision cannot release that lease or repeat it.
+						a.State = "unknown"
+						a.Deadline = e.cfg.Now().Unix()
+					}
+				}
+				if retire {
+					a.State = "finished"
+					a.Superseded = true
+				}
+				if err = put(v, "action", a.ID, a); err != nil {
+					return err
+				}
 			}
 			return put(v, "goal", g.ID, current)
 		})

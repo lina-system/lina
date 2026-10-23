@@ -162,3 +162,47 @@ func TestClaimCapacityReturnsRecoveryAllowances(t *testing.T) {
 		})
 	}
 }
+
+func TestClaimCapacityPreservesExistingEffectObservation(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		t.Run(map[bool]string{false: "running", true: "restart"}[restart], func(t *testing.T) {
+			e, original := claimedAssignment(t)
+			if err := e.Signal(t.Context(), Signal{ID: "new-input", ActionID: original.ID}); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.Report(t.Context(), original.ID, e.cfg.Epoch, Observation{Status: OutcomeRunning, Handle: "live"}); err != nil {
+				t.Fatal(err)
+			}
+			n := readyNode("n")
+			n.Yielding = true
+			if err := e.NodeChanged(t.Context(), n); err != nil {
+				t.Fatal(err)
+			}
+			if restart {
+				cfg := e.cfg
+				cfg.Epoch++
+				var err error
+				e, err = NewEngine(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			reads := 0
+			e.cfg.Driver = &fixtureDriver{run: func(Action) (Observation, error) {
+				t.Error("reexecuted an existing effect")
+				return Observation{}, ErrInvalid
+			}, observe: func(a Action) (Observation, error) {
+				reads++
+				if a.ID != original.ID || a.Handle != "live" {
+					t.Errorf("wrong effect observed: %+v", a)
+				}
+				return Observation{Status: OutcomeSucceeded, Head: "head", EffectsSettled: true}, nil
+			}}
+			s := authorizationStep(t, e)
+			task := s.Goals[0].Tasks[0]
+			if reads != 1 || task.Stage != TaskDelivered || task.Attempt != original.Attempt {
+				t.Fatalf("capacity check released an already-dispatched effect: reads=%d task=%+v", reads, task)
+			}
+		})
+	}
+}
