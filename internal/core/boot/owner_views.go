@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/waiting/view"
+	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -222,6 +223,12 @@ func (r *conversationRuntime) goalTitles(ctx context.Context) (map[string]string
 	}
 	s, err := r.workEngine.engine.Snapshot(ctx)
 	if err != nil {
+		// A definition the person removed or that no longer parses leaves the
+		// line's name unknown; it does not hide the rest of the line. A failed
+		// ledger read still fails the projection.
+		if errors.Is(err, goal.ErrDefinitionMissing) || errors.Is(err, goal.ErrInvalid) {
+			return titles, nil
+		}
 		return nil, err
 	}
 	for _, g := range s.Goals {

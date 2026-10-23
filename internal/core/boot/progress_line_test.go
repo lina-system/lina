@@ -102,3 +102,42 @@ func TestProgressLinePublishesStageEntries(t *testing.T) {
 		t.Fatal("unchanged recomputation advanced the progress topic")
 	}
 }
+
+// TestProgressLineWithMissingDefinitionKeepsTheLine checks that a goal whose
+// record was removed still shows its line with an unknown name instead of
+// failing the whole progress view.
+func TestProgressLineWithMissingDefinitionKeepsTheLine(t *testing.T) {
+	r := controlRuntime(t)
+	r.ownerViews.stop()
+	<-r.ownerViews.done
+	g := goal.Goal{
+		ID: "orphan-goal", Person: r.person, Agent: r.agent, Conversation: r.conversation,
+		RecordID: "goal:orphan-goal", RecordRevision: "missing", State: goal.GoalRunning,
+		CreatedAt: 1_700_000_000,
+		Tasks: []goal.Task{{
+			ID: "orphan-step", Name: "Collect dates", Stage: goal.TaskBuilding,
+			Repository: "fixture", Base: "dev", Area: "dates.md", Worker: "stub",
+			Resources: goal.Resources{CPU: 1, MemoryMB: 1, DiskMB: 1},
+		}},
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		raw, err := json.Marshal(g)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(t.Context(), "INSERT INTO work_records(kind,id,version,body) VALUES('goal',?,1,?)", g.ID, raw)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := r.ownerSnapshot(t.Context())
+	if err != nil {
+		t.Fatalf("a missing definition failed the progress view: %v", err)
+	}
+	if p.Rows == nil || len(*p.Rows) != 1 || (*p.Rows)[0].Ref != g.ID {
+		t.Fatalf("goal line missing: %+v", p.Rows)
+	}
+	if name := (*p.Rows)[0].Line.Name; name != "Untitled" {
+		t.Fatalf("name = %q, want the untitled word", name)
+	}
+}
