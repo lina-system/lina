@@ -43,6 +43,7 @@ func codexSessionFixture() {
 	}
 	initialized := false
 	cwd, turn, state := "", "", "idle"
+	switchFailures := false
 	count := 0
 	for scan.Scan() {
 		var r struct {
@@ -76,6 +77,11 @@ func codexSessionFixture() {
 				os.Exit(96)
 			}
 			count++
+			if count == 1 {
+				var inputs []struct{ Text string }
+				_ = json.Unmarshal(r.Params["input"], &inputs)
+				switchFailures = len(inputs) == 1 && inputs[0].Text == "switch refusal and terminal connection failure"
+			}
 			turn = fmt.Sprintf("turn-%d", count)
 			state = "active"
 			notify("turn/started", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turn, "status": "inProgress"}})
@@ -85,7 +91,12 @@ func codexSessionFixture() {
 				}
 				notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turn, "item": map[string]any{"type": "agentMessage", "id": "result", "text": "LINA_WORKER_RESULT"}})
 				state = "idle"
-				notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turn, "status": "completed"}})
+				completed := map[string]any{"id": turn, "status": "completed"}
+				if switchFailures {
+					completed["status"] = "failed"
+					completed["error"] = map[string]any{"message": "fixture provider disconnected after output", "codexErrorInfo": map[string]any{"responseStreamDisconnected": map[string]any{}}}
+				}
+				notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": completed})
 			}
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
 		case "turn/steer":
@@ -114,12 +125,17 @@ func codexSessionFixture() {
 			reply(map[string]any{})
 		case "thread/read":
 			status := "completed"
+			threadStatus := map[string]any{"type": state}
 			if state == "active" {
 				status = "inProgress"
+				if switchFailures && count == 1 {
+					threadStatus["activeFlags"] = []string{"waitingOnUserInput"}
+				}
 			} else if state == "systemError" {
 				status = "failed"
+
 			}
-			reply(map[string]any{"thread": map[string]any{"id": "fixture-thread", "cwd": cwd, "status": map[string]any{"type": state}, "turns": []any{map[string]any{"id": turn, "status": status}}}})
+			reply(map[string]any{"thread": map[string]any{"id": "fixture-thread", "cwd": cwd, "status": threadStatus, "turns": []any{map[string]any{"id": turn, "status": status}}}})
 			if gate := os.Getenv("LINA_WORKER_FINISH_GATE"); gate != "" && count == 1 && state == "active" {
 				response, err := http.Get(gate)
 				if err != nil {

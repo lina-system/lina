@@ -4,11 +4,25 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
 )
+
+func TestWaitingInputIsDefinitivelyRefused(t *testing.T) {
+	p := newAdapterPeer(t, `{"rateLimits":{}}`)
+	th := p.start(t)
+	p.send(requestFrame(`"approval"`, "item/commandExecution/requestApproval", approvalParams))
+	p.event(t, worker.ApprovalEvent)
+	if err := p.s.Input(p.ctx, th, worker.Input{Text: "continue"}); !errors.Is(err, worker.ErrInputRefused) {
+		t.Fatalf("local input refusal was ambiguous: %v", err)
+	}
+	if snap := p.snapshot(t, th); snap.Thread != th || snap.State != worker.Waiting {
+		t.Fatalf("refused input changed execution: %+v", snap)
+	}
+}
 
 func TestLN133AnswersAreSingleUseAndInvalidAnswersStayPending(t *testing.T) {
 	p := newAdapterPeer(t, `{"rateLimits":{}}`)
