@@ -201,43 +201,10 @@ func goalTask(g *Goal, id string) *Task {
 func restoreUndispatchedTask(g *Goal, a Action) {
 	t := goalTask(g, a.TaskID)
 	if t != nil {
-		switch a.Kind {
-		case Assign:
-			t.Stage = TaskReady
-			t.NodeID = ""
-		case Resume:
-			t.Stage = TaskWorkerLost
-		case RepairConflict:
-			t.Stage = TaskConflicted
-		case ContinueWorker:
-			t.Stage = TaskNoReceipt
-		case RepairQA:
-			t.Stage = TaskQAFailed
-		case PlanGoal:
+		restoreWorkerAward(t, a, false, true)
+		if a.Kind == PlanGoal {
 			t.RepairAsked = false
-		case InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, CheckCriterion:
 		}
-		if reserves(a) {
-			refundRecovery(t, a.Kind)
-			t.Attempt--
-			t.EffectsSettled = true
-		}
-	}
-}
-
-// Cancellation before dispatch and a settled quota interruption both leave the
-// task's one recovery available. A quota attempt still retains its attempt id.
-func refundRecovery(t *Task, kind ActionKind) {
-	switch kind {
-	case Resume:
-		t.Recoveries--
-	case ContinueWorker:
-		t.Continuations--
-	case RepairConflict:
-		t.Conflicts--
-	case RepairQA:
-		t.QARepairs--
-	case Assign, InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion:
 	}
 }
 
@@ -355,17 +322,8 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					t.NodeID = a.NodeID
 					t.PR = PRState{}
 					t.EffectsSettled = false
-					if a.Kind == ContinueWorker {
-						t.Continuations++
-					}
-					if a.Kind == Resume {
-						t.Recoveries++
-					}
-					if a.Kind == RepairConflict {
-						t.Conflicts++
-					}
-					if a.Kind == RepairQA {
-						t.QARepairs++
+					if counter := kindSpecs[a.Kind].counter; counter != nil {
+						*counter(t)++
 					}
 				}
 			}
@@ -597,7 +555,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 				return err
 			}
 			a.State = "finished"
-			refundRecovery(t, a.Kind)
+			refundRecovery(t, a.Kind, false)
 			t.Stage = TaskReady
 			t.NodeID = ""
 			t.EffectsSettled = true

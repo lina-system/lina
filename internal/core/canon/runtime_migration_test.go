@@ -18,7 +18,7 @@ func TestInstalledRuntimeMigrationHistory(t *testing.T) {
 			}
 			t.Run(name+string(rune('0'+count)), func(t *testing.T) {
 				cfg := storeConfig(t)
-				legacy := append([]Migration{}, Migrations()[:10]...)
+				legacy := append([]Migration{}, migrationsBefore(t, retractSchema+retractLineageSchema+retractViewsSchema+retractSearchSchema)...)
 				if retracted {
 					legacy = append(legacy, Migration{Version: 11, SQL: retractSchema + retractLineageSchema + retractViewsSchema + retractSearchSchema})
 				}
@@ -137,7 +137,7 @@ func TestPlanningUpgradePreservesPublishedKoreanSearch(t *testing.T) {
 	cfg := storeConfig(t)
 	// Reproduce the published dev catalog, independently of the pending plan
 	// migration. An existing installation at version 33 has no plan tables.
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:32]...), Migration{Version: 33, SQL: recordsKoreanSearchSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, recordsKoreanSearchSchema)...), Migration{Version: 33, SQL: recordsKoreanSearchSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), "INSERT INTO records_korean_fts(id,title,note) VALUES('existing','도서관에서','연필을 준비한다')")
@@ -183,7 +183,7 @@ func TestPlanningUpgradePreservesPublishedKoreanSearch(t *testing.T) {
 func TestPlanningUpgradePreservesPublishedWaitingDecisions(t *testing.T) {
 	cfg := storeConfig(t)
 	// Version 34 was published with waiting decisions before planning landed.
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:33]...), Migration{Version: 34, SQL: WaitingDecisionsSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, WaitingDecisionsSchema)...), Migration{Version: 34, SQL: WaitingDecisionsSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO waiting_decisions(source,item_id,revision,person,agent,answer,answered_at) VALUES('approval','existing','r1','person','agent','approve','2026-10-22T00:00:00Z')`)
@@ -219,7 +219,7 @@ func TestPlanningUpgradePreservesPublishedWaitingDecisions(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedPresetEffects(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:34]...), Migration{Version: 35, SQL: presetEffectsSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, presetEffectsSchema)...), Migration{Version: 35, SQL: presetEffectsSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO authority_delegations(task_id,person,source,source_task,receiver,limits) VALUES('existing','person','source','source-task','receiver','{}')`)
@@ -255,7 +255,7 @@ func TestPlanningUpgradePreservesPublishedPresetEffects(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedSkillMaintenance(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:35]...), Migration{Version: 36, SQL: skillMaintenanceSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, skillMaintenanceSchema)...), Migration{Version: 36, SQL: skillMaintenanceSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO skill_maintenance(id,revision,operation_hash,kind) VALUES('existing',1,'hash','prune')`)
@@ -291,7 +291,7 @@ func TestPlanningUpgradePreservesPublishedSkillMaintenance(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedWorkEvents(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:36]...), Migration{Version: 37, SQL: workEngineSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, workEngineSchema)...), Migration{Version: 37, SQL: workEngineSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_events(id,kind,at,body) VALUES('existing','fixture',1,'{"state":"accepted"}')`)
@@ -327,7 +327,7 @@ func TestPlanningUpgradePreservesPublishedWorkEvents(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedTodoProjection(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:37]...), Migration{Version: 38, SQL: recordsTodoSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, recordsTodoSchema)...), Migration{Version: 38, SQL: recordsTodoSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		if _, err := tx.ExecContext(t.Context(), `INSERT INTO records_index(id,path,blob,revision) VALUES('existing','inbox/task.md','blob','revision')`); err != nil {
@@ -366,7 +366,7 @@ func TestPlanningUpgradePreservesPublishedTodoProjection(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedWorkSequenceGuard(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:38]...), Migration{Version: 39, SQL: workEventSequenceSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, workEventSequenceSchema)...), Migration{Version: 39, SQL: workEventSequenceSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_events(seq,id,kind,at,body) VALUES(1,'existing','fixture',1,'{}')`)
@@ -402,7 +402,7 @@ func TestPlanningUpgradePreservesPublishedWorkSequenceGuard(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedTimersAndCompletions(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:39]...),
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, WorkCompletionsSchema)...),
 		Migration{Version: 40, SQL: WorkCompletionsSchema}, Migration{Version: 41, SQL: TimersSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
@@ -443,7 +443,7 @@ INSERT INTO timer(id,person,agent,conversation,authored,next_at) VALUES('existin
 
 func TestPlanningUpgradePreservesPublishedStarters(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:41]...), Migration{Version: 42, SQL: startersSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, startersSchema)...), Migration{Version: 42, SQL: startersSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO agent_starters(preset,agent_id) VALUES('fixture','starter'); INSERT INTO agent_selection(person_id,agent_id) VALUES('person','selected');`)
@@ -482,7 +482,7 @@ func TestPlanningUpgradePreservesPublishedStarters(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedWorkerChoice(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:42]...), Migration{Version: 43, SQL: WorkerChoiceSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, WorkerChoiceSchema)...), Migration{Version: 43, SQL: WorkerChoiceSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO worker_quota(worker,rows) VALUES('fixture',X'01');`)
@@ -525,7 +525,7 @@ func TestPlanningUpgradePreservesPublishedWorkerChoice(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedNaming(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:43]...), Migration{Version: 44, SQL: namingSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, namingSchema)...), Migration{Version: 44, SQL: namingSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO conv_event(id,conversation_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,body) VALUES('naming-reply','conversation','agent','agent','{}','2026-10-23T00:00:00Z','2026-10-23T00:00:00Z','observed','{}','fixture'); INSERT INTO naming_breaches(event_id,person,agent) VALUES('naming-reply','person','agent');`)
@@ -560,7 +560,7 @@ func TestPlanningUpgradePreservesPublishedNaming(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedRecordOperations(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:44]...), Migration{Version: 45, SQL: recordOperationsSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, recordOperationsSchema)...), Migration{Version: 45, SQL: recordOperationsSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO record_candidates(number,person,source,source_revision,class,equivalence,proposal) VALUES(7,'person','event','r1','task','same',X'01'); INSERT INTO record_operations(handle,person,agent,record_id,before_blob,revision,notice,candidate) VALUES('undo','person','agent','record','blob','revision','Saved',7);`)
@@ -597,7 +597,7 @@ func TestPlanningUpgradePreservesPublishedRecordOperations(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedWorkSwitch(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:45]...), Migration{Version: 46, SQL: WorkSwitchSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, WorkSwitchSchema)...), Migration{Version: 46, SQL: WorkSwitchSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_switches(id,record) VALUES('existing',X'01'); INSERT INTO work_switch_events(switch_id,record) VALUES('existing',X'02');`)
@@ -640,7 +640,7 @@ func TestPlanningUpgradePreservesPublishedWorkSwitch(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedHandoffs(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:46]...), Migration{Version: 47, SQL: handoffsSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, handoffsSchema)...), Migration{Version: 47, SQL: handoffsSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO artifact_changes(person,kind,artifact,owner,work_id,done) VALUES('person','record','published','agent','work','accepted');`)
@@ -678,7 +678,7 @@ func TestPlanningUpgradePreservesPublishedHandoffs(t *testing.T) {
 
 func TestPlanningUpgradePreservesPublishedWorkReviews(t *testing.T) {
 	cfg := storeConfig(t)
-	cfg.Migrations = append(append([]Migration{}, Migrations()[:47]...), Migration{Version: 48, SQL: workReviewsSchema})
+	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, workReviewsSchema)...), Migration{Version: 48, SQL: workReviewsSchema})
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_reviews(repository,pr_number,head,record) VALUES('fixture/project',212,'published',X'01');`)
