@@ -309,6 +309,14 @@ and receipt observations are seeded while Core is stopped; vendor dispatch is
 covered by the worker adapter scenarios. Run with
 `go test -count=1 ./e2e/m1 -run '^TestM2WorkArea$'`.
 
+`m2/work-dispatch.json`, executed by `TestM2DispatchedWorkArea`, drives installed
+Core's `dispatch_work` through a synthetic worker and GitHub boundary. The worker
+creates its assigned branch at the detached base, produces a real commit and
+attempts ordinary writes to protected refs. Assertions check the shared
+`work/tasks` allocation, independent parent clone, unchanged source checkout,
+clean result, artifact provenance and live-card equivalence to ledger replay.
+Run it with `go test -count=1 ./e2e/m1 -run '^TestM2DispatchedWorkArea$'`.
+
 `m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
 and chooses another agent through the real TUI. It checks that the empty composer,
 header and reply speaker name that agent before and after Core reconnect, using
@@ -443,3 +451,9 @@ card, marking it applied or deleting the artifact.
 record change appears on Home alongside the worker's authenticated decisions.
 Resolving the sources clears the summary and preserves the typed draft. The
 scenario checks parsed terminal cells, the worker-written artifact and cleanup.
+
+`m2/progress-controls.json` is exercised by `TestM2ProgressControlsSurfaces` and
+`TestM2ProgressDigestWorker`. The built TUI and paired Telegram gateway send
+explicit controls to running Core and inspect the durable target runs; the worker
+scenario observes its approval, question and real artifact through the digest.
+Only external provider and platform wires are scripted.

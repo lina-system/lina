@@ -19,19 +19,27 @@ import (
 
 func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 	t.Parallel()
+	testAntigravityThroughInstalledCore(t, "../m3/antigravity.json", true)
+}
 
-	raw, err := os.ReadFile("../m3/antigravity.json")
+func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, presetVariants bool) {
+	t.Helper()
+	raw, err := os.ReadFile(scenarioPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var scenario struct {
 		Cases      []struct{ Name, Expected, Preset string }
 		What, Done string
+		WorkArea   bool `json:"work_area"`
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
 	}
 	for _, preset := range []string{"system", "creative"} {
+		if !presetVariants {
+			break
+		}
 		for _, test := range scenario.Cases {
 			if test.Name == "success" {
 				test.Name += "-" + preset
@@ -164,6 +172,9 @@ func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 				wd, err := os.ReadFile(filepath.Join(fixture, "workdir"))
 				if err != nil {
 					t.Fatal(err)
+				}
+				if scenario.WorkArea {
+					assertDispatchedWorkArea(t, h, fixture, repo, string(wd), base)
 				}
 				body, err := os.ReadFile(filepath.Join(string(wd), "result.txt"))
 				if err != nil || !strings.Contains(string(body), "worker produced") {

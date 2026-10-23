@@ -95,6 +95,10 @@ func codexSessionFixture() {
 				os.Exit(98)
 			}
 			reply(map[string]any{"turnId": turn})
+			if strings.Contains(string(r.Params["input"]), "finish running-list fixture") {
+				state = "idle"
+				notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turn, "status": "completed"}})
+			}
 		case "turn/interrupt":
 			var expected string
 			json.Unmarshal(r.Params["turnId"], &expected)
@@ -449,7 +453,9 @@ func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, re
 	if json.Unmarshal(inputs[len(inputs)-1], &item) != nil || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
 		return false
 	}
-	if strings.Contains(item.Content, result) {
+	if result == "" {
+		emitResponse(w, "Worker finished.", true)
+	} else if strings.Contains(item.Content, result) {
 		emitResponse(w, "Worker outcome: "+result, true)
 	} else {
 		emitResponse(w, "Worker stopped.", true)

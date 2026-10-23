@@ -27,6 +27,7 @@ func TestM2GitHubMergeInstalledCore(t *testing.T) {
 		MovedCause             string `json:"moved_cause"`
 		ProtectedCause         string `json:"protected_cause"`
 		ObservationCause       string `json:"observation_cause"`
+		ReviewRacePhase        string `json:"review_race_phase"`
 	}
 	raw, err := os.ReadFile("../m2/github-merge.json")
 	if err != nil {
@@ -85,7 +86,12 @@ if [ "$1" = pr ]; then
 fi
 printf 'HTTP/2.0 200 OK\r\n\r\n'
 case "$*" in
- *graphql*) printf '{"data":{"repository":{"pullRequest":{"headRefOid":"%s","reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}' "$head" ;;
+ *graphql*)
+   if [ "$phase" = REVIEW_RACE ]; then
+     head=MOVED_SHA
+     printf moved > "$LINA_GH_FIXTURE/phase"
+   fi
+   printf '{"data":{"repository":{"pullRequest":{"headRefOid":"%s","reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}}' "$head" ;;
  *check-runs*)
    conclusion=success; if [ "$phase" = observed ]; then conclusion=failure; fi
    printf '{"total_count":1,"check_runs":[{"name":"foundation","status":"completed","conclusion":"%s"}]}' "$conclusion" ;;
@@ -103,7 +109,7 @@ case "$*" in
  *) exit 90 ;;
 esac
 `
-	script = strings.NewReplacer("HEAD_SHA", f.Head, "MOVED_SHA", f.Moved, "MERGE_SHA", f.Commit, "REPOSITORY", f.Repository).Replace(script)
+	script = strings.NewReplacer("HEAD_SHA", f.Head, "MOVED_SHA", f.Moved, "MERGE_SHA", f.Commit, "REPOSITORY", f.Repository, "REVIEW_RACE", f.ReviewRacePhase).Replace(script)
 	if err = os.WriteFile(filepath.Join(h.root, "gh"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -200,6 +206,20 @@ esac
 	r := call(request("github_merge", "task"))
 	if r.Cause == nil || *r.Cause != f.MovedCause || r.Head == nil || *r.Head != f.Moved {
 		t.Fatalf("moved: %+v", r)
+	}
+	noWrites()
+	phase("open")
+	accept("task", f.Head)
+	phase(f.ReviewRacePhase)
+	r = call(request("github_merge", "task"))
+	if r.State == nil || *r.State != "blocked" || r.Cause == nil || *r.Cause != f.MovedCause || r.Head == nil || *r.Head != f.Moved || r.Ci == nil || *r.Ci != "success" {
+		evidence, _ := json.Marshal(r)
+		t.Fatalf("head moved during review: %s", evidence)
+	}
+	noWrites()
+	r = call(request("github_merge", "task"))
+	if r.Cause == nil || *r.Cause != "head_not_accepted" {
+		t.Fatalf("moved head automatically accepted: %+v", r)
 	}
 	noWrites()
 	phase("open")

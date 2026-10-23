@@ -23,7 +23,7 @@ func TestM2ProgressWaitingInstalledCore(t *testing.T) {
 	if err != nil || json.Unmarshal(data, &fixture) != nil || fixture.OutsideText == "" {
 		t.Fatal("missing outside-change fixture", err)
 	}
-	runCodexWorkTools(t, "../m2/progress-waiting.json", "", func(h *harness, phase string) {
+	runCodexWorkTools(t, "../m2/progress-waiting.json", "", func(h *harness, phase string, questions []protocol.Question) {
 		c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "progress-reader", []protocol.Capability{{Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}})
 		if err != nil {
 			t.Fatal(err)
@@ -74,7 +74,7 @@ func TestM2ProgressWaitingInstalledCore(t *testing.T) {
 			source = "approval"
 		}
 		if phase == "question" {
-			want = 1
+			want = len(questions)
 			source = "worker"
 		}
 		if len(*list.Rows) != want {
@@ -82,6 +82,41 @@ func TestM2ProgressWaitingInstalledCore(t *testing.T) {
 		}
 		if want > 0 && (*list.Rows)[0].Ref.Source != source {
 			t.Fatalf("wrong producer: %+v", list)
+		}
+		if phase == "question" {
+			assertOrder := func(rows []protocol.WaitingRow, want []protocol.Question) {
+				t.Helper()
+				if len(rows) != len(want) {
+					t.Fatalf("waiting rows=%d, want %d", len(rows), len(want))
+				}
+				for i, question := range want {
+					if rows[i].Ref.Key != question.Card.ID {
+						t.Errorf("question %d = %s, want %s in arrival order", i, rows[i].Ref.Key, question.Card.ID)
+					}
+				}
+			}
+			// Eight requests cross the adapter's decimal ID boundary, so ID
+			// sorting disagrees with the observed question publication order.
+			assertOrder(*list.Rows, questions)
+			if p.Waiting == nil || p.WaitingMore == nil || *p.WaitingMore != "3" {
+				t.Fatalf("Home waiting list/count missing: %+v", p)
+			}
+			assertOrder(*p.Waiting, questions[:5])
+			// Refresh while the same questions are unanswered, in both orders.
+			for _, order := range []string{"priority", "lightest"} {
+				if _, err := c.Waiting(h.ctx, protocol.WaitingGet{Order: &order}); err != nil {
+					t.Fatal(err)
+				}
+				frame, err := c.Receive(h.ctx)
+				if err != nil || frame.Error != nil {
+					t.Fatalf("waiting refresh: %v %+v", err, frame.Error)
+				}
+				refreshed, ok := frame.Payload.(protocol.Waiting)
+				if !ok || refreshed.Rows == nil {
+					t.Fatalf("waiting refresh missing rows: %+v", frame.Payload)
+				}
+				assertOrder(*refreshed.Rows, questions)
+			}
 		}
 		topic := "progress"
 		if _, err = c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {

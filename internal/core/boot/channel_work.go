@@ -124,6 +124,9 @@ func (c *channelRuntime) channelWork(ctx context.Context, bot channels.Bot, sche
 	return nil
 }
 func (c *channelRuntime) admitChannelInput(ctx context.Context, shared *conversationRuntime, event gateway.Inbound, binding channels.Binding, in channelInput) error {
+	if handled, err := c.channelControl(ctx, shared, event, binding, in); handled || err != nil {
+		return err
+	}
 	shared.mu.Lock()
 	defer shared.mu.Unlock()
 	var body struct {
