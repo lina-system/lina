@@ -171,7 +171,7 @@ func TestLaunchdJobProcess(t *testing.T) {
 	case "root":
 		fmt.Printf("root=%d\n", os.Getpid())
 		fork := exec.Command(exe, "-test.run=^TestLaunchdJobProcess$", "--", "fork")
-		fork.Env = []string{"LINA_PROC_JOB_TEST=1"}
+		fork.Env = os.Environ()
 		fork.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		fork.Stdout, fork.Stderr = os.Stdout, os.Stderr
 		if err := fork.Start(); err != nil {
