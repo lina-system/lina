@@ -70,6 +70,11 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 			for _, e := range ref.Evidence {
 				item.Evidence = append(item.Evidence, assemble.Ref{ID: e.ID, Revision: e.Revision})
 			}
+		case "name-v1":
+			if source.Memory == nil {
+				return nil, replay.Exclusion("missing_assembly")
+			}
+			item = nameContext(*source.Memory, a.AgentID)
 		case "relationship-v1":
 			if source.Memory == nil {
 				return nil, replay.Exclusion("missing_assembly")
