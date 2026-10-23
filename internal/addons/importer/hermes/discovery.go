@@ -22,7 +22,7 @@ var outputReference = regexp.MustCompile(`\[(?:Externalized|GC'd externalized) (
 
 func DiscoverSidecars(ctx context.Context, sourceRoot, relativeDir, staging string, profiles []Profile) ([]Sidecar, error) {
 	if !filepath.IsLocal(relativeDir) {
-		return nil, ErrSnapshot
+		return nil, invalidSnapshot("sidecar directory must be local")
 	}
 	root, err := os.OpenRoot(sourceRoot)
 	if err != nil {
@@ -78,7 +78,7 @@ func DiscoverSidecars(ctx context.Context, sourceRoot, relativeDir, staging stri
 			}
 			for name := range names {
 				if name == "." || name == ".." || strings.ContainsAny(name, "/\\") || !strings.HasSuffix(name, ".json") {
-					return nil, ErrSnapshot
+					return nil, invalidSnapshot("sidecar reference basename")
 				}
 				key := strconv.FormatInt(out.id, 10)
 				relative := filepath.Join(relativeDir, name)
@@ -92,7 +92,7 @@ func DiscoverSidecars(ctx context.Context, sourceRoot, relativeDir, staging stri
 					return nil, err
 				}
 				if !info.Mode().IsRegular() {
-					return nil, ErrSnapshot
+					return nil, invalidSnapshot("sidecar regular file")
 				}
 				data, err := root.ReadFile(relative)
 				if err != nil {
