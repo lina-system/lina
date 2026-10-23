@@ -264,7 +264,16 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					return err == nil && rec.Thread != nil
 				})
 				c.Close()
-				core.killAndWait()
+				// The load fixture wraps Core. Kill its recorded child, then
+				// join the launcher before starting the replacement epoch.
+				if err := core.signal(os.Kill); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-core.done:
+				case <-h.ctx.Done():
+					t.Fatal("Core SIGKILL did not finish", h.ctx.Err())
+				}
 				core = start()
 				waitDispatchedRecovery(t, h, func(rec dispatch.Record) bool {
 					_, err := os.Stat(filepath.Join(fixture, "snapshot-requested"))
