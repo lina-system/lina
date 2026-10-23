@@ -110,6 +110,29 @@ ORDER BY CASE type WHEN 'trigger' THEN 0 WHEN 'view' THEN 1 WHEN 'index' THEN 2 
 	if err == nil {
 		_, err = legacy.ExecContext(h.ctx, strings.Join(removals, "\n")+"\nPRAGMA user_version=14;")
 	}
+	if err == nil {
+		// Later search migrations also insert catalog rows in this old table.
+		// Restore the published metadata so their upgrade can run again.
+		_, err = legacy.ExecContext(h.ctx, "DELETE FROM search_index_config")
+	}
+	if err == nil {
+		rows, err = reference.QueryContext(h.ctx, "SELECT name,tokenizer,fallback FROM search_index_config")
+		if err == nil {
+			for rows.Next() {
+				var name, tokenizer, fallback string
+				if err = rows.Scan(&name, &tokenizer, &fallback); err == nil {
+					_, err = legacy.ExecContext(h.ctx, "INSERT INTO search_index_config VALUES(?,?,?)", name, tokenizer, fallback)
+				}
+				if err != nil {
+					break
+				}
+			}
+			if err == nil {
+				err = rows.Err()
+			}
+			rows.Close()
+		}
+	}
 	legacy.Close()
 	if err != nil {
 		t.Fatal(err)
