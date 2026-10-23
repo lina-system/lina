@@ -62,6 +62,9 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 			var live protocol.Result
 			for _, frame := range frames {
 				if card, ok := frame.Payload.(protocol.Result); ok {
+					if live.ResultID != "" {
+						t.Fatal("authored result published twice or replaced by a diagnostic")
+					}
 					live = card
 				}
 			}
@@ -109,6 +112,9 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 			}
 			if live.Stream == nil {
 				t.Fatal("no live result stream")
+			}
+			if tc.kind != result.PlanType && live.Next == nil {
+				t.Fatal("large authored result did not require pagination")
 			}
 			provePager := func() {
 				t.Helper()

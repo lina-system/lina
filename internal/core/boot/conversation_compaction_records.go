@@ -61,9 +61,8 @@ func (s *turnState) recordCompactionContinuation(ctx context.Context, db ledger.
 // Live delivery and history restoration project the same durable diagnostic.
 // Its summary stays one line; Details contains only measured sizes, no content.
 func (r *conversationRuntime) publishCompactionFailure(ctx context.Context, notice ledger.Event, turnID string) (bool, error) {
-	// A committed outcome must remain readable after the turn was stopped.
-	ctx = context.WithoutCancel(ctx)
-	e, err := r.journal().Get(ctx, "continuation-sizes:"+turnID)
+	// A committed stop still publishes after its turn context is cancelled.
+	e, err := r.journal().Get(context.WithoutCancel(ctx), "continuation-sizes:"+turnID)
 	if errors.Is(err, ledger.ErrNotFound) {
 		return false, nil
 	}
