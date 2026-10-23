@@ -1,0 +1,5 @@
+{
+ "labels": ["First fixture", "Second fixture"],
+ "plan": "Synthetic plan",
+ "commands": ["/accounts", "/usage"]
+}
