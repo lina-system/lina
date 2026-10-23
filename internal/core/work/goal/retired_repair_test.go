@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	e := revisionEngine(t, readyTask("a"), readyTask("b"))
@@ -29,19 +32,24 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	// failed task inputs and QA evidence unchanged.
 	revisionEdit(t, e)
 	repair.ID, repair.Repairs, repair.DependsOn = "obsolete-repair-b", "b", []string{"b"}
+	late := Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}
 	for range 2 {
-		if err := e.Report(t.Context(), managers[1].ID, managers[1].Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
+		if err := e.Report(t.Context(), managers[1].ID, managers[1].Epoch, late); err != nil {
 			t.Fatal(err)
 		}
 	}
-	retired := false
+	found := false
 	for _, a := range revisionSnapshot(t, e).Actions {
-		if a.ID == managers[1].ID {
-			retired = a.State == "finished" && a.Superseded
+		if a.ID != managers[1].ID {
+			continue
+		}
+		found = true
+		if a.State != "finished" || !a.Superseded || !a.RetirementReconciled || !bytes.Equal(a.Receipt, encode(late)) {
+			t.Fatalf("retired assessment lost its settlement or late receipt: %+v", a)
 		}
 	}
-	if !retired {
-		t.Fatal("old report did not retain the superseded assessment")
+	if !found {
+		t.Fatal("retired assessment disappeared")
 	}
 	cfg := e.cfg
 	cfg.Epoch++
@@ -50,8 +58,8 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Definition refresh may already clear a retired assessment. Restart before
-	// derivation to prove its durable receipt cannot strand the failed task.
+	// Definition refresh already cleared this obsolete judgment's repair marker.
+	// Restart must retain the late receipt without reviving that marker.
 	if err = e.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
