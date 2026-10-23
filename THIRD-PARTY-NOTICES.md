@@ -1366,6 +1366,12 @@ SOFTWARE.
 Source: https://github.com/NousResearch/hermes-agent. License: MIT.
 Reference snapshot supplied 2026-10-21; upstream revision metadata unavailable.
 
+The Hermes importer also references revision
+`cb757fac59c92b49e9b8f2910e5cd7ab75efffdd` for gateway delivery tokens, display
+kinds and local session identities. Its observations and limits are in
+[the import reference](internal/addons/importer/hermes/REFERENCE.md). No upstream
+implementation is copied or bundled.
+
 The Go Telegram adapter derives behavior and structure from Hermes Agent's
 Telegram adapter and gateway: protected code formatting, fence-aware message
 splitting, flood-wait/backoff handling, idempotent edits, callback authorization

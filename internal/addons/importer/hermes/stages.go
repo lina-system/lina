@@ -127,7 +127,11 @@ func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (_ *Pla
 	for _, profile := range req.Profiles {
 		p.profiles = append(p.profiles, profile.ID)
 		p.people[profile.ID] = profile.PersonID
-		p.mappings = append(p.mappings, ProfileMapping{Profile: profile.ID, Agent: profile.AgentID, Person: profile.PersonID, OwnerChannels: profile.OwnerChannels})
+		candidates, err := DiscoverOwnerChannels(ctx, profile.StatePath)
+		if err != nil {
+			return nil, err
+		}
+		p.mappings = append(p.mappings, ProfileMapping{Profile: profile.ID, Agent: profile.AgentID, Person: profile.PersonID, OwnerChannels: profile.OwnerChannels, CandidateOwnerChannels: candidates})
 	}
 	seen := map[string]bool{}
 	builders := map[string]*profileBuilder{}

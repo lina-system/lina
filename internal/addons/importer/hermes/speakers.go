@@ -243,9 +243,16 @@ func readSpeaker(ctx context.Context, db, state *sql.DB, id int64, host bool, ow
 			kinds = append(kinds, speakerDecision{guard.Agent, false})
 		}
 	}
-	// Display payloads have no registered provenance vocabulary. Their presence
-	// cannot be silently discarded to elevate a user-role row to person.
-	if display != "" || metadata != "" {
+	// Presentation markers never establish a sender. Notifications are explicit
+	// machinery; ordinary input and steering still need the confirmed channel.
+	switch display {
+	case "internal_notification":
+		kinds = append(kinds, speakerDecision{guard.System, false})
+	case "", "steer":
+	default:
+		kinds = append(kinds, unknownSpeaker())
+	}
+	if metadata != "" && !knownInputMetadata(metadata) {
 		kinds = append(kinds, unknownSpeaker())
 	}
 	if len(kinds) > 0 {
@@ -267,14 +274,34 @@ func readSpeaker(ctx context.Context, db, state *sql.DB, id int64, host bool, ow
 	if hasSession && (owner.UserID != user || owner.ChatID != chat) {
 		return speakerDecision{guard.ExternalParticipant, false}, nil
 	}
-	if hasSession && sessionSource != "cli" && (user == "" || chat == "" || (chatType != "private" && chatType != "dm")) {
+	if localOwnerSource(sessionSource) {
+		if chatType != "" && chatType != "private" && chatType != "dm" {
+			return unknownSpeaker(), nil
+		}
+	} else if user == "" || chat == "" || (chatType != "private" && chatType != "dm") {
 		return unknownSpeaker(), nil
 	}
 	return speakerDecision{guard.Person, false}, nil
 }
+
+// gateway_input_owner identifies a persisted delivery, not a human. Only the
+// registered singleton string shape is neutral; extra fields remain unproven.
+func knownInputMetadata(metadata string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(metadata), &fields) != nil || len(fields) != 1 {
+		return false
+	}
+	var token string
+	return json.Unmarshal(fields["gateway_input_owner"], &token) == nil && token != ""
+}
+
+func localOwnerSource(source string) bool {
+	return source == "cli" || source == "desktop" || source == "webui"
+}
+
 func interactiveSource(source string) bool {
 	switch source {
-	case "cli", "telegram", "discord", "slack", "signal", "whatsapp":
+	case "cli", "desktop", "webui", "telegram", "discord", "slack", "signal", "whatsapp":
 		return true
 	}
 	return false
