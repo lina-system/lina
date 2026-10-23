@@ -1,6 +1,7 @@
 {
   "side": "server",
   "input": [
+    "normal/surface_hello.json",
     "invalid/surface_legacy_version.json",
     "invalid/surface_action_legacy_version.json",
     "invalid/surface_version.json",
@@ -11,9 +12,11 @@
     "normal/surface_action.json"
   ],
   "output": [
+    "normal/surface_hello.json",
     "normal/surface_action.json"
   ],
   "errors": [
+    "",
     "malformed",
     "malformed",
     "malformed",
@@ -24,7 +27,7 @@
     ""
   ],
   "outcome": {
-    "accepted": 1,
+    "accepted": 2,
     "unknown_kinds": 0,
     "malformed": 7
   }

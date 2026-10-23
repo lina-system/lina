@@ -1485,7 +1485,7 @@ type WorkerLane struct {
 	Worker     string   `json:"worker"`
 }
 
-// Payload is the closed set of client 1.0 payload types.
+// Payload is the closed set of client 1.0/1.1 payload types.
 type Payload interface{ isPayload() }
 
 func (Hello) isPayload()                {}
@@ -1990,7 +1990,7 @@ func decodeMessage(data []byte) (Envelope, error) {
 const clientSchemaJSON = `{
   "$comment": "SPDX-License-Identifier: Apache-2.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Client 1.0 envelope",
+  "title": "Client 1.0 and 1.1 envelope",
   "description": "Client 1.0 kinds and specified payload fields. Reserved objects have no wire fields until the implementation issue named in their $comment defines them. Client 1.1 adds generated surfaces and catalog negotiation; 1.0 remains supported.",
   "type": "object",
   "properties": {
