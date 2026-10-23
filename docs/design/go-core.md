@@ -2577,7 +2577,8 @@ type Definition struct {
   Core resolves design references at the registered base, mints stable task ids from the turn/call/key, creates `lina/<task-id>` branches and separate worktrees, fetches and pins the remote base without moving the clone's local base branch, verifies that it contains each dependency's observed merge commit, installs the shared work-area protected-ref guard and the worktree's exact assigned-branch binding before dispatch, and refuses an incompatible existing hook configuration rather than replacing it.
   Only Core's fixed administrative Git commands bypass that guard to fetch bases and allocate worktrees.
   It then starts the installed Codex App Server through the existing `worker.Adapter` session implementation.
-  The execution packet directs a worker to publish its assigned branch to origin's URL, preserving the guarded local tracking refs.
+  The execution packet directs a worker to publish its assigned branch to origin's URL.
+  The guard permits only that branch's own tracking ref to update; every other protected ref stays closed.
   No model, sandbox or approval setting is overridden.
   `refresh_work` reads the asking conversation's task cards and their current forge observations; it cannot assert merged state or request a merge.
 - Owner stop controls durably close scheduled cards before interrupting their workers.

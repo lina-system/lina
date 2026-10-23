@@ -140,9 +140,25 @@ binding=$(git rev-parse --git-path lina-task-ref) || exit 1
 if [ -f "$binding" ]; then
  IFS= read -r assigned < "$binding" || exit 1
 fi
+assigned_branch=${assigned#refs/heads/}
 while read -r old new ref; do
  case "$ref" in
- refs/heads/main|refs/heads/master|refs/heads/dev|refs/remotes/*|refs/lina/*)
+ refs/remotes/*)
+  # A push updates the pushed branch's tracking ref, including a push to a
+  # URL that matches a configured remote. Only the assigned branch's mirror
+  # may move; every other tracking ref stays protected.
+  mirror=${ref#refs/remotes/}
+  mirror=${mirror#*/}
+  if [ -z "$assigned_branch" ] || [ "$assigned" = "$assigned_branch" ] || [ "$mirror" != "$assigned_branch" ] || [ "${ref#refs/remotes/}" = "$mirror" ]; then
+   echo 'LINA protected ref' >&2
+   exit 1
+  fi
+  case "$new" in
+   *[!0]*) ;;
+   *) echo 'LINA protected ref: only Core may delete a tracking ref' >&2
+      exit 1;;
+  esac;;
+ refs/heads/main|refs/heads/master|refs/heads/dev|refs/lina/*)
   echo 'LINA protected ref' >&2
   exit 1;;
  refs/heads/*)

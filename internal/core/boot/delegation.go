@@ -414,9 +414,10 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 
 	// After this boundary a failed response can conceal an accepted start.
 	sent = true
-	// A named-remote push also writes local tracking refs. Publish to the same
-	// origin URL directly so workers need no bypass of the shared ref guard.
-	packet := "The shared Git directory guards base, other-task and remote-tracking refs. Keep that guard enabled. Publish your assigned branch using origin's URL as the git push destination, rather than the origin alias, so only the remote branch is updated.\n" + p.Packet
+	// A push writes the pushed branch's tracking ref, even when the destination
+	// is a URL that matches a configured remote. The shared guard permits only
+	// that assigned branch's mirror; every other protected ref stays closed.
+	packet := "The shared Git directory guards base, other-task and remote-tracking refs. Keep that guard enabled. Publish your assigned branch using origin's URL as the git push destination; only your branch's own tracking ref may update.\n" + p.Packet
 	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: worker.FrameMessage(c.Task.AgentID, "agent", c.Task.ID, c.Task.ID+":start", packet), ApprovalKey: d.root.personaAuthority.WorkerApprovalKey(), Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
 	if err != nil {
 		return work.Run{}, err

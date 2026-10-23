@@ -64,7 +64,7 @@ This contract does not cover, and links instead to:
 
 **Binding epoch.** The generation of LINA Core's binding to a worker thread. A new binding epoch starts when control returns after a handover and when a remote thread is bound again.
 
-**Protected ref.** A ref in the parent clone that a worker must never create, move or delete: `dev`, `main`, `master`, remote-tracking and LINA base refs, and every branch other than its own assigned task branch. A worker may create and update its assigned branch, but must never delete or rename it; only Core's explicit administrative path may clean it up. Branch ownership belongs to the allocated worktree and does not change when its worker checks out another branch or detaches HEAD.
+**Protected ref.** A ref in the parent clone that a worker must never create, move or delete: `dev`, `main`, `master`, remote-tracking refs other than its assigned branch's own mirror, LINA base refs, and every branch other than its own assigned task branch. A worker may create and update its assigned branch, but must never delete or rename it; only Core's explicit administrative path may clean it up. Branch ownership belongs to the allocated worktree and does not change when its worker checks out another branch or detaches HEAD.
 
 **Task packet.** The first input a worker receives: the work definition (see Development method), the LINA assignment id, and how to return the completion receipt. It also carries references (id and revision) to the materials and memory projections the task may read.
 
@@ -139,7 +139,8 @@ are refused. Non-Git tasks get a private directory. Missing Git disables Git
 allocation without blocking conversation or non-Git work.
 
 Ordinary Git reference transactions in the parent clone reject writes to
-`main`, `master`, `dev`, remote-tracking refs and `refs/lina/*`. Before returning
+`main`, `master`, `dev`, `refs/lina/*` and remote-tracking refs other than the
+assigned branch's own mirror. Before returning
 a Git allocation, Core records its exact assigned branch beside the linked
 worktree's Git HEAD. The shared guard allows branch creation and updates only
 for that worktree's assigned branch, even while detached or before the branch
@@ -162,9 +163,11 @@ remain unchanged. Existing unrelated executable hooks or a custom hooks path
 refuse the allocation rather than being disabled; a guard failure is a known
 pre-dispatch failure. Core's fixed Git administration can still fetch the next
 landed base and create a dependent worktree under the shared guard.
-Scheduled workers publish to origin's URL directly: a named-remote push also
-updates local tracking refs, which remain protected. The target remote and
-assigned branch are unchanged, and publication never disables the guard.
+Scheduled workers publish to origin's URL directly. A push updates the local
+tracking ref of the branch it publishes, including when the URL matches a
+configured remote; the guard permits only that assigned branch's mirror and
+keeps every other tracking ref protected. The target remote and assigned branch
+are unchanged, and publication never disables the guard.
 The installed-Core [headless work-area scenario](../../e2e/m2/work-area.json)
 allocates two real linked worktrees, rejects cross-task branch updates, deletion
 and renaming into a reserved branch, commits on each assigned branch, and retains
