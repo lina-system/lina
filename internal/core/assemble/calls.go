@@ -13,11 +13,12 @@ import (
 // paired tool output names the result, its revision and its title.
 const resultCallReference = `{"note":"result body stored; the tool result names its id and revision"}`
 
-// presentedResults returns the call ids whose paired tool output reports a
+// storedResults returns the call ids whose paired tool output reports a
 // completed presentation. Only those calls have a stored body to refer to; a
-// refused or interrupted call keeps its arguments so the model can correct it.
-func presentedResults(items []provider.Item) map[string]bool {
-	presented := map[string]bool{}
+// refused, interrupted or unreceipted call keeps its arguments so the model can
+// correct what it sent.
+func storedResults(items []provider.Item) map[string]bool {
+	stored := map[string]bool{}
 	for _, item := range items {
 		if !bytes.Contains(item, []byte("call_output")) {
 			continue
@@ -33,16 +34,16 @@ func presentedResults(items []provider.Item) map[string]bool {
 		}
 		var receipt struct{ Code string }
 		if json.Unmarshal([]byte(output.Output), &receipt) == nil && receipt.Code == "ok" {
-			presented[output.CallID] = true
+			stored[output.CallID] = true
 		}
 	}
-	return presented
+	return stored
 }
 
 // condenseResultCall projects one provider item for the model. It returns the
 // input unchanged unless the item presents an authored result whose call
 // completed.
-func condenseResultCall(item provider.Item, presented map[string]bool) provider.Item {
+func condenseResultCall(item provider.Item, stored map[string]bool) provider.Item {
 	if !bytes.Contains(item, []byte("present_result")) {
 		return item
 	}
@@ -53,18 +54,18 @@ func condenseResultCall(item provider.Item, presented map[string]bool) provider.
 	var kind, name, callID string
 	if json.Unmarshal(call["type"], &kind) != nil || kind != "function_call" ||
 		json.Unmarshal(call["name"], &name) != nil || name != "present_result" ||
-		json.Unmarshal(call["call_id"], &callID) != nil || !presented[callID] {
+		json.Unmarshal(call["call_id"], &callID) != nil || !stored[callID] {
 		return item
 	}
 	var arguments string
 	if json.Unmarshal(call["arguments"], &arguments) != nil {
 		return item
 	}
-	var presentedRequest struct {
+	var presented struct {
 		Body json.RawMessage `json:"body"`
 	}
-	if json.Unmarshal([]byte(arguments), &presentedRequest) != nil ||
-		len(presentedRequest.Body) == 0 || bytes.Equal(presentedRequest.Body, []byte("null")) {
+	if json.Unmarshal([]byte(arguments), &presented) != nil ||
+		len(presented.Body) == 0 || bytes.Equal(presented.Body, []byte("null")) {
 		return item
 	}
 	reference, err := json.Marshal(resultCallReference)
@@ -97,11 +98,11 @@ func CondenseResultItems(items []provider.Item) ([]provider.Item, bool) {
 	if len(items) == 0 {
 		return items, false
 	}
-	presented := presentedResults(items)
+	stored := storedResults(items)
 	projected := items
 	copied := false
 	for i, item := range items {
-		condensed := condenseResultCall(item, presented)
+		condensed := condenseResultCall(item, stored)
 		if bytes.Equal(condensed, item) {
 			continue
 		}

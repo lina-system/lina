@@ -19,6 +19,20 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
+// A summary source carries the same projection as a request: a stored result
+// body stays in the ledger, so the summarizer receives the bounded reference.
+// The records arrive in ledger order, which keeps each call beside its receipt.
+func condenseSummarySources(records []compaction.Record) {
+	items := make([]provider.Item, len(records))
+	for i := range records {
+		items[i] = records[i].Item
+	}
+	items, _ = assemble.CondenseResultItems(items)
+	for i := range records {
+		records[i].Item = items[i]
+	}
+}
+
 // Fit the complete prepared request before applying its hard size limit. Canon
 // remains lossless: only a published summary or a recoverable tool note changes
 // the request projection. A failed generation/publication never drops sources.
@@ -121,6 +135,7 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 					}
 					input.Records = append(input.Records, item)
 				}
+				condenseSummarySources(input.Records)
 				text, err := auxiliary.Summarize(ctx, input)
 				if err != nil {
 					return compaction.Output{}, err
@@ -236,6 +251,7 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 			}
 			segment.Records[i] = item
 		}
+		condenseSummarySources(segment.Records)
 		return auxiliary.Summarize(ctx, segment)
 	}
 	c := &conversationCompaction{builder: builder, pending: map[string]bool{}, preparations: r.summaryState().candidates()}

@@ -10,11 +10,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/compaction"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -327,5 +329,67 @@ func TestConversationCompactionBudgetsPublishedHistory(t *testing.T) {
 				t.Error("dispatched request lost optional context, summary coverage, budget, or evidence digest")
 			}
 		})
+	}
+}
+
+// A stored result body must not reach the summarizer either: the summary source
+// carries the same bounded reference as a request.
+func TestConversationCompactionKeepsStoredResultBodiesOutOfSummaries(t *testing.T) {
+	r, _, agent, _ := managementFixture(t)
+	r.agent, r.conversation = agent, "main:"+agent
+	var err error
+	r.route, err = modelpath.ResponsesFromEnv(func(key string) string {
+		return map[string]string{"LINA_RESPONSES_BASE_URL": "http://127.0.0.1:1", "LINA_RESPONSES_MODEL": "fixture-model", "LINA_RESPONSES_API_KEY": "synthetic-key"}[key]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Repeat("결과 content.\n", 800) + "RESULT-END"
+	arguments, err := json.Marshal(map[string]any{"type": "document_draft", "title": "Authored result", "summary": "Ready.", "body": map[string]any{"blocks": []any{map[string]any{"kind": "paragraph", "text": body}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := json.Marshal(map[string]any{"type": "function_call", "call_id": "present", "name": "present_result", "arguments": string(arguments)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admit := func(id, body string, entry guard.Entry, locator string) {
+		if _, err := r.journal().Admit(t.Context(), entry, ledger.Input{ID: id, ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(1, 0), RecordedAt: time.Unix(1, 0), TimeQuality: "observed", Body: body, ScaffoldKind: "provider_item", Locator: locator}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	admit("call", string(call), guard.EntryAgent, "model")
+	admit("receipt", `{"type":"function_call_output","call_id":"present","output":"{\"code\":\"ok\"}"}`, guard.EntryTool, "result-tool")
+	queuedContextEvent(t, r, "old", strings.Repeat("old ", 2500), guard.EntryOwner, "")
+	queuedContextEvent(t, r, "reply", strings.Repeat("public ", 1800), guard.EntryAgent, "")
+	current := queuedContextEvent(t, r, "current", "Continue", guard.EntryOwner, "")
+	var summary string
+	stream := func(_ context.Context, request provider.Request) (provider.Stream, error) {
+		raw, err := json.Marshal(request.Items)
+		if err != nil {
+			return nil, err
+		}
+		summary = string(raw)
+		text, _ := json.Marshal(compaction.Text{Requests: "none", Topics: "archive", Actions: "read", Values: "content", Omitted: "repeated text"})
+		item, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": string(text)}}})
+		return &handoffRuntimeStream{events: []provider.Event{{Kind: provider.ItemDone, Item: item}, {Kind: provider.Terminal}}}, nil
+	}
+	items, _, _, events, err := r.modelContext(t.Context(), current.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := assemble.Input{MainID: "main-test", ConversationID: r.conversation, AgentID: agent, PersonaRevision: "fixture", Model: "fixture-model", Core: "core", Current: items[len(items)-1], History: items[:len(items)-1], MaxTokens: 22000}
+	_, report, err := r.compactConversation(t.Context(), in, events, stream)
+	if err != nil || report.Failure != "" {
+		t.Fatalf("compaction failed: %+v %v", report, err)
+	}
+	if summary == "" {
+		t.Fatal("no summary was generated")
+	}
+	if strings.Contains(summary, "RESULT-END") {
+		t.Fatal("stored result body reached the summarizer")
+	}
+	if !strings.Contains(summary, "result body stored") {
+		t.Fatalf("summary source lost the bounded reference: %.400s", summary)
 	}
 }
