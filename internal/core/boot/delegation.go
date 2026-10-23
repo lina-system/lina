@@ -268,6 +268,9 @@ func (d *delegationRuntime) origin(ctx context.Context, task work.Task) (*conver
 		if err != nil {
 			return nil, ledger.Event{}, err
 		}
+		if !origin.channelBinding.Scope.Tools {
+			return nil, ledger.Event{}, channels.ErrDenied
+		}
 	} else if origin.conversation != task.ConversationID {
 		// These identities come from the admitted task and its recorded input.
 		// A channel task's requests and evidence belong to that conversation.

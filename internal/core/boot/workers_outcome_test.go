@@ -332,6 +332,21 @@ func testWorkerOriginChannelScope(t *testing.T, scheduled bool) {
 			if err := view.validateChannel(ctx); err != nil {
 				t.Fatal(err)
 			}
+			if scheduled {
+				// A queued task must recheck the current tool ceiling before
+				// allocating a worktree or opening its worker session.
+				restricted := source
+				restricted.Scope.Tools = false
+				if err := store.Bind(ctx, restricted); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := originView(); err == nil {
+					t.Fatal("queued dispatch ignored revoked channel tool permission")
+				}
+				if err := store.Bind(ctx, source); err != nil {
+					t.Fatal(err)
+				}
+			}
 			// A revoked original route cannot fall back to the same persona on another
 			// platform, even though that other binding still has tools and memory.
 			if err := store.Disconnect(ctx, source.Bot, r.person); err != nil {
