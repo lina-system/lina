@@ -2748,6 +2748,7 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
   The timer stops with Core; idle installs without observers do not perform these periodic source reads, and unchanged snapshots still publish no frame.
   The headless `e2e/m2/progress-waiting.json` scenario covers installed Core, an actual stdio child, approval and question disappearance, a worker-created artifact and restart without provider replay.
 - Implementation notes: [C-55 progress digest increment](../../internal/core/progress/REFERENCE.md#c-55-progress-digest-increment).
+- The stage list is projected from the admitted step graph revisions and the step states observed with them, with no separate stage record; a done stage keeps its number and its steps. Implementation notes: [C-55 stage list increment](../../internal/core/progress/REFERENCE.md#c-55-stage-list-increment).
 - Explicit TUI and paired-channel commands use the same Core operations: `/progress`, `/waiting priority|lightest`, `/stop <run>`, `/stop all` and `/note <run> <text>`.
   Bare `/stop` interrupts the current conversation.
   Targeted controls recheck the person and optional conversation; stop-all captures the person's live background runs and worker sessions in private surfaces, and only the bound conversation in a shared channel.
