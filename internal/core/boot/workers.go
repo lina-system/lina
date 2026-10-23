@@ -717,7 +717,9 @@ func (e *workerSession) observe() {
 					fmt.Fprintf(os.Stderr, "worker completion admission failed: %v\n", err)
 				}
 			}
-			if rec.ID != "" {
+			// A delayed completion still belongs in its result lane, but only
+			// the exact current turn can settle this recovery record.
+			if rec.ID != "" && event.Thread == rec.Thread {
 				rec.State = "unknown"
 				if delivered && (event.Finish.Status == worker.Done || rec.Canceled) {
 					rec.State = "finished"

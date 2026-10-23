@@ -1432,6 +1432,8 @@ A terminal read does not consume the worker's completion notification: a later
 live event still reaches Core once. Input admission rechecks recovery state
 under the same control lock as reconciliation before releasing reservations
 or sending input.
+A delayed event may deliver an earlier turn's result, but only an event matching
+the current recovery thread and turn can change that recovery state.
 
 ## Judgment and delivery
 
