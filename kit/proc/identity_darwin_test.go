@@ -29,16 +29,15 @@ func TestProcessStatesClassifiesZombie(t *testing.T) {
 			if state.pid != cmd.Process.Pid {
 				continue
 			}
-			if !state.zombie {
-				t.Fatalf("exited child %d is not classified as a zombie", state.pid)
-			}
 			if state.uniqueID == 0 || state.parentUniqueID == 0 {
 				t.Fatalf("recorded identity of %d is incomplete: %+v", state.pid, state.processIdentity)
 			}
-			return
+			if state.zombie {
+				return // The child has exited and is waiting to be reaped.
+			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("child %d left the process table before it was classified", cmd.Process.Pid)
+			t.Fatalf("child %d never appeared as an unreaped zombie", cmd.Process.Pid)
 		}
 		time.Sleep(time.Millisecond)
 	}

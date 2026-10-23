@@ -80,24 +80,21 @@ func (p *darwinProcess) kill() error {
 }
 
 func (p *darwinProcess) terminate() error {
-	// Keep the leader unreaped until cleanup finishes. A dead Darwin process
-	// group can report EPERM instead of ESRCH; never signal a recycled group
-	// id after cmd.Wait has released its leader.
-	var err error
-	info, inspectErr := unix.SysctlKinfoProc("kern.proc.pid", p.cmd.Process.Pid)
-	if inspectErr == nil && info.Proc.P_stat != 5 { // SZOMB
-		err = syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
-		if errors.Is(err, syscall.EPERM) {
-			current, e := unix.SysctlKinfoProc("kern.proc.pid", p.cmd.Process.Pid)
-			if e == nil && current.Proc.P_stat == 5 {
-				err = nil
-			}
-		}
-		if errors.Is(err, syscall.ESRCH) {
+	// The leader stays unreaped until cleanup finishes, so its pid and process
+	// group id cannot be reused by another process. The escape denial keeps
+	// every descendant in this group, including one that outlived its own
+	// parent, so this kill is the primary teardown.
+	err := syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+	if errors.Is(err, syscall.ESRCH) {
+		err = nil // the group is already empty
+	}
+	if errors.Is(err, syscall.EPERM) {
+		// Darwin can refuse a signal once the group has no live member.
+		// Accept only a positively observed end of this leader.
+		current, inspectErr := unix.SysctlKinfoProc("kern.proc.pid", p.cmd.Process.Pid)
+		if errors.Is(inspectErr, syscall.ESRCH) || inspectErr == nil && current.Proc.P_stat == 5 {
 			err = nil
 		}
-	} else if inspectErr != nil && !errors.Is(inspectErr, syscall.ESRCH) {
-		err = inspectErr
 	}
 	if p.identity.uniqueID != 0 {
 		err = errors.Join(err, killDescendants(p.identity))

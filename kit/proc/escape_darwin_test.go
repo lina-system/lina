@@ -38,15 +38,15 @@ func TestOwnerDeniesSessionEscape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The child reports both errno values on one line before it exits.
 	if got := strings.TrimSpace(output.String()); got != "setsid=operation not permitted setpgid=operation not permitted" {
 		t.Fatalf("child escape results = %q", got)
 	}
 }
 
-// The deepest descendant clears its environment and survives its intermediate
-// parent, which the kernel reaps and replaces with launchd. It cannot leave the
-// process group, so teardown still reaps it.
+// The deepest descendant clears its environment and outlives the intermediate
+// parent the kernel reaps and replaces with launchd, so neither the owner token
+// nor the parent chain names it. It cannot leave the process group, so teardown
+// still reaps it.
 func TestOwnerReapsOrphanedClearedEnvironmentDescendant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -60,7 +60,6 @@ func TestOwnerReapsOrphanedClearedEnvironmentDescendant(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer output.Close()
-	defer writer.Close()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -122,25 +121,29 @@ func TestOwnerReapsOrphanedClearedEnvironmentDescendant(t *testing.T) {
 	}
 }
 
+// TestDarwinEscapeProcess is a helper process, not a test: each mode does its
+// work and exits without letting the test framework print its own result.
 func TestDarwinEscapeProcess(t *testing.T) {
 	switch os.Getenv("LINA_PROC_DARWIN_TEST") {
 	case "deny":
 		_, sidErr := syscall.Setsid()
 		pgErr := syscall.Setpgid(0, 0)
 		fmt.Printf("setsid=%v setpgid=%v\n", sidErr, pgErr)
+		os.Exit(0)
 	case "orphan":
-		// Start a child with a cleared environment, then exit so the kernel
-		// reparents it to launchd before teardown.
+		// Start a descendant with a cleared environment, then exit so the
+		// kernel reparents it to launchd before teardown.
 		cmd := exec.Command(os.Args[0], "-test.run=^TestDarwinEscapeProcess$")
 		cmd.Env = []string{"LINA_PROC_DARWIN_TEST=leaf"}
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Start(); err != nil {
 			panic(err)
 		}
-		_ = cmd.Process.Release()
+		os.Exit(0)
 	case "leaf":
 		_, err := syscall.Setsid()
 		fmt.Printf("setsid=%v pid=%d\n", err, os.Getpid())
 		time.Sleep(time.Hour)
+		os.Exit(0)
 	}
 }
