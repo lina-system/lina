@@ -194,7 +194,7 @@ func permission(id, sid string) string {
 }
 func TestPermissionOnceAndCancel(t *testing.T) {
 	verified := make(chan struct{})
-	ids := []string{`"approval"`, `9007199254740993`, `"9007199254740993"`}
+	ids := []string{`null`, `null`, `"null"`, `0`, `""`, `9007199254740993`, `"9007199254740993"`}
 	c, ctx := fixture(t, func(a agent) {
 		a.initialize()
 		a.send(permission(ids[0], "s"))
@@ -206,7 +206,7 @@ func TestPermissionOnceAndCancel(t *testing.T) {
 			a.send(permission(id, "s"))
 		}
 		seen := map[string]bool{}
-		for range 3 {
+		for range len(ids) {
 			f = a.read()
 			if f.Method == "session/cancel" {
 				continue
@@ -216,8 +216,10 @@ func TestPermissionOnceAndCancel(t *testing.T) {
 			}
 			seen[string(f.ID)] = true
 		}
-		if !seen[ids[1]] || !seen[ids[2]] {
-			t.Fatalf("ids %v", seen)
+		for _, id := range ids[1:] {
+			if !seen[id] {
+				t.Fatalf("missing ID %s in %v", id, seen)
+			}
 		}
 		// A request already in flight when cancel was sent is cancelled too.
 		a.send(permission(`"late"`, "s"))
@@ -232,6 +234,9 @@ func TestPermissionOnceAndCancel(t *testing.T) {
 	next := func() *acp.Permission {
 		select {
 		case p := <-c.Permissions():
+			if p == nil {
+				t.Fatalf("permission connection closed: %v", c.Err())
+			}
 			return p
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
@@ -245,11 +250,14 @@ func TestPermissionOnceAndCancel(t *testing.T) {
 	if e := p.Answer(ctx, "yes"); !errors.Is(e, acp.ErrAnswered) {
 		t.Fatalf("duplicate: %v", e)
 	}
-	p1, p2 := next(), next()
+	pending := make([]*acp.Permission, len(ids)-1)
+	for i := range pending {
+		pending[i] = next()
+	}
 	if e := c.Cancel(ctx, "s"); e != nil {
 		t.Fatal(e)
 	}
-	for _, p := range []*acp.Permission{p1, p2} {
+	for _, p := range pending {
 		if e := p.Answer(ctx, "no"); !errors.Is(e, acp.ErrAnswered) {
 			t.Fatalf("cancelled answer: %v", e)
 		}

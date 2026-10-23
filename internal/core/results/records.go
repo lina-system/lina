@@ -49,6 +49,12 @@ func OpenRecords(stateRoot string, db Canon, a *assets.Store, resolve ResolvePla
 	}
 	return r, nil
 }
+
+// NewRecordsWriter shares Core's existing repository handle. The caller owns
+// that handle and its lifetime.
+func NewRecordsWriter(store *records.Store, a *assets.Store, resolve ResolvePlace) *Records {
+	return &Records{repo: store, store: store, assets: a, resolve: resolve}
+}
 func (r *Records) Close() error { return r.store.Close() }
 func slug(title string) string {
 	var b strings.Builder
