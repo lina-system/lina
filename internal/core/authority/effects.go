@@ -37,6 +37,7 @@ type Service struct {
 }
 type Effect struct {
 	Class                                            tools.EffectClass `json:",omitempty"`
+	DenialCode                                       string            `json:",omitempty"`
 	Key, Plugin, Account, Tool, ArgumentHash, Target string
 	Person, Agent, TaskID, GrantID, Basis            string
 	Epoch                                            uint64
@@ -189,11 +190,23 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 	}
 	ticket := tools.Ticket{Key: c.Key}
 	var denied error
+	var approvalsChanged bool
 	err = s.store.Write(ctx, func(tx *canon.Tx) error {
 		if err := s.checkEpoch(ctx, tx); err != nil {
 			return err
 		}
 		e.Class = spec.EffectClass(in)
+		refuse := func(reason error) error {
+			denied = reason
+			e.State, e.Result.State, e.DenialCode = tools.Refused, tools.Refused, reason.Error()
+			ticket.Result = e.Result
+			var err error
+			approvalsChanged, err = stopEffectApproval(ctx, tx, e.Key)
+			if err != nil {
+				return err
+			}
+			return insertEffect(ctx, tx, e, fingerprint, false)
+		}
 		limits, err := taskLimits(ctx, tx, c.Auth.Person, c.Auth.Agent, c.Auth.TaskID)
 		if err != nil {
 			return err
@@ -211,17 +224,20 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 			}
 			ticket.Replay = true
 			ticket.Result = existing.Result
+			if existing.State == tools.Refused {
+				denied = replayDenial(existing)
+				approvalsChanged, err = stopEffectApproval(ctx, tx, existing.Key)
+				return err
+			}
 			return nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if !limits.Allows(e.Class) {
-			denied = ErrPresetLimit
-			e.State, e.Basis = tools.Refused, ErrPresetLimit.Error()
+			e.Basis = ErrPresetLimit.Error()
 			e.Result = refusal(limits, e.Class)
-			ticket.Result = e.Result
-			return insertEffect(ctx, tx, e, fingerprint, false)
+			return refuse(ErrPresetLimit)
 		}
 		var active string
 		if in.Write {
@@ -242,21 +258,15 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 			}
 		}
 		if authorization != nil {
-			denied = authorization
-			e.State = tools.Refused
-			e.Result.State = tools.Refused
 			if e.CurrentRevision != env.Revision {
 				e.PreviousAgent = ""
 			}
 			e.CurrentRevision = env.Revision
-			return insertEffect(ctx, tx, e, fingerprint, false)
+			return refuse(authorization)
 		}
 		if in.Write {
 			if e.CurrentRevision != c.Auth.Revision {
-				denied = grant.ErrStaleRevision
-				e.State = tools.Refused
-				e.Result.State = tools.Refused
-				return insertEffect(ctx, tx, e, fingerprint, false)
+				return refuse(grant.ErrStaleRevision)
 			}
 			if active != "" {
 				return tools.ErrInProgress
@@ -269,11 +279,8 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 			return nil
 		}
 		if errors.Is(err, ErrDenied) || errors.Is(err, ErrNoSurface) {
-			denied = err
-			e.State = tools.Refused
-			e.Result.State = tools.Refused
 			e.Basis = err.Error()
-			return insertEffect(ctx, tx, e, fingerprint, false)
+			return refuse(err)
 		}
 		if err != nil {
 			return err
@@ -289,7 +296,7 @@ func (s *Service) Begin(ctx context.Context, c tools.Call, spec tools.Spec, in t
 	if err != nil {
 		return tools.Ticket{}, err
 	}
-	if errors.Is(denied, tools.ErrApprovalRequired) && s.cfg.ApprovalsChanged != nil {
+	if (approvalsChanged || errors.Is(denied, tools.ErrApprovalRequired)) && s.cfg.ApprovalsChanged != nil {
 		s.cfg.ApprovalsChanged(ctx)
 	}
 	return ticket, denied

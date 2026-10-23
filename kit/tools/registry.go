@@ -187,24 +187,34 @@ func (r *Registry) Dispatch(ctx context.Context, c Call) (Result, error) {
 	case <-ctx.Done():
 		out = outcome{Result{State: Unknown}, ctx.Err()}
 	}
-	switch out.result.State {
-	case Applied:
-		if out.err != nil || in.Write && out.result.Revision == "" {
-			out.result = Result{State: Unknown}
-			out.err = errors.Join(out.err, ErrUnknown)
-		}
-	case Failed, Cancelled:
-	case None, Refused, Unknown:
-		out.result.State = Unknown
-		out.err = errors.Join(out.err, ErrUnknown)
-	default:
-		out.result = Result{State: Unknown}
-		out.err = errors.Join(out.err, ErrUnknown)
-	}
+	out.result, out.err = acceptOutcome(ctx, in, out.result, out.err)
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer finishCancel()
 	if err := r.gate.Finish(finishCtx, ticket, out.result); err != nil {
 		return Result{State: Unknown}, errors.Join(out.err, err)
 	}
 	return out.result, out.err
+}
+
+func acceptOutcome(ctx context.Context, in Input, result Result, err error) (Result, error) {
+	// Both select arms can be ready. Cancellation must win even when select
+	// chose the adapter's late outcome; it cannot become a trusted receipt.
+	if cause := ctx.Err(); cause != nil {
+		return Result{State: Unknown}, errors.Join(err, cause, ErrUnknown)
+	}
+	switch result.State {
+	case Applied:
+		if err != nil || in.Write && result.Revision == "" {
+			result = Result{State: Unknown}
+			err = errors.Join(err, ErrUnknown)
+		}
+	case Failed, Cancelled:
+	case None, Refused, Unknown:
+		result.State = Unknown
+		err = errors.Join(err, ErrUnknown)
+	default:
+		result = Result{State: Unknown}
+		err = errors.Join(err, ErrUnknown)
+	}
+	return result, err
 }
