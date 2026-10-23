@@ -55,6 +55,7 @@ func Migrations() []Migration {
 		{Version: 41, SQL: TimersSchema},
 		{Version: 42, SQL: startersSchema},
 		{Version: 43, SQL: WorkerChoiceSchema},
+		{Version: 44, SQL: doneEvidenceSchema + ResultSchema},
 	}
 }
 

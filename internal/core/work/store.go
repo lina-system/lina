@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 type Service struct {
@@ -101,15 +102,15 @@ func (s *Service) Finish(ctx context.Context, taskID, runID, status string) erro
 
 // Judge and Apply are Core-only APIs. The worker-facing transport must never
 // install handlers for them or accept an arbitrary Event.
-func (s *Service) Judge(ctx context.Context, taskID, receiptID, verdict, evidence string) error {
+func (s *Service) Judge(ctx context.Context, taskID, receiptID, verdict, evidence string, proof ...result.CompletionRequest) error {
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
-	return s.append(ctx, Event{Key: "judge:" + receiptID, TaskID: taskID, Kind: "judged", ReceiptID: receiptID, Value: verdict, Evidence: evidence})
+	return s.append(ctx, Event{Key: "judge:" + receiptID, TaskID: taskID, Kind: "judged", ReceiptID: receiptID, Value: verdict, Evidence: evidence, DoneRequest: firstProof(proof)})
 }
-func (s *Service) Apply(ctx context.Context, taskID, receiptID, evidence string) error {
+func (s *Service) Apply(ctx context.Context, taskID, receiptID, evidence string, proof ...result.CompletionRequest) error {
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
-	return s.append(ctx, Event{Key: "apply:" + receiptID, TaskID: taskID, Kind: "applied", ReceiptID: receiptID, Evidence: evidence})
+	return s.append(ctx, Event{Key: "apply:" + receiptID, TaskID: taskID, Kind: "applied", ReceiptID: receiptID, Evidence: evidence, DoneRequest: firstProof(proof)})
 }
 
 func ledger(ctx context.Context, tx *canon.Tx, id string) ([]Event, error) {
@@ -172,6 +173,7 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 		if err = json.Unmarshal(prior, &old); err != nil {
 			return err
 		}
+		old.Completion = nil // The first committed policy decision is immutable.
 		if reflect.DeepEqual(old, e) {
 			return nil
 		}
@@ -182,6 +184,24 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	}
 	if err = advance(&c, e); err != nil {
 		return err
+	}
+	if c.State == "done" && (e.Kind == "judged" || e.Kind == "applied" || e.Kind == "files_landed") {
+		request := result.CompletionRequest{WorkKind: c.Task.WorkKind}
+		if e.DoneRequest != nil {
+			request = *e.DoneRequest
+		}
+		if c.Task.WorkKind != "" {
+			request.WorkKind = c.Task.WorkKind
+		}
+		if c.Task.Workspace != nil && c.Task.Workspace.Spec.RepositoryID != "" {
+			request.WorkKind = "code"
+		}
+		completion := result.CompletionFor(ctx, request)
+		completion.ID, completion.AgentID = "task:"+e.TaskID+":"+e.Key, c.Task.AgentID
+		e.Completion, c.Completion = &completion, &completion
+		if err := canon.RecordDoneCompletion(ctx, tx, &completion); err != nil {
+			return err
+		}
 	}
 	b, err := json.Marshal(e)
 	if err != nil {
@@ -285,4 +305,11 @@ func (s *Service) Revision(ctx context.Context, id string) (string, error) {
 		return "", err
 	}
 	return digest(string(raw)), nil
+}
+
+func firstProof(proof []result.CompletionRequest) *result.CompletionRequest {
+	if len(proof) == 0 {
+		return nil
+	}
+	return &proof[0]
 }

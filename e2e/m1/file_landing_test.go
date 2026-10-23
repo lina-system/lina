@@ -127,7 +127,7 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		}
 	}
 	destination := t.TempDir()
-	raw = invoke("prepare_work", coreexec.PrepareWork{TaskID: scenario.TaskID, Title: scenario.Title, Done: scenario.Done, Destination: destination}, true)
+	raw = invoke("prepare_work", coreexec.PrepareWork{WorkKind: "document", TaskID: scenario.TaskID, Title: scenario.Title, Done: scenario.Done, Destination: destination}, true)
 	var workspace work.Workspace
 	if err = json.Unmarshal(raw, &workspace); err != nil {
 		t.Fatal(err)
@@ -378,7 +378,20 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	if !c.Applied || c.State != "done" || c.FileEvidence == nil {
 		t.Fatalf("lost evidence: %+v", c)
 	}
+	if c.Completion == nil || c.Completion.State != "claimed" || c.Completion.Label != "not verified" {
+		t.Fatalf("file hash readback replaced required document evidence: %+v", c.Completion)
+	}
 	land(true)
+	reader, readErr := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	var breaches int
+	readErr = reader.QueryRowContext(h.ctx, "SELECT count(*) FROM done_completions WHERE agent_id=? AND state='claimed'", c.Task.AgentID).Scan(&breaches)
+	reader.Close()
+	if readErr != nil || breaches != 1 {
+		t.Fatalf("restart/retry duplicated task claim: %d %v", breaches, readErr)
+	}
 	entries, err = os.ReadDir(destination)
 	if err != nil || len(entries) != wantBundles {
 		t.Fatal("restart duplicated bundle")

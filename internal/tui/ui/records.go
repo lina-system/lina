@@ -175,7 +175,7 @@ func (m *shellModel) refreshRecords() {
 			if row.Blocked {
 				line += " / " + text("blocked")
 			}
-			if recordValueUI(v.query.View) == "board" || recordValueUI(v.query.View) == "list" {
+			if row.State == "claimed" || recordValueUI(v.query.View) == "board" || recordValueUI(v.query.View) == "list" {
 				line += " / " + text("state."+row.State)
 			}
 			width := m.size.Width

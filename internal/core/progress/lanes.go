@@ -47,10 +47,17 @@ func Lanes(ctx context.Context, db *canon.Store, person, after string, agents ma
 			}
 			r := c.Run
 			details := []string{}
+			if c.Completion != nil {
+				details = append(details, c.Completion.Label)
+			}
 			for _, stage := range c.Stages {
 				details = append(details, stage.Name+" ("+stage.Source+"): "+stage.Summary)
 			}
-			lanes = append(lanes, protocol.WorkerLane{LaneID: r.ID, TaskID: c.Task.ID, AgentID: c.Task.AgentID, AgentName: bounded(name), Worker: bounded(r.Worker), ThreadID: bounded(r.ThreadID), TurnID: bounded(r.TurnID), NodeID: bounded(r.NodeID), State: c.State, Title: bounded(c.Task.Title), Generation: strconv.Itoa(r.Generation), Details: details})
+			state := c.State
+			if c.Completion != nil && c.Completion.State == "claimed" {
+				state = "claimed"
+			}
+			lanes = append(lanes, protocol.WorkerLane{LaneID: r.ID, TaskID: c.Task.ID, AgentID: c.Task.AgentID, AgentName: bounded(name), Worker: bounded(r.Worker), ThreadID: bounded(r.ThreadID), TurnID: bounded(r.TurnID), NodeID: bounded(r.NodeID), State: state, Title: bounded(c.Task.Title), Generation: strconv.Itoa(r.Generation), Details: details})
 			for i := range lanes[len(lanes)-1].Details {
 				lanes[len(lanes)-1].Details[i] = bounded(lanes[len(lanes)-1].Details[i])
 			}

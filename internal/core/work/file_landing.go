@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 type FileCopy struct {
@@ -59,6 +60,7 @@ func advanceFiles(c *Card, e Event) error {
 		if e.FileSnapshot.Fingerprint != e.FileSnapshot.Tree.Fingerprint() || len(e.FileSnapshot.Materials) != len(e.FileSnapshot.Tree.Files) {
 			return ErrInvalid
 		}
+		c.Completion = nil
 		c.Receipt = e.Receipt
 		c.FileSnapshot = e.FileSnapshot
 		c.Materials = e.FileSnapshot.Materials
@@ -114,7 +116,8 @@ func advanceFiles(c *Card, e Event) error {
 
 // LandFiles records the manager's judgment of this exact snapshot, then performs
 // the mechanical handover. A model cannot supply file evidence or a new target.
-func (s *Service) LandFiles(ctx context.Context, taskID, receiptID, fingerprint, judgment string) (FileEvidence, error) {
+func (s *Service) LandFiles(ctx context.Context, taskID, receiptID, fingerprint, judgment string, proof ...result.CompletionRequest) (FileEvidence, error) {
+	ctx = withFileProof(ctx, firstProof(proof))
 	s.workspaceMu.Lock()
 	defer s.workspaceMu.Unlock()
 	c, err := s.Get(ctx, taskID)
@@ -327,7 +330,7 @@ func (s *Service) copyFiles(ctx context.Context, c Card) (evidence FileEvidence,
 	}
 	evidence = FileEvidence{Path: copy.Path, Fingerprint: tree.Fingerprint(), Tree: tree}
 	copy.Status = "landed"
-	err = s.append(ctx, Event{Key: fmt.Sprintf("landed:%s:%d", c.Task.ID, copy.Attempt), TaskID: c.Task.ID, Kind: "files_landed", FileCopy: &copy, FileEvidence: &evidence})
+	err = s.append(ctx, Event{Key: fmt.Sprintf("landed:%s:%d", c.Task.ID, copy.Attempt), TaskID: c.Task.ID, Kind: "files_landed", DoneRequest: fileProof(ctx), FileCopy: &copy, FileEvidence: &evidence})
 	return evidence, err
 }
 func syncDir(root *os.Root, path string) error {
@@ -408,4 +411,14 @@ func resolveDestination(path string) (string, error) {
 		resolved = filepath.Join(resolved, suffix[i])
 	}
 	return resolved, nil
+}
+
+type fileProofKey struct{}
+
+func withFileProof(ctx context.Context, proof *result.CompletionRequest) context.Context {
+	return context.WithValue(ctx, fileProofKey{}, proof)
+}
+func fileProof(ctx context.Context) *result.CompletionRequest {
+	proof, _ := ctx.Value(fileProofKey{}).(*result.CompletionRequest)
+	return proof
 }

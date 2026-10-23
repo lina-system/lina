@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 var (
@@ -45,23 +46,24 @@ type Repeat struct {
 // Todo is the typed front matter of a to-do. Title and note stay in Markdown.
 // Empty State on capture means open; other optional flow fields remain unset.
 type Todo struct {
-	State          string          `json:"state"`
-	Checklist      []ChecklistItem `json:"checklist,omitempty"`
-	When           string          `json:"when,omitempty"`
-	Deadline       string          `json:"deadline,omitempty"`
-	DeadlineSource string          `json:"deadline_source,omitempty"`
-	Repeat         *Repeat         `json:"repeat,omitempty"`
-	Important      bool            `json:"important,omitempty"`
-	Tags           []string        `json:"tags,omitempty"`
-	BelongsTo      []string        `json:"belongs_to,omitempty"`
-	Source         string          `json:"source,omitempty"`
-	BlockedBy      []string        `json:"blocked_by,omitempty"`
-	WaitingOn      *WaitingOn      `json:"waiting_on,omitempty"`
-	Assignee       *Assignee       `json:"assignee,omitempty"`
-	PullRequest    string          `json:"pull_request,omitempty"`
-	Issue          string          `json:"issue,omitempty"`
-	ExecutionState string          `json:"execution_state,omitempty"`
-	Priority       string          `json:"priority,omitempty"`
+	Completion     *result.Completion `json:"completion,omitempty"`
+	State          string             `json:"state"`
+	Checklist      []ChecklistItem    `json:"checklist,omitempty"`
+	When           string             `json:"when,omitempty"`
+	Deadline       string             `json:"deadline,omitempty"`
+	DeadlineSource string             `json:"deadline_source,omitempty"`
+	Repeat         *Repeat            `json:"repeat,omitempty"`
+	Important      bool               `json:"important,omitempty"`
+	Tags           []string           `json:"tags,omitempty"`
+	BelongsTo      []string           `json:"belongs_to,omitempty"`
+	Source         string             `json:"source,omitempty"`
+	BlockedBy      []string           `json:"blocked_by,omitempty"`
+	WaitingOn      *WaitingOn         `json:"waiting_on,omitempty"`
+	Assignee       *Assignee          `json:"assignee,omitempty"`
+	PullRequest    string             `json:"pull_request,omitempty"`
+	Issue          string             `json:"issue,omitempty"`
+	ExecutionState string             `json:"execution_state,omitempty"`
+	Priority       string             `json:"priority,omitempty"`
 }
 
 // Go's RFC3339 parser also accepts single-digit hours, comma fractions and
@@ -84,7 +86,7 @@ func validDate(value string) bool {
 }
 func (v Todo) Validate() error {
 	switch v.State {
-	case "", "backlog", "open", "started", "completed", "canceled":
+	case "", "backlog", "open", "started", "completed", "claimed", "canceled":
 	default:
 		return ErrInvalid
 	}
@@ -145,7 +147,7 @@ func (v Todo) Validate() error {
 	return nil
 }
 
-var todoKeys = strings.Fields("state checklist when deadline deadline_source repeat important tags belongs_to source blocked_by waiting_on assignee pull_request issue execution_state priority")
+var todoKeys = strings.Fields("state checklist when deadline deadline_source repeat important tags belongs_to source blocked_by waiting_on assignee pull_request issue execution_state priority completion")
 
 func parseTodo(fields map[string]string) (*Todo, error) {
 	raw := map[string]json.RawMessage{}

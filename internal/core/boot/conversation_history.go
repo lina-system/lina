@@ -18,7 +18,7 @@ const conversationHistorySources = `
         e.rowid AS fallback,1 AS phase,0 AS partial_position
  FROM conv_event e
  WHERE (e.speaker_kind IN ('person','agent','forwarded') OR e.scaffold_kind IN ('interruption','failure','skill_change','persona_change','worker_session','run_handoff','background_notice','worker_result','coding_handoff','timer'))
-   AND coalesce(e.scaffold_kind,'')<>'result'
+   AND (coalesce(e.scaffold_kind,'')<>'result' OR e.speaker_kind='agent')
  UNION ALL
  SELECT e.conversation_id,printf('%s:%d:%d',r.id,p.round+1,p.ordinal),'',p.body,r.id,
         e.rowid,0,p.rowid

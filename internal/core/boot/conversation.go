@@ -60,6 +60,7 @@ import (
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/result"
 	builtin "github.com/thisisjun786/lina/skills"
 )
 
@@ -772,6 +773,16 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			return err
 		}
 		text := e.Body.Text()
+		if e.ScaffoldKind == "result" && e.SpeakerKind == guard.Agent {
+			var value result.Result
+			if err := json.Unmarshal([]byte(text), &value); err != nil {
+				return err
+			}
+			if err := r.publishResult(ctx, value); err != nil {
+				return err
+			}
+			continue
+		}
 		if e.ScaffoldKind == "background_notice" {
 			var notices []lane.Notice
 			if err := json.Unmarshal([]byte(text), &notices); err != nil {
@@ -867,6 +878,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		delete(r.personaGrants, turnID+":expression")
 		delete(r.personaGrants, turnID+":relationship")
 		delete(r.personaGrants, turnID+":coding")
+		for id := range r.personaGrants {
+			if strings.HasPrefix(id, turnID+":results:") {
+				delete(r.personaGrants, id)
+			}
+		}
 		r.personaMu.Unlock()
 
 	}()
@@ -929,6 +945,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.prepareResultTools(turnID, input, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if err := r.prepareRecordTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -944,6 +963,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
+			declarations = append(declarations, coreexec.ResultDeclarations()...)
 			declarations = append(declarations, workDeclarations...)
 			declarations = append(declarations, methodologyDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
@@ -986,6 +1006,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					}
 					bindings[name] = tool
 				}
+			}
+			if err := r.bindDoneEvidence(ctx, persona, bindings); err != nil {
+				return turn.PreparedRequest{}, err
 			}
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {
