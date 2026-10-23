@@ -109,7 +109,8 @@ func TestM3WorkPanelViewsInstalledCore(t *testing.T) {
 									if rows[1] != title || !s.CursorHidden {
 										return false
 									}
-									text := strings.Join(rows[1:fixture.Height-4], "\n")
+									// Only the rule, composer and status are outside the panel.
+									text := strings.Join(rows[1:fixture.Height-3], "\n")
 									shown, total, done := 0, 0, 0
 									for _, row := range expected {
 										line := row.Line
@@ -121,7 +122,7 @@ func TestM3WorkPanelViewsInstalledCore(t *testing.T) {
 											}
 										}
 										found := -1
-										for j, r := range rows[2 : fixture.Height-4] {
+										for j, r := range rows[2 : fixture.Height-3] {
 											if strings.Contains(r, strings.Fields(line.Name)[0]+" ") {
 												if found != -1 {
 													return false
@@ -185,7 +186,7 @@ func TestM3WorkPanelViewsInstalledCore(t *testing.T) {
 									}
 									// Count physical card rows: compact has no second activity row.
 									nonempty := 0
-									for _, r := range rows[2 : fixture.Height-4] {
+									for _, r := range rows[2 : fixture.Height-3] {
 										if strings.TrimSpace(r) != "" {
 											nonempty++
 										}
