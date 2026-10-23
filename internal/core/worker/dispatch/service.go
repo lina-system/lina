@@ -163,7 +163,7 @@ func validate(d Definition) error {
 		return work.ErrInvalid
 	}
 	for _, pattern := range d.WriteArea {
-		if pattern == "" || path.IsAbs(pattern) || strings.Contains(pattern, "..") {
+		if strings.TrimSpace(pattern) == "" || path.IsAbs(pattern) || strings.Contains(pattern, "..") {
 			return work.ErrInvalid
 		}
 		if _, err := path.Match(pattern, "file"); err != nil {
@@ -171,8 +171,8 @@ func validate(d Definition) error {
 		}
 	}
 	for _, ref := range d.DesignRefs {
-		file, _, ok := strings.Cut(ref, "#")
-		if !ok || file == "" || path.Clean(file) != file || strings.HasPrefix(file, "/") || strings.HasPrefix(file, "../") || strings.ContainsAny(file, ":\x00") {
+		file, anchor, ok := strings.Cut(ref, "#")
+		if !ok || strings.TrimSpace(anchor) == "" || file == "" || path.Clean(file) != file || strings.HasPrefix(file, "/") || strings.HasPrefix(file, "../") || strings.ContainsAny(file, ":\x00") {
 			return work.ErrInvalid
 		}
 	}
@@ -236,9 +236,12 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 			}
 			return loop.Result{ID: c.ID, Code: loop.Denied, Output: mustJSON(body)}
 		}
-		r.Definition = d
-		// A durable admission already passed Manage. Rebuilding it here can
-		// change older manager arguments or rerun a completed handoff.
+		base, err := s.baseForAdmission(ctx, origin, c.ID, d)
+		if err != nil {
+			return loop.Result{ID: c.ID, Code: loop.Invalid}
+		}
+		r.Definition, r.BaseCommit = d, base
+		// An existing admission already passed its manager decision.
 		if !replay && s.cfg.Manage != nil {
 			r, err = s.cfg.Manage(ctx, r)
 			if err != nil {
@@ -385,5 +388,5 @@ func (o *output) Write(p []byte) (int, error) {
 func (s *Service) command(ctx context.Context, l lease.Lease, owner *proc.Owner, dir string, args ...string) (string, error) {
 	var out output
 	err := owner.Run(ctx, l, proc.Command{Path: s.cfg.Git, Args: append([]string{"-C", dir}, args...), Env: s.cfg.Environment, Stdout: &out, Stderr: io.Discard})
-	return strings.TrimSpace(out.String()), err
+	return strings.TrimRight(out.String(), "\r\n"), err
 }

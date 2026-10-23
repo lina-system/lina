@@ -96,7 +96,12 @@ func (s *Service) execute(r Record) {
 			return
 		}
 	}
-	base, err := git(repo, "rev-parse", "--verify", d.Base+"^{commit}")
+	baseRef := r.BaseCommit
+	if baseRef == "" {
+		// Legacy queued records predate admission pinning.
+		baseRef = d.Base
+	}
+	base, err := git(repo, "rev-parse", "--verify", baseRef+"^{commit}")
 	if err != nil {
 		return
 	}
@@ -267,20 +272,7 @@ func taskPacket(r Record) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return skills.MethodPacket("Implement this task definition in this worktree using your own setup. Create the named task branch from the detached base. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n"+string(definition), r.Method)
-}
-func hasHeading(body, anchor string) bool {
-	for _, line := range strings.Split(body, "\n") {
-		if !strings.HasPrefix(line, "#") {
-			continue
-		}
-		title := strings.TrimSpace(strings.TrimLeft(line, "#"))
-		slug := strings.ToLower(strings.ReplaceAll(title, " ", "-"))
-		if slug == anchor && anchor != "" {
-			return true
-		}
-	}
-	return false
+	return skills.MethodPacket(fmt.Sprintf("Assignment: %s\nBase commit: %s\nCompletion: report the final worker result and PR; Core derives an adapter receipt from observed evidence. No additional material or memory projections are granted.\n", r.ID, r.BaseCommit)+"Implement this task definition in this worktree using your own setup. Create the named task branch from the detached base. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n"+string(definition), r.Method)
 }
 func allowedFiles(files string, patterns []string) bool {
 	if files == "" {

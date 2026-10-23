@@ -19,6 +19,7 @@ else {
   if (args.join(' ') !== '--output-format stream-json') throw Error('unexpected settings override');
   if (process.env.LINA_RESPONSES_API_KEY) throw Error('Core provider credential leaked');
   const prompt = fs.readFileSync(0, 'utf8');
+  fs.writeFileSync(path.join(root, 'packet'), prompt);
   if (!prompt.includes('result.txt')) throw Error('task packet lost');
   console.log(JSON.stringify({event:'init',conversation_id:'fixture',init:{cwd:process.cwd(),permission_mode:'request-review'}}));
   if (mode === 'exit-zero') process.exit(0);

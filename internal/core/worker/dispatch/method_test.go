@@ -20,7 +20,7 @@ func TestDispatchMethodPacketAndUnknownReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer catalog.Close()
-	s, err := Open(t.Context(), Config{DB: db, Epoch: 1, Skills: catalog})
+	s, err := openService(t, Config{DB: db, Epoch: 1, Skills: catalog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestDispatchMethodPacketAndUnknownReference(t *testing.T) {
 	}
 	// A restarted dispatcher can use the persisted body without rereading an
 	// updated catalog or installing anything in the worker's filesystem.
-	restarted, err := Open(t.Context(), Config{DB: db, Epoch: 1})
+	restarted, err := openService(t, Config{DB: db, Epoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestDispatchReplaysPinnedMethodAfterCatalogRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(t.Context(), Config{DB: db, Epoch: 1, Skills: catalog})
+	s, err := openService(t, Config{DB: db, Epoch: 1, Skills: catalog})
 	if err != nil {
 		t.Fatal(err)
 	}
