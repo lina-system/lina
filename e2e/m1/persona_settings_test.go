@@ -18,6 +18,142 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+func TestPersonaSettingsRetractionThroughInstalledCore(t *testing.T) {
+	t.Parallel()
+	const colorQuote = "We chose violet as your favorite color."
+	const birthdayQuote = "Your birthday is June 12."
+	var calls atomic.Int32
+	packets := make(chan string, 8)
+	memories := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct{ Input []json.RawMessage }
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		n := calls.Add(1)
+		for _, raw := range request.Input {
+			var item struct{ Role, Content string }
+			if json.Unmarshal(raw, &item) == nil && strings.Contains(item.Content, "persona_settings") {
+				if item.Role != "user" {
+					t.Error("settings gained instruction authority")
+				}
+				packets <- item.Content
+			}
+		}
+		if n == 2 || n == 3 || n == 5 {
+			var item struct{ Output string }
+			var result struct {
+				Code   string
+				Output struct {
+					ID                 string
+					Filled, Remembered bool
+				}
+			}
+			if len(request.Input) == 0 || json.Unmarshal(request.Input[len(request.Input)-1], &item) != nil || json.Unmarshal([]byte(item.Output), &result) != nil || result.Code != "ok" {
+				t.Errorf("request %d tool failed: %s", n, item.Output)
+			} else if n == 3 {
+				if !result.Output.Remembered || result.Output.ID == "" {
+					t.Error("source memory was not committed")
+				}
+				memories <- result.Output.ID
+			} else if !result.Output.Filled {
+				t.Error("setting was not filled")
+			}
+		}
+		switch n {
+		case 1:
+			emitPersonaCall(w, "color", "fill_persona_setting", map[string]any{"quote": colorQuote, "name": "likes", "value": "violet"})
+		case 2:
+			emitPersonaCall(w, "source", "record_relationship", map[string]any{"quote": colorQuote})
+		case 4:
+			emitPersonaCall(w, "birthday", "fill_persona_setting", map[string]any{"quote": birthdayQuote, "name": "birthday", "value": "June 12"})
+		default:
+			emitResponse(w, "Acknowledged.", true)
+		}
+	}))
+	defer server.Close()
+	h, start := installedConversationHarness(t, server.URL)
+	core := start(true)
+	c, _ := conversationClient(t, h)
+	person := c.Welcome.PersonID
+	c.Close()
+	h.stopCore(core)
+	agent := seedPersonaAgent(t, h, person)
+	core = start(true)
+	c, conversation := conversationClient(t, h, protocol.Capability{Name: "memory", Version: "1.0"})
+	admittedTurn(t, h, c, conversation, "retract-color", colorQuote)
+	admittedTurn(t, h, c, conversation, "keep-birthday", birthdayQuote)
+	reader, err := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var colorSource, birthdaySource string
+	err = reader.QueryRowContext(h.ctx, "SELECT json_extract(state,'$.setting_sources.likes'),json_extract(state,'$.setting_sources.birthday') FROM agents WHERE id=?", agent).Scan(&colorSource, &birthdaySource)
+	reader.Close()
+	if err != nil || colorSource == "" || birthdaySource == "" || colorSource == birthdaySource {
+		t.Fatal("fills lack independent confirmed sources", err)
+	}
+	for range 5 {
+		select {
+		case <-packets:
+		default:
+			t.Fatal("fill request missing persona settings")
+		}
+	}
+	check := func(id string, visible bool) {
+		t.Helper()
+		admittedTurn(t, h, c, conversation, id, "Which settings are available?")
+		select {
+		case packet := <-packets:
+			if strings.Contains(packet, "violet") != visible || strings.Contains(packet, colorSource) != visible {
+				t.Errorf("color exposure after %s: want visible=%v; packet=%s", id, visible, packet)
+			}
+			if !strings.Contains(packet, "June 12") || !strings.Contains(packet, birthdaySource) {
+				t.Errorf("active value or its provenance lost: %s", packet)
+			}
+		default:
+			t.Fatal("prepared settings missing")
+		}
+	}
+	check("before-forget", true)
+	var memoryID string
+	select {
+	case memoryID = <-memories:
+	default:
+		t.Fatal("missing committed memory receipt")
+	}
+	op := "forget"
+	requestID, err := c.Memory(h.ctx, protocol.MemoryRequest{Operation: &op, AgentID: &agent, ItemID: &memoryID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame.ReplyTo == nil || *frame.ReplyTo != requestID {
+			continue
+		}
+		if frame.Kind != protocol.KindMemoryResult {
+			t.Fatalf("forget failed: %+v", frame)
+		}
+		break
+	}
+	check("after-forget", false)
+	c.Close()
+	h.stopCore(core)
+	core = start(true)
+	c, conversation = conversationClient(t, h)
+	check("after-restart", false)
+	c.Close()
+	h.stopCore(core)
+	if calls.Load() != 8 {
+		t.Fatalf("provider calls=%d, want 8", calls.Load())
+	}
+}
+
 // Seed a synthetic preset while the installed Core is stopped. Owner-authored
 // preset files are never changed; the next Core process uses the normal store.
 func seedPersonaAgent(t *testing.T, h *harness, person string) string {
