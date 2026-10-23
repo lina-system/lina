@@ -27,7 +27,6 @@ func TestM2InstalledWorkerOutcome(t *testing.T) {
 
 func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 	workdir := t.TempDir()
-	initialWaiting := make(chan struct{})
 	release := make(chan struct{})
 	var launches atomic.Int32
 	gate := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +101,13 @@ func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 				emitResponse(w, "Checked result: LINA_WORKER_RESULT", true)
 			} else {
 				if pendingAtRestart {
-					close(initialWaiting)
+					// Force the provider continuation behind the worker-release
+					// barrier: it cannot be evidence that Core started the worker.
+					select {
+					case <-release:
+					case <-r.Context().Done():
+						return
+					}
 					<-r.Context().Done()
 					return
 				}
@@ -137,18 +142,35 @@ func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 		return p
 	}
 	core := start()
-	c, conversation := conversationClient(t, h)
+	c, conversation := conversationClient(t, h, protocol.Capability{Name: "turn_activity", Version: "1.0"})
 	voiced := 0
 	const inputText = "Create result.txt and check its content after the worker finishes."
 	if pendingAtRestart {
 		inputID, text := "delegate", inputText
-		if _, err := c.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &inputID, Text: &text}); err != nil {
+		requestID, err := c.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &inputID, Text: &text})
+		if err != nil {
 			t.Fatal(err)
 		}
-		select {
-		case <-initialWaiting:
-		case <-h.ctx.Done():
-			t.Fatal(h.ctx.Err())
+		// Core publishes the tool outcome before requesting another model
+		// response. The restart boundary must not depend on the provider
+		// continuation, which is deliberately held above.
+		for {
+			frame, err := c.Receive(h.ctx)
+			if err != nil {
+				t.Fatalf("worker start event missing: %v", err)
+			}
+			if frame.ReplyTo != nil && *frame.ReplyTo == requestID && frame.Error != nil {
+				t.Fatalf("worker input refused: %s", frame.Error.Code)
+			}
+			if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active {
+				t.Fatal("initial turn ended before the worker start event")
+			}
+			if activity, ok := frame.Payload.(protocol.ToolActivity); ok && activity.CallID == "start-worker" && activity.Status == protocol.ToolActivityStatusFinished {
+				if activity.Outcome == nil || *activity.Outcome != protocol.ToolActivityOutcomeOk {
+					t.Fatalf("worker start failed: %+v", activity)
+				}
+				break
+			}
 		}
 		close(release)
 		// The ongoing initial turn keeps the completion queued. Observe the

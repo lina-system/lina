@@ -146,15 +146,7 @@ func validateGraph(cards []Card) error {
 			return err
 		}
 	}
-	var depends func(string, string) bool
-	depends = func(id, ancestor string) bool {
-		for _, dep := range tasks[id].Schedule.DependsOn {
-			if dep == ancestor || depends(dep, ancestor) {
-				return true
-			}
-		}
-		return false
-	}
+	depends := dependencyReachability(func(id string) []string { return tasks[id].Schedule.DependsOn })
 	for i, a := range cards {
 		if a.Task.Schedule == nil {
 			continue
@@ -177,6 +169,32 @@ func validateGraph(cards []Card) error {
 		}
 	}
 	return nil
+}
+
+func dependencyReachability(dependencies func(string) []string) func(string, string) bool {
+	// Cache the complete ancestor set, including negative answers, for each
+	// queried task. Shared ancestors are expanded once per source, not per path
+	// or overlapping pair. The cache lives only for this graph validation.
+	ancestors := map[string]map[string]bool{}
+	return func(id, ancestor string) bool {
+		seen, ok := ancestors[id]
+		if !ok {
+			seen = map[string]bool{}
+			pending := []string{id}
+			for len(pending) != 0 {
+				current := pending[len(pending)-1]
+				pending = pending[:len(pending)-1]
+				for _, dep := range dependencies(current) {
+					if !seen[dep] {
+						seen[dep] = true
+						pending = append(pending, dep)
+					}
+				}
+			}
+			ancestors[id] = seen
+		}
+		return seen[ancestor]
+	}
 }
 
 // ValidateSchedule checks a proposed graph before manager admission has effects.
