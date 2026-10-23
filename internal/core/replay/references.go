@@ -99,7 +99,20 @@ func memoryReference(ctx context.Context, tx *canon.Tx, scope Scope, id string, 
 		return Exclusion("restricted_content")
 	}
 	for _, ref := range item.Evidence {
-		if err := evidenceReference(ctx, tx, scope, ref, visiting); err != nil {
+		evidenceScope := scope
+		if item.Kind == memory.Name && item.Holder == memory.All && ref.Kind == memory.Event {
+			// A readable common name authorizes checking its provenance, not
+			// reading another agent's turn. Bind the source agent from canon;
+			// visible still enforces person ownership, privacy and removal.
+			err := tx.QueryRowContext(ctx, `SELECT agent_id FROM conv_event WHERE id=? AND person_id=? AND speaker_kind='person'`, ref.ID, scope.Person).Scan(&evidenceScope.Agent)
+			if errors.Is(err, sql.ErrNoRows) {
+				return Exclusion("restricted_content")
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if err := evidenceReference(ctx, tx, evidenceScope, ref, visiting); err != nil {
 			return err
 		}
 	}

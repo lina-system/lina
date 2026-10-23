@@ -97,6 +97,11 @@ func (s *Store) Start(ctx context.Context, input Request, at time.Time) (Receipt
 		if err = insertMessage(ctx, tx, row, at, material); err != nil {
 			return err
 		}
+		if r.Origin != nil {
+			if err = insertOrigin(ctx, tx, r, at); err != nil {
+				return err
+			}
+		}
 		receipt = Receipt{ID: id, DeliveryID: r.DeliveryID, Inserted: true}
 		return nil
 	})
