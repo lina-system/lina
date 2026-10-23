@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/clientsrv"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
@@ -78,6 +78,10 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 		record.Owner, record.Manager = a.Owner, a.Conversation
 		return record, nil
 	}, Publish: func(ctx context.Context, record dispatch.Record) error {
+		view, parent, err := r.dispatchRecoveryView(ctx, record)
+		if err != nil {
+			return err
+		}
 		managerVerdict := "unverified"
 		if record.State == "decision" {
 			agent, conversation := record.Owner, record.Manager
@@ -106,10 +110,6 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 				}
 			}
 		}
-		view, err := r.router.view(ctx, clientsrv.Session{PersonID: record.Origin.Person}, record.Origin.Agent)
-		if err != nil {
-			return err
-		}
 		text := record.WorkerName() + ": " + record.Code
 		if record.Version != "" {
 			text += " (" + record.Version + "; unverified version)"
@@ -119,10 +119,6 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 		}
 		if record.PR != nil {
 			text += fmt.Sprintf("; %s @ %s; adapter-derived receipt; dev manager: %s; not merged", record.PR.URL, record.PR.Head, managerVerdict)
-		}
-		parent, err := view.journal().Get(ctx, strings.TrimPrefix(record.Origin.Turn, "turn:"))
-		if err != nil {
-			return err
 		}
 		now := time.Now()
 		noticeID := "worker-result:" + record.ID
@@ -145,10 +141,12 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 // Reuse the authenticated conversation approval/question bridge. Dispatch owns
 // adapter events and lifetime; these entries only route owner decisions.
 func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapter worker.Adapter, thread worker.Thread, packet, workdir string) (func(worker.Event), func()) {
-	delivery := newConversationView(r.router.root, record.Origin.Agent, record.Origin.Conversation)
+	delivery, input, err := r.dispatchRecoveryView(r.ctx, record)
+	if err != nil {
+		return func(worker.Event) {}, func() {}
+	}
 	owner := newConversationView(r.router.root, record.Owner, record.Manager)
 	owner.codingDelivery = delivery
-	input, _ := delivery.journal().Get(r.ctx, strings.TrimPrefix(record.Origin.Turn, "turn:"))
 	e := &workerSession{cancelTask: func(ctx context.Context) error { return r.workerDispatch.Cancel(ctx, record.ID) }, adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
 	r.workers.mu.Lock()
 	r.workers.sessions[thread.ID] = e
@@ -181,7 +179,11 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 
 func (r *conversationRuntime) authorizeWorkerRecovery(ctx context.Context, record dispatch.Record) (bool, error) {
 	if !record.Goal {
-		return true, nil
+		view, _, err := r.dispatchRecoveryView(ctx, record)
+		if err != nil {
+			return false, err
+		}
+		return view.channelBinding == nil || view.channelBinding.Scope.Tools, nil
 	}
 	if r.dispatchMu != nil {
 		r.dispatchMu.RLock()
@@ -194,4 +196,21 @@ func (r *conversationRuntime) authorizeWorkerRecovery(ctx context.Context, recor
 		return false, goal.ErrInvalid
 	}
 	return runtime.engine.CanContinue(ctx, record.GoalAction)
+}
+
+// Resolve the persisted source before recovering work or delivering its result.
+// A missing/revoked channel never inherits the personal conversation's authority.
+func (r *conversationRuntime) dispatchRecoveryView(ctx context.Context, record dispatch.Record) (*conversationRuntime, ledger.Event, error) {
+	input, err := r.journal().Get(ctx, strings.TrimPrefix(record.Origin.Turn, "turn:"))
+	if err != nil {
+		return nil, input, err
+	}
+	if record.Origin.Person != r.person || input.AgentID != record.Origin.Agent || input.ConversationID != record.Origin.Conversation {
+		return nil, input, channels.ErrDenied
+	}
+	view, err := r.workerRecoveryView(ctx, input)
+	if err == nil {
+		err = view.validateChannel(ctx)
+	}
+	return view, input, err
 }

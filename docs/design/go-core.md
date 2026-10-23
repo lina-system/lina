@@ -1393,7 +1393,7 @@ See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-a
 for the evidence boundary and account-free acceptance limits.
 
 The #135 recovery path persists worker bindings and the one continuation allowance
-in canon migration 44. Installed Core marks unfinished sessions unknown before
+in canon migration 46. Installed Core marks unfinished sessions unknown before
 admission, resumes their existing Codex thread and reads the exact turn, paging
 its history without starting another turn. Missing or incomplete items, lost
 requests, failed reads and effects without independent evidence remain unknown.
@@ -1407,7 +1407,7 @@ in Waiting for me; keeping it paused or stopping it grants no further execution.
 A person cancellation disables automatic recovery. Restoring a backup disables captured recovery and queued dispatch authority while preserving observations and receipts. All adapters reject interrupt
 reasons outside user, budget, Node policy and the stall rule.
 
-Headless dispatch retains terminal snapshots and attempt-specific receipts. A
+Headless dispatch commits terminal snapshots, attempt-specific receipts and the next recovery state in one canon transaction. Codex dispatch retains the native thread and exact turn before work bookkeeping, so restart can observe the original attempt and recover its real worktree result without launching a turn. Recovery revalidates the originating channel and goal scope; quota replacements do not consume the one ordinary recovery. A
 complete failure with no observed tool activity can release one new attempt in
 the existing worktree, without resetting review or CI allowances. Tool activity
 or a cut stream retains unknown. Claude and Antigravity provide no read-only
@@ -1415,7 +1415,7 @@ persisted-thread API: absent a committed terminal snapshot, restarting Core
 cannot manufacture one or replay their commands. Their second settled failure
 uses the same durable decision surface. `e2e/m2/worker-recovery.json` covers
 SIGKILL, read-only settlement, the once-only continuation, unknown effects and
-restart persistence; `e2e/m2/headless-worker-recovery.json` covers Claude dispatch.
+restart persistence; `e2e/m2/headless-worker-recovery.json` covers Claude dispatch, and `e2e/m2/work-dispatch-recovery.json` covers a dispatched Codex task producing a file, commit and pull request before Core dies.
 
 **C-57 Work definition, choice and splitting (new).**
 

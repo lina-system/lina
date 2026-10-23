@@ -128,3 +128,43 @@ func TestTerminalSnapshotCannotCommitWithoutItsReceipt(t *testing.T) {
 	}
 
 }
+
+func TestQuotaReplacementKeepsOneOrdinaryRecovery(t *testing.T) {
+	thread := worker.Thread{ID: "thread", TurnID: "turn", TaskID: "task", AttemptID: "task:2"}
+	r := Record{ID: "task", State: "unknown", Attempt: 2, Thread: &thread, Tried: []string{"first", "second"}, Packet: "original packet", Snapshot: &worker.ThreadSnapshot{Thread: thread, EffectsKnown: true, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure}}}
+	next := recoveryRecord(r)
+	if next.State != "queued" || next.Recoveries != 1 || next.Attempt != 2 || len(next.Tried) != 0 || next.RecoveryThread == nil {
+		t.Fatalf("quota replacement consumed recovery: %+v", next)
+	}
+	next.Attempt = 3
+	next.Snapshot = r.Snapshot
+	if final := recoveryRecord(next); final.State != "decision" || final.Recoveries != 1 {
+		t.Fatalf("ordinary recovery allowance reset: %+v", final)
+	}
+}
+
+func TestDispatchCancellationSurvivesStaleObservation(t *testing.T) {
+	db := store(t)
+	s := &Service{cfg: Config{DB: db}}
+	r := Record{ID: "task", State: "unknown", Attempt: 1}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO worker_dispatch VALUES('task','turn','repo','unknown',?)", mustJSON(r))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Cancel(t.Context(), r.ID); err != nil {
+		t.Fatal(err)
+	}
+	r.Snapshot = &worker.ThreadSnapshot{Thread: worker.Thread{ID: "thread", TurnID: "turn"}, EffectsKnown: true, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure}}
+	if err := s.save(t.Context(), r); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := s.records(t.Context())
+	if err != nil || len(saved) != 1 || !saved[0].Canceled {
+		t.Fatalf("cancel lost: %+v %v", saved, err)
+	}
+	if next := recoveryRecord(saved[0]); next.State != "finished" || next.Recoveries != 0 {
+		t.Fatalf("canceled work recovered: %+v", next)
+	}
+}

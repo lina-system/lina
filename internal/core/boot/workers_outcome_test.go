@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -307,6 +308,17 @@ func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
 			original := completion
 			original.ID = completion.ParentID
 			original.ParentID = ""
+			original.Surface.Platform, original.Surface.ChatID = source.Platform, source.Chat
+			if _, err := r.router.channelView(ctx, source); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: original.ID, ConversationID: original.ConversationID, AgentID: original.AgentID, PersonID: r.person, Surface: original.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "work request"}); err != nil {
+				t.Fatal(err)
+			}
+			record := dispatch.Record{Origin: dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: source.Conversation, Turn: "turn:" + original.ID}}
+			if allowed, err := r.authorizeWorkerRecovery(ctx, record); err == nil && allowed {
+				t.Fatal("automatic dispatch recovery bypassed channel tool restriction")
+			}
 			recovered, err := r.workerRecoveryView(ctx, original)
 			if err != nil || recovered.channelBinding == nil || *recovered.channelBinding != source || recovered.channelAddress != source.Address {
 				t.Fatalf("worker recovery widened channel authority: %+v %v", recovered, err)
@@ -374,4 +386,12 @@ func TestRecoveredWorkerCompletionQueuesOneResultWithoutWorkerReplay(t *testing.
 		t.Fatalf("failed recovery queued autonomous work: %d %v", admitted, err)
 	}
 
+}
+
+func TestDispatchRecoveryRequiresRetainedOrigin(t *testing.T) {
+	r := controlRuntime(t)
+	record := dispatch.Record{Origin: dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: "turn:missing"}}
+	if allowed, err := r.authorizeWorkerRecovery(t.Context(), record); err == nil && allowed {
+		t.Fatal("missing origin authorized automatic recovery")
+	}
 }

@@ -236,6 +236,10 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 
 	var activity lease.Lease
 	if send {
+		source := e.origin.workerDelivery()
+		if source.validateChannel(ctx) != nil || source.channelBinding != nil && !source.channelBinding.Scope.Tools {
+			return
+		}
 		arguments, _ := json.Marshal(workerArgs{Session: next.ID, Turn: next.Thread.TurnID, Generation: next.Thread.ProcessGeneration, Binding: next.Thread.BindingEpoch, Text: recoveryContinuation})
 		// Recovery inherits the same preset and ownership; a stored role grants no
 		// additional effect authority and an unavailable owner cannot execute.
