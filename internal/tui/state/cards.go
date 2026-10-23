@@ -17,6 +17,7 @@ import (
 // ID, epoch and revision are opaque routing data and are not display fields.
 type Card struct {
 	Topic                          string
+	ConversationID                 string
 	Token                          string
 	pending                        *CardAnswerRequest
 	ID, Epoch                      string
