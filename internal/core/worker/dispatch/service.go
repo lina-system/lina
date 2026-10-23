@@ -33,6 +33,7 @@ import (
 )
 
 type Definition struct {
+	Worker     string   `json:"worker,omitempty"`
 	Kind       string   `json:"kind,omitempty"`
 	Skill      string   `json:"skill,omitempty"`
 	Repository string   `json:"repository"`
@@ -50,6 +51,7 @@ type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
 	Goal           bool                       `json:"goal,omitempty"`
 	Protected      map[string]string          `json:"protected_refs,omitempty"`
+	Result         json.RawMessage            `json:"result,omitempty"`
 	Method         *skills.Body               `json:"method,omitempty"`
 	BaseCommit     string                     `json:"base_commit,omitempty"`
 	ChangeEvidence string                     `json:"change_evidence,omitempty"`
@@ -77,6 +79,13 @@ func (r Record) TaskDefinition() Definition {
 	return d
 }
 
+func (r Record) WorkerName() string {
+	if r.Definition.Worker == "" {
+		return "antigravity"
+	}
+	return r.Definition.Worker
+}
+
 func taskBranch(requested, id string) string {
 	if strings.Contains(requested, id) {
 		return requested
@@ -85,18 +94,19 @@ func taskBranch(requested, id string) string {
 }
 
 type Config struct {
-	Manage      func(context.Context, Record) (Record, error)
-	Skills      *skills.Store
-	DB          *canon.Store
-	Work        *work.Service
-	Area        *work.Area
-	Root, Main  string
-	Epoch       uint64
-	Binary, Git string
-	PR          antigravity.PullRequestReader
-	Environment []string
-	Activities  lease.Leaser
-	Publish     func(context.Context, Record) error
+	Manage       func(context.Context, Record) (Record, error)
+	Skills       *skills.Store
+	DB           *canon.Store
+	Work         *work.Service
+	Area         *work.Area
+	Root, Main   string
+	Epoch        uint64
+	Binary, Git  string
+	ClaudeBinary string
+	PR           antigravity.PullRequestReader
+	Environment  []string
+	Activities   lease.Leaser
+	Publish      func(context.Context, Record) error
 }
 type Service struct {
 	cfg     Config
@@ -174,6 +184,9 @@ func (s *Service) Close(ctx context.Context) error {
 var branchName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 
 func validate(d Definition) error {
+	if d.Worker != "" && d.Worker != "antigravity" && d.Worker != "claude" {
+		return work.ErrInvalid
+	}
 	if !filepath.IsAbs(d.Repository) || filepath.Clean(d.Repository) != d.Repository || !branchName.MatchString(d.Base) || !branchName.MatchString(d.Branch) || d.Branch == d.Base || d.Branch == "main" || d.Branch == "master" || d.Branch == "dev" || strings.TrimSpace(d.What) == "" || strings.TrimSpace(d.Why) == "" || strings.TrimSpace(d.Done) == "" || len(d.Scope) == 0 || len(d.DesignRefs) == 0 || len(d.WriteArea) == 0 {
 		return work.ErrInvalid
 	}
@@ -391,7 +404,7 @@ func (s *Service) sync() {
 	}
 }
 func Declaration() provider.ToolDecl {
-	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to the person's installed Antigravity worker. Core allocates a detached task worktree from a local GitHub clone. It appends the generated task ID to the requested branch unless already present, and returns the assigned branch. The worker creates that branch. Supply the complete authorized task, design sections, done condition and write area. The dev manager checks the definition before Core returns a task receipt; completion returns to this conversation. The worker uses its own permissions and login. Optional kind selects a development method from skill_index methodology=dev; skill overrides it with one catalog ID. Core includes that version in the task packet.","parameters":{"type":"object","properties":{"kind":{"type":"string"},"skill":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
+	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to the person's installed worker (antigravity by default; worker=claude selects Claude Code). Core allocates a detached task worktree from a local GitHub clone. It appends the generated task ID to the requested branch unless already present, and returns the assigned branch. The worker creates that branch. Supply the complete authorized task, design sections, done condition and write area. The dev manager checks the definition before Core returns a task receipt; completion returns to this conversation. The worker uses its own permissions and login. Optional kind selects a development method from skill_index methodology=dev; skill overrides it with one catalog ID. Core includes that version in the task packet.","parameters":{"type":"object","properties":{"worker":{"type":"string","enum":["antigravity","claude"]},"kind":{"type":"string"},"skill":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
 }
 
 type output struct{ bytes.Buffer }

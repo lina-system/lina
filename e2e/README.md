@@ -401,6 +401,14 @@ is found through search and read by LINA id, source-id lookup fails, a new resul
 is saved, and restart keeps the imported identity. This operator-only test and
 fixture are excluded from release archives together with the takeover tool.
 
+`m2/claude-worker.json` runs `dispatch_work` with `worker=claude` through
+installed Core. A headless fixture worker writes and commits a real artifact,
+opens a synthetic PR and reports a final result while staying alive. Core must
+reap it, retain the result and PR in an adapter-derived receipt, and preserve the
+conversation result on restart. Other cases cover permission denial, exit zero
+without a result and pending PR checks. No personal account or GitHub write is
+used. Run with `go test ./e2e/m1 -run '^TestM2ClaudeWorkerThroughInstalledCore$'`.
+
 `m3/antigravity.json` dispatches through installed Core's conversation tool,
 starts its supervised headless worker in a new worktree, produces a real file
 and commit, and verifies a recorded PR at that head. Separate cases cover soft

@@ -162,7 +162,11 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err != nil {
 		return
 	}
-	adapter := antigravity.New(antigravity.Config{Binary: s.cfg.Binary, Environment: s.cfg.Environment, Epoch: s.cfg.Epoch, Leaser: s.cfg.Activities})
+	adapter, observation, err := s.attempt(r.WorkerName())
+	if err != nil {
+		r.Code = "worker_unavailable"
+		return
+	}
 	defer adapter.Close(context.Background())
 	r.Version, err = adapter.Version(ctx)
 	if err != nil {
@@ -176,7 +180,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err != nil {
 		return
 	}
-	run := work.Run{ID: r.ID + ":1", TaskID: r.ID, Generation: 1, Worker: "antigravity", ThreadID: thread.ID, TurnID: thread.TurnID, NodeID: s.cfg.Main}
+	run := work.Run{ID: r.ID + ":1", TaskID: r.ID, Generation: 1, Worker: adapter.Name(), ThreadID: thread.ID, TurnID: thread.TurnID, NodeID: s.cfg.Main}
 	if err = service.Start(ctx, run); err != nil {
 		return
 	}
@@ -203,8 +207,21 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		return
 	}
 	r.State = "finished"
-	result := adapter.Result()
-	r.Denied = result.DeniedActions
+	rawResult, denied := observation()
+	observed, err := secrets.Mask(string(mustJSON(struct {
+		Result json.RawMessage            `json:"result"`
+		Denied []antigravity.DeniedAction `json:"denied_actions"`
+	}{rawResult, denied})))
+	if err != nil {
+		r.Code = "invalid_result"
+		return
+	}
+	// Mask before assigning to the record: the deferred journal save must not
+	// retain the unmasked final response even if later PR reads fail.
+	if err = json.Unmarshal([]byte(observed.Text()), &r); err != nil {
+		r.Code = "invalid_result"
+		return
+	}
 	status, outcome := "completed", "ready_for_review"
 	if finish.Status != worker.Done {
 		status, outcome = "failed", "failed"
