@@ -367,11 +367,12 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
 		release = false // A launch error may have started a turn; retain its reservation.
-		thread, err := adapter.Start(ctx, process, worker.StartSpec{TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
+		thread, err := entry.start(ctx, worker.StartSpec{TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
 		if err != nil {
 			activity.Release()
-			adapter.Close()
-			process.Release()
+			if entry.reservation == "" {
+				return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+			}
 			return tools.Result{State: tools.Unknown, Body: workerError(err)}, err
 		}
 		entry.thread = thread
@@ -560,6 +561,25 @@ func (e *workerSession) result(ctx context.Context, t worker.Thread) (tools.Resu
 	}
 	return e.encode(snap), nil
 }
+func (e *workerSession) start(ctx context.Context, spec worker.StartSpec) (worker.Thread, error) {
+	thread, err := e.adapter.Start(ctx, e.process, spec)
+	if err != nil {
+		closeErr := e.close()
+		e.process.Release()
+		// A definitive refusal dispatched no initial turn. Only successful
+		// process cleanup permits releasing its durable directory reservation.
+		if errors.Is(err, worker.ErrInputRefused) && closeErr == nil {
+			releaseErr := e.origin.work.ReleaseWorker(context.WithoutCancel(ctx), e.reservation)
+			if releaseErr == nil {
+				e.reservation = ""
+			}
+			err = errors.Join(err, releaseErr)
+		}
+		err = errors.Join(err, closeErr)
+	}
+	return thread, err
+}
+
 func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
 	raw, _ := json.Marshal(workerResult{Live: true, Owner: e.origin.agent, Manager: e.origin.conversation, Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}

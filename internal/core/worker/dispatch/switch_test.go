@@ -324,3 +324,73 @@ func TestDispatchSwitchFencesQuotaReplacement(t *testing.T) {
 		})
 	}
 }
+
+type connectionSwitchAdapter struct {
+	quotaStopAdapter
+	name, code string
+}
+
+func (a *connectionSwitchAdapter) Name() string { return a.name }
+func (a *connectionSwitchAdapter) Start(ctx context.Context, l lease.Lease, spec worker.StartSpec) (worker.Thread, error) {
+	thread, err := a.quotaStopAdapter.Start(ctx, l, spec)
+	event := <-a.events
+	event.Finish = &worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: a.code}
+	a.events <- event
+	return thread, err
+}
+
+func TestDispatchSwitchConnectionEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, code string
+		terminal   bool
+	}{
+		{"claude", "invalid_message", false},
+		{"claude", "session_mismatch", false},
+		{"claude", "invalid_result", false},
+		{"claude", "invalid_init", false},
+		{"claude", "invalid_usage", false},
+		{"claude", "missing_result", false},
+		{"antigravity", "missing_result", false},
+		{"codex", "connection_lost", false},
+		{"codex", "connection", true},
+	} {
+		t.Run(tc.name+"/"+tc.code, func(t *testing.T) {
+			s, r, _, _, _ := switchDispatchFixture(t, false)
+			r.Definition.Worker = tc.name
+			if err := s.save(t.Context(), r); err != nil {
+				t.Fatal(err)
+			}
+			w := externalDispatchTask(t, s, []string{r.Definition.Repository}, true)
+			s.cfg.Workers = []Factory{{Name: tc.name, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+				a := &connectionSwitchAdapter{quotaStopAdapter: quotaStopAdapter{events: make(chan worker.Event, 1)}, name: tc.name, code: tc.code}
+				return a, func(context.Context) error { return nil }, nil
+			}}}
+			s.execute(s.ctx, r)
+			records, err := s.records(t.Context())
+			if err != nil || len(records) != 1 {
+				t.Fatal(records, err)
+			}
+			wantState := "unknown"
+			if tc.terminal {
+				wantState = "finished"
+			}
+			if records[0].State != wantState || records[0].Code != tc.code {
+				t.Errorf("connection evidence misclassified: state=%s code=%s", records[0].State, records[0].Code)
+			}
+			if err := w.Recover(t.Context(), "restart"); err != nil {
+				t.Fatal(err)
+			}
+			card, err := w.Get(t.Context(), r.ID)
+			if err != nil || card.Active == tc.terminal || (card.Receipt != nil) != tc.terminal {
+				t.Errorf("connection outcome lost: card=%+v err=%v", card, err)
+			}
+			if err := w.RequestRollback(t.Context(), "switch", "owner", "connection failure"); err != nil {
+				t.Fatal(err)
+			}
+			err = w.CompleteRollback(t.Context(), "switch", "owner", "check observed outcome")
+			if tc.terminal && err != nil || !tc.terminal && !errors.Is(err, work.ErrActiveRun) {
+				t.Fatal("rollback ignored connection evidence", err)
+			}
+		})
+	}
+}

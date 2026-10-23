@@ -395,6 +395,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			}
 			c.Close()
 			h.stopCore(core)
+			if scenario.Worker == "claude" && claudeUnknownCode(workerCase) != "" {
+				assertClaudeReceipt(t, h, workerCase)
+			}
 			if scenario.CompletionEvents {
 				assertWorkCompletion(t, h)
 			}
