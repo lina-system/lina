@@ -453,19 +453,41 @@ func sameActionValue(left, right json.RawMessage) bool {
 	}
 	if number, ok := a.(json.Number); ok {
 		other, ok := b.(json.Number)
-		if !ok {
-			return false
-		}
-		x, ok := new(big.Rat).SetString(string(number))
-		if !ok {
-			return false
-		}
-		y, ok := new(big.Rat).SetString(string(other))
-		return ok && x.Cmp(y) == 0
+		return ok && sameNumber(number, other)
 	}
 	x, _ := json.Marshal(a)
 	y, _ := json.Marshal(b)
 	return bytes.Equal(x, y)
+}
+
+// sameNumber compares exact decimal values. Extreme exponents fall back to the
+// literal text so a client cannot force a huge rational allocation.
+func sameNumber(left, right json.Number) bool {
+	a, ok := exactRational(left)
+	if !ok {
+		return string(left) == string(right)
+	}
+	b, ok := exactRational(right)
+	if !ok {
+		return string(left) == string(right)
+	}
+	return a.Cmp(b) == 0
+}
+
+func exactRational(number json.Number) (*big.Rat, bool) {
+	text := string(number)
+	if len(text) > 4096 {
+		return nil, false
+	}
+	if index := strings.IndexAny(text, "eE"); index >= 0 {
+		exponent := text[index+1:]
+		value, err := strconv.Atoi(exponent)
+		if err != nil || value < -4096 || value > 4096 {
+			return nil, false
+		}
+	}
+	rational, ok := new(big.Rat).SetString(text)
+	return rational, ok
 }
 
 func decodeNumberValue(raw json.RawMessage) (any, error) {

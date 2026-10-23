@@ -256,6 +256,7 @@ func TestSurfaceConstantActionNumbersKeepPrecision(t *testing.T) {
 		{`9007199254740993.0`, true},
 		{`9007199254740992`, false},
 		{`9007199254740994`, false},
+		{`1e1000000000`, false},
 	} {
 		_, err := s.ValidateAction("send", map[string]json.RawMessage{"fixed": json.RawMessage(tc.value)})
 		if tc.ok && err != nil {
