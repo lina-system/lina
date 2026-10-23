@@ -898,11 +898,15 @@ there is no separate client endpoint.
   targets are owner-scoped and a recursive index query rejects cycles under the
   repository writer lock. The existing revision CAS and durable tool receipts
   apply unchanged. The tool cannot set work execution state or complete a
-  delegated task.
+  delegated task. Planning-field edits may preserve an already `completed`
+  state; only transitions into completion require the delegated-work guard.
+  Execution observations remain protected on every edit.
 - The today fixture includes overdue starts, deadlines, current recurring
   occurrences, undated tasks, terminal states and zone boundaries. The installed
   Core scenario `e2e/m2/todos.json` exercises saves, date and cycle refusals,
   today/upcoming/anytime queries, rescheduling and restart after index loss.
+  `e2e/m2/todo-completed-planning.json` covers editing a completed delegated
+  to-do through Core and retaining its fields and completion after restart.
   Recurrence advancement, candidates and memo promotion remain #156.
 - Recurrence is Core's own parser for the subset (daily, weekly, monthly, yearly; interval; by-day; by-month-day; count; until) plus the from-completion flag. `Next(rule, from, zone)` advances only to a future occurrence. A table-driven corpus covers month ends and zone gaps.
 - Reminders and pre-warnings are timer rows (C-26).
