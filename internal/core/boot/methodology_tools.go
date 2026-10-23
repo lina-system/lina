@@ -84,7 +84,7 @@ func methodologyToolSchema(name string, raw json.RawMessage) (tools.Input, error
 	return tools.Input{Arguments: canonical, Target: target, What: name, Where: target, ScopeKey: target, Write: name == "repair_records_index", Undoable: true}, nil
 }
 
-func (r *conversationRuntime) prepareMethodologyTools(turnID string, bindings map[string]loop.Tool) error {
+func (r *conversationRuntime) prepareMethodologyTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	for _, name := range []string{"calculate", "observe_health", "repair_records_index"} {
 		class := tools.Research
@@ -120,7 +120,7 @@ func (r *conversationRuntime) prepareMethodologyTools(turnID string, bindings ma
 			raw, _ := json.Marshal(h)
 			return tools.Result{State: tools.Applied, Body: raw, Revision: h.Revision}, nil
 		}); err != nil {
-			return err
+			return nil, err
 		}
 		validated := turn.Tool(registry, spec, tools.Call{}, turnID)
 		bindings[name] = loop.Tool{Validate: validated.Validate, Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
@@ -146,7 +146,7 @@ func (r *conversationRuntime) prepareMethodologyTools(turnID string, bindings ma
 			return turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID).Execute(ctx, c)
 		}}
 	}
-	return nil
+	return methodologyDeclarations(), nil
 }
 
 func methodologyDeclarations() []provider.ToolDecl {
