@@ -10,6 +10,7 @@ import (
 )
 
 func TestGroupChangeIsStaleAndAnswerRollsBackWholeGroup(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, true, nil)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {

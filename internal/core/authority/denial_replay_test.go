@@ -15,8 +15,10 @@ import (
 )
 
 func TestRefusalReplaysTypedDenialAfterRestart(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"denied", "no_surface", "stale_revision", "granted_revision", "read_stale_revision", "read_granted_revision", "preset"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			f := setup(t)
 			read := kind == "read_stale_revision" || kind == "read_granted_revision"
 			marked := !read && kind != "stale_revision" && kind != "granted_revision"
@@ -111,8 +113,10 @@ func TestRefusalReplaysTypedDenialAfterRestart(t *testing.T) {
 }
 
 func TestRefusalStopsPendingApproval(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"no_surface", "stale_revision", "approved_stale_revision"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			f := setup(t)
 			f.register(t, true, nil)
 			if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {

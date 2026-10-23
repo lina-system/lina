@@ -1360,10 +1360,13 @@ the two-mode comparison. S11 requires every width observation from 100 through
 greater width in that range. SIGINT and SIGTERM cancel the scenario runner through
 its terminal-restoration paths.
 
-LN-85 delivers the harness and scenario validation. The confirmed terminal matrix,
-owner-run S1–S7 and S9–S11 evidence, and final library decision remain in
-[follow-up #371](https://github.com/thisisjun786/lina/issues/371), including #87's
-outstanding acceptance. Harness completion does not establish the spike gate.
+LN-85 delivers the harness and scenario validation. [#86](https://github.com/thisisjun786/lina/issues/86)
+records the proposed terminal matrix in `evidence/tui-spike/terminals.json`.
+Owner confirmation of that list is still pending and is the first Done-when item
+of [follow-up #371](https://github.com/thisisjun786/lina/issues/371), which also
+owns the confirmed matrix, owner-run S1–S7 and S9–S11 evidence and the final
+library decision, including #87's outstanding acceptance. Harness completion
+does not establish the spike gate.
 
 Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower frame rate while streaming and a frame memo. F2: a row-string renderer on Ultraviolet with changed rows only, in synchronized output. F3: tcell v3. The reducer, render, layout and `clientapi` do not change in any fallback.
 
@@ -1545,7 +1548,7 @@ reference links, link scheme filtering, cache reuse, authoritative replacement,
 and Korean/emoji wrapping and resize in both width modes. These are automated
 rendering checks; they do not replace the physical terminal and IME spike.
 
-**Tokens and theme.** `internal/design` is generated from the DTCG files in `design/tokens/` ([surfaces.md](surfaces.md#one-design-language)). `node scripts/tokens.mjs` writes Go values, CSS, the SVG mark and the token tables in `DESIGN.md`. Its `--check` mode regenerates in memory and fails on drift without changing the checkout. Foundation runs it for TUI/design component changes as well as token or automation changes ([foundation.md](../policy/foundation.md)).
+**Tokens and theme.** `internal/design` is generated from the DTCG files in `design/tokens/` ([surfaces.md](surfaces.md#one-design-language)). `node scripts/tokens.mjs` writes Go values, CSS, the launcher panel's Swift constants, the SVG mark and the token tables in `DESIGN.md`. Its `--check` mode regenerates in memory and fails on drift without changing the checkout. Foundation runs it for TUI/design component changes as well as token or automation changes ([foundation.md](../policy/foundation.md)).
 
 - Raw presentation colours, ANSI colour numbers and glyph literals are banned in production `internal/tui` source. The token checker scans literals and colour constructors; comments, test fixtures and numeric Unicode measurement data are not presentation values. `tui/ui` turns generated semantic colours, spacing and glyphs into Lip Gloss styles.
 - Contrast checks require at least 4.5:1 for text, muted text and accent on canvas and surface, in light, dark and high contrast. The source also specifies tested 256-colour and 16-colour mappings. Dark ANSI16 uses bright white for the accent where standard blue cannot pass; user-redefined ANSI palettes can change physical contrast. Hairlines are decorative, never the only state indicator.

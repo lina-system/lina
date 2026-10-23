@@ -31,6 +31,10 @@ func (Secret) MarshalText() ([]byte, error) { return []byte(Placeholder), nil }
 func (Secret) MarshalJSON() ([]byte, error) { return []byte(`"` + Placeholder + `"`), nil }
 func (Secret) LogValue() slog.Value         { return slog.StringValue(Placeholder) }
 
+// Ready reports whether a value is present. It reveals only that, never the
+// value, so a caller can refuse a request that would carry an empty credential.
+func (s Secret) Ready() bool { return s.value != nil && s.value() != "" }
+
 // Environment is one of the two plaintext exit points. The caller must have
 // authorized this credential for the destination process, outside the sandbox.
 func Environment(name string, value Secret) (string, error) {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
-// Check local file targets and Markdown heading anchors in tracked Markdown and LICENSE.
+// Check local file targets and Markdown heading anchors in tracked Markdown and LICENSE,
+// and reject tracked paths that differ only by case.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -143,6 +144,22 @@ function links(text) {
   return destinations;
 }
 
+// A case-insensitive filesystem (default macOS APFS) holds only one of two paths that differ
+// only by case, so such a tree cannot be checked out cleanly. ASCII folding matches the
+// `tr A-Z a-z` diagnostic that found the first collision.
+const folded = new Map();
+for (const name of tracked) {
+  const key = name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  const paths = folded.get(key);
+  if (paths) paths.push(name);
+  else folded.set(key, [name]);
+}
+for (const paths of folded.values()) {
+  if (paths.length < 2) continue;
+  paths.sort();
+  for (const name of paths.slice(1)) failures.push(`${paths[0]} and ${name}: tracked paths differ only by case`);
+}
+
 for (const source of documents) {
   if (!existsSync(path.join(root, source))) {
     failures.push(`${source}: tracked document is missing`);
@@ -154,5 +171,5 @@ if (failures.length) {
   console.error(failures.join('\n'));
   process.exitCode = 1;
 } else {
-  console.log(`Checked ${documents.length} tracked documents: local file targets and Markdown heading anchors OK (external URLs not checked).`);
+  console.log(`Checked ${documents.length} tracked documents and ${tracked.size} tracked paths: local file targets and Markdown heading anchors OK, no case-only path collisions (external URLs not checked).`);
 }

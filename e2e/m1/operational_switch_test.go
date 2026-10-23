@@ -30,16 +30,16 @@ import (
 // TestM3OperationalSwitch (m3/operational-switch.json) exercises the owner-only
 // switch on the real Core socket: missing approval, a failed transfer with
 // explicit service restoration, a held external task, successful transfer, and
-// a real Core-launched fixture worker output and receipt. It covers locally
-// refused worker input, a confirmed terminal provider connection failure,
-// restart with an outstanding execution, rollback refusal until drain, and
-// preservation of originals, Git branches, worktree registrations, receipts and
-// journals after explicit rollback. The external coordinator is synthetic; its
-// call log checks that approval precedes stop and durable LINA release precedes
-// external restart. Imported tasks and receipt facts use the engine API while
-// Core is stopped, as in the M2 ledger scenario; worker start, interrupt,
-// resume and result observation use the running Core tool registry and a
-// separate stdio process.
+// a real Core-launched fixture worker output and receipt. It covers worker
+// input held while the session waits for an answer, a confirmed terminal
+// provider connection failure, restart with an outstanding execution, rollback
+// refusal until drain, and preservation of originals, Git branches, worktree
+// registrations, receipts and journals after explicit rollback. The external
+// coordinator is synthetic; its call log checks that approval precedes stop and
+// durable LINA release precedes external restart. Imported tasks and receipt
+// facts use the engine API while Core is stopped, as in the M2 ledger scenario;
+// worker start, interrupt, resume and result observation use the running Core
+// tool registry and a separate stdio process.
 //
 // Live switch operations go through the real Core binary. The executor fixture
 // uses the same work admission API as the engine and a real child process; only
@@ -172,13 +172,29 @@ func testOperationalSwitch(t *testing.T, outcome string) {
 				return
 			}
 			expected := "ok"
-			if n == 2 || n == 5 {
+			if n == 2 {
 				expected = "failed"
 			}
 			if result.Code != expected {
 				t.Errorf("worker step %d: %s", n, item.Output)
 				emitResponse(w, "failed", true)
 				return
+			}
+			if n == 5 {
+				// The session waits for an answer, so the follow-up is stored
+				// and never reaches the worker until the session resumes.
+				messages, _ := result.Output["steering"].([]any)
+				if len(messages) != 1 {
+					t.Errorf("waiting input has no receipt: %s", item.Output)
+					emitResponse(w, "failed", true)
+					return
+				}
+				receipt, _ := messages[0].(map[string]any)
+				if receipt["state"] != "held" || receipt["reason"] != "waiting_for_answer" {
+					t.Errorf("waiting input was delivered: %s", item.Output)
+					emitResponse(w, "failed", true)
+					return
+				}
 			}
 			if n >= 4 && n != 5 {
 				control = map[string]any{"session": result.Output["session"], "turn": result.Output["turn"], "generation": result.Output["generation"], "binding": result.Output["binding"]}
@@ -204,8 +220,8 @@ func testOperationalSwitch(t *testing.T, outcome string) {
 			emit("worker_interrupt", control)
 		case 6, 8:
 			if n == 6 && outcome == "refused_input" {
-				// Stop before another input can reconcile the idle turn and
-				// hide a reservation left by the refused input.
+				// Stop before another input resumes the idle turn and can
+				// release the reservation the held message must not retain.
 				emitResponse(w, "worker interrupted", true)
 				return
 			}
@@ -338,17 +354,17 @@ func testOperationalSwitch(t *testing.T, outcome string) {
 	admittedTurn(t, h, conversation, conversationID, "switch-execute", "Stop this worker after starting it, then resume to produce the result")
 	if outcome == "refused_input" {
 		if providerCalls.Load() != 6 {
-			t.Fatal("refused input path incomplete", providerCalls.Load())
+			t.Fatal("held input path incomplete", providerCalls.Load())
 		}
 		// The observer writes the completion after releasing the turn's
 		// reservation. Await that durable boundary, never a fixed delay.
 		waitWorkerCanon(t, h, "SELECT count(*) FROM conv_event WHERE scaffold_kind='worker_completion'", 1)
 		if err = procedure.Rollback(h.ctx); err != nil {
-			t.Fatal("refused input retained the interrupted turn's reservation", err)
+			t.Fatal("held input retained the interrupted turn's reservation", err)
 		}
 		status, err := call(h.ctx, protocol.WorkSwitchRequest{Operation: "switch_status", SwitchID: scenario.SwitchID})
 		if err != nil || status.State != "rolled_back" || !enabled || !running {
-			t.Fatalf("refused input rollback: %+v enabled=%v running=%v %v", status, enabled, running, err)
+			t.Fatalf("held input rollback: %+v enabled=%v running=%v %v", status, enabled, running, err)
 		}
 		conversation.Close()
 		stop()

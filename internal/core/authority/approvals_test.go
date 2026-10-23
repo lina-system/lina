@@ -26,6 +26,7 @@ func pending(t *testing.T, f *fixture) authority.Approval {
 	return rows[0]
 }
 func TestApprovalPresentationIsComputedFromValidatedArguments(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, true, nil)
 	f.call.Args = json.RawMessage(`{"target":"document","body":"hello","what":"pretend read","where":"elsewhere","undoable":false}`)
@@ -79,6 +80,7 @@ func (f *fixture) registerNetwork(t *testing.T) {
 	}
 }
 func TestNetworkStandingGrantRevokesInOneAction(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.registerNetwork(t)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -120,6 +122,7 @@ func TestNetworkStandingGrantRevokesInOneAction(t *testing.T) {
 	}
 }
 func TestPendingApprovalStopsAtRestartAndLateAnswerIsStale(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, true, nil)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -153,8 +156,10 @@ func TestPendingApprovalStopsAtRestartAndLateAnswerIsStale(t *testing.T) {
 	}
 }
 func TestApprovalRejectsTextWrongOwnerAndPluginStandingGrant(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"text", "wrong-owner", "unauthenticated", "descendant", "old-epoch", "plugin-always"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			f := setup(t)
 			f.register(t, true, nil)
 			if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -187,6 +192,7 @@ func TestApprovalRejectsTextWrongOwnerAndPluginStandingGrant(t *testing.T) {
 	}
 }
 func TestNetworkGrantAgentRestrictionAndChannelChoices(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.registerNetwork(t)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -211,6 +217,7 @@ func TestNetworkGrantAgentRestrictionAndChannelChoices(t *testing.T) {
 }
 
 func TestApprovalCannotAuthorizeChangedPresentation(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, true, nil)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -240,6 +247,7 @@ func TestApprovalCannotAuthorizeChangedPresentation(t *testing.T) {
 	}
 }
 func TestStandingGrantPersistsButRevokedGrantCannotAuthorizeApprovedRequest(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.registerNetwork(t)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -285,6 +293,7 @@ func TestStandingGrantPersistsButRevokedGrantCannotAuthorizeApprovedRequest(t *t
 	}
 }
 func TestEmptyNamedAgentScopeDoesNotBecomeAllAgents(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.registerNetwork(t)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -300,6 +309,7 @@ func TestEmptyNamedAgentScopeDoesNotBecomeAllAgents(t *testing.T) {
 	}
 }
 func TestDeniedApprovalRecordsRefusal(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, true, nil)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -327,6 +337,7 @@ func TestDeniedApprovalRecordsRefusal(t *testing.T) {
 }
 
 func TestNoApprovalSurfaceRefusesAndRecordsEffect(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.surfaceAvailable = false
 	f.register(t, true, nil)
@@ -344,6 +355,7 @@ func TestNoApprovalSurfaceRefusesAndRecordsEffect(t *testing.T) {
 }
 
 func TestOnlyOneConcurrentApprovalAnswerIsAccepted(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, true, nil)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -376,6 +388,7 @@ func TestOnlyOneConcurrentApprovalAnswerIsAccepted(t *testing.T) {
 	}
 }
 func TestInterruptedClaimBecomesUnknownAndRetainsTarget(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	s := spec(false)
 	in, err := s.Schema(f.call.Args)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -24,8 +25,13 @@ func TestAlphaOwnerWorkerCrash(t *testing.T) {
 	h, start := alphaOwnerHarness(t, true)
 	workdir := t.TempDir()
 	core := start()
-	c, _ := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
+	c, conversation := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
 	terminal, _ := h.startConversationTUI(120, 34, "TERM=xterm-256color", "LC_ALL=ko")
+	defer func() {
+		if t.Failed() {
+			alphaSaveScreen(t, terminal, "crash-failed", terminal.screen.Snapshot(), "")
+		}
+	}()
 	alphaScreen(t, h, terminal, "fresh", func(s string) bool { return strings.Contains(s, "Ctrl+D") }, "")
 	input := fmt.Sprintf("Codex 작업자에게 문서 검토를 맡겨 줘. 작업 폴더는 %s야. 주제는 '소규모 텃밭의 물 관리'이고, 서로 다른 상황 40개를 번호 순서대로 각각 세 문장으로 분석하게 해. 파일이나 명령 실행은 필요 없고 도구 없이 답변 텍스트만 작성해. 추가 질문 없이 바로 시작해. 결과는 네가 한국어로 전달해 줘.", workdir)
 	h.keys(terminal, "\x1b[200~"+input+"\x1b[201~\r")
@@ -78,7 +84,17 @@ func TestAlphaOwnerWorkerCrash(t *testing.T) {
 		t.Fatalf("real worker did not recover successfully: state=%s retries=%d", after.State, after.Retries)
 	}
 	alphaWaitOwnerRecovery(t, h, func(_ []recovery.Record) bool { return workerRecoveryReactions(t, h) == 1 })
-	alphaScreen(t, h, terminal, "recovered-result", func(s string) bool { return strings.Contains(s, "연결됨") && strings.Contains(s, "텃밭") }, "")
+	reply := alphaOwnerRecoveredReply(t, h, conversation, after)
+	alphaScreen(t, h, terminal, "recovered-result", func(s string) bool { return alphaRecoveredReplyVisible(input, reply.Body, s) }, "")
+	if directory := os.Getenv("LINA_ALPHA_CAPTURES"); directory != "" {
+		raw, err := json.MarshalIndent(reply, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, t.Name(), "recovered-reply.json"), append(raw, '\n'), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	output, sessions := alphaLastWorkerOutput(t, h)
 	if strings.TrimSpace(output) == "" || sessions != 1 {
 		t.Fatal("recovery omitted the real result or started a second worker session")
@@ -95,10 +111,122 @@ func TestAlphaOwnerWorkerCrash(t *testing.T) {
 	if workerRecoveryReactions(t, h) != 1 {
 		t.Fatal("second restart duplicated result delivery")
 	}
+	if restoredReply := alphaOwnerRecoveredReply(t, h, conversation, after); restoredReply != reply {
+		t.Fatal("second restart changed the delivered result")
+	}
 	terminal = h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=ko"}, false, true, 120, 34)
-	alphaScreen(t, h, terminal, "recovery-restored", func(s string) bool { return strings.Contains(s, "텃밭") }, "")
+	alphaScreen(t, h, terminal, "recovery-restored", func(s string) bool { return alphaRecoveredReplyVisible(input, reply.Body, s) }, "")
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
+}
+
+func alphaOwnerRecoveredReply(t *testing.T, h *harness, conversation string, attempt recovery.Record) alphaRecoveryReply {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	reply, err := alphaRecoveredReply(h.ctx, db, alphaLedgerBodies{h.root}, conversation, attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every run records the retained bodies it attributed, so a later failure is
+	// measured against the same evidence instead of a disposable database.
+	alphaRecoveryReplyDiagnostic(t, h, db, conversation, attempt)
+	if reply.ID == "" || strings.TrimSpace(reply.Body) == "" {
+		t.Fatal("recovered result has no completed reply in the originating conversation")
+	}
+	return reply
+}
+
+// A failed attribution retains every stored candidate, its delivery state and
+// its body size, including bodies the ledger keeps in materials instead of the
+// conversation column.
+func alphaRecoveryReplyDiagnostic(t *testing.T, h *harness, db *canon.Store, conversation string, attempt recovery.Record) {
+	t.Helper()
+	t.Logf("expected recovery delivery: conversation=%s input=%s session=%s turn=%s", conversation, attempt.Input, attempt.Thread.ID, attempt.Thread.TurnID)
+	type candidate struct {
+		completion, conversation, input, agent, state, reply, replyConversation, replyAgent, scaffold string
+		completionMaterial, replyMaterial                                                             bool
+	}
+	var candidates []candidate
+	err := db.Read(h.ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(h.ctx, `SELECT w.id,w.conversation_id,coalesce(w.parent_id,''),w.agent_id,
+ coalesce(t.state,''),
+ coalesce(e.id,''),coalesce(e.conversation_id,''),coalesce(e.agent_id,''),coalesce(e.scaffold_kind,''),
+ coalesce(w.material_id,'')<>'',coalesce(e.material_id,'')<>''
+ FROM conv_event w
+ LEFT JOIN inbox i ON i.native_id=w.id AND i.source='worker-finish' AND i.conversation=w.conversation_id
+ LEFT JOIN turn_runs t ON t.inbox_id=i.id AND t.conversation=w.conversation_id
+ LEFT JOIN conv_event e ON e.parent_id=w.id
+ WHERE w.scaffold_kind='worker_completion'
+ ORDER BY w.rowid,e.rowid`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c candidate
+			if err := rows.Scan(&c.completion, &c.conversation, &c.input, &c.agent, &c.state, &c.reply, &c.replyConversation, &c.replyAgent, &c.scaffold, &c.completionMaterial, &c.replyMaterial); err != nil {
+				return err
+			}
+			candidates = append(candidates, c)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Logf("recovery delivery diagnostic: %v", err)
+		return
+	}
+	bodies := alphaLedgerBodies{h.root}
+	retained := []map[string]any{}
+	for _, c := range candidates {
+		completion, completionErr := alphaEventBody(h.ctx, db, bodies, c.completion)
+		var fields struct{ Session, Turn, Status string }
+		if completionErr == nil {
+			_ = json.Unmarshal([]byte(completion), &fields)
+		}
+		replyBytes := -1
+		var replyErr error
+		if c.reply != "" {
+			var body string
+			body, replyErr = alphaEventBody(h.ctx, db, bodies, c.reply)
+			replyBytes = len(body)
+		}
+		t.Logf("recovery delivery candidate: completion=%s conversation=%s input=%s agent=%s session=%s turn=%s status=%s delivery=%s completion_material=%t completion_bytes=%d completion_error=%v reply=%s reply_conversation=%s reply_agent=%s scaffold=%s reply_material=%t reply_bytes=%d reply_error=%v", c.completion, c.conversation, c.input, c.agent, fields.Session, fields.Turn, fields.Status, c.state, c.completionMaterial, len(completion), completionErr, c.reply, c.replyConversation, c.replyAgent, c.scaffold, c.replyMaterial, replyBytes, replyErr)
+		retained = append(retained, map[string]any{
+			"completion": c.completion, "conversation": c.conversation, "input": c.input, "agent": c.agent,
+			"session": fields.Session, "turn": fields.Turn, "status": fields.Status, "delivery": c.state,
+			"completion_material": c.completionMaterial, "completion_bytes": len(completion), "completion_error": alphaErrorText(completionErr),
+			"reply": c.reply, "reply_conversation": c.replyConversation, "reply_agent": c.replyAgent, "scaffold": c.scaffold,
+			"reply_material": c.replyMaterial, "reply_bytes": replyBytes, "reply_error": alphaErrorText(replyErr),
+		})
+	}
+	// A real-model failure must leave the metadata that attributes it, so the
+	// next investigation does not depend on a disposable database.
+	raw, err := json.MarshalIndent(map[string]any{"inline_limit": ledger.InlineBytes, "conversation": conversation, "input": attempt.Input, "session": attempt.Thread.ID, "turn": attempt.Thread.TurnID, "candidates": retained}, "", "  ")
+	if err != nil {
+		t.Logf("recovery delivery retention encode: %v", err)
+		return
+	}
+	if directory := os.Getenv("LINA_ALPHA_CAPTURES"); directory != "" {
+		directory = filepath.Join(directory, t.Name())
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Logf("recovery delivery retention: %v", err)
+			return
+		}
+		if err := os.WriteFile(filepath.Join(directory, "recovery-delivery.json"), append(raw, '\n'), 0600); err != nil {
+			t.Logf("recovery delivery retention: %v", err)
+		}
+	}
+}
+
+func alphaErrorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func alphaOwnerRecoveryRecords(t *testing.T, h *harness) []recovery.Record {

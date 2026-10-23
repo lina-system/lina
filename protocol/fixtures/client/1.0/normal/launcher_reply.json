@@ -1,0 +1,29 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "launcher_reply",
+  "message_id": "launcher-reply-example",
+  "attempt_id": "launcher-reply-example-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "request_id": "launcher-request-1",
+    "conversation_id": "main:lina",
+    "agent_id": "lina",
+    "text": "Short answer.",
+    "done": true,
+    "message_id": "turn:input:example:1:0"
+  }
+}

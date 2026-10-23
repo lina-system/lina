@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -25,8 +26,15 @@ import (
 // controls the scenario; socket deadlines below are failure bounds only.
 type scenarioClock struct{ now time.Time }
 
+// tuiCapabilities mirrors the offers in internal/tui/ui's shellCapabilities.
+// fakecore matches hello payloads exactly, so a capability the shell adds must
+// be added here too; the TUI e2e fails otherwise.
+var tuiCapabilities = []protocol.Capability{protocol.SurfaceResultsCapability(), {Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+
 // Keep the shared conformance corpus unchanged. The TUI scenario explicitly
-// offers its implemented text-stream capabilities, which Core may grant or not.
+// offers its implemented capabilities, which Core may grant or not. A refused
+// 1.1 handshake reconnects once with the legacy envelope, so hello-legacy.json
+// carries the same offers without the fields only a newer minor version defines.
 func tuiFixtures(t *testing.T) fstest.MapFS {
 	t.Helper()
 	fixtures := fstest.MapFS{}
@@ -52,14 +60,37 @@ func tuiFixtures(t *testing.T) fstest.MapFS {
 		t.Fatal(err)
 	}
 	hello := envelope.Payload.(protocol.Hello)
-	hello.Capabilities = []protocol.Capability{{Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+	hello.ProtocolVersions = []string{"1.1", "1.0"}
+	hello.Capabilities = append([]protocol.Capability(nil), tuiCapabilities...)
+	// The real client sends its compiled platform, and Core admits the pair.
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	hello.Platform = &platform
+	envelope.Protocol.Version = "1.1"
 	envelope.Payload = hello
+	fixtures["hello.json"] = helloFixture(t, envelope)
+
+	legacy := envelope
+	legacy.Protocol.Version = "1.0"
+	legacyHello := hello
+	legacyHello.ProtocolVersions = []string{"1.0"}
+	legacyHello.Capabilities = nil
+	for _, capability := range tuiCapabilities {
+		if capability.Name != "results" && capability.Name != "mocks" {
+			legacyHello.Capabilities = append(legacyHello.Capabilities, protocol.Capability{Name: capability.Name, Version: capability.Version})
+		}
+	}
+	legacy.Payload = legacyHello
+	fixtures["hello-legacy.json"] = helloFixture(t, legacy)
+	return fixtures
+}
+
+func helloFixture(t *testing.T, envelope protocol.Envelope) *fstest.MapFile {
+	t.Helper()
 	data, err := json.Marshal(envelope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixtures["hello.json"] = &fstest.MapFile{Data: data}
-	return fixtures
+	return &fstest.MapFile{Data: data}
 }
 
 func (c *scenarioClock) Now() time.Time { return c.now }
@@ -74,15 +105,26 @@ func (c *scenarioClock) Wait(ctx context.Context, d time.Duration) error {
 // Use #34's isolated state, socket, command and PTY lifecycle. The scenario is
 // data under m1 so the unexported test helpers remain shared in this package.
 func (h *harness) fakeCore(steps []fakecore.Step, tui ...bool) <-chan error {
+	return h.fakeCoreConnections(len(tui) > 0 && tui[0], steps)
+}
+
+// fakeCoreConnections serves one script per accepted connection in order. A TUI
+// that offers client 1.1 reconnects once after a refusal, so its refused
+// scenario needs a legacy connection after the 1.1 one.
+func (h *harness) fakeCoreConnections(tui bool, scripts ...[]fakecore.Step) <-chan error {
 	h.t.Helper()
 	clk := &scenarioClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	fixtures := fs.FS(os.DirFS("../../protocol/fixtures/client/1.0"))
-	if len(tui) > 0 && tui[0] {
+	if tui {
 		fixtures = tuiFixtures(h.t)
 	}
-	core, err := fakecore.New(fixtures, clk, steps)
-	if err != nil {
-		h.t.Fatal(err)
+	cores := make([]*fakecore.Core, len(scripts))
+	for i, steps := range scripts {
+		core, err := fakecore.New(fixtures, clk, steps)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		cores[i] = core
 	}
 	if err := os.MkdirAll(filepath.Dir(h.socket), 0700); err != nil {
 		h.t.Fatal(err)
@@ -98,11 +140,18 @@ func (h *harness) fakeCore(steps []fakecore.Step, tui ...bool) <-chan error {
 	go func() {
 		defer close(joined)
 		defer listener.Close()
-		conn, err := listener.Accept()
-		if err == nil {
-			err = core.Run(ctx, conn)
+		var errs []error
+		for _, core := range cores {
+			conn, err := listener.Accept()
+			if err != nil {
+				errs = append(errs, err)
+				break
+			}
+			if err := core.Run(ctx, conn); err != nil {
+				errs = append(errs, err)
+			}
 		}
-		result <- err
+		result <- errors.Join(errs...)
 	}()
 	h.t.Cleanup(func() { cancel(); listener.Close(); <-joined; stop() })
 	return result
@@ -116,9 +165,9 @@ func TestM1FakeCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	var scenario struct {
-		Protocol []fakecore.Step `json:"protocol"`
-		TUI      []fakecore.Step `json:"tui"`
-		Refused  []fakecore.Step `json:"tui_refused"`
+		Protocol []fakecore.Step   `json:"protocol"`
+		TUI      [][]fakecore.Step `json:"tui"`
+		Refused  [][]fakecore.Step `json:"tui_refused"`
 	}
 	if err := json.Unmarshal(data, &scenario); err != nil {
 		t.Fatal(err)
@@ -250,7 +299,7 @@ func TestM1FakeCore(t *testing.T) {
 	binary := buildLina(t)
 	t.Run("TUI connect and quit", func(t *testing.T) {
 		h := newHarness(t, binary)
-		done := h.fakeCore(scenario.TUI, true)
+		done := h.fakeCoreConnections(true, scenario.TUI...)
 		term := h.startTUI()
 		h.expectState(term, "live")
 		h.keys(term, "q\n")
@@ -261,7 +310,7 @@ func TestM1FakeCore(t *testing.T) {
 	})
 	t.Run("TUI refused", func(t *testing.T) {
 		h := newHarness(t, binary)
-		done := h.fakeCore(scenario.Refused, true)
+		done := h.fakeCoreConnections(true, scenario.Refused...)
 		term := h.startTUI()
 		term.process.wait(t, 78)
 		for range term.lines {

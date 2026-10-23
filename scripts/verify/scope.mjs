@@ -54,13 +54,16 @@ const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{'
 export function kind(path) {
   if (['scripts/verify/test-times.json', 'scripts/verify/bwrap.apparmor'].includes(path)) return 'automation';
   if (path.startsWith('adapters/claude/') || path.startsWith('adapters/claude-acp/')) return 'automation';
+  // Native parts carry their own portable tests; the automation check compiles
+  // and runs them, so a change under native/ selects it.
+  if (path.startsWith('native/')) return 'automation';
   if (path.startsWith('third_party/')) return 'dependencies';
   if (path === 'packaging/README.md') return 'docs';
   if (path === 'packaging/sqlite-vec/build.sh') return 'automation';
   if (/^packaging\/sqlite-vec\/(?:README|NOTICE)\.md$/.test(path)) return 'docs';
   if (path === 'scripts/verify/dependency-exceptions.json' || path === 'THIRD-PARTY-NOTICES.md') return 'dependencies';
   if (modules.has(path)) return 'modules';
-  if (path === 'DESIGN.md' || /^design\/tokens\/[^/]+\.(?:json|css|svg)$/.test(path)) return 'automation';
+  if (path === 'DESIGN.md' || /^design\/tokens\/[^/]+\.(?:json|css|svg|swift)$/.test(path)) return 'automation';
   if (/^evidence\/(?:brand|generated-ui)\/[^/]+\.png$/.test(path)) return 'docs';
   if (componentOf(path)) return 'components';
   if (documents.has(path) || /^docs\/(?:policy|design|research)\/[^/]+\.md$/.test(path)

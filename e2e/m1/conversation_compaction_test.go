@@ -104,6 +104,11 @@ func TestM1ConversationCompactsRetainedHistory(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	h, start := installedConversationHarness(t, server.URL)
+	// Forty retained turns and two Core boots exceed the shared 30-second
+	// default; size this scenario to its work like other multi-boot cases.
+	ctx, cancel := context.WithTimeout(t.Context(), 12*operationTimeout)
+	t.Cleanup(cancel)
+	h.ctx = ctx
 	core := start(true)
 	c, conversation := conversationClient(t, h)
 	admittedTurn(t, h, c, conversation, "relationship", "We are study partners.")

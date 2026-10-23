@@ -28,6 +28,7 @@ func snapshotTo(t *testing.T, source, dest string) {
 	}
 }
 func TestRemovalListReplaysBeforeSnapshotOfOlderCanon(t *testing.T) {
+	t.Parallel()
 	cfg, store := fixture(t)
 	ctx := t.Context()
 	_, err := ledger.New(cfg.Canon, nil).Admit(ctx, guard.EntryOwner, ledger.Input{ID: "source-test", ConversationID: "conversation-test", PersonID: "person-test", AgentID: "agent-test", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(1, 0), RecordedAt: time.Unix(1, 0), TimeQuality: "observed", Body: "synthetic violet preference"})

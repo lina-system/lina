@@ -14,7 +14,7 @@ No Mac was touched for this note. Nothing was installed, and no command ran on m
 6. A plug-in can identify its socket peer by audit token. `LOCAL_PEERTOKEN` returns the audit token of the process that last used the peer socket, looked up when the option is read. Security.framework turns that token into a code object that can be checked against a signing requirement. Because the lookup happens at read time, the plug-in reads the token again after the answer arrives and compares the two.
 7. macOS documents no call that locks the screen at once. The supported ways are the person's own commands, such as Control-Command-Q and Lock Screen in the Apple menu. The lock state is not a documented key either. A relock is therefore an action whose result is observed. When the result cannot be observed, the relock is reported as unknown.
 8. The person's input can be watched through two documented paths: the HID devices, under the Input Monitoring permission, and event taps, where each event carries the process id of its source. Remote input from Screen Sharing comes through the session's event stream, not from a HID device. One report shows a service that ignored it. LINA watches both paths.
-9. A password-less unlock leaves the keychain locked. The engine marks every `system.login.*` evaluation as needing the keybag to be unlocked, and only a password can do that. Tasks must not depend on keychain items.
+9. A password-less unlock does not unlock the login keychain. The engine marks every `system.login.*` evaluation as needing the keybag to be unlocked, and only a password can do that. The same unlock does not lock a keychain that is already unlocked, and locking the screen does not lock it either. Lock after inactivity and lock when sleeping are separate Keychain Access settings. `SecKeychainLock` locks a keychain without a password, and `SecKeychainGetStatus` reports whether it is unlocked (`kSecUnlockStateStatus` means unlocked). Both calls are deprecated. Tasks must not depend on keychain items, and a ticket has to wait until the login keychain has been locked and that status has been read.
 10. No open-source driver unlocks a locked Mac today. The driver that the owner's assistant uses refuses background input behind the lock screen, and a fix closed on 2026-10-19 makes it report the lock as a lock. Its plan to unlock with a plug-in is still open.
 11. Direction: design the feature on macOS, but keep it off until the eval below passes on the macOS build, and fall back to Linux if it cannot pass. See Direction.
 
@@ -26,6 +26,8 @@ No Mac was touched for this note. Nothing was installed, and no command ran on m
 | Apple documentation: [SecCodeCopyGuestWithAttributes](https://developer.apple.com/documentation/security/seccodecopyguestwithattributes(_:_:_:_:)), [kSecGuestAttributeAudit](https://developer.apple.com/documentation/security/kSecGuestAttributeAudit), [SecRequirementCreateWithString](https://developer.apple.com/documentation/security/secrequirementcreatewithstring(_:_:_:)), [SecCodeCheckValidity](https://developer.apple.com/documentation/security/seccodecheckvalidity(_:_:_:)), [SecCodeCopySigningInformation](https://developer.apple.com/documentation/security/seccodecopysigninginformation(_:_:_:)), [kSecCodeInfoFlags](https://developer.apple.com/documentation/security/kseccodeinfoflags), [kSecCodeInfoEntitlementsDict](https://developer.apple.com/documentation/security/kseccodeinfoentitlementsdict), [xpc_connection_set_peer_code_signing_requirement](https://developer.apple.com/documentation/xpc/xpc_connection_set_peer_code_signing_requirement(_:_:)), [NSXPCConnection.setCodeSigningRequirement](https://developer.apple.com/documentation/foundation/nsxpcconnection/setcodesigningrequirement(_:)) | Live pages, 2026-10-23 | Same |
 | Apple documentation: [IOHIDRequestType](https://developer.apple.com/documentation/iokit/iohidrequesttype), [CGPreflightListenEventAccess](https://developer.apple.com/documentation/coregraphics/cgpreflightlisteneventaccess()), [CGEvent.tapCreate](https://developer.apple.com/documentation/coregraphics/cgevent/tapcreate(tap:place:options:eventsofinterest:callback:userinfo:)), [CGEventTapOptions.listenOnly](https://developer.apple.com/documentation/coregraphics/cgeventtapoptions/listenonly), [CGEventField.eventSourceUnixProcessID](https://developer.apple.com/documentation/coregraphics/cgeventfield/eventsourceunixprocessid), [CGEventSource.secondsSinceLastEventType](https://developer.apple.com/documentation/coregraphics/cgeventsource/secondssincelasteventtype(_:eventtype:)), [CGSessionCopyCurrentDictionary](https://developer.apple.com/documentation/coregraphics/cgsessioncopycurrentdictionary()), [window server session properties](https://developer.apple.com/documentation/coregraphics/window-server-session-properties), [SCContentFilter(display:excludingWindows:)](https://developer.apple.com/documentation/screencapturekit/sccontentfilter/init(display:excludingwindows:)), [NSWindow.Level.screenSaver](https://developer.apple.com/documentation/appkit/nswindow/level-swift.struct/screensaver), [canJoinAllSpaces](https://developer.apple.com/documentation/appkit/nswindow/collectionbehavior-swift.struct/canjoinallspaces), [DistributedNotificationCenter](https://developer.apple.com/documentation/foundation/distributednotificationcenter) | Live pages, 2026-10-23 | Same |
 | Apple support: [Lock the screen of your Mac](https://support.apple.com/guide/mac-help/lock-the-screen-of-your-mac-mchl8e8b6a34/mac), [Mac keyboard shortcuts](https://support.apple.com/en-us/102650) | Live pages, 2026-10-23 | Search summary |
+| Apple support: [If your Mac keeps asking for your keychain password](https://support.apple.com/en-gb/guide/keychain-access/kyca1242/mac) | Live page, 2026-10-23, macOS Tahoe 26 guide | Page text |
+| Apple documentation: [SecKeychainLock](https://developer.apple.com/documentation/security/seckeychainlock(_:)), [SecKeychainGetStatus](https://developer.apple.com/documentation/security/seckeychaingetstatus(_:_:)), [kSecUnlockStateStatus](https://developer.apple.com/documentation/security/ksecunlockstatestatus) | Live pages, 2026-10-23. `SecKeychain` deprecated in macOS 10.10 | Documentation JSON, read as text |
 | Apple's authorization engine, [Security-61901.120.67](https://github.com/apple-oss-distributions/Security/tree/Security-61901.120.67/OSX/authd): `engine.m`, `rule.c`, `agent.c`, `authorization.plist`, and `OSX/libsecurity_authorization/lib/AuthorizationTagsPriv.h` | Tag `Security-61901.120.67`, commit `cbb0aed4e0f3c12f87862fd16d04fe5846d90c4f` | Source read |
 | Apple's kernel, [xnu](https://github.com/apple-oss-distributions/xnu/tree/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea): `bsd/sys/un.h`, `bsd/kern/uipc_usrreq.c` | Commit `f6217f891ac0bb64f3d375211650a4c1ff8ca1ea` | Source read |
 | Apple Developer Forums, [thread 737268](https://developer.apple.com/forums/thread/737268): authorization plug-ins at screen unlock on macOS 14 and later, with answers from Apple Developer Technical Support | Read 2026-10-23, last post April 2026 | Page summary |
@@ -36,7 +38,7 @@ No Mac was touched for this note. Nothing was installed, and no command ran on m
 
 ### The plug-in interface
 
-An authorization plug-in is a bundle in `/Library/Security/SecurityAgentPlugins/`. Its entry point, `AuthorizationPluginCreate`, receives the engine's callbacks (`AuthorizationCallbacks`) and returns the plug-in's interface (`AuthorizationPluginInterface`: `MechanismCreate`, `MechanismInvoke`, `MechanismDeactivate`, `MechanismDestroy` and `PluginDestroy`). A mechanism reports its decision through `SetResult` with one of four results: allow, deny, undefined (failed and not to be retried in this session) or user cancelled. The callbacks also read and write hints and context values, and read the arguments, the session id and the `LAContext`.
+An authorization plug-in is a bundle in `/Library/Security/SecurityAgentPlugins/`. Its entry point, `AuthorizationPluginCreate`, receives the engine's callbacks (`AuthorizationCallbacks`) and returns the plug-in's interface (`AuthorizationPluginInterface`: `MechanismCreate`, `MechanismInvoke`, `MechanismDeactivate`, `MechanismDestroy` and `PluginDestroy`). A mechanism reports its decision through `SetResult` with one of four results: allow, deny, undefined (failed and not to be retried in this session) or user cancelled. `MechanismDeactivate` finishes only when the mechanism calls `DidDeactivate`; the engine waits for that callback, and the function's return value does not complete the handshake. The callbacks also read and write hints and context values, and read the arguments, the session id and the `LAContext`.
 
 Apple's article names two plug-in hosts. One runs as an anonymous user and can show an interface. The other runs as root and must not connect to the window server. A mechanism runs in the root host when its name ends in `,privileged`, for example `Plugin:mechanism,privileged`. An installer adds a rule with `AuthorizationRightSet`. Apple notes that the key names for rule definitions live in `AuthorizationTagsPriv.h`, which is not public API. The command-line form is `security authorizationdb read <right>` and `security authorizationdb write <right>`.
 
@@ -96,7 +98,13 @@ Report R8 gives the timing of one failure on a macOS 27 beta. After a lock from 
 
 ### The keychain
 
-`engine.m` sets the hint `AGENT_HINT_KBGUNLOCK_REQ` for every right whose name starts with `system.login.`, so the evaluation is expected to unlock the user's keybag. A password-less allow provides nothing to unlock it with. This matches the owner's observation in #974 that the login keychain stays locked after such an unlock. The design accepts that: it refuses steps that need keychain items.
+`engine.m` sets the hint `AGENT_HINT_KBGUNLOCK_REQ` for every right whose name starts with `system.login.`, so the evaluation is expected to unlock the user's keybag. A password-less allow provides nothing to unlock it with. This matches the owner's observation in #974 that the login keychain stays locked after such an unlock when it was locked beforehand.
+
+A login keychain that is already unlocked is a different case. The screen lock does not lock it. Keychain Access locks it only when the person has turned on "Lock after" a number of minutes or "Lock when sleeping" ([If your Mac keeps asking for your keychain password](https://support.apple.com/en-gb/guide/keychain-access/kyca1242/mac)). Both settings are off unless the person turned them on, and neither is the screen lock. `security show-keychain-info` prints those settings. It does not print whether the keychain is locked now.
+
+[`SecKeychainLock`](https://developer.apple.com/documentation/security/seckeychainlock(_:)) locks a keychain and takes no password. Passing no keychain locks the default keychain, which is not necessarily the login keychain. [`SecKeychainGetStatus`](https://developer.apple.com/documentation/security/seckeychaingetstatus(_:_:)) reads the status of the keychain it is given, and [`kSecUnlockStateStatus`](https://developer.apple.com/documentation/security/ksecunlockstatestatus) means unlocked. Apple notes that the status can change at any time, and that `SecKeychainLock` is for when the person has asked to lock the keychain. Both calls belong to `SecKeychain`, which Apple marks deprecated since macOS 10.10. No replacement lock call appears in this note. A missing keychain returns `errSecNoSuchKeychain`. An invalid one returns `errSecInvalidKeychain`.
+
+The design has the broker lock the login keychain and read that status before it arms a ticket, leave the auto-lock settings unchanged, and keep reading the status during the lease. The broker makes those calls while the screen is locked. Whether they succeed in that state was not measured, and neither was whether the data protection keychain stays readable afterwards. The eval's test item is in the login keychain, and the eval is what shows that these calls still lock it on a measured build.
 
 ## Proving the peer
 
@@ -176,8 +184,8 @@ This plan was written before any building, so that implementation is measured ag
 - **Test Mac.** Apple silicon, the current macOS 27 release, recorded with `sw_vers`. A test account with a test password and administrator rights; the password is a test fixture and never the person's. The lock screen requires the password immediately. No MDM enrollment, no Platform SSO. Whether the Mac has Touch ID is recorded.
 - **Controller.** A Linux host that runs a test LINA main, the eval script, SSH to the test account with a key (the recovery path), and a VNC client for Screen Sharing input.
 - **Physical input.** A USB HID emulator: a microcontroller that presents a keyboard and a mouse to the Mac and takes commands from the controller over serial. The controller records when it sends each event.
-- **Builds.** The release build of every part, plus a test variant of the plug-in that reads two switches from a root-only folder: crash during the call, and hang during the call. The release plug-in has no switches. The test variant is never left installed.
-- **Keychain.** The test account's login keychain is locked with `security lock-keychain` before each lease and confirmed locked with `security show-keychain-info`.
+- **Builds.** The release build of every part, plus a test variant of the plug-in that reads two switches from a root-only folder: crash during the call, and hang during the call. A test variant of the broker reads one switch from that folder: the keychain lock call fails. The release plug-in and the release broker have no switches. A test variant is never left installed.
+- **Keychain.** The login keychain holds one test item created before the runs. The harness reads lock status with `SecKeychainGetStatus` on that keychain. `kSecUnlockStateStatus` means unlocked. The harness does not treat `security show-keychain-info` as a status, because that command prints the auto-lock settings. It runs `security lock-keychain` only in the one E1 run that starts from a locked keychain.
 - **Clock.** The offset between the controller and the Mac is taken from three SSH round trips before each case. Every time bound below includes the measured uncertainty.
 - **Declared bounds**, fixed before the first run:
 
@@ -203,9 +211,10 @@ Open TextEdit, create a document, type the line `lina-eval <run id>`, save it as
 
 **E1. A locked Mac finishes one task and is locked again.** Ten runs for each kind of lock: Control-Command-Q from the HID emulator, idle display sleep (display sleep set to one minute) and the screen saver starting. Each run:
 
-1. Lock the Mac and wait until the lock is observed.
-2. The test owner approves a locked-screen lease.
-3. Core dispatches the task. Wait for the task to end.
+1. Unlock the login keychain with the test fixture. Read its status and require `kSecUnlockStateStatus`. The harness does not run `security lock-keychain` on these runs.
+2. Lock the Mac and wait until the lock is observed. Read the status again and require the unlocked bit still set, so the screen lock did not establish the locked keychain.
+3. The test owner approves a locked-screen lease.
+4. Core dispatches the task. Wait for the task to end.
 
 The run passes when all of these hold:
 
@@ -216,7 +225,10 @@ The run passes when all of these hold:
 - Unlock and relock have receipts.
 - `pmset -g assertions` lists no LINA assertion afterwards.
 - `ioreg -l -w 0` shows no `kCGSSessionSecureInputPID` afterwards.
-- The login keychain, locked before the lease, is still locked during and after it, and a read of a test keychain item during the lease fails.
+- The broker's log shows a lock of the login keychain and then a status read of that same keychain with the unlocked bit clear, both before the ticket is armed. The harness did not lock it.
+- A read of the login-keychain test item fails during the lease and after the relock, and the status stays locked through the relock.
+
+Two further runs use a Control-Command-Q lock. In one, the harness locks the login keychain before the screen lock and does not unlock it; the broker still locks that keychain and reads the locked status before the ticket. In the other, the broker's test variant makes the lock call fail; no ticket is armed, the Mac stays locked, the task asks, and the unlocked bit is still set.
 
 **E2. A keypress stops the task within 1 s.** Twenty runs for each input: a key and a click from the HID emulator, a pointer move from the HID emulator, and a key through Screen Sharing from the controller. The input is sent at t0, during the typing step. A run passes when:
 
@@ -262,12 +274,13 @@ lina-eval locked-mac restore   --mac <host>                        # the rollbac
 
 Each record keeps these raw logs:
 
-- the Node's log and the logs of the broker and the cover;
+- the Node's log and the logs of the broker and the cover, including the keychain lock result and the status read;
+- the harness status reads before the screen lock and during the lease;
 - the plug-in's lines from the system log (`log show` with the plug-in's subsystem);
 - `security authorizationdb read system.login.screensaver` before and after;
 - the HID send times.
 
-Cleanup always runs `restore`, compares the rule with the preflight hash and removes the test variant of the plug-in.
+Cleanup always runs `restore`, compares the rule with the preflight hash and removes the test variants of the plug-in and the broker.
 
 ### What the eval decides
 
@@ -278,6 +291,7 @@ Cleanup always runs `restore`, compares the rule with the preflight hash and rem
 ## Not checked
 
 - Nothing in this note ran on a Mac.
+- Whether locking the login keychain also locks the data protection keychain was not measured. The note names no replacement for the deprecated `SecKeychain` lock and status calls.
 - `loginwindow` is closed source. How it handles an internal error from the rule, and the rule order, are not verified.
 - Whether a mechanism in the root plug-in host can reach an XPC service in the person's GUI session was not tried.
 - Whether the HID watcher sees keys behind the lock screen is not known.

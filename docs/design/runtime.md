@@ -42,6 +42,11 @@ External components (document parsers, OCR, the local transcription component, t
 LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Cursor, Gemini CLI, Grok or Antigravity, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
 
 - LINA uses the installed tool found on `PATH` or at a path the user configured, and records the version it observed.
+- Gemini CLI is probed with `gemini --acp`; its version comes from
+  `initialize.agentInfo.version`, without creating a session. A successful
+  handshake with no version is recorded as unknown and unverified. A failed
+  handshake makes the tool unavailable. This worker uses its own login,
+  separate from the Gemini API-key provider.
 - Grok's installed version is probed with `grok --version`. The worker's separate
   ACP handshake observation never replaces that CLI version or retains host
   details from its metadata ([ACP adapter](work-and-delegation.md#acp-adapter)).
@@ -237,17 +242,18 @@ The person signs in to each service themself, one account per service ([Accounts
 | Provider | Class | Adapter | Account |
 | --- | --- | --- | --- |
 | ChatGPT | Model API | Go, in LINA Core: the Responses API with the person's ChatGPT plan | Sign in with ChatGPT (OAuth). It is also LINA's login and the default provider. |
-| Claude | Agent runtime | The Claude adapter, an external component on the Claude Agent SDK ([Provider adapters](#provider-adapters)) | The person's Claude subscription |
+| Claude | Model API or Agent runtime | Two routes: Go, in LINA Core over the Messages API for an API-key account; the Claude adapter, an external component on the Claude Agent SDK ([Provider adapters](#provider-adapters)) for a subscription | The person's Claude API key, or their Claude subscription |
 | Grok | Agent runtime | Go, in LINA Core, driving the official `grok` command the person installed. Best effort. | The person's Grok account, signed in through that command's OAuth login |
 | Gemini | Model API | Go, in LINA Core: the Gemini API through the Go genai client | An API key the person enters |
 
-- **Model-API providers** (ChatGPT, Gemini). LINA Core owns the loop, request assembly, tool dispatch, the ledger and compaction. Every request carries the full input it needs, and the ledger records the exact request input.
-- **Agent-runtime providers** (Claude, Grok). The vendor's process runs the inner tool loop of a turn, and LINA Core can only constrain it. Core still owns the turn, the ledger, the persona and context, compaction, and the authority of every tool. For each turn the adapter:
+- **Model-API providers** (ChatGPT, Gemini, the Claude API-key route). LINA Core owns the loop, request assembly, tool dispatch, the ledger and compaction. Every request carries the full input it needs, and the ledger records the exact request input.
+- **Agent-runtime providers** (the Claude subscription route, Grok). The vendor's process runs the inner tool loop of a turn, and LINA Core can only constrain it. Core still owns the turn, the ledger, the persona and context, compaction, and the authority of every tool. For each turn the adapter:
   - turns the runtime's built-in tools off and offers LINA's tools to it as MCP tools, so every tool call comes back to LINA Core and runs under the checks, approvals and effect ledger of this contract;
   - replaces the runtime's system prompt with LINA's, and loads no settings, skills, hooks, memory or MCP servers from the person's own setup of that tool;
   - turns off the runtime's own session persistence and compaction, or treats them as opaque;
   - records what the runtime reports with the request: usage, an estimated cost and a session id.
   The guarantees that need the whole request in LINA's hands are not available from a runtime: the exact request input as sent, and encrypted reasoning carried back unchanged. The ledger names the class that served each request. Claude and Grok may serve as the conversation engine and as background sub-agent engines, with this reduced fidelity.
+- **Claude's two routes.** A Claude API-key account is served as a Model API and a Claude subscription as an agent runtime; only the route's class decides the guarantees, never the provider name. Batching, cache marks and the full request are available on the API-key route and stay unavailable on the subscription route.
 
 Providers differ in what cuts cost and waiting time: prompt caches, cache marks and lifetimes, reasoning state, server state and discounted batch work. Each adapter declares which of these it can use for each model, and Core uses them under [Provider capabilities](#provider-capabilities). A request is never reduced to what every provider shares, and no provider feature is required for a request to succeed.
 
@@ -278,8 +284,8 @@ durable input acknowledgement, live deltas, completed reply and turn completion.
 Restarting Core must restore the same canon conversation and item identities,
 order and text. A loopback fixture runs these assertions in CI and holds completion
 until the client observes a delta. The real journey skips only when opt-in or the
-API key is absent; configured failures fail acceptance. A provider probe alone
-does not establish this client-level journey.
+API key is absent, or when the host cannot install Core; configured failures fail
+acceptance. A provider probe alone does not establish this client-level journey.
 
 - `store` is `false` and `stream` is `true`, as the Sign in with ChatGPT surface requires. Every request carries the full input it needs.
 - The adapter sends only fields that the Sign in with ChatGPT request surface accepts. `input` is an array. Instructions go in `instructions` or in developer-role items, never in system-role items. The fields that surface lists as unsupported (among them output limits, sampling parameters, truncation, `user`, `metadata`, `prompt_cache_retention`, and `previous_response_id` over HTTP) are not sent on it. Function and custom tools are declared in the form that surface requires. A field the surface does not document enters the request field list only after V1 shows it is accepted.
@@ -289,6 +295,7 @@ does not establish this client-level journey.
 - The request fields LINA sends form a list per model-API provider in the release manifest. A new field enters the list before it is sent.
 - Auxiliary reasoning (internal inference without tools) is a separate request with no tool list and no persona. It runs as its own run kind, can cause no external effect, and its output is never recorded as part of the conversation. A compaction summary is the one exception. It carries the conversation's fixed instructions and tool declarations unchanged, so it reuses the cached prefix, and Core runs none of its tool calls ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)).
 - The Gemini adapter follows the same rules wherever the Gemini API has an equivalent: stateless requests, every provider state item (such as thought parts) returned as received, and the same typed failures.
+- The Claude API-key adapter calls the Messages API at `https://api.anthropic.com/v1` with an `x-api-key` credential and a pinned API version, with Go's standard-library HTTP client and SSE reader and zero retries. It sends `model`, `max_tokens`, `stream`, `system`, `messages`, `tools` and `thinking` only. Core's items are mapped one way: a conversation message is one text block, a reasoning item is a thinking block with its signature, a tool call is `tool_use` and its result is `tool_result`. Roles are `user` and `assistant`; a developer or context message is sent as user text. The route refuses a subscription token, a custom tool declaration and an item it cannot map, before sending.
 
 ### Provider capabilities
 
@@ -310,11 +317,11 @@ A capability is used only under all of these rules:
 | --- | --- | --- | --- | --- | --- |
 | Prefix cache | Reuses the unchanged start of a request | Automatic, written at the end of the latest user message or tool result | Only where marked | Automatic | Automatic, inside the `grok` command |
 | Cache identity | Keeps one conversation on one cache | `prompt_cache_key`, after V1 | None | None | The command's own |
-| Cache marks | Says where to cache | None on the plan surface | Up to four. On the runtime, on prompt blocks | None | None |
-| Cache lifetime | How long an entry lives | The route's default | 5 minutes or 1 hour per mark. On the runtime, one setting per query | The provider's | The provider's |
-| Reasoning state | Opaque state to return | Encrypted reasoning | The runtime's own | Thought signatures | The runtime's own |
+| Cache marks | Says where to cache | None on the plan surface | Up to four. On the runtime, on prompt blocks; on the API key, on the content blocks at Core's boundaries | None | None |
+| Cache lifetime | How long an entry lives | The route's default | 5 minutes or 1 hour per mark. On the runtime, one setting per query; on the API key, 1 hour per mark | The provider's | The provider's |
+| Reasoning state | Opaque state to return | Encrypted reasoning | The runtime's own; on the API key, thinking blocks and their signatures | Thought signatures | The runtime's own |
 | Server state | The provider keeps the conversation | Not offered on the plan route | Runtime session, not used | Interactions, not used | Runtime session, not used |
-| Batch and flex | Deferred work at a discount | Not offered on the plan route | Not offered on the runtime | Batch and flex on the API key | Not offered on the command |
+| Batch and flex | Deferred work at a discount | Not offered on the plan route | Batch on the API key; not offered on the runtime | Batch and flex on the API key | Not offered on the command |
 
 The rules for each capability:
 
@@ -325,14 +332,14 @@ The rules for each capability:
   - after the person's input of the previous turn;
   - after the person's input of the current turn;
   - in a follow-up request, after the newest item of the turn.
-  An adapter whose provider needs explicit marks places them there; the others ignore them. The Claude adapter sends each earlier turn as its own text block of the runtime prompt and marks the last one, then sends the person's input and the ContextPacket.
+  An adapter whose provider needs explicit marks places them there; the others ignore them. The Claude adapter sends each earlier turn as its own text block of the runtime prompt and marks the last one, then sends the person's input and the ContextPacket. On the Claude API-key route the last content block derived from each boundary's item carries the mark, with the 1-hour lifetime; no mark is placed on the ContextPacket.
   Boundaries are exclusive counts in the request's item and tool arrays. The
   fixed boundary excludes tools loaded on demand. A missing previous input or
   newest follow-up item has no boundary; Core does not substitute external
   user-role evidence for a person's input. Follow-ups retain the initial
   boundaries and update the newest position after transforms. The request
   digest covers these positions and all selected capability values.
-- **Cache lifetime.** Claude marks use 1 hour, set once per query on the runtime. A 1-hour write costs more only on the tokens added since the last request, while an expired 5-minute mark makes the next request write the whole history again. ChatGPT, Gemini and Grok keep their route's default, and LINA sends no lifetime field that V1 or V4 has not accepted.
+- **Cache lifetime.** Claude marks use 1 hour: once per query on the runtime, and on every mark on the API-key route. A 1-hour write costs more only on the tokens added since the last request, while an expired 5-minute mark makes the next request write the whole history again. ChatGPT, Gemini and Grok keep their route's default, and LINA sends no lifetime field that V1 or V4 has not accepted.
 - **Reasoning state.** Every reasoning item, thinking block and thought signature returns unchanged in later requests, earlier turns included. Removing one changes the cached prefix as well as the model's state. The Responses adapter asks for the encrypted form with `include: ["reasoning.encrypted_content"]` only when Core selected this capability; a route that narrows it away sends the request without that option and still returns whatever reasoning items the provider gives.
 - **Compaction.** Compaction and its summary request reuse the cache as [Compaction and resume](conversation-and-memory.md#compaction-and-resume) says.
 - **Server state and provider compaction.** Neither is admitted today. The plan routes refuse server state. On OpenAI's API, a chained request is billed for all earlier input again. xAI refuses instructions together with a chained request, so the chain cannot carry LINA's instructions on every request. A provider's own compaction returns a summary LINA cannot read, expand, check against retraction or delete with its sources.
@@ -380,6 +387,8 @@ The Responses adapter assembles the server-sent event stream itself:
 - `response.completed` closes a response. It is never evidence that a product effect happened.
 
 The Gemini adapter assembles its own stream by the same rules: deltas drive live display only, an item is final only when the provider marks it done, tool calls are dispatched from final items only, and a completed response is never evidence that a product effect happened.
+
+The Claude API-key adapter does the same with Messages events: only text deltas enter the visible stream, thinking and signature deltas stay inside their block, a block becomes the recorded item at its own stop event, tool calls become ready only at `message_stop`, and a stream that ends without it fails.
 
 ### Failures and retries
 
@@ -502,14 +511,22 @@ ChatGPT is the default provider and LINA's login. The sign-in is the documented 
 
 ### Claude
 
-Claude is the person's Claude subscription, used through the Claude Agent SDK. The SDK exists for TypeScript and Python only, so the Claude adapter ([Provider adapters](#provider-adapters)) is a small Node.js process that wraps it. It serves one account, speaks LINA's provider-adapter protocol over its standard input and output with one JSON message per line, and passes no credential on. It is an adapter, not a proxy.
+Claude is the person's Claude account, in either of two forms: a subscription used through the Claude Agent SDK, or an API key used through the Messages API by a Go adapter in LINA Core. The subscription text below keeps the SDK route unchanged. The API-key route is the one this section adds.
+
+The SDK exists for TypeScript and Python only, so the subscription adapter ([Provider adapters](#provider-adapters)) is a small Node.js process that wraps it. It serves one account, speaks LINA's provider-adapter protocol over its standard input and output with one JSON message per line, and passes no credential on. It is an adapter, not a proxy.
 
 - Sign-in, in this order. LINA first looks for the login that the person already has with the vendor's command, by the command's status report; if there is one, the adapter uses it and LINA stores nothing. Otherwise LINA guides the person through the vendor's token command, which prints a one-year token for model requests only. The person pastes it, LINA keeps it in the secret store and gives it to the adapter as `CLAUDE_CODE_OAUTH_TOKEN`. LINA runs no OAuth client of its own against claude.ai. LINA records the day the token was made and warns before the year ends; a failed call shows needs sign-in.
 - The adapter's environment holds none of the variables that outrank the subscription token: an API key, an auth token, a key helper, and the cloud-provider variables.
 - The vendor's bare mode never reads a subscription login, so the adapter cannot use it. Isolation is explicit instead: the options named under Providers, an empty working directory of the adapter's own, a pinned version, and a check of the runtime's start-up message, which lists the tools, MCP servers and plugins it loaded. The adapter refuses to serve a turn when that list holds anything LINA did not put there.
 - The product names it "Claude" or "Claude Agent", never "Claude Code" or in that tool's styling.
 - Quota comes from the rate-limit events the runtime emits (window, utilization, reset) and from the SDK's usage report where it returns one for the token the adapter holds. The cost the runtime reports is an estimate.
-- A Claude API-key account can stand in for the token without any change to this contract.
+- A Claude API-key account can stand in for the token without any change to the subscription contract. On that route LINA Core is the adapter:
+  - The account is an API key the person enters, kept in the secret store and sent only as the request's `x-api-key` header. It never enters a log, the sandbox, a worker or another adapter, and it is consumed from Core's environment before workers start. A missing or refused key shows needs sign-in on that account; no request moves to the subscription or to another account.
+  - The route is one explicitly configured model with the Messages API base. Partial or ambiguous configuration is refused, and a route counts as configured only once with its model.
+  - Thinking blocks and their signatures return with the item the loop records and go back unchanged in later requests, inside a tool loop included, as the API requires. Every reasoning item is kept; none is rewritten or dropped.
+  - Cache marks sit at Core's four boundaries, at most four per request, each with the 1-hour lifetime. Usage keeps the input, cache read and cache write counts the API reports, with writes split by the lifetime buckets it reports; an unreported count stays unknown.
+  - A background job whose deadline lies beyond the batch window may use Message Batches. Each submission is recorded with its batch id; a batch that fails, expires or is cancelled runs once as a normal request. A turn never uses a batch.
+  - A route-level refusal is typed from the API's own error: authentication is needs sign-in, permission is not eligible, rate limit and billing are usage capped, overload and server errors are unavailable, and a rejected field is not accepted.
 
 The #167 adapter is in [adapters/claude](../../adapters/claude/README.md), pinned
 to SDK 0.3.308 with a separate npm lockfile. Node 24.20.0 runs its TypeScript
@@ -791,7 +808,7 @@ preparation or sign-in implementation.
 
 ### Provider adapters
 
-The ChatGPT, Gemini and Grok adapters are Go inside LINA Core. The Claude adapter is the only provider adapter that is a separate program.
+The ChatGPT, Gemini, Grok and Claude API-key adapters are Go inside LINA Core. The Claude subscription adapter is the only provider adapter that is a separate program. The Messages adapter shares the Responses adapter's shape: standard-library HTTP and SSE, no redirects, zero retries, and the same stream rules, so only final items reach the loop and tool calls become ready only at the terminal event.
 
 - The Claude adapter is LINA's own TypeScript, an external component ([Language and build](#language-and-build)) that runs on Node.js. LINA Core starts it on first use of a Claude account, as a stdio child, and stops it after an idle period. It is never started at boot and never kept warm, because the vendor runtime it wraps is large: a binary of about 270 to 290 MB per platform, and a parked process of about 230 to 260 MB. Each concurrent turn on a Claude account holds its own runtime process, so the number of concurrent turns per account is limited (see Deferred).
 - LINA does not ship a Node.js runtime. The adapter runs on the Node.js that the person has installed, found on `PATH` or at a path the person configured, as an installed tool ([Installed tools](#installed-tools)). Without a usable Node.js, only Claude accounts are unsupported, and the account says why.
@@ -843,13 +860,14 @@ The initial JSON object contains these required fields; later implementation iss
 | `kitVersion` | Positive integer read from `kit/VERSION`, initially `1`. |
 | `sqlite` | Object with binding `module`, exact `version`, Go `moduleSum` (`h1:`), `sqliteVersion`, `wasmSHA256` (64 lowercase hex characters), `execution: "wazero"`, and `sqliteVec` (exact `version` and `sha256` of the complete custom Wasm engine; older manifests may have null). |
 | `providers.chatgpt` | `adapter: "responses"`, `retryCount: 0`, and `requestFields`, the explicit array of allowed top-level request fields. |
+| `providers.claude_api_key` | `adapter: "messages"`, `retryCount: 0`, `maxOutputTokens`, `requestFields` and the admitted `capabilities`. Optional in older manifests; when present, the adapter identity and retry policy are checked. |
 | `providerCapabilities` | Route names mapped to admitted capability-name arrays. New builds include every implemented route, including empty sets. Older manifests without this optional field remain readable; absence grants no capability. |
 | `verifiedWorkerVersions` | Optional object mapping worker names to verified version arrays; `codex` uses bare versions from the adapter's `versions.json`, such as `["0.163.0"]`. |
 | `binaries` | Array of objects with `name` (basename), `size` (positive byte count), and `sha256` (64 lowercase hexadecimal characters). Includes both `lina` and `lina-node`, with platform suffixes. |
 
 The writer copies route admission sets from `kit/provider/capabilities.json`. The Responses descriptor also records its admitted `capabilities`; a per-request choice cannot widen that set. Unrecognized or unadmitted capabilities fail validation.
 
-The writer copies `providers` from `kit/provider/responses/manifest.json` and checks its adapter identity and zero retry count. The Responses adapter reads that configuration from the generated manifest, validates required and forbidden fields, and permits per-request narrowing only. The initial list is exercised by scripted wires; live V1 acceptance remains required before conversation acceptance.
+The writer copies `providers` from `kit/provider/responses/manifest.json` and `kit/provider/messages/manifest.json` and checks each adapter identity and zero retry count. The Responses adapter reads that configuration from the generated manifest, validates required and forbidden fields, and permits per-request narrowing only. The initial list is exercised by scripted wires; live V1 acceptance remains required before conversation acceptance.
 
 The writer removes an old manifest before building and writes a new one atomically after both binaries succeed. It obtains SQLite metadata by running `internal/core/manifest/sqliteinfo` on the build host with the same toolchain, `CGO_ENABLED=0` and readonly module inputs: Go build information supplies the binding version and checksum, while in-memory SQLite and sqlite-vec queries and a hash of the embedded bytes identify the engine. The Wasm bytes are platform-independent; the metadata probe is never executed as a foreign-target binary. Uncommitted tracked, staged or nonignored untracked changes still permit a development build but suppress the manifest. A source change or a different `HEAD` detected during the build or metadata probe also suppresses it. The three generated output files do not count as untracked source changes; tracked files cannot be used as output artifacts.
 
@@ -1082,7 +1100,7 @@ Foundation keeps one local command and one required CI result. PRs select docs, 
 - Publishing binaries and their manifests: added to [releases.md](../policy/releases.md) when LINA is first packaged.
 - The default embedding model: chosen by the implementation issue that brings memory recall into answers.
 - Whether LINA qualifies as a Sign in with ChatGPT client, including a LINA Core on a remote host the person owns: confirmed with the issuer before the release that depends on it.
-- Whether the Claude subscription route through the Agent SDK is allowed for LINA: the SDK's overview says third-party products may not offer claude.ai login without approval ([research](../research/provider-optimization.md#result)). Confirmed with the vendor before the release that depends on it. A Claude API-key route over the Messages API is planned as its own implementation.
+- Whether the Claude subscription route through the Agent SDK is allowed for LINA: the SDK's overview says third-party products may not offer  login without approval ([research](../research/provider-optimization.md#result)). Confirmed with the vendor before the release that depends on it. The API-key route over the Messages API is implemented separately and is not that confirmation.
 - The keep-alive interval of an idle ChatGPT refresh token, the warning period before a Claude token's year ends, the idle period after which the Claude adapter stops, and the number of concurrent turns per Claude account: set during implementation acceptance of the provider adapters.
 - Which quota source a Claude token supports (the runtime's events, the usage report, or both): decided by a live test in V4.
 - Model-specific tokenizers and authoritative context-window metadata for the remaining provider routes. Until both are available, the adapter uses the conservative byte budget in [Compaction and resume](conversation-and-memory.md#compaction-and-resume).
