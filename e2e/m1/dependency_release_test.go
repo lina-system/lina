@@ -131,7 +131,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	var calls atomic.Int32
 	var managerCalls atomic.Int32
 	var taskIDs []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Input []json.RawMessage
 			Tools []struct{ Name string }
@@ -259,7 +259,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		default:
 			emitResponse(w, "Work refreshed.", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, _ := installedConversationHarness(t, server.URL)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)

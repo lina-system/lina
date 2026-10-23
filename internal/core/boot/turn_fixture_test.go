@@ -295,12 +295,28 @@ func assertTurnRequests(t *testing.T, p *turnProvider, count int) {
 			t.Fatalf("request lost model policy: model=%s purpose=%s", request.Model, request.Purpose)
 		}
 		var names []string
+		catalog := map[string]bool{}
 		for _, raw := range request.Tools {
 			var declaration struct{ Name string }
 			if err := json.Unmarshal(raw, &declaration); err != nil {
 				t.Fatal(err)
 			}
 			names = append(names, declaration.Name)
+			if declaration.Name == "load_tools" {
+				var loader struct {
+					Parameters struct {
+						Properties struct {
+							Tools struct{ Items struct{ Enum []string } }
+						}
+					}
+				}
+				if err := json.Unmarshal(raw, &loader); err != nil {
+					t.Fatal(err)
+				}
+				for _, name := range loader.Parameters.Properties.Tools.Items.Enum {
+					catalog[name] = true
+				}
+			}
 		}
 		// Pin the public names and their assembly order, not schema descriptions
 		// or persona prose. This catches omitted families and duplicated tools.
@@ -309,15 +325,20 @@ func assertTurnRequests(t *testing.T, p *turnProvider, count int) {
 			"record_emotion", "set_emotion_expression", "record_relationship", "remember_name",
 			"skill_notices", "skill_maintenance", "skill_index", "read_skill", "write_skill", "undo_skill",
 			"query_records", "read_record", "write_record", "promote_memo", "undo_record", "propose_candidate", "list_candidates",
-			"present_result", "read_result", "calculate", "observe_health", "repair_records_index",
-			"plan_index", "read_plan", "draft_plan", "start_run", "dispatch_work",
-			"prepare_work", "retain_work_result", "report_work_result", "land_work_result",
-			"worker_start", "worker_input", "worker_interrupt", "worker_quota", "worker_read_file", "worker_snapshot",
-			"create_timer", "timer_status", "cancel_timer",
+			"present_result", "read_result", "calculate",
+			"plan_index", "read_plan", "draft_plan", "start_run",
 			"send_handoff", "handoff_status", "begin_artifact_change", "finish_artifact_change",
+			"load_tools", "call_tool", "create_timer", "timer_status", "cancel_timer",
 		}
 		if !reflect.DeepEqual(names, want) {
 			t.Fatalf("declared tool order = %v, want %v", names, want)
+		}
+		for _, name := range append(want, "observe_health", "repair_records_index", "dispatch_work",
+			"prepare_work", "retain_work_result", "report_work_result", "land_work_result",
+			"worker_start", "worker_input", "worker_interrupt", "worker_quota", "worker_read_file", "worker_snapshot") {
+			if name != "load_tools" && name != "call_tool" && !catalog[name] {
+				t.Fatalf("tool missing from discovery catalog: %s", name)
+			}
 		}
 	}
 }
