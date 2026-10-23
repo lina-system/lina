@@ -13,8 +13,25 @@ import (
 	wire "github.com/thisisjun786/lina/kit/acp"
 )
 
+// promptEnded reports whether a failed prompt leaves a settled attempt. The
+// prompt error itself must be the end of the stream: an invalid or absent
+// completion reply that merely races EOF keeps the attempt unknown.
+func promptEnded(promptErr, connErr error) bool {
+	ended := func(err error) bool { return errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) }
+	return ended(promptErr) && ended(connErr)
+}
+
 func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 	defer a.turns.Done()
+	a.mu.Lock()
+	held := a.held
+	a.held = nil
+	a.mu.Unlock()
+	for _, u := range held {
+		if !a.update(th, u) {
+			return
+		}
+	}
 	c := a.client
 	updates, permissions, requests := c.Updates(), c.Permissions(), c.Requests()
 	for {
@@ -88,7 +105,7 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 					c.Close()
 					a.mu.Lock()
 					// Malformed or overflowed streams may have lost effect evidence.
-					a.transportEnded = errors.Is(transportErr, io.EOF) || errors.Is(transportErr, io.ErrClosedPipe)
+					a.transportEnded = promptEnded(result.Err, transportErr)
 					a.mu.Unlock()
 				}
 				a.finish(th, worker.Finish{Status: worker.Failed, Failure: failure, Code: "prompt_failed"})

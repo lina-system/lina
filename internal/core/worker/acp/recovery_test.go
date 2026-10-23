@@ -139,3 +139,32 @@ func TestMalformedTransportCannotSettleEffects(t *testing.T) {
 		})
 	}
 }
+
+func TestRestoreKeepsLiveUpdates(t *testing.T) {
+	a, ctx, l, spec := fixture(t)
+	a.cfg.Environment = append(a.cfg.Environment, "ACP_RECOVERY=load")
+	prior := worker.Thread{ID: "fixture", TurnID: "acp:1", TaskID: spec.TaskID, AttemptID: "previous", ProcessGeneration: 999, BindingEpoch: 6}
+	th, err := a.RecoverAttempt(ctx, l, spec, prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := false
+	for {
+		e := event(t, ctx, a)
+		if e.Thread != th {
+			t.Fatal("recovery event has old binding", e.Thread)
+		}
+		if e.Progress != nil && e.Progress.Phase == "thought" && e.Progress.Text == "LIVE_AFTER_RESTORE" {
+			live = true
+		}
+		if e.Finish != nil {
+			if e.Finish.Status != worker.Done {
+				t.Fatal(e.Finish)
+			}
+			break
+		}
+	}
+	if !live {
+		t.Fatal("live update after the restore response was dropped")
+	}
+}
