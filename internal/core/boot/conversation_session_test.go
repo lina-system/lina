@@ -93,7 +93,9 @@ func TestConversationQueuesSummaryOnlyAfterDelivery(t *testing.T) {
 		t.Run(fmt.Sprintf("condense=%v", condense), func(t *testing.T) {
 			r, p := turnRuntime(t)
 			r.route.Adapter = usageTurnProvider{p}
-			queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 4000), guard.EntryOwner, "")
+			// Keep the completed request above the unchanged preparation trigger
+			// even though enabled-tool instructions no longer duplicate schemas.
+			queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 7500), guard.EntryOwner, "")
 			queuedContextEvent(t, r, "archive-reply", "Archived.", guard.EntryAgent, "")
 			input, inbox := admitTurnInput(t, r, "finish-current-work")
 			count := func(table string) int {
@@ -172,7 +174,7 @@ func (p budgetTurnProvider) RequestBudget(model provider.ModelRef) (int, func(pr
 func TestConversationUsesAdapterContextBudget(t *testing.T) {
 	r, p := turnRuntime(t)
 	r.route.Adapter = budgetTurnProvider{p}
-	queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 4000), guard.EntryOwner, "")
+	queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 7000), guard.EntryOwner, "")
 	queuedContextEvent(t, r, "reply", "Archived.", guard.EntryAgent, "")
 	input, inbox := admitTurnInput(t, r, "continue")
 	summary, _ := json.Marshal(compaction.Text{Requests: "none", Topics: "archive", Actions: "Archived.", Values: "42", Omitted: "repeated archive"})
