@@ -78,7 +78,7 @@ func (d *codeGoalDriver) inputs(ctx context.Context, a goal.Action) (goal.State,
 }
 
 func (d *codeGoalDriver) Authorize(ctx context.Context, a goal.Action) error {
-	state, g, t, repo, err := d.inputs(ctx, a)
+	_, g, t, repo, err := d.inputs(ctx, a)
 	if err != nil {
 		return err
 	}
@@ -88,9 +88,14 @@ func (d *codeGoalDriver) Authorize(ctx context.Context, a goal.Action) error {
 	if (a.Kind == goal.InspectPR || a.Kind == goal.Merge) && a.Revision != t.Head || a.Kind == goal.RunQA && a.Revision != t.Merge.Revision || (a.Kind == goal.Deploy || a.Kind == goal.Verify) && a.Revision != codeGoalRevision(g) {
 		return goal.ErrNeedsPerson
 	}
-	for _, current := range state.Actions {
-		if current.ID == a.ID && (current.Signal != a.Signal || current.Sequence != a.Sequence) {
-			return goal.ErrNeedsPerson
+	if a.InputVersion == nil || a.InputVersion.GoalRevision != g.Revision || a.InputVersion.RecordRevision != g.RecordRevision {
+		return goal.ErrNeedsPerson
+	}
+	for _, task := range g.Tasks {
+		if a.TaskID == "" || a.TaskID == task.ID {
+			if a.InputVersion.PRGenerations[task.ID] != task.PRGeneration {
+				return goal.ErrNeedsPerson
+			}
 		}
 	}
 	class := tools.LocalWrite
