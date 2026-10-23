@@ -40,10 +40,9 @@ func Validate(kind Type, raw json.RawMessage, lim Limits) (Body, error) {
 		return nil, fmt.Errorf("%w: body size or encoding", ErrMalformed)
 	}
 	var b Body
-	if kind == SurfaceType {
-		return validateSurface(raw)
-	}
 	switch kind {
+	case SurfaceType:
+		return validateSurface(raw)
 	case SummaryType:
 		b = &Summary{}
 	case TableType:

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package clientapi owns the typed client connection to Core. It has no access
-// to Core state and never starts Core or retries a request.
+// to Core state and never starts Core or retries an operation.
 package clientapi
 
 import (
@@ -57,20 +57,37 @@ func Dial(ctx context.Context, socket, productVersion string) (*Client, error) {
 }
 
 // DialWithCapabilities offers only the caller's implemented capabilities.
+// A 1.1 handshake refused as unsupported may reconnect once using 1.0.
 // Welcome may grant any subset, never an unoffered capability or version.
 func DialWithCapabilities(ctx context.Context, socket, productVersion string, capabilities []protocol.Capability) (*Client, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
-	}
-	client, err := handshake(ctx, conn, productVersion, capabilities)
-	if err != nil {
+	for attempt := 0; attempt < 2; attempt++ {
+		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		}
+		client, err := handshake(ctx, conn, productVersion, capabilities)
+		if err == nil {
+			return client, nil
+		}
 		conn.Close()
-		return nil, err
+		var refusal *Refusal
+		if attempt != 0 || !protocol.HasCapability(capabilities, protocol.SurfaceResultsCapability()) || !errors.As(err, &refusal) || refusal.Cause.Code != protocol.ErrorUnsupportedCombination {
+			return nil, err
+		}
+		// An installed 1.0 Core refuses the 1.1 envelope before negotiation.
+		// Reconnect once within the original deadline, with only fields that
+		// its strict decoder knows. No operation has been sent or retried.
+		legacy := make([]protocol.Capability, 0, len(capabilities))
+		for _, capability := range capabilities {
+			if capability.Name != "results" {
+				legacy = append(legacy, protocol.Capability{Name: capability.Name, Version: capability.Version})
+			}
+		}
+		capabilities = legacy
 	}
-	return client, nil
+	return nil, ErrUnavailable
 }
 
 func handshake(ctx context.Context, conn net.Conn, productVersion string, capabilities []protocol.Capability) (*Client, error) {

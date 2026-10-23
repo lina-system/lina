@@ -55,3 +55,9 @@ func TestSurfaceBatchPublishesOnlyCompleteRevisions(t *testing.T) {
 		t.Fatal("cross-agent read")
 	}
 }
+
+func TestSurfaceSaveHasNoMaterialDestination(t *testing.T) {
+	if _, err := destination(result.SurfaceType, result.Destination{Kind: "resource"}); !errors.Is(err, ErrOutOfScope) {
+		t.Fatalf("surface save=%v", err)
+	}
+}

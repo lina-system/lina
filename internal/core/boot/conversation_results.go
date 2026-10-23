@@ -163,6 +163,9 @@ func (r *conversationRuntime) publishTypedResult(ctx context.Context, source led
 		return r.publish(ctx, protocol.KindItemDone, key, protocol.ItemDone{Text: &view.Text, Speaker: &speaker})
 	}
 	p := authoredResultWire(value, view.Text)
+	if value.Type == result.SurfaceType {
+		return r.publish(ctx, protocol.KindResult, key, p)
+	}
 	text, next, err := resultTextPage(*p.Text, 0)
 	if err != nil {
 		return err

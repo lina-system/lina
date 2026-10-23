@@ -491,7 +491,10 @@ One more type, `app`, is reserved for a later view that a plugin supplies ([inte
 Client **1.1** adds `surface`, an A2UI v0.9 card, and `surface_action`. The
 canonical [client schema](../../protocol/schema/client/1.0/envelope.json) retains
 its original path and defines both 1.0 and 1.1. A 1.0 envelope cannot contain a
-surface or surface action. `mock` remains reserved for a later minor version.
+surface or surface action. An updated client first offers 1.1; if an installed
+older Core explicitly refuses that version, it may reconnect once within the
+same handshake deadline using a 1.0 envelope and capabilities without new fields.
+This retries negotiation only, never a person input or operation. `mock` remains reserved for a later minor version.
 
 A `surface` body has `version: "v0.9"`, `catalogId: "lina.cards"`,
 `catalogVersion: "1.0"`, `surfaceId`, `components`, `dataModel` and `deleted`.
@@ -507,7 +510,7 @@ the intersection. Core derives `surface_controls` (action keys, names, resolved
 values and bindings; ordered field labels, current values and numbered choices)
 from the validated tree. Clients use those descriptors for local form state;
 they do not infer validation or authority from the catalog. A client negotiating 1.1 and this capability gets surface card
-fields and complete Core text; `body` and `surface_controls` are included only when it lists both
+fields and complete Core text (bounded surface text is never paginated); `body` and `surface_controls` are included only when it lists both
 `surface` and `lina.cards/1.0`. Other clients receive an ordinary text output
 item, including on replay. Existing 1.0 result behavior remains available.
 

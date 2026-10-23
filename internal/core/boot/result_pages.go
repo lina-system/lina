@@ -103,6 +103,12 @@ func (r *conversationRuntime) readResultPage(ctx context.Context, session client
 		return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorStaleRevision}
 	}
 	wire := authoredResultWire(value, value.Summary)
+	if value.Type == result.SurfaceType {
+		if offset != 0 {
+			return clientsrv.Result{}, malformedManagement()
+		}
+		return clientsrv.Result{Kind: protocol.KindResult, Payload: wire}, nil
+	}
 	text, next, err := resultTextPage(*wire.Text, offset)
 	if err != nil {
 		return clientsrv.Result{}, err
