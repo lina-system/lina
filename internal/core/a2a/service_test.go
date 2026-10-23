@@ -33,6 +33,7 @@ type peerFixture struct {
 	token      string
 	changed    atomic.Bool
 	revoked    atomic.Bool
+	cardLeak   atomic.Bool
 }
 
 func peer(t *testing.T, mode string) *peerFixture {
@@ -67,6 +68,9 @@ func peer(t *testing.T, mode string) *peerFixture {
 		}
 		if r.URL.Path == "/card" {
 			name := "controlled"
+			if f.cardLeak.Load() {
+				name = f.token
+			}
 			if f.changed.Load() {
 				name = "changed"
 			}
@@ -488,5 +492,24 @@ func TestUnknownSendCannotFallbackToAnotherConnection(t *testing.T) {
 	}
 	if f.sends.Load() != 1 || other.sends.Load() != 0 {
 		t.Fatal("fallback reached another agent")
+	}
+}
+
+func TestCardCannotReflectStoredCredentials(t *testing.T) {
+	f := peer(t, "task")
+	if _, err := f.send(t, false); err != nil {
+		t.Fatal(err)
+	}
+	f.cardLeak.Store(true)
+	if _, err := f.service.Configure(t.Context(), f.connection, nil); err == nil {
+		t.Fatal("credential-bearing card admitted")
+	}
+	connection, err := f.service.Connection(t.Context(), f.owner.Person, "peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(connection)
+	if strings.Contains(string(raw), f.token) {
+		t.Fatal("credential persisted in connection metadata")
 	}
 }

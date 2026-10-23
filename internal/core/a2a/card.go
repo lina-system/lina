@@ -2,9 +2,12 @@
 package a2a
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"io"
 	"mime"
 	"net/http"
@@ -181,10 +184,16 @@ func (s *Service) Configure(ctx context.Context, c Connection, credential []byte
 		}
 		names[p.Name] = true
 	}
+	if s.connectionContainsCredential(c, credential) {
+		return Connection{}, ErrInvalid
+	}
 	var err error
 	c.Card, c.Interface, c.CardHash, err = s.fetchCard(ctx, c)
 	if err != nil {
 		return Connection{}, err
+	}
+	if s.connectionContainsCredential(c, credential) {
+		return Connection{}, ErrInvalid
 	}
 	for _, p := range c.Profiles {
 		if !slices.Contains(c.Card.OutputModes, p.MediaType) {
@@ -249,4 +258,48 @@ func validCardShape(c Card) bool {
 		}
 	}
 	return true
+}
+
+// Check decoded strings so JSON escaping cannot hide a reflected credential in
+// a card, profile or URL. This never exports a stored credential from the vault.
+func (s *Service) connectionContainsCredential(c Connection, newCredential []byte) bool {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return true
+	}
+	var tree any
+	if json.Unmarshal(raw, &tree) != nil {
+		return true
+	}
+	var visit func(any, int) bool
+	visit = func(v any, depth int) bool {
+		if depth > 64 {
+			return true
+		}
+		switch value := v.(type) {
+		case string:
+			if len(newCredential) > 0 && bytes.Contains([]byte(value), newCredential) {
+				return true
+			}
+			if s.Vault == nil {
+				return false
+			}
+			found, err := s.Vault.Contains(key(c), []byte(value))
+			return found || err != nil && !errors.Is(err, secrets.ErrNotFound)
+		case []any:
+			for _, child := range value {
+				if visit(child, depth+1) {
+					return true
+				}
+			}
+		case map[string]any:
+			for name, child := range value {
+				if visit(name, depth+1) || visit(child, depth+1) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return visit(tree, 0)
 }
