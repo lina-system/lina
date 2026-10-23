@@ -6,6 +6,47 @@ import (
 	"testing"
 )
 
+func TestInspectionConflictSignalUsesCentralFence(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		t.Run(map[bool]string{false: "live", true: "restart"}[restart], func(t *testing.T) {
+			e := revisionEngine(t, readyTask("a"))
+			revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "head", EffectsSettled: true})
+			old := claimOnlyAction(t, e, InspectPR)
+			if err := e.Signal(t.Context(), Signal{ID: "pr-changed", GoalID: old.GoalID, TaskID: old.TaskID}); err != nil {
+				t.Fatal(err)
+			}
+			if restart {
+				cfg := e.cfg
+				cfg.Epoch++
+				var err error
+				e, err = NewEngine(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reviewReconcile(t, e) // Run's startup pass loads canonical definitions.
+			}
+			conflict := Observation{Status: OutcomeConflict, PR: PRState{Head: "head"}}
+			if err := e.Report(t.Context(), old.ID, e.cfg.Epoch, conflict); err != nil {
+				t.Fatal(err)
+			}
+			if task := revisionSnapshot(t, e).Goals[0].Tasks[0]; task.Stage != TaskDelivered || task.PR != (PRState{}) || task.Conflicts != 0 {
+				t.Fatalf("stale inspection conflict changed the current task: %+v", task)
+			}
+			fresh := claimOnlyAction(t, e, InspectPR)
+			if fresh.ID == old.ID {
+				t.Fatal("reused stale inspection identity")
+			}
+			if err := e.Report(t.Context(), fresh.ID, e.cfg.Epoch, conflict); err != nil {
+				t.Fatal(err)
+			}
+			repair := claimOnlyAction(t, e, RepairConflict)
+			if repair.TaskID != old.TaskID || revisionSnapshot(t, e).Goals[0].Tasks[0].Conflicts != 1 {
+				t.Fatal("fresh inspection conflict lost the single recovery allowance")
+			}
+		})
+	}
+}
+
 func TestInspectionConflictReturnsToOwnWorkerOnce(t *testing.T) {
 	e, worker := claimedAssignment(t)
 	if err := e.Report(t.Context(), worker.ID, worker.Epoch, Observation{Status: OutcomeSucceeded, Head: "head", EffectsSettled: true}); err != nil {

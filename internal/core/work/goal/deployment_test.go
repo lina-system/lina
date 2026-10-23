@@ -339,8 +339,12 @@ func TestLateDeploymentCannotVerifyAnotherRepositoryAtSameCommit(t *testing.T) {
 	if s.Goals[0].Deployment != (Proof{}) || s.Actions[0].State != "finished" {
 		t.Fatalf("late deployment verified the new repository: %+v / %+v", s.Goals[0].Deployment, s.Actions)
 	}
-	if len(s.Goals[0].Evidence) != 1 {
-		t.Fatal("settled deployment evidence was lost")
+	var receipt Observation
+	if err := json.Unmarshal(s.Actions[0].Receipt, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Goals[0].Evidence) != 0 || receipt.Proof.Ref != "old-repository-deploy" || !receipt.Proof.Passed {
+		t.Fatal("obsolete deployment must remain receipt history, not current goal evidence")
 	}
 }
 
