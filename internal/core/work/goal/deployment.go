@@ -48,14 +48,14 @@ func targetRevision(g Goal) string {
 			}
 		}
 		if onlyResults {
-			var results []string
+			var results [][2]string
 			for _, t := range g.Tasks {
 				if !stepLanded(t) {
 					return ""
 				}
-				results = append(results, t.ID+":"+t.Result.Revision)
+				results = append(results, [2]string{t.ID, t.Result.Revision})
 			}
-			sort.Strings(results)
+			sort.Slice(results, func(i, j int) bool { return results[i][0] < results[j][0] })
 			return actionID(Action{GoalID: g.ID, Revision: string(encode(results))})
 		}
 	}

@@ -1653,6 +1653,9 @@ claims. Background completion wakes derivation through the run's stored result;
 record waits reread their owner-visible source on change and at expiry, and date
 waits use a timer. Neither kind borrows code merge or QA evidence. A mixed goal
 retains the merge, QA, deployment and runtime checks of each code task.
+For a graph containing only runs and waits with no service, the ordered stored
+results form the verification revision. Core rereads each result before checking
+the goal; `step.read` checks one named step and `steps.read` checks all results.
 
 A task's pull-request change signal invalidates its cached head, check, review and manager proofs, including while it waits for another task's merge slot. Core reads the pull request again before deriving a merge from those proofs.
 

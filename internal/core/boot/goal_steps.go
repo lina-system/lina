@@ -123,7 +123,11 @@ func (d *codeGoalDriver) readStepResult(ctx context.Context, s goal.State, g goa
 			if a.GoalID != g.ID || a.TaskID != t.ID || a.Kind != goal.Assign || a.Superseded || a.State != "finished" {
 				continue
 			}
-			r, found, err := d.runtime.background.service.Started(ctx, origin, a.ID)
+			id := a.ID
+			if a.ObserveActionID != "" {
+				id = a.ObserveActionID
+			}
+			r, found, err := d.runtime.background.service.Started(ctx, origin, id)
 			if err != nil {
 				return goal.Proof{}, err
 			}
