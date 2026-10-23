@@ -529,6 +529,82 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 	}
 	historyClient.Close()
 	h.stopCore(core)
+	// A historical recipient can disappear before the next boot. A new
+	// outbox item must still reach the surviving agent through running Core.
+	nextPhase()
+	var pendingID string
+	withFileCanon(t, h, func(db *canon.Store) {
+		store, err := agents.Open(h.root, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		oldAgent := strings.TrimPrefix(conversation, "main:")
+		var person string
+		if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(h.ctx, "SELECT person_id FROM agent_revisions WHERE agent_id=? AND revision=1", oldAgent).Scan(&person)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err = store.Delete(h.ctx, oldAgent, person, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		skillStore, err := skills.Open(h.root, db, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer skillStore.Close()
+		created, err := skillStore.Patch(h.ctx, skills.Patch{ID: "fixture-later", Files: skills.Bundle{"SKILL.md": {Text: "---\nname: fixture-later\ndescription: Retired.\n---\nRetired procedure."}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = db.Write(h.ctx, func(tx *canon.Tx) error {
+			_, err := skillStore.MaintainTx(h.ctx, tx, skills.Maintenance{Kind: "prune", Target: created.Undo, Reason: "Retired later procedure."})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := skillStore.MaintenanceNotices(h.ctx)
+		if err != nil || len(rows) != 5 {
+			t.Fatalf("pending notices=%+v %v", rows, err)
+		}
+		pendingID = fmt.Sprintf("skill-maintenance:%d", rows[len(rows)-1].Sequence)
+	})
+	for range 2 {
+		nextPhase()
+		core = start(true)
+		historyClient, err = clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := "main:" + newFirst
+		topic := "conversation:" + target
+		if _, err = historyClient.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+			t.Fatal(err)
+		}
+		frame, err := historyClient.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, ok := frame.Payload.(protocol.Snapshot)
+		if !ok {
+			t.Fatalf("expected snapshot: %+v", frame)
+		}
+		count := 0
+		for _, item := range snapshot.Items {
+			if strings.HasPrefix(item.Key, "skill-maintenance:") {
+				if item.Key != pendingID {
+					t.Fatalf("rerouted unavailable recipient's notice: %s", item.Key)
+				}
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("unavailable recipient blocked later notice: got %d, want 1", count)
+		}
+		historyClient.Close()
+		h.stopCore(core)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if calls != 3 {

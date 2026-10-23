@@ -28,6 +28,11 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 
 Failure coverage also includes:
 
+- `TestM2ConversationWorkerRunningInstalledCore`: a fixture worker started by
+  `worker_start` remains visible in Ctrl+R after the conversation turn ends,
+  with its owner agent before Codex. Explicitly finishing the worker removes
+  its row from the open pager without relying on a short execution duration.
+
 - `TestM1TurnCrashBoundaries`: acknowledged SIGKILL after claim, preparation,
   model item, tool intent, applied effect, tool receipt and completed turn;
   repeated recovery creates one interruption, retains committed results and
