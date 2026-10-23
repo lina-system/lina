@@ -139,3 +139,25 @@ func TestCompletionPreservesChannelScope(t *testing.T) {
 		})
 	}
 }
+
+func TestCompletionRejectsMissingOrigin(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	first, err := r.agents.FirstRun(ctx, r.person, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := work.Task{ID: "legacy-private", PersonID: r.person, AgentID: first.Agent.ID, ConversationID: "main:" + first.Agent.ID, Title: "Saved work", Done: "Result checked"}
+	if err = r.work.Create(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	card, err := r.work.Get(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Absence of a current binding cannot prove a private channel never owned
+	// this task: its binding may already have been removed.
+	if _, err = r.completionRunner(ctx, card); !errors.Is(err, channels.ErrDenied) {
+		t.Fatalf("missing origin acquired personal authority: %v", err)
+	}
+}

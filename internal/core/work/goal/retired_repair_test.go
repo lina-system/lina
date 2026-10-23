@@ -43,10 +43,19 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 			}
 			repair.ID, repair.Repairs, repair.DependsOn = "obsolete-repair-b", "b", []string{"b"}
 			late := Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}
+			expected := revisionSnapshot(t, e).Goals[0]
+			if !tc.corrected {
+				// The first receipt clears only the obsolete assessment marker.
+				expected.Tasks[1].RepairAsked = false
+			}
+			before := encode(expected)
 			for range 2 {
 				if err := e.Report(t.Context(), managers[1].ID, managers[1].Epoch, late); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if after := encode(revisionSnapshot(t, e).Goals[0]); !bytes.Equal(before, after) {
+				t.Fatal("stale report changed the current goal")
 			}
 			retired := revisionSnapshot(t, e)
 			if b := retired.Goals[0].Tasks[1]; b.Stage != TaskQAFailed || b.RepairAsked || b.RepairedBy != "" || b.QA.Ref != "failed-qa" {
@@ -104,8 +113,12 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 			}
 			// A later, different obsolete response must not clear the replacement.
 			repair.ID = "late-repair-b"
+			before = encode(revisionSnapshot(t, e).Goals[0])
 			if err := e.Report(t.Context(), managers[1].ID, cfg.Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
 				t.Fatal(err)
+			}
+			if after := encode(revisionSnapshot(t, e).Goals[0]); !bytes.Equal(before, after) {
+				t.Fatal("late obsolete response changed the current goal")
 			}
 			if !revisionSnapshot(t, e).Goals[0].Tasks[1].RepairAsked {
 				t.Fatal("late obsolete response cleared the replacement assessment")
