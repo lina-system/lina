@@ -56,6 +56,7 @@ export function registryFor(cwd) {
     'internal/core/secrets/',
     'internal/core/skills/',
     'internal/core/turn/',
+    'internal/core/timers/',
     'internal/core/update/',
     'internal/core/reactor/',
     'internal/core/recover/',

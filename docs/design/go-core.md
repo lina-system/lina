@@ -1352,6 +1352,47 @@ type Definition struct {
 
 **C-26 Scheduler (kept).** The canon `timer` table keeps authored fields apart from scheduler-owned ones. One sleeper goroutine runs Core's own five-field and RRULE next-instant function in the timer's zone. A nonexistent local time fires at the first valid instant, and a repeated hour fires once. One transaction selects due timers, inserts a fire row unique on (timer, instant), advances next and commits; then it dispatches. Uses: reminders and pre-warnings, the briefing, expiry of exchanges and approvals, deterministic sensors (a model runs only when the signature changes) and jobs. At restart a claimed fire of an older epoch is replaced once, and only if its action is read-only.
 
+#129 implements `timers` through the running Core. `create_timer` admits an
+immutable schedule and action from an authenticated private main conversation;
+Core supplies the person, agent and conversation. `timer_status` and
+`cancel_timer` recheck that binding. Repeated admission under the same tool-call
+identity returns the saved receipt, including after expiry; a changed request
+conflicts. Cancellation stops future fires; already claimed work may finish.
+Channel scheduling is not admitted without a durable channel authority binding.
+
+Schedules accept one RFC3339 instant, a five-field cron expression (numeric
+lists, ranges and steps), or a minute-resolution RRULE with an explicit IANA
+zone and start instant. RRULE supports MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY
+and YEARLY frequencies; INTERVAL; COUNT or UTC UNTIL; BYMINUTE, BYHOUR, BYDAY
+(weekday names), BYMONTHDAY (including negative days) and BYMONTH. Unsupported
+fields and impossible schedules are refused. Cron day-of-month and weekday
+restrictions use their ordinary OR rule. Civil-time resolution includes
+non-hour transitions: a gap maps to its first valid instant and a fold uses its
+first occurrence. Colliding gap candidates share the same fire identity.
+
+Canon migration 40 adds authored timer rows and scheduler-owned next instants,
+signatures and fire claims after completion events. One transaction commits a
+unique `(timer, instant)` fire and its next instant before any dispatch. One
+sleeper and four bounded delivery workers serve the scheduler. A timer's next
+fire cannot overtake an unfinished claim. On restart an older-epoch reminder
+or sensor claim is replaced at most once; an interrupted effect-capable job or
+second interrupted claim becomes `unknown` and remains inspectable. This is
+one durable fire per instant, not an exactly-once external-effect promise.
+
+Reminders append one system message without a model. Jobs enter the shared
+inbox and conversation lane to perform the saved request under ordinary tool
+authority. The initial deterministic sensor reads a saved record's revision;
+its first observation and later changed revisions enter that same reaction
+path. An identical revision uses no model call. The signature and change
+decision commit together and survive interrupted delivery. Read failures do
+not invent a change. Stable inbox and turn identities prevent a recovered fire
+from starting the same turn again. Internal scheduling input stays out of the
+display history; reminders and resulting replies remain in the conversation.
+The installed-Core scenario `e2e/m2/timers.json` covers real record tool results,
+reminder delivery, unchanged and changed observations, cancellation and restart.
+Package tests cover civil-time transitions, concurrent claims and SIGKILL at
+both sides of the claim commit.
+
 **C-55 Waiting list and progress lines (new).**
 
 - `waiting.Build` collects rows from approvals, questions, `needs_input` runs, blocked work, 할 일 the person promised or that are overdue with a deadline, requests awaiting a reply, exchanges flagged for the person, and outside-change problems. Each producer returns a row with kind, effort hint and an answer mapping. Core re-reads the source before showing.

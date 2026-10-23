@@ -343,6 +343,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G1-11, G2-01. Design refs: C-58; [work-and-delegation.md](work-and-delegation.md#event-driven-flow).
 
 **G2-03 Timers, reminders and sensors.** Durable timers, reminders, deterministic sensors.
+- #129 connects canon-backed timers to installed Core conversation tools and the shared reaction lane. `e2e/m2/timers.json` covers a scheduled job creating a record, model-free reminders, record-revision sensors, cancellation and restart. Focused tests exercise cron/RRULE DST gaps and folds, concurrent claims, bounded read-only recovery and SIGKILL before/after the claim commit.
 - Done when: a nonexistent local time and a repeated hour each fire once; `kill -9` at claim gives one fire per instant; an unchanged sensor signature spends no model call.
 - Depends on: G1-11, G2-02. Design refs: C-26.
 
