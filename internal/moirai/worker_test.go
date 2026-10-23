@@ -177,3 +177,63 @@ func (a *routeAPI) Apply(_ context.Context, p jobapi.Proposal) (jobapi.Applied, 
 	return jobapi.Applied{Watermark: p.Through}, nil
 }
 func (*routeAPI) Report(context.Context, string, jobapi.JobState) error { return nil }
+
+type committedAPI struct{ routeAPI }
+
+func (*committedAPI) Report(context.Context, string, jobapi.JobState) error {
+	return errors.New("report unavailable after committed Apply")
+}
+
+func TestStepCompletesWithApplyReceipt(t *testing.T) {
+	api := &committedAPI{}
+	work := jobapi.Work{Epoch: 1, Job: jobapi.Job{ID: "job", Deterministic: true, Timeout: time.Second}, Task: jobapi.Task{Sequence: 1, Input: json.RawMessage(`{}`)}}
+	if err := (Worker{Core: api}).Step(t.Context(), work); err != nil {
+		t.Fatalf("committed job depended on a separate report: %v", err)
+	}
+	if len(api.applied) != 1 {
+		t.Fatalf("Apply calls=%d", len(api.applied))
+	}
+}
+
+type failingReader struct {
+	work    jobapi.Work
+	started <-chan struct{}
+	failure error
+	cancel  context.CancelFunc
+	reads   int
+}
+
+func (r *failingReader) Ready(ctx context.Context, _ time.Time) ([]jobapi.Work, error) {
+	r.reads++
+	if r.reads == 1 {
+		return []jobapi.Work{r.work}, nil
+	}
+	select {
+	case <-r.started:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if r.reads > 2 {
+		// Bound the old silent-polling behavior without a timing-dependent failure.
+		r.cancel()
+	}
+	return nil, r.failure
+}
+
+func TestRunReturnsReadFailureAndJoinsActiveWork(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	core := &waitingCore{started: make(chan struct{})}
+	failure := errors.New("canon snapshot unavailable")
+	reader := &failingReader{work: jobapi.Work{Epoch: 1, Job: jobapi.Job{ID: "job", Timeout: time.Minute}, Task: jobapi.Task{Sequence: 1}}, started: core.started, failure: failure, cancel: cancel}
+	done := make(chan error, 1)
+	go func() { done <- (Worker{Reader: reader, Core: core}).Run(ctx, time.Millisecond) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, failure) || reader.reads != 2 {
+			t.Fatalf("read failure was hidden: err=%v reads=%d", err, reader.reads)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("read failure did not cancel and join active work")
+	}
+}
