@@ -31,6 +31,7 @@ export function registryFor(cwd) {
   // selects the acceptance suite, including transitive kit changes.
   const e2e = existsSync(join(cwd, 'e2e')) ? ['./e2e/...'] : [];
   return [
+    { name: 'storebench', module: '.', directories: ['internal/core/storebench/'], files: [], packages: ['./internal/core/storebench/...'] },
     { name: 'crw-takeover', module: '.', directories: ['tools/crw-takeover/'], files: [], packages: ['./tools/crw-takeover/...'] },
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
     { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', 'testdata/crw/', 'testdata/provider-replay/', ...addonDirectories, ...clientDirectories, 'third_party/codex-app-server/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...persona, ...skills, ...core, ...addonPackages, ...clientPackages, ...e2e, ...vendored], binary: 'lina' },

@@ -89,3 +89,19 @@ they do not establish current acceptance or change the contracts.
 `internal/core/worker/acp` implements C-29 on that client.
 A profile holds the worker name, the command and arguments, the environment variables it sets (such as `CLAUDE_CODE_EXECUTABLE`), the version probe and the vendor rate-limit key it may read.
 Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added profiles come from an editable settings file defined by their own issue.
+
+## Grok handshake (#759)
+
+- **Seen:** The protocol measurements and issue #759 record Grok Build 1.0.68
+  answering ACP v1 with `loadSession`, `session/list`, `session/resume` and
+  `session/close`. Its version is `_meta.agentVersion`, alongside host details.
+  Without sign-in, `session/new` returns -32000. The existing Grok profile probes
+  `grok --version` and starts `grok --no-auto-update agent stdio`.
+- **Inferred:** Keep the CLI version as readiness and installation evidence.
+  Store only the handshake version and known capability names, never raw
+  metadata, nested capability metadata or authentication descriptions. Observed
+  capabilities do not enable unimplemented adapter operations.
+- **Unknown:** A signed-in vendor account round trip remains unverified. The
+  synthetic installed-Core scenario proves dispatch and receipt wiring, not a
+  vendor release. This implements the native LINA contract; no external harness
+  or memory-system behavior is ported.
