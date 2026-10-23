@@ -9,12 +9,52 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/provider"
 )
+
+func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
+	var ids []string
+	err := r.db.Read(ctx, func(tx *canon.Tx) error {
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work','handoff_check','worker_session','worker_completion'))`
+		args := []any{r.conversation}
+		if through != "" {
+			query += ` AND (speaker_kind NOT IN ('person','forwarded') OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
+			args = append(args, through)
+		}
+		query += ` ORDER BY rowid DESC LIMIT 200`
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err = rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	var events []ledger.Event
+	journal := r.journal()
+	for i := len(ids) - 1; i >= 0; i-- {
+		event, err := journal.Get(ctx, ids[i])
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, nil
+}
 
 // modelContext filters both ledger evidence and memory through the same scoped
 // removal view. The person's original ledger remains available to the UI.
