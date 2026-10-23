@@ -16,6 +16,14 @@ a second snapshot, then checks one completion and the result file. The gate
 wait runs outside the worker request loop. `TestM2InstalledWorkerOutcome`
 exercises the corresponding worker, file read-back and restart path in Core.
 
+`TestM2WorkArea` drives Core's workspace allocation and result retention tools,
+commits real worker output, and verifies branch isolation, restart and backup
+after losing the work area. Its completion responder locates the current input
+before the ContextPacket's clock reference. `TestWorkAreaCompletionRequest`
+uses production request assembly to check that trailing evidence cannot hide a
+completion or make an older completion consume a newer input. The installed
+scenario also rejects retention results produced before the retention request.
+
 This map follows the nine acceptance checks and failure injections in
 [LINA 1](../../docs/design/go-roadmap.md#lina-1). External providers and Telegram
 are synthetic wires; the production stores, operations, Core and TUI are real.
