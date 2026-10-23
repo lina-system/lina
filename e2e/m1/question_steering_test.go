@@ -45,25 +45,32 @@ func TestQuestionSteeringInstalledCore(t *testing.T) {
 			}
 			emitResponse(w, "I recommend a table.", true)
 		case 3:
-			found := false
+			foundAnswer, foundRelated := false, false
 			for _, raw := range request.Input {
 				var item struct{ Role, Content string }
-				if json.Unmarshal(raw, &item) == nil && item.Role == "user" && strings.Contains(item.Content, "Use a list") {
-					found = true
+				if json.Unmarshal(raw, &item) == nil && item.Role == "user" {
+					foundAnswer = foundAnswer || strings.Contains(item.Content, "Use a list")
+					foundRelated = foundRelated || strings.Contains(item.Content, "Why a table?")
 				}
 			}
-			if !found {
-				t.Error("consumed steering missing from model request")
+			if !foundAnswer || !foundRelated {
+				t.Error("both consumed inputs must reach the model")
 			}
-			emitPersonaCall(w, "answer-format", "resolve_question", map[string]any{"id": questionID, "kind": "answered", "quote": "Use a list", "value": "list"})
+			emitPersonaCall(w, "earlier-related", "resolve_question", map[string]any{"id": questionID, "kind": "related", "quote": "Why a table?"})
 		case 4:
+			assertAskResult(t, request.Input, "earlier-related", "ok", "")
+			emitPersonaCall(w, "premature-save", "write_record", map[string]any{"id": "", "revision": "", "kind": "memo", "title": "Premature draft", "note": "table"})
+		case 5:
+			assertAskResult(t, request.Input, "premature-save", "invalid_arguments", "pending_question_needs_resolution")
+			emitPersonaCall(w, "answer-format", "resolve_question", map[string]any{"id": questionID, "kind": "answered", "quote": "Use a list", "value": "list"})
+		case 6:
 			var q waiting.ConversationQuestion
 			_ = json.Unmarshal(assertAskResult(t, request.Input, "answer-format", "ok", ""), &q)
 			if q.Resolution == nil || q.Resolution.Value != "list" {
 				t.Error("live answer did not resolve the question")
 			}
 			emitPersonaCall(w, "save-list", "write_record", map[string]any{"id": "", "revision": "", "kind": "memo", "title": "Chosen draft", "note": "list"})
-		case 5:
+		case 7:
 			var result struct{ ID string }
 			_ = json.Unmarshal(assertAskResult(t, request.Input, "save-list", "ok", ""), &result)
 			recordID = result.ID
@@ -71,12 +78,12 @@ func TestQuestionSteeringInstalledCore(t *testing.T) {
 				t.Error("no saved result")
 			}
 			emitPersonaCall(w, "read-list", "read_record", map[string]any{"id": recordID})
-		case 6:
+		case 8:
 			if raw := assertAskResult(t, request.Input, "read-list", "ok", ""); !strings.Contains(string(raw), "list") {
 				t.Errorf("saved draft readback: %s", raw)
 			}
 			emitResponse(w, "The list draft is saved and checked.", true)
-		case 7:
+		case 9:
 			emitResponse(w, "The draft remains a list.", true)
 		default:
 			t.Error("unexpected model request")
@@ -101,18 +108,21 @@ func TestQuestionSteeringInstalledCore(t *testing.T) {
 	case <-h.ctx.Done():
 		t.Fatal("asking turn did not reach the provider barrier")
 	}
-	key, text = "live-answer", "Use a list"
-	answerID, err := c.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &key, Text: &text})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for {
-		frame, err := c.Receive(h.ctx)
-		if err != nil || frame.Error != nil {
-			t.Fatalf("answer admission: %+v %v", frame, err)
+	// Both inputs are durably admitted before the provider barrier releases,
+	// so the loop consumes them together without a timing-dependent sleep.
+	for _, input := range []struct{ key, text string }{{"live-related", "Why a table?"}, {"live-answer", "Use a list"}} {
+		inputID, err := c.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &input.key, Text: &input.text})
+		if err != nil {
+			t.Fatal(err)
 		}
-		if frame.ReplyTo != nil && *frame.ReplyTo == answerID {
-			break
+		for {
+			frame, err := c.Receive(h.ctx)
+			if err != nil || frame.Error != nil {
+				t.Fatalf("input admission: %+v %v", frame, err)
+			}
+			if frame.ReplyTo != nil && *frame.ReplyTo == inputID {
+				break
+			}
 		}
 	}
 	close(release)
@@ -125,8 +135,8 @@ func TestQuestionSteeringInstalledCore(t *testing.T) {
 			break
 		}
 	}
-	if calls.Load() != 6 {
-		t.Fatalf("requests=%d, want six in one turn", calls.Load())
+	if calls.Load() != 8 {
+		t.Fatalf("requests=%d, want eight in one turn", calls.Load())
 	}
 	assertReceipt := func(turns int) {
 		t.Helper()
@@ -161,7 +171,7 @@ func TestQuestionSteeringInstalledCore(t *testing.T) {
 	}
 	assertReceipt(1)
 	topic := "waiting"
-	if _, err = c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+	if _, err := c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
 		t.Fatal(err)
 	}
 	frame, err := c.Receive(h.ctx)
@@ -200,7 +210,7 @@ func TestQuestionSteeringInstalledCore(t *testing.T) {
 	}
 	admittedTurn(t, h, c, conversation, "new-topic", "Tell me the time")
 	assertReceipt(2)
-	if calls.Load() != 7 {
+	if calls.Load() != 9 {
 		t.Fatalf("answer replayed after restart: requests=%d", calls.Load())
 	}
 }

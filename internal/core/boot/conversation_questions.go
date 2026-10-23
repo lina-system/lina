@@ -318,13 +318,14 @@ type questionTurn struct {
 	mu       sync.Mutex
 	runtime  *conversationRuntime
 	pending  map[string]bool
-	assessed map[string]bool
+	assessed map[string]string // question ID -> latest assessed input ID
 	sources  map[string][]ledger.Event
 }
 
 func (g *questionTurn) init(r *conversationRuntime, input ledger.Event, pending []waiting.ConversationQuestion) {
 	g.runtime = r
-	g.pending, g.assessed = map[string]bool{}, map[string]bool{}
+	g.pending = map[string]bool{}
+	g.assessed = map[string]string{}
 	g.sources = map[string][]ledger.Event{}
 	if !g.personInput(input) {
 		return
@@ -380,7 +381,6 @@ func (g *questionTurn) consume(ctx context.Context, accepted acceptedSteering) e
 		}
 		if allowed {
 			g.pending[q.ID] = true
-			g.assessed[q.ID] = false
 			g.sources[q.ID] = append(g.sources[q.ID], input)
 		}
 	}
@@ -390,7 +390,8 @@ func (g *questionTurn) check(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for id := range g.pending {
-		if g.assessed[id] {
+		sources := g.sources[id]
+		if len(sources) > 0 && g.assessed[id] == sources[len(sources)-1].ID {
 			continue
 		}
 		q, err := waiting.NewConversationQuestions(g.runtime.db).Get(ctx, id)
@@ -514,14 +515,19 @@ func (g *questionTurn) tool() loop.Tool {
 			if err = r.questionDecisions().PublishQuestion(ctx, q.ID); err != nil {
 				return loop.Result{ID: c.ID, Code: loop.Failed}
 			}
-			g.assessed[q.ID] = true
+			// An older related follow-up cannot account for newer steering.
+			// Reprocessing it must also preserve an assessed newer input.
+			sources := g.sources[q.ID]
+			if sources[len(sources)-1].ID == input.ID {
+				g.assessed[q.ID] = input.ID
+			}
 			body, _ := json.Marshal(q)
 			return loop.Result{ID: c.ID, Code: loop.OK, Output: body}
 		},
 	}
 }
 func resolveQuestionDeclaration() provider.ToolDecl {
-	return provider.ToolDecl(`{"type":"function","name":"resolve_question","description":"Before other tools or your final reply, account for each pending question using the current person input or owner steering received during this turn. Quote the input that answers it or changes the topic. Use answered with the person's value, related if they ask a related follow-up without answering, or default_applied if they move to an unrelated topic. Core applies the stored default, closes the question and records a notice. Continue the original work with that value. No resolution grants effect authority.","parameters":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["answered","related","default_applied"]},"quote":{"type":"string"},"value":{"type":"string"}},"required":["id","kind","quote"],"additionalProperties":false}}`)
+	return provider.ToolDecl(`{"type":"function","name":"resolve_question","description":"Before other tools or your final reply, account for each pending question using the current person input or owner steering received during this turn. Quote the input that answers it or changes the topic. A related assessment must cover the latest consumed input before work can continue; quoting an older follow-up does not account for newer steering. Use answered with the person's value, related if they ask a related follow-up without answering, or default_applied if they move to an unrelated topic. Core applies the stored default, closes the question and records a notice. Continue the original work with that value. No resolution grants effect authority.","parameters":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["answered","related","default_applied"]},"quote":{"type":"string"},"value":{"type":"string"}},"required":["id","kind","quote"],"additionalProperties":false}}`)
 }
 
 type questionTransaction struct{ tx *canon.Tx }
