@@ -4,6 +4,7 @@ package provider
 import (
 	"encoding/json"
 	"slices"
+	"time"
 )
 
 // Capability is an optimization, never model entitlement or tool permission.
@@ -43,6 +44,20 @@ func (s CapabilitySet) Valid() bool {
 		seen[c] = true
 	}
 	return true
+}
+
+// UsableCacheLifetime reports the cache lifetime both the adapter declaration
+// and the route admission accept. A route whose caching declares no lifetime,
+// or whose lifetime is not admitted, has no known expiry.
+func UsableCacheLifetime(supported, admitted CapabilitySet) (time.Duration, bool) {
+	usable := func(c Capability) bool { return supported.Has(c) && admitted.Has(c) }
+	switch {
+	case usable(CacheLifetime1hCapability):
+		return time.Hour, true
+	case usable(CacheLifetime5mCapability):
+		return 5 * time.Minute, true
+	}
+	return 0, false
 }
 
 // Position is an exclusive prefix count in Items and Tools. Instructions are

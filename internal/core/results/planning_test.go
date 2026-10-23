@@ -13,6 +13,7 @@ import (
 )
 
 func TestPlanOnlyLatestConfirmationCreatesRecords(t *testing.T) {
+	t.Parallel()
 	s, db, _, _ := setup(t)
 	repo, err := records.Open(t.TempDir(), db)
 	if err != nil {
@@ -90,6 +91,7 @@ func TestPlanOnlyLatestConfirmationCreatesRecords(t *testing.T) {
 }
 
 func TestPlanConfirmationReconcilesInterruptedPublication(t *testing.T) {
+	t.Parallel()
 	s, db, _, _ := setup(t)
 	repo, err := records.Open(t.TempDir(), db)
 	if err != nil {

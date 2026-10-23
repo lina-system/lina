@@ -2,9 +2,11 @@
 package provider_test
 
 import (
-	"github.com/thisisjun786/lina/kit/provider"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 func TestCapabilityAdmissionAndValues(t *testing.T) {
@@ -40,5 +42,29 @@ func TestCapabilityAdmissionAndValues(t *testing.T) {
 	}
 	if err := provider.ValidateUse(req, supported, nil); err == nil {
 		t.Fatal("unadmitted use accepted")
+	}
+}
+
+func TestUsableCacheLifetimeNeedsDeclarationAndAdmission(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		supported provider.CapabilitySet
+		admitted  provider.CapabilitySet
+		want      time.Duration
+		known     bool
+	}{
+		{"one hour", provider.CapabilitySet{provider.CacheLifetime1hCapability}, provider.CapabilitySet{provider.CacheLifetime1hCapability}, time.Hour, true},
+		{"five minutes", provider.CapabilitySet{provider.CacheLifetime5mCapability}, provider.CapabilitySet{provider.CacheLifetime5mCapability}, 5 * time.Minute, true},
+		{"both prefers one hour", provider.CapabilitySet{provider.CacheLifetime1hCapability, provider.CacheLifetime5mCapability}, provider.CapabilitySet{provider.CacheLifetime1hCapability, provider.CacheLifetime5mCapability}, time.Hour, true},
+		{"declared only", provider.CapabilitySet{provider.CacheLifetime1hCapability}, nil, 0, false},
+		{"admitted only", nil, provider.CapabilitySet{provider.CacheLifetime1hCapability}, 0, false},
+		{"none", nil, nil, 0, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, known := provider.UsableCacheLifetime(c.supported, c.admitted)
+			if got != c.want || known != c.known {
+				t.Fatalf("UsableCacheLifetime=%v,%v want %v,%v", got, known, c.want, c.known)
+			}
+		})
 	}
 }

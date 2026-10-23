@@ -143,3 +143,14 @@ func TestDesignReferenceUsesMarkdownSections(t *testing.T) {
 		})
 	}
 }
+
+func TestDefinitionAnchorFromInlineHeading(t *testing.T) {
+	body := "# Ship `code` with *emphasis* and <https://example.com/docs>\n"
+	const anchor = "ship-code-with-emphasis-and-httpsexamplecomdocs"
+	if !hasHeading(body, anchor) {
+		t.Fatalf("hasHeading(%q, %q) = false", body, anchor)
+	}
+	if hasHeading(body, anchor+"-1") {
+		t.Fatal("single heading received a duplicate suffix")
+	}
+}
