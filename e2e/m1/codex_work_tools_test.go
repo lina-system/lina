@@ -257,7 +257,10 @@ func codexWorkToolsFixture() {
 				fail("Core changed server request id: " + string(r.ID))
 			}
 		case "thread/read":
-			if fixture.QuotaRecovery && quotaRead {
+			// Background snapshots may run before the model receives its first
+			// quota result. Only the test's acknowledgement enables recovery.
+			_, observedErr := os.Stat(os.Getenv("LINA_WORKER_QUOTA_OBSERVED"))
+			if fixture.QuotaRecovery && quotaRead && observedErr == nil {
 				// A sparse update changes only primary. The adapter must retain
 				// secondary's original observation time through the next quota read.
 				primary := map[string]any{"usedPercent": fixture.FiveHour}
@@ -328,6 +331,7 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 		t.Fatal(err)
 	}
 	workdir := t.TempDir()
+	quotaObserved := filepath.Join(t.TempDir(), "quota-observed")
 	finished := make(chan struct{})
 	var calls atomic.Int32
 	var quotaChecked atomic.Bool
@@ -413,6 +417,11 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 				return
 			}
 			weeklyObserved.Store(quota.Rows[1].Observed)
+			if err := os.WriteFile(quotaObserved, []byte("observed"), 0600); err != nil {
+				t.Error(err)
+				emitResponse(w, "Worker quota unavailable.", true)
+				return
+			}
 			emitPersonaCall(w, "refresh-worker", "worker_snapshot", map[string]any{"session": sessionID.Load().(string)})
 			return
 		}
@@ -462,7 +471,7 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 	}
 	start := func() *process {
 		p := h.command("core", "--state-root", h.root, "--socket", h.socket)
-		p.command.Env = append(p.command.Env, "PATH="+bin, "LINA_WORKER_FIXTURE=2", "CODEX_HOME=/fixture/codex-home", "LINA_WORK_TOOLS_SCENARIO="+string(data), "LINA_WORKER_BARRIER_URL="+server.URL+"/worker-finished", "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+		p.command.Env = append(p.command.Env, "PATH="+bin, "LINA_WORKER_FIXTURE=2", "CODEX_HOME=/fixture/codex-home", "LINA_WORK_TOOLS_SCENARIO="+string(data), "LINA_WORKER_BARRIER_URL="+server.URL+"/worker-finished", "LINA_WORKER_QUOTA_OBSERVED="+quotaObserved, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 		p.start(t)
 		h.connect(p).Close()
 		waitCoreReady(t, h)
