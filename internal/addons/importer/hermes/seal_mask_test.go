@@ -15,6 +15,7 @@ import (
 )
 
 func TestSealJSONBodies(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"assignment":  `{"token":"synthetic-private-value","public":"visible"}`,
 		"escaped":     `{"password":"synthetic-\"private-value","public":"visible"}`,
@@ -56,6 +57,7 @@ func TestSealJSONBodies(t *testing.T) {
 }
 
 func TestSealUnmaskableBody(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"depth":          strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66),
 		"encoding":       "synthetic-private-value\xff",
@@ -121,6 +123,7 @@ func TestSealUnmaskableBody(t *testing.T) {
 }
 
 func TestSealJSONSidecar(t *testing.T) {
+	t.Parallel()
 	for name, raw := range map[string]string{
 		"JSON":           `{"token":"synthetic-private-value","public":"visible"}`,
 		"unmaskable":     strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66),
@@ -135,7 +138,7 @@ func TestSealJSONSidecar(t *testing.T) {
 			if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 				t.Fatal(err)
 			}
-			key := LegacyKey{string(HermesLCM), "profile", "messages", "2"}
+			key := LegacyKey{string(HermesLCM), "profile", "messages", "1"}
 			req.Sidecars = []Sidecar{{Key: LegacyKey{string(HermesLCM), "profile", "sidecars", "output"}, Event: key, SnapshotPath: path, SHA256: bytesHash([]byte(raw))}}
 			p, err := Prepare(t.Context(), req)
 			if err != nil {
@@ -192,6 +195,7 @@ func TestSealJSONSidecar(t *testing.T) {
 }
 
 func TestPromotionUsesSidecarBody(t *testing.T) {
+	t.Parallel()
 	for name, raw := range map[string]string{
 		"unmaskable":     strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66),
 		"numeric secret": `{"password":123456,"public":"visible"}`,
@@ -246,6 +250,7 @@ func TestPromotionUsesSidecarBody(t *testing.T) {
 }
 
 func TestPromotionScreensInlineQuoteWithSidecar(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	// The quote stays the inline sentence, so a secret there must exclude the
 	// event even when the adopted sidecar that publication displays is benign.

@@ -19,10 +19,28 @@ import (
 
 func authoredResultWire(value result.Result, summary string) protocol.Result {
 	text := value.Summary + "\n" + value.Text
+	if value.Type == result.MockType {
+		text += "\n" + mockExportActions(value)
+	}
 	p := protocol.Result{
 		ResultID: value.ID, Revision: json.Number(strconv.Itoa(value.Revision)), Type: protocol.ResultType(value.Type), Status: protocol.ResultStatus(value.Status),
 		Title: value.Title, Summary: summary, Text: &text, RevisedBy: value.RevisedBy,
 		Provenance: protocol.ResultProvenance{AgentID: value.Provenance.AgentID, ConversationID: value.Provenance.ConversationID, TurnID: value.Provenance.TurnID, TaskID: value.Provenance.TaskID},
+	}
+	if value.Type == result.SurfaceType {
+		body := json.RawMessage(value.Body)
+		p.Body = &body
+		var surface result.Surface
+		if json.Unmarshal(body, &surface) == nil {
+			controls := surface.Controls()
+			p.SurfaceControls = &controls
+		}
+
+	}
+	if value.Type == result.MockType {
+		raw := json.RawMessage(value.Body)
+		p.Body = &raw
+
 	}
 	if value.Completion != nil {
 		p.Completion = &protocol.CompletionStatus{State: protocol.CompletionState(value.Completion.State), Label: value.Completion.Label}
@@ -48,7 +66,9 @@ func resultTextPage(text string, offset int64) (string, *json.Number, error) {
 
 func (r *conversationRuntime) resultOperations() map[protocol.Kind]clientsrv.Operation {
 	return map[protocol.Kind]clientsrv.Operation{
-		protocol.KindResultGet: {Capability: clientsrv.ConversationCapability, Handle: r.readResultPage},
+		protocol.KindResultGet:     {Capability: clientsrv.ConversationCapability, Alternatives: []protocol.Capability{clientsrv.ResultsCapability}, Handle: r.readResultPage},
+		protocol.KindSurfaceAction: {Capability: clientsrv.ResultsCapability, Handle: r.surfaceAction},
+		protocol.KindMockRequest:   {Capability: clientsrv.MocksCapability, Handle: r.mockOperation},
 	}
 }
 
@@ -93,10 +113,23 @@ func (r *conversationRuntime) readResultPage(ctx context.Context, session client
 		return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorStaleRevision}
 	}
 	wire := authoredResultWire(value, value.Summary)
+	if value.Type == result.SurfaceType {
+		if offset != 0 {
+			return clientsrv.Result{}, malformedManagement()
+		}
+		return clientsrv.Result{Kind: protocol.KindResult, Payload: wire}, nil
+	}
 	text, next, err := resultTextPage(*wire.Text, offset)
 	if err != nil {
 		return clientsrv.Result{}, err
 	}
 	wire.Text, wire.Next = &text, next
 	return clientsrv.Result{Kind: protocol.KindResult, Payload: wire}, nil
+}
+
+// IDs are opaque data even in an explicit shell export action.
+func mockExportActions(value result.Result) string {
+	quote := func(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'" }
+	base := "lina mock-export --socket <socket> --conversation " + quote(value.Provenance.ConversationID) + " --result " + quote(value.ID) + " --revision " + strconv.Itoa(value.Revision)
+	return base + " --asset png --output mock.png\n" + base + " --asset page --output mock.zip"
 }

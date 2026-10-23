@@ -24,14 +24,14 @@ func TestWorkerSteeringThroughRunningCore(t *testing.T) {
 	script = strings.Replace(script, "readline.createInterface({input:process.stdin}).on('line',line=>{", "readline.createInterface({input:process.stdin}).on('line',async line=>{", 1)
 	script = strings.Replace(script, "fs.writeFileSync(path.join(root,'cwd'),process.cwd());reply", "bridge=mcp(m.params.mcpServers[0]);await bridge.call('initialize',{protocolVersion:'2025-06-18'});fs.writeFileSync(path.join(root,'cwd'),process.cwd());reply", 1)
 	script = strings.Replace(script, "release(()=>{", "release(async ()=>{", 1)
-	script = strings.Replace(script, "const definition=JSON.parse(packet.slice(packet.indexOf('{')));", `const response=await bridge.call('tools/call',{name:'read_projection',arguments:{}});
-  const inbox=response.result.content.map(c=>JSON.parse(c.text)).find(c=>c.steering);
+	script = strings.Replace(script, "const definition=JSON.parse(messageText(packet).slice(messageText(packet).indexOf('{')));", `const response=await bridge.call('tools/call',{name:'read_projection',arguments:{}});
+  const inbox=response.result.content.map(c=>JSON.parse(messageText(c.text))).find(c=>c.steering);
   if(!inbox||inbox.steering.length!==1)throw Error('missing steering in next tool result');
   const mail=inbox.steering[0];
   await bridge.call('tools/call',{name:'check_inbox',arguments:{read:[mail.id]}});
   fs.writeFileSync(path.join(root,'steering-id'),mail.id);
-  const definition=JSON.parse(packet.slice(packet.indexOf('{')));`, 1)
-	script = strings.Replace(script, "fs.writeFileSync('result.txt','ACP result\\n')", "fs.writeFileSync('result.txt',mail.text+'\\n')", 1)
+  const definition=JSON.parse(messageText(packet).slice(messageText(packet).indexOf('{')));`, 1)
+	script = strings.Replace(script, "fs.writeFileSync('result.txt','ACP result\\n')", "fs.writeFileSync('result.txt',messageText(mail.text)+'\\n')", 1)
 	script = strings.Replace(script, "reply(pending,{stopReason:'end_turn'});", `await bridge.call('tools/call',{name:'check_inbox',arguments:{acted:[mail.id]}});
   await bridge.close();reply(pending,{stopReason:'end_turn'});`, 1)
 	runACPWorkersThroughRunningCore(t, []acpScenario{{name: "steering", worker: "gemini", binary: "gemini", mode: "steering", script: script,

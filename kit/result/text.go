@@ -25,6 +25,8 @@ func PlainText(b Body, m Measurer) string {
 		}
 	}
 	switch v := b.(type) {
+	case *Surface:
+		return v.plainText()
 	case *Summary:
 		for _, s := range v.Outline {
 			add(s.Heading)
@@ -129,6 +131,17 @@ func PlainText(b Body, m Measurer) string {
 			}
 			add(line)
 		}
+	case *Mock:
+		add(v.Request)
+		for i, item := range v.Checklist {
+			line := fmt.Sprintf("[%d] %s", i+1, item.Description)
+			if item.Action != "none" {
+				line += " (" + item.Action + ")"
+			}
+			add(line)
+		}
+		add(fmt.Sprintf("Export page: %s revision %d", v.Page.ID, v.Page.Revision))
+		add(fmt.Sprintf("Export PNG: %s revision %d", v.PNG.ID, v.PNG.Revision))
 	case *File:
 		add(fmt.Sprintf("%s (%s, %d bytes)\nAsset: %s revision %d", v.Name, v.MediaType, v.Size, v.Asset.ID, v.Asset.Revision))
 	}

@@ -14,6 +14,7 @@ import (
 )
 
 func TestRehearsalSealPromotion(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	db := importStore(t)
 	p, err := Prepare(t.Context(), req)
@@ -98,6 +99,7 @@ func TestRehearsalSealPromotion(t *testing.T) {
 }
 
 func TestSealVerificationAndBackupFailure(t *testing.T) {
+	t.Parallel()
 	p, err := Prepare(t.Context(), importRequest(t))
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +132,7 @@ func TestSealVerificationAndBackupFailure(t *testing.T) {
 }
 
 func TestSealRejectsChangedAttributionAndMissingLinks(t *testing.T) {
+	t.Parallel()
 	for _, query := range []string{
 		"UPDATE import_event SET speaker_kind='person',person_id='person' WHERE speaker_kind='tool'",
 		"DELETE FROM import_link WHERE kind='child'",
@@ -158,6 +161,7 @@ func TestSealRejectsChangedAttributionAndMissingLinks(t *testing.T) {
 }
 
 func TestFinalBackupResumesAfterPromotion(t *testing.T) {
+	t.Parallel()
 	p, err := Prepare(t.Context(), importRequest(t))
 	if err != nil {
 		t.Fatal(err)
@@ -188,6 +192,7 @@ func TestFinalBackupResumesAfterPromotion(t *testing.T) {
 }
 
 func TestPromotionHistoryFiltersAndSessionEvidence(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	w := honchoWorkspace{profile: "profile", workspace: "workspace"}
 	for _, fields := range []map[string]any{
@@ -253,6 +258,7 @@ func TestPromotionHistoryFiltersAndSessionEvidence(t *testing.T) {
 }
 
 func TestSealedSecretsStayOutOfSearchAndPromotion(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	for _, profile := range req.Profiles {
 		sqlSource(t, profile.LCMPath, "UPDATE messages SET content='password=synthetic-secret-value' WHERE store_id=1")

@@ -65,9 +65,7 @@ func TestWorkAreaCompletionRequest(t *testing.T) {
 				t.Fatal(report.Failure)
 			}
 			input := make([]json.RawMessage, len(request.Items))
-			for i, item := range request.Items {
-				input[i] = item
-			}
+			copy(input, request.Items)
 			response := httptest.NewRecorder()
 			if got := scriptedWorkCompletion(response, input); got != tc.want {
 				t.Fatalf("completion handled=%v, want %v", got, tc.want)
