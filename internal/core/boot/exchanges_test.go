@@ -19,7 +19,7 @@ func TestHandoffToolsTrackReceiptAndCheckback(t *testing.T) {
 		t.Fatal(err)
 	}
 	bindings := map[string]loop.Tool{}
-	if len(r.prepareExchangeTools("turn", bindings)) == 0 {
+	if declarations, err := r.prepareExchangeTools("turn", nil, bindings); err != nil || len(declarations) == 0 {
 		t.Fatal("missing handoff tools")
 	}
 	now := time.Now()
@@ -63,7 +63,7 @@ func TestHandoffToolsTrackReceiptAndCheckback(t *testing.T) {
 	}
 	foreign := newConversationView(r, peer.ID, "main:"+peer.ID)
 	other := map[string]loop.Tool{}
-	foreign.prepareExchangeTools("other", other)
+	foreign.prepareExchangeTools("other", nil, other)
 	raw, _ := json.Marshal(map[string]string{"id": status.ID})
 	if got := other["handoff_status"].Execute(t.Context(), provider.ToolCall{ID: "read", Arguments: string(raw)}); got.Code == loop.OK {
 		t.Fatal("foreign sender status exposed")
@@ -73,7 +73,7 @@ func TestHandoffToolsTrackReceiptAndCheckback(t *testing.T) {
 func TestArtifactOwnerRoutesSecondRecordWrite(t *testing.T) {
 	r := controlRuntime(t)
 	bindings := map[string]loop.Tool{}
-	if err := r.prepareRecordTools("create", "", bindings); err != nil {
+	if _, err := r.prepareRecordTools("create", &toolPreparation{}, bindings); err != nil {
 		t.Fatal(err)
 	}
 	create := provider.ToolCall{ID: "create", Name: "write_record", Arguments: `{"id":"","revision":"","kind":"document","title":"Draft","note":"Original"}`}
@@ -85,7 +85,7 @@ func TestArtifactOwnerRoutesSecondRecordWrite(t *testing.T) {
 	if err := json.Unmarshal(got.Output, &doc); err != nil {
 		t.Fatal(err)
 	}
-	r.prepareExchangeTools("lease", bindings)
+	r.prepareExchangeTools("lease", nil, bindings)
 	args, _ := json.Marshal(changeRequest{Artifact: exchange.Artifact{Kind: "business_document", ID: "record:" + doc.ID}, Done: "Draft revised", Wanted: "Revise", OutOfScope: "No sending", NextCheck: time.Now().Add(time.Hour), Deadline: time.Now().Add(2 * time.Hour)})
 	got = bindings["begin_artifact_change"].Execute(t.Context(), provider.ToolCall{ID: "lease", Arguments: string(args)})
 	var lease exchange.ChangeResult
@@ -106,7 +106,7 @@ func TestArtifactOwnerRoutesSecondRecordWrite(t *testing.T) {
 	}
 	other := newConversationView(r, owner, "main:"+owner)
 	otherBindings := map[string]loop.Tool{}
-	if err := other.prepareRecordTools("edit", "", otherBindings); err != nil {
+	if _, err := other.prepareRecordTools("edit", &toolPreparation{}, otherBindings); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(map[string]string{"id": doc.ID, "revision": doc.Revision, "kind": "document", "title": "Draft", "note": "Other edit"})
@@ -134,7 +134,7 @@ func TestArtifactOwnerRoutesSecondRecordWrite(t *testing.T) {
 	}
 	channel := newConversationView(r, owner, "channel:shared")
 	channelBindings := map[string]loop.Tool{}
-	if err := channel.prepareRecordTools("channel-edit", "", channelBindings); err != nil {
+	if _, err := channel.prepareRecordTools("channel-edit", &toolPreparation{}, channelBindings); err != nil {
 		t.Fatal(err)
 	}
 	redirected := channelBindings[call.Name].Execute(t.Context(), call)

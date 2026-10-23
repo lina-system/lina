@@ -30,8 +30,10 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-// The same Core digest is read while an actual stdio worker waits for approval,
-// asks a question and writes its result. Only model/worker service wires are scripted.
+// TestM2ProgressDigestWorker runs the worker journey in
+// m2/progress-controls.json through the Core digest while an actual stdio
+// worker waits for approval, asks a question and writes its result. Only model
+// and worker service wires are scripted.
 func TestM2ProgressDigestWorker(t *testing.T) {
 	t.Parallel()
 	runCodexWorkTools(t, "../m2/progress-controls.json", "", func(h *harness, phase string, _ []protocol.Question) {
@@ -67,8 +69,11 @@ func TestM2ProgressDigestWorker(t *testing.T) {
 	})
 }
 
-// Exercise the built TUI and the paired Telegram adapter against the same Core
-// handlers and durable run store. Queued runs make scope assertions deterministic.
+// TestM2ProgressControlsSurfaces runs m2/progress-controls.json through the
+// built TUI and paired Telegram gateway. They send explicit controls to the
+// same running Core handlers and inspect the durable target runs. Queued runs
+// make scope assertions deterministic. Only external provider and platform
+// wires are scripted.
 func TestM2ProgressControlsSurfaces(t *testing.T) {
 	for _, surface := range []string{"tui", "channel"} {
 		t.Run(surface, func(t *testing.T) { testProgressControlsSurfaces(t, surface) })

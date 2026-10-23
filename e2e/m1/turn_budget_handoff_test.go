@@ -247,7 +247,8 @@ func TestM1TurnBudgetHandoffInstalledCore(t *testing.T) {
 }
 
 func TestM1StartRunAtSoftInstalledCore(t *testing.T) {
-	t.Parallel()
+	// Keep this cold Core boot isolated from the other acceptance scenarios.
+	// The turn-budget assertions and operation deadlines remain unchanged.
 
 	var foreground, background atomic.Int32
 	runStarted := make(chan struct{}, 1)

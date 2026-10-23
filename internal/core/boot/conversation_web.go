@@ -16,7 +16,15 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
-func (r *conversationRuntime) prepareWebTools(turnID string, p coreexec.WebProvider, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
+func (r *conversationRuntime) prepareWebTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
+	p, err := r.selectedWebProvider()
+	if err != nil {
+		return nil, err
+	}
+	return r.bindWebTools(turnID, p, bindings)
+}
+
+func (r *conversationRuntime) bindWebTools(turnID string, p coreexec.WebProvider, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	if p == nil {
 		return nil, nil
 	}

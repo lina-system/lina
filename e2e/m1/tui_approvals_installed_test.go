@@ -20,6 +20,10 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM1TUIApprovalsInstalledCore (m1/tui-approvals-installed.json) uses the
+// installed Core and TUI binaries, seeded synthetic producer data, socket
+// discovery/decisions, and a separate-key PTY approval. This scenario creates
+// no second product decision store and uses no timing sleeps.
 func TestM1TUIApprovalsInstalledCore(t *testing.T) {
 	t.Parallel()
 

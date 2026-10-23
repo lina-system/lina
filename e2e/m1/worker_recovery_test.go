@@ -123,6 +123,11 @@ func recoveryWorkerFixture() {
 	}
 }
 
+// TestM2WorkerRecovery runs m2/worker-recovery.json through installed Core.
+// A gated snapshot proves unknown state after SIGKILL, then settlement without
+// a new turn, one continuation and a durable second-failure decision. The
+// disconnected case retains the provisional notice and delivers confirmed
+// output once. Real files survive restart; worker/provider wires are synthetic.
 func TestM2WorkerRecovery(t *testing.T) {
 	var scenario struct {
 		Cases                   []string

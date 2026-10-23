@@ -18,6 +18,13 @@ import (
 	"github.com/thisisjun786/lina/internal/core/update"
 )
 
+// TestM2UpdateClaudeCredential uses the installed update harness with a
+// synthetic Claude token and an empty login home. The production Claude adapter
+// must complete smoke using that token; the missing token case must hold after
+// READY. A bundled-worker probe checks its environment before running the real
+// readiness check, and outputs and durable state are checked for credential
+// disclosure.
+//
 // Serial: copying and verifying both update bundles is resource intensive.
 func TestM2UpdateClaudeCredential(t *testing.T) {
 	real := buildLina(t)

@@ -21,6 +21,10 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM2TUIBoardInstalledCore runs m2/tui-board.json through installed Core and
+// a real PTY TUI. The board combines an outside-change waiting request with a
+// background run, updates its groups on landing and opens the result. External
+// model wires are synthetic.
 func TestM2TUIBoardInstalledCore(t *testing.T) {
 	var fixture struct{ Input, Artifact string }
 	raw, err := os.ReadFile("../m2/tui-board.json")

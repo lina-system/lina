@@ -4,11 +4,59 @@ package design
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"unicode"
 )
+
+func TestCatalogRegister(t *testing.T) {
+	original := catalog
+	catalog = make(map[string]translation)
+	t.Cleanup(func() { catalog = original })
+
+	first := translation{"First", "첫째"}
+	second := translation{"Second", "둘째"}
+	register(map[string]translation{"test.first": first})
+	register(map[string]translation{"test.second": second})
+	for id, want := range map[string]translation{"test.first": first, "test.second": second} {
+		for language, text := range map[Language]string{English: want.en, Korean: want.ko} {
+			if got, ok := Lookup(language, id); !ok || got != text {
+				t.Errorf("Lookup(%q, %q) = %q, %t; want %q", language, id, got, ok, text)
+			}
+		}
+	}
+}
+
+func TestCatalogRegisterRejectsDuplicate(t *testing.T) {
+	for _, sameText := range []bool{false, true} {
+		t.Run(fmt.Sprint(sameText), func(t *testing.T) {
+			original := catalog
+			catalog = make(map[string]translation)
+			t.Cleanup(func() { catalog = original })
+
+			first := translation{"First", "첫째"}
+			next := translation{"Replacement", "교체"}
+			if sameText {
+				next = first
+			}
+			const id = "test.duplicate"
+			register(map[string]translation{id: first})
+			defer func() {
+				if value := recover(); value == nil {
+					t.Error("duplicate catalog id did not panic")
+				} else if !strings.Contains(fmt.Sprint(value), id) {
+					t.Errorf("panic does not identify the duplicate: %v", value)
+				}
+				if got := catalog[id]; got != first {
+					t.Errorf("duplicate replaced the existing translation: %+v", got)
+				}
+			}()
+			register(map[string]translation{id: next})
+		})
+	}
+}
 
 // Enumerate the actual schema, including nested enums, so adding a closed code
 // requires both translations. Wording is deliberately not an assertion.

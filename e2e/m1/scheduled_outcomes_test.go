@@ -21,6 +21,13 @@ type scheduledOutcomeScenario map[string]struct {
 	Output string `json:"output"`
 }
 
+// TestM3ScheduledOutcomes (m3/scheduled-outcomes.json) steers active scheduled
+// workers through the owner protocol. They write and commit real artifacts,
+// then report success or failure through final assistant text without
+// submitting receipts. Core delivers both reports to the originating persona
+// and restores their untrusted evidence and recorded snapshots after restart.
+// Neither report verifies the task nor releases its dependent. The synthetic
+// worker rejects a second turn start.
 func TestM3ScheduledOutcomes(t *testing.T) {
 	raw, err := os.ReadFile("../m3/scheduled-outcomes.json")
 	if err != nil {
