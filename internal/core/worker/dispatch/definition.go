@@ -3,16 +3,12 @@ package dispatch
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
-	"errors"
 	"html"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
-	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
@@ -21,26 +17,9 @@ import (
 	"github.com/yuin/goldmark/text"
 )
 
-// A committed admission owns its base, just as it owns its method snapshot.
-// Only new admissions resolve a moving branch. Git reads happen after the
-// caller's authority check and before the manager, queue or workspace exists.
-func (s *Service) baseForAdmission(ctx context.Context, origin Origin, callID string, d Definition) (string, error) {
-	var raw []byte
-	err := s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT record FROM worker_dispatch WHERE id=?", admissionID(origin, callID)).Scan(&raw)
-	})
-	if err == nil {
-		var saved Record
-		if err = json.Unmarshal(raw, &saved); err != nil {
-			return "", err
-		}
-		// methodForAdmission already matched the complete definition and origin.
-		if saved.BaseCommit != "" {
-			return saved.BaseCommit, nil
-		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return "", err
-	}
+// Resolve only new admissions. The caller has checked authority; a replay
+// retains its persisted base and manager decision without rereading Git.
+func (s *Service) resolveBase(ctx context.Context, d Definition) (string, error) {
 	if s.cfg.Activities == nil || s.cfg.Git == "" {
 		return "", work.ErrInvalid
 	}
@@ -54,7 +33,7 @@ func (s *Service) baseForAdmission(ctx context.Context, origin Origin, callID st
 	owner := proc.NewOwner()
 	defer owner.Close(context.Background())
 	git := func(args ...string) (string, error) { return s.command(ctx, l, owner, d.Repository, args...) }
-	for _, ref := range []string{d.Base, taskBranch(d.Branch, admissionID(origin, callID))} {
+	for _, ref := range []string{d.Base, d.Branch} {
 		if _, err = git("check-ref-format", "--branch", ref); err != nil {
 			return "", work.ErrInvalid
 		}
