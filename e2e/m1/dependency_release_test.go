@@ -315,7 +315,14 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 					t.Error("recovered task failure disabled delegation tools")
 				}
 			}
-			emitPersonaCall(w, "refresh", "refresh_work", map[string]any{"tasks": taskIDs})
+			refreshIDs := taskIDs
+			if option.sharedAncestors != 0 {
+				// Only these tasks can have a forge result. The full tail is
+				// checked in canon before and after restart; returning every
+				// queued packet here would exhaust the model input budget.
+				refreshIDs = taskIDs[:3]
+			}
+			emitPersonaCall(w, "refresh", "refresh_work", map[string]any{"tasks": refreshIDs})
 		default:
 			emitResponse(w, "Work refreshed.", true)
 		}

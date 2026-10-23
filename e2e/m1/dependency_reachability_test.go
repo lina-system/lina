@@ -16,6 +16,8 @@ import (
 // Both initial workers' persona replies finish before the merge refresh, so
 // completion turns cannot consume that scripted request. The refresh is queued
 // and matched to its durable input rather than another turn's idle frame.
+// Forge refresh reads the three executable tasks; all 48 queued descendants
+// are still checked directly in canon before and after Core restarts.
 func TestM3SharedAncestorGraphInstalledCore(t *testing.T) {
 	raw, err := os.ReadFile("../m3/dependency-reachability.json")
 	if err != nil {
