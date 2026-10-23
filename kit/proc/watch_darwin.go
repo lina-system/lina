@@ -55,6 +55,9 @@ func (w *watcher) run() {
 		}
 		timeout := syscall.NsecToTimespec(int64(50 * time.Millisecond))
 		n, err := syscall.Kevent(w.kq, nil, events, &timeout)
+		if n < 0 {
+			n = 0 // Kevent reports a negative count alongside its error
+		}
 		if err != nil && err != syscall.EINTR && err != syscall.EBADF {
 			time.Sleep(10 * time.Millisecond)
 		}
