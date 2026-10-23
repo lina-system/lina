@@ -25,29 +25,105 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
-func (s *Service) execute(ctx context.Context, r Record) {
+// outcome carries both the dispatch's final save and its directory fence.
+// A committed delivery may still have unknown effects. A quota wait may also
+// retain an uncertain fence if closing a parked adapter failed.
+type outcome uint8
+
+const (
+	outcomeFinished outcome = iota // No launch, or a settled quota attempt.
+	outcomeUnknown
+	outcomeQueued
+	outcomeQueuedUnknown
+	outcomeDelivered
+	outcomeDeliveryUnknown // Delivery owns the save, even if its transaction fails.
+)
+
+func (o outcome) saveState() string {
+	switch o {
+	case outcomeFinished:
+		return "finished"
+	case outcomeUnknown:
+		return "unknown"
+	case outcomeQueued, outcomeQueuedUnknown:
+		return "queued"
+	case outcomeDelivered, outcomeDeliveryUnknown:
+		return ""
+	}
+	panic("invalid dispatch outcome")
+}
+
+func (o outcome) queued() bool {
+	return o == outcomeQueued || o == outcomeQueuedUnknown
+}
+
+func (o outcome) releaseReservations() bool {
+	return o == outcomeFinished || o == outcomeQueued || o == outcomeDelivered
+}
+
+func (o outcome) waitForQuota() outcome {
+	if o.releaseReservations() {
+		return outcomeQueued
+	}
+	return outcomeQueuedUnknown
+}
+
+type execution struct {
+	record       Record
+	outcome      outcome
+	observing    bool
+	lease        lease.Lease
+	git          func(string, ...string) (string, error)
+	reservations []string
+	deferred     []func()
+	workspace    executionWorkspace
+	attempt      executionAttempt
+}
+
+type executionWorkspace struct {
+	repo, repository, workdir, taskRoot, base string
+	protectedArgs                             []string
+	protected, workProtected                  string
+	protectedWorkRefs                         func() (string, error)
+	directories                               []work.WorkerDirectory
+}
+
+type executionAttempt struct {
+	thread      worker.Thread
+	run         work.Run
+	finish      worker.Finish
+	observation observation
+}
+
+func (e *execution) closeDeferred() {
+	deferred := e.deferred
+	e.deferred = nil
+	for i := len(deferred) - 1; i >= 0; i-- {
+		deferred[i]()
+	}
+}
+
+func (s *Service) execute(ctx context.Context, record Record) {
+	e := execution{record: record}
+	r := &e.record
 	// Shutdown does not replay a possibly effective dispatch. Recovery marks the
 	// running record unknown and retains the task's active reservation.
 	observing := r.State == "unknown" && r.Thread != nil && r.WorkerName() == "codex"
-	admitted, settled := observing, false
-	deliverySaved := false
-	queued := false
+	e.observing = observing
+	if observing {
+		e.outcome = outcomeUnknown
+	}
 	defer func() {
-		if ctx.Err() == nil && !deliverySaved {
+		if state := e.outcome.saveState(); ctx.Err() == nil && state != "" {
 			// A terminal snapshot is recoverable only with its committed receipt.
 			r.Snapshot = nil
-			r.State = "finished"
-			if queued {
-				r.State = "queued"
-			} else if admitted && !settled {
-				r.State = "unknown"
-			}
-			_ = s.save(ctx, r)
+			r.State = state
+			_ = s.save(ctx, *r)
 		}
 		s.mu.Lock()
 		delete(s.running, r.ID)
 		s.mu.Unlock()
-		if !queued {
+		if !e.outcome.queued() {
 			s.Wake()
 		}
 	}()
@@ -62,7 +138,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	// Persist the assignment before creating any workspace or worker process.
 	if r.Branch == "" {
 		r.Branch = taskBranch(r.Definition.Branch, r.ID)
-		if err := s.save(ctx, r); err != nil {
+		if err := s.save(ctx, *r); err != nil {
 			return
 		}
 	}
@@ -87,33 +163,43 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	defer l.Release()
 	owner := proc.NewOwner()
 	service := s.cfg.Work
-	var reservations []string
 	defer func() {
 		// The adapter's later defer joins its process tree first. Join Git's
 		// process owner too before releasing any directory reservation.
 		if err := owner.Close(context.Background()); err != nil {
-			admitted, settled = true, false
-			queued, deliverySaved = false, false
+			e.outcome = outcomeUnknown
 			r.Code = "cleanup_failed"
 			return
 		}
-		if len(reservations) > 0 && (!admitted || settled) {
-			if err := service.ReleaseWorker(context.Background(), reservations...); err != nil {
-				admitted, settled = true, false
-				queued, deliverySaved = false, false
+		if len(e.reservations) > 0 && e.outcome.releaseReservations() {
+			if err := service.ReleaseWorker(context.Background(), e.reservations...); err != nil {
+				e.outcome = outcomeUnknown
 				r.Code = "reservation_unreleased"
 			}
 		}
 	}()
-	git := func(dir string, args ...string) (string, error) { return s.command(ctx, l, owner, dir, args...) }
+	e.lease = l
+	e.git = func(dir string, args ...string) (string, error) { return s.command(ctx, l, owner, dir, args...) }
+	// Keep every attempt's deferred cleanup in execute's scope, including
+	// the repeated close after delivery and the reverse order on handoff.
+	defer e.closeDeferred()
+	if !s.prepareWorkspace(ctx, &e) || !s.runAttempts(ctx, &e) {
+		return
+	}
+	s.deliver(ctx, &e)
+}
+
+func (s *Service) prepareWorkspace(ctx context.Context, e *execution) bool {
+	r, l, git := &e.record, e.lease, e.git
+	service, observing := s.cfg.Work, e.observing
 	d := r.TaskDefinition()
 	repo, err := filepath.EvalSymlinks(d.Repository)
 	if err != nil {
-		return
+		return false
 	}
 	common, err := git(repo, "rev-parse", "--git-common-dir")
 	if err != nil {
-		return
+		return false
 	}
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(repo, common)
@@ -136,29 +222,29 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			if errors.Is(err, work.ErrControlHeld) {
 				r.Code = "control_held"
 			}
-			return
+			return false
 		}
 	}
 	for _, directory := range directories {
-		reservations = append(reservations, directory.ID)
+		e.reservations = append(e.reservations, directory.ID)
 	}
 	remote, err := git(repo, "remote", "get-url", "origin")
 	if err != nil {
-		return
+		return false
 	}
 	if !strings.HasPrefix(remote, "https://github.com/") && !strings.HasPrefix(remote, "git@github.com:") {
 		r.Code = "repository_unsupported"
-		return
+		return false
 	}
 	repository := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(remote, "https://github.com/"), "git@github.com:"), ".git")
 	if strings.Count(repository, "/") != 1 || strings.ContainsAny(repository, ": \t\n") {
 		r.Code = "repository_unsupported"
-		return
+		return false
 	}
 	for _, ref := range []string{d.Base, d.Branch} {
 		if _, err = git(repo, "check-ref-format", "--branch", ref); err != nil {
 			r.Code = "invalid_branch"
-			return
+			return false
 		}
 	}
 	baseRef := r.BaseCommit
@@ -168,13 +254,13 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	}
 	base, err := git(repo, "rev-parse", "--verify", baseRef+"^{commit}")
 	if err != nil {
-		return
+		return false
 	}
 	r.BaseCommit = base
 	protectedArgs := []string{"for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/remotes", "refs/lina"}
 	protected, err := git(repo, protectedArgs...)
 	if err != nil {
-		return
+		return false
 	}
 	priorProtected := r.Protected
 	r.Protected = map[string]string{}
@@ -187,18 +273,18 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if (observing || r.ReturnReceipt != "") && !maps.Equal(priorProtected, r.Protected) {
 		r.Protected = priorProtected
 		r.Code = "protected_ref_changed"
-		return
+		return false
 	}
 	if r.ParentRefs == "" {
 		if observing {
-			return
+			return false
 		}
 		r.ParentRefs = protected
 	} else {
 		protected = r.ParentRefs
 	}
-	if err = s.save(ctx, r); err != nil {
-		return
+	if err = s.save(ctx, *r); err != nil {
+		return false
 	}
 	r.DesignText = map[string]string{}
 	for _, ref := range d.DesignRefs {
@@ -206,11 +292,11 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		body, err := git(repo, "show", base+":"+file)
 		if err != nil || !hasHeading(body, anchor) {
 			r.Code = "design_reference_missing"
-			return
+			return false
 		}
 		masked, maskErr := secrets.Mask(body)
 		if maskErr != nil {
-			return
+			return false
 		}
 		r.DesignText[ref] = masked.DerivedText()
 	}
@@ -223,20 +309,20 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		manager = r.Origin.Conversation
 	}
 	if err = service.Create(ctx, work.Task{ID: r.ID, PersonID: r.Origin.Person, AgentID: ownerAgent, ConversationID: manager, Title: d.What, Done: d.Done, ArtifactRoots: []string{workdir, taskRoot}, Workspace: &workspace, RequiresApply: true}); err != nil {
-		return
+		return false
 	}
 	if !observing {
 		if _, err = s.cfg.Area.Prepare(ctx, l, r.ID, workspace.Spec); err != nil {
-			return
+			return false
 		}
 		if _, err = git(workdir, "remote", "set-url", "origin", remote); err != nil {
-			return
+			return false
 		}
 		if err = os.MkdirAll(taskRoot, 0700); err != nil {
-			return
+			return false
 		}
 	} else if info, err := os.Stat(workdir); err != nil || !info.IsDir() {
-		return
+		return false
 	}
 	protectedWorkRefs := func() (string, error) {
 		refs, err := git(workdir, protectedArgs...)
@@ -250,35 +336,45 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	}
 	workProtected, err := protectedWorkRefs()
 	if err != nil {
-		return
+		return false
 	}
 	if r.WorkRefs == "" {
 		if observing {
-			return
+			return false
 		}
 		r.WorkRefs = workProtected
 	} else {
 		workProtected = r.WorkRefs
 	}
-	if err = s.save(ctx, r); err != nil {
-		return
+	if err = s.save(ctx, *r); err != nil {
+		return false
 	}
 	if r.Packet == "" {
-		r.Packet, err = taskPacket(r)
-		if err != nil || s.save(ctx, r) != nil {
-			return
+		r.Packet, err = taskPacket(*r)
+		if err != nil || s.save(ctx, *r) != nil {
+			return false
 		}
 	}
+	e.workspace = executionWorkspace{repo: repo, repository: repository, workdir: workdir, taskRoot: taskRoot, base: base,
+		protectedArgs: protectedArgs, protected: protected, workProtected: workProtected, protectedWorkRefs: protectedWorkRefs, directories: directories}
+	return true
+}
+
+func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
+	r, l := &e.record, e.lease
+	service, observing := s.cfg.Work, e.observing
+	workdir, directories := e.workspace.workdir, e.workspace.directories
+	var err error
 	var thread worker.Thread
 	var run work.Run
 	var finish worker.Finish
 	var observation observation
 	if observing {
 		readCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		snap, readErr := s.observeThread(readCtx, l, &r, workdir)
+		snap, readErr := s.observeThread(readCtx, l, r, workdir)
 		cancel()
 		if readErr != nil || snap.Finish == nil {
-			return
+			return false
 		}
 		thread = snap.Thread
 		finish = *snap.Finish
@@ -286,11 +382,11 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		run = work.Run{ID: thread.AttemptID, TaskID: r.ID, Generation: r.Attempt, Worker: r.WorkerName(), ThreadID: thread.ID, TurnID: thread.TurnID, NodeID: s.cfg.Main}
 		card, readErr := service.Get(ctx, r.ID)
 		if readErr != nil {
-			return
+			return false
 		}
 		if card.Run == nil || card.Run.ID != run.ID {
 			if err = service.Start(ctx, run); err != nil {
-				return
+				return false
 			}
 		}
 		observation = func() (json.RawMessage, []antigravity.DeniedAction) {
@@ -301,50 +397,49 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			for _, directory := range directories {
 				if err = service.CheckWorker(ctx, directory.ID); err != nil {
 					r.Code = "control_held"
-					return
+					return false
 				}
 			}
-			adapter, closeAdapter, selectErr := s.selectWorker(ctx, l, r)
+			adapter, closeAdapter, selectErr := s.selectWorker(ctx, l, *r)
 			if selectErr != nil {
-				return
+				return false
 			}
 			if adapter == nil {
 				r.Wait = "worker_quota"
-				queued = true
-				return
+				e.outcome = e.outcome.waitForQuota()
+				return false
 			}
 			closeWorker := closeAdapter
 			closeAdapter = func(closeCtx context.Context) error {
 				closeErr := closeWorker(closeCtx)
 				if closeErr != nil {
-					admitted, settled = true, false
-					queued, deliverySaved = false, false
+					e.outcome = outcomeUnknown
 					r.Code = "cleanup_failed"
 				}
 				return closeErr
 			}
-			defer closeAdapter(context.Background())
+			e.deferred = append(e.deferred, func() { closeAdapter(context.Background()) })
 			observation = observeAdapter(adapter)
 			r.Version, err = adapter.Version(ctx)
 			if err != nil {
 				closeAdapter(context.Background())
-				return
+				return false
 			}
-			if err = s.reserveWorker(ctx, &r, adapter.Name()); err != nil {
+			if err = s.reserveWorker(ctx, r, adapter.Name()); err != nil {
 				closeAdapter(context.Background())
 				if errors.Is(err, errWorkerParked) {
 					continue
 				}
-				return
+				return false
 			}
 			generation := r.Attempt
 			run = work.Run{ID: fmt.Sprintf("%s:%d", r.ID, generation), TaskID: r.ID, Generation: generation, Worker: r.Worker, NodeID: s.cfg.Main}
 			if r.Recoveries > 0 && s.cfg.AuthorizeRecovery != nil {
-				allowed, err := s.cfg.AuthorizeRecovery(ctx, r)
+				allowed, err := s.cfg.AuthorizeRecovery(ctx, *r)
 				if err != nil || !allowed {
 					r.Code = "recovery_scope_changed"
 					closeAdapter(context.Background())
-					return
+					return false
 				}
 			}
 			// reserveWorker persisted this attempt before any launch. A crash is
@@ -352,24 +447,23 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			for _, directory := range directories {
 				if err = service.CheckWorker(ctx, directory.ID); err != nil {
 					r.Code = "control_held"
-					return
+					return false
 				}
 			}
-			admitted, settled = true, false
-			thread, err = s.startAttempt(ctx, l, adapter, r, run.ID, workdir)
+			e.outcome = outcomeUnknown
+			thread, err = s.startAttempt(ctx, l, adapter, *r, run.ID, workdir)
 			if err != nil {
-				admitted = true
 				closeAdapter(context.Background())
-				return
+				return false
 			}
 			// ACP agentInfo is available only after the session handshake.
 			r.Version, err = adapter.Version(ctx)
 			if err == nil {
-				err = s.save(ctx, r)
+				err = s.save(ctx, *r)
 			}
 			if err != nil {
 				closeAdapter(context.Background())
-				return
+				return false
 			}
 			var cancelled bool
 			_ = s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
@@ -381,24 +475,24 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			}
 			run.ThreadID, run.TurnID = thread.ID, thread.TurnID
 			r.Thread = &thread
-			if err = s.save(ctx, r); err != nil {
+			if err = s.save(ctx, *r); err != nil {
 				closeAdapter(context.Background())
-				return
+				return false
 			}
-			admitted, settled = true, false
+			e.outcome = outcomeUnknown
 			if err = service.Start(ctx, run); err != nil {
 				closeAdapter(context.Background())
-				return
+				return false
 			}
 			handle, unbind := func(worker.Event) {}, func() {}
 			if s.cfg.Bind != nil {
-				handle, unbind = s.cfg.Bind(r, adapter, thread, r.Packet, workdir)
+				handle, unbind = s.cfg.Bind(*r, adapter, thread, r.Packet, workdir)
 			}
 			observed := false
 			var progressSequence uint64
 			var progress progressBuffer
 			progressTick := time.NewTicker(progressInterval)
-			defer progressTick.Stop()
+			e.deferred = append(e.deferred, progressTick.Stop)
 			recordProgress := func(summary string, progressErr error) error {
 				if progressErr != nil || summary == "" {
 					return progressErr
@@ -413,7 +507,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 						r.Code = "worker_protocol_error"
 						unbind()
 						closeAdapter(context.Background())
-						return
+						return false
 					}
 					if event.Progress != nil {
 						err = recordProgress(progress.Observe(*event.Progress, time.Now()))
@@ -424,7 +518,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 						r.Code = "progress_failed"
 						unbind()
 						closeAdapter(context.Background())
-						return
+						return false
 					}
 					if event.Approval != nil || event.Question != nil || event.ToolCall != nil || event.Progress != nil && event.Progress.Phase == "server_request_resolved" {
 						if r.PendingRequests == nil {
@@ -440,10 +534,10 @@ func (s *Service) execute(ctx context.Context, r Record) {
 						default:
 							delete(r.PendingRequests, event.Progress.ItemID)
 						}
-						if err = s.save(ctx, r); err != nil {
+						if err = s.save(ctx, *r); err != nil {
 							unbind()
 							closeAdapter(context.Background())
-							return
+							return false
 						}
 					}
 					handle(event)
@@ -456,12 +550,12 @@ func (s *Service) execute(ctx context.Context, r Record) {
 						r.Code = "progress_failed"
 						unbind()
 						closeAdapter(context.Background())
-						return
+						return false
 					}
 				case <-ctx.Done():
 					unbind()
 					closeAdapter(context.Background())
-					return
+					return false
 				}
 			}
 			progressTick.Stop()
@@ -481,20 +575,31 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			// and all of its descendants have been reaped.
 			closeErr := closeAdapter(ctx)
 			if err != nil || closeErr != nil {
-				return
+				return false
 			}
 			if quotaStop && len(r.Tried) == 1 && r.Snapshot.EffectsKnown {
 				r.Snapshot = nil
 				r.PendingRequests = nil
 				if err = service.Finish(ctx, r.ID, run.ID, "failed"); err != nil {
-					return
+					return false
 				}
-				settled = true
+				e.outcome = outcomeFinished
 				continue
 			}
 			break
 		}
 	}
+	e.attempt = executionAttempt{thread: thread, run: run, finish: finish, observation: observation}
+	return true
+}
+
+func (s *Service) deliver(ctx context.Context, e *execution) {
+	r, git := &e.record, e.git
+	d := r.TaskDefinition()
+	w := e.workspace
+	repo, repository, workdir, taskRoot, base := w.repo, w.repository, w.workdir, w.taskRoot, w.base
+	protectedArgs, protected, workProtected, protectedWorkRefs := w.protectedArgs, w.protected, w.workProtected, w.protectedWorkRefs
+	thread, run, finish, observation := e.attempt.thread, e.attempt.run, e.attempt.finish, e.attempt.observation
 	// Claude and Antigravity synthesize connection failures without a result.
 	// Codex alone also reports observed provider failures as "connection";
 	// its transport-loss finish is synthetic and must remain unknown too.
@@ -514,7 +619,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	}
 	// Mask before assigning to the record: the deferred journal save must not
 	// retain the unmasked final response even if later PR reads fail.
-	if err = json.Unmarshal([]byte(observed.Text()), &r); err != nil {
+	if err = json.Unmarshal([]byte(observed.Text()), r); err != nil {
 		r.Code = "invalid_result"
 		return
 	}
@@ -591,8 +696,8 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		Manifest: []work.Artifact{{Path: artifact, SHA256: hash}}, Provenance: []work.Provenance{{ArtifactID: "adapter-derived:" + r.ID, TaskID: r.ID, NodeID: s.cfg.Main, Path: artifact, SHA256: hash, ObservedAt: now}}}
 	receipt.RevisionHash = work.ManifestHash(receipt.Manifest)
 	receipt.EventID = work.ReceiptID(receipt)
-	deliverySaved = true
-	if err = s.finish(ctx, r, run.ID, status, receipt); err != nil {
+	e.outcome = outcomeDeliveryUnknown
+	if err = s.finish(ctx, *r, run.ID, status, receipt); err != nil {
 		r.Code = "receipt_failed"
 	} else {
 		// A committed terminal receipt can still describe unknown effects.
@@ -601,8 +706,9 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		readErr := s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
 			return tx.QueryRowContext(ctx, "SELECT state FROM worker_dispatch WHERE id=?", r.ID).Scan(&state)
 		})
-		settled = readErr == nil && state != "unknown"
-		deliverySaved = true
+		if readErr == nil && state != "unknown" {
+			e.outcome = outcomeDelivered
+		}
 	}
 }
 func taskPacket(r Record) (string, error) {
