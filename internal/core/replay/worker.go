@@ -317,7 +317,10 @@ func Request(ep Episode, candidates map[string]string, model, effort string, bui
 	default:
 		return provider.Request{}, Exclusion("missing_assembly")
 	}
-	r := provider.Request{Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Instructions: instructions, Items: ep.Items, Tools: ep.Evidence.Tools, Fields: ep.Evidence.Fields, Purpose: provider.Replay}
+	r := provider.Request{CacheIdentity: ep.Evidence.CacheIdentity, Layout: ep.Evidence.Layout.Clone(), Model: ep.Evidence.Model, Effort: ep.Evidence.Effort, Instructions: instructions, Items: ep.Items, Tools: ep.Evidence.Tools, Fields: ep.Evidence.Fields, Purpose: provider.Replay}
+	if ep.Evidence.Capabilities != nil {
+		r.Capabilities = ep.Evidence.Capabilities.Clone()
+	}
 	if model != "" {
 		r.Model = provider.ModelRef(model)
 	}

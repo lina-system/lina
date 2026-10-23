@@ -150,7 +150,7 @@ func TestReviewStaleCriterionCompletionDoesNotStopRunner(t *testing.T) {
 	e.cfg.Driver = &fixtureDriver{run: func(a Action) (Observation, error) {
 		entered <- a
 		<-release
-		return Observation{Status: OutcomeSucceeded, Criterion: &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: "old-check-output", Passed: true}}, nil
+		return Observation{Status: OutcomeSucceeded, Criterion: &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "old-check-output", Passed: true}}, nil
 	}}
 	if err := e.step(t.Context()); err != nil {
 		t.Fatal(err)

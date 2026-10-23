@@ -76,6 +76,43 @@ func TestUpdateOverflowFailsConnection(t *testing.T) {
 		t.Fatalf("overflow %v", e)
 	}
 }
+
+func TestLoadWithoutReplayDoesNotQueueHistory(t *testing.T) {
+	c, ctx := fixture(t, func(a agent) {
+		a.initialize()
+		f := a.method("session/load")
+		for range 1024 {
+			a.send(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"history"}}}}`)
+		}
+		a.reply(f, `{}`)
+		a.send(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"live"}}}}`)
+		<-a.ctx.Done()
+	})
+	initialize(t, c, ctx)
+	loader, ok := any(c).(interface {
+		LoadSessionWithoutReplay(context.Context, acp.LoadSessionRequest) (acp.LoadSessionResponse, error)
+	})
+	if !ok {
+		t.Fatal("load cannot suppress replay before queue admission")
+	}
+	if _, err := loader.LoadSessionWithoutReplay(ctx, acp.LoadSessionRequest{SessionID: "s", Cwd: "/work"}); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately no consumer during load: history must never enter the queue.
+	select {
+	case update := <-c.Updates():
+		if update.Replay || update.Notification.Update.AgentMessageChunk == nil || update.Notification.Update.AgentMessageChunk.Content.Text.Text != "live" {
+			t.Fatal("replay suppression crossed the load response boundary", update)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case update := <-c.Updates():
+		t.Fatal("unexpected queued replay", update)
+	default:
+	}
+}
 func TestCancelIsScopedAndCompletionInvalidatesPermissions(t *testing.T) {
 	finished := make(chan struct{})
 	c, ctx := fixture(t, func(a agent) {

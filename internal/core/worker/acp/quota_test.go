@@ -200,18 +200,20 @@ func TestFailureAdvertisementVersionAndScope(t *testing.T) {
 	}
 }
 
-func TestNativeToolOutcomeFencesReplacement(t *testing.T) {
+func TestNativeToolActivityFencesReplacement(t *testing.T) {
 	for _, tc := range []struct {
 		name, updates string
 		known         bool
 	}{
+		{"no activity", `{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Waiting"}}`, true},
+		{"unknown update", `{"sessionUpdate":"future_effect"}`, false},
 		{"missing outcome", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write"}`, false},
 		{"running", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write","status":"in_progress"}`, false},
-		{"completed", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write"},{"sessionUpdate":"tool_call_update","toolCallId":"write","status":"completed"}`, true},
-		{"failed", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write"},{"sessionUpdate":"tool_call_update","toolCallId":"write","status":"failed"}`, true},
+		{"completed", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write"},{"sessionUpdate":"tool_call_update","toolCallId":"write","status":"completed"}`, false},
+		{"failed", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write"},{"sessionUpdate":"tool_call_update","toolCallId":"write","status":"failed"}`, false},
 		{"unknown status", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write","status":"future"}`, false},
 		{"update only", `{"sessionUpdate":"tool_call_update","toolCallId":"write","title":"Write"}`, false},
-		{"title after outcome", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write","status":"completed"},{"sessionUpdate":"tool_call_update","toolCallId":"write","title":"Done"}`, true},
+		{"title after outcome", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write","status":"completed"},{"sessionUpdate":"tool_call_update","toolCallId":"write","title":"Done"}`, false},
 		{"one of two pending", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write"},{"sessionUpdate":"tool_call","toolCallId":"read","title":"Read","status":"completed"}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -233,7 +235,19 @@ func TestNativeToolOutcomeFencesReplacement(t *testing.T) {
 }
 
 func TestPromptSuccessDoesNotReconcileEarlierRPCError(t *testing.T) {
+	testPromptAfterRPCError(t, false)
+}
+
+func TestQuotaStopDoesNotReconcileEarlierRPCError(t *testing.T) {
+	testPromptAfterRPCError(t, true)
+}
+
+func testPromptAfterRPCError(t *testing.T, quota bool) {
+	t.Helper()
 	a, ctx, l, s := fixture(t)
+	if quota {
+		a.cfg.Environment = append(a.cfg.Environment, "ACP_INIT_META="+failureAdvertisement, "ACP_UPDATES=["+failureUpdate("limit", `[]`, "error")+"]")
+	}
 	s.TaskPacket = "rpc-error"
 	th, err := a.Start(ctx, l, s)
 	if err != nil {
@@ -245,7 +259,8 @@ func TestPromptSuccessDoesNotReconcileEarlierRPCError(t *testing.T) {
 	if err = a.Input(ctx, th, worker.Input{Text: "success"}); err != nil {
 		t.Fatal(err)
 	}
-	if f := terminal(t, ctx, a); f.Status != worker.Done {
+	f := terminal(t, ctx, a)
+	if quota && f.Failure != worker.QuotaFailure || !quota && f.Status != worker.Done {
 		t.Fatal(f)
 	}
 	snap, err := a.Snapshot(ctx, th)

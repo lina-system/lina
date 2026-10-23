@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -62,6 +63,11 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 		drained:
 			// Requests are enqueued before the prompt reply. They are already expired
 			// in the shared client and must not become requests of the next turn.
+			if len(permissions) > 0 || len(requests) > 0 {
+				a.mu.Lock()
+				a.effectSeen = true
+				a.mu.Unlock()
+			}
 			for len(permissions) > 0 {
 				<-permissions
 			}
@@ -69,17 +75,24 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 				<-requests
 			}
 			if result.Err != nil {
-				// An error reply observes termination, not the outcome of its
-				// effects. Later prompts cannot reconcile that uncertainty.
-				a.mu.Lock()
-				a.uncertainEffects = true
-				a.mu.Unlock()
 				failure := worker.ConnectionFailure
 				var remote *wire.RPCError
 				if errors.As(result.Err, &remote) {
 					// A complete error reply ends the turn even if EOF follows.
 					// Retain neither its numeric code nor remote message/data.
+					// Later prompts cannot reconcile effects of this failed turn.
+					a.mu.Lock()
+					a.uncertainEffects = true
+					a.mu.Unlock()
 					failure = worker.WorkerFailure
+				} else if transportErr := c.Err(); transportErr != nil {
+					// Join the owned process and descendants before admitting a
+					// terminal snapshot. A timeout waiting for a reply is not death.
+					c.Close()
+					a.mu.Lock()
+					// Malformed or overflowed streams may have lost effect evidence.
+					a.transportEnded = errors.Is(transportErr, io.EOF) || errors.Is(transportErr, io.ErrClosedPipe)
+					a.mu.Unlock()
 				}
 				a.finish(th, worker.Finish{Status: worker.Failed, Failure: failure, Code: "prompt_failed"})
 				return
@@ -117,6 +130,9 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 	}
 	v := u.Notification.Update
 	a.mu.Lock()
+	if v.ToolCall != nil || v.ToolCallUpdate != nil || len(v.Unrecognized) > 0 {
+		a.effectSeen = true
+	}
 	raw, _ := json.Marshal(v)
 	a.doing.Record("acp", raw, time.Now())
 	a.mu.Unlock()
@@ -136,12 +152,10 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 			p.Text = v.AgentThoughtChunk.Content.Text.Text
 		}
 	case v.ToolCall != nil:
-		a.observeNativeTool(string(v.ToolCall.ToolCallID), v.ToolCall.Status, true)
 		p.Phase = "tool_call"
 		p.ItemID = string(v.ToolCall.ToolCallID)
 		p.Text = v.ToolCall.Title
 	case v.ToolCallUpdate != nil:
-		a.observeNativeTool(string(v.ToolCallUpdate.ToolCallID), v.ToolCallUpdate.Status, false)
 		p.Phase = "tool_call_update"
 		p.ItemID = string(v.ToolCallUpdate.ToolCallID)
 		if v.ToolCallUpdate.Title != nil {
@@ -175,8 +189,10 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 }
 func (a *Adapter) finish(th worker.Thread, f worker.Finish) {
 	a.mu.Lock()
+	a.terminal = &f
+	a.effectSeen = a.effectSeen || len(a.requests) > 0 || len(a.pending) > 0
 	a.requests = nil
-	a.lastFinish = &f
+	a.uncertainEffects = a.uncertainEffects || a.effectSeen
 	if a.state == worker.Active || a.state == worker.Waiting {
 		close(a.turnEnded)
 	}
@@ -203,41 +219,4 @@ func (a *Adapter) emit(e worker.Event) bool {
 	case <-a.life.Done():
 		return false
 	}
-}
-
-// Native tools do not use the Core work-tool request map. Their explicit outcome
-// is required before a failed turn can authorize replacement of its worker.
-func (a *Adapter) observeNativeTool(id string, status *wire.ToolCallStatus, initial bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if id == "" {
-		a.nativeOverflow = true
-		return
-	}
-	if a.nativeTools == nil {
-		a.nativeTools = map[string]bool{}
-	}
-	known, exists := a.nativeTools[id]
-	if !exists && len(a.nativeTools) >= 1024 {
-		a.nativeOverflow = true
-		return
-	}
-	if initial {
-		known = false
-	}
-	if status != nil {
-		known = *status == wire.ToolCallStatusCompleted || *status == wire.ToolCallStatusFailed
-	}
-	a.nativeTools[id] = known
-}
-func (a *Adapter) effectsKnownLocked() bool {
-	if len(a.pending) != 0 || a.nativeOverflow || a.uncertainEffects {
-		return false
-	}
-	for _, known := range a.nativeTools {
-		if !known {
-			return false
-		}
-	}
-	return true
 }

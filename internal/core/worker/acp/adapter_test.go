@@ -249,6 +249,7 @@ func agentFixture() {
 			Result json.RawMessage
 			Params struct {
 				Cwd        string
+				SessionID  string
 				McpServers []json.RawMessage
 				Prompt     []struct{ Text string }
 			}
@@ -262,7 +263,30 @@ func agentFixture() {
 		}
 		switch f.Method {
 		case "initialize":
-			reply(f.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]any{"name": "fixture", "version": "fixture-9"}, "_meta": fixtureMeta()})
+			capabilities := map[string]any{}
+			if mode := os.Getenv("ACP_RECOVERY"); mode != "" && mode != "fresh" {
+				capabilities["loadSession"] = true
+				if mode == "resume" {
+					capabilities["sessionCapabilities"] = map[string]any{"resume": map[string]any{}}
+				}
+			}
+			reply(f.ID, map[string]any{"protocolVersion": 1, "agentCapabilities": capabilities, "agentInfo": map[string]any{"name": "fixture", "version": "fixture-9"}, "_meta": fixtureMeta()})
+		case "session/load", "session/resume":
+			want := "session/load"
+			if os.Getenv("ACP_RECOVERY") == "resume" {
+				want = "session/resume"
+			}
+			cwd, _ := os.Getwd()
+			if f.Method != want || f.Params.SessionID != "fixture" || f.Params.Cwd != cwd || len(f.Params.McpServers) != 1 {
+				os.Exit(17)
+			}
+			os.WriteFile("restored", []byte(f.Method), 0600)
+			if f.Method == "session/load" {
+				for range 1024 {
+					progress("REPLAY_ONLY")
+				}
+			}
+			reply(f.ID, map[string]any{})
 		case "session/new":
 			if file := os.Getenv("ACP_MCP_CAPTURE"); file != "" {
 				raw, _ := json.Marshal(f.Params.McpServers)
@@ -302,6 +326,11 @@ func agentFixture() {
 				}
 				send(map[string]any{"jsonrpc": "2.0", "id": "decision", "method": method, "params": params})
 			case "exit":
+				os.Exit(0)
+			case "malformed":
+				send(map[string]any{"jsonrpc": "invalid", "method": "session/update"})
+			case "partial":
+				fmt.Fprint(os.Stdout, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"tool_call"`)
 				os.Exit(0)
 			case "unknown":
 				pending = f.ID

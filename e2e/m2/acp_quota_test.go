@@ -53,7 +53,7 @@ func TestACPTypedFailuresThroughRunningCore(t *testing.T) {
 	if out, err := nodeBuild.CombinedOutput(); err != nil {
 		t.Fatalf("build Node: %v\n%s", err, out)
 	}
-	for _, mode := range []string{"needs-sign-in", "rate-limited", "quota-exhausted", "double-stop", "native-unresolved", "vendor", "vendor-missing", "silent"} {
+	for _, mode := range []string{"needs-sign-in", "rate-limited", "quota-exhausted", "double-stop", "native-unresolved", "native-completed", "vendor", "vendor-missing", "silent"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 			defer cancel()
@@ -351,7 +351,7 @@ func TestACPTypedFailuresThroughRunningCore(t *testing.T) {
 				card, err = work.New(db).Get(ctx, record.ID)
 				return err == nil
 			}
-			if mode != "double-stop" && mode != "native-unresolved" {
+			if mode != "double-stop" && mode != "native-unresolved" && mode != "native-completed" {
 				wait("replacement or unknown worker progress", func() bool {
 					if read() && (record.State == "finished" || record.State == "unknown") {
 						t.Fatalf("no working session: %+v", record)
@@ -373,7 +373,7 @@ func TestACPTypedFailuresThroughRunningCore(t *testing.T) {
 					t.Fatalf("readiness: %+v", record.ReadinessFailures)
 				}
 			}
-			if mode == "native-unresolved" {
+			if mode == "native-unresolved" || mode == "native-completed" {
 				if record.State != "unknown" || record.Attempt != 1 || record.Snapshot == nil || record.Snapshot.EffectsKnown {
 					t.Fatalf("unresolved native effect allowed replacement: %+v", record)
 				}
@@ -512,11 +512,11 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   }
   fs.appendFileSync(path.join(root,'packets'),JSON.stringify({Worker:name,Packet:packet,Cwd:process.cwd(),PID:process.pid})+'\n');
   const first=name==='claude-agent-acp';
-  if((first&&['rate-limited','quota-exhausted','double-stop','native-unresolved'].includes(mode))||(name==='gemini'&&mode==='double-stop')){
+  if((first&&['rate-limited','quota-exhausted','double-stop','native-unresolved','native-completed'].includes(mode))||(name==='gemini'&&mode==='double-stop')){
    fs.writeFileSync(prior,String(process.pid));
-   if(mode==='native-unresolved'||mode==='quota-exhausted'){
+   if(mode==='native-unresolved'||mode==='native-completed'){
     update({sessionUpdate:'tool_call',toolCallId:'external-write',title:'Write',status:'in_progress'});
-    if(mode==='quota-exhausted')update({sessionUpdate:'tool_call_update',toolCallId:'external-write',status:'completed'});
+    if(mode==='native-completed')update({sessionUpdate:'tool_call_update',toolCallId:'external-write',status:'completed'});
    }
    const actions=mode==='rate-limited'?['retry']:[];
    const failure={sessionUpdate:'session_info_update',_meta:{jetbrains:{air:{version:1,sessionFailure:{id:'incident',revision:1,category:'limit',severity:'error',actions,title:'account-detail-must-stay-private'}}}}};
