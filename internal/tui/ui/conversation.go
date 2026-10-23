@@ -16,6 +16,8 @@ import (
 type conversationView struct {
 	workFocused  bool
 	workSelected string
+	workIndex    int
+	workOffset   int
 	undo         []state.Draft
 	history      *inputHistory
 	scroll       int
