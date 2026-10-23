@@ -173,6 +173,13 @@ func TestM3WorkPanelStages(t *testing.T) {
 	}
 	fixture := loadPanelFixture(t)
 	h, start := installedConversationHarness(t, "http://127.0.0.1:1")
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", h.root)
+	t.Setenv("XDG_CONFIG_HOME", h.root)
+	t.Setenv("PATH", filepath.Dir(git))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	h.ctx = ctx

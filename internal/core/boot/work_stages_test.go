@@ -7,10 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 )
 
 type panelWorkerProbe struct {
@@ -120,5 +122,63 @@ func TestWorkPanelCardStagesAndLiveWorkers(t *testing.T) {
 	save()
 	if _, ok := read()["line"].(map[string]any)["stages"]; ok {
 		t.Fatal("foreign agent graph attached to card")
+	}
+	// Real goal dispatch cards are managed assignments without Task.GoalID.
+	// Their trusted action/owner records are the link, not their display text.
+	g.Agent = r.agent
+	card.Task.GoalID = ""
+	save()
+	d := dispatch.Record{ID: card.Task.ID, Goal: true, GoalAction: "draft-session", Owner: r.agent, Origin: dispatch.Origin{Person: r.person, Agent: r.agent}}
+	a := goal.Action{ID: d.GoalAction, GoalID: g.ID, TaskID: "draft", Kind: goal.Assign}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		raw, _ := json.Marshal(d)
+		if _, err := tx.ExecContext(t.Context(), "INSERT INTO worker_dispatch(id,turn_id,repository,state,record) VALUES(?,?,?,?,?)", d.ID, "turn", "fixture", "running", raw); err != nil {
+			return err
+		}
+		raw, _ = json.Marshal(a)
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO work_records(kind,id,version,body) VALUES('action',?,1,?)", a.ID, raw)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := read()["line"].(map[string]any)["stages"]; !ok {
+		t.Fatal("production dispatch card has no stage list")
+	}
+	manager, err := r.agents.Create(t.Context(), agents.Create{Name: "Manager", PersonID: r.person, Preset: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	card.Task.AgentID, d.Owner = manager.ID, manager.ID
+	saveDispatch := func() {
+		t.Helper()
+		if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+			raw, _ := json.Marshal(d)
+			_, err := tx.ExecContext(t.Context(), "UPDATE worker_dispatch SET record=? WHERE id=?", raw, d.ID)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save()
+	saveDispatch()
+	raw, _ = json.Marshal(read())
+	if !strings.Contains(string(raw), `"workers"`) {
+		t.Fatal("manager persona hid the original goal's worker")
+	}
+	d.Origin.Person = "someone-else"
+	saveDispatch()
+	if _, ok := read()["line"].(map[string]any)["stages"]; ok {
+		t.Fatal("foreign dispatch origin linked the graph")
+	}
+	d.Origin.Person = r.person
+	saveDispatch()
+	g.State = goal.GoalDone
+	for i := range g.Tasks {
+		g.Tasks[i].Stage = goal.TaskDone
+	}
+	save()
+	closed := read()["line"].(map[string]any)["stages"].([]any)
+	if len(closed) != 1 || closed[0].(map[string]any)["kind"] != "done" {
+		t.Fatalf("closed goal stages: %+v", closed)
 	}
 }

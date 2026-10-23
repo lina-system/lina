@@ -3,10 +3,16 @@ package boot
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/progress"
+	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -31,7 +37,11 @@ func (r *conversationRuntime) stageWorkers(ctx context.Context, units []progress
 				readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				session, snapshot, live, err := registry.Observe(readCtx, step.Session)
 				if !live {
-					session, snapshot, live, err = r.activeStageWorker(readCtx, step.Session, u.Agent)
+					agent := u.Agent
+					if u.StageAgent != "" {
+						agent = u.StageAgent
+					}
+					session, snapshot, live, err = r.activeStageWorker(readCtx, step.Session, agent)
 				}
 				cancel()
 				if ctx.Err() != nil {
@@ -73,6 +83,65 @@ func (r *conversationRuntime) stageWorkers(ctx context.Context, units []progress
 		}
 	}
 	return out, nil
+}
+
+// Goal dispatch creates a manager-owned work card. Its durable action record
+// identifies the original goal; display names and worker output cannot link it.
+func (r *conversationRuntime) dispatchedStageSources(ctx context.Context, tx *canon.Tx, units []progress.Unit, agents map[string]string) error {
+	for i := range units {
+		u := &units[i]
+		var raw []byte
+		err := tx.QueryRowContext(ctx, "SELECT record FROM worker_dispatch WHERE id=?", u.ID).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var record dispatch.Record
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return err
+		}
+		owner := record.Owner
+		if owner == "" {
+			owner = record.Origin.Agent
+		}
+		if !record.Goal || record.ID != u.ID || record.GoalAction == "" || owner != u.Agent || record.Origin.Person != r.person {
+			continue
+		}
+		if _, ok := agents[record.Origin.Agent]; !ok {
+			continue
+		}
+		err = tx.QueryRowContext(ctx, "SELECT body FROM work_records WHERE kind='action' AND id=?", record.GoalAction).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var action goal.Action
+		if err := json.Unmarshal(raw, &action); err != nil {
+			return err
+		}
+		if action.ID != record.GoalAction || action.Superseded || !goal.WorkerAction(action.Kind) {
+			continue
+		}
+		err = tx.QueryRowContext(ctx, "SELECT body FROM work_records WHERE kind='goal' AND id=?", action.GoalID).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var g goal.Goal
+		if err := json.Unmarshal(raw, &g); err != nil {
+			return err
+		}
+		if g.Person == record.Origin.Person && g.Agent == record.Origin.Agent && g.Conversation == record.Origin.Conversation && g.Turn == record.Origin.Turn {
+			u.StageGoal, u.StageAgent = g.ID, g.Agent
+		}
+	}
+	return nil
 }
 
 // Dispatch owns an active adapter until it hands the finished turn to Live.

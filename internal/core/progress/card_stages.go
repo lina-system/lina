@@ -23,14 +23,18 @@ func AttachCardStages(ctx context.Context, tx *canon.Tx, person string, cards, g
 	}
 	for i := range cards {
 		c := &cards[i]
-		if c.Kind == "goal" || c.Parent == "" {
+		parent, agent := c.Parent, c.Agent
+		if c.StageGoal != "" {
+			parent, agent = c.StageGoal, c.StageAgent
+		}
+		if c.Kind == "goal" || parent == "" {
 			continue
 		}
-		k := key{c.Parent, c.Agent}
+		k := key{parent, agent}
 		stages, known := cache[k]
 		if !known {
 			var raw []byte
-			err := tx.QueryRowContext(ctx, "SELECT body FROM work_records WHERE kind='goal' AND id=?", c.Parent).Scan(&raw)
+			err := tx.QueryRowContext(ctx, "SELECT body FROM work_records WHERE kind='goal' AND id=?", parent).Scan(&raw)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
@@ -39,7 +43,7 @@ func AttachCardStages(ctx context.Context, tx *canon.Tx, person string, cards, g
 				if err := json.Unmarshal(raw, &g); err != nil {
 					return err
 				}
-				if g.Person == person && g.Agent == c.Agent {
+				if g.Person == person && g.Agent == agent {
 					stages, err = GoalStages(ctx, tx, g.ID, person, design.ConversationLanguage(c.Name, design.English))
 					if err != nil {
 						return err

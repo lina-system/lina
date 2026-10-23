@@ -32,6 +32,7 @@ type Entry struct {
 // Done is used only to retire a seen completion; it cannot supply a plan stage.
 // Landed allows acknowledgement-based retirement without a success verdict.
 type Unit struct {
+	StageGoal, StageAgent  string // Trusted dispatch origin, independent of its manager card.
 	Agent                  string // Canonical owner; never part of the display line.
 	StartedAt, FinishedAt  time.Time
 	Now                    string

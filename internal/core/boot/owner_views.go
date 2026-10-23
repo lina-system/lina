@@ -254,6 +254,9 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		if err != nil {
 			return err
 		}
+		if err := r.dispatchedStageSources(ctx, tx, units, names); err != nil {
+			return err
+		}
 		if err := progress.AttachCardStages(ctx, tx, r.person, units, goals); err != nil {
 			return err
 		}

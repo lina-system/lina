@@ -310,3 +310,45 @@ func TestWorkPanelStagesWorkersAndStepIdentity(t *testing.T) {
 		t.Fatal("collapsed step retained worker")
 	}
 }
+
+func TestWorkPanelStageWorkerRowsScrollWithTheirStep(t *testing.T) {
+	steps := make([]protocol.ProgressStageStep, 82)
+	refs := make([]string, 82)
+	workers := []protocol.ProgressStageWorker{{Name: "Codex", State: protocol.RunningStateInProgress}}
+	for i := range steps {
+		steps[i] = protocol.ProgressStageStep{Name: fmt.Sprintf("Step-%02d", i), State: "working", Workers: &workers}
+		refs[i] = fmt.Sprint(i)
+	}
+	number := json.Number("1")
+	var rows []protocol.ProgressRow
+	if err := json.Unmarshal([]byte(stagePanelRows), &rows); err != nil {
+		t.Fatal(err)
+	}
+	stages := []protocol.ProgressStage{{Kind: "stage", Number: &number, Label: "Step-00 and 81 more", State: "working", Steps: &steps}}
+	routes := []protocol.ProgressStageRefs{{Kind: "stage", Number: &number, Steps: refs}}
+	rows[0].Line.Stages = &stages
+	rows[0].StageRefs = &routes
+	raw, _ := json.Marshal(rows)
+	m := stagePanelShell(t, 100, design.English, false, string(raw))
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	for i := range steps {
+		m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		panel := m.workPanelRows(40, 10)
+		selected := "  › ● " + steps[i].Name
+		found := false
+		for j, line := range panel {
+			if line == selected {
+				found = true
+				if j+1 >= len(panel) || !strings.HasPrefix(panel[j+1], "        [Codex]") {
+					t.Fatalf("selected step lost worker: %q", panel)
+				}
+			}
+			if strings.HasPrefix(line, "        [") && (j == 0 || !strings.Contains(panel[j-1], "Step-")) {
+				t.Fatalf("orphan worker: %q", panel)
+			}
+		}
+		if !found || len(panel) > 10 {
+			t.Fatalf("step %d not reachable with worker: %q", i, panel)
+		}
+	}
+}

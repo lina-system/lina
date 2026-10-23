@@ -810,6 +810,10 @@ A work card carries the stages of its canonical goal link when that goal has
 the same person and agent. Missing or foreign links leave its list unknown.
 Core reuses the goal projection from the same canon snapshot; a client never
 joins cards to graphs by display names or row positions.
+For a manager-owned dispatch card, Core instead validates its stored goal
+action against the original person, agent, conversation and turn, and the
+card's recorded manager. This supplies the goal link without changing the
+card's owner or granting a manager access through an arbitrary goal id.
 
 The optional `stage_refs` on a progress row carries each entry's `kind`, optional
 `number`, and `steps`: opaque step refs in the same order as its displayed steps.
