@@ -2,10 +2,12 @@
 package responses
 
 import (
+	"encoding/json"
 	"errors"
-	"github.com/thisisjun786/lina/kit/provider"
 	"net/http"
 	"testing"
+
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 func TestCapabilitiesRefusedBeforeSending(t *testing.T) {
@@ -36,5 +38,40 @@ func TestCapabilitiesRefusedBeforeSending(t *testing.T) {
 	r.Capabilities.ReasoningState = true
 	if _, _, err := run(t, a, r); err == nil {
 		t.Fatal("manifest ignored")
+	}
+}
+
+// The wire option that returns encrypted reasoning is the application of the
+// reasoning-state capability, so it follows Core's selection: a narrowed route
+// that leaves the capability unselected must not send it.
+func TestReasoningWireOptionFollowsSelectedCapability(t *testing.T) {
+	for _, selected := range []bool{true, false} {
+		c, err := BuildConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !selected {
+			c.Capabilities = nil
+		}
+		var wire map[string]json.RawMessage
+		a, _ := fixture(t, c, func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
+				t.Error(err)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			completed(w)
+		})
+		r := request()
+		r.Capabilities.ReasoningState = selected
+		if _, _, err := run(t, a, r); err != nil {
+			t.Fatalf("selected=%v: %v", selected, err)
+		}
+		include, sent := wire["include"]
+		if sent != selected {
+			t.Fatalf("selected=%v include=%s", selected, include)
+		}
+		if selected && string(include) != `["reasoning.encrypted_content"]` {
+			t.Fatalf("include=%s", include)
+		}
 	}
 }

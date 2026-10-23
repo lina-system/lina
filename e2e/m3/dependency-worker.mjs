@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Synthetic installed worker and forge; actual Core, Git and task worktrees run.
+function messageText(text) {
+ if (!text.startsWith('<lina-message ')) return text;
+ const match=text.match(/^<lina-message [^>]*><text>([\s\S]*)<\/text><\/lina-message>$/);
+ if (!match) throw Error('invalid worker message frame');
+ return match[1].replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi,(_,e)=>e[0]==='#'?String.fromCodePoint(e[1].toLowerCase()==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"})[e]);
+}
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -57,7 +63,7 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
       if(['read_projection','ask','coordinate','submit_receipt'].includes(kind)) {
         if(!message.result?.success)throw new Error(`work tool failed: ${kind} ${JSON.stringify(message)}`);
         const text=message.result.contentItems.find(item=>item.type==='inputText')?.text;
-        const result=JSON.parse(text);
+        const result=JSON.parse(messageText(text));
         if(kind==='read_projection') {
           if(result.assignment_id!==thread.id||!result.task_packet.includes('Work definition:'))throw new Error('foreign projection');
           thread.projection=result;
@@ -105,7 +111,7 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
       case 'turn/start': {
         const thread=threads.get(p.threadId);thread.count++;
         if(thread.count===1) {
-          thread.definition=JSON.parse(p.input[0].text.split('Work definition:\n')[1]);
+          thread.definition=JSON.parse(messageText(p.input[0].text).split('Work definition:\n')[1]);
           writeFileSync(join(root,`${thread.id}.definition.json`),JSON.stringify(thread.definition));
         } else if(!cfg.conflict||thread.count!==cfg.conflict.returns+1||!p.input[0].text.includes('unmergeable'))throw new Error('unexpected conflict return');
         thread.turn={id:`turn-${thread.count}`,status:'inProgress',items:[]};

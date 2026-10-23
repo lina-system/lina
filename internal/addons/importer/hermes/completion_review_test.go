@@ -33,7 +33,10 @@ func TestReviewSealedMaterialReadsAreMaskedAndReversible(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	req.Sidecars = []Sidecar{{Key: LegacyKey{string(HermesLCM), "profile", "sidecars", "output"}, Event: LegacyKey{string(HermesLCM), "profile", "messages", "2"}, SnapshotPath: path, SHA256: bytesHash(raw)}}
+	// A user event has no tool-call projection, so the event keeps the sidecar
+	// as its material. TestImportedMaterialToolCallsKeepLiveProjection covers
+	// the assistant-with-calls combination.
+	req.Sidecars = []Sidecar{{Key: LegacyKey{string(HermesLCM), "profile", "sidecars", "output"}, Event: LegacyKey{string(HermesLCM), "profile", "messages", "1"}, SnapshotPath: path, SHA256: bytesHash(raw)}}
 	p, err := Prepare(t.Context(), req)
 	if err != nil {
 		t.Fatal(err)

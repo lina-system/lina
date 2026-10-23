@@ -1,0 +1,20 @@
+{
+  "side": "client",
+  "input": [
+    "mock.json",
+    "mock-response.json"
+  ],
+  "output": [
+    "mock.json",
+    "mock-response.json"
+  ],
+  "errors": [
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 2,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

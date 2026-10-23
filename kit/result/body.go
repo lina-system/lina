@@ -17,6 +17,7 @@ const (
 	ComparisonType Type = "comparison"
 	PlanType       Type = "plan_view"
 	FileType       Type = "file"
+	MockType       Type = "mock"
 )
 
 type Body interface{ resultBody() }

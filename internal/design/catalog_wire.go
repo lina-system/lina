@@ -4,6 +4,7 @@ package design
 
 func init() {
 	register(map[string]translation{
+		"select":                    {"Choose", "선택"},
 		"claimed":                   {"not verified", "미검증"},
 		"record_request":            {"Record request", "기록 요청"},
 		"record_result":             {"Record result", "기록 결과"},
