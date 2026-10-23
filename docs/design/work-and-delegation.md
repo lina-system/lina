@@ -1406,7 +1406,16 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 
 The running list is the person's view of the flow: a short list of what is in progress, waiting and landed, not a stream of notices. LINA Core owns it, and it is shown on Home and in the sidebar ([surfaces.md](surfaces.md)); the TUI shows it as a list and a count in its status line. It lists the tasks and background runs one by one; the progress lines summarize the same work for each 일 and 목표 (see Progress line).
 
-- A row is one task or one background run. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
+Conversation-started worker sessions without a durable task card contribute
+their own rows from the live worker registry and the owning adapter's observed
+state. Core gathers adapter observations outside canon transactions; list
+transactions read those copied observations and the canonical owner names.
+Rows are scoped to the requesting person and name the owner agent before
+the worker. An idle session leaves the list without asserting that the task is
+verified; a new active turn makes it visible again. Unknown observations stay
+unknown. These rows do not alter the task or background-run state mappings.
+
+- A row is one task, one background run or one conversation-started worker. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
 - The states map onto the work card states: working is in progress; waiting, paused and input needed are waiting; done is landed. A stalled or failed task shows its state word until it is dispatched again (see Stall and failure).
 - A row is one line in the person's words about the outcome, not about the pull request. Rows that need the person come first, then the rest in the order they started. Opening a row opens the task's card.
 - A running count, such as "2 running, 1 waiting for you", shows in the conversation header or composer.

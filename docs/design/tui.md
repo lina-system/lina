@@ -545,6 +545,9 @@ An open running pager applies accepted `running` topic updates and replacement
 snapshots immediately, including completed and removed rows, without polling or
 requiring the person to close and reopen it. Refreshing its text preserves the
 pager's reading offset (clamped to the remaining content) and active search.
+Conversation-started workers use this same Ctrl+R list, with the owner agent's
+name before the worker's tool name. Their rows leave the open pager when the
+worker becomes idle; that removal does not claim verified task completion.
 List updates do not focus the pager or change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 
@@ -1280,6 +1283,11 @@ result-type negotiation and full wire bodies remain tracked in
 | View to cells | `View` drawn into a cell buffer in test code | Cell contents, cursor position, widths |
 | End to end | The program with a recording writer and an emulator | Zero bytes on an unchanged state; bounds on writes; final cells |
 | PTY | The built binary against the fake Core | Start, connect, refuse, recover, quit |
+
+The recording writer derives cursor visibility from parsed DECTCEM (DEC mode
+25) changes. This state is global across main and alternate screens; switching
+screens does not restore an obsolete per-screen visibility value. The recorder
+retains the original output bytes and never injects a successful teardown.
 
 No test sleeps. Assertions check ids, codes, counts and bytes, never prose or rendered strings, and no golden file pins renderer bytes ([AGENTS.md](../../AGENTS.md)). Wall-clock bounds are measured in the spike and in benchmark runs, and recorded as evidence. The PTY layer does not replace S1 to S11.
 

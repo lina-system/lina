@@ -1,4 +1,5 @@
 {
+  "refused": "/stop missing-run",
   "digest": "/progress",
   "order": "/waiting lightest",
   "note": "Read the appendix before finishing.",
