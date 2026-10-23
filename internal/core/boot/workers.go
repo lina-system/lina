@@ -444,15 +444,6 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 	if closed || entry == nil || !entry.origin.workerConversation(r) {
 		return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker session unavailable in this conversation"))}, nil
 	}
-	if name == "worker_input" {
-		entry.recoveryMu.Lock()
-		state := entry.recovery.State
-		entry.recoveryMu.Unlock()
-		if state == "unknown" || state == "retrying" || state == "decision" || state == "parked" {
-			return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker effects require reconciliation"))}, nil
-		}
-
-	}
 	if name == "worker_read_file" {
 		return r.readWorkerFile(ctx, entry.workdir, a.Path)
 
@@ -485,6 +476,16 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 	snap, err := entry.adapter.Snapshot(ctx, thread)
 	if err != nil {
 		return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+	}
+	// Recovery may have changed while this operation waited for control or
+	// read the worker. Check it inside the serialized admission boundary.
+	if name == "worker_input" {
+		entry.recoveryMu.Lock()
+		state := entry.recovery.State
+		entry.recoveryMu.Unlock()
+		if state == "unknown" || state == "retrying" || state == "decision" || state == "parked" {
+			return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker effects require reconciliation"))}, nil
+		}
 	}
 	if name == "worker_snapshot" {
 		return entry.encode(snap), nil

@@ -76,6 +76,32 @@ func TestWorkerRecoveryBlocksInputWithUnsettledEffects(t *testing.T) {
 	}
 }
 
+func TestWorkerInputRechecksRecoveryAfterControlRead(t *testing.T) {
+	owner := &conversationRuntime{person: "person", agent: "agent", conversation: "main:agent"}
+	thread := worker.Thread{ID: "thread", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}
+	inputProbe := &workerProbe{}
+	probe := &runningWorkerProbe{Adapter: inputProbe, snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}
+	entry := &workerSession{adapter: probe, origin: owner, thread: thread, active: map[string]lease.Lease{}}
+	entry.recovery.State = "running"
+	owner.workers = &workerRuntime{sessions: map[string]*workerSession{thread.ID: entry}}
+	probe.beforeSnapshot = func() {
+		if entry.control.TryLock() {
+			entry.control.Unlock()
+			t.Error("input snapshot was not serialized with recovery")
+		}
+		// Learn about unresolved effects after the initial session lookup,
+		// before the serialized control operation can admit worker input.
+		entry.recoveryMu.Lock()
+		entry.recovery.State = "unknown"
+		entry.recoveryMu.Unlock()
+	}
+	raw, _ := json.Marshal(workerArgs{Session: thread.ID, Turn: thread.TurnID, Generation: 1, Binding: 1, Text: "continue"})
+	result, err := owner.workerOperation(t.Context(), "worker_input", "turn", ledger.Event{}, tools.Input{Arguments: raw})
+	if err != nil || result.State != tools.Failed || inputProbe.inputs != 0 {
+		t.Fatalf("unsettled effects admitted input: state=%s inputs=%d err=%v", result.State, inputProbe.inputs, err)
+	}
+}
+
 func TestWorkerRecoveryRequestResolutionCannotCrossBindings(t *testing.T) {
 	r := controlRuntime(t)
 	rec := recovery.Record{ID: "thread", Person: r.person, Agent: r.agent, Input: "input", Conversation: r.conversation, Thread: worker.Thread{ID: "thread", TurnID: "turn", TaskID: "task", ProcessGeneration: 1, BindingEpoch: 1}, State: "unknown"}

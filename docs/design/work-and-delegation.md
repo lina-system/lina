@@ -1428,6 +1428,10 @@ result for the same attempt and turn. Core retains both observations and admits
 the confirmed result once, including after rebinding or restarting. Repeated
 terminal observations share one result identity; a successful live completion
 and its later reconciliation do not create separate responses.
+A terminal read does not consume the worker's completion notification: a later
+live event still reaches Core once. Input admission rechecks recovery state
+under the same control lock as reconciliation before releasing reservations
+or sending input.
 
 ## Judgment and delivery
 
