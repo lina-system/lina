@@ -59,7 +59,7 @@ export function kind(path) {
   if (path === 'scripts/verify/dependency-exceptions.json' || path === 'THIRD-PARTY-NOTICES.md') return 'dependencies';
   if (modules.has(path)) return 'modules';
   if (path === 'DESIGN.md' || /^design\/tokens\/[^/]+\.(?:json|css|svg)$/.test(path)) return 'automation';
-  if (/^evidence\/brand\/[^/]+\.png$/.test(path)) return 'docs';
+  if (/^evidence\/(?:brand|generated-ui)\/[^/]+\.png$/.test(path)) return 'docs';
   if (componentOf(path)) return 'components';
   if (documents.has(path) || /^docs\/(?:policy|design|research)\/[^/]+\.md$/.test(path)
       || /^evidence\/.+\.(?:json|md)$/.test(path)) return 'docs';

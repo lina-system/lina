@@ -473,6 +473,8 @@ The closed list of types for version 1.0:
 
 One more type, `app`, is reserved for a later view that a plugin supplies ([integrations.md](integrations.md)). It is not part of version 1.0, no party sends or accepts it, and its fallback is the tool's text result.
 
+Two types for generated UI, `surface` (an A2UI v0.9 card from LINA's catalog) and `mock` (a drawn mock whose body references its page bundle and PNG as assets), and the client kind `surface_action` are reserved for a later minor version. Their rules are in [surfaces.md](surfaces.md#generated-ui). Until that version no party sends or accepts them; a client that does not render them gets their `text`. A `surface` body is data under the rules below: it names catalog widgets and data, never code or a URL to fetch.
+
 Rules:
 
 - Bodies are data only. No type holds HTML, script, an expression, or a URL that a renderer would fetch. A chart and a diagram are LINA's own closed specs, never the source text of another tool's language, because a spec language that can evaluate an expression or load a URL is not data. An image in a document is a reference to a material by asset id and revision, never a URL. A link in text is text and opens only when the person chooses, through the system.
