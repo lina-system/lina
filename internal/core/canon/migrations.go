@@ -67,6 +67,7 @@ func Migrations() []Migration {
 		{Version: 53, SQL: retractSearchDeltaSchema},
 		{Version: 54, SQL: citeSchema},
 		{Version: 55, SQL: inputBindingSchema},
+		{Version: 56, SQL: recallSchema},
 	}
 }
 
@@ -104,6 +105,7 @@ var publishedMigrationTables = []struct {
 	{45, "record_operations"}, {45, "record_candidates"},
 	{54, "cite"},
 	{55, "records_activity"},
+	{56, "recall_doc"}, {56, "recall_text"}, {56, "recall_pair"}, {56, "recall_pending"},
 	{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
 }
 
