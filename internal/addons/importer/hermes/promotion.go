@@ -74,13 +74,7 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 			// Promotion judges the body publication displays. An event whose
 			// output sidecar cannot be masked publishes an unavailable notice,
 			// so it cannot back a memory item; secrets stay excluded either way.
-			display := promotionBody(c, r)
-			if len(ScanSecrets([]byte(display))) > 0 {
-				continue
-			}
-			// Unavailable bodies and secrets recognized only after JSON decoding
-			// cannot become verbatim promotion drafts or memory evidence.
-			masked, err := displayMask(display)
+			masked, err := displayMask(promotionBody(c, r))
 			if err != nil || len(masked.Spans()) != 0 {
 				continue
 			}

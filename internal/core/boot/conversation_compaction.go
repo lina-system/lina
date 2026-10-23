@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,8 +22,12 @@ import (
 // Fit the complete prepared request before applying its hard size limit. Canon
 // remains lossless: only a published summary or a recoverable tool note changes
 // the request projection. A failed generation/publication never drops sources.
-func (r *conversationRuntime) compactConversation(ctx context.Context, in assemble.Input, events []ledger.Event, stream func(context.Context, provider.Request) (provider.Stream, error)) (provider.Request, assemble.Report, error) {
+func (r *conversationRuntime) compactConversation(ctx context.Context, in assemble.Input, events []ledger.Event, stream func(context.Context, provider.Request) (provider.Stream, error), bind ...func(*conversationCompaction)) (provider.Request, assemble.Report, error) {
 	limit := in.MaxTokens
+	_, count := r.conversationBudget()
+	if limit <= 0 || count == nil {
+		return provider.Request{}, assemble.Report{}, compaction.ErrPass
+	}
 	if len(events) == 0 {
 		return provider.Request{}, assemble.Report{}, assemble.ErrHistory
 	}
@@ -46,7 +51,7 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	// Build the fixed prefix without freezing optional-context budget drops.
 	// The published root must replace its covered events before size selection.
 	in.MaxTokens = int(^uint(0) >> 1)
-	request, report := assemble.Assemble(in, conversationRequestSize)
+	request, report := assemble.Assemble(in, count)
 	if report.Failure != "" {
 		return provider.Request{}, report, assemble.ErrHistory
 	}
@@ -82,6 +87,7 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	// segment, never this turn's input or transient ContextPacket.
 	auxiliaryRequest := request
 	auxiliaryRequest.Credential = r.route.Request(nil).Credential
+	auxiliaryRequest.Layout = nil                  // The summary has no current input or transient packet boundaries.
 	auxiliaryRequest.Items = request.Items[:fixed] // Profiles must not become summary source text.
 	auxiliary := compaction.Auxiliary{Request: auxiliaryRequest, RetainPrefix: true, Stream: stream}
 	store := compaction.New(r.db)
@@ -176,7 +182,7 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 			in.PreviousInput = &n
 		}
 	}
-	request, report = assemble.Assemble(in, conversationRequestSize)
+	request, report = assemble.Assemble(in, count)
 	if report.Failure != "" && report.Failure != assemble.TooLarge {
 		return provider.Request{}, report, assemble.ErrHistory
 	}
@@ -201,14 +207,15 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		// Only mandatory history/context remains; allow the fitting pass to
 		// reduce the former without carrying oversized optional material.
 		in.MaxTokens = int(^uint(0) >> 1)
-		request, report = assemble.Assemble(in, conversationRequestSize)
+		request, report = assemble.Assemble(in, count)
 		if report.Failure != "" {
 			return provider.Request{}, report, assemble.ErrHistory
 		}
 	}
 	view.Request = request
 	view.Packet = request.Items[fixed+len(in.History)+1:]
-	builder := &compaction.Builder{Store: store, Events: r.journal(), Agent: r.agent, Conversation: r.conversation, CurrentInput: current.ID, Model: in.Model, GenerationRevision: string(in.Effort), Now: time.Now, NextID: func() string { return "summary:" + rand.Text() }}
+	configuration, _ := json.Marshal(auxiliaryRequest)
+	builder := &compaction.Builder{Store: store, Events: r.journal(), Agent: r.agent, Conversation: r.conversation, CurrentInput: current.ID, Model: in.Model, GenerationRevision: fmt.Sprintf("%s:%x", in.Effort, sha256.Sum256(configuration)), Now: time.Now, NextID: func() string { return "summary:" + rand.Text() }}
 	builder.Generate = func(ctx context.Context, segment compaction.PassSegment) (compaction.Text, error) {
 		// Builder checked the exact coverage/frontier and supplied canonical
 		// source ids. Project those ids in their original provider format.
@@ -221,7 +228,8 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		}
 		return auxiliary.Summarize(ctx, segment)
 	}
-	pass := compaction.Pass{Policy: compaction.Policy{ContextWindow: limit}, Count: conversationRequestSize, Summarize: builder.Summarize, Publish: builder.Publish}
+	c := &conversationCompaction{builder: builder, pending: map[string]bool{}, preparations: r.summaryState().candidates()}
+	pass := compaction.Pass{Policy: compaction.Policy{ContextWindow: limit}, Count: count, Summarize: c.summarize, Prepared: c.prepared, Publish: c.publish}
 	fitted, err := pass.Fit(ctx, view, false)
 	if err != nil && err != compaction.ErrTooLarge {
 		return provider.Request{}, report, err
@@ -243,7 +251,17 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 			in.PreviousInput = &n
 		}
 	}
-	request, report = assemble.Assemble(in, conversationRequestSize)
+	request, report = assemble.Assemble(in, count)
 	report.Dropped = append(budgetDrops, report.Dropped...)
+	if report.Failure != "" {
+		return request, report, nil
+	}
+	c.pass, c.view = pass, fitted.View
+	c.initialItems = len(request.Items)
+	c.view.Request = request
+	c.view.Packet = request.Items[fixed+len(in.History)+1:]
+	for _, callback := range bind {
+		callback(c)
+	}
 	return request, report, nil
 }

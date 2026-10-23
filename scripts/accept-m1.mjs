@@ -143,6 +143,10 @@ export function validateRecord(record, { readEvidence } = {}) {
       requireValue(data.commit === a.commit && data.run_id === a.run_id, 'stale_evidence');
       return data;
     };
+    const ownerObservation = hash => {
+      const receipt = evidence(hash);
+      requireValue(receipt.format === 1 && receipt.kind === 'owner-observation', 'owner_observation_required');
+    };
     const outcomes = [...Object.values(a.checks), ...Object.values(a.failures), a.ui_ux, ...a.terminals.records];
     lastPassed = [...outcomes, ...a.diagnosis, ...a.matrix].every(c => c.result === 'pass');
     // Even failed attempts retain their complete matrix and evidence. Later
@@ -166,7 +170,7 @@ export function validateRecord(record, { readEvidence } = {}) {
       if (lastPassed) requireValue(current > epoch, 'matrix_epoch');
       epoch = current;
       requireValue(row.root_id === (row.step === 'restore' ? restoredRoot : firstRoot), 'restart_root');
-      evidence(row.evidence_sha256);
+      ownerObservation(row.evidence_sha256);
       if (lastPassed) requireValue(row.ready && row.effects_replayed === 0, 'restart_observation');
     }
     if (lastPassed) requireValue(a.restore?.whole_generation && a.restore.forgotten_search_hits === 0
@@ -179,6 +183,7 @@ export function validateRecord(record, { readEvidence } = {}) {
       if (result.result !== 'not_run') evidence(result.evidence_sha256);
       else requireValue(result.evidence_sha256 === null, 'unrun_evidence');
     }
+    if (a.ui_ux.result !== 'not_run') ownerObservation(a.ui_ux.evidence_sha256);
     for (const result of [...Object.values(a.checks), ...Object.values(a.failures)]) {
       if (result.result === 'pass') requireValue(result.evidence_sha256 === a.headless_sha256, 'behavior_requires_headless');
     }
