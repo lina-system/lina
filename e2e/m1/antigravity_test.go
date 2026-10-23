@@ -238,6 +238,10 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 						return
 					}
 					args := map[string]any{"repository": repo, "base": "dev", "branch": "task-branch", "what": scenario.What, "why": "Prove real worker execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": scenario.Done, "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}}
+					if test.Choice == "overlap" && callNumber == 3 {
+						// Exercise the same write-area reservation with distinct work.
+						args["what"] = "Create another result in the same write area."
+					}
 					if test.Omit != "" {
 						delete(args, test.Omit)
 					}
