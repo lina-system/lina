@@ -23,8 +23,11 @@ type ProviderFixture struct {
 
 // FixtureSummary chooses the segment a measured summary request covers. The
 // segment ends at a complete turn, so Segment is even and leaves a tail.
+// Baseline measures the request Core sent before it carried the conversation's
+// cache boundary: the same prefix items, tools and segment, with no layout.
 type FixtureSummary struct {
-	Segment int `json:"segment"`
+	Segment  int  `json:"segment"`
+	Baseline bool `json:"baseline,omitempty"`
 }
 type FixtureTurn struct {
 	Input   provider.Item `json:"input"`

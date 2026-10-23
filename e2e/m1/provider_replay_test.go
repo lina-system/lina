@@ -36,11 +36,6 @@ func TestM2ProviderReplay(t *testing.T) {
 			}
 			summary := len(request.Input) > 0 && strings.Contains(string(request.Input[len(request.Input)-1]), "unanswered_requests")
 			if summary {
-				// The summary request keeps the fixed prefix, the tools and the
-				// segment, and ends with the summary instruction.
-				if len(request.Tools) < 40 || request.Instructions == "" || len(request.Input) != 42 {
-					t.Error("summary request changed the cached prefix or escaped its segment")
-				}
 				for _, item := range request.Input {
 					// Packets and live inputs belong after the segment, never in it.
 					if strings.Contains(string(item), "Public replay turn") {
@@ -49,6 +44,11 @@ func TestM2ProviderReplay(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"{\\\"unanswered_requests\\\":\\\"none\\\"}\"}\n\n")
+				// The summary request keeps the fixed prefix, the tools and the
+				// segment, and ends with the summary instruction.
+				if len(request.Tools) < 40 || request.Instructions == "" || len(request.Input) != 42 {
+					t.Error("summary request changed the cached prefix or escaped its segment")
+				}
 				fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":101,\"input_tokens_details\":{\"cached_tokens\":70},\"output_tokens\":3}}}\n\n")
 				return
 			}
@@ -60,11 +60,16 @@ func TestM2ProviderReplay(t *testing.T) {
 				t.Error("fixture lost persona/history/tools")
 			}
 			if n <= 12 && (round == 2 || round == 5) {
-				name := "skill_index"
-				if round == 5 {
+				// The same arguments the fixture records: a real model fills the
+				// optional methodology field, so the prompt names it.
+				var name string
+				var args any = struct{}{}
+				if round == 2 {
+					name, args = "skill_index", map[string]string{"methodology": "dev"}
+				} else {
 					name = "skill_notices"
 				}
-				emitPersonaCall(w, fmt.Sprint(n), name, struct{}{})
+				emitPersonaCall(w, fmt.Sprint(n), name, args)
 				return
 			}
 			if n <= 12 && (round == 3 || round == 6) {
@@ -135,14 +140,21 @@ func TestM2ProviderReplay(t *testing.T) {
 					}
 					continue
 				}
-				want := int64(101 + i)
-				if row.Turn == "summary" {
-					// The summary is the seventh request, after the four turns.
-					want = 101
+				switch row.Turn {
+				case "summary":
+					// The summary is the last request, after the four turns.
+					if row.Input == nil || *row.Input != 101 || row.Read == nil || *row.Read != 70 || row.Plain == nil || *row.Plain != 31 {
+						t.Fatalf("summary usage: %+v", row)
+					}
+					continue
 				}
+				want := int64(101 + i)
 				if row.Input == nil || *row.Input != want || row.Read == nil || *row.Read != 70 || row.Plain == nil || *row.Plain != want-70 {
 					t.Fatalf("usage: %+v", row)
 				}
+			}
+			if report.Requests[6].Turn != "summary" {
+				t.Fatalf("summary row missing: %+v", report.Requests[6:])
 			}
 		}
 		if before != digest() {

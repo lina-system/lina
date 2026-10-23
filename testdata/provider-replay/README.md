@@ -9,15 +9,21 @@ items, shaped as Core sends it: the persona, the tool declarations and that
 segment unchanged, then the summary instruction, with no current input and no
 ContextPacket. Its report row is reported under the turn `summary`, so two
 reports of this fixture compare the summary's plain tokens before and after a
-change beside the conversation's own. No private text, account identifiers,
-credentials or real tool effects are used.
+change beside the conversation's own. `summary.baseline` measures the shape
+Core sent before the summary carried the conversation's cache boundary: the
+same prefix items, tools and segment with no layout, so only a provider with
+explicit marks reads fewer cached tokens. A route whose adapter sends neither a
+boundary nor an identity receives the same bytes either way. No private text,
+account identifiers, credentials or real tool effects are used.
 
 The snapshot comes from `persona/lina/`, `docs/design/runtime.md`, the declaration
 functions in `internal/core/exec/`, and Core's question, run, dispatch,
 methodology, timer, worker and exchange declarations. It was captured against
 `11360891` plus the capability dependency from #877, and the `summary` selection
-was added with the cache-aware compaction change (#885). Keep the fixture unchanged
-between measurements; a changed digest makes the comparison command refuse.
+was added with the cache-aware compaction change (#885), and the second turn
+names `methodology` so a real model sends the recorded arguments. Keep the
+fixture unchanged between measurements; a changed digest makes the comparison
+command refuse.
 The snapshot is intentional, so changing production persona or tools does not
 silently change the benchmark. Refresh it explicitly when changing workloads.
 
