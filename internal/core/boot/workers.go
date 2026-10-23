@@ -415,13 +415,8 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 			return tools.Result{State: tools.Failed}, err
 		}
 	}
-	// Keep the new activity private until its returned turn id is bound. A late
-	// finish for the prior turn can only release that prior turn's activity.
-	entry.mu.Lock()
-	switch name {
-	case "worker_input":
-		err = entry.adapter.Input(ctx, snap.Thread, worker.Input{Text: a.Text})
-	case "worker_interrupt":
+	// Persistence must finish before taking the event/session mutex.
+	if name == "worker_interrupt" {
 		if entry.cancelTask != nil {
 			if err = entry.cancelTask(ctx); err != nil {
 				return tools.Result{State: tools.Failed}, err
@@ -440,6 +435,15 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		if err != nil {
 			return tools.Result{State: tools.Failed}, err
 		}
+	}
+	// Keep the new activity private until its returned turn id is bound. A late
+	// finish for the prior turn can only release that prior turn's activity.
+	entry.mu.Lock()
+	switch name {
+	case "worker_input":
+		err = entry.adapter.Input(ctx, snap.Thread, worker.Input{Text: a.Text})
+	case "worker_interrupt":
+
 		err = entry.adapter.Interrupt(ctx, snap.Thread, worker.UserCancel)
 	}
 	if name == "worker_input" && snap.State == worker.Idle {

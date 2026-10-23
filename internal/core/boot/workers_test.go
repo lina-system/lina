@@ -238,3 +238,31 @@ func TestWorkerStartAcceptsSingleMethodSelection(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerCancelPersistenceFailureReleasesSession(t *testing.T) {
+	for _, source := range []string{"dispatch", "session"} {
+		t.Run(source, func(t *testing.T) {
+			owner := &conversationRuntime{person: "person", agent: "agent", conversation: "main:agent"}
+			probe := &workerProbe{snapshot: worker.ThreadSnapshot{Thread: worker.Thread{ID: "thread", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}, State: worker.Active}}
+			entry := &workerSession{adapter: probe, origin: owner, thread: probe.snapshot.Thread}
+			if source == "dispatch" {
+				entry.cancelTask = func(context.Context) error { return context.Canceled }
+			} else {
+				entry.recovery.ID = "invalid-persisted-binding"
+			}
+			owner.workers = &workerRuntime{sessions: map[string]*workerSession{"thread": entry}}
+			in, err := workerSchema("worker_interrupt", json.RawMessage(`{"session":"thread","turn":"turn","generation":1,"binding":1,"quote":"stop"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := owner.workerOperation(t.Context(), "worker_interrupt", "control", ledger.Event{}, in)
+			if err == nil || result.State != tools.Failed || probe.interrupts != 0 {
+				t.Fatalf("failed persistence sent interrupt: %+v %v", result, err)
+			}
+			if !entry.mu.TryLock() {
+				t.Fatal("failed cancellation retained session mutex")
+			}
+			entry.mu.Unlock()
+		})
+	}
+}

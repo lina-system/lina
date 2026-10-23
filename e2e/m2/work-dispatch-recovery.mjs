@@ -30,7 +30,9 @@ for await(const line of readline.createInterface({input:process.stdin})){
   if(fs.existsSync(path.join(root,'attempts')))throw Error('recovery started another turn');
   fs.writeFileSync(path.join(root,'attempts'),'codex\n');
   reply({turn:{id:'dispatch-turn',status:'inProgress'}});
-  execFileSync(path.join(path.dirname(process.argv[1]),'artifact-worker'),['--output-format','stream-json'],{cwd,input:p.input[0].text,env:{...process.env,LINA_WORKER_CASE:'success'},stdio:['pipe','pipe','pipe']});
+  try {
+   execFileSync(path.join(path.dirname(process.argv[1]),'artifact-worker'),['--output-format','stream-json'],{cwd,input:p.input[0].text,env:{...process.env,LINA_WORKER_CASE:'success'},stdio:['pipe','pipe','pipe']});
+  } catch(error) {fs.writeFileSync(path.join(root,'worker-error'),String(error));throw error;}
   fs.writeFileSync(path.join(root,'worker-ready'),'ready');
   break; // Core is killed before a completion signal reaches it.
  case 'thread/resume':

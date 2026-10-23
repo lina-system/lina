@@ -257,6 +257,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			}
 			if scenario.CrashRecovery {
 				waitDispatchedRecovery(t, h, func(rec dispatch.Record) bool {
+					if message, err := os.ReadFile(filepath.Join(fixture, "worker-error")); err == nil {
+						t.Fatalf("worker fixture: %s", message)
+					}
 					_, err := os.Stat(filepath.Join(fixture, "worker-ready"))
 					return err == nil && rec.Thread != nil
 				})
