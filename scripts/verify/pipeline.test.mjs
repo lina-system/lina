@@ -158,3 +158,34 @@ test('an actual failing Go scenario publishes the diagnostic for post-merge QA',
   assert.equal(record.tests[0].result, 'fail');
   assert.match(record.tests[0].output, /scenario_test.go:3: forced QA diagnostic/);
 });
+
+test('a package panic keeps the shard failed while a paused scenario remains unknown', async t => {
+  const sb = sandbox(t);
+  const { work } = developmentRepository(sb);
+  const toolchain = 'go 1.27\ntoolchain go1.27.3\n';
+  sb.commit(work, 'test: seed a panic with a paused scenario', {
+    'go.mod': 'module example.invalid/lina\n' + toolchain,
+    'kit/go.mod': 'module example.invalid/lina/kit\n' + toolchain,
+    'go.work': toolchain + 'use (\n.\n./kit\n)\n',
+    'doc.go': 'package lina\n', 'kit/doc.go': 'package kit\n',
+    'cmd/lina/main.go': 'package main\nfunc main() {}\n',
+    'e2e/scenario_test.go': `// SPDX-License-Identifier: Apache-2.0
+package e2e
+import "testing"
+func TestWaiting(t *testing.T) { t.Parallel(); t.Fatal("must not resume") }
+func TestCrash(t *testing.T) { panic("forced package failure") }
+`,
+  });
+  const { plan } = selectFoundation({ cwd: work, full: true, event: 'push', log() {} });
+  assert.equal(plan.selection.result, 'success');
+  const task = plan.tasks.find(task => task.kind === 'e2e');
+  const record = await executeTask(work, plan, task.id, () => {});
+  assert.equal(record.result, 'failure');
+  assert.deepEqual(record.tests.map(({ test, result }) => [test, result]), [
+    ['TestWaiting', 'unknown'], ['TestCrash', 'fail'],
+  ]);
+  // Give every other check a successful result to isolate this shard's gate.
+  const records = plan.tasks.map(other => ({ ...record, id: other.id, kind: other.kind,
+    result: other.id === task.id ? 'failure' : 'success' }));
+  assert.equal(finishFoundation(work, plan, aggregate(plan, records), { note: false }).result, 'failure');
+});
