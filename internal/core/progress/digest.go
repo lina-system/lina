@@ -22,7 +22,11 @@ func Digest(waiting []string, entries []Entry) Summary {
 	}
 	for _, e := range entries {
 		v := e.Line
-		add(v.Name + " · " + v.Stage + " · " + v.JustFinished + " → " + v.Next)
+		name := v.Name
+		if v.State != "" {
+			name = v.State + ": " + name
+		}
+		add(name + " · " + v.Stage + " · " + v.JustFinished + " → " + v.Next)
 	}
 	d.More = d.Total - len(d.Lines)
 	return d
