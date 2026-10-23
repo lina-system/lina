@@ -29,6 +29,7 @@ func TestLedgerProjectionExcludesAuditAndImportedRecords(t *testing.T) {
 	events[5].Origin.Locator = "channel-source"
 	events[5].SpeakerKind = guard.ExternalParticipant
 	events = append(events, event("compaction", "compaction_recorded", "range bookkeeping"))
+	events = append(events, event("reply-check", "reply_check", "reply measurement"))
 	items, err := assemble.History(events, "conversation", "agent")
 	if err != nil || len(items) != 2 {
 		t.Fatalf("%s %v", items, err)

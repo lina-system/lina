@@ -356,9 +356,21 @@ func (s *Service) applyProposal(ctx context.Context, tx *canon.Tx, d Definition,
 	if err = saveJob(ctx, tx, j); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO moirai_applied VALUES (?,?,?)", p.JobID, p.Through, encoded)
+	if _, err = tx.ExecContext(ctx, "INSERT INTO moirai_applied VALUES (?,?,?)", p.JobID, p.Through, encoded); err != nil {
+		return err
+	}
+	return saveReport(ctx, tx, p.JobID, jobapi.JobState{Epoch: p.Epoch, Watermark: p.Through, Status: "applied"})
+}
+
+func saveReport(ctx context.Context, tx *canon.Tx, id string, state jobapi.JobState) error {
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, "INSERT INTO moirai_reports VALUES (?,?) ON CONFLICT(job) DO UPDATE SET record=excluded.record", id, data)
 	return err
 }
+
 func (s *Service) Report(ctx context.Context, id string, state jobapi.JobState) error {
 	if state.Status != "applied" && state.Status != "failed" {
 		return jobapi.ErrInvalid
@@ -371,8 +383,6 @@ func (s *Service) Report(ctx context.Context, id string, state jobapi.JobState) 
 		if j.Watermark != state.Watermark {
 			return jobapi.ErrConflict
 		}
-		data, _ := json.Marshal(state)
-		_, err = tx.ExecContext(ctx, "INSERT INTO moirai_reports VALUES (?,?) ON CONFLICT(job) DO UPDATE SET record=excluded.record", id, data)
-		return err
+		return saveReport(ctx, tx, id, state)
 	})
 }

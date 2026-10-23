@@ -79,11 +79,12 @@ func TestReplyAndCardCrashAtomicity(t *testing.T) {
 			store := ledger.New(crashDB(t, root, 2), nil)
 			source, sourceErr := store.Get(t.Context(), "reply")
 			card, cardErr := store.Get(t.Context(), "card-event")
+			check, checkErr := store.Get(t.Context(), "reply-check:reply")
 			if phase == "before" {
-				if !errors.Is(sourceErr, ledger.ErrNotFound) || !errors.Is(cardErr, ledger.ErrNotFound) {
+				if !errors.Is(sourceErr, ledger.ErrNotFound) || !errors.Is(cardErr, ledger.ErrNotFound) || !errors.Is(checkErr, ledger.ErrNotFound) {
 					t.Fatalf("uncommitted pair: %v %v", sourceErr, cardErr)
 				}
-			} else if sourceErr != nil || cardErr != nil || card.ParentID != source.ID {
+			} else if sourceErr != nil || cardErr != nil || checkErr != nil || card.ParentID != source.ID || check.ParentID != source.ID {
 				t.Fatalf("crash stranded a reply: source=%v card=%v", sourceErr, cardErr)
 			}
 		})

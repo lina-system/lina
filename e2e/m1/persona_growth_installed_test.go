@@ -8,12 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/agents"
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/moirai/jobapi"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -182,6 +185,26 @@ func TestM2InstalledPersonaGrowth(t *testing.T) {
 	c.Close()
 	conv.Close()
 	h.stopCore(core)
+	// The installed Core commits status with adoption even when there is no
+	// worker left to make a separate Report request.
+	withFileCanon(t, h, func(db *canon.Store) {
+		if err := db.Read(h.ctx, func(tx *canon.Tx) error {
+			var raw []byte
+			if err := tx.QueryRowContext(h.ctx, "SELECT record FROM moirai_reports WHERE job=?", "growth:"+agent).Scan(&raw); err != nil {
+				return err
+			}
+			var state jobapi.JobState
+			if err := json.Unmarshal(raw, &state); err != nil {
+				return err
+			}
+			if state.Status != "applied" || state.Watermark != 1 || strconv.FormatUint(state.Epoch, 10) != c.Welcome.Epoch {
+				t.Fatalf("installed Core lost adoption status: %+v", state)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("installed Core did not persist adoption status: %v", err)
+		}
+	})
 	if _, err := os.Lstat(filepath.Join(h.root, "run", "jobs.sock")); !os.IsNotExist(err) {
 		t.Fatalf("job socket left after shutdown: %v", err)
 	}

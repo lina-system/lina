@@ -296,6 +296,10 @@ func TestSearchReturnsLongReplyOnceIncludingLegacyCards(t *testing.T) {
 	card.Relations = []ledger.Relation{{Kind: "view_of", TargetID: source.ID}}
 	card.Body = `{"type":"document_draft","text":"` + source.Body + `"}`
 	admit(t, store, guard.EntryAgent, card)
+	check := input("reply-check")
+	check.PersonID, check.ScaffoldKind, check.ParentID = "", "reply_check", source.ID
+	check.Body = `{"unique recall needle":1}`
+	admit(t, store, guard.EntrySystem, check)
 	hits, err := store.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: "unique recall needle", Limit: 1})
 	if err != nil || len(hits) != 1 || hits[0].ID != source.ID {
 		t.Fatalf("recall: %+v %v", hits, err)

@@ -16,7 +16,7 @@ func TestMaskPunctuationRoundTrip(t *testing.T) {
 		{"json_fields", `{"api_key":"syntheticcredential","token":"anothercredential"}`, `{"api_key":"` + secret.Placeholder + `","token":"` + secret.Placeholder + `"}`},
 		{"quoted_placeholder_prefix", `token="[REDACTED]syntheticcredential".`, "token=" + secret.Placeholder + "."},
 	}
-	for _, punctuation := range []string{".", ",", "}", ")", ";"} {
+	for _, punctuation := range []string{".", ",", "}", "]", ")", ";", "<", ">"} {
 		for _, quote := range []string{`"`, `'`} {
 			cases = append(cases, struct{ name, input, want string }{
 				quote + punctuation,
@@ -26,7 +26,7 @@ func TestMaskPunctuationRoundTrip(t *testing.T) {
 		}
 		// Unquoted real values retain the existing masking boundaries.
 		want := "token=" + secret.Placeholder
-		if punctuation == "," || punctuation == ";" {
+		if punctuation == "," || punctuation == ";" || punctuation == "<" || punctuation == ">" {
 			want += punctuation
 		}
 		cases = append(cases, struct{ name, input, want string }{

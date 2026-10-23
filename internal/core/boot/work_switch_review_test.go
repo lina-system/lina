@@ -55,29 +55,41 @@ func TestSwitchTerminalConnectionFailureReleasesExecution(t *testing.T) {
 }
 
 func TestSwitchRefusedInputKeepsCompletionBinding(t *testing.T) {
-	r, entry, probe := reviewWorkerFixture(t)
-	probe.snapshot.State = worker.Waiting
-	probe.inputErr = worker.ErrInputRefused
-	raw, _ := json.Marshal(workerArgs{Session: "thread", Turn: "old", Generation: 1, Binding: 1, Text: "continue"})
-	in, err := workerSchema("worker_input", raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := r.workerOperation(t.Context(), "worker_input", "conversation-turn", ledger.Event{}, in)
-	if err != nil || result.State != tools.Failed {
-		t.Errorf("definitive refusal reported as ambiguous: %+v %v", result, err)
-	}
-	if entry.reservationTurn != "old" {
-		t.Errorf("definitive refusal lost completion binding: %s", entry.reservationTurn)
-	}
-	probe.events <- worker.Event{Thread: entry.thread, Kind: worker.FinishEvent, Finish: &worker.Finish{Status: worker.Interrupted}}
-	close(probe.events)
-	entry.observe()
-	if err := r.work.RequestRollback(t.Context(), "switch", r.person, "interrupted after refusal"); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.work.CompleteRollback(t.Context(), "switch", r.person, "terminal event observed"); err != nil {
-		t.Fatal("refused input retained execution after its completion", err)
+	for _, status := range []worker.FinishStatus{worker.Done, worker.Interrupted} {
+		t.Run(string(status), func(t *testing.T) {
+			r, entry, probe := reviewWorkerFixture(t)
+			released := false
+			entry.active["old"] = lease.New(func() { released = true })
+			entry.close = func() error {
+				if !released {
+					t.Error("refused input retained hard activity until process close")
+				}
+				return nil
+			}
+			probe.snapshot.State = worker.Waiting
+			probe.inputErr = worker.ErrInputRefused
+			raw, _ := json.Marshal(workerArgs{Session: "thread", Turn: "old", Generation: 1, Binding: 1, Text: "continue"})
+			in, err := workerSchema("worker_input", raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := r.workerOperation(t.Context(), "worker_input", "conversation-turn", ledger.Event{}, in)
+			if err != nil || result.State != tools.Failed {
+				t.Errorf("definitive refusal reported as ambiguous: %+v %v", result, err)
+			}
+			if entry.reservationTurn != "old" || released {
+				t.Errorf("definitive refusal changed the active execution: turn=%s released=%v", entry.reservationTurn, released)
+			}
+			probe.events <- worker.Event{Thread: entry.thread, Kind: worker.FinishEvent, Finish: &worker.Finish{Status: status}}
+			close(probe.events)
+			entry.observe()
+			if err := r.work.RequestRollback(t.Context(), "switch", r.person, "finished after refusal"); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.work.CompleteRollback(t.Context(), "switch", r.person, "terminal event observed"); err != nil {
+				t.Fatal("refused input retained execution after its completion", err)
+			}
+		})
 	}
 }
 

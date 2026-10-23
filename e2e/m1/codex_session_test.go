@@ -93,8 +93,12 @@ func codexSessionFixture() {
 				state = "idle"
 				completed := map[string]any{"id": turn, "status": "completed"}
 				if switchFailures {
+					code := os.Getenv("LINA_WORKER_CONNECTION_ERROR")
+					if code == "" {
+						code = "responseStreamDisconnected"
+					}
 					completed["status"] = "failed"
-					completed["error"] = map[string]any{"message": "fixture provider disconnected after output", "codexErrorInfo": map[string]any{"responseStreamDisconnected": map[string]any{}}}
+					completed["error"] = map[string]any{"message": "fixture provider disconnected after output", "codexErrorInfo": map[string]any{code: map[string]any{}}}
 				}
 				notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": completed})
 			}
