@@ -136,13 +136,27 @@ const refGuard = `#!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
 [ "$1" = prepared ] || exit 0
 assigned=
+name=
 binding=$(git rev-parse --git-path lina-task-ref) || exit 1
 if [ -f "$binding" ]; then
  IFS= read -r assigned < "$binding" || exit 1
 fi
+case "$assigned" in
+ refs/heads/*) name=${assigned#refs/heads/};;
+esac
 while read -r old new ref; do
  case "$ref" in
- refs/heads/main|refs/heads/master|refs/heads/dev|refs/remotes/*|refs/lina/*)
+ refs/remotes/*)
+  # A push of the assigned branch may update the remote-tracking ref that
+  # mirrors it. Git 2.56 does so for a push to a URL that matches one
+  # configured remote; every other remote-tracking ref belongs elsewhere.
+  case "$ref" in
+   */"$name") [ -n "$name" ] || { echo 'LINA protected ref' >&2; exit 1; };;
+   *)
+    echo 'LINA protected ref' >&2
+    exit 1;;
+  esac;;
+ refs/heads/main|refs/heads/master|refs/heads/dev|refs/lina/*)
   echo 'LINA protected ref' >&2
   exit 1;;
  refs/heads/*)
@@ -354,6 +368,15 @@ func (a *Area) Bundle(ctx context.Context, l lease.Lease, w Workspace, head stri
 // must never turn allocation into a write to an unrelated user file.
 func (a *Area) installGuard(dir string) (err error) {
 	return a.writeAreaFile(filepath.Join(dir, "reference-transaction"), refGuard, 0700)
+}
+
+// linaGuard reports whether body is a guard Core wrote, including one from an
+// earlier Core version. Core replaces its own guard in place on upgrade and
+// still refuses a hook that someone else wrote.
+func linaGuard(body []byte) bool {
+	b := string(body)
+	return strings.HasPrefix(b, "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\n") &&
+		strings.Contains(b, "lina-task-ref") && strings.Contains(b, "LINA protected ref")
 }
 
 func (a *Area) writeAreaFile(path, body string, mode os.FileMode) (err error) {
