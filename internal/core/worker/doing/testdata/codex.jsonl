@@ -1,0 +1,2 @@
+{"id":"fixture","thread_name":"Login repair"}
+{"type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[{\"step\":\"Write tests\",\"status\":\"completed\"},{\"step\":\"Running tests\",\"status\":\"in_progress\"}]}"}}

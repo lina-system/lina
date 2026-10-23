@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/lina/internal/core/work/observation"
 )
 
 // Project replays facts without clocks, database reads or worker calls.
@@ -140,6 +142,7 @@ func advanceState(c *Card, e Event) error {
 			return ErrState
 		}
 		c.Activity = ""
+		c.Doing = nil
 		c.Completion = nil
 		c.Head, c.CompletionHead = "", ""
 		c.Run = e.Run
@@ -154,6 +157,15 @@ func advanceState(c *Card, e Event) error {
 		c.Applied = false
 		c.TurnStatus = ""
 		c.Stages = []Stage{{Name: "worker", Source: "unknown"}, {Name: "review", Source: "unknown"}, {Name: "apply", Source: "unknown"}}
+	case "worker_doing":
+		if c.Run == nil || c.Run.ID != e.RunID || !c.Active || c.TurnStatus != "" {
+			return ErrState
+		}
+		if e.Doing == nil || e.Doing.Since.IsZero() || e.Doing.Line != observation.Clean(e.Doing.Line) {
+			return ErrInvalid
+		}
+		observation := *e.Doing
+		c.Doing = &observation
 	case "worker_activity":
 		if c.Run == nil || c.Run.ID != e.RunID || !c.Active || c.TurnStatus != "" {
 			return ErrState

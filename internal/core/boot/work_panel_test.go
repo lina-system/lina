@@ -112,3 +112,30 @@ func TestWorkPanelCoreAttentionOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkPanelDoingFromSameAdapterEvent(t *testing.T) {
+	r, _ := runningWorkerFixture(t)
+	session := r.workers.sessions["fixture"]
+	for _, line := range []string{"Login · Reading tests", "Login · Running tests"} {
+		raw := fmt.Sprintf(`{"Thread":{"ID":%q,"TurnID":%q},"Kind":1,"Progress":{"Phase":"doing"},"Doing":{"line":%q,"busy":true,"since":"2026-10-23T00:00:00Z"}}`, session.thread.ID, session.thread.TurnID, line)
+		var event worker.Event
+		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			t.Fatal(err)
+		}
+		session.observeActivity(event)
+		p, err := r.ownerSnapshot(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Rows == nil || len(*p.Rows) != 1 || (*p.Rows)[0].Line.Now == nil || *(*p.Rows)[0].Line.Now != line {
+			t.Fatalf("doing not applied within event: %+v", p)
+		}
+		event.Thread.TurnID = "stale"
+		event.Doing.Line = "stale"
+		session.observeActivity(event)
+		p, err = r.ownerSnapshot(t.Context())
+		if err != nil || *(*p.Rows)[0].Line.Now != line {
+			t.Fatal("stale observation replaced current doing", err)
+		}
+	}
+}

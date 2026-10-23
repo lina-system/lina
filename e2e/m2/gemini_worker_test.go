@@ -39,12 +39,12 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   reply(m.id,{protocolVersion:1,agentCapabilities:{loadSession:true},...(name==='gemini'?{agentInfo:{name:'gemini-cli',version:'0.65.0'}}:{})});break;
  case 'session/new':
   if(m.params.cwd!==process.cwd()||m.params.mcpServers.length!==1||m.params.mcpServers[0].name!=='lina'||m.params.mcpServers[0].args[0]!=='worker-tools')throw Error('unexpected session setup');
-  if(name==='gemini'&&process.env.LINA_ACP_CASE==='needs-sign-in') {
+  if(name==='gemini'&&process.env.LINA_ACP_CASE==='needs-sign-in'&&!fs.existsSync(path.join(root,'signed-in'))) {
    send({id:m.id,error:{code:-32000,message:'Authentication required',data:{private:'account-detail-must-stay-private'}}});break;
   }
   reply(m.id,{sessionId:session});break;
  case 'session/prompt': {
-  if(name==='gemini'&&process.env.LINA_ACP_CASE==='needs-sign-in')throw Error('prompt without sign-in');
+  if(name==='gemini'&&process.env.LINA_ACP_CASE==='needs-sign-in'&&!fs.existsSync(path.join(root,'signed-in')))throw Error('prompt without sign-in');
   const packet=m.params.prompt[0].text;
   send({method:'session/update',params:{sessionId:session,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Working on result.txt'}}}});
   const timer=setInterval(()=>{
