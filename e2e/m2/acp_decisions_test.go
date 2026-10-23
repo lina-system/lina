@@ -576,52 +576,58 @@ func assertACPDecisionViews(t *testing.T, h *harness, runningRef, progressRef st
 		if topic == "progress" {
 			ref = progressRef
 		}
-		c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: topic, Version: "1.0"}})
+		ctx, cancel := context.WithTimeout(h.ctx, 10*time.Second)
+		defer cancel()
+		c, err := clientapi.DialWithCapabilities(ctx, h.socket, "test", []protocol.Capability{{Name: topic, Version: "1.0"}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer c.Close()
-		if _, err = c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		if _, err = c.Subscribe(ctx, protocol.Subscribe{Topic: &topic}); err != nil {
 			t.Fatal(err)
 		}
-		frame, err := c.Receive(h.ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		snapshot, ok := frame.Payload.(protocol.Snapshot)
-		if !ok || snapshot.Topic != topic {
-			t.Fatalf("missing %s snapshot: %+v", topic, frame)
-		}
-		var state *protocol.RunningState
-		for _, item := range snapshot.Items {
-			switch item.Kind {
-			case protocol.KindRunningUpdate:
-				var update protocol.RunningUpdate
-				if err := json.Unmarshal(item.Payload, &update); err != nil {
+		state := protocol.RunningState("")
+		for state != protocol.RunningStateNeedsInput {
+			frame, err := c.Receive(ctx)
+			if err != nil {
+				t.Fatalf("%s state for %s = %q, want needs_input: %v", topic, ref, state, err)
+			}
+			if frame.Error != nil {
+				t.Fatalf("%s refused: %+v", topic, frame.Error)
+			}
+			var payloads []json.RawMessage
+			if snapshot, ok := frame.Payload.(protocol.Snapshot); ok {
+				if snapshot.Topic != topic {
+					t.Fatalf("unexpected snapshot topic %q", snapshot.Topic)
+				}
+				for _, item := range snapshot.Items {
+					payloads = append(payloads, item.Payload)
+				}
+			} else {
+				raw, err := json.Marshal(frame.Payload)
+				if err != nil {
 					t.Fatal(err)
 				}
-				if update.RunID != nil && *update.RunID == ref {
+				payloads = append(payloads, raw)
+			}
+			for _, raw := range payloads {
+				var update struct {
+					RunID string `json:"run_id"`
+					State protocol.RunningState
+					Rows  []protocol.ProgressRow
+				}
+				if err := json.Unmarshal(raw, &update); err != nil {
+					t.Fatal(err)
+				}
+				if topic == "running" && update.RunID == ref {
 					state = update.State
 				}
-			case protocol.KindProgressUpdate:
-				var update protocol.ProgressUpdate
-				if err := json.Unmarshal(item.Payload, &update); err != nil {
-					t.Fatal(err)
-				}
-				if update.Rows != nil {
-					for _, row := range *update.Rows {
-						if row.Ref == ref {
-							state = row.Line.State
-						}
+				for _, row := range update.Rows {
+					if topic == "progress" && row.Ref == ref && row.Line.State != nil {
+						state = *row.Line.State
 					}
 				}
 			}
-		}
-		if state == nil {
-			t.Fatalf("%s has no state for %s: %+v", topic, ref, snapshot)
-		}
-		if *state != protocol.RunningStateNeedsInput {
-			t.Fatalf("%s state = %s, want needs_input", topic, *state)
 		}
 	}
 }
