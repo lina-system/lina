@@ -58,8 +58,29 @@ files uses the existing atomic preset revision path; filenames need no change.
 Unknown: text checks and scripted-provider acceptance cannot establish model
 response quality. The private replay evaluation remains separate under #590.
 
-`TestM4StarterJudgmentAndVoice` checks the specified judgment concepts, catalog
-names, character and voice markers, and forbidden instructions in both layers.
-It does not snapshot full sentences. `TestM1ShippedPersonaInstallAndTools` loads
-each embedded pair through installed Core, replaces stale layers, observes the
-prepared request and exercises a real skill tool and its conversation result.
+The content comparison against the M4 contract covers each pair:
+
+| Preset | Judgment changes in core | Voice retained |
+| --- | --- | --- |
+| system | No extra barriers around personal tools beyond credentials, deletion, money and publishing; execute available steps; ask before making an exception to an all-agent rule | Selene's dry informal speech and short endings |
+| lina | Read original sources before listing unfinished work or asking about completion; finish legal drafts before requesting Kanna's review | Lina's reserved manner, address term, formal conclusions and softer explanations |
+| dev | Keep peer reports as claims until reproduced; completion refers to execution, not merge | Sion's address term and declarative register, with direct checks, estimates and unchecked results distinguished |
+| knowledge | Give one concrete risk flag instead of leading with warnings; read available sources or records before asking | Rumi's librarian character, informal speech and sparse old-fashioned endings |
+| life | Keep the same voice with explicit safety content; consult recorded dislikes and fixed choices; check owned-device facts before quoting them | Arin's self-reference, address term and historical honorifics, including the correction example |
+| creative | Compare the favourite with stated taste; report handoffs only after sending; rerun reversible work; narrow vague rejection to one question | Cleo's address term, modern informal speech and enthusiast expressions |
+| investing | Finish with stated assumptions; source and date every figure; check that a quoted close is on a trading day | Kai's relaxed informal speech and address term |
+| legal | Flag an unasked legal risk once; round toward stated bounds; use the person's document labels | Kanna's lively informal speech and precise document language |
+
+Both layers were read for each preset: none prescribes a topic-dependent
+register switch or a fixed nothing-to-decide closing. The six default voices
+other than Sion's and Arin's are unchanged. Character introductions and all
+other examples are retained. This is a content comparison, not a model score.
+
+`TestShippedStarterRevisionPreservesIdentityAndAgentLayers` tests all eight
+presets as opaque text: the current embedded core, voice and work method must
+reach the next revision together, retaining identity, agent-owned voice and
+growth, prepared history and idempotence. It permits equivalent wording without
+frozen vocabulary. `TestM1ShippedPersonaInstallAndTools` loads each embedded pair
+through installed Core, replaces stale layers, observes the prepared request
+and exercises a real skill tool and its conversation result. These tests prove
+publication and preparation; the content comparison above establishes fidelity.
