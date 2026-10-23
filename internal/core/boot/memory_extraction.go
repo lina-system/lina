@@ -273,7 +273,7 @@ func (r *conversationRuntime) extractionModel(ctx context.Context, c jobs.Call) 
 				return jobs.Result{}, jobapi.ErrInvalid
 			}
 			for _, item := range items {
-				if item.Basis != memory.Stated || item.Subject != (memory.Subject{Kind: memory.Person, ID: batch.Person}) || item.ID != "" || item.Supersedes != "" || item.Standing {
+				if item.Basis != memory.Stated || item.Subject != (memory.Subject{Kind: memory.Person, ID: batch.Person}) || item.ID != "" || item.Supersedes != "" || item.Standing || item.Scope != "" {
 					return jobs.Result{}, jobapi.ErrInvalid
 				}
 			}

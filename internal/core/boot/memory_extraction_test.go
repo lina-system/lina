@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/jobs"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/moirai/jobapi"
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -372,5 +373,33 @@ func TestMemoryExtractionShrinksLargeBatch(t *testing.T) {
 	cursor, err := s.ExtractionCursor(t.Context(), extractionPrefix+r.agent)
 	if err != nil || cursor != 0 {
 		t.Fatal("queued batch advanced committed source")
+	}
+}
+
+func TestMemoryExtractionRejectsModelScopeBeforeCaching(t *testing.T) {
+	r, p, s := extractionFixture(t)
+	const statement = "I go hiking with my friend."
+	now := time.Now()
+	if _, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "private-source", AgentID: r.agent, PersonID: r.person, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, Body: statement, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Tags: []secrets.Span{{Start: 0, End: len(statement), Sensitivity: "third_party"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.queueExtraction(t.Context(), r.agent); err != nil {
+		t.Fatal(err)
+	}
+	item := memory.Item{Kind: memory.Fact, Content: "Goes hiking with a friend", Subject: memory.Subject{Kind: memory.Person, ID: r.person}, Basis: memory.Stated, Scope: memory.Local, Evidence: []memory.Evidence{{Kind: memory.Event, ID: "private-source", Precision: memory.Exact}}}
+	invalid, _ := json.Marshal([]memory.Item{item})
+	item.Scope = ""
+	valid, _ := json.Marshal([]memory.Item{item})
+	p.steps = []turnStep{{events: turnText(string(invalid))}, {events: turnText(string(valid))}}
+	if _, err := s.Aux(t.Context(), extractionDue(t, r, s)); !errors.Is(err, jobapi.ErrUnavailable) {
+		t.Fatalf("model scope was cached instead of rejected: %v", err)
+	}
+	if err := r.queueExtraction(t.Context(), r.agent); err != nil {
+		t.Fatal(err)
+	}
+	extractionStep(t, r, s)
+	hits, err := memory.New(r.db).Recall(t.Context(), memory.RecallScope{Agent: r.agent, Person: r.person}, memory.Query{At: time.Now().Unix()})
+	if err != nil || len(hits) != 1 || hits[0].Scope != memory.Private {
+		t.Fatalf("canonical evidence scope not preserved: %+v %v", hits, err)
 	}
 }
