@@ -129,6 +129,7 @@ func (m *shellModel) boardKey(name string) (bool, tea.Cmd) {
 				m.content, _ = state.Reduce(m.content, state.OpenCard{ID: card.ID})
 				m.cardGate.CardChanged(m.now())
 				m.cardField, m.cardScroll = 0, 0
+				m.resetCardReading()
 				break
 			}
 		}
