@@ -212,13 +212,6 @@ func (p *publicationRuntime) stopTask(ctx context.Context, rec a2a.Record) {
 	state := a2a.Unspecified
 	if err == nil && p.root.workerDispatch != nil {
 		_ = p.root.workerDispatch.Cancel(ctx, d.ID)
-		for _, session := range p.root.workers.entries() {
-			if session.thread.TaskID == d.ID {
-				stopCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-				_ = session.adapter.Interrupt(stopCtx, session.thread, worker.UserCancel)
-				cancel()
-			}
-		}
 		// The dispatcher's recorded terminal observation, rather than Cancel's
 		// acknowledgment, decides whether execution has stopped.
 		if d.State == "finished" && (d.Code == "cancelled" || d.Snapshot != nil && d.Snapshot.Finish != nil && d.Snapshot.EffectsKnown && d.Snapshot.Finish.Status == worker.Interrupted) {

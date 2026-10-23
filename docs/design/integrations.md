@@ -372,7 +372,10 @@ an authenticated owner can allow that request once or deny it. No eligible
 surface means refusal. The answer is bound to the request and current Core
 epoch; a caller message, another task or a restart cannot reuse it. Pending
 execution approval is `INPUT_REQUIRED`. Approval does not remove the preset
-ceiling or the worker's own later approval requirements.
+ceiling or the worker's own later approval requirements. A denied worker
+approval stops that published task and cannot trigger an automatic worker retry.
+Core reports cancellation only from a recorded terminal observation; missing
+or uncertain evidence remains unknown.
 The publication does not authorize the manager to merge or close a PR.
 Supplementary messages on an authorized nonterminal task retain their origin
 and reach the owner's conversation as untrusted input. They do not change the

@@ -252,6 +252,22 @@ func testM3A2APublication(t *testing.T, mode string) {
 		p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_A2A_TEST_ROOT="+h.root, "LINA_A2A_TEST_SOCKET="+h.socket, "LINA_A2A_TEST_CA="+certPath, "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+workerMode, "LINA_RESPONSES_BASE_URL="+provider.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 		load.wrap(t, p)
 		p.start(t)
+		t.Cleanup(func() {
+			select {
+			case <-p.done:
+				return
+			default:
+			}
+			_ = p.signal(syscall.SIGTERM)
+			timer := time.NewTimer(10 * time.Second)
+			defer timer.Stop()
+			select {
+			case <-p.done:
+			case <-timer.C:
+				_ = p.signal(syscall.SIGKILL)
+				p.killAndWait()
+			}
+		})
 		h.connectWithin(p, time.Minute).Close()
 		waitCoreReady(t, h)
 		return p
@@ -306,6 +322,11 @@ func testM3A2APublication(t *testing.T, mode string) {
 		if t.Failed() {
 			logWorkerDispatchState(t, h, fixture)
 			logA2ATaskState(t, h)
+			if records, err := workerDispatchRecords(context.Background(), h); err == nil {
+				for _, record := range records {
+					t.Logf("worker snapshot=%+v thread=%+v pending=%+v", record.Snapshot, record.Thread, record.PendingRequests)
+				}
+			}
 			t.Logf("provider task calls=%d", calls.Load())
 		}
 	})
@@ -530,6 +551,9 @@ func testM3A2APublication(t *testing.T, mode string) {
 		_, body = request("valid", "GetTask", map[string]string{"id": id})
 		var got struct{ Result a2a.Task }
 		json.Unmarshal(body, &got)
+		if mode == "denied" && got.Result.Status.State == a2a.Unspecified {
+			t.Fatal("worker denial lost its terminal evidence")
+		}
 		if a2a.Terminal(got.Result.Status.State) {
 			completed = got.Result
 			break
@@ -717,6 +741,8 @@ func logA2ATaskState(t *testing.T, h *harness) {
 			"SELECT json_object('phase',phase,'state',json_extract(record,'$.task.status.state'),'input',json_extract(record,'$.input_event'),'calls',json_extract(record,'$.tool_calls')) FROM a2a_tasks",
 			"SELECT json_object('turn',id,'state',state,'prepared',prepared) FROM turn_runs",
 			"SELECT json_object('call',call_id,'name',json_extract(call,'$.Name'),'result',json(result)) FROM turn_calls",
+			"SELECT json_object('snapshot',json_extract(record,'$.snapshot'),'thread',json_extract(record,'$.thread'),'pending',json_extract(record,'$.pending_requests'),'state',state,'code',json_extract(record,'$.code')) FROM worker_dispatch",
+			"SELECT json_object('active',json_extract(record,'$.active'),'status',json_extract(record,'$.turn_status'),'receipt',json_extract(record,'$.receipt'),'run',json_extract(record,'$.run')) FROM work_cards",
 			"SELECT CAST(outcome AS TEXT) FROM turn_outcome",
 		} {
 			rows, err := tx.QueryContext(ctx, query)

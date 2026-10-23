@@ -23,6 +23,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/results"
 	"github.com/thisisjun786/lina/internal/core/review"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
@@ -46,6 +47,9 @@ func (p *publicationRuntime) observeWork(ctx context.Context, rec a2a.Record, d 
 		return nil
 	}
 	if d.Canceled {
+		if d.Code == "cancelled" || d.Snapshot != nil && d.Snapshot.Finish != nil && d.Snapshot.EffectsKnown && d.Snapshot.Finish.Status == worker.Interrupted {
+			return set(a2a.Canceled)
+		}
 		return set(a2a.Unspecified)
 	}
 	if d.Code != "ready_for_review" || d.PR == nil || len(d.Denied) > 0 {

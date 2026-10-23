@@ -217,7 +217,10 @@ Only the existing authenticated owner surfaces answer local approvals. A2A
 follow-ups are forwarded task data, never owner answers. A cancellation request
 is durable before Core interrupts work. An interrupt acknowledgment without
 terminal execution evidence leaves the task unknown; it cannot produce a
-canceled or completed claim or authorize a replacement worker.
+canceled or completed claim or authorize a replacement worker. The dispatcher
+observes durable cancellation even if no owner-session bridge is registered.
+An owner denial is persisted as a stop before it is relayed to a published
+worker, preventing an interrupted receipt from authorizing recovery.
 
 The publication binding alone cannot activate an installed worker with the
 owner's permissions. Core requires a separate one-time owner execution decision
