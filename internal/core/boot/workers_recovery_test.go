@@ -55,6 +55,12 @@ func TestWorkerRecoveryBlocksInputWithUnsettledEffects(t *testing.T) {
 	e := r.workers.sessions["fixture"]
 	for _, state := range []string{"unknown", "retrying", "decision", "parked"} {
 		e.recovery.State = state
+		if state == "unknown" {
+			var reply workerResult
+			if err := json.Unmarshal(e.encode(probe.snapshot).Body, &reply); err != nil || reply.State != worker.Unknown {
+				t.Fatalf("snapshot hid unknown effects: %+v %v", reply, err)
+			}
+		}
 		raw, _ := json.Marshal(workerArgs{Session: "fixture", Turn: "turn", Generation: 1, Binding: 1, Text: "continue"})
 		result, err := r.workerOperation(t.Context(), "worker_input", "turn", ledger.Event{}, tools.Input{Arguments: raw})
 		if err != nil || result.State != tools.Failed {

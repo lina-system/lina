@@ -433,6 +433,15 @@ func (e *workerSession) result(ctx context.Context, t worker.Thread) (tools.Resu
 	return e.encode(snap), nil
 }
 func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
+	e.recoveryMu.Lock()
+	state := e.recovery.State
+	e.recoveryMu.Unlock()
+	if state == "unknown" || state == "retrying" {
+		s.State = worker.Unknown
+	}
+	if state == "decision" || state == "parked" {
+		s.State = worker.Waiting
+	}
 	raw, _ := json.Marshal(workerResult{Owner: e.origin.agent, Manager: e.origin.conversation, Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
 }
