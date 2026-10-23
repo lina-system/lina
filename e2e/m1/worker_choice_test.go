@@ -123,6 +123,7 @@ func waitForAreaClaim(t *testing.T, h *harness, fixture string) {
 		}
 		select {
 		case <-deadline.C:
+			logWorkerQuotaState(t, h)
 			t.Fatalf("area reservation not observed: waiting=%d active=%d err=%v", waiting, active, err)
 		case <-tick.C:
 		}

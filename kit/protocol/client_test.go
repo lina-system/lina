@@ -18,7 +18,7 @@ var clientKinds = []string{
 	"running_get", "running", "running_update", "stop", "stop_result", "follow_up", "background_notice",
 	"progress_get", "progress", "progress_update", "progress_digest_get", "progress_digest",
 	"waiting_get", "waiting", "waiting_update", "waiting_answer", "details_get", "details",
-	"readiness_failure", "agent_request", "agent_result", "work_request", "work_result",
+	"readiness_failure", "agent_request", "agent_result", "work_request", "work_result", "work_switch_request", "work_switch_result",
 	"account_request", "account_result", "memory_request", "memory_result",
 	"memory_import_progress", "memory_promotion_batch", "channel_request", "channel_result", "channel_state",
 	"agent_talk_get", "agent_talk", "agent_talk_entry", "agent_talk_expand", "agent_talk_subscribe",
@@ -105,9 +105,11 @@ func concretePayloads() map[string]any {
 				"payload": map[string]any{"text": "complete"},
 			}},
 		},
-		"resync":          map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
-		"plan_request":    map[string]any{"operation": "get", "agent_id": "agent", "result_id": "plan"},
-		"resync_required": map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
+		"work_switch_request": map[string]any{"operation": "switch_status", "switch_id": "switch-1"},
+		"work_switch_result":  map[string]any{"switch_id": "switch-1", "state": "approved", "approval": "input-1", "snapshot": "hash", "tasks": []any{"task-1"}, "events": []any{}},
+		"resync":              map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
+		"resync_required":     map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
+		"plan_request":        map[string]any{"operation": "get", "agent_id": "agent", "result_id": "plan"},
 	}
 }
 

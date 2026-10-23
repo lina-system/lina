@@ -594,3 +594,46 @@ func TestPlanningUpgradePreservesPublishedRecordOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedWorkSwitch(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:45]...), Migration{Version: 46, SQL: WorkSwitchSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_switches(id,record) VALUES('existing',X'01'); INSERT INTO work_switch_events(switch_id,record) VALUES('existing',X'02');`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var state, event []byte
+		if err := tx.QueryRowContext(t.Context(), "SELECT s.record,e.record FROM work_switches s JOIN work_switch_events e ON e.switch_id=s.id WHERE s.id='existing'").Scan(&state, &event); err != nil {
+			return err
+		}
+		if !bytes.Equal(state, []byte{1}) || !bytes.Equal(event, []byte{2}) {
+			t.Fatal("published switch state or event changed")
+		}
+		var n int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&n); err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatal("upgrade created a plan")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), "UPDATE work_switch_events SET record=X'03' WHERE switch_id='existing'")
+		return err
+	})
+	if err == nil || !strings.Contains(err.Error(), "switch history is append only") {
+		t.Fatal("published switch history guard lost", err)
+	}
+}

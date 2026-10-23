@@ -528,12 +528,13 @@ The current installed adapter uses Korean counting and the shared TUI renderer a
 - Summary-first writing is a background run given the latest outline revision.
 - Managed planning previews use the same result ledger and revision checks.
   Core installs the results and planning receipt schemas in the numbered canon
-  catalog at migration 46, after the published Korean records search migration
+  catalog at migration 47, after the published Korean records search migration
   33, waiting decisions migration 34, preset effects migration 35 and skill
   maintenance migration 36, work engine migration 37 and to-do records migration
   38, work event sequence guard migration 39, work completions migration 40
   timers migration 41, starter/selection migration 42 and worker choice migration
-  43, naming-breach migration 44 and record-operation migration 45. Generic presentation and saving cannot replace or confirm a managed
+  43, naming-breach migration 44, record-operation migration 45 and operational
+  switch migration 46. Generic presentation and saving cannot replace or confirm a managed
   plan. The `planning` capability binds confirmation to the authenticated person,
   agent, preview revision and accepted root revision. Complete plan bodies carry
   done conditions, ordered stage labels and dependency ids in addition to card

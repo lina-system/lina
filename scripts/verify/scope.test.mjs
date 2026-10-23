@@ -891,3 +891,11 @@ test('vendored manifest edits and removals keep dependencies selected', t => {
     assert.notEqual(scope.mode, 'docs');
   }
 });
+
+test('one-time takeover operator is verified separately from release commands', () => {
+  assert.equal(kind('tools/crw-takeover/switch.go'), 'components');
+  assert.equal(kind('tools/crw-takeover/REFERENCE.md'), 'components');
+  const operator = componentRegistry.find(c => c.name === 'crw-takeover');
+  assert.deepEqual(operator.packages, ['./tools/crw-takeover/...']);
+  assert.equal(operator.binary, undefined);
+});
