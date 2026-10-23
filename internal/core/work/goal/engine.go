@@ -547,6 +547,17 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			// or a plan for this revision. A late result is not a Core failure.
 			a.State = "finished"
 			a.Superseded = true
+			if a.Kind == PlanGoal && !a.RetirementReconciled {
+				// Retire the assessment in the receipt transaction. Reconciliation
+				// and late reports must not clear a replacement assessment later.
+				if t != nil && t.RepairedBy == "" {
+					t.RepairAsked = false
+					if err = put(v, "goal", g.ID, g); err != nil {
+						return err
+					}
+				}
+				a.RetirementReconciled = true
+			}
 			if hasExternalEffect(a) && !currentActionTarget(g, a) && !effectSettled(a, o) {
 				// A different target cannot inherit this effect. Retain its
 				// lease and bounded observation wait until its outcome is known.

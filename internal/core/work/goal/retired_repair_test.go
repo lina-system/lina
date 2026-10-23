@@ -58,4 +58,27 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 			t.Fatal("unchanged failed task was sent to the person")
 		}
 	}
+	// A later, different obsolete response must not clear the new assessment.
+	repair.ID = "late-repair-b"
+	if err := e.Report(t.Context(), managers[1].ID, cfg.Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
+		t.Fatal(err)
+	}
+	if !revisionSnapshot(t, e).Goals[0].Tasks[1].RepairAsked {
+		t.Fatal("late obsolete response cleared the replacement assessment")
+	}
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	plans := 0
+	for _, a := range revisionSnapshot(t, e).Actions {
+		if a.TaskID == "b" && a.Kind == PlanGoal && a.State == "queued" {
+			plans++
+			if a.ID != fresh.ID {
+				t.Fatal("late obsolete response replaced the current assessment")
+			}
+		}
+	}
+	if plans != 1 {
+		t.Fatalf("current repair assessments=%d, want 1", plans)
+	}
 }

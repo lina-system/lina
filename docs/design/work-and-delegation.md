@@ -1085,7 +1085,9 @@ When a revision invalidates queued actions, Core retires them and releases their
 A completed criterion check for an obsolete goal revision, checking round or target is retained as a receipt without applying its evidence or stopping Core. A manager response assesses only the canonical record revision it was given; an older response cannot clear the corrected definition's fence, add its old tasks, or mark the correction blocked. Independent sibling repair plans remain valid across execution revisions while the canonical definition is unchanged.
 
 Retiring an obsolete task repair assessment clears its assessment marker in
-the same transaction. Once the current definition is assessed, an unchanged
+the same transaction that retains its obsolete receipt. Later reconciliation
+or another obsolete response must not clear a replacement assessment.
+Once the current definition is assessed, an unchanged
 failed task receives a fresh repair assessment, including after restart.
 
 An action awaiting authorization before dispatch is recorded separately from an executed action whose outcome needs the person. A committed approval-change signal for that action requeues its authority check; the signal itself grants nothing. Core rechecks the exact action's current authority before executing it once, including after restart. A signal arriving during the authority check or while its dispatch is unwinding is retained as a wake, without waiting for a sweep. A revision retires an obsolete authorization wait like other undispatched work. An executed or uncertain effect is never requeued by an approval hint.
