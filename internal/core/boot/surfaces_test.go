@@ -60,6 +60,14 @@ func TestSurfaceActionDurableOwnerInputAndRevision(t *testing.T) {
 	if len(delivered) != 1 || delivered[0].SpeakerKind != guard.Person || delivered[0].Surface.Card != card.ID || !strings.Contains(delivered[0].Body.Text(), `"slot":"wed-1500"`) {
 		t.Fatalf("input=%+v", delivered)
 	}
+	source, err := r.journal().Get(t.Context(), delivered[0].Surface.ReplyTo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revision result.Result
+	if err := json.Unmarshal([]byte(source.Body.Text()), &revision); err != nil || revision.Revision != 1 || revision.ID != card.ID {
+		t.Fatalf("action lost its source revision: %+v %v", revision, err)
+	}
 	if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
 		var events, inbox int
 		if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM conv_event WHERE speaker_kind='person' AND conversation_id=?`, r.conversation).Scan(&events); err != nil {

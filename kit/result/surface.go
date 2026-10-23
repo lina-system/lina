@@ -85,6 +85,10 @@ func validateSurface(raw []byte) (*Surface, error) {
 	if err := s.check(); err != nil {
 		return nil, err
 	}
+	controls, err := json.Marshal(s.Controls())
+	if err != nil || len(controls) > 64<<10 || len(s.plainText()) > 64<<10 {
+		return nil, surfaceError("expanded card size")
+	}
 	return &s, nil
 }
 
@@ -493,14 +497,65 @@ func (c SurfaceComponent) MarshalJSON() ([]byte, error) {
 	return json.Marshal(value)
 }
 
-// BoundValue returns a copy for a client's unsent form state. It performs no IO.
-func (s *Surface) BoundValue(raw json.RawMessage) json.RawMessage {
+// boundValue copies a resolved value for the Core form projection.
+func (s *Surface) boundValue(raw json.RawMessage) json.RawMessage {
 	value, _ := s.resolve(raw)
 	return slices.Clone(value)
 }
 
-// OrderedComponents exposes only reading order for a client's local form state.
-func (s *Surface) OrderedComponents() []SurfaceComponent {
-	components, _ := s.ordered()
-	return components
+// Controls is Core's form projection. Clients need no catalog parser or
+// action-schema inference to display and submit the text form.
+func (s *Surface) Controls() protocol.SurfaceControls {
+	out := protocol.SurfaceControls{Actions: []protocol.SurfaceControlAction{}, Fields: []protocol.SurfaceControlField{}}
+	if s.Deleted {
+		return out
+	}
+	ordered, _ := s.ordered()
+	number := 0
+	for _, c := range ordered {
+		path := pathOf(c.Value)
+		if c.Component == "ChoicePicker" && path == "" {
+			number += len(c.Options)
+		}
+		if path != "" {
+			field := protocol.SurfaceControlField{ID: path, Kind: "text", Value: s.boundValue(c.Value), Choices: []protocol.SurfaceControlChoice{}}
+			field.Label, _ = s.stringValue(c.Label)
+			if field.Label == "" {
+				field.Label = c.Component
+			}
+			switch c.Component {
+			case "CheckBox":
+				field.Kind = "boolean"
+			case "DateTimeInput":
+				field.Kind = "date"
+			case "ChoicePicker":
+				field.Kind = "choice"
+				field.Multiple = c.Variant == "multipleSelection"
+				for _, option := range c.Options {
+					number++
+					label, _ := s.stringValue(option.Label)
+					field.Choices = append(field.Choices, protocol.SurfaceControlChoice{Key: strconv.Itoa(number), Label: label, Value: option.Value})
+				}
+			}
+			out.Fields = append(out.Fields, field)
+		}
+	}
+	for _, a := range s.Actions() {
+		action := protocol.SurfaceControlAction{Key: a.Key, Name: a.Name, Values: a.Values, Bindings: map[string]string{}}
+		for _, c := range ordered {
+			if c.Action == nil || c.Action.Event.Name != a.Name {
+				continue
+			}
+			for key, value := range c.Action.Event.Context {
+				path := pathOf(value)
+				for _, field := range out.Fields {
+					if path == field.ID {
+						action.Bindings[key] = path
+					}
+				}
+			}
+		}
+		out.Actions = append(out.Actions, action)
+	}
+	return out
 }

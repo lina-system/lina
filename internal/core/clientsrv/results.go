@@ -5,6 +5,7 @@ package clientsrv
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -32,12 +33,18 @@ func projectResults(e protocol.Envelope, session Session) protocol.Envelope {
 		if session.ProtocolVersion != "1.1" || capability == nil {
 			text := p.Title + "\n" + p.Summary
 			if p.Text != nil {
-				text += "\n" + *p.Text
+				if strings.HasPrefix(*p.Text, p.Summary+"\n") {
+					text = p.Title + "\n" + *p.Text
+				} else {
+					text += "\n" + *p.Text
+				}
 			}
-			return protocol.KindItemDone, protocol.ItemDone{Text: &text, Stream: p.Stream}
+			speaker := protocol.ConversationSpeakerAgent
+			return protocol.KindItemDone, protocol.ItemDone{Text: &text, Stream: p.Stream, AgentID: &p.Provenance.AgentID, Speaker: &speaker}
 		}
 		if capability.Types == nil || !slices.Contains(*capability.Types, protocol.ResultTypeSurface) || capability.Catalogs == nil || !slices.Contains(*capability.Catalogs, "lina.cards/1.0") {
 			p.Body = nil
+			p.SurfaceControls = nil
 		}
 		return protocol.KindResult, p
 	}

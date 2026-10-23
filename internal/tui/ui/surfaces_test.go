@@ -11,24 +11,24 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
-	"github.com/thisisjun786/lina/kit/result"
 )
 
 func TestSurfaceTextChoiceAndActionKeys(t *testing.T) {
-	raw, err := os.ReadFile("../../../kit/result/testdata/choice.json")
+	raw, err := os.ReadFile("../../../protocol/fixtures/client/1.0/normal/surface.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := result.Validate(result.SurfaceType, raw, result.Limits{})
-	if err != nil {
+	var envelope protocol.Envelope
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	text := result.PlainText(body, nil)
+	card := envelope.Payload.(protocol.Result)
+	card.ResultID = "choice"
+	card.Revision = "3"
 	m := conversationShell()
 	m.content.Capabilities = append(m.content.Capabilities, protocol.SurfaceResultsCapability())
 	m.conversation.id = "main:agent"
-	payload := json.RawMessage(raw)
-	card := protocol.Result{ResultID: "choice", Revision: "3", Type: protocol.ResultTypeSurface, Text: &text, Body: &payload}
+
 	block := state.Block{ID: "card", Kind: protocol.KindResult, Topic: "conversation:main:agent", Done: true}
 	projectConversationBlock(&block, card)
 	m.content.Blocks = []state.Block{block}

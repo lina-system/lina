@@ -27,9 +27,9 @@ func (r *conversationRuntime) surfaceAction(ctx context.Context, session clients
 	if err != nil || revision < 1 {
 		return clientsrv.Result{}, malformedManagement()
 	}
-	var agent, conversation string
+	var agent, conversation, sourceEvent string
 	err = r.db.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, `SELECT agent,conversation FROM result_heads WHERE id=? AND person=?`, p.ResultID, session.PersonID).Scan(&agent, &conversation)
+		return tx.QueryRowContext(ctx, `SELECT agent,conversation,event_id FROM result_heads WHERE id=? AND person=?`, p.ResultID, session.PersonID).Scan(&agent, &conversation, &sourceEvent)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return clientsrv.Result{}, outsideManagement()
@@ -75,7 +75,7 @@ func (r *conversationRuntime) surfaceAction(ctx context.Context, session clients
 	inputID := "surface:" + p.InputID
 	// The inbox, owner ledger event and revision check commit together. Queue mode
 	// deliberately waits for the next turn boundary instead of steering a turn.
-	answer, err := view.admitInput(ctx, session, protocol.Input{ConversationID: &conversation, InputID: &inputID, Text: &text, Mode: &mode, Card: &p.ResultID}, func(ctx context.Context, tx *canon.Tx) error {
+	answer, err := view.admitInput(ctx, session, protocol.Input{ConversationID: &conversation, InputID: &inputID, Text: &text, Mode: &mode, Card: &p.ResultID, ReplyTo: &sourceEvent}, func(ctx context.Context, tx *canon.Tx) error {
 		var current int64
 		if err := tx.QueryRowContext(ctx, `SELECT revision FROM result_heads WHERE id=? AND person=? AND agent=? AND conversation=?`, p.ResultID, session.PersonID, agent, conversation).Scan(&current); err != nil {
 			return outsideManagement()

@@ -27,6 +27,11 @@ func authoredResultWire(value result.Result, summary string) protocol.Result {
 	if value.Type == result.SurfaceType {
 		body := json.RawMessage(value.Body)
 		p.Body = &body
+		var surface result.Surface
+		if json.Unmarshal(body, &surface) == nil {
+			controls := surface.Controls()
+			p.SurfaceControls = &controls
+		}
 	}
 	if value.Completion != nil {
 		p.Completion = &protocol.CompletionStatus{State: protocol.CompletionState(value.Completion.State), Label: value.Completion.Label}

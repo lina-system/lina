@@ -331,10 +331,7 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 			block.TurnActive = *p.Active
 		}
 	case protocol.Result:
-		block.SurfaceBody = nil
-		if p.Type == protocol.ResultTypeSurface && p.Body != nil {
-			block.SurfaceBody = append(json.RawMessage{}, (*p.Body)...)
-		}
+		block.SurfaceControls = p.SurfaceControls
 		block.ResultID, block.ResultRevision, block.ResultPaged = p.ResultID, string(p.Revision), p.Next != nil
 		if p.RunID != nil {
 			block.RunID = *p.RunID

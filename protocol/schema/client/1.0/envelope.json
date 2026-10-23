@@ -1696,6 +1696,11 @@
                         "const": "surface"
                       }
                     }
+                  },
+                  "not": {
+                    "required": [
+                      "surface_controls"
+                    ]
                   }
                 }
               }
@@ -1733,6 +1738,11 @@
                                         "const": "surface"
                                       }
                                     }
+                                  },
+                                  "not": {
+                                    "required": [
+                                      "surface_controls"
+                                    ]
                                   }
                                 }
                               }
@@ -1780,6 +1790,11 @@
                                             "const": "surface"
                                           }
                                         }
+                                      },
+                                      "not": {
+                                        "required": [
+                                          "surface_controls"
+                                        ]
                                       }
                                     }
                                   }
@@ -2112,7 +2127,11 @@
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "1.0"
+          "type": "string",
+          "enum": [
+            "1.0",
+            "1.1"
+          ]
         },
         "capabilities": {
           "type": "array",
@@ -2507,6 +2526,9 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "surface_controls": {
+          "$ref": "#/$defs/surface_controls"
         }
       },
       "required": [
@@ -7297,6 +7319,122 @@
         "action",
         "values",
         "input_id"
+      ],
+      "additionalProperties": false
+    },
+    "surface_control_choice": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "surface_control_field": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "text",
+            "boolean",
+            "choice",
+            "date"
+          ]
+        },
+        "value": {
+          "$ref": "#/$defs/surface_value"
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface_control_choice"
+          },
+          "maxItems": 256
+        },
+        "multiple": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "kind",
+        "value",
+        "choices",
+        "multiple"
+      ],
+      "additionalProperties": false
+    },
+    "surface_control_action": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/surface_value"
+          }
+        },
+        "bindings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "values",
+        "bindings"
+      ],
+      "additionalProperties": false
+    },
+    "surface_controls": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface_control_action"
+          },
+          "maxItems": 256
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface_control_field"
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "actions",
+        "fields"
       ],
       "additionalProperties": false
     }

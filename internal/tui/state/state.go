@@ -6,7 +6,6 @@ package state
 
 import (
 	"context"
-	"encoding/json"
 	"maps"
 	"slices"
 	"strings"
@@ -20,7 +19,7 @@ type Msg interface{ isMsg() }
 type Cmd func(context.Context) Msg
 
 type Block struct {
-	SurfaceBody              json.RawMessage
+	SurfaceControls          *protocol.SurfaceControls
 	ResultID, ResultRevision string
 	ResultPaged              bool
 	Work                     *WorkSummary

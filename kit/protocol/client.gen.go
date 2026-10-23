@@ -810,21 +810,22 @@ type RestartStatus struct {
 	RequestedEpoch  *string      `json:"requested_epoch,omitempty"`
 }
 type Result struct {
-	Body       *json.RawMessage  `json:"body,omitempty"`
-	Completion *CompletionStatus `json:"completion,omitempty"`
-	Next       *json.Number      `json:"next,omitempty"`
-	Provenance ResultProvenance  `json:"provenance"`
-	ResultID   string            `json:"result_id"`
-	RevisedBy  string            `json:"revised_by"`
-	Revision   json.Number       `json:"revision"`
-	RunID      *string           `json:"run_id,omitempty"`
-	SavedAs    *SavedReference   `json:"saved_as"`
-	Status     ResultStatus      `json:"status"`
-	Stream     *StreamMetadata   `json:"stream,omitempty"`
-	Summary    string            `json:"summary"`
-	Text       *string           `json:"text,omitempty"`
-	Title      string            `json:"title"`
-	Type       ResultType        `json:"type"`
+	Body            *json.RawMessage  `json:"body,omitempty"`
+	Completion      *CompletionStatus `json:"completion,omitempty"`
+	Next            *json.Number      `json:"next,omitempty"`
+	Provenance      ResultProvenance  `json:"provenance"`
+	ResultID        string            `json:"result_id"`
+	RevisedBy       string            `json:"revised_by"`
+	Revision        json.Number       `json:"revision"`
+	RunID           *string           `json:"run_id,omitempty"`
+	SavedAs         *SavedReference   `json:"saved_as"`
+	Status          ResultStatus      `json:"status"`
+	Stream          *StreamMetadata   `json:"stream,omitempty"`
+	Summary         string            `json:"summary"`
+	SurfaceControls *SurfaceControls  `json:"surface_controls,omitempty"`
+	Text            *string           `json:"text,omitempty"`
+	Title           string            `json:"title"`
+	Type            ResultType        `json:"type"`
 }
 type ResultEdit struct {
 	BaseRevision json.Number     `json:"base_revision"`
@@ -1202,6 +1203,29 @@ func (v *SurfaceComponent) UnmarshalJSON(data []byte) error {
 	return fmt.Errorf("invalid union value")
 }
 
+type SurfaceControlAction struct {
+	Bindings map[string]string          `json:"bindings"`
+	Key      string                     `json:"key"`
+	Name     string                     `json:"name"`
+	Values   map[string]json.RawMessage `json:"values"`
+}
+type SurfaceControlChoice struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+type SurfaceControlField struct {
+	Choices  []SurfaceControlChoice `json:"choices"`
+	ID       string                 `json:"id"`
+	Kind     string                 `json:"kind"`
+	Label    string                 `json:"label"`
+	Multiple bool                   `json:"multiple"`
+	Value    json.RawMessage        `json:"value"`
+}
+type SurfaceControls struct {
+	Actions []SurfaceControlAction `json:"actions"`
+	Fields  []SurfaceControlField  `json:"fields"`
+}
 type SurfaceEvent struct {
 	Context map[string]json.RawMessage `json:"context"`
 	Name    string                     `json:"name"`
@@ -3661,6 +3685,11 @@ const clientSchemaJSON = `{
                         "const": "surface"
                       }
                     }
+                  },
+                  "not": {
+                    "required": [
+                      "surface_controls"
+                    ]
                   }
                 }
               }
@@ -3698,6 +3727,11 @@ const clientSchemaJSON = `{
                                         "const": "surface"
                                       }
                                     }
+                                  },
+                                  "not": {
+                                    "required": [
+                                      "surface_controls"
+                                    ]
                                   }
                                 }
                               }
@@ -3745,6 +3779,11 @@ const clientSchemaJSON = `{
                                             "const": "surface"
                                           }
                                         }
+                                      },
+                                      "not": {
+                                        "required": [
+                                          "surface_controls"
+                                        ]
                                       }
                                     }
                                   }
@@ -4077,7 +4116,11 @@ const clientSchemaJSON = `{
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "1.0"
+          "type": "string",
+          "enum": [
+            "1.0",
+            "1.1"
+          ]
         },
         "capabilities": {
           "type": "array",
@@ -4472,6 +4515,9 @@ const clientSchemaJSON = `{
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "surface_controls": {
+          "$ref": "#/$defs/surface_controls"
         }
       },
       "required": [
@@ -9262,6 +9308,122 @@ const clientSchemaJSON = `{
         "action",
         "values",
         "input_id"
+      ],
+      "additionalProperties": false
+    },
+    "surface_control_choice": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "surface_control_field": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "text",
+            "boolean",
+            "choice",
+            "date"
+          ]
+        },
+        "value": {
+          "$ref": "#/$defs/surface_value"
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface_control_choice"
+          },
+          "maxItems": 256
+        },
+        "multiple": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "kind",
+        "value",
+        "choices",
+        "multiple"
+      ],
+      "additionalProperties": false
+    },
+    "surface_control_action": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/surface_value"
+          }
+        },
+        "bindings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "values",
+        "bindings"
+      ],
+      "additionalProperties": false
+    },
+    "surface_controls": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface_control_action"
+          },
+          "maxItems": 256
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface_control_field"
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "actions",
+        "fields"
       ],
       "additionalProperties": false
     }

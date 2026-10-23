@@ -503,8 +503,11 @@ data, and no actions. It remains readable in history and export.
 
 The `results` capability version `1.0` carries `types` and `catalogs` arrays in
 hello and welcome. The versioned catalog id is `lina.cards/1.0`. Welcome grants
-the intersection. A client negotiating 1.1 and this capability gets surface card
-fields and complete Core text; `body` is included only when it lists both
+the intersection. Core derives `surface_controls` (action keys, names, resolved
+values and bindings; ordered field labels, current values and numbered choices)
+from the validated tree. Clients use those descriptors for local form state;
+they do not infer validation or authority from the catalog. A client negotiating 1.1 and this capability gets surface card
+fields and complete Core text; `body` and `surface_controls` are included only when it lists both
 `surface` and `lina.cards/1.0`. Other clients receive an ordinary text output
 item, including on replay. Existing 1.0 result behavior remains available.
 

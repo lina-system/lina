@@ -3,9 +3,13 @@
 package clientsrv
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -66,5 +70,40 @@ func TestSurfaceNegotiationAndProjection(t *testing.T) {
 				t.Fatal("projection mutated retained frame")
 			}
 		})
+	}
+}
+
+func TestSurfaceMinorNegotiatesThroughListener(t *testing.T) {
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	identity := Identity{MainID: "main-test", Epoch: "1", Operations: map[protocol.Kind]Operation{
+		protocol.KindSurfaceAction: {Capability: ResultsCapability, Handle: func(_ context.Context, s Session, _ protocol.Envelope) (Result, error) {
+			if s.ProtocolVersion != "1.1" || !protocol.HasCapability(s.Capabilities, ResultsCapability) {
+				t.Error("lost negotiated session")
+			}
+			return Result{Kind: protocol.KindItemDone, Payload: protocol.ItemDone{}}, nil
+		}},
+	}}
+	go func() { defer close(done); defer server.Close(); serveConn(server, identity) }()
+	t.Cleanup(func() { client.Close(); server.Close(); <-done })
+	client.SetDeadline(time.Now().Add(5 * time.Second))
+	reader := bufio.NewReader(client)
+	request := testHello(t)
+	request.Protocol.Version = "1.1"
+	hello := request.Payload.(protocol.Hello)
+	hello.ProtocolVersions = []string{"1.1", "1.0"}
+	hello.Capabilities = []protocol.Capability{protocol.SurfaceResultsCapability()}
+	request.Payload = hello
+	response := exchange(t, client, reader, request)
+	welcome, ok := response.Payload.(protocol.Welcome)
+	if !ok || welcome.ProtocolVersion != "1.1" || len(welcome.Capabilities) != 1 || welcome.Capabilities[0].Catalogs == nil {
+		t.Fatalf("welcome: %+v", response)
+	}
+	request.Epoch = response.Epoch
+	request.Kind = protocol.KindSurfaceAction
+	request.Payload = protocol.SurfaceAction{ResultID: "card", Revision: "1", Action: "choose", InputID: "press", Values: map[string]json.RawMessage{}}
+	response = exchange(t, client, reader, request)
+	if response.Kind != protocol.KindItemDone || response.Error != nil || response.Protocol.Version != "1.1" {
+		t.Fatalf("action dispatch: %+v", response)
 	}
 }

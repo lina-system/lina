@@ -204,9 +204,9 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 	if identity.Supported == nil {
 		identity.Supported = LocalCombinations()
 	}
-	// The generated codec currently speaks only client 1.0. A manifest row
+	// The generated codec speaks client 1.0 and 1.1. A manifest row
 	// cannot make the binary implement another version.
-	identity.Supported = slices.DeleteFunc(slices.Clone(identity.Supported), func(row Combination) bool { return row.ProtocolVersion != "1.0" })
+	identity.Supported = slices.DeleteFunc(slices.Clone(identity.Supported), func(row Combination) bool { return row.ProtocolVersion != "1.0" && row.ProtocolVersion != "1.1" })
 	if identity.PersonID == "" {
 		identity.PersonID = personID
 	}
