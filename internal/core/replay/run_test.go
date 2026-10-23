@@ -110,3 +110,20 @@ func TestReplayLocalReadRunsLiveWithoutRecordedResult(t *testing.T) {
 		t.Fatalf("reads=%d rounds=%d err=%v", readCalls, rounds, err)
 	}
 }
+
+func TestReplayRuntimeUsesRecordedBridgeResults(t *testing.T) {
+	call := provider.ToolCall{ID: "runtime", Name: "lookup", Arguments: `{}`}
+	out, err := Run(t.Context(), RunConfig{RuntimeTools: true, Request: provider.Request{Tools: []provider.ToolDecl{[]byte(`{"type":"function","name":"lookup"}`)}}, Calls: []Call{{Call: call, Result: &loop.Result{Code: loop.OK, Output: []byte(`{"recorded":true}`)}}}, Stream: func(ctx context.Context, r provider.Request) (provider.Stream, error) {
+		if r.Bridge == nil {
+			t.Fatal("missing runtime bridge")
+		}
+		result, err := r.Bridge.Call(ctx, call)
+		if err != nil || !strings.Contains(string(result.Output), "recorded") {
+			t.Fatalf("%s %v", result.Output, err)
+		}
+		return &stream{[]provider.Event{{Kind: provider.Terminal}}}, nil
+	}})
+	if err != nil || len(out.Results) != 1 {
+		t.Fatalf("%+v %v", out, err)
+	}
+}

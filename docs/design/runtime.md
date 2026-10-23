@@ -219,7 +219,8 @@ The Core client protocol adds `export_request`, `export_result`,
 `replay_request` and `replay_result` under the optional `replay/1.0` capability.
 These operations are unavailable during recovery. The CLI owns external input
 and output paths; Core owns export staging and never accepts a replay output
-path or a candidate directory from the wire. No command starts Core implicitly.
+path or a candidate directory from the wire. No command starts Core implicitly. The provider measurement variant and its
+private report format are defined under [Provider capabilities](#provider-capabilities).
 
 
 ## Model path
@@ -334,6 +335,37 @@ The rules for each capability:
 - **Server state and provider compaction.** Neither is admitted today. The plan routes refuse server state. On OpenAI's API, a chained request is billed for all earlier input again. xAI refuses instructions together with a chained request, so the chain cannot carry LINA's instructions on every request. A provider's own compaction returns a summary LINA cannot read, expand, check against retraction or delete with its sources.
 - **Batch and flex.** A background job (not a turn, a continuation or a background run) may use a provider's batch or flex tier when its account's route offers one and the job's deadline is longer than the tier's window. Each submission is recorded. A batch that fails or passes its window runs as a normal request.
 - **Provider replay.** One fixed, synthetic replay of LINA-shaped turns runs on each provider, with real accounts on opt-in. It reports, for every request, the input, read, written and plain tokens and the time to the first token. A change to a capability or to these rules carries its before and after from this replay. The episode export can feed the same replay from the person's own conversations on their machine, and those results stay off the repository.
+
+The development command is `lina provider-replay --provider <name> --socket
+<path> --fixture <file> --out <new-directory>`. Both caller and running Core
+require `LINA_QA_REAL_MODEL=1`, including scripted loopback tests. The named
+provider must match Core's configured adapter; there is no account fallback.
+The fixed public fixture contains the shipped persona and tool declarations,
+40 public history turns and four live turns, two with recorded tool results.
+Core uses its request assembler, capability admission and sandboxed loop. Each
+run has a fresh cache identity that stays stable across its turns. Ephemeral
+ContextPackets leave the history; returned reasoning items remain unchanged.
+
+`--episode <export.jsonl>` replaces `--fixture` and reuses the connected
+install's live ownership, reconstruction and removal checks. No effect runs,
+and neither mode writes canon or budget usage. Reports go only to a new private
+directory outside Git worktrees; symlinked parents receive the same check.
+
+`report.json` records every adapter request by turn and round: total input,
+cache reads, total writes, writes by reported lifetime, ordinary-rate input,
+and milliseconds from transport start to the first visible text or ready tool
+call. Reasoning-only items are not visible output. Unreported values and
+unobserved first output remain null. Provider-specific input accounting is
+normalized only when the required counters are known. Internal native-runtime
+requests that the adapter does not expose remain unmeasured. A failed or
+incomplete replay retains observed request measurements and exits nonzero;
+it is never retried automatically. Model replies and prompts stay out of the
+measurement report.
+
+`lina provider-replay compare <before.json> <after.json>` displays each request
+side by side, including missing requests, failures and unknown values. It
+refuses different source digests. The existing `replay_request` gains optional
+`provider` and `fixture` fields; ordinary episode replay remains compatible.
 
 ### Stream assembly
 

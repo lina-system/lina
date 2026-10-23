@@ -25,9 +25,10 @@ type Call struct {
 }
 
 type RunConfig struct {
-	Request provider.Request
-	Calls   []Call
-	Stream  loop.StreamFunc
+	RuntimeTools bool
+	Request      provider.Request
+	Calls        []Call
+	Stream       loop.StreamFunc
 	// Only trusted local read implementations may be supplied. There is no
 	// effect executor, registry, canon writer, or default dispatch fallback.
 	Reads map[string]loop.Tool
@@ -81,7 +82,7 @@ func Run(ctx context.Context, cfg RunConfig) (loop.Outcome, error) {
 	missing := false
 	cfg.Request.Purpose = provider.Replay
 	out, err := loop.Run(ctx, loop.Config{
-		Request: cfg.Request, Stream: cfg.Stream, Tools: cfg.Reads,
+		Request: cfg.Request, Stream: cfg.Stream, Tools: cfg.Reads, RuntimeTools: cfg.RuntimeTools,
 		// Discarding Journal: no callback reaches turn.Store or the effect ledger.
 		Journal: loop.Journal{}, Parallel: 1,
 		Admit: func(_ context.Context, call provider.ToolCall) *loop.Result {
