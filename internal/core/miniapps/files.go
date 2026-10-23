@@ -239,6 +239,14 @@ func (s *Service) readRevision(appID string, revision int64) (map[string][]byte,
 	return files, nil
 }
 
+// removeRevision drops only the candidate revision's own files, so a failed
+// write never touches revisions the person can still restore.
+func (s *Service) removeRevision(appID string, revision int64) error {
+	_ = os.Remove(filepath.Join(s.captureDir(appID), fmt.Sprintf("%d.png", revision)))
+	_ = os.Remove(s.recipePath(appID, revision))
+	return os.RemoveAll(s.revisionDir(appID, revision))
+}
+
 func (s *Service) removeAppDir(appID string) error {
 	return os.RemoveAll(filepath.Join(s.cfg.Root, "miniapps", appID))
 }

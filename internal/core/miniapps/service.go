@@ -42,9 +42,10 @@ type EffectResult struct {
 	Code    string `json:"code,omitempty"`
 }
 
-// Fetcher fetches a declared host under the web tools rules.
+// Fetcher fetches one of the hosts an app declared, under the web tools rules.
+// It receives the whole list so a redirect cannot leave it.
 type Fetcher interface {
-	Fetch(ctx context.Context, rawURL string) ([]byte, string, error)
+	Fetch(ctx context.Context, hosts []string, rawURL string) ([]byte, string, error)
 }
 
 // App is the registry record. The token hash is never exposed in a listing.
@@ -505,9 +506,15 @@ func (s *Service) Change(ctx context.Context, person, appID string, req ChangeRe
 	if err != nil {
 		return Change{}, err
 	}
+	shape := sortedUnique(req.StoreShape)
 	summary, changed := DiffSummary(current, req.Files)
-	if !changed {
+	// Declarations are part of the revision: narrowing or widening them without
+	// touching the files still has to be checked, recorded and re-asked.
+	if !changed && sameManifest(app.Manifest, manifest) && sameStrings(shape, app.storeShape) {
 		return Change{App: app, Changed: false}, nil
+	}
+	if summary == "" {
+		summary = "declarations changed"
 	}
 	checked, err := s.check(ctx, req.Files, manifest, req.Checklist)
 	if err != nil {
@@ -517,7 +524,6 @@ func (s *Service) Change(ctx context.Context, person, appID string, req ChangeRe
 		return Change{}, checkFailure(checked)
 	}
 	next := app.Revision + 1
-	shape := sortedUnique(req.StoreShape)
 	snapshot := !sameStrings(shape, app.storeShape)
 	if snapshot {
 		if err := s.snapshotStore(app); err != nil {
@@ -534,18 +540,9 @@ func (s *Service) Change(ctx context.Context, person, appID string, req ChangeRe
 		return Change{}, err
 	}
 	widened := app.Manifest.Widens(manifest)
-	narrowed := app.Manifest.Narrows(manifest)
-	// A revision that keeps the declarations keeps the open page working. A
-	// widened app waits for a new allow, and a narrowed one revokes its token.
-	allowed, hash := next, app.tokenHash
-	if widened || narrowed {
-		allowed = next
-		if widened {
-			allowed = 0
-		}
-		if _, hash, err = s.newToken(); err != nil {
-			return Change{}, err
-		}
+	allowed, hash, err := s.carryConsent(app, next, manifest)
+	if err != nil {
+		return Change{}, err
 	}
 	now := s.now().UTC()
 	infos := fileInfos(req.Files)
@@ -564,7 +561,7 @@ func (s *Service) Change(ctx context.Context, person, appID string, req ChangeRe
 		return err
 	})
 	if err != nil {
-		_ = s.removeAppDir(appID)
+		_ = s.removeRevision(appID, next)
 		return Change{}, err
 	}
 	app.Revision, app.AllowedRevision, app.Manifest, app.UpdatedAt, app.tokenHash, app.storeShape = next, allowed, manifest, now, hash, shape
@@ -581,6 +578,31 @@ func sameStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// carryConsent decides what a new revision inherits from the person's standing
+// choice. Keeping the declarations keeps an allowed app open; widening or
+// narrowing them waits for a new allow and rotates the token, so an older cookie
+// stops working. An app the person never allowed stays unallowed.
+func (s *Service) carryConsent(app App, next int64, manifest Manifest) (int64, string, error) {
+	if !app.Manifest.Widens(manifest) && !app.Manifest.Narrows(manifest) {
+		if app.Allowed() {
+			return next, app.tokenHash, nil
+		}
+		return 0, app.tokenHash, nil
+	}
+	_, hash, err := s.newToken()
+	if err != nil {
+		return 0, "", err
+	}
+	return 0, hash, nil
+}
+
+// sameManifest reports whether two manifests declare the same scope. The name
+// is fixed by the app, so it never counts as a change.
+func sameManifest(a, b Manifest) bool {
+	return a.Schedule == b.Schedule && sameStrings(a.Reads, b.Reads) &&
+		sameStrings(a.Requests, b.Requests) && sameStrings(a.Hosts, b.Hosts)
 }
 
 // Allow records the person's decision for the current revision and rotates the
@@ -731,19 +753,13 @@ func (s *Service) restore(ctx context.Context, person, appID string, revision in
 	if err := s.writeRecipe(appID, next, manifest, recipe.Checklist, shape); err != nil {
 		return Change{}, err
 	}
-	widened := app.Manifest.Widens(manifest)
-	narrowed := app.Manifest.Narrows(manifest)
-	allowed, hash := next, app.tokenHash
-	if widened || narrowed {
-		if _, hash, err = s.newToken(); err != nil {
-			return Change{}, err
-		}
-		if widened {
-			allowed = 0
-		}
+	allowed, hash, err := s.carryConsent(app, next, manifest)
+	if err != nil {
+		return Change{}, err
 	}
 	now := s.now().UTC()
 	manifestRaw, _ := json.Marshal(manifest)
+	shapeRaw, _ := json.Marshal(shape)
 	infos := fileInfos(files)
 	encoded, _ := encodeFiles(infos)
 	summary := "restored revision " + itoa(revision)
@@ -751,10 +767,11 @@ func (s *Service) restore(ctx context.Context, person, appID string, revision in
 		if _, err := tx.ExecContext(ctx, "INSERT INTO mini_app_revision(app,revision,request,summary,files,store_snapshot,created_at) VALUES(?,?,?,?,?,?,?)", appID, next, request, summary, encoded, false, now); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, "UPDATE mini_app SET manifest=?,revision=?,allowed_revision=?,token_hash=?,updated_at=? WHERE id=?", manifestRaw, next, allowed, hash, now, appID)
+		_, err := tx.ExecContext(ctx, "UPDATE mini_app SET manifest=?,revision=?,allowed_revision=?,token_hash=?,store_shape=?,updated_at=? WHERE id=?", manifestRaw, next, allowed, hash, shapeRaw, now, appID)
 		return err
 	})
 	if err != nil {
+		_ = s.removeRevision(appID, next)
 		return Change{}, err
 	}
 	app.Revision, app.AllowedRevision, app.Manifest, app.UpdatedAt, app.tokenHash = next, allowed, manifest, now, hash
@@ -909,7 +926,7 @@ func (s *Service) Fetch(ctx context.Context, appID, token, rawURL string) ([]byt
 		s.event(ctx, app.ID, "fetch", "refused "+rawURL)
 		return nil, "", ErrForbidden
 	}
-	body, media, err := s.cfg.Fetcher.Fetch(ctx, rawURL)
+	body, media, err := s.cfg.Fetcher.Fetch(ctx, app.Manifest.Hosts, rawURL)
 	if err != nil {
 		return nil, "", err
 	}
@@ -995,14 +1012,28 @@ func (s *Service) PutStore(ctx context.Context, appID, token string, value json.
 }
 
 func writeAtomic(name string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
+	dir := filepath.Dir(name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp := name + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// A unique temporary file keeps two overlapping writers from sharing bytes.
+	f, err := os.CreateTemp(dir, filepath.Base(name)+".tmp-")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, name)
+	tmp := f.Name()
+	if _, err = f.Write(data); err == nil {
+		err = f.Close()
+	} else {
+		_ = f.Close()
+	}
+	if err == nil {
+		err = os.Rename(tmp, name)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
 
 func (s *Service) snapshotStore(app App) error {

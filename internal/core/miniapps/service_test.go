@@ -63,10 +63,14 @@ func (f *fakeEffects) Run(_ context.Context, r EffectRequest) (EffectResult, err
 	return EffectResult{State: f.state}, nil
 }
 
-type fakeFetcher struct{ hits int }
+type fakeFetcher struct {
+	hits  int
+	hosts []string
+}
 
-func (f *fakeFetcher) Fetch(_ context.Context, rawURL string) ([]byte, string, error) {
+func (f *fakeFetcher) Fetch(_ context.Context, hosts []string, rawURL string) ([]byte, string, error) {
 	f.hits++
+	f.hosts = hosts
 	return []byte(`{"price":1}`), "application/json", nil
 }
 
@@ -459,7 +463,7 @@ func TestNoOpRecordsNothingAndUndoRestoresThePreviousRevision(t *testing.T) {
 	if _, err := f.svc.Allow(t.Context(), "owner", change.App.ID, change.App.Revision); err != nil {
 		t.Fatal(err)
 	}
-	noop, err := f.svc.Change(t.Context(), "owner", change.App.ID, ChangeRequest{Request: "make it blue", Manifest: baseManifest(), Checklist: todoChecklist, Files: appFiles("")})
+	noop, err := f.svc.Change(t.Context(), "owner", change.App.ID, ChangeRequest{Request: "make it blue", Manifest: baseManifest(), Checklist: todoChecklist, Files: appFiles(""), StoreShape: []string{"seen"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,4 +606,84 @@ func TestManifestRejectsUnboundedDeclarations(t *testing.T) {
 	if ValidateManifest(Manifest{Name: "x", Reads: []string{"todos", "running"}, Hosts: []string{"api.example.com"}, Schedule: "15m"}) != nil {
 		t.Fatal("a valid manifest was refused")
 	}
+}
+
+// A revision the person has not allowed must not become allowed just because a
+// later change keeps the declarations. The person's allow is per revision of
+// declarations, and a denial is not undone by an unrelated edit.
+func TestChangeNeverGrantsConsentOnItsOwn(t *testing.T) {
+	f := newFixture(t)
+	change := create(t, f)
+	// Revision 1 was never allowed. A file-only change keeps the declarations.
+	next, err := f.svc.Change(t.Context(), "owner", change.App.ID, ChangeRequest{Request: "tidy the layout", Manifest: baseManifest(), Checklist: todoChecklist, Files: appFiles(`<p class="muted">Ready</p>`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.App.Allowed() || next.App.AllowedRevision != 0 {
+		t.Fatalf("a change allowed an app nobody opened: %+v", next.App)
+	}
+	if _, err := f.svc.MintToken(t.Context(), change.App.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("an unallowed revision minted a token: %v", err)
+	}
+	// A denied app stays denied after a file change.
+	if _, err := f.svc.Allow(t.Context(), "owner", change.App.ID, next.App.Revision); err != nil {
+		t.Fatal(err)
+	}
+	denied, err := f.svc.Deny(t.Context(), "owner", change.App.ID, next.App.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if denied.Allowed() {
+		t.Fatal("deny left the revision allowed")
+	}
+	after, err := f.svc.Change(t.Context(), "owner", change.App.ID, ChangeRequest{Request: "another tidy", Manifest: baseManifest(), Checklist: todoChecklist, Files: appFiles(`<p class="muted">Ready now</p>`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.App.Allowed() {
+		t.Fatal("a change undid the person's denial")
+	}
+}
+
+// A change that only narrows a declaration is a real revision: it must be
+// recorded and must revoke the token, even though every file is unchanged.
+func TestDeclarationOnlyChangeIsRecordedAndRevokes(t *testing.T) {
+	f := newFixture(t)
+	change := create(t, f)
+	if _, err := f.svc.Allow(t.Context(), "owner", change.App.ID, change.App.Revision); err != nil {
+		t.Fatal(err)
+	}
+	token := f.token(t, change.App.ID)
+	narrowed := baseManifest()
+	narrowed.Reads = nil
+	recorded, err := f.svc.Change(t.Context(), "owner", change.App.ID, ChangeRequest{Request: "stop reading my to-dos", Manifest: narrowed, Checklist: todoChecklist, Files: appFiles("")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recorded.Changed || recorded.Revision.Number != 2 {
+		t.Fatalf("a declaration-only change recorded nothing: %+v", recorded)
+	}
+	if recorded.App.Allowed() {
+		t.Fatal("a narrowed app stayed allowed")
+	}
+	if _, err := f.svc.Authorize(t.Context(), change.App.ID, token); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("a narrowed app kept its token: %v", err)
+	}
+}
+
+// The fetcher sees the whole declared host list, so a redirect cannot leave it.
+func TestFetchPassesTheDeclaredHosts(t *testing.T) {
+	f := newFixture(t)
+	change := create(t, f)
+	if _, err := f.svc.Allow(t.Context(), "owner", change.App.ID, change.App.Revision); err != nil {
+		t.Fatal(err)
+	}
+	token := f.token(t, change.App.ID)
+	if _, _, err := f.svc.Fetch(t.Context(), change.App.ID, token, "https://prices.example.com/x"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("an undeclared host was fetched: %v", err)
+	}
+	if f.fetch.hits != 0 {
+		t.Fatal("an undeclared host reached the fetcher")
+	}
+	_ = f.svc.Change
 }

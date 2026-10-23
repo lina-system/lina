@@ -865,7 +865,9 @@ with a one-time code and, when the tailnet is configured, the same frame on the
 tailnet; before the person allows the current revision it returns no address.
 The one-time code is exchanged for the app's own HttpOnly cookie on the app's
 origin, never on the frame origin. `list`, `open` and `history` are reads; the
-other operations are mutations and report the closed error code in `code`.
+other operations are mutations and report the closed error code in `code`. Only
+this authenticated operation records the person's allow, deny, keep, undo,
+restore and remove; the agent's own tool cannot.
 
 A gateway request is not this capability. The app talks to its own origin, and
 Core admits it only with that app's token and only for its declared reads,

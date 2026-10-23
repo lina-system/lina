@@ -226,11 +226,12 @@ func TestFrameRefusesNavigationAway(t *testing.T) {
 		if err := c.evaluate(t.Context(), `document.getElementById('app').src`, &first); err != nil {
 			return err
 		}
-		if !strings.Contains(first, "/?code=") {
-			t.Fatalf("the frame dropped its one-time code on the app's first load: %s", first)
+		// The one-time code is spent on the first load, so the frame settles on
+		// the app's origin and never keeps the code in view.
+		if strings.Contains(first, "code=") {
+			t.Fatalf("the frame kept the one-time code: %s", first)
 		}
-		home, _, _ := strings.Cut(first, "/?")
-		home += "/"
+		home := strings.TrimSuffix(first, "/") + "/"
 		// The app navigates its own frame away from its origin. The policy does
 		// not stop a navigation; the framing page returns the frame to the app.
 		var out struct{ After string }
@@ -240,6 +241,18 @@ func TestFrameRefusesNavigationAway(t *testing.T) {
 		}
 		if out.After != home {
 			t.Fatalf("the frame did not return to the app origin after a navigation away: %s", out.After)
+		}
+		// A same-origin load keeps the frame in place instead of reloading it.
+		if err := c.evaluate(t.Context(), `document.getElementById('app').contentWindow.location.reload()`, nil); err != nil {
+			return nil
+		}
+		time.Sleep(time.Second)
+		var afterReload string
+		if err := c.evaluate(t.Context(), `document.getElementById('app').src`, &afterReload); err != nil {
+			return err
+		}
+		if afterReload != home {
+			t.Fatalf("a same-origin reload moved the frame: %s", afterReload)
 		}
 		return nil
 	})

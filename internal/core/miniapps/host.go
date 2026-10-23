@@ -433,12 +433,14 @@ func (h *Host) serveFile(w http.ResponseWriter, r *http.Request, appID, token st
 		name = "index.html"
 	}
 	var data []byte
-	if err := validatePath(name); err != nil {
-		return http.StatusNotFound, false
-	}
+	// The fixed template is served first: its font and styles are not app files
+	// and would otherwise fail the app path rules.
 	if template := generatedui.MiniAppFiles(); template[name] != nil && name != "index.html" {
 		data = template[name]
 	} else {
+		if err := validatePath(name); err != nil {
+			return http.StatusNotFound, false
+		}
 		files, err := h.svc.readRevision(app.ID, app.Revision)
 		if err != nil {
 			return http.StatusNotFound, false
@@ -614,15 +616,46 @@ func (h *Host) serveFrame(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	appURL := fmt.Sprintf("http://127.0.0.1:%d/?code=%s", o.port, appCode)
-	home := fmt.Sprintf("http://127.0.0.1:%d/", o.port)
+	origin, ok := h.frameOrigin(r)
+	if !ok {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	appURL := fmt.Sprintf("http://%s/?code=%s", net.JoinHostPort(origin, fmt.Sprint(o.port)), appCode)
+	home := fmt.Sprintf("http://%s/", net.JoinHostPort(origin, fmt.Sprint(o.port)))
 	nonce := make([]byte, 12)
 	_, _ = rand.Read(nonce)
 	n := hex.EncodeToString(nonce)
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-src http://127.0.0.1:"+fmt.Sprint(o.port)+"; style-src 'nonce-"+n+"'; script-src 'nonce-"+n+"'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-src http://"+net.JoinHostPort(origin, fmt.Sprint(o.port))+"; style-src 'nonce-"+n+"'; script-src 'nonce-"+n+"'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LINA mini app</title><style nonce="` + n + `">html,body{margin:0;height:100%;background:transparent}iframe{border:0;width:100%;height:100%;display:block}</style></head><body><iframe id="app" title="Mini app" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" src="` + appURL + `"></iframe><script nonce="` + n + `">(()=>{const app=document.getElementById('app');const home=` + jsonString(home) + `;let loads=0;app.addEventListener('load',()=>{try{if(app.contentWindow.location.href==='about:blank'){return}}catch{}if(loads++===0){return}app.src=home});})()</script></body></html>`
+	page := `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LINA mini app</title><style nonce="` + n + `">html,body{margin:0;height:100%;background:transparent}iframe{border:0;width:100%;height:100%;display:block}</style></head><body><iframe id="app" title="Mini app" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" src="` + appURL + `"></iframe><script nonce="` + n + `">(()=>{const app=document.getElementById('app');const home=` + jsonString(home) + `;const homeOrigin=new URL(home).origin;app.addEventListener('load',()=>{let same=false;try{same=app.contentWindow.location.origin===homeOrigin}catch{same=false}if(!same)app.src=home});})()</script></body></html>`
 	_, _ = w.Write([]byte(page))
+}
+
+// frameOrigin matches the host the frame was reached on: loopback or the
+// configured tailnet address. A frame served to another device must point at
+// that device's view of Core, never at its own loopback.
+func (h *Host) frameOrigin(r *http.Request) (string, bool) {
+	host, port, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		return "", false
+	}
+	h.mu.Lock()
+	frame := h.frame
+	h.mu.Unlock()
+	if frame == nil || port != fmt.Sprint(frame.port) {
+		return "", false
+	}
+	if host == "localhost" {
+		host = "127.0.0.1"
+	}
+	if host == "127.0.0.1" {
+		return host, true
+	}
+	if h.cfg.TailnetIP != "" && host == h.cfg.TailnetIP {
+		return host, true
+	}
+	return "", false
 }
 
 func jsonString(value string) string {
@@ -647,13 +680,15 @@ func (h *Host) Preview(ctx context.Context, files map[string][]byte) (string, fu
 		if name == "" || name == "." {
 			name = "index.html"
 		}
-		if err := validatePath(name); err != nil {
-			http.NotFound(w, r)
-			return
-		}
 		data, ok := files[name]
-		if !ok {
+		if !ok && name != "index.html" {
 			data = template[name]
+		}
+		if data == nil {
+			if err := validatePath(name); err != nil {
+				http.NotFound(w, r)
+				return
+			}
 		}
 		if data == nil {
 			http.NotFound(w, r)
