@@ -31,7 +31,8 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	binary, _ := proc.LookPath("agy")
 	codexBinary, _ := proc.LookPath("codex")
 	claude, _ := proc.LookPath("claude")
-	if binary == "" && codexBinary == "" && claude == "" {
+	acpFactories := dispatch.InstalledACPFactories(dispatch.Config{Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities})
+	if binary == "" && codexBinary == "" && claude == "" && len(acpFactories) == 0 {
 		return nil
 	}
 	gh, err := proc.LookPath("gh")
@@ -53,6 +54,8 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if codexBinary != "" {
 		factories = append(factories, dispatch.CodexFactory(codexBinary))
 	}
+	// Keep the established order when quota and choice rules are tied.
+	factories = append(factories, acpFactories...)
 	rules, err := dispatch.ReadRules(r.root)
 	if err != nil {
 		return err

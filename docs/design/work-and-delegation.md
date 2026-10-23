@@ -1096,6 +1096,22 @@ One adapter drives every worker that speaks the Agent Client Protocol, version 1
 - **Never sent.** `authenticate` and `logout`, because the person signs in to a worker in the worker itself; `session/delete`; and `session/set_mode`. `session/close` is sent only on an explicit close.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
 
+The lifecycle adapter in #747 registers `claude-acp`, `cursor`, `gemini` and
+`grok` with `dispatch_work`; `claude` retains the headless adapter pending the
+worker evaluation. Each attempt records its version again after session
+initialization and reports an unverified version while continuing the task.
+Synthetic protocol tests do not add vendor versions to the verified list.
+Progress is masked and recorded on the active work card as `worker_report`,
+using the existing ledger. Stream fragments retain their masking context in
+bounded memory; possible credential prefixes wait until they can be masked.
+Card observations are coalesced at 250 ms intervals, with a final flush before
+the receipt. They neither submit a receipt nor end the run.
+A cancelled prompt records an interrupted turn and receipt; an open prompt lost
+with its process remains an uncertain failed execution without a receipt.
+This lifecycle slice advertises progress and completion. Approval/question
+routing, work-tool MCP, steering, quota and recovery remain separate integrations;
+requesting a capability that is not implemented fails before dispatch.
+
 #### Claude Code through ACP
 
 Claude Code has no ACP mode of its own. The `claude-agent-acp` program (Apache-2.0, from the ACP project) wraps it. The LINA release pins it with its own lockfile, like the Claude adapter, and Core installs it on first use of the Claude Code worker with lifecycle scripts disabled and optional packages omitted, so the Claude Code binary that its package can carry is never installed ([runtime.md](runtime.md#installed-tools)). It runs on the person's Node.js. It always runs the person's installed `claude`, never the copy of Claude Code that its package can carry, so the person's version, login, settings, plugins and permission mode stay in use. It starts Claude Code with its permission prompts routed over ACP and with the person's user, project and local settings, and writes nothing into the person's setup. Because it always loads those settings, it can serve only as a worker, never as the Claude conversation provider ([runtime.md](runtime.md#providers)).

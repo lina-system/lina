@@ -186,6 +186,10 @@ func (c *Client) call(ctx context.Context, method string, params, out any, sessi
 		return err
 	}
 
+	return c.awaitCall(ctx, method, ch, out)
+}
+
+func (c *Client) awaitCall(ctx context.Context, method string, ch <-chan envelope, out any) error {
 	var f envelope
 	select {
 	case f = <-ch:
@@ -202,7 +206,7 @@ func (c *Client) call(ctx context.Context, method string, params, out any, sessi
 	if f.Error != nil {
 		return (*RPCError)(f.Error)
 	}
-	if err = json.Unmarshal(f.Result, out); err != nil {
+	if err := json.Unmarshal(f.Result, out); err != nil {
 		c.fail(err)
 		return fmt.Errorf("ACP %s response: %w", method, err)
 	}
@@ -235,20 +239,54 @@ func (c *Client) NewSession(ctx context.Context, p NewSessionRequest) (NewSessio
 	}
 	return out, err
 }
-func (c *Client) Prompt(ctx context.Context, p PromptRequest) (PromptResponse, error) {
-	var out PromptResponse
+
+// PromptResult is the single terminal observation for a sent prompt.
+type PromptResult struct {
+	Response PromptResponse
+	Err      error
+}
+
+// StartPrompt returns only after session/prompt has been written. A subsequent
+// Cancel therefore cannot overtake it. The result channel receives one reply or
+// connection failure even if the caller stops waiting. Drain Updates and
+// requests while it runs; only Cancel requests protocol cancellation.
+func (c *Client) StartPrompt(ctx context.Context, p PromptRequest) (<-chan PromptResult, error) {
 	if p.SessionID == "" || len(p.Prompt) == 0 {
-		return out, errors.New("ACP prompt requires a session and content")
+		return nil, errors.New("ACP prompt requires a session and content")
 	}
-	err := c.call(ctx, "session/prompt", p, &out, p.SessionID)
-	if err == nil {
-		switch out.StopReason {
-		case StopReasonEndTurn, StopReasonMaxTokens, StopReasonMaxTurnRequests, StopReasonRefusal, StopReasonCancelled:
-		default:
-			err = fmt.Errorf("ACP unknown stop reason %q", out.StopReason)
+	reply, err := c.beginCall(ctx, "session/prompt", p, p.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	result := make(chan PromptResult, 1)
+	go func() {
+		var out PromptResponse
+		// awaitCall also observes the connection lifetime. A complete reply followed
+		// by EOF remains a complete reply, even if the transport context has ended.
+		err := c.awaitCall(context.Background(), "session/prompt", reply, &out)
+		if err == nil {
+			switch out.StopReason {
+			case StopReasonEndTurn, StopReasonMaxTokens, StopReasonMaxTurnRequests, StopReasonRefusal, StopReasonCancelled:
+			default:
+				err = fmt.Errorf("ACP unknown stop reason %q", out.StopReason)
+			}
 		}
+		result <- PromptResult{Response: out, Err: err}
+	}()
+	return result, nil
+}
+
+func (c *Client) Prompt(ctx context.Context, p PromptRequest) (PromptResponse, error) {
+	result, err := c.StartPrompt(ctx, p)
+	if err != nil {
+		return PromptResponse{}, err
 	}
-	return out, err
+	select {
+	case r := <-result:
+		return r.Response, r.Err
+	case <-ctx.Done():
+		return PromptResponse{}, ctx.Err()
+	}
 }
 func (c *Client) LoadSession(ctx context.Context, p LoadSessionRequest) (LoadSessionResponse, error) {
 	var out LoadSessionResponse
