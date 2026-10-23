@@ -58,8 +58,14 @@ func ParseForm(params json.RawMessage) (*Form, error) {
 	}
 	slices.Sort(names)
 	for _, name := range names {
+		if protocol.RefusedFormFieldName(name) {
+			return nil, errors.New("refused ACP form field")
+		}
 		property := (*schema.Properties)[name]
 		field := protocol.FormField{Name: name}
+		if schema.Required == nil || !slices.Contains(*schema.Required, name) {
+			field.Optional = optionalFormField()
+		}
 		var title, description *string
 		switch {
 		case property.String != nil:
@@ -104,6 +110,9 @@ func ParseForm(params json.RawMessage) (*Form, error) {
 		}
 		if f.arrays[name] {
 			text += "\nEnter choices as a JSON array."
+			if choices := multiSelectChoices(property.Array.Items); choices != "" {
+				text += "\nAllowed: " + choices
+			}
 		}
 		f.Fields = append(f.Fields, field)
 		f.Targets = append(f.Targets, protocol.DecisionTarget{Name: name, Value: text})
@@ -132,6 +141,35 @@ func ParseForm(params json.RawMessage) (*Form, error) {
 	}
 	return f, nil
 }
+func optionalFormField() *bool {
+	value := true
+	return &value
+}
+
+func multiSelectChoices(items json.RawMessage) string {
+	var enumerated struct {
+		Enum []string `json:"enum"`
+	}
+	if json.Unmarshal(items, &enumerated) == nil && len(enumerated.Enum) > 0 {
+		return strings.Join(enumerated.Enum, ", ")
+	}
+	var titled struct {
+		AnyOf []wire.EnumOption `json:"anyOf"`
+	}
+	if json.Unmarshal(items, &titled) != nil || len(titled.AnyOf) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(titled.AnyOf))
+	for _, option := range titled.AnyOf {
+		part := option.Const
+		if option.Title != "" && option.Title != option.Const {
+			part += " (" + option.Title + ")"
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
+}
+
 func secretForm(value any) bool {
 	switch v := value.(type) {
 	case map[string]any:

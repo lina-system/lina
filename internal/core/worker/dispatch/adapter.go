@@ -138,3 +138,17 @@ func registerBinaries(cfg Config) []Factory {
 	}
 	return factories
 }
+
+// ACP quota arrives with the prompt, after selection's initial empty snapshot.
+// Save it before closing this session so later choices see the reported windows.
+func (s *Service) observeACPQuota(ctx context.Context, adapter worker.Adapter) error {
+	a, ok := adapter.(*workeracp.Adapter)
+	if !ok {
+		return nil
+	}
+	rows, err := a.Quota(ctx)
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+	return s.ObserveQuota(ctx, a.Name(), rows)
+}

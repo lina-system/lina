@@ -69,6 +69,7 @@ func Migrations() []Migration {
 		{Version: 55, SQL: inputBindingSchema},
 		{Version: 56, SQL: MemoryExtractionSchema},
 		{Version: 57, SQL: A2ASchema},
+		{Version: 58, SQL: recallSchema},
 	}
 }
 
@@ -108,6 +109,7 @@ var publishedMigrationTables = []struct {
 	{45, "record_operations"}, {45, "record_candidates"},
 	{54, "cite"},
 	{55, "records_activity"},
+	{58, "recall_doc"}, {58, "recall_text"}, {58, "recall_pair"}, {58, "recall_pending"},
 	{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
 }
 

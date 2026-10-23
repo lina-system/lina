@@ -42,7 +42,7 @@ func (k *exchangeKnowledge) Common(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	hits, err := memory.New(k.r.db).Recall(ctx, memory.RecallScope{Person: k.r.person, Agent: k.r.agent, CommonOnly: true, ExternalModel: true}, memory.Query{At: time.Now().Unix(), Limit: 32})
+	hits, err := k.r.memoryStore().Recall(ctx, memory.RecallScope{Person: k.r.person, Agent: k.r.agent, CommonOnly: true, ExternalModel: true}, memory.Query{At: time.Now().Unix(), Limit: 32})
 	if err != nil {
 		return nil, err
 	}

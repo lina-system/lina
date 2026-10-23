@@ -45,7 +45,7 @@ func TestLedgerMemoryChecksRealAdmissionProvenance(t *testing.T) {
 	if receipt, err := flow.Remember(t.Context(), write); err == nil || receipt.Remembered() {
 		t.Fatal("missing event accepted")
 	}
-	hits, err := memory.New(db).Recall(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, memory.Query{At: 100})
+	hits, err := flow.store.Recall(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, memory.Query{At: 100})
 	if err != nil || len(hits) != 1 || hits[0].Evidence[0].Quote != "person: I like tea" {
 		t.Fatalf("canonical evidence: %+v %v", hits, err)
 	}
@@ -136,7 +136,7 @@ func TestRememberLargeSourceAndReplayKeepsOneLineage(t *testing.T) {
 	if second.ID != first.ID || second.Revision != first.Revision {
 		t.Fatalf("replay became independent evidence: %+v %+v", first, second)
 	}
-	hits, err := memory.New(db).Recall(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, memory.Query{At: 100})
+	hits, err := flow.store.Recall(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, memory.Query{At: 100})
 	if err != nil || len(hits) != 1 || len(hits[0].Evidence) != 1 || hits[0].Evidence[0].ID != "original" {
 		t.Fatalf("lineage: %+v %v", hits, err)
 	}

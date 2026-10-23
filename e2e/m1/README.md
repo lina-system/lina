@@ -151,3 +151,10 @@ credential-free CI.
 
 [lcm]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/compaction.py
 [honcho]: https://github.com/plastic-labs/honcho/blob/607438d20c408575d1c9257f325c4885da871e82/sdks/python/src/honcho/conclusions.py
+
+`TestM1MemoryQuotesInstalledCore` runs a conversation tool that remembers a
+name from a material-backed Korean event with a secret span. The installed
+Core resolves the quote through memory management before and after restart;
+canon inspection verifies that item/revision evidence contains no quote text.
+The management renderer's synthetic [capture](../../evidence/generated-ui/memory-quotes.png)
+shows a quote and an erased-source status.

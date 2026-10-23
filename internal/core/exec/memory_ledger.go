@@ -20,6 +20,7 @@ import (
 func NewMemory(db *canon.Store, materials ledger.Materials, aux Auxiliary) *Memory {
 	events := ledger.New(db, materials)
 	m := newMemory(db, nil, nil, aux)
+	m.store = memory.New(db).WithQuotes(events.Citation)
 	m.prepare = func(ctx context.Context, in memory.Write) (memory.ResolveEvidence, error) {
 		return PrepareMemoryEvidence(ctx, db, materials, in)
 	}
@@ -59,6 +60,9 @@ func NewMemory(db *canon.Store, materials ledger.Materials, aux Auxiliary) *Memo
 				continue
 			}
 			event, err := events.Get(ctx, id)
+			if errors.Is(err, ledger.ErrBytesUnavailable) && ctx.Err() == nil {
+				continue
+			}
 			if err != nil {
 				return nil, err
 			}
