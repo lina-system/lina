@@ -23,7 +23,6 @@ import (
 // Exercise actual ledger commits and inspect both durable records and raw SQLite
 // bytes after restart: the packet is sent, while only its references are stored.
 func TestAssemblyThroughDurableTurnNeverStoresPacket(t *testing.T) {
-	t.Parallel()
 	db, config := database(t)
 	s := turn.New(db)
 	const packetText = "ephemeral-context-body-should-never-be-stored"

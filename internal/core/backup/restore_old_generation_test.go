@@ -110,7 +110,6 @@ type oldRecord struct {
 }
 
 func TestRestoreGenerationFromBeforeCitationMigration(t *testing.T) {
-	t.Parallel()
 	scenario := readOldGeneration(t)
 	source := t.TempDir()
 	if err := os.Chmod(source, 0700); err != nil {

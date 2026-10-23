@@ -43,16 +43,3 @@ The #133 running-Core bridge declares the four `lina` dynamic work tools, routes
 Request withdrawal and terminal turns stop pending decisions.
 Tool results and completion receipts remain worker evidence, not verification verdicts.
 The headless `e2e/m2/codex-work-tools.json` scenario covers the stdio and conversation protocol round trip.
-
-### C-59 live sessions
-
-#766 adds `worker.Live`: the registry of worker sessions Core keeps after their
-turn. A session records the Core handle, worker and version, its start time and
-its thread, and is ended by joining the process without closing the thread or
-session record. Ended sessions stay readable in the registry, and the durable
-record remains the work ledger's thread handle.
-Ending is idempotent; a failed join is retried by the next event or sweep.
-The registry drains the adopted adapter's events, so an idle process cannot
-block on a full channel. That drain ends the adopted entry, not whatever
-session later reuses its handle. Bulk ending forwards the caller's context, so
-a canceled join stays retryable.

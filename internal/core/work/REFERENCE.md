@@ -82,3 +82,19 @@ idempotent retry, and atomic missing-dependency, cycle and unordered-fork
 rejection with an existing ledger. `TestM3SharedAncestorGraphInstalledCore`
 exercises the conversation tool, manager admission, real worker Git results,
 dependency release and restart while the shared-ancestor tail stays queued.
+
+### Goal commands (#772)
+
+The person's order, pause, resume and stop choices are recorded in the work
+ledger as `goal.command` events keyed by the input message identity, so a resent
+choice keeps one record and a refused or no-op choice records nothing. `Command`
+reports whether the choice changed the goal, and the client answer is `applied`
+only then. The committed event
+writes the goal projection in the same transaction: rank, paused flag or the
+final `stopped` state. Derivation sorts ready steps by rank before Capacity's
+deadline, depth and age order, keeps a paused goal's waits and queued award, and
+derives nothing for a paused, stopped or done goal. A claim on a paused goal
+returns a claim conflict without changing the action, so a resumed goal claims
+its already-committed award instead of spending a second attempt.
+`progress.Goals` reads the same rank and pause flag for the line's order and Now,
+so a restart rebuilds the identical projection.

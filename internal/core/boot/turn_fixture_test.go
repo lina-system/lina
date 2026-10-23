@@ -26,6 +26,7 @@ import (
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
+	responseconfig "github.com/thisisjun786/lina/kit/provider/responses/config"
 )
 
 type turnStep struct {
@@ -160,7 +161,7 @@ func installTurnManifest(t *testing.T, root string) {
 		Version: "0.0.1-alpha.dev", Commit: strings.Repeat("a", 40), Date: "2026-10-23",
 		Target: runtime.GOOS + "/" + runtime.GOARCH, GoToolchain: runtime.Version(), KitVersion: 1,
 		SupportedCombinations: []manifest.Combination{},
-		Providers:             map[string]json.RawMessage{"chatgpt": json.RawMessage(`{"adapter":"responses","retryCount":0,"requestFields":["model","input","store","stream"]}`)},
+		Providers:             map[string]responseconfig.Config{"chatgpt": {Adapter: "responses", RequestFields: provider.FieldList{"model", "input", "store", "stream"}}},
 		SQLite: manifest.SQLite{Module: "github.com/ncruces/go-sqlite3", Version: "v0.30.5",
 			ModuleSum: "h1:6usmTQ6khriL8oWilkAZSJM/AIpAlVL2zFrlcpDldCE=", SQLiteVersion: "3.51.2", WasmSHA256: strings.Repeat("d", 64), Execution: "wazero"},
 		Binaries: []manifest.Binary{

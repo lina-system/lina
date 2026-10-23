@@ -18,9 +18,6 @@ const (
 	KindConversationStart    Kind = "conversation_start"
 	KindInput                Kind = "input"
 	KindInterrupt            Kind = "interrupt"
-	KindLauncherRequest      Kind = "launcher_request"
-	KindLauncherResult       Kind = "launcher_result"
-	KindLauncherReply        Kind = "launcher_reply"
 	KindHistoryGet           Kind = "history_get"
 	KindHistory              Kind = "history"
 	KindSubscribe            Kind = "subscribe"
@@ -61,6 +58,8 @@ const (
 	KindWorkResult           Kind = "work_result"
 	KindWorkSwitchRequest    Kind = "work_switch_request"
 	KindWorkSwitchResult     Kind = "work_switch_result"
+	KindWorkControlRequest   Kind = "work_control_request"
+	KindWorkControlResult    Kind = "work_control_result"
 	KindAccountRequest       Kind = "account_request"
 	KindAccountResult        Kind = "account_result"
 	KindMemoryRequest        Kind = "memory_request"
@@ -568,25 +567,6 @@ type ItemDone struct {
 	Speaker  *ConversationSpeaker `json:"speaker,omitempty"`
 	Stream   *StreamMetadata      `json:"stream,omitempty"`
 	Text     *string              `json:"text,omitempty"`
-}
-type LauncherReply struct {
-	AgentID        string          `json:"agent_id"`
-	ConversationID string          `json:"conversation_id"`
-	Done           bool            `json:"done"`
-	MessageID      *string         `json:"message_id,omitempty"`
-	RequestID      string          `json:"request_id"`
-	Stream         *StreamMetadata `json:"stream,omitempty"`
-	Text           string          `json:"text"`
-}
-type LauncherRequest struct {
-	AgentID   *string `json:"agent_id,omitempty"`
-	RequestID string  `json:"request_id"`
-	Text      string  `json:"text"`
-}
-type LauncherResult struct {
-	AgentID        string `json:"agent_id"`
-	ConversationID string `json:"conversation_id"`
-	RequestID      string `json:"request_id"`
 }
 type MemoryEvidence struct {
 	Quote     *string          `json:"quote,omitempty"`
@@ -1484,6 +1464,18 @@ type Welcome struct {
 	PersonID        string       `json:"person_id"`
 	ProtocolVersion string       `json:"protocol_version"`
 }
+type WorkControlRequest struct {
+	Confirm   *bool  `json:"confirm,omitempty"`
+	GoalID    string `json:"goal_id"`
+	Operation string `json:"operation"`
+}
+type WorkControlResult struct {
+	GoalID    string      `json:"goal_id"`
+	Operation string      `json:"operation"`
+	Paused    bool        `json:"paused"`
+	Rank      json.Number `json:"rank"`
+	State     string      `json:"state"`
+}
 type WorkRequest struct {
 	AgentID       *string   `json:"agent_id,omitempty"`
 	Base          *string   `json:"base,omitempty"`
@@ -1555,9 +1547,6 @@ func (ErrorPayload) isPayload()         {}
 func (ConversationStart) isPayload()    {}
 func (Input) isPayload()                {}
 func (Interrupt) isPayload()            {}
-func (LauncherRequest) isPayload()      {}
-func (LauncherResult) isPayload()       {}
-func (LauncherReply) isPayload()        {}
 func (HistoryGet) isPayload()           {}
 func (History) isPayload()              {}
 func (Subscribe) isPayload()            {}
@@ -1598,6 +1587,8 @@ func (WorkRequest) isPayload()          {}
 func (WorkResult) isPayload()           {}
 func (WorkSwitchRequest) isPayload()    {}
 func (WorkSwitchResult) isPayload()     {}
+func (WorkControlRequest) isPayload()   {}
+func (WorkControlResult) isPayload()    {}
 func (AccountRequest) isPayload()       {}
 func (AccountResult) isPayload()        {}
 func (MemoryRequest) isPayload()        {}
@@ -1688,18 +1679,6 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		return p, err
 	case KindInterrupt:
 		var p Interrupt
-		err := json.Unmarshal(data, &p)
-		return p, err
-	case KindLauncherRequest:
-		var p LauncherRequest
-		err := json.Unmarshal(data, &p)
-		return p, err
-	case KindLauncherResult:
-		var p LauncherResult
-		err := json.Unmarshal(data, &p)
-		return p, err
-	case KindLauncherReply:
-		var p LauncherReply
 		err := json.Unmarshal(data, &p)
 		return p, err
 	case KindHistoryGet:
@@ -1860,6 +1839,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		return p, err
 	case KindWorkSwitchResult:
 		var p WorkSwitchResult
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWorkControlRequest:
+		var p WorkControlRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWorkControlResult:
+		var p WorkControlResult
 		err := json.Unmarshal(data, &p)
 		return p, err
 	case KindAccountRequest:
@@ -2092,9 +2079,6 @@ const clientSchemaJSON = `{
         "conversation_start",
         "input",
         "interrupt",
-        "launcher_request",
-        "launcher_result",
-        "launcher_reply",
         "history_get",
         "history",
         "subscribe",
@@ -2135,6 +2119,8 @@ const clientSchemaJSON = `{
         "work_result",
         "work_switch_request",
         "work_switch_result",
+        "work_control_request",
+        "work_control_result",
         "account_request",
         "account_result",
         "memory_request",
@@ -2360,54 +2346,6 @@ const clientSchemaJSON = `{
         "properties": {
           "payload": {
             "$ref": "#/$defs/interrupt"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "launcher_request"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "#/$defs/launcher_request"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "launcher_result"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "#/$defs/launcher_result"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "launcher_reply"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "#/$defs/launcher_reply"
           }
         }
       }
@@ -3742,6 +3680,38 @@ const clientSchemaJSON = `{
       "if": {
         "properties": {
           "kind": {
+            "const": "work_control_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_control_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
             "const": "a2a_request"
           }
         }
@@ -4433,92 +4403,6 @@ const clientSchemaJSON = `{
         }
       },
       "required": [],
-      "additionalProperties": false
-    },
-    "launcher_request_id": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-    },
-    "launcher_request": {
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "$ref": "#/$defs/launcher_request_id"
-        },
-        "text": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 16384
-        },
-        "agent_id": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "request_id",
-        "text"
-      ],
-      "additionalProperties": false
-    },
-    "launcher_result": {
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "$ref": "#/$defs/launcher_request_id"
-        },
-        "conversation_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "agent_id": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "request_id",
-        "conversation_id",
-        "agent_id"
-      ],
-      "additionalProperties": false
-    },
-    "launcher_reply": {
-      "type": "object",
-      "properties": {
-        "stream": {
-          "$ref": "#/$defs/stream_metadata"
-        },
-        "request_id": {
-          "$ref": "#/$defs/launcher_request_id"
-        },
-        "conversation_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "agent_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "text": {
-          "type": "string",
-          "maxLength": 4096
-        },
-        "done": {
-          "type": "boolean"
-        },
-        "message_id": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "request_id",
-        "conversation_id",
-        "agent_id",
-        "text",
-        "done"
-      ],
       "additionalProperties": false
     },
     "history_get": {
@@ -6662,7 +6546,7 @@ const clientSchemaJSON = `{
     },
     "stream_topic": {
       "type": "string",
-      "pattern": "^(conversation:[\\s\\S]+|results:[\\s\\S]+|running|progress|waiting|exchanges|accounts|channels|launcher|core)$"
+      "pattern": "^(conversation:[\\s\\S]+|results:[\\s\\S]+|running|progress|waiting|exchanges|accounts|channels|core)$"
     },
     "stream_cursor": {
       "type": "object",
@@ -6716,7 +6600,6 @@ const clientSchemaJSON = `{
           "type": "string",
           "enum": [
             "output_delta",
-            "launcher_reply",
             "item_done",
             "turn_state",
             "tool_activity",
@@ -6771,22 +6654,6 @@ const clientSchemaJSON = `{
             "properties": {
               "payload": {
                 "$ref": "#/$defs/output_delta"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "kind": {
-                "const": "launcher_reply"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "payload": {
-                "$ref": "#/$defs/launcher_reply"
               }
             }
           }
@@ -8622,6 +8489,81 @@ const clientSchemaJSON = `{
       "required": [
         "operation",
         "switch_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_control_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "confirm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation",
+        "goal_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_control_result": {
+      "type": "object",
+      "properties": {
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "defining",
+            "running",
+            "waiting",
+            "checking",
+            "done",
+            "stopped",
+            "blocked"
+          ]
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "goal_id",
+        "operation",
+        "state",
+        "paused",
+        "rank"
       ],
       "additionalProperties": false
     },

@@ -29,11 +29,8 @@ cannot starve the next batch; it wraps at the end and retries. Full successful
 batches yield 10 ms; idle or failed passes wait one second. This is eventual
 indexing only for queued sources; no search request runs the drain.
 
-During the switch window the citation walk owns removal, recovery and erase for
-this index: a removal deletes the documents it hides in its own transaction, a
-recovery queues only what the source view admits again, and the source view
-fences a late write through the candidate's citation ancestors. The existing
-retraction indexes keep their own triggers until the contract step. New
+During the switch window, removal hooks bridge the existing retraction indexes.
+The later citation-based retraction change owns replacing those hooks. New
 readers, ranking, vectors and messenger windows belong to later steps.
 
 Tests cover atomic native writes, queued sources and exclusions, generation

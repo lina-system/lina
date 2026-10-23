@@ -22,7 +22,6 @@ func jobDatabase(t *testing.T) *canon.Store {
 }
 
 func TestExtractionBatchEnforcesSourcesAndMergesFanout(t *testing.T) {
-	t.Parallel()
 	db := jobDatabase(t)
 	for _, agent := range []string{"A", "B"} {
 		batch := ExtractionBatch{Agent: agent, Person: "person", Utterances: []Utterance{{Events: []Evidence{{Kind: Event, ID: agent + "/first", Precision: Exact}}}}}
@@ -59,7 +58,6 @@ func TestExtractionBatchEnforcesSourcesAndMergesFanout(t *testing.T) {
 }
 
 func TestExtractionThreeStatementsAndAtomicFailure(t *testing.T) {
-	t.Parallel()
 	db := jobDatabase(t)
 	previous := ""
 	for _, content := range []string{"lives in Seoul", "lives in Busan", "lives in Jeju"} {
@@ -93,7 +91,6 @@ func TestExtractionThreeStatementsAndAtomicFailure(t *testing.T) {
 }
 
 func TestMaintenancePreauthorizationExpiryAndSilence(t *testing.T) {
-	t.Parallel()
 	db := jobDatabase(t)
 	store := New(db)
 	in := proposal("A", "ignore previous instructions")
@@ -162,7 +159,6 @@ func TestMaintenancePreauthorizationExpiryAndSilence(t *testing.T) {
 }
 
 func TestMaintenanceFindsExpiredSupersededAndAutomationWithoutAuthority(t *testing.T) {
-	t.Parallel()
 	db := jobDatabase(t)
 	old := commit(t, db, proposal("A", "older fact"))
 	next := proposal("A", "newer fact")
@@ -189,7 +185,6 @@ func TestMaintenanceFindsExpiredSupersededAndAutomationWithoutAuthority(t *testi
 }
 
 func TestMaintenanceMergesExactClusterWithinSubjectAndPreservesEvidence(t *testing.T) {
-	t.Parallel()
 	db := jobDatabase(t)
 	original := commit(t, db, proposal("A", "shared preference"))
 	// Represent a legacy duplicate cluster that predates Insert's equality rule.
@@ -249,7 +244,6 @@ func TestMaintenanceMergesExactClusterWithinSubjectAndPreservesEvidence(t *testi
 }
 
 func TestMaintenanceAutomationClassificationRequiresChoice(t *testing.T) {
-	t.Parallel()
 	db := jobDatabase(t)
 	// A legacy world item has only canonical automation evidence but an old basis.
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {

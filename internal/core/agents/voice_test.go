@@ -9,7 +9,6 @@ import (
 )
 
 func TestVoiceChangeAndUndoApplyOnFollowingTurn(t *testing.T) {
-	t.Parallel()
 	s, db, root := setup(t)
 	a, other := create(t, s, ""), create(t, s, "")
 	before, err := s.Prepare(t.Context(), "asking-turn", a.ID)
@@ -62,7 +61,6 @@ func TestVoiceChangeAndUndoApplyOnFollowingTurn(t *testing.T) {
 }
 
 func TestVoiceUndoCannotUndoAnotherKindOfRevision(t *testing.T) {
-	t.Parallel()
 	s, _, _ := setup(t)
 	a := create(t, s, "")
 	p, err := s.Prepare(t.Context(), "baseline", a.ID)

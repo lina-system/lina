@@ -12,7 +12,6 @@ import (
 )
 
 func TestWorkMethodFillSurvivesPresetRestartAndRetirement(t *testing.T) {
-	t.Parallel()
 	s, db, root := setup(t)
 	p := agents.Preset{ID: "lina", Core: "core", DefaultVoice: "voice", WorkMethod: `{"schema":1,"preset":"lina","ask":{"form":"choices"},"fill":["ask.form"]}`}
 	if err := s.UpdatePreset(t.Context(), p, "person"); err != nil {
@@ -148,7 +147,6 @@ func TestWorkMethodFillSurvivesPresetRestartAndRetirement(t *testing.T) {
 }
 
 func TestWorkMethodTriplePublicationRollsBackAndDeduplicates(t *testing.T) {
-	t.Parallel()
 	s, db, _ := setup(t)
 	p := agents.Preset{ID: "dev", Core: "one", DefaultVoice: "voice one", WorkMethod: `{"schema":1,"preset":"dev"}`}
 	if err := s.UpdatePreset(t.Context(), p, "person"); err != nil {

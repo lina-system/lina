@@ -8,7 +8,6 @@ import (
 )
 
 func TestCitationMergeStoresOnlyNewEvidence(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	var item Item
 	for i := 0; i < 200; i++ {
@@ -85,7 +84,6 @@ func assertMemoryCitations(t *testing.T, db *canon.Store) {
 }
 
 func TestCitationFailureRollsBackMemoryAndRevision(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	err := db.Write(t.Context(), func(tx *canon.Tx) error {
 		_, err := tx.ExecContext(t.Context(), `CREATE TRIGGER fail_cite BEFORE INSERT ON cite BEGIN SELECT RAISE(ABORT,'injected_citation_failure'); END;`)
@@ -118,7 +116,6 @@ func TestCitationFailureRollsBackMemoryAndRevision(t *testing.T) {
 }
 
 func TestCitationBriefGenerationRetiresPreviousSentences(t *testing.T) {
-	t.Parallel()
 	db := jobDatabase(t)
 	store := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}

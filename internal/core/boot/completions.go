@@ -22,7 +22,7 @@ func (r *conversationRuntime) startCompletions(ctx context.Context) error {
 	if r.route != nil && (r.background == nil || r.background.service == nil || r.lanes == nil) {
 		return work.ErrState
 	}
-	flow := &reactor.Reactor{DB: r.db, Work: r.work, Epoch: strconv.FormatUint(r.epoch, 10), On: r.reactCompletion, Live: &reactor.LiveSessions{Sessions: r.liveWorkers, Keep: r.liveWorkerSteps}}
+	flow := &reactor.Reactor{DB: r.db, Work: r.work, Epoch: strconv.FormatUint(r.epoch, 10), On: r.reactCompletion}
 	// Repair before READY, even when no worker or model route is installed.
 	if err := flow.Sweep(ctx); err != nil {
 		return err

@@ -64,11 +64,6 @@ type Config struct {
 	Now           func() time.Time
 	Driver        Driver
 	Sweep         <-chan time.Time
-	// Sessions owns the worker processes of goal steps. After every committed
-	// event, a session whose step has landed or been closed is ended, so live
-	// sessions follow the frontier and not the history of the goal. The work
-	// layer names only what it calls; the worker registry implements it.
-	Sessions SessionOwner
 	// Changed publishes a committed projection. A delivery failure does not
 	// revoke the state; startup and subsequent events can publish it again.
 	Changed func(context.Context, State) error
@@ -228,7 +223,7 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 	if err := validateGoal(g); err != nil {
 		return err
 	}
-	if g.StepGraph != nil || g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || len(g.MergedRevisions) > 0 || g.Deployment != (Proof{}) || g.Verification != (Proof{}) {
+	if g.StepGraph != nil || g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || len(g.MergedRevisions) > 0 || g.Deployment != (Proof{}) || g.Verification != (Proof{}) || g.Rank != 0 || g.Paused {
 		return ErrInvalid
 	}
 	for _, t := range g.Tasks {
@@ -249,6 +244,17 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 		if _, ok := v.Get("goal", g.ID); ok {
 			return ErrConflict
 		}
+		rank := 1
+		for _, r := range v.Records("goal") {
+			var other Goal
+			if err := json.Unmarshal(r.Body, &other); err != nil {
+				return err
+			}
+			if other.Person == g.Person && other.State != GoalDone && other.State != GoalStopped && other.Rank >= rank {
+				rank = other.Rank + 1
+			}
+		}
+		g.Rank = rank
 		return put(v, "goal", g.ID, g)
 	})
 }
@@ -331,10 +337,6 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					t.Stage = TaskBuilding
 					t.Attempt = a.Attempt
 					t.NodeID = a.NodeID
-					// The worker action of this reservation owns the step's
-					// session. Recording its key here, in the same transaction,
-					// keeps the live set derivable before any process exists.
-					t.Session = a.ID
 					t.PR = PRState{}
 					t.EffectsSettled = false
 					if counter := kindSpecs[a.Kind].counter; counter != nil {
@@ -345,21 +347,26 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 		}
 		for i := range s.Goals {
 			g := &s.Goals[i]
-			waits := []Wait{}
-			for _, w := range p.Waits {
-				if w.GoalID != g.ID {
-					continue
-				}
-				for _, old := range g.Waits {
-					if old.TaskID == w.TaskID && old.Reason == w.Reason && old.Wake == w.Wake {
-						w.Until = old.Until
-						break
+			// A paused goal keeps its waits, including their deadlines, until it
+			// is resumed. Its in-progress step settles through its receipt.
+			waits := g.Waits
+			if !g.Paused {
+				waits = []Wait{}
+				for _, w := range p.Waits {
+					if w.GoalID != g.ID {
+						continue
 					}
+					for _, old := range g.Waits {
+						if old.TaskID == w.TaskID && old.Reason == w.Reason && old.Wake == w.Wake {
+							w.Until = old.Until
+							break
+						}
+					}
+					waits = append(waits, w)
 				}
-				waits = append(waits, w)
+				g.Waits = waits
 			}
-			g.Waits = waits
-			if g.State != GoalDone && g.State != GoalStopped {
+			if g.State != GoalDone && g.State != GoalStopped && !g.Paused {
 				allLanded := len(g.Tasks) > 0
 				for _, t := range g.Tasks {
 					allLanded = allLanded && t.Stage == TaskDone
@@ -446,6 +453,11 @@ func (e *Engine) Claim(ctx context.Context, id string) (Action, error) {
 			return ErrConflict
 		}
 		if g.DefinitionPending && a.Kind != PlanGoal && a.ObserveActionID == "" {
+			return ErrConflict
+		}
+		// A paused goal dispatches nothing new. A claimed step from before the
+		// pause is observed, never replayed or extended.
+		if g.Paused && a.ObserveActionID == "" {
 			return ErrConflict
 		}
 		if reserves(a) && a.ObserveActionID == "" {
@@ -785,12 +797,6 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		t.Head = o.Head
 		t.Stage = TaskDelivered
 		t.EffectsSettled = true
-		if o.Handle != "" {
-			// The handle names the worker session that stays live while this
-			// step is under pull-request operation. It is Core's record key,
-			// never a worker claim.
-			t.ThreadHandle = o.Handle
-		}
 	case InspectPR:
 		if t == nil || o.PR.Head == "" {
 			return ErrInvalid
@@ -991,9 +997,6 @@ func (e *Engine) step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// A step that has landed or been closed no longer justifies a process. A
-	// failed join stays live and is retried by the next event or sweep.
-	_ = e.reapSessions(ctx, s)
 	if e.cfg.Changed != nil {
 		if err := e.cfg.Changed(ctx, s); err != nil {
 			return err

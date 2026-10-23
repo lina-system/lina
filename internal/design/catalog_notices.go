@@ -24,7 +24,6 @@ func init() {
 		"notice.handoff":             {"The gathered work is saved and continues in the background.", "모은 내용을 저장했고 작업은 백그라운드에서 계속돼요."},
 		"reply.request_limit":        {"Request limit", "요청 한도"},
 		"notice.request_too_large":   {"This request does not fit the model’s context window.", "요청이 모델의 컨텍스트 한도를 넘었어요."},
-		"notice.sign_in":             {"Sign in to your model account to continue.", "모델 계정에 로그인해 주세요."},
 		"notice.failed":              {"The reply could not be completed. Send a new message to continue.", "답변을 마치지 못했어요. 계속하려면 새 메시지를 보내 주세요."},
 		"notice.person":              {"You stopped this reply.", "요청하신 대로 답변을 멈췄어요."},
 		"notice.watchdog":            {"This reply stopped because it was no longer making progress.", "답변이 더 진행되지 않아 멈췄어요."},

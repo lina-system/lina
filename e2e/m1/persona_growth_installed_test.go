@@ -96,24 +96,26 @@ func TestM2InstalledPersonaGrowth(t *testing.T) {
 	agent := c.Welcome.Agents[0].AgentID
 	request := func(p protocol.AgentRequest) (protocol.AgentResult, *protocol.Error) {
 		t.Helper()
-		if _, err := c.Agent(h.ctx, p); err != nil {
-			t.Fatal(err)
-		}
-		reply, err := c.Receive(h.ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if reply.Error != nil {
-			if reply.Error.Code == protocol.ErrorUnavailable {
-				t.Fatalf("growth unavailable: %+v", p)
+		for {
+			if _, err := c.Agent(h.ctx, p); err != nil {
+				t.Fatal(err)
 			}
-			return protocol.AgentResult{}, reply.Error
+			reply, err := c.Receive(h.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reply.Error != nil {
+				if reply.Error.Code == protocol.ErrorUnavailable {
+					t.Fatalf("growth unavailable: %+v", p)
+				}
+				return protocol.AgentResult{}, reply.Error
+			}
+			result, ok := reply.Payload.(protocol.AgentResult)
+			if !ok {
+				t.Fatalf("unexpected growth result: %+v", reply)
+			}
+			return result, nil
 		}
-		result, ok := reply.Payload.(protocol.AgentResult)
-		if !ok {
-			t.Fatalf("unexpected growth result: %+v", reply)
-		}
-		return result, nil
 	}
 	apply := func(operation string, candidate *protocol.GrowthCandidate, revision *string) protocol.AgentResult {
 		t.Helper()

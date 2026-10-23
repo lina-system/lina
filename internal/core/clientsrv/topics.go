@@ -122,7 +122,7 @@ func NewTopics(epoch string, options TopicOptions) (*Topics, error) {
 
 func validTopic(topic string) bool {
 	switch topic {
-	case "running", "progress", "waiting", "exchanges", "accounts", "channels", "core", "launcher":
+	case "running", "progress", "waiting", "exchanges", "accounts", "channels", "core":
 		return true
 	}
 	for _, prefix := range []string{"conversation:", "results:"} {

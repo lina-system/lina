@@ -345,3 +345,45 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Execution history and evidence stay in the journal. Only the current task
+// projection drops superseded work after its effects have settled. A landed
+// dependency remains satisfied; an unlanded one requires replanning dependents.
+func retainScopedTasks(repositories []string, tasks []Task) []Task {
+	removed := map[string]Task{}
+	for _, task := range tasks {
+		if !has(repositories, task.Repository) {
+			removed[task.ID] = task
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, task := range tasks {
+			if _, ok := removed[task.ID]; ok {
+				continue
+			}
+			for _, id := range task.DependsOn {
+				if predecessor, ok := removed[id]; ok && !predecessor.Merge.proves(predecessor.Merge.Revision) {
+					removed[task.ID] = task
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	kept := []Task{}
+	for _, task := range tasks {
+		if _, ok := removed[task.ID]; ok {
+			continue
+		}
+		dependencies := []string{}
+		for _, id := range task.DependsOn {
+			if _, ok := removed[id]; !ok {
+				dependencies = append(dependencies, id)
+			}
+		}
+		task.DependsOn = dependencies
+		kept = append(kept, task)
+	}
+	return kept
+}

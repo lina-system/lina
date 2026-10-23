@@ -206,13 +206,6 @@ func compactionTurn(t *testing.T, h *harness, c *clientapi.Client, conversation,
 
 func compactionCore(t *testing.T, url string) (*harness, func() func()) {
 	t.Helper()
-	return installedCore(t, "LINA_RESPONSES_BASE_URL="+url+"/v1", "LINA_RESPONSES_MODEL=fixture", "LINA_RESPONSES_API_KEY=synthetic-key")
-}
-
-// installedCore builds and installs the commands once, then returns a start
-// function whose provider route comes from the given environment.
-func installedCore(t *testing.T, routeEnv ...string) (*harness, func() func()) {
-	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	t.Cleanup(cancel)
 	root, err := os.MkdirTemp("", "lina-compaction-")
@@ -256,9 +249,8 @@ func installedCore(t *testing.T, routeEnv ...string) (*harness, func() func()) {
 	h.socket = installed.Socket
 	return h, func() func() {
 		cmd := exec.CommandContext(ctx, filepath.Join(h.root, "system/bin/lina"), "core", "--state-root", h.root, "--socket", h.socket)
-		cmd.Env = append(append([]string{}, env...), routeEnv...)
+		cmd.Env = append(append([]string{}, env...), "LINA_RESPONSES_BASE_URL="+url+"/v1", "LINA_RESPONSES_MODEL=fixture", "LINA_RESPONSES_API_KEY=synthetic-key")
 		var logs bytes.Buffer
-		h.logs = &logs
 		cmd.Stdout = &logs
 		cmd.Stderr = &logs
 		if err := cmd.Start(); err != nil {

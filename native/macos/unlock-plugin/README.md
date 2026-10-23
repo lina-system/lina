@@ -78,17 +78,7 @@ In order; the first failing step denies.
 Every other case denies with its own reason, and the crash marker is cleared on
 the way out. The answer is one system-log line with the ticket id and the
 reason; no credential is logged, and no context or hint value is read or
-written. The decision path uses only `SetResult` and `WriteLog`.
-
-## Deactivation
-
-`MechanismInvoke` returns only after it has answered, so a later
-`MechanismDeactivate` has no evaluation left to stop. It calls `DidDeactivate`
-with the engine reference stored at creation and returns that status. The
-engine waits for the callback; returning success without it leaves the
-evaluation waiting. A missing callback returns an internal error instead of
-reporting a handshake that did not happen. `MechanismDestroy` frees the
-mechanism and does not call `DidDeactivate` again.
+written, because the engine exposes only `SetResult` and `WriteLog`.
 
 ## Wire format
 
@@ -102,7 +92,7 @@ One fixed request and one fixed reply, both documented in `src/protocol.h`.
 ## Build and test
 
 ```sh
-# Linux foundation check: compiles the core and the plug-in entry points, and runs their tests.
+# Linux foundation check: compiles the core and runs its tests.
 node scripts/verify/check-native.mjs
 
 # macOS: builds build/LinaUnlock.bundle for arm64, signs and verifies it.

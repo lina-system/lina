@@ -18,22 +18,10 @@ type Reactor struct {
 	Work  *work.Service
 	Epoch string
 	On    func(context.Context, work.Completion, work.Card) error
-	Live  *LiveSessions
 }
 
 // Sweep only repairs durable signals. It has no model or worker dependency.
-func (r *Reactor) Sweep(ctx context.Context) error {
-	return errors.Join(r.Work.ReconcileCompletions(ctx), r.reap(ctx))
-}
-
-// reap is a safety net for a session whose step event was lost. Goal execution
-// reaps on its own committed events; this repeats the same deterministic rule.
-func (r *Reactor) reap(ctx context.Context) error {
-	if r.Live == nil {
-		return nil
-	}
-	return r.Live.ReapCurrent(ctx)
-}
+func (r *Reactor) Sweep(ctx context.Context) error { return r.Work.ReconcileCompletions(ctx) }
 
 func (r *Reactor) Drain(ctx context.Context) error {
 	pending, err := r.Work.PendingCompletions(ctx, r.Epoch)
@@ -68,7 +56,6 @@ func (r *Reactor) Run(ctx context.Context) {
 	for {
 		changed := r.DB.Changed()
 		_ = r.Drain(ctx)
-		_ = r.reap(ctx)
 		select {
 		case <-ctx.Done():
 			return

@@ -77,41 +77,37 @@ const (
 )
 
 type Task struct {
-	Kind       StepKind         `json:"kind,omitempty"`
-	Background *BackgroundBrief `json:"background,omitempty"`
-	Wait       *StepWait        `json:"wait,omitempty"`
-	Result     Proof            `json:"result,omitempty"`
-	Name       string           `json:"name,omitempty"`
-	// Session is the worker action that owns this step's worker session. Core
-	// records it with the dispatch reservation, so the live set is derivable
-	// before any process exists.
-	Session        string    `json:"session,omitempty"`
-	PRGeneration   uint64    `json:"pr_generation"`
-	Continuations  int       `json:"continuations"`
-	ThreadHandle   string    `json:"thread_handle,omitempty"`
-	Repairs        string    `json:"repairs,omitempty"`
-	RepairedBy     string    `json:"repaired_by,omitempty"`
-	ResultRevision string    `json:"result_revision,omitempty"`
-	RepairAsked    bool      `json:"repair_asked"`
-	ID             string    `json:"id"`
-	Done           string    `json:"done"`
-	Repository     string    `json:"repository"`
-	Base           string    `json:"base"`
-	Area           string    `json:"area"`
-	Worker         string    `json:"worker"`
-	Resources      Resources `json:"resources"`
-	DependsOn      []string  `json:"depends_on"`
-	Stage          TaskStage `json:"stage"`
-	Attempt        int       `json:"attempt"`
-	Recoveries     int       `json:"recoveries"`
-	EffectsSettled bool      `json:"effects_settled"`
-	Conflicts      int       `json:"conflicts"`
-	QARepairs      int       `json:"qa_repairs"`
-	NodeID         string    `json:"node_id"`
-	Head           string    `json:"head"`
-	PR             PRState   `json:"pr"`
-	Merge          Proof     `json:"merge"`
-	QA             Proof     `json:"qa"`
+	Kind           StepKind         `json:"kind,omitempty"`
+	Background     *BackgroundBrief `json:"background,omitempty"`
+	Wait           *StepWait        `json:"wait,omitempty"`
+	Result         Proof            `json:"result,omitempty"`
+	Name           string           `json:"name,omitempty"`
+	PRGeneration   uint64           `json:"pr_generation"`
+	Continuations  int              `json:"continuations"`
+	ThreadHandle   string           `json:"thread_handle,omitempty"`
+	Repairs        string           `json:"repairs,omitempty"`
+	RepairedBy     string           `json:"repaired_by,omitempty"`
+	ResultRevision string           `json:"result_revision,omitempty"`
+	RepairAsked    bool             `json:"repair_asked"`
+	ID             string           `json:"id"`
+	Done           string           `json:"done"`
+	Repository     string           `json:"repository"`
+	Base           string           `json:"base"`
+	Area           string           `json:"area"`
+	Worker         string           `json:"worker"`
+	Resources      Resources        `json:"resources"`
+	DependsOn      []string         `json:"depends_on"`
+	Stage          TaskStage        `json:"stage"`
+	Attempt        int              `json:"attempt"`
+	Recoveries     int              `json:"recoveries"`
+	EffectsSettled bool             `json:"effects_settled"`
+	Conflicts      int              `json:"conflicts"`
+	QARepairs      int              `json:"qa_repairs"`
+	NodeID         string           `json:"node_id"`
+	Head           string           `json:"head"`
+	PR             PRState          `json:"pr"`
+	Merge          Proof            `json:"merge"`
+	QA             Proof            `json:"qa"`
 }
 type GoalState string
 
@@ -142,6 +138,8 @@ type Goal struct {
 	CheckRound        int64               `json:"check_round"`
 	State             GoalState           `json:"state"`
 	Revision          int64               `json:"revision"`
+	Rank              int                 `json:"rank,omitempty"`
+	Paused            bool                `json:"paused,omitempty"`
 	ManagerTurns      int                 `json:"manager_turns"`
 	AttentionID       string              `json:"attention_id,omitempty"`
 	BlockedReason     string              `json:"blocked_reason,omitempty"`
@@ -335,6 +333,16 @@ func validateGoalState(g Goal, pendingCorrection bool) error {
 	return nil
 }
 
+// goalRank orders ready placement. A goal admitted before ranks existed has no
+// rank; it is older than every ranked goal, because a new goal takes the last
+// rank, so it sorts first until a person's move gives it one.
+func goalRank(g Goal) int {
+	if g.Rank < 0 {
+		return 0
+	}
+	return g.Rank
+}
+
 func pending(actions []Action, goal, task string) bool {
 	for _, a := range actions {
 		if a.GoalID == goal && a.TaskID == task && a.State != "finished" {
@@ -371,6 +379,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 		task  Task
 		kind  ActionKind
 		depth int
+		rank  int
 	}
 	var ready []candidate
 	type areaLease struct {
@@ -432,6 +441,11 @@ func Derive(state State, now time.Time) (Plan, error) {
 	}
 	for _, g := range goals {
 		if g.State == GoalDone || g.State == GoalStopped {
+			continue
+		}
+		// A paused goal keeps its waits and its in-progress step, but derives no
+		// new step and no further input until the person resumes it.
+		if g.Paused {
 			continue
 		}
 		if g.DefinitionPending {
@@ -569,7 +583,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 			default:
 				return Plan{}, ErrInvalid
 			}
-			ready = append(ready, candidate{g, t, kind, depth(t.ID)})
+			ready = append(ready, candidate{g, t, kind, depth(t.ID), goalRank(g)})
 		}
 		if !allDone || pending(state.Actions, g.ID, "") {
 			continue
@@ -648,6 +662,9 @@ func Derive(state State, now time.Time) (Plan, error) {
 	}
 	sort.SliceStable(ready, func(i, j int) bool {
 		a, b := ready[i], ready[j]
+		if a.rank != b.rank {
+			return a.rank < b.rank
+		}
 		if deadline(a.goal) != deadline(b.goal) {
 			return deadline(a.goal) < deadline(b.goal)
 		}

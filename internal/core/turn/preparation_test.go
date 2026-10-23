@@ -33,7 +33,6 @@ func preparation() *turn.Preparation {
 }
 
 func TestPreparationStopsAtEachFailedStep(t *testing.T) {
-	t.Parallel()
 	for _, failed := range []turn.Step{turn.BuildStep, turn.AccountStep, turn.ModelStep, turn.ContextStep} {
 		t.Run(string(failed), func(t *testing.T) {
 			db, _ := database(t)
@@ -85,7 +84,6 @@ func TestPreparationStopsAtEachFailedStep(t *testing.T) {
 }
 
 func TestPreparationCommitFailureAndSignIn(t *testing.T) {
-	t.Parallel()
 	for _, stage := range []string{"sign-in", "ack", "request"} {
 		t.Run(stage, func(t *testing.T) {
 			db, _ := database(t)
@@ -117,7 +115,6 @@ func TestPreparationCommitFailureAndSignIn(t *testing.T) {
 }
 
 func TestPreparedRequestRetainedAcrossFollowUp(t *testing.T) {
-	t.Parallel()
 	db, _ := database(t)
 	s := turn.New(db)
 	p := preparation()
@@ -167,7 +164,6 @@ func TestPreparedRequestRetainedAcrossFollowUp(t *testing.T) {
 }
 
 func TestFollowUpBudgetStopsBeforeRecordingOrDispatch(t *testing.T) {
-	t.Parallel()
 	db, _ := database(t)
 	s := turn.New(db)
 	p := preparation()

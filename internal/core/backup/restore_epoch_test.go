@@ -14,7 +14,6 @@ import (
 )
 
 func TestRestoreEpochNeverFallsAndLeavesControlsAlone(t *testing.T) {
-	t.Parallel()
 	for _, tc := range []struct{ control, current, captured, want uint64 }{
 		{90, 80, 7, 90}, {2, 85, 7, 85}, {0, 0, 70, 70}, {9007199254740993, 1, 8, 9007199254740993}, {0, 0, math.MaxUint64, 0},
 	} {

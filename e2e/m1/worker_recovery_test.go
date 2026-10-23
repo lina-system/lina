@@ -31,12 +31,6 @@ func recoveryWorkerFixture() {
 	}
 	dir := os.Getenv("LINA_RECOVERY_DIR")
 	mode := os.Getenv("LINA_RECOVERY_CASE")
-	// The recovered turn's retained output can be made larger than the ledger's
-	// inline body limit, which is what a long real worker report does.
-	output := "Retained worker result."
-	if value := os.Getenv("LINA_RECOVERY_OUTPUT"); value != "" {
-		output = value
-	}
 	turns := 0
 	if raw, err := os.ReadFile(filepath.Join(dir, "turn-count")); err == nil {
 		turns, _ = strconv.Atoi(string(raw))
@@ -171,10 +165,10 @@ func recoveryWorkerFixture() {
 				time.Sleep(time.Millisecond)
 			}
 			status := "failed"
-			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" || mode == "delayed" || mode == "followup_reply" || mode == "steer_snapshot_failure" || mode == "steer_pending" || mode == "spilled" {
+			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" || mode == "delayed" || mode == "followup_reply" || mode == "steer_snapshot_failure" || mode == "steer_pending" {
 				status = "completed"
 			}
-			items := []any{map[string]any{"type": "agentMessage", "id": "message", "text": output}}
+			items := []any{map[string]any{"type": "agentMessage", "id": "message", "text": "Retained worker result."}}
 			if mode == "unknown" {
 				items = append(items, map[string]any{"type": "commandExecution", "id": "unsettled", "status": "inProgress"})
 			}

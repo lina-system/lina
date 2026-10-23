@@ -14,7 +14,6 @@ import (
 )
 
 func TestTurnOutcomeMasksOriginalInputAndNestedToolData(t *testing.T) {
-	t.Parallel()
 	db, _ := database(t)
 	id, err := inbox.New(db).Admit(t.Context(), inbox.Input{Key: inbox.Key{Conversation: "conversation", Source: "client", NativeID: "message"}, Body: []byte(`password="synthetic-input"`)})
 	if err != nil {

@@ -3,9 +3,7 @@ package e2e_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -83,7 +81,7 @@ func TestAlphaWorkerQuestionWaitsForDelivery(t *testing.T) {
 	event("completion", "", "tool", "worker_completion", `{"output":"What name should I use?"}`)
 	check := func(want string, failed bool) {
 		t.Helper()
-		got, err := alphaSpokenWorkerQuestion(h.ctx, db, alphaInlineBodies{}, "conversation")
+		got, err := alphaSpokenWorkerQuestion(h.ctx, db, "conversation")
 		if got != want || (err != nil) != failed {
 			t.Fatalf("delivered=%q err=%v; want=%q failure=%t", got, err, want, failed)
 		}
@@ -99,44 +97,39 @@ func TestAlphaWorkerQuestionWaitsForDelivery(t *testing.T) {
 	check("Which name should the worker use?", false)
 }
 
-// The completion and its reply can exceed the ledger's inline size, so their
-// bodies live in materials. Read the committed bytes rather than the columns.
-func alphaSpokenWorkerQuestion(ctx context.Context, db *canon.Store, bodies alphaReplyBodies, conversation string) (string, error) {
-	var id, state, reply string
+func alphaSpokenWorkerQuestion(ctx context.Context, db *canon.Store, conversation string) (string, error) {
+	var output string
 	err := db.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, `SELECT w.id,coalesce(t.state,''),coalesce(e.id,'')
+		rows, err := tx.QueryContext(ctx, `SELECT w.id,w.body,coalesce(t.state,''),coalesce(e.body,'')
  FROM conv_event w
  LEFT JOIN inbox i ON i.native_id=w.id AND i.source='worker-finish' AND i.conversation=w.conversation_id
  LEFT JOIN turn_runs t ON t.inbox_id=i.id AND t.conversation=w.conversation_id
  LEFT JOIN conv_event e ON e.parent_id=w.id AND e.conversation_id=w.conversation_id AND e.agent_id=w.agent_id AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'')=''
- WHERE w.conversation_id=? AND w.scaffold_kind='worker_completion' ORDER BY w.rowid DESC,e.rowid DESC LIMIT 1`, conversation).Scan(&id, &state, &reply)
+ WHERE w.conversation_id=? AND w.scaffold_kind='worker_completion' ORDER BY w.rowid DESC,e.rowid DESC LIMIT 1`, conversation)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		if rows.Next() {
+			var id, raw, state, reply string
+			if err := rows.Scan(&id, &raw, &state, &reply); err != nil {
+				return err
+			}
+			var completion struct{ Output string }
+			if err := json.Unmarshal([]byte(raw), &completion); err != nil {
+				return err
+			}
+			if !alphaNameRequest(completion.Output) {
+				return nil
+			}
+			if state == "failed" || state == "aborted" {
+				return fmt.Errorf("worker question delivery %s ended %s", id, state)
+			}
+			if state == "completed" && alphaNameRequest(reply) {
+				output = reply
+			}
+		}
+		return rows.Err()
 	})
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	raw, err := alphaEventBody(ctx, db, bodies, id)
-	if err != nil {
-		return "", err
-	}
-	var completion struct{ Output string }
-	if err := json.Unmarshal([]byte(raw), &completion); err != nil {
-		return "", err
-	}
-	if !alphaNameRequest(completion.Output) {
-		return "", nil
-	}
-	if state == "failed" || state == "aborted" {
-		return "", fmt.Errorf("worker question delivery %s ended %s", id, state)
-	}
-	if state != "completed" || reply == "" {
-		return "", nil
-	}
-	text, err := alphaEventBody(ctx, db, bodies, reply)
-	if err != nil || !alphaNameRequest(text) {
-		return "", err
-	}
-	return text, nil
+	return output, err
 }

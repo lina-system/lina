@@ -430,7 +430,7 @@ func alphaSpokenQuestion(t *testing.T, h *harness, conversation string) string {
 		t.Fatal(err)
 	}
 	defer db.Close(context.Background())
-	reply, err := alphaSpokenWorkerQuestion(h.ctx, db, alphaLedgerBodies{h.root}, conversation)
+	reply, err := alphaSpokenWorkerQuestion(h.ctx, db, conversation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,36 +444,32 @@ func alphaLastWorkerOutput(t *testing.T, h *harness) (string, int) {
 		t.Fatal(err)
 	}
 	defer db.Close(context.Background())
-	var output, completion string
+	var output string
 	var versions int
 	err = db.Read(h.ctx, func(tx *canon.Tx) error {
 		if err := tx.QueryRowContext(h.ctx, "SELECT count(*) FROM conv_event WHERE id LIKE 'worker-version:%'").Scan(&versions); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(h.ctx, "SELECT id FROM conv_event WHERE scaffold_kind='worker_completion' ORDER BY rowid DESC LIMIT 1")
+		rows, err := tx.QueryContext(h.ctx, "SELECT body FROM conv_event WHERE scaffold_kind='worker_completion' ORDER BY rowid DESC LIMIT 1")
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		if rows.Next() {
-			return rows.Scan(&completion)
+			var body string
+			if err := rows.Scan(&body); err != nil {
+				return err
+			}
+			var result struct{ Output string }
+			if err := json.Unmarshal([]byte(body), &result); err != nil {
+				return err
+			}
+			output = result.Output
 		}
 		return rows.Err()
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if completion != "" {
-		// A large completion body is a material, not a conversation column.
-		raw, err := alphaEventBody(h.ctx, db, alphaLedgerBodies{h.root}, completion)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var result struct{ Output string }
-		if err := json.Unmarshal([]byte(raw), &result); err != nil {
-			t.Fatal(err)
-		}
-		output = result.Output
 	}
 	return output, versions
 }

@@ -36,11 +36,10 @@ search on the same 60 queries; these comparisons are outside latency samples.
 
 The packaged SQLite engine does not expose `dbstat`. Page inspection requires
 Python 3 with SQLite's `ENABLE_DBSTAT_VTAB` (available on the Linux CI runners).
-Its standard library opens the committed scratch database read-only; the
-inspector passes `uri=True`, because a `file:` URI is only parsed by default on
-builds compiled with `SQLITE_USE_URI`. It neither loads the corpus nor times
-queries. All timed operations use Core's pinned embedded engine. An unavailable
-inspector fails the run rather than reporting zero bytes.
+Its standard library opens the committed scratch database read-only; it neither
+loads the corpus nor times queries. All timed operations use Core's pinned
+embedded engine. An unavailable inspector fails the run rather than reporting
+zero bytes.
 
 ## Corpus
 

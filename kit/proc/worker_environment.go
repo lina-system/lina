@@ -13,10 +13,9 @@ import (
 func WorkerEnvironment() []string {
 	env := make([]string, 0)
 	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "LINA_RESPONSES_API_KEY=") || strings.HasPrefix(entry, "LINA_CLAUDE_API_KEY=") {
-			continue
+		if !strings.HasPrefix(entry, "LINA_RESPONSES_API_KEY=") {
+			env = append(env, entry)
 		}
-		env = append(env, entry)
 	}
 	return env
 }

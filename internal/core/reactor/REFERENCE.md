@@ -42,11 +42,3 @@ The attempt key is Core's run ID; Git heads come from Core observations, and a r
 A corrected file receipt or directory fingerprint replaces the current row for that task/attempt/head with a new reaction identity; prior claims remain tombstones, and unchanged output retains its identity.
 Worker receipt formats stay unchanged.
 On upgrade, persisted dispatch PR evidence fills a previously absent terminal head; it cannot replace a known head.
-
-### C-59 live-session reap
-
-#766 adds `LiveSessions`: a deterministic reap of worker sessions whose steps
-have left the goal's live set. It ends sessions outside the keep set on every
-reactor wake and on the five-minute sweep, so a lost event cannot leave a
-process behind. An unavailable keep source ends nothing, and a failed join
-keeps the session for the next attempt.

@@ -15,7 +15,6 @@ import (
 )
 
 func TestFirstRunPreservesLegacyIdentityAndUserRevisions(t *testing.T) {
-	t.Parallel()
 	s, db, _ := setup(t)
 	if err := s.UpdatePreset(t.Context(), agents.Preset{ID: "lina", Core: "fixture core", DefaultVoice: "fixture voice"}, "person"); err != nil {
 		t.Fatal(err)
@@ -86,7 +85,6 @@ func assertStarters(t *testing.T, s *agents.Store) map[string]agents.Agent {
 }
 
 func TestFirstRunCreatesEightStartersFromCurrentPresets(t *testing.T) {
-	t.Parallel()
 	s, _, _ := setup(t)
 	for key := range starterNames {
 		if err := s.UpdatePreset(t.Context(), agents.Preset{ID: key, Core: "core-" + key, DefaultVoice: "voice-" + key}, "person"); err != nil {
@@ -110,7 +108,6 @@ func TestFirstRunCreatesEightStartersFromCurrentPresets(t *testing.T) {
 }
 
 func TestFirstRunConcurrentStoresAndRestartKeepEightIdentities(t *testing.T) {
-	t.Parallel()
 	s, db, root := setup(t)
 	other, err := agents.Open(root, db)
 	if err != nil {
@@ -147,7 +144,6 @@ func TestFirstRunConcurrentStoresAndRestartKeepEightIdentities(t *testing.T) {
 }
 
 func TestFirstRunResumesAfterInterruptedPublication(t *testing.T) {
-	t.Parallel()
 	s, db, root := setup(t)
 	exec := func(sql string) {
 		t.Helper()
@@ -184,7 +180,6 @@ func TestFirstRunResumesAfterInterruptedPublication(t *testing.T) {
 }
 
 func TestFirstRunDoesNotReplaceRenamedDeletedOrExpiredStarters(t *testing.T) {
-	t.Parallel()
 	s, _, _ := setup(t)
 	if _, err := s.FirstRun(t.Context(), "person", true); err != nil {
 		t.Fatal(err)

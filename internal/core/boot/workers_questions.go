@@ -130,7 +130,7 @@ func (q workerQuestions) Question(ctx context.Context, person, id string) (proto
 		return q.runtime.a2aQuestion(ctx, person, id)
 	}
 	if !strings.HasPrefix(id, "worker-request:") {
-		return runQuestions(q).Question(ctx, person, id)
+		return (runQuestions{runtime: q.runtime}).Question(ctx, person, id)
 	}
 	e, item, err := q.find(person, id)
 	if err != nil {
@@ -152,7 +152,7 @@ func (q workerQuestions) AnswerQuestionMessage(ctx context.Context, person strin
 		return q.runtime.answerConversationQuestion(ctx, person, answer, messageID)
 	}
 	if answer.CardID != nil && strings.HasPrefix(*answer.CardID, "work:") {
-		return runQuestions(q).AnswerQuestionMessage(ctx, person, answer, messageID)
+		return (runQuestions{runtime: q.runtime}).AnswerQuestionMessage(ctx, person, answer, messageID)
 	}
 	return q.AnswerQuestion(ctx, person, answer)
 }
@@ -166,7 +166,7 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 		return protocol.DecisionOutcomeRefused, nil
 	}
 	if !strings.HasPrefix(*answer.CardID, "worker-request:") {
-		return runQuestions(q).AnswerQuestion(ctx, person, answer)
+		return (runQuestions{runtime: q.runtime}).AnswerQuestion(ctx, person, answer)
 	}
 	e, item, err := q.find(person, *answer.CardID)
 	if err != nil {

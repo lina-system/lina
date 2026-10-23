@@ -8,7 +8,6 @@ import (
 )
 
 func TestMethodologiesResolveFromCanonWithoutReplacingPersona(t *testing.T) {
-	t.Parallel()
 	s, _, _ := setup(t)
 	if err := s.UpdatePreset(t.Context(), agents.Preset{ID: "creative", Core: "Synthetic creative character", DefaultVoice: "Synthetic voice"}, "person"); err != nil {
 		t.Fatal(err)

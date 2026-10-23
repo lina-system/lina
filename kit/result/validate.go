@@ -515,7 +515,7 @@ func blockShapes(raw []byte) error {
 			return err
 		}
 		allowed := map[string]bool{"kind": true, "audience": true}
-		var required []string
+		required := []string{}
 		switch kind {
 		case "heading":
 			required = []string{"text", "level"}

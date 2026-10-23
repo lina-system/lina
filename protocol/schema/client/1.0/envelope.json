@@ -17,9 +17,6 @@
         "conversation_start",
         "input",
         "interrupt",
-        "launcher_request",
-        "launcher_result",
-        "launcher_reply",
         "history_get",
         "history",
         "subscribe",
@@ -60,6 +57,8 @@
         "work_result",
         "work_switch_request",
         "work_switch_result",
+        "work_control_request",
+        "work_control_result",
         "account_request",
         "account_result",
         "memory_request",
@@ -285,54 +284,6 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/interrupt"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "launcher_request"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "#/$defs/launcher_request"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "launcher_result"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "#/$defs/launcher_result"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "kind": {
-            "const": "launcher_reply"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "$ref": "#/$defs/launcher_reply"
           }
         }
       }
@@ -1667,6 +1618,38 @@
       "if": {
         "properties": {
           "kind": {
+            "const": "work_control_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_control_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
             "const": "a2a_request"
           }
         }
@@ -2358,92 +2341,6 @@
         }
       },
       "required": [],
-      "additionalProperties": false
-    },
-    "launcher_request_id": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-    },
-    "launcher_request": {
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "$ref": "#/$defs/launcher_request_id"
-        },
-        "text": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 16384
-        },
-        "agent_id": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "request_id",
-        "text"
-      ],
-      "additionalProperties": false
-    },
-    "launcher_result": {
-      "type": "object",
-      "properties": {
-        "request_id": {
-          "$ref": "#/$defs/launcher_request_id"
-        },
-        "conversation_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "agent_id": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "request_id",
-        "conversation_id",
-        "agent_id"
-      ],
-      "additionalProperties": false
-    },
-    "launcher_reply": {
-      "type": "object",
-      "properties": {
-        "stream": {
-          "$ref": "#/$defs/stream_metadata"
-        },
-        "request_id": {
-          "$ref": "#/$defs/launcher_request_id"
-        },
-        "conversation_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "agent_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "text": {
-          "type": "string",
-          "maxLength": 4096
-        },
-        "done": {
-          "type": "boolean"
-        },
-        "message_id": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "request_id",
-        "conversation_id",
-        "agent_id",
-        "text",
-        "done"
-      ],
       "additionalProperties": false
     },
     "history_get": {
@@ -4587,7 +4484,7 @@
     },
     "stream_topic": {
       "type": "string",
-      "pattern": "^(conversation:[\\s\\S]+|results:[\\s\\S]+|running|progress|waiting|exchanges|accounts|channels|launcher|core)$"
+      "pattern": "^(conversation:[\\s\\S]+|results:[\\s\\S]+|running|progress|waiting|exchanges|accounts|channels|core)$"
     },
     "stream_cursor": {
       "type": "object",
@@ -4641,7 +4538,6 @@
           "type": "string",
           "enum": [
             "output_delta",
-            "launcher_reply",
             "item_done",
             "turn_state",
             "tool_activity",
@@ -4696,22 +4592,6 @@
             "properties": {
               "payload": {
                 "$ref": "#/$defs/output_delta"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "kind": {
-                "const": "launcher_reply"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "payload": {
-                "$ref": "#/$defs/launcher_reply"
               }
             }
           }
@@ -6547,6 +6427,81 @@
       "required": [
         "operation",
         "switch_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_control_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "confirm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation",
+        "goal_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_control_result": {
+      "type": "object",
+      "properties": {
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "defining",
+            "running",
+            "waiting",
+            "checking",
+            "done",
+            "stopped",
+            "blocked"
+          ]
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "goal_id",
+        "operation",
+        "state",
+        "paused",
+        "rank"
       ],
       "additionalProperties": false
     },

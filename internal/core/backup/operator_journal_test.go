@@ -16,7 +16,6 @@ import (
 const testJournal = "system/crw-takeover-journal.json"
 
 func TestOperatorJournalBackupInventory(t *testing.T) {
-	t.Parallel()
 	cfg, _ := fixture(t)
 	write := func(path, value string) {
 		t.Helper()
@@ -54,7 +53,6 @@ func TestOperatorJournalBackupInventory(t *testing.T) {
 }
 
 func TestOperatorJournalRestoreGenerationAndInterruption(t *testing.T) {
-	t.Parallel()
 	for _, captured := range []bool{true, false} {
 		for _, stop := range []string{"", "pending", "saved:" + testJournal, "installed:" + testJournal, "installed:canon"} {
 			name := "pre-import/"
@@ -137,7 +135,6 @@ func TestOperatorJournalRestoreGenerationAndInterruption(t *testing.T) {
 }
 
 func TestOperatorJournalRejectsInvalidPaths(t *testing.T) {
-	t.Parallel()
 	for _, kind := range []string{"directory", "symlink", "executable"} {
 		t.Run(kind, func(t *testing.T) {
 			cfg, _ := fixture(t)
@@ -163,7 +160,6 @@ func TestOperatorJournalRejectsInvalidPaths(t *testing.T) {
 }
 
 func TestRestoreLayoutAllowsOnlyOperatorJournalInSystem(t *testing.T) {
-	t.Parallel()
 	for _, path := range []string{testJournal, "system/core/epoch", "system/other.json", testJournal + "/nested"} {
 		m := Manifest{Directories: []string{".", "system"}, Files: []File{{Path: path, Mode: 0600}}}
 		if err := validateRestoreLayout(m); (err == nil) != (path == testJournal) {

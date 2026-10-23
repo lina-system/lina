@@ -3,7 +3,6 @@ package install
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -11,7 +10,7 @@ import (
 	"unicode"
 )
 
-var toolNames = []string{"codex", "claude", "antigravity", "cursor-agent", "gemini", "gh", "grok", "node", "bwrap"}
+var toolNames = []string{"codex", "claude", "antigravity", "cursor-agent", "gh", "grok", "node", "bwrap"}
 
 func discover(ctx context.Context, cfg Config, host Host, verified map[string][]string) []Tool {
 	tools := make([]Tool, 0, len(toolNames))
@@ -28,7 +27,9 @@ func discover(ctx context.Context, cfg Config, host Host, verified map[string][]
 		}
 		if err == nil && filepath.IsAbs(path) {
 			tool.Path = path
-			out, err := probeVersion(ctx, host, name, path)
+			probe, cancel := context.WithTimeout(ctx, 3*time.Second)
+			out, err := host.Run(probe, path, "--version")
+			cancel()
 			tool.Status = "unavailable"
 			if err == nil && len(out) <= 4096 {
 				line, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
@@ -56,24 +57,4 @@ func versionForComparison(name, version string) string {
 		return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), "codex-cli "))
 	}
 	return version
-}
-
-// ACP discovery negotiates the same protocol as dispatch, but never creates a
-// session. Hosts without a protocol probe cannot claim a usable Gemini tool.
-func probeVersion(ctx context.Context, host Host, name, path string) ([]byte, error) {
-	if name == "gemini" {
-		probe, ok := host.(interface {
-			ACPVersion(context.Context, string, ...string) (string, error)
-		})
-		if !ok {
-			return nil, errors.New("ACP version probe unavailable")
-		}
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		version, err := probe.ACPVersion(ctx, path, "--acp")
-		return []byte(version), err
-	}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	return host.Run(ctx, path, "--version")
 }

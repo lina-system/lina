@@ -9,7 +9,6 @@ import (
 )
 
 func TestRelationshipInsertClosesPredecessorInterval(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	in := proposal("A", "We are study partners.")
 	in.Item.Kind = Relationship
@@ -55,7 +54,6 @@ func TestRelationshipInsertClosesPredecessorInterval(t *testing.T) {
 }
 
 func TestRelationshipReplacementRejectsMissingOrEarlierTime(t *testing.T) {
-	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		at   int64
@@ -90,7 +88,6 @@ func TestRelationshipReplacementRejectsMissingOrEarlierTime(t *testing.T) {
 }
 
 func TestRelationshipReplacementRollbackPreservesPredecessor(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	in := proposal("A", "We are study partners.")
 	in.Item.Kind = Relationship
@@ -136,7 +133,6 @@ func TestRelationshipReplacementRollbackPreservesPredecessor(t *testing.T) {
 }
 
 func TestRelationshipRecallKeepsObserverAndPersonBeforeLimit(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	s := New(db)
 	in := proposal("A", "study partners")

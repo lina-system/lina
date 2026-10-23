@@ -12,7 +12,6 @@ import (
 )
 
 func TestPublishedPersonaCommitInManifest(t *testing.T) {
-	t.Parallel()
 	cfg, _ := fixture(t)
 	store, err := agents.Open(cfg.Root, cfg.Canon)
 	if err != nil {
@@ -55,7 +54,6 @@ func TestPublishedPersonaCommitInManifest(t *testing.T) {
 	}
 }
 func TestWorkspaceLinksCannotExposeExcludedState(t *testing.T) {
-	t.Parallel()
 	for _, mode := range []string{"absolute", "relative", "chained"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, _ := fixture(t)
@@ -89,7 +87,6 @@ func TestWorkspaceLinksCannotExposeExcludedState(t *testing.T) {
 }
 
 func TestPublishedSkillCommitAndMissingObject(t *testing.T) {
-	t.Parallel()
 	cfg, _ := fixture(t)
 	store, err := skills.Open(cfg.Root, cfg.Canon, nil)
 	if err != nil {

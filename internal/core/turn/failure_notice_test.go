@@ -18,7 +18,6 @@ import (
 )
 
 func TestFailedTurnNoticeCommitsWithState(t *testing.T) {
-	t.Parallel()
 	for _, tc := range []struct {
 		name                  string
 		refuseNotice, partial bool
@@ -118,36 +117,5 @@ func TestFailedTurnNoticeCommitsWithState(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// A provider authentication refusal mid-turn is a state of the account: the
-// durable notice asks the person to sign in instead of reporting a lost reply.
-func TestSignInRefusalNotice(t *testing.T) {
-	t.Parallel()
-	db, _ := database(t)
-	event := inputEvent(t, db)
-	store := turn.New(db)
-	_, err := store.Run(t.Context(), turn.Options{ID: "signed-out", Conversation: "conversation", InboxID: admit(t, db), InputEvent: event, Loop: loop.Config{
-		Stream: func(context.Context, provider.Request) (provider.Stream, error) {
-			return nil, &provider.Failure{Kind: provider.NeedsSignIn}
-		},
-	}})
-	var failure *provider.Failure
-	if !errors.As(err, &failure) || failure.Kind != provider.NeedsSignIn {
-		t.Fatalf("failure %v", err)
-	}
-	var noticeID string
-	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
-		return tx.QueryRowContext(t.Context(), "SELECT notice_event FROM turn_control WHERE turn_id='signed-out'").Scan(&noticeID)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	notice, err := ledger.New(db, nil).Get(t.Context(), noticeID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(notice.Body.Text(), "Sign in") {
-		t.Fatalf("notice does not ask for sign-in: %q", notice.Body.Text())
 	}
 }

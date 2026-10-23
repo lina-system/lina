@@ -176,25 +176,3 @@ test('a real workspace plan covers selected packages and scenario files exactly 
   sb.write(sb.dir, 'scripts/verify/test-times.json', '{"schema":2,"packages":{},"scenarios":{}}\n');
   assert.throws(() => planComponents({ cwd: sb.dir, scope }), /timing/i);
 });
-
-// The m3 corpus holds installed-Core scenarios that each boot Core and a
-// worker. One shared package watchdog let a late scenario reach the
-// six-minute limit while it was still progressing, so the milestone keeps two
-// independent shards under the default plan.
-test('the default plan keeps m3 acceptance work in more than one shard', t => {
-  const sb = sandbox(t);
-  const toolchain = 'go 1.27\ntoolchain go1.27.3\n';
-  for (const [path, source] of Object.entries({
-    'go.mod': `module example.invalid/lina\n${toolchain}`,
-    'kit/go.mod': `module example.invalid/lina/kit\n${toolchain}`,
-    'go.work': `${toolchain}use (\n.\n./kit\n)\n`,
-    'doc.go': 'package lina\n', 'kit/doc.go': 'package kit\n',
-    'cmd/lina/main.go': 'package main\nfunc main() {}\n',
-    'e2e/m3/one_test.go': 'package acceptance_test\nimport "testing"\nfunc TestM3One(t *testing.T) {}\n',
-    'e2e/m3/two_test.go': 'package acceptance_test\nimport "testing"\nfunc TestM3Two(t *testing.T) {}\n',
-  })) sb.write(sb.dir, path, source);
-  const scope = { components: true, selectedComponents: ['kit', 'lina'], reason: 'manual-full', changed: [], automation: true };
-  const m3 = planComponents({ cwd: sb.dir, scope, unitCount: 2 }).tasks.filter(task => task.id.startsWith('e2e-m3-'));
-  assert.deepEqual(m3.map(task => task.id), ['e2e-m3-1', 'e2e-m3-2']);
-  assert.deepEqual(m3.flatMap(task => task.tests).sort(), ['TestM3One', 'TestM3Two']);
-});

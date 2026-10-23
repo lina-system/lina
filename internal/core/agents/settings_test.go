@@ -10,7 +10,6 @@ import (
 )
 
 func TestFillBlankIsAgentSpecificAndSurvivesPresetUpdates(t *testing.T) {
-	t.Parallel()
 	s, db, root := setup(t)
 	preset := agents.Preset{ID: "fixture", Core: "fixture core", BlankSettings: []string{"likes", "birthday"}}
 	if err := s.UpdatePreset(t.Context(), preset, "person"); err != nil {
@@ -66,7 +65,6 @@ func TestFillBlankIsAgentSpecificAndSurvivesPresetUpdates(t *testing.T) {
 }
 
 func TestFillBlankNeedsAValueAndEvidence(t *testing.T) {
-	t.Parallel()
 	s, _, _ := setup(t)
 	if err := s.UpdatePreset(t.Context(), agents.Preset{ID: "fixture", BlankSettings: []string{"likes"}}, "person"); err != nil {
 		t.Fatal(err)
@@ -84,7 +82,6 @@ func TestFillBlankNeedsAValueAndEvidence(t *testing.T) {
 }
 
 func TestConcurrentBlankFillsRejectStaleState(t *testing.T) {
-	t.Parallel()
 	s, _, _ := setup(t)
 	if err := s.UpdatePreset(t.Context(), agents.Preset{ID: "fixture", BlankSettings: []string{"likes", "birthday"}}, "person"); err != nil {
 		t.Fatal(err)

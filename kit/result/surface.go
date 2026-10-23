@@ -7,12 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -258,49 +256,26 @@ func (s *Surface) check() error {
 				if err != nil {
 					return err
 				}
-				if err := checkActionValue(resolved); err != nil {
-					return err
+				var v any
+				if json.Unmarshal(resolved, &v) != nil {
+					return surfaceError("action context")
+				}
+				switch x := v.(type) {
+				case string, bool, float64:
+				case []any:
+					for _, item := range x {
+						if _, ok := item.(string); !ok {
+							return surfaceError("action context")
+						}
+					}
+				default:
+					return surfaceError("action context")
 				}
 			}
 		}
 	}
 	return nil
 }
-
-// Action values use the wire surface_value limits so a resolved binding cannot
-// carry more than a client is allowed to submit.
-const (
-	surfaceValueLength = 8192
-	surfaceValueItems  = 256
-)
-
-func checkActionValue(raw json.RawMessage) error {
-	var value any
-	if json.Unmarshal(raw, &value) != nil {
-		return surfaceError("action context")
-	}
-	switch x := value.(type) {
-	case string:
-		if utf8.RuneCountInString(x) > surfaceValueLength {
-			return surfaceError("action context")
-		}
-	case bool, float64:
-	case []any:
-		if len(x) > surfaceValueItems {
-			return surfaceError("action context")
-		}
-		for _, item := range x {
-			text, ok := item.(string)
-			if !ok || utf8.RuneCountInString(text) > surfaceValueLength {
-				return surfaceError("action context")
-			}
-		}
-	default:
-		return surfaceError("action context")
-	}
-	return nil
-}
-
 func checkSurfaceValue(c SurfaceComponent, raw json.RawMessage) error {
 	switch c.Component {
 	case "CheckBox":
@@ -428,8 +403,14 @@ func (s *Surface) ValidateAction(name string, values map[string]json.RawMessage)
 				}
 			}
 			if !bound {
-				actual, err := s.resolve(expected)
-				if err != nil || !sameActionValue(raw, actual) {
+				actual, _ := s.resolve(expected)
+				var a, b any
+				if json.Unmarshal(raw, &a) != nil || json.Unmarshal(actual, &b) != nil {
+					return nil, surfaceError("action value")
+				}
+				x, _ := json.Marshal(a)
+				y, _ := json.Marshal(b)
+				if string(x) != string(y) {
 					return nil, surfaceError("constant action value")
 				}
 			}
@@ -438,66 +419,6 @@ func (s *Surface) ValidateAction(name string, values map[string]json.RawMessage)
 		return out, nil
 	}
 	return nil, surfaceError("unknown action")
-}
-
-// sameActionValue compares constant context without narrowing numbers to
-// float64, so adjacent large integers stay distinct.
-func sameActionValue(left, right json.RawMessage) bool {
-	a, err := decodeNumberValue(left)
-	if err != nil {
-		return false
-	}
-	b, err := decodeNumberValue(right)
-	if err != nil {
-		return false
-	}
-	if number, ok := a.(json.Number); ok {
-		other, ok := b.(json.Number)
-		return ok && sameNumber(number, other)
-	}
-	x, _ := json.Marshal(a)
-	y, _ := json.Marshal(b)
-	return bytes.Equal(x, y)
-}
-
-// sameNumber compares exact decimal values. Extreme exponents fall back to the
-// literal text so a client cannot force a huge rational allocation.
-func sameNumber(left, right json.Number) bool {
-	a, ok := exactRational(left)
-	if !ok {
-		return string(left) == string(right)
-	}
-	b, ok := exactRational(right)
-	if !ok {
-		return string(left) == string(right)
-	}
-	return a.Cmp(b) == 0
-}
-
-func exactRational(number json.Number) (*big.Rat, bool) {
-	text := string(number)
-	if len(text) > 4096 {
-		return nil, false
-	}
-	if index := strings.IndexAny(text, "eE"); index >= 0 {
-		exponent := text[index+1:]
-		value, err := strconv.Atoi(exponent)
-		if err != nil || value < -4096 || value > 4096 {
-			return nil, false
-		}
-	}
-	rational, ok := new(big.Rat).SetString(text)
-	return rational, ok
-}
-
-func decodeNumberValue(raw json.RawMessage) (any, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, err
-	}
-	return value, nil
 }
 
 func (s *Surface) plainText() string {

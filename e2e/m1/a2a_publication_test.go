@@ -198,7 +198,7 @@ func testM3A2APublication(t *testing.T, mode string) {
 		}
 		u, p, ok := r.BasicAuth()
 		if !ok || u != "core" || p != "fixture-secret" {
-			http.Error(w, "denied", http.StatusUnauthorized)
+			http.Error(w, "denied", 401)
 			return
 		}
 		r.ParseForm()

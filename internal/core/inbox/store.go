@@ -104,24 +104,6 @@ func Insert(ctx context.Context, tx *canon.Tx, input Input) (Receipt, error) {
 	return Receipt{ID: id, Inserted: changed == 1}, nil
 }
 
-// Find returns the earliest admission of one delivery id across conversations.
-// A producer whose retry must keep its original owner reads it before it
-// resolves a destination; it never inserts or claims a turn.
-func (s *Store) Find(ctx context.Context, source, nativeID string) (Record, error) {
-	if source == "" || nativeID == "" {
-		return Record{}, ErrInvalid
-	}
-	record := Record{Input: Input{Key: Key{Source: source, NativeID: nativeID}}}
-	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, `SELECT id, conversation, body FROM inbox WHERE source=? AND native_id=? ORDER BY id LIMIT 1`,
-			source, nativeID).Scan(&record.ID, &record.Conversation, &record.Body)
-	})
-	if err != nil {
-		return Record{}, err
-	}
-	return record, nil
-}
-
 // Get reads committed input, including after a process restart. It never
 // claims or replays a turn; recovery and turn claims belong to their own flow.
 func (s *Store) Get(ctx context.Context, key Key) (Record, error) {

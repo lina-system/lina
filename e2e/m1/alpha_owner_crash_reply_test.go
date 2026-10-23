@@ -3,21 +3,13 @@ package e2e_test
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/guard"
-	"github.com/thisisjun786/lina/internal/core/inbox"
-	"github.com/thisisjun786/lina/internal/core/ledger"
-	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/internal/design"
@@ -28,111 +20,36 @@ type alphaRecoveryReply struct {
 	Body string `json:"body"`
 }
 
-// A conversation body above the ledger's inline size is stored as a material
-// and its event keeps a null body column. Attribution therefore reads the
-// committed bytes through the product's own ledger and asset readers; raw SQL
-// sees an empty body and silently drops the recovered reply.
-type alphaReplyBodies interface {
-	read(context.Context, *canon.Store, string) (string, error)
-}
-
-// alphaLedgerBodies reads installed events exactly as the product does, so a
-// spilled body is verified through the material store rather than skipped.
-type alphaLedgerBodies struct{ root string }
-
-func (b alphaLedgerBodies) read(ctx context.Context, db *canon.Store, id string) (string, error) {
-	store, err := assets.Open(ctx, b.root, db)
-	if err != nil {
-		return "", err
-	}
-	defer store.Close()
-	event, err := ledger.New(db, alphaReadMaterials{store}).Get(ctx, id)
-	if err != nil {
-		return "", err
-	}
-	return event.Body.Text(), nil
-}
-
-// alphaEventBody reads one committed event body, whichever storage the ledger
-// chose for it.
-func alphaEventBody(ctx context.Context, db *canon.Store, bodies alphaReplyBodies, id string) (string, error) {
-	return bodies.read(ctx, db, id)
-}
-
-// alphaInlineBodies serves synthetic fixtures whose bodies are all inline.
-type alphaInlineBodies struct{}
-
-func (alphaInlineBodies) read(ctx context.Context, db *canon.Store, id string) (string, error) {
-	var body string
-	err := db.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT coalesce(body,'') FROM conv_event WHERE id=?", id).Scan(&body)
-	})
-	return body, err
-}
-
 // A successful worker receipt is not proof that its conversation response was
 // delivered. Bind the reply to the exact input and recovered worker turn, and
 // wait for that response's own turn to commit.
-func alphaRecoveredReply(ctx context.Context, db *canon.Store, bodies alphaReplyBodies, conversation string, attempt recovery.Record) (alphaRecoveryReply, error) {
-	type candidate struct {
-		completion string
-		reply      string
-		state      string
-	}
-	var candidates []candidate
+func alphaRecoveredReply(ctx context.Context, db *canon.Store, conversation string, attempt recovery.Record) (alphaRecoveryReply, error) {
+	var reply alphaRecoveryReply
 	err := db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT w.id,coalesce(e.id,''),coalesce(t.state,'')
+		var state string
+		err := tx.QueryRowContext(ctx, `SELECT coalesce(t.state,''),coalesce(e.id,''),coalesce(e.body,'')
  FROM conv_event w
  LEFT JOIN inbox i ON i.native_id=w.id AND i.source='worker-finish' AND i.conversation=w.conversation_id
  LEFT JOIN turn_runs t ON t.inbox_id=i.id AND t.conversation=w.conversation_id
  LEFT JOIN conv_event e ON e.parent_id=w.id AND e.conversation_id=w.conversation_id AND e.agent_id=w.agent_id AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'')=''
  WHERE w.conversation_id=? AND w.parent_id=? AND w.scaffold_kind='worker_completion'
- ORDER BY w.rowid DESC,e.rowid DESC`, conversation, attempt.Input)
+ AND json_extract(w.body,'$.session')=? AND json_extract(w.body,'$.turn')=? AND json_extract(w.body,'$.status')='done'
+ ORDER BY w.rowid DESC,e.rowid DESC LIMIT 1`, conversation, attempt.Input, attempt.Thread.ID, attempt.Thread.TurnID).Scan(&state, &reply.ID, &reply.Body)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var c candidate
-			if err := rows.Scan(&c.completion, &c.reply, &c.state); err != nil {
-				return err
-			}
-			candidates = append(candidates, c)
+		if state == "failed" || state == "aborted" {
+			return fmt.Errorf("recovered result delivery ended %s", state)
 		}
-		return rows.Err()
+		if state != "completed" {
+			reply = alphaRecoveryReply{}
+		}
+		return nil
 	})
-	if err != nil {
-		return alphaRecoveryReply{}, err
-	}
-	seen := map[string]bool{}
-	for _, c := range candidates {
-		if seen[c.completion] {
-			continue
-		}
-		seen[c.completion] = true
-		body, err := bodies.read(ctx, db, c.completion)
-		if err != nil {
-			return alphaRecoveryReply{}, err
-		}
-		var result struct {
-			Session, Turn, Status string
-		}
-		if json.Unmarshal([]byte(body), &result) != nil || result.Session != attempt.Thread.ID || result.Turn != attempt.Thread.TurnID || result.Status != "done" {
-			continue
-		}
-		if c.state == "failed" || c.state == "aborted" {
-			return alphaRecoveryReply{}, fmt.Errorf("recovered result delivery ended %s", c.state)
-		}
-		if c.state != "completed" || c.reply == "" {
-			return alphaRecoveryReply{}, nil
-		}
-		reply, err := bodies.read(ctx, db, c.reply)
-		if err != nil {
-			return alphaRecoveryReply{}, err
-		}
-		return alphaRecoveryReply{ID: c.reply, Body: reply}, nil
-	}
-	return alphaRecoveryReply{}, nil
+	return reply, err
 }
 
 func alphaRecoveredReplyVisible(request, reply, screen string) bool {
@@ -248,7 +165,7 @@ func TestAlphaRecoveredReplyWaitsForExactDelivery(t *testing.T) {
 			write("INSERT INTO inbox(id,conversation,source,native_id,body) VALUES(?,?,'worker-finish',?,'{}')", inboxID, conversation, prefix+"completion")
 			write("INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,?)", prefix+"delivery", conversation, inboxID, state)
 			event("reply", replyParent, replyConversation, replyAgent, "agent", scaffold, "Delivered result.")
-			got, err := alphaRecoveredReply(h.ctx, db, alphaInlineBodies{}, conversation, attempt)
+			got, err := alphaRecoveredReply(h.ctx, db, conversation, attempt)
 			failed := name == "failed" || name == "aborted"
 			if (err != nil) != failed {
 				t.Fatalf("delivery error=%v, want failure=%t", err, failed)
@@ -262,132 +179,6 @@ func TestAlphaRecoveredReplyWaitsForExactDelivery(t *testing.T) {
 			}
 			if got != want {
 				t.Fatalf("reply=%+v, want=%+v", got, want)
-			}
-		})
-	}
-}
-
-// A conversation body above the ledger's inline size is stored as a material
-// and the event keeps a null body column. The result acceptance must read the
-// committed bytes; a completion that carries a long worker report and a long
-// reply both cross that boundary, which is what made this check intermittent.
-type alphaReadMaterials struct{ store *assets.Store }
-
-func (m alphaReadMaterials) Prepare(context.Context, secrets.Masked) (ledger.MaterialWrite, error) {
-	return nil, errors.New("read-only materials")
-}
-
-func (m alphaReadMaterials) Read(ctx context.Context, ref ledger.Material) (string, error) {
-	file, err := m.store.OpenRead(ctx, ref.ID, ref.Revision)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	data, err := io.ReadAll(file)
-	return string(data), err
-}
-
-type alphaSeedMaterials struct {
-	alphaReadMaterials
-	writer *assets.MaterialWriter
-}
-
-func (m alphaSeedMaterials) Prepare(ctx context.Context, body secrets.Masked) (ledger.MaterialWrite, error) {
-	prepared, err := m.writer.Prepare(ctx, strings.NewReader(body.Text()), "conversation-body", assets.Actor{PersonID: "person", AgentID: "agent"})
-	if err != nil {
-		return nil, err
-	}
-	return alphaSeedMaterial{prepared}, nil
-}
-
-type alphaSeedMaterial struct{ *assets.PreparedMaterial }
-
-func (m alphaSeedMaterial) Insert(ctx context.Context, tx *canon.Tx) (ledger.Material, error) {
-	asset, err := m.PreparedMaterial.Insert(ctx, tx)
-	return ledger.Material{ID: asset.ID, Revision: asset.Revision}, err
-}
-
-func TestAlphaRecoveredReplyReadsSpilledBodies(t *testing.T) {
-	root := t.TempDir()
-	if err := os.Chmod(root, 0700); err != nil {
-		t.Fatal(err)
-	}
-	db, _ := acceptanceStore(t, root, 1)
-	store, err := assets.Open(t.Context(), root, db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	writer, err := assets.OpenMaterialWriter(t.Context(), store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	materials := alphaSeedMaterials{alphaReadMaterials{store}, writer}
-	events := ledger.New(db, materials)
-	conversation := "spilled:conversation"
-	now := time.Now().UTC()
-	input, err := events.Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "spilled:input", ConversationID: conversation, PersonID: "person", AgentID: "agent", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Spilled body task."})
-	if err != nil {
-		t.Fatal(err)
-	}
-	long := strings.Repeat("흙이 마르면 뿌리 깊이를 확인하고 그에 맞춰 물을 줍니다. ", 600)
-	if len(long) <= ledger.InlineBytes {
-		t.Fatalf("fixture is %d bytes; it must exceed the inline limit %d", len(long), ledger.InlineBytes)
-	}
-	spilled := func(id string) bool {
-		t.Helper()
-		var material string
-		if err := db.Read(t.Context(), func(tx *canon.Tx) error {
-			return tx.QueryRowContext(t.Context(), "SELECT coalesce(material_id,'') FROM conv_event WHERE id=?", id).Scan(&material)
-		}); err != nil {
-			t.Fatal(err)
-		}
-		return material != ""
-	}
-	for _, tc := range []struct {
-		name, report, reply string
-	}{
-		{"completion", long, "짧은 결과입니다."},
-		{"reply", "", long},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			completionBody, err := json.Marshal(struct {
-				Session, Turn, Status, Output string
-			}{tc.name, "turn", "done", tc.report})
-			if err != nil {
-				t.Fatal(err)
-			}
-			completion, err := events.Admit(t.Context(), guard.EntryTool, ledger.Input{ID: "spilled:" + tc.name + ":completion", ConversationID: conversation, ParentID: input.ID, AgentID: "agent", Surface: ledger.Surface{Kind: "tui"}, Locator: "worker-session:" + tc.name, ScaffoldKind: "worker_completion", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: string(completionBody)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			receipt, err := inbox.New(db).Admit(t.Context(), inbox.Input{Key: inbox.Key{Conversation: conversation, Source: "worker-finish", NativeID: completion.ID}, Body: []byte(`{}`)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-				_, err := tx.ExecContext(t.Context(), "INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,'completed')", "turn:"+completion.ID, conversation, receipt.ID)
-				return err
-			}); err != nil {
-				t.Fatal(err)
-			}
-			reply, err := events.Admit(t.Context(), guard.EntryAgent, ledger.Input{ID: "spilled:" + tc.name + ":reply", ConversationID: conversation, ParentID: completion.ID, AgentID: "agent", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: tc.reply})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tc.name == "completion" && !spilled(completion.ID) {
-				t.Fatal("fixture completion body was not stored as a material")
-			}
-			if tc.name == "reply" && !spilled(reply.ID) {
-				t.Fatal("fixture reply body was not stored as a material")
-			}
-			attempt := recovery.Record{Input: input.ID, Thread: worker.Thread{ID: tc.name, TurnID: "turn"}}
-			got, err := alphaRecoveredReply(t.Context(), db, alphaLedgerBodies{root}, conversation, attempt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got.ID != reply.ID || got.Body != tc.reply {
-				t.Fatalf("reply id=%q bytes=%d, want id=%q bytes=%d", got.ID, len(got.Body), reply.ID, len(tc.reply))
 			}
 		})
 	}

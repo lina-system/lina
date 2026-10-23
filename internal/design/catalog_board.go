@@ -36,6 +36,7 @@ func init() {
 		"progress.unknown":      {"unknown", "알 수 없음"},
 		"progress.needs_you":    {"Needs you", "확인 필요"},
 		"progress.waiting_word": {"Waiting", "대기"},
+		"progress.paused":       {"Paused", "일시정지"},
 		"progress.untitled":     {"Untitled", "제목 없음"},
 		"progress.design":       {"design", "설계"},
 		"progress.building":     {"building", "만드는 중"},

@@ -136,9 +136,6 @@ type Config struct {
 	PrepareClaudeACP   func(context.Context, lease.Lease) (string, error)
 	Publish            func(context.Context, Record) error
 	ClaudeBinary       string
-	// Sessions owns worker sessions between turns. A goal step keeps its
-	// session while the step is in progress or its pull request is operated on.
-	Sessions *worker.Live
 }
 type Service struct {
 	cfg     Config

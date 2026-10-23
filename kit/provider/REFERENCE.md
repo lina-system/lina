@@ -14,17 +14,6 @@ Model-list network calls also require a lease.
 The future secret-store adapter supplies these credentials.
 Items and tool declarations retain provider JSON so opaque state can round-trip without reconstruction.
 
-### Claude API-key route and batch identity
-
-#882 adds `kit/provider/messages` and its own route admission
-(`claude_api_key`) alongside the Claude runtime route. `Credential.ApplyHeader`
-lets an adapter place the credential in a provider's own header; a missing or
-unusable value is a needs-sign-in failure, and the value still never leaves that
-call. `Credential.Ready` and `Secret.Ready` report presence without a value, so a
-route with no key refuses a turn before any request is prepared.
-`Meta.Batch` carries a deferred submission id from an adapter that served the
-request through a batch tier; run evidence records it after the answer.
-
 ### Capabilities and cache metadata
 
 #877 adds per-model `Capabilities` declarations. The Responses adapter reports

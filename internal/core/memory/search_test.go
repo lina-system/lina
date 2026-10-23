@@ -14,7 +14,6 @@ import (
 )
 
 func TestKoreanIndexedRecall(t *testing.T) {
-	t.Parallel()
 	var corpus struct {
 		Documents []struct{ ID, Body string }
 		Queries   []struct {
@@ -72,7 +71,6 @@ func TestKoreanIndexedRecall(t *testing.T) {
 }
 
 func TestKoreanRecallKeepsScopeValidityAndHistory(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	s := New(db)
 	current := commit(t, db, proposal("A", "도서관에서 공부를 한다."))
@@ -99,7 +97,6 @@ func TestKoreanRecallKeepsScopeValidityAndHistory(t *testing.T) {
 }
 
 func TestKoreanIndexRollsBackWithMemory(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	failure := errors.New("rollback")
 	err := db.Write(t.Context(), func(tx *canon.Tx) error {
@@ -128,7 +125,6 @@ func TestKoreanIndexRollsBackWithMemory(t *testing.T) {
 }
 
 func TestIndexedRecallPreservesLiteralNormalizationAndShortQueries(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	item := commit(t, db, proposal("A", "Mixed  CASE\n도서관에서 공부를 한다. a% xy"))
 	for _, text := range []string{"CASE 도서관", "mIxEd", "a%", "xy", "a", "도", "", "공부"} {
@@ -140,7 +136,6 @@ func TestIndexedRecallPreservesLiteralNormalizationAndShortQueries(t *testing.T)
 }
 
 func TestMemoryIndexAndSourceBecomeVisibleTogether(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	var item Item
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
@@ -168,7 +163,6 @@ func TestMemoryIndexAndSourceBecomeVisibleTogether(t *testing.T) {
 }
 
 func TestKoreanRecallChecksRestrictedEvidenceBeforeLimit(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	allowed := commit(t, db, proposal("B", "도서관에서 공부한다."))
 	restricted := proposal("A", "a private statement")
@@ -193,7 +187,6 @@ func TestKoreanRecallChecksRestrictedEvidenceBeforeLimit(t *testing.T) {
 }
 
 func TestKoreanIndexOfLongMemoryDeduplicatesPostings(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	item := commit(t, db, proposal("A", strings.Repeat("공부 ", 8192)+"도서관에서"))
 	for _, query := range []string{"공부", "도서관"} {
@@ -217,7 +210,6 @@ func TestKoreanIndexOfLongMemoryDeduplicatesPostings(t *testing.T) {
 }
 
 func TestKoreanRecallCannotBypassAnotherHoldersProtectedEvent(t *testing.T) {
-	t.Parallel()
 	db := database(t)
 	allowed := commit(t, db, proposal("B", "도서관에서 공부한다."))
 	protected := proposal("A", "a protected statement")

@@ -1,24 +1,23 @@
 {
-  "format": 2,
-  "status": "proposed",
-  "deferred_to": 371,
+  "format": 1,
+  "status": "awaiting_owner_confirmation",
   "confirmed_list": null,
   "proposed_list": [
     {
       "id": "macos-local",
-      "platform": "macos",
+      "platform": "macOS",
       "terminal": "Apple Terminal",
       "ssh": false
     },
     {
       "id": "lina-os-default",
-      "platform": "linux-omarchy",
+      "platform": "LINA OS",
       "terminal": "installed default terminal",
       "ssh": false
     },
     {
       "id": "macos-ssh",
-      "platform": "macos",
+      "platform": "macOS terminal, remote Linux application",
       "terminal": "Apple Terminal",
       "ssh": true
     }

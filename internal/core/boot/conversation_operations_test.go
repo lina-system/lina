@@ -186,7 +186,8 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				protocol.KindRecordRequest: "records", protocol.KindWebRequest: "web", protocol.KindA2aRequest: "a2a",
 				protocol.KindExportRequest: "replay", protocol.KindReplayRequest: "replay",
 				protocol.KindApprovalAnswer: "waiting", protocol.KindQuestionAnswer: "waiting", protocol.KindWaitingGet: "waiting",
-				protocol.KindWorkSwitchRequest: "work", protocol.KindProgressGet: "worker_lanes",
+				protocol.KindWorkSwitchRequest: "work", protocol.KindWorkControlRequest: "work",
+				protocol.KindProgressGet: "worker_lanes",
 				protocol.KindChannelRequest: "channels", protocol.KindAgentTalkGet: "exchanges", protocol.KindAgentTalkExpand: "exchanges",
 				protocol.KindAgentRequest: "agents", protocol.KindMemoryRequest: "memory",
 				protocol.KindPlanRequest: "planning", protocol.KindProgressDigestGet: "progress",
@@ -205,7 +206,6 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				for _, kind := range []protocol.Kind{protocol.KindConversationStart, protocol.KindHistoryGet, protocol.KindInput, protocol.KindInterrupt, protocol.KindResultGet} {
 					want[kind] = "conversation"
 				}
-				want[protocol.KindLauncherRequest] = "launcher"
 				for _, kind := range []protocol.Kind{protocol.KindStop, protocol.KindRunningGet, protocol.KindFollowUp, protocol.KindMultiTaskControl} {
 					want[kind] = "running"
 				}
@@ -213,7 +213,6 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				for _, topic := range []string{"core", "conversation:", "results:"} {
 					topics[topic] = protocol.Capability{Name: "conversation", Version: "1.0"}
 				}
-				topics["launcher"] = protocol.Capability{Name: "launcher", Version: "1.0"}
 				topics["running"] = protocol.Capability{Name: "running", Version: "1.0"}
 			}
 			if len(r.identity.Operations) != len(want) {

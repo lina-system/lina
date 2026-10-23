@@ -116,7 +116,6 @@ func ClientCombinationsFor(target string) []Combination {
 			{Name: "sign_in_relay", Version: "1.0"},
 			{Name: "lifecycle", Version: "1.0"},
 			{Name: "conversation", Version: "1.0"},
-			{Name: "launcher", Version: "1.0"},
 			{Name: "turn_activity", Version: "1.0"},
 			{Name: "replay", Version: "1.0"},
 			{Name: "growth", Version: "1.0"},
@@ -126,6 +125,7 @@ func ClientCombinationsFor(target string) []Combination {
 		Evidence: []string{
 			"go test ./e2e/m1 -run TestM3PlanDrafting",
 			"go test ./e2e/m1 -run TestM3OperationalSwitch",
+			"go test ./e2e/m1 -run TestM3WorkCommandsInstalledCore",
 			"go test ./e2e/m1 -run TestM2TUIRecordsInstalledCore",
 			"go test ./e2e/m1 -run TestM2ProgressWaitingInstalledCore",
 			"go test ./e2e/m1 -run TestM3WorkerLanes",
@@ -136,7 +136,6 @@ func ClientCombinationsFor(target string) []Combination {
 			"go test ./kit/protocol/conformance",
 			"go test ./e2e/m1 -run TestPlannedRestart",
 			"go test ./e2e/m1 -run TestM1TUIConversationInstalledCore",
-			"go test ./e2e/m1 -run TestM3LauncherInstalledCore",
 			"go test ./e2e/m1 -run TestM1InstalledToolActivity",
 			"go test ./e2e/m1 -run TestM1TUIAccountsInstalledCore",
 			"go test ./e2e/m1 -run TestM1TUIChannel",

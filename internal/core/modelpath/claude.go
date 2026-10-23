@@ -18,21 +18,11 @@ func FromEnv(getenv func(string) string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	apiKey, err := MessagesFromEnv(getenv)
-	if err != nil {
-		return nil, err
-	}
 	node, program, model := getenv("LINA_CLAUDE_NODE"), getenv("LINA_CLAUDE_ADAPTER"), getenv("LINA_CLAUDE_MODEL")
 	if node == "" && program == "" && model == "" {
-		if responses != nil && apiKey != nil {
-			return nil, errors.New("ambiguous model routes")
-		}
-		if responses != nil {
-			return responses, nil
-		}
-		return apiKey, nil
+		return responses, nil
 	}
-	if responses != nil || apiKey != nil || !filepath.IsAbs(node) || !filepath.IsAbs(program) || strings.TrimSpace(model) == "" || strings.ContainsAny(model, "\r\n\x00") {
+	if responses != nil || !filepath.IsAbs(node) || !filepath.IsAbs(program) || strings.TrimSpace(model) == "" || strings.ContainsAny(model, "\r\n\x00") {
 		return nil, errors.New("invalid Claude route")
 	}
 	adapter := &claudeproc.Adapter{Node: node, Program: program, Token: secret.New(getenv("CLAUDE_CODE_OAUTH_TOKEN"))}

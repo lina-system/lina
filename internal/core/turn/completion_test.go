@@ -48,7 +48,6 @@ func completionReply() ledger.Admission {
 }
 
 func TestCrashAfterTurnCompletionPreservesReply(t *testing.T) {
-	t.Parallel()
 	if root := os.Getenv("LINA_COMPLETION_CRASH_ROOT"); root != "" {
 		db := completionCrash{restartDB(t, root, 1)}
 		input := inputEvent(t, db.Store)
@@ -120,7 +119,6 @@ func TestCrashAfterTurnCompletionPreservesReply(t *testing.T) {
 }
 
 func TestLateCancellationPreservesCompletedReply(t *testing.T) {
-	t.Parallel()
 	db, cfg := database(t)
 	input := inputEvent(t, db)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -188,7 +186,6 @@ func TestLateCancellationPreservesCompletedReply(t *testing.T) {
 }
 
 func TestCompletionAndRepliesRollbackTogether(t *testing.T) {
-	t.Parallel()
 	for _, failure := range []string{"completion", "second_reply"} {
 		t.Run(failure, func(t *testing.T) {
 			db, _ := database(t)
@@ -248,7 +245,6 @@ func TestCompletionAndRepliesRollbackTogether(t *testing.T) {
 }
 
 func TestUnsuccessfulTurnsSkipCompletion(t *testing.T) {
-	t.Parallel()
 	for _, interrupted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "failed", true: "interrupted"}[interrupted], func(t *testing.T) {
 			db, _ := database(t)
@@ -283,7 +279,6 @@ func TestUnsuccessfulTurnsSkipCompletion(t *testing.T) {
 }
 
 func TestCompletionPreparationHasNoDeadline(t *testing.T) {
-	t.Parallel()
 	db, _ := database(t)
 	input := inputEvent(t, db)
 	// Assert the deadline boundary directly, without waiting for a slow disk or

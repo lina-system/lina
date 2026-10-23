@@ -30,20 +30,6 @@ import (
 // This scenario launches the real Core command. Only the model, ACP agent and
 // GitHub boundary are synthetic; dispatch, worktrees, commits and cards are real.
 func TestCursorReadinessThroughRunningCore(t *testing.T) {
-	runACPReadinessThroughRunningCore(t, acpReadinessScenario{
-		worker: "cursor", binary: "cursor-agent", version: "cursor-fixture-210",
-		refusedVersion: "cursor-fixture-210", versionProbe: true,
-		fallback: "gemini", fallbackVersion: "gemini-fixture-210", script: cursorAgentScript,
-	})
-}
-
-type acpReadinessScenario struct {
-	worker, binary, version, refusedVersion string
-	fallback, fallbackVersion, script       string
-	versionProbe                            bool
-}
-
-func runACPReadinessThroughRunningCore(t *testing.T, scenario acpReadinessScenario) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux and bubblewrap binding /proc/loadavg")
 	}
@@ -97,12 +83,12 @@ func runACPReadinessThroughRunningCore(t *testing.T, scenario acpReadinessScenar
 					t.Fatal(e)
 				}
 			}
-			names := []string{scenario.binary, "gh"}
+			names := []string{"cursor-agent", "gh"}
 			if mode == "needs-sign-in" {
-				names = append(names, scenario.fallback)
+				names = append(names, "gemini")
 			}
 			for _, name := range names {
-				write(filepath.Join(bin, name), scenario.script, 0700)
+				write(filepath.Join(bin, name), cursorAgentScript, 0700)
 			}
 			env := []string{"PATH=" + bin, "HOME=" + root, "XDG_CONFIG_HOME=" + root, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "LANG=C", "LINA_ACP_FIXTURE=" + fixture, "LINA_ACP_CASE=" + mode}
 			write(filepath.Join(bin, "systemctl"), "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$2\" in show) printf 'not-found\\n';; daemon-reload|enable) exit 0;; *) exit 97;; esac\n", 0700)
@@ -122,29 +108,12 @@ func runACPReadinessThroughRunningCore(t *testing.T, scenario acpReadinessScenar
 			}
 			versionSeen := false
 			for _, tool := range installed.Tools {
-				if tool.Name == scenario.binary {
-					versionSeen = tool.Path == filepath.Join(bin, scenario.binary) && tool.Version == scenario.version && tool.Status == "unverified"
+				if tool.Name == "cursor-agent" {
+					versionSeen = tool.Version == "cursor-fixture-210" && tool.Status == "unverified"
 				}
 			}
 			if !versionSeen {
-				t.Fatal("worker version was not recorded as unverified", installed.Tools)
-			}
-			installTrace, err := os.ReadFile(filepath.Join(fixture, "trace"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			probe := "initialize"
-			if scenario.versionProbe {
-				probe = "--version"
-			}
-			var primaryProbes []string
-			for line := range strings.SplitSeq(strings.TrimSpace(string(installTrace)), "\n") {
-				if strings.HasPrefix(line, scenario.binary+" ") {
-					primaryProbes = append(primaryProbes, line)
-				}
-			}
-			if len(primaryProbes) != 1 || primaryProbes[0] != scenario.binary+" "+probe {
-				t.Fatal("installation performed more than a version probe", primaryProbes)
+				t.Fatal("Cursor --version was not recorded as unverified", installed.Tools)
 			}
 			h.socket = installed.Socket
 			installedBinary := filepath.Join(state, "system/bin/lina")
@@ -240,7 +209,7 @@ func runACPReadinessThroughRunningCore(t *testing.T, scenario acpReadinessScenar
 						emitResponse(w, "Worker unavailable.", true)
 						return
 					}
-					emitPersonaCall(w, "dispatch", "dispatch_work", map[string]any{"repository": targetRepo.Load().(string), "base": "dev", "branch": "acp-result", "what": "Create result.txt", "why": "Exercise ACP worker readiness", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": "A committed result file with verified PR evidence", "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}})
+					emitPersonaCall(w, "dispatch", "dispatch_work", map[string]any{"repository": targetRepo.Load().(string), "base": "dev", "branch": "acp-result", "what": "Create result.txt", "why": "Exercise Cursor readiness", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": "A committed result file with verified PR evidence", "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}})
 					return
 				}
 				emitResponse(w, "Task accepted.", true)
@@ -424,9 +393,9 @@ func runACPReadinessThroughRunningCore(t *testing.T, scenario acpReadinessScenar
 					t.Fatal(err)
 				}
 				versionReported := false
-				wantWorker, wantVersion := scenario.worker, scenario.version
+				wantWorker, wantVersion := "cursor", "cursor-fixture-210"
 				if mode == "needs-sign-in" && phase == 0 {
-					wantWorker, wantVersion = scenario.fallback, scenario.fallbackVersion
+					wantWorker, wantVersion = "gemini", "gemini-fixture-210"
 				}
 				for _, observation := range progressLedger {
 					versionReported = versionReported || observation.Kind == "worker_progress" && strings.Contains(observation.Value, wantVersion) && strings.Contains(observation.Value, "unverified")
@@ -435,25 +404,22 @@ func runACPReadinessThroughRunningCore(t *testing.T, scenario acpReadinessScenar
 					t.Fatal("unverified version was not reported on the work card")
 				}
 				if mode == "needs-sign-in" && phase == 0 {
-					if len(record.ReadinessFailures) != 1 || record.ReadinessFailures[0].Worker != scenario.worker || record.ReadinessFailures[0].Code != "needs_sign_in" {
-						t.Fatal("worker readiness failure missing", record.ReadinessFailures)
-					}
-					if scenario.refusedVersion != "" && record.ReadinessFailures[0].Version != scenario.refusedVersion {
-						t.Fatal("worker readiness version missing", record.ReadinessFailures)
+					if len(record.ReadinessFailures) != 1 || record.ReadinessFailures[0] != (dispatch.ReadinessFailure{Worker: "cursor", Version: "cursor-fixture-210", Code: "needs_sign_in"}) {
+						t.Fatal("Cursor readiness failure missing", record.ReadinessFailures)
 					}
 					signInReported := false
 					for _, observation := range progressLedger {
-						signInReported = signInReported || observation.Kind == "worker_progress" && strings.Contains(observation.Value, scenario.worker) && strings.Contains(observation.Value, "needs sign-in")
+						signInReported = signInReported || observation.Kind == "worker_progress" && strings.Contains(observation.Value, "cursor") && strings.Contains(observation.Value, "needs sign-in")
 					}
 					if !signInReported {
-						t.Fatal("worker needs sign-in was not reported", progressLedger)
+						t.Fatal("Cursor needs sign-in was not reported", progressLedger)
 					}
-					if strings.Join(record.Tried, ",") != scenario.worker+","+scenario.fallback {
+					if strings.Join(record.Tried, ",") != "cursor,gemini" {
 						t.Fatal("wrong fallback attempts", record.Tried)
 					}
 				}
-				if phase == 1 && (strings.Join(record.Tried, ",") != scenario.worker || len(record.ReadinessFailures) != 0) {
-					t.Fatal("signed-in worker did not recover for the new task", record)
+				if phase == 1 && (strings.Join(record.Tried, ",") != "cursor" || len(record.ReadinessFailures) != 0) {
+					t.Fatal("signed-in Cursor did not recover for the new task", record)
 				}
 				if record.Worker != wantWorker || record.Version != wantVersion {
 					t.Fatalf("worker/version: %+v", record)
@@ -462,10 +428,10 @@ func runACPReadinessThroughRunningCore(t *testing.T, scenario acpReadinessScenar
 				if err != nil {
 					t.Fatal(err)
 				}
-				if strings.Contains(string(trace), scenario.binary+" --version") != scenario.versionProbe || !strings.Contains(string(trace), scenario.binary+" initialize") || !strings.Contains(string(trace), scenario.binary+" session/new") {
-					t.Fatal("incorrect worker probes", string(trace))
+				if !strings.Contains(string(trace), "cursor-agent --version") || !strings.Contains(string(trace), "cursor-agent session/new") {
+					t.Fatal("missing Cursor probes", string(trace))
 				}
-				if mode == "needs-sign-in" && phase == 0 && strings.Contains(string(trace), scenario.binary+" session/prompt") {
+				if mode == "needs-sign-in" && phase == 0 && strings.Contains(string(trace), "cursor-agent session/prompt") {
 					t.Fatal("prompt sent without sign-in")
 				}
 				write(filepath.Join(fixture, "release"), "", 0600)

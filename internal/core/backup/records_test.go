@@ -10,7 +10,6 @@ import (
 )
 
 func TestRecordsGenerationBeforeAndAfterFirstWrite(t *testing.T) {
-	t.Parallel()
 	cfg, _ := fixture(t)
 	repo, err := records.Open(cfg.Root, cfg.Canon)
 	if err != nil {

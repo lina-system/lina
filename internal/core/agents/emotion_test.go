@@ -12,7 +12,6 @@ import (
 )
 
 func TestEmotionCannotBeWrittenWithoutConfirmedEvidence(t *testing.T) {
-	t.Parallel()
 	s, _, _ := setup(t)
 	a := create(t, s, "")
 	state, err := s.State(t.Context(), a.ID)
@@ -26,7 +25,6 @@ func TestEmotionCannotBeWrittenWithoutConfirmedEvidence(t *testing.T) {
 }
 
 func TestEmotionLayersDecayAndStayWithinTheirAgentAndConversation(t *testing.T) {
-	t.Parallel()
 	s, db, root := setup(t)
 	a, b := create(t, s, ""), create(t, s, "")
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -83,7 +81,6 @@ func TestEmotionLayersDecayAndStayWithinTheirAgentAndConversation(t *testing.T) 
 }
 
 func TestEmotionSuppressorHidesStateWithoutErasingIt(t *testing.T) {
-	t.Parallel()
 	s, _, _ := setup(t)
 	a := create(t, s, "")
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -119,7 +116,6 @@ func TestEmotionSuppressorHidesStateWithoutErasingIt(t *testing.T) {
 }
 
 func TestSensitiveShortEmotionExpiresOnTheClock(t *testing.T) {
-	t.Parallel()
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	p := agents.DefaultEmotionPolicy()
 	state := agents.State{Affect: &agents.EmotionRecord{Short: map[string]agents.ShortEmotion{"chat": {At: now, Sensitive: true}}}}

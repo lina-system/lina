@@ -117,3 +117,77 @@ func admitGoal(t *testing.T, engine *goal.Engine) {
 		t.Fatal(err)
 	}
 }
+
+// TestPausedGoalLineAndRankOrder checks the two values the person's commands
+// change on a line: a paused goal says so in Now, and goal lines follow rank.
+func TestPausedGoalLineAndRankOrder(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	ctl, err := ctlfiles.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctl.Close()
+	if err = ctl.Acquire(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: canon.Migrations()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(t.Context())
+	repo, err := records.Open(root, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	engine, err := goal.NewEngine(goal.Config{DB: db, Records: stageDefinitions{repo}, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitGoal(t, engine)
+	if _, _, err = engine.Command(t.Context(), goal.GoalCommand{ID: "pause-g", Goal: "g", Person: "person", Command: goal.CommandPause}); err != nil {
+		t.Fatal(err)
+	}
+	read := func() []Entry {
+		t.Helper()
+		var units []Unit
+		if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+			units, err = Goals(t.Context(), tx, "person", map[string]string{"agent": "Agent"}, func(string) string { return "Prepare the trip" })
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return Compute(units)
+	}
+	lines := read()
+	if len(lines) != 1 {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if lines[0].Line.Now != design.Text(design.English, "progress.paused") {
+		t.Fatalf("now = %q, want the paused word", lines[0].Line.Now)
+	}
+	// Two ranked goals of one person follow rank, whatever their ids say.
+	second := goal.Goal{ID: "a", Person: "person", Agent: "agent", Conversation: "conversation", Summary: "Book the venue", Done: "The venue is booked", NoServiceReason: "plan", Scope: goal.GoalScope{Repositories: []string{"repo"}, Includes: "plan.md"}, Criteria: []goal.Criterion{{ID: "outcome", Statement: "The venue is booked", Check: goal.CriterionCheck{Kind: goal.RunEvidence, Method: "acceptance", Target: "repo"}}}}
+	if err = engine.Admit(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+	if lines = read(); len(lines) != 2 || lines[0].Ref != "g" || lines[1].Ref != "a" {
+		t.Fatalf("rank order = %+v, want the first-admitted goal first", lines)
+	}
+	if _, _, err = engine.Command(t.Context(), goal.GoalCommand{ID: "down", Goal: "g", Person: "person", Command: goal.CommandRankDown}); err != nil {
+		t.Fatal(err)
+	}
+	if lines = read(); len(lines) != 2 || lines[0].Ref != "a" || lines[1].Ref != "g" {
+		t.Fatalf("order after the move = %+v", lines)
+	}
+	// A stopped goal leaves the lines.
+	if _, _, err = engine.Command(t.Context(), goal.GoalCommand{ID: "stop-a", Goal: "a", Person: "person", Command: goal.CommandStop, Confirmed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if lines = read(); len(lines) != 1 || lines[0].Ref != "g" {
+		t.Fatalf("lines after the stop = %+v", lines)
+	}
+}

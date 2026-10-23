@@ -11,7 +11,7 @@ import (
 )
 
 func TestCoreConfiguredClaudeCredentialDoesNotReachWorkers(t *testing.T) {
-	for _, name := range []string{"LINA_RESPONSES_BASE_URL", "LINA_RESPONSES_MODEL", "LINA_RESPONSES_API_KEY", "LINA_CLAUDE_API_MODEL", "LINA_CLAUDE_API_KEY", "LINA_CLAUDE_API_EFFORT"} {
+	for _, name := range []string{"LINA_RESPONSES_BASE_URL", "LINA_RESPONSES_MODEL", "LINA_RESPONSES_API_KEY"} {
 		t.Setenv(name, "")
 	}
 	t.Setenv("LINA_CLAUDE_NODE", filepath.Join(t.TempDir(), "node"))
@@ -46,42 +46,5 @@ func TestCoreConfiguredClaudeCredentialDoesNotReachWorkers(t *testing.T) {
 	}
 	if os.Getenv("OPENAI_API_KEY") != "synthetic-worker-own-key" {
 		t.Fatal("unrelated worker configuration changed")
-	}
-}
-
-// The Messages route keeps its key inside the adapter. Neither Core's inherited
-// environment nor a worker's environment carries it after boot.
-func TestCoreConfiguredMessagesKeyDoesNotReachWorkers(t *testing.T) {
-	for _, name := range []string{"LINA_RESPONSES_BASE_URL", "LINA_RESPONSES_MODEL", "LINA_RESPONSES_API_KEY", "LINA_CLAUDE_NODE", "LINA_CLAUDE_ADAPTER", "LINA_CLAUDE_MODEL", "CLAUDE_CODE_OAUTH_TOKEN"} {
-		t.Setenv(name, "")
-	}
-	t.Setenv("LINA_CLAUDE_API_MODEL", "fixture-model")
-	t.Setenv("LINA_CLAUDE_API_KEY", "synthetic-messages-key")
-	root := t.TempDir()
-	if err := os.Chmod(root, 0700); err != nil {
-		t.Fatal(err)
-	}
-	controls := filepath.Join(root, "system/core")
-	if err := os.MkdirAll(controls, 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(controls, "main.json"), []byte(`{"main_id":"synthetic-main"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(controls, "lifecycle.json"), []byte(`{"schema":2}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if code := runCore([]string{"--state-root", root, "--socket", filepath.Join(root, "client.sock")}); code != 78 {
-		t.Fatalf("invalid lifecycle exit = %d", code)
-	}
-	if os.Getenv("LINA_CLAUDE_API_KEY") != "" {
-		t.Fatal("configured key remains in Core's environment")
-	}
-	for _, env := range [][]string{proc.InheritedEnvironment(), proc.WorkerEnvironment()} {
-		for _, entry := range env {
-			if strings.HasPrefix(entry, "LINA_CLAUDE_API_KEY=") {
-				t.Fatal("configured key remains available to a child")
-			}
-		}
 	}
 }

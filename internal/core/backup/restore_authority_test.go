@@ -39,7 +39,6 @@ func restoreDB(t *testing.T) *canon.Store {
 }
 
 func TestRestoreInvalidatesAuthority(t *testing.T) {
-	t.Parallel()
 	db := restoreDB(t)
 	states := []tools.State{tools.None, tools.Unknown, tools.Applied, tools.Failed, tools.Cancelled, tools.Refused}
 	original := map[tools.State]string{}
@@ -140,7 +139,6 @@ func TestRestoreInvalidatesAuthority(t *testing.T) {
 }
 
 func TestRestoreAuthorityFailureIsAtomic(t *testing.T) {
-	t.Parallel()
 	db := restoreDB(t)
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
 		if _, err := tx.ExecContext(t.Context(), `INSERT INTO authority_targets VALUES('target','revision','agent','claim')`); err != nil {
@@ -166,7 +164,6 @@ func TestRestoreAuthorityFailureIsAtomic(t *testing.T) {
 }
 
 func TestRestoreInvalidatesMergePermissionButKeepsUncertainReservation(t *testing.T) {
-	t.Parallel()
 	db := restoreDB(t)
 	service := authority.NewMerges(db, 9)
 	for _, id := range []string{"ready", "unknown"} {
@@ -214,7 +211,6 @@ func TestRestoreInvalidatesMergePermissionButKeepsUncertainReservation(t *testin
 }
 
 func TestRestoreCannotResetWorkerRecoveryAllowance(t *testing.T) {
-	t.Parallel()
 	db := restoreDB(t)
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO worker_recovery VALUES('thread','{"ID":"thread","State":"running","Retries":0}');

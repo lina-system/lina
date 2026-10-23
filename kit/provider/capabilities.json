@@ -1,6 +1,5 @@
 {
   "chatgpt": ["reasoning_state"],
   "responses_api_key": ["reasoning_state"],
-  "claude": [],
-  "claude_api_key": ["prefix_cache", "cache_marks", "cache_lifetime_1h", "cache_lifetime_5m", "reasoning_state", "batch"]
+  "claude": []
 }

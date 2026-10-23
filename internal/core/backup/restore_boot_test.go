@@ -13,7 +13,6 @@ import (
 )
 
 func TestCoreRefusesIncompleteRestoreBeforeOpeningServices(t *testing.T) {
-	t.Parallel()
 	root, err := os.MkdirTemp("", "restore-boot-")
 	if err != nil {
 		t.Fatal(err)

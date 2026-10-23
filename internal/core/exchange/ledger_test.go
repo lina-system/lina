@@ -165,7 +165,7 @@ func TestLargeMailboxRollbackDoesNotRetainMaterialMetadata(t *testing.T) {
 	req := request()
 	req.HandOff.Wanted = strings.Repeat("detail ", 4000)
 	receipt, err := exchange.NewWithMaterials(rollback{db}, material).Start(t.Context(), req, now)
-	if !errors.Is(err, errRollback) || receipt.ID != "" {
+	if !errors.Is(err, rollbackError) || receipt.ID != "" {
 		t.Fatalf("rollback receipt: %+v %v", receipt, err)
 	}
 	for _, table := range []string{"assets", "asset_revisions", "conv_event", "exch_msg", "exchanges"} {

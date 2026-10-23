@@ -64,9 +64,9 @@ func success(w http.ResponseWriter, id json.RawMessage, result any) {
 func authFailure(w http.ResponseWriter, err error) {
 	if errors.Is(err, ErrAuthentication) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="a2a"`)
-		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		http.Error(w, "Authentication required", 401)
 	} else {
-		http.Error(w, "Access denied", http.StatusForbidden)
+		http.Error(w, "Access denied", 403)
 	}
 }
 func (s *Server) authenticate(ctx context.Context, c Config, p Publication, header string) (Principal, Binding, error) {
@@ -118,17 +118,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer func() { <-s.slots }()
 	default:
 		w.Header().Set("Retry-After", "1")
-		http.Error(w, "Capacity exhausted", http.StatusTooManyRequests)
+		http.Error(w, "Capacity exhausted", 429)
 		return
 	}
 	if s.Ready != nil && !s.Ready() {
 		w.Header().Set("Retry-After", "1")
-		http.Error(w, "Core recovering", http.StatusServiceUnavailable)
+		http.Error(w, "Core recovering", 503)
 		return
 	}
 	c, err := s.Config()
 	if err != nil {
-		http.Error(w, "Publication unavailable", http.StatusServiceUnavailable)
+		http.Error(w, "Publication unavailable", 503)
 		return
 	}
 	route := strings.TrimPrefix(r.URL.Path, "/a2a/")
@@ -166,7 +166,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, err := io.ReadAll(io.LimitReader(r.Body, MaxInput+1))
 	if err != nil || len(raw) > MaxInput {
-		http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
+		http.Error(w, "Request too large", 413)
 		return
 	}
 	var req rpcRequest
@@ -313,9 +313,9 @@ func (s *Server) storeFailure(w http.ResponseWriter, id json.RawMessage, err err
 		failure(w, id, -32602, "Invalid parameters")
 	case errors.Is(err, ErrCapacity):
 		w.Header().Set("Retry-After", "1")
-		http.Error(w, "Capacity exhausted", http.StatusTooManyRequests)
+		http.Error(w, "Capacity exhausted", 429)
 	default:
-		http.Error(w, "Storage unavailable", http.StatusServiceUnavailable)
+		http.Error(w, "Storage unavailable", 503)
 	}
 }
 func card(c Config, p Publication) any {
@@ -340,7 +340,7 @@ func (s *Server) observe(w http.ResponseWriter, r *http.Request, id json.RawMess
 		c, err := s.Config()
 		if err != nil {
 			if !started {
-				http.Error(w, "Publication unavailable", http.StatusServiceUnavailable)
+				http.Error(w, "Publication unavailable", 503)
 			}
 			return
 		}
@@ -518,7 +518,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, req rpcRequest, c 
 	query := digest([]any{p.ID, pr.Key(), q})
 	key, err := s.cursorKey(c)
 	if err != nil {
-		http.Error(w, "Publication unavailable", http.StatusServiceUnavailable)
+		http.Error(w, "Publication unavailable", 503)
 		return
 	}
 	var cur cursor

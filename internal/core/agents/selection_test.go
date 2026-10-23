@@ -11,7 +11,6 @@ import (
 )
 
 func TestSelectionIsDurableScopedAndRejectsUnavailableAgents(t *testing.T) {
-	t.Parallel()
 	s, db, root := setup(t)
 	a, b := create(t, s, ""), create(t, s, "")
 	if err := s.Select(t.Context(), a.ID, "person"); err != nil {

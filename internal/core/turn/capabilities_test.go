@@ -13,7 +13,6 @@ import (
 )
 
 func TestCapabilitiesRecordedBeforeEveryTurnRequest(t *testing.T) {
-	t.Parallel()
 	db, _ := database(t)
 	p := preparation()
 	p.Digest = assemble.Digest

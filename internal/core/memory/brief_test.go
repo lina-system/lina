@@ -9,7 +9,6 @@ import (
 )
 
 func TestPersonBriefCitationsTopicAgeAndSupersededJobs(t *testing.T) {
-	t.Parallel()
 	db := jobDatabase(t)
 	store := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}
@@ -71,7 +70,6 @@ func TestPersonBriefCitationsTopicAgeAndSupersededJobs(t *testing.T) {
 }
 
 func TestBriefEmptyBackoffAndRevocation(t *testing.T) {
-	t.Parallel()
 	db := jobDatabase(t)
 	store := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}
@@ -105,7 +103,6 @@ func TestBriefEmptyBackoffAndRevocation(t *testing.T) {
 }
 
 func TestBriefNeverLeavesAndCrossAgentScope(t *testing.T) {
-	t.Parallel()
 	db := jobDatabase(t)
 	store := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}
@@ -123,7 +120,6 @@ func TestBriefNeverLeavesAndCrossAgentScope(t *testing.T) {
 }
 
 func TestBriefDispatchRechecksPreparedEvidence(t *testing.T) {
-	t.Parallel()
 	db := jobDatabase(t)
 	store := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}

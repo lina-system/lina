@@ -127,23 +127,8 @@ func NewCredential(account AccountID, kind AuthKind, bearer string) Credential {
 }
 func (Credential) String() string   { return "[credential]" }
 func (Credential) GoString() string { return "[credential]" }
-
-// Ready reports whether the credential holds a usable value. A caller that
-// finds it empty reports needs sign-in before preparing a request.
-func (c Credential) Ready() bool { return c.bearer.Ready() }
 func (c Credential) Authorize(r *http.Request) error {
-	return c.ApplyHeader(r, "Authorization", "Bearer ")
-}
-
-// ApplyHeader writes the credential into a provider's own header, such as
-// x-api-key. The header name and prefix are fixed by the adapter, and the
-// value never leaves this call. A missing or unusable credential is a sign-in
-// failure, so no adapter can send an empty key.
-func (c Credential) ApplyHeader(r *http.Request, name, prefix string) error {
-	if r == nil {
-		return &Failure{Kind: NeedsSignIn}
-	}
-	if err := secret.InjectHeader(r.Header, name, prefix, c.bearer); err != nil {
+	if err := secret.InjectHeader(r.Header, "Authorization", "Bearer ", c.bearer); err != nil {
 		return &Failure{Kind: NeedsSignIn}
 	}
 	return nil
@@ -218,9 +203,6 @@ type Meta struct {
 	Class            Class
 	Usage            Usage
 	RuntimeSessionID string
-	// Batch is the deferred submission id when a provider served the request
-	// through a batch tier. Empty means no batch was used.
-	Batch string
 }
 
 // Money is a reported estimate in millionths of the named currency.

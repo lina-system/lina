@@ -17,7 +17,6 @@ import (
 )
 
 func TestLargePersonaBackup(t *testing.T) {
-	t.Parallel()
 	cfg, _ := fixture(t)
 	store, err := agents.Open(cfg.Root, cfg.Canon)
 	if err != nil {
@@ -44,7 +43,6 @@ func TestLargePersonaBackup(t *testing.T) {
 }
 
 func TestCommitIntegrity(t *testing.T) {
-	t.Parallel()
 	for _, tc := range []struct {
 		name, raw               string
 		tamper, corrupt, cancel bool

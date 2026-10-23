@@ -18,7 +18,6 @@ import (
 )
 
 func TestRestoreSurvivesProcessDeath(t *testing.T) {
-	t.Parallel()
 	if root := os.Getenv("LINA_RESTORE_CRASH_ROOT"); root != "" {
 		cfg, store := fixtureAt(t, root)
 		material(t, store)

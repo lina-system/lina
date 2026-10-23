@@ -12,7 +12,6 @@ import (
 )
 
 func TestVersionSpaceDerivedAndEmptyDirectories(t *testing.T) {
-	t.Parallel()
 	cfg, _ := fixture(t)
 	store, err := agents.Open(cfg.Root, cfg.Canon)
 	if err != nil {
@@ -72,7 +71,6 @@ func TestVersionSpaceDerivedAndEmptyDirectories(t *testing.T) {
 	}
 }
 func TestCopyCancellationAndCorruption(t *testing.T) {
-	t.Parallel()
 	for _, mode := range []string{"cancel", "corrupt", "special"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, s := fixture(t)
@@ -115,7 +113,6 @@ func TestCopyCancellationAndCorruption(t *testing.T) {
 }
 
 func TestPostCopyDamageCannotBecomeExpectedHash(t *testing.T) {
-	t.Parallel()
 	cfg, _ := fixture(t)
 	if err := os.Mkdir(filepath.Join(cfg.Root, "workspace"), 0700); err != nil {
 		t.Fatal(err)

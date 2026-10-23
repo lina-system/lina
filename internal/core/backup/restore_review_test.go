@@ -23,7 +23,6 @@ import (
 )
 
 func TestRestoreReviewPreservesInstalledMigrationNumbers(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -85,7 +84,6 @@ func reviewGeneration(t *testing.T) (RestoreConfig, *ctlfiles.Store) {
 }
 
 func TestRestoreReviewClearsOnlyVerifiedHalt(t *testing.T) {
-	t.Parallel()
 	for _, valid := range []bool{true, false} {
 		t.Run(map[bool]string{true: "valid", false: "malformed"}[valid], func(t *testing.T) {
 			cfg, ctl := reviewGeneration(t)
@@ -141,7 +139,6 @@ func TestRestoreReviewClearsOnlyVerifiedHalt(t *testing.T) {
 }
 
 func TestRestoreReviewIgnoresOnlyCommandProvenance(t *testing.T) {
-	t.Parallel()
 	cfg, _ := reviewGeneration(t)
 	cfg.Artifacts = map[string]string{"lina": "test", "backup_command": "rebuilt-command"}
 	cfg.boundary = func(at string) error {
@@ -168,7 +165,6 @@ func TestRestoreReviewIgnoresOnlyCommandProvenance(t *testing.T) {
 }
 
 func TestRestoreReviewReplacesCorruptTarget(t *testing.T) {
-	t.Parallel()
 	for _, fence := range []string{"valid", "missing", "malformed"} {
 		t.Run(fence, func(t *testing.T) {
 			cfg, _ := reviewGeneration(t)
@@ -211,7 +207,6 @@ func TestRestoreReviewReplacesCorruptTarget(t *testing.T) {
 }
 
 func TestRestoreReviewChecksNewerTargetGenerations(t *testing.T) {
-	t.Parallel()
 	cfg, store := fixture(t)
 	_, err := ledger.New(cfg.Canon, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "source", ConversationID: "conversation", AgentID: "agent", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: "synthetic violet"})
 	if err != nil {
@@ -272,7 +267,6 @@ func TestRestoreReviewChecksNewerTargetGenerations(t *testing.T) {
 }
 
 func TestRestoreReviewCannotReactivateRetainedCredentials(t *testing.T) {
-	t.Parallel()
 	db := restoreDB(t)
 	vaultRoot := t.TempDir()
 	if err := os.Chmod(vaultRoot, 0700); err != nil {

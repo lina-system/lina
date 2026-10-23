@@ -265,28 +265,11 @@ func (h *harness) connectWithin(core *process, budget time.Duration) net.Conn {
 	defer cancel()
 	retry := time.NewTicker(5 * time.Millisecond)
 	defer retry.Stop()
-	// Both bounds end in this loop, and a dial that started before a deadline
-	// can report its own timeout before the context records the cancellation.
-	// Decide by the deadlines the loop owns, so a short scenario allowance is
-	// never reported as a Core startup or protocol fault.
-	notListening := func() {
-		if deadline, ok := h.ctx.Deadline(); ok && !time.Now().Before(deadline) {
-			h.t.Fatalf("Core did not listen: scenario context expired")
-		}
-		h.t.Fatalf("Core did not listen within %s", budget)
-	}
-	timeout := func(err error) bool {
-		var netErr net.Error
-		return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &netErr) && netErr.Timeout()
-	}
 	for {
 		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", h.socket)
 		if err == nil {
 			h.t.Cleanup(func() { conn.Close() })
 			return conn
-		}
-		if timeout(err) {
-			notListening()
 		}
 		// Retry only socket startup, never a broken protocol exchange. Progress
 		// is a successful connection, not an elapsed startup delay.
@@ -297,7 +280,7 @@ func (h *harness) connectWithin(core *process, budget time.Duration) net.Conn {
 		case <-core.done:
 			h.t.Fatalf("Core exited before listening: %v; stderr: %s", core.err, &core.stderr)
 		case <-ctx.Done():
-			notListening()
+			h.t.Fatalf("Core did not listen: %v", ctx.Err())
 		case <-retry.C:
 		}
 	}
