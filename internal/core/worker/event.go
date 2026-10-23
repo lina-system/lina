@@ -4,6 +4,7 @@ package worker
 import (
 	"encoding/json"
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/worker/doing"
 
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -20,6 +21,7 @@ const (
 )
 
 type Event struct {
+	Doing    *doing.Snapshot
 	Thread   Thread
 	Kind     EventKind
 	Progress *Progress

@@ -6,6 +6,16 @@ selection runs it once; there is no recursive test runner. Builds are shared,
 state roots are private, children are joined and temporary state is removed.
 Existing persona-growth extensions still use this harness and `../m2/` fixtures.
 
+The shared conversation client checks admission before subscribing, so its
+readiness receive loop cannot consume live conversation events. It still
+correlates each probe reply and retries only an explicit recovery refusal.
+`TestConversationReadinessBeforeSubscription` checks the ordering through the
+real client server after an unavailable probe. `TestM2WorkerFixtureFinishGate`
+waits for the synthetic worker to enter its completion gate before requesting
+a second snapshot, then checks one completion and the result file. The gate
+wait runs outside the worker request loop. `TestM2InstalledWorkerOutcome`
+exercises the corresponding worker, file read-back and restart path in Core.
+
 This map follows the nine acceptance checks and failure injections in
 [LINA 1](../../docs/design/go-roadmap.md#lina-1). External providers and Telegram
 are synthetic wires; the production stores, operations, Core and TUI are real.
@@ -27,6 +37,13 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 | 9. Waiting, running, cards, unchanged output, spikes | `TestM1WaitingRunningNotices`, `TestM1TUICards`, `TestM1TUIApprovalsInstalledCore`, `TestM1TurnBudgetHandoffInstalledCore` and the TUI stream/recovery/resize fixtures cover ordering, counts and cards. Foundation also runs the recording-writer checks `TestUnchangedConnectionWritesNothing`, `TestConversationDoneReplacesStreamAndUnchangedWritesNothing` and `TestConversationMarkdownProfilesAndUnchangedOutput` in `internal/tui/ui`. They compare exact byte counts synchronously, without idle sleeps. Physical spike evidence remains the prerequisite below. |
 
 Failure coverage also includes:
+
+- `TestM2InstalledWorkerOutcome`: the pending-at-restart case releases the
+  worker only after Core emits the successful `start-worker` tool activity.
+  The provider continuation waits behind that release, so it cannot supply
+  the barrier. A committed completion with no claimed follow-up gates restart;
+  recovery must read the worker's file, deliver one reply and retain the result
+  without relaunching the worker. The 30-second scenario deadline is unchanged.
 
 - `TestM1TurnBudgetHandoffInstalledCore` keeps the complete long task name
   visible across wrapped rows in the 120-column terminal's running panel.

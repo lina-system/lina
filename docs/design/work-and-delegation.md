@@ -497,7 +497,11 @@ remain ordered by id with an exclusive `after` cursor, matching record search.
 
 Core checks dependency targets and cycles under the same writer lock as
 publication. Targets must be the person's existing to-dos; belonging targets
-must be that person's projects or areas. A self-edge or transitive cycle returns
+must be that person's projects or areas. A planning draft's dependency targets
+must be to-dos in that draft, including entries published together at confirmation.
+Core rejects project dependency targets before saving a `plan_view` preview,
+through the completed-invalid rejection path in [Planning](cognition-and-life.md#planning).
+A self-edge or transitive cycle returns
 `dependency_cycle` without changing the file, index or saved revision. The
 `blocked` overlay is queried from direct nonterminal blockers, never stored;
 completed or canceled predecessors no longer block. Human completion remains a
@@ -1009,6 +1013,8 @@ holds completion until the initial conversation closes, checks the persona's
 file read-back and single result, and asks for the outcome after Core restart.
 It also restarts after the completion is committed but before its queued
 follow-up starts, checking one recovered reply and no worker relaunch.
+That boundary follows Core's successful worker-start tool event and committed
+completion, independently of the provider's next response or elapsed time.
 The separately opted-in installed-Codex test preserves the user's setup;
 its file-tool probe encountered a worker approval, so live approval/file execution
 is not counted as session acceptance evidence.
@@ -1151,15 +1157,26 @@ sends no prompt and retains no remote error text or account data. A protocol
 or connection failure is not evidence of an authentication refusal.
 Dispatch retains the refused worker, probed version and `needs_sign_in` code
 in its record without creating a worker run or receipt. After confirmed child
-cleanup, it uses the existing eligibility block and chooser to try the next
-worker within the existing two-worker limit. The replacement's work card also
-reports which worker needs sign-in. Explicit worker selection stays explicit;
+cleanup, it uses the task's attempted-worker exclusion and chooser to try the
+next worker within the existing two-worker limit. A readiness refusal does not
+block the worker's quota for other tasks: a new task rechecks the session so
+external sign-in can restore delegation, including after Core restarts. It
+does not retry an already refused worker within the same task. Actual quota
+and in-turn failure blocks retain their existing recovery rules. The replacement's
+work card also reports which worker needs sign-in. Explicit worker selection stays explicit;
 other start failures remain uncertain and are not retried.
+
+On startup, an old unmeasured worker-wide error block can be invalidated only
+when the dispatch history attributes every attempt at that worker to a
+definitive readiness refusal. Measured, account-specific or ambiguous blocks
+remain subject to quota recovery; a past sign-in refusal alone cannot clear them.
 
 `TestCursorReadinessThroughRunningCore` installs Core with synthetic Cursor and
 Gemini executables. It covers Cursor's unverified CLI version, the sign-in
 refusal and fallback, and a signed-in Cursor task producing a committed file
-and adapter-derived receipt. A live Cursor account test remains opt-in.
+and adapter-derived receipt. After a refusal and fallback, it also signs in
+externally, restarts Core and dispatches a new task to Cursor through completion.
+A live Cursor account test remains opt-in.
 
 The optional local graph scheduler also checks its initial quota observation
 before releasing recovered tasks. A failed or unanswered quota read disables
@@ -2011,7 +2028,7 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 - The progress of a 목표 is the share of its 일 that are done, and its stage is that of its least advanced running 일.
 - Now is, in this order: 확인 필요 (needs you) and the subject of its row while a row of "Waiting for me" belongs to it; else 일시정지 (paused) while the person has paused it; else the name of the earliest-started step in progress, followed by the number of the other steps in progress ("로그인 화면 수정 외 1"); else its queue reason and place, or 대기 (waiting) and its one reason or wait (see Order, pause and run limit); else the stage word 설계, 확인 or 끝. It changes only when a step starts or ends, a wait or row opens or closes, or the goal's pause, rank or place changes.
 - Started is when the goal was handed over, or when a run that serves no goal started. Elapsed time runs from it to now, or to the finish of a done line. Core records the instant in new work-ledger events and preserves it through retries and projection rebuilds. Legacy events with no timestamp stay unknown. Live conversation workers use their Core launch time; independent background runs use their recorded creation time.
-- Before a plan's stages exist, Now reflects the observed execution: in progress, running a command, editing files, preparing a reply or using a tool. A pending person request takes precedence and supplies its subject. These are Core activity classifications, not worker prose, command arguments, reasoning or completion claims. Repeated deltas in the same activity do not change Now; an activity change is retained for durable dispatched work. Plan stage and percentage remain unknown until observed.
+- Before a plan's stages exist, Now prefers the worker's existing session title and current to-do item: `title · current step`, either alone when only one is observed. Core reads Claude Code `ai-title`, TodoWrite and session task files; Codex thread names and `update_plan`; Gemini `write_todos`; Cursor `todo_write`; opencode titles and todos; and ACP session metadata and plan entries. Streaming readers consume each new record once, file readers retain append offsets, and rewritten task/document snapshots are read only when changed. An empty plan clears the current step. Core masks secrets, removes terminal controls and active markup, and limits the line to 120 Unicode characters before storing or publishing it. Busy/idle and the last transition time come from those observations and adapter lifecycle events; silence changes neither. No prompt asks for a progress report and no model call produces this line. The next adapter event carries the observation to the work card and sidebar, using the existing progress publication window. The line is display evidence, never a completion verdict or plan percentage. When neither title nor current step is observed, Now reflects the observed execution: in progress, running a command, editing files, preparing a reply or using a tool. A pending person request takes precedence and supplies its subject. These fallback labels are Core activity classifications, not worker prose, command arguments, reasoning or completion claims. Repeated deltas in the same activity do not change Now; an activity change is retained for durable dispatched work. Plan stage and percentage remain unknown until observed.
 - A value that cannot be observed is unknown and is shown as unknown, never as zero, as the rule of Plans says. A line says done only when the done condition is met.
 - A 목표 has a line when one of its 일 runs or something waits on the person. An 일 that belongs to a 목표 is a line below it, and an 일 that stands alone is a line of its own. A goal that is a single 할 일, and a background run that serves no goal, is a line of its own whose stage list is its one step. A finished item leaves the lines once the person has seen it.
 - Shared overview rows keep each goal immediately followed by its children, even when their execution states differ. Core supplies a separate flat card order for the work panel; sorting those cards never moves the shared rows or changes their depth.
