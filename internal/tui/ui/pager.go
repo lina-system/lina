@@ -16,30 +16,31 @@ import (
 
 type textPager struct {
 	workCard, workStage, workStep string
-	surface                       *surfacePager
-	result                        *resultPager
-	board                         *boardView
-	records                       *recordPager
-	recordID                      string
-	tool                          bool
-	developer, developerBusy      bool
-	developerID                   string
-	lanes                         state.WorkerLanes
-	laneNext                      *string
-	transcript                    bool
-	running                       bool
-	progress                      bool
-	waiting                       bool
-	selected                      int
-	runID                         string
-	next                          *json.Number
-	open                          bool
-	text                          string
-	cardID                        string
-	followEnd                     bool
-	offset                        int
-	query                         string
-	searching                     bool
+
+	surface                  *surfacePager
+	result                   *resultPager
+	board                    *boardView
+	records                  *recordPager
+	recordID                 string
+	tool                     bool
+	developer, developerBusy bool
+	developerID              string
+	lanes                    state.WorkerLanes
+	laneNext                 *string
+	transcript               bool
+	running                  bool
+	progress                 bool
+	waiting                  bool
+	selected                 int
+	runID                    string
+	next                     *json.Number
+	open                     bool
+	text                     string
+	cardID                   string
+	followEnd                bool
+	offset                   int
+	query                    string
+	searching                bool
 }
 
 func (m *shellModel) openPager(text string) {

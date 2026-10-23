@@ -295,6 +295,40 @@ func TestM3WorkPanelStages(t *testing.T) {
 		}
 		t.Logf("%s: %s", v.Check, v.Detail)
 	}
+	// Keep the fan-out open while its actual workers finish. A replacement
+	// projection must remove its worker rows without closing the work or draft.
+	terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "LANG=en_US.UTF-8", "LC_ALL=en_US.UTF-8"}, false, true, 100, scenario.Height)
+	waitScreen := func(name string, predicate func(tuiterm.Snapshot) bool) tuiterm.Snapshot {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+		defer cancel()
+		snapshot, err := terminal.screen.Wait(ctx, predicate)
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, screenText(snapshot))
+		}
+		return snapshot
+	}
+	waitScreen("composer", func(s tuiterm.Snapshot) bool { return s.AltScreen && !s.CursorHidden })
+	h.keys(terminal, "keep draft")
+	waitScreen("draft", func(s tuiterm.Snapshot) bool { return strings.Contains(screenText(s), "keep draft") })
+	h.keys(terminal, "\x10")
+	waitScreen("panel", func(s tuiterm.Snapshot) bool {
+		return s.CursorHidden && panelCellRows(s, 0, 100)[1] == design.Text(design.English, "work.title")
+	})
+	projection := panelProjection(t, h)
+	fanIndex := 0
+	for i, row := range projection {
+		if row.Ref == cards[3].ID {
+			fanIndex = i
+			break
+		}
+	}
+	h.keys(terminal, strings.Repeat("\x1b[B", fanIndex)+"\r")
+	waitScreen("fan stage list", func(s tuiterm.Snapshot) bool {
+		return strings.HasPrefix(panelCellRows(s, 0, 100)[1], "‹ "+projection[fanIndex].Line.Name)
+	})
+	h.keys(terminal, "\r")
+	waitScreen("live fan workers", func(s tuiterm.Snapshot) bool { return strings.Contains(screenText(s), "[stub]") })
 	close(world.releaseAll)
 	landed := awaitPanelStages(t, h, func(rows []protocol.ProgressRow) bool {
 		if len(rows) != len(cards) || panelWorkerCount(rows) != 0 {
@@ -321,6 +355,19 @@ func TestM3WorkPanelStages(t *testing.T) {
 	if count != 101 {
 		t.Fatalf("verified %d worker artifacts, want all 101 corpus steps", count)
 	}
+	snapshot := waitScreen("landed workers removed", func(s tuiterm.Snapshot) bool {
+		return s.CursorHidden && strings.HasPrefix(panelCellRows(s, 0, 100)[1], "‹ "+projection[fanIndex].Line.Name) && !strings.Contains(screenText(s), "[stub]")
+	})
+	t.Logf("landed fan retains its opened work\n%s", screenText(snapshot))
+	h.keys(terminal, "\x1b")
+	waitScreen("cards restored", func(s tuiterm.Snapshot) bool {
+		return panelCellRows(s, 0, 100)[1] == design.Text(design.English, "work.title")
+	})
+	h.keys(terminal, "\x1b")
+	waitScreen("draft restored", func(s tuiterm.Snapshot) bool { return !s.CursorHidden && strings.Contains(screenText(s), "keep draft") })
+	h.keys(terminal, "\x04")
+	terminal.process.wait(t, 0)
+	h.expectTerminalRestored(terminal)
 	t.Logf("Core admitted all 101 worker artifacts; no landed step retained a worker row")
 }
 
@@ -435,7 +482,7 @@ func recordPanelStageViews(t *testing.T, h *harness, c *panelCase, projection []
 				if len(panel) < 3 || !strings.HasPrefix(panel[1], back) || !strings.Contains(panel[1], row.Line.Name) {
 					return false
 				}
-				body := strings.Join(panel[2:c.Height-4], "\n")
+				body := strings.Join(panel[2:c.Height-3], "\n")
 				if expanded && panelRowHasWorker(row) {
 					return strings.Contains(body, "[stub]")
 				}
@@ -446,7 +493,7 @@ func recordPanelStageViews(t *testing.T, h *harness, c *panelCase, projection []
 			}
 			view := panelStageView{Card: row.Ref}
 			panel := panelCellRows(snap, x, width)
-			for _, line := range panel[2 : c.Height-4] {
+			for _, line := range panel[2 : c.Height-3] {
 				if strings.TrimSpace(line) != "" {
 					view.Rows = append(view.Rows, line)
 				}
@@ -498,7 +545,7 @@ func recordPanelStageViews(t *testing.T, h *harness, c *panelCase, projection []
 			h.keys(terminal, "\x1b")
 			if _, err := wait(func(s tuiterm.Snapshot) bool {
 				panel := panelCellRows(s, x, width)
-				return !strings.Contains(strings.Join(panel[2:c.Height-4], "\n"), "[stub]")
+				return !strings.Contains(strings.Join(panel[2:c.Height-3], "\n"), "[stub]")
 			}); err != nil {
 				t.Fatal("collapse", err)
 			}

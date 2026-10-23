@@ -48,37 +48,38 @@ type workerRuntime struct {
 }
 type workerSession struct {
 	goalSession, goalPerson, goalAgent, goalWorker string
-	cancelTask                                     func(context.Context) error
-	recoveryMu                                     sync.Mutex
-	recovery                                       recovery.Record
-	ownerControl                                   sync.Mutex
-	ownerRequests                                  map[string]string
-	adapter                                        worker.Adapter
-	close                                          func() error
-	compatibility                                  codex.Compatibility
-	origin                                         *conversationRuntime
-	input                                          ledger.Event
-	thread                                         worker.Thread
-	executionGeneration                            int
-	packet                                         string
-	workdir                                        string
-	scheduled                                      bool
-	answered                                       func(context.Context, worker.Thread)
-	started                                        time.Time
-	activity                                       string
-	doing                                          string
-	doingTurn                                      string
-	approvals                                      map[string]worker.Event
-	questions                                      map[string]*workerQuestion
-	output                                         string
-	outputThread                                   worker.Thread // Scheduled output belongs to one exact execution.
-	process                                        lease.Lease
-	mu                                             sync.Mutex
-	active                                         map[string]lease.Lease
-	control                                        sync.Mutex
-	done                                           chan struct{}
-	reservation                                    string
-	reservationTurn                                string
+
+	cancelTask          func(context.Context) error
+	recoveryMu          sync.Mutex
+	recovery            recovery.Record
+	ownerControl        sync.Mutex
+	ownerRequests       map[string]string
+	adapter             worker.Adapter
+	close               func() error
+	compatibility       codex.Compatibility
+	origin              *conversationRuntime
+	input               ledger.Event
+	thread              worker.Thread
+	executionGeneration int
+	packet              string
+	workdir             string
+	scheduled           bool
+	answered            func(context.Context, worker.Thread)
+	started             time.Time
+	activity            string
+	doing               string
+	doingTurn           string
+	approvals           map[string]worker.Event
+	questions           map[string]*workerQuestion
+	output              string
+	outputThread        worker.Thread // Scheduled output belongs to one exact execution.
+	process             lease.Lease
+	mu                  sync.Mutex
+	active              map[string]lease.Lease
+	control             sync.Mutex
+	done                chan struct{}
+	reservation         string
+	reservationTurn     string
 }
 
 type workerArgs struct {
