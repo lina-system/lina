@@ -4,9 +4,11 @@ package e2e_test
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/lina/internal/core/runs"
 	"net/http"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -22,13 +24,20 @@ func TestM3StepGraphInstalledCore(t *testing.T) {
 	installedCodeGoal(t, "step-graph")
 }
 
+func TestM3ReadyFrontierInstalledCore(t *testing.T) {
+	t.Parallel()
+	installedCodeGoal(t, "ready-frontier")
+}
+
 type stepGraphScenario struct {
-	mu       sync.Mutex
-	refusals []struct{ Kind, Name, Code string }
-	call     int
-	id       string
-	saved    goal.StepGraph
-	read     bool
+	mixed           bool
+	backgroundCalls int
+	mu              sync.Mutex
+	refusals        []struct{ Kind, Name, Code string }
+	call            int
+	id              string
+	saved           goal.StepGraph
+	read            bool
 }
 
 func newStepGraphScenario(t *testing.T) *stepGraphScenario {
@@ -48,12 +57,34 @@ func newStepGraphScenario(t *testing.T) *stepGraphScenario {
 func (s *stepGraphScenario) respond(t *testing.T, w http.ResponseWriter, request methodologyRequest) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.mixed && strings.Contains(request.Instructions, "self-contained background brief") {
+		s.backgroundCalls++
+		if s.backgroundCalls == 1 {
+			emitPersonaCall(w, "read-catalog", "skill_index", map[string]any{})
+			return
+		}
+		if s.backgroundCalls != 2 {
+			t.Error("background work repeated")
+		}
+		emitResponse(w, string(mustJSON(t, runs.Artifact{Body: "Catalog read", Done: true})), true)
+		return
+	}
 	n := s.call
 	s.call++
 	operation := n / 2
 	count := len(s.refusals)
 	step := func() goal.Step {
 		return goal.Step{ID: "change", Name: "Create output", Done: "Produce result.txt", Repository: "fixture/project", Base: "dev", Area: "result.txt", Worker: "antigravity", Resources: goal.Resources{CPU: 0.01, MemoryMB: 1, DiskMB: 1}, DependsOn: []string{}}
+	}
+	steps := func(p goal.Step) []goal.Step {
+		if !s.mixed {
+			return []goal.Step{p}
+		}
+		p.DependsOn = []string{"facts", "time-entry"}
+		return []goal.Step{p,
+			{ID: "facts", Name: "Read catalog", Kind: goal.BackgroundStep, Done: "Catalog read", Repository: "fixture/project", Resources: goal.Resources{CPU: 0.01, MemoryMB: 1, DiskMB: 1}, DependsOn: []string{}, Background: &runs.Brief{Goal: "Read catalog", Scope: "skill catalog", NotTouch: "files", Done: "Catalog read", Result: "notes", Allow: []string{"skill_index"}, Checks: []runs.Check{{Name: "skill_index", Kind: runs.ToolCalled}}}},
+			{ID: "time-entry", Name: "Wait for date", Kind: goal.WaitStep, Done: "Date reached", Repository: "fixture/project", DependsOn: []string{}, Wait: &goal.StepWait{At: 1}},
+		}
 	}
 	if n%2 == 1 {
 		switch {
@@ -84,7 +115,7 @@ func (s *stepGraphScenario) respond(t *testing.T, w http.ResponseWriter, request
 			if operation == count+3 {
 				want.Name = "Prepare output"
 			}
-			if s.saved.GoalID != s.id || s.saved.Revision != uint64(operation-count-1) || !reflect.DeepEqual(s.saved.Steps, []goal.Step{want}) {
+			if s.saved.GoalID != s.id || s.saved.Revision != uint64(operation-count-1) || !reflect.DeepEqual(s.saved.Steps, steps(want)) {
 				t.Errorf("missing complete graph: %+v", s.saved)
 			}
 		case operation == count+4:
@@ -130,7 +161,11 @@ func (s *stepGraphScenario) respond(t *testing.T, w http.ResponseWriter, request
 			p.Name = "Prepare output"
 			revision = 1
 		}
-		emit("submit_step_graph", map[string]any{"goal_id": s.id, "expected_revision": revision, "steps": []goal.Step{p}})
+		proposed := []goal.Step{p}
+		if operation > count {
+			proposed = steps(p)
+		}
+		emit("submit_step_graph", map[string]any{"goal_id": s.id, "expected_revision": revision, "steps": proposed})
 	}
 }
 
@@ -138,6 +173,19 @@ func (s *stepGraphScenario) verify(t *testing.T, g goal.Goal) {
 	t.Helper()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.mixed {
+		if s.backgroundCalls != 2 || len(g.Tasks) != 3 {
+			t.Fatalf("missing mixed work: background=%d tasks=%d", s.backgroundCalls, len(g.Tasks))
+		}
+		for _, task := range g.Tasks {
+			if task.ID == "change" {
+				continue
+			}
+			if task.Stage != goal.TaskDone || !task.Result.Passed || task.Result.Ref == "" || task.Attempt != 1 {
+				t.Fatalf("step did not land exactly once: %+v", task)
+			}
+		}
+	}
 	if g.StepGraph == nil || !reflect.DeepEqual(*g.StepGraph, s.saved) || !s.read || s.call != 2*(len(s.refusals)+5) {
 		t.Fatalf("missing graph revision/restart evidence: goal=%+v read=%t calls=%d", g.StepGraph, s.read, s.call)
 	}
