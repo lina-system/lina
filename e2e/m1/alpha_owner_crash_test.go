@@ -24,8 +24,13 @@ func TestAlphaOwnerWorkerCrash(t *testing.T) {
 	h, start := alphaOwnerHarness(t, true)
 	workdir := t.TempDir()
 	core := start()
-	c, _ := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
+	c, conversation := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
 	terminal, _ := h.startConversationTUI(120, 34, "TERM=xterm-256color", "LC_ALL=ko")
+	defer func() {
+		if t.Failed() {
+			alphaSaveScreen(t, terminal, "crash-failed", terminal.screen.Snapshot(), "")
+		}
+	}()
 	alphaScreen(t, h, terminal, "fresh", func(s string) bool { return strings.Contains(s, "Ctrl+D") }, "")
 	input := fmt.Sprintf("Codex 작업자에게 문서 검토를 맡겨 줘. 작업 폴더는 %s야. 주제는 '소규모 텃밭의 물 관리'이고, 서로 다른 상황 40개를 번호 순서대로 각각 세 문장으로 분석하게 해. 파일이나 명령 실행은 필요 없고 도구 없이 답변 텍스트만 작성해. 추가 질문 없이 바로 시작해. 결과는 네가 한국어로 전달해 줘.", workdir)
 	h.keys(terminal, "\x1b[200~"+input+"\x1b[201~\r")
@@ -78,7 +83,17 @@ func TestAlphaOwnerWorkerCrash(t *testing.T) {
 		t.Fatalf("real worker did not recover successfully: state=%s retries=%d", after.State, after.Retries)
 	}
 	alphaWaitOwnerRecovery(t, h, func(_ []recovery.Record) bool { return workerRecoveryReactions(t, h) == 1 })
-	alphaScreen(t, h, terminal, "recovered-result", func(s string) bool { return strings.Contains(s, "연결됨") && strings.Contains(s, "텃밭") }, "")
+	reply := alphaOwnerRecoveredReply(t, h, conversation, after)
+	alphaScreen(t, h, terminal, "recovered-result", func(s string) bool { return alphaRecoveredReplyVisible(input, reply.Body, s) }, "")
+	if directory := os.Getenv("LINA_ALPHA_CAPTURES"); directory != "" {
+		raw, err := json.MarshalIndent(reply, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, t.Name(), "recovered-reply.json"), append(raw, '\n'), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	output, sessions := alphaLastWorkerOutput(t, h)
 	if strings.TrimSpace(output) == "" || sessions != 1 {
 		t.Fatal("recovery omitted the real result or started a second worker session")
@@ -95,10 +110,63 @@ func TestAlphaOwnerWorkerCrash(t *testing.T) {
 	if workerRecoveryReactions(t, h) != 1 {
 		t.Fatal("second restart duplicated result delivery")
 	}
+	if restoredReply := alphaOwnerRecoveredReply(t, h, conversation, after); restoredReply != reply {
+		t.Fatal("second restart changed the delivered result")
+	}
 	terminal = h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=ko"}, false, true, 120, 34)
-	alphaScreen(t, h, terminal, "recovery-restored", func(s string) bool { return strings.Contains(s, "텃밭") }, "")
+	alphaScreen(t, h, terminal, "recovery-restored", func(s string) bool { return alphaRecoveredReplyVisible(input, reply.Body, s) }, "")
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
+}
+
+func alphaOwnerRecoveredReply(t *testing.T, h *harness, conversation string, attempt recovery.Record) alphaRecoveryReply {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	reply, err := alphaRecoveredReply(h.ctx, db, conversation, attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.ID == "" || strings.TrimSpace(reply.Body) == "" {
+		alphaRecoveryReplyDiagnostic(t, h, db, conversation, attempt)
+		t.Fatal("recovered result has no completed reply in the originating conversation")
+	}
+	return reply
+}
+
+func alphaRecoveryReplyDiagnostic(t *testing.T, h *harness, db *canon.Store, conversation string, attempt recovery.Record) {
+	t.Helper()
+	t.Logf("expected recovery delivery: conversation=%s input=%s session=%s turn=%s", conversation, attempt.Input, attempt.Thread.ID, attempt.Thread.TurnID)
+	err := db.Read(h.ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(h.ctx, `SELECT w.id,w.conversation_id,coalesce(w.parent_id,''),w.agent_id,
+ json_extract(w.body,'$.turn'),json_extract(w.body,'$.status'),coalesce(t.state,''),
+ coalesce(e.id,''),coalesce(e.conversation_id,''),coalesce(e.agent_id,''),coalesce(e.scaffold_kind,''),length(coalesce(e.body,''))
+ FROM conv_event w
+ LEFT JOIN inbox i ON i.native_id=w.id AND i.source='worker-finish' AND i.conversation=w.conversation_id
+ LEFT JOIN turn_runs t ON t.inbox_id=i.id AND t.conversation=w.conversation_id
+ LEFT JOIN conv_event e ON e.parent_id=w.id
+ WHERE w.scaffold_kind='worker_completion' AND json_extract(w.body,'$.session')=?
+ ORDER BY w.rowid,e.rowid`, attempt.Thread.ID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var completion, conv, input, agent, turn, status, state, reply, replyConv, replyAgent, scaffold string
+			var size int
+			if err := rows.Scan(&completion, &conv, &input, &agent, &turn, &status, &state, &reply, &replyConv, &replyAgent, &scaffold, &size); err != nil {
+				return err
+			}
+			t.Logf("recovery delivery candidate: completion=%s conversation=%s input=%s agent=%s turn=%s status=%s delivery=%s reply=%s reply_conversation=%s reply_agent=%s scaffold=%s reply_bytes=%d", completion, conv, input, agent, turn, status, state, reply, replyConv, replyAgent, scaffold, size)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Logf("recovery delivery diagnostic: %v", err)
+	}
 }
 
 func alphaOwnerRecoveryRecords(t *testing.T, h *harness) []recovery.Record {

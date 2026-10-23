@@ -181,9 +181,9 @@ func TestQuestionCardAnswers(t *testing.T) {
 			}); err != nil || deliveries != 1 {
 				t.Errorf("answer has no durable conversation delivery: %d %v", deliveries, err)
 			}
-			events, err := r.events(t.Context(), "")
-			if err != nil {
-				t.Fatal(err)
+			events, eventsErr := r.events(t.Context(), "")
+			if eventsErr != nil {
+				t.Fatal(eventsErr)
 			}
 			retained := false
 			for _, event := range events {
