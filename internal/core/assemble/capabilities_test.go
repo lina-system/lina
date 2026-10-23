@@ -2,6 +2,7 @@
 package assemble_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -27,11 +28,11 @@ func TestCapabilityLayoutAndIdentity(t *testing.T) {
 	if r.Layout == nil || !reflect.DeepEqual(r.Layout, report.Layout) {
 		t.Fatal("missing layout")
 	}
-	if r.Layout.Fixed.Items != 6 || r.Layout.Fixed.Tools != 1 || r.Layout.PreviousInput == nil || r.Layout.PreviousInput.Items != 8 || r.Layout.CurrentInput.Items != r.Layout.Fixed.Items+1+len(in.History)+1 || r.Layout.Newest != nil {
+	if r.Layout.Fixed.Items != 6 || r.Layout.Fixed.Tools != 1 || r.Layout.PreviousInput == nil || r.Layout.PreviousInput.Items != 8 || r.Layout.CurrentInput.Items != 11 || r.Layout.Newest != nil {
 		t.Fatalf("layout: %+v", r.Layout)
 	}
-	if !reflect.DeepEqual(r.Items[r.Layout.CurrentInput.Items-1], in.Current) || r.Layout.CurrentInput.Items >= len(r.Items) {
-		t.Fatal("current-input boundary must precede the context packet")
+	if !bytes.Equal(r.Items[r.Layout.CurrentInput.Items-1], in.Current) || r.Layout.CurrentInput.Items >= len(r.Items) {
+		t.Fatal("current input boundary includes the ContextPacket")
 	}
 	original := assemble.Digest(r)
 	changed := *r.Layout

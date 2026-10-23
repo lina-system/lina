@@ -15,8 +15,13 @@ import (
 )
 
 func runIntakeReplay(args []string) int {
+	var routers []string
+	if len(args) > 0 && args[0] == "--core" {
+		routers = []string{"core-rules"}
+		args = args[1:]
+	}
 	if len(args) != 1 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "usage: lina intake-replay <cases.jsonl>")
+		fmt.Fprintln(os.Stderr, "usage: lina intake-replay [--core] <cases.jsonl>")
 		if len(args) == 1 {
 			return 0
 		}
@@ -28,7 +33,7 @@ func runIntakeReplay(args []string) int {
 		deadline, stop := context.WithTimeout(ctx, 30*time.Second)
 		defer stop()
 		return boot.ReplayIntakeCase(deadline, c, router)
-	})
+	}, routers...)
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(report); err != nil {

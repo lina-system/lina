@@ -475,10 +475,13 @@ type HistoryGet struct {
 	ConversationID *string `json:"conversation_id,omitempty"`
 }
 type Input struct {
+	Card           *string    `json:"card,omitempty"`
 	ConversationID *string    `json:"conversation_id,omitempty"`
 	InputID        *string    `json:"input_id,omitempty"`
 	Mode           *InputMode `json:"mode,omitempty"`
+	ReplyTo        *string    `json:"reply_to,omitempty"`
 	Text           *string    `json:"text,omitempty"`
+	Thread         *string    `json:"thread,omitempty"`
 }
 type InputMode string
 
@@ -3524,6 +3527,18 @@ const clientSchemaJSON = `{
         },
         "mode": {
           "$ref": "#/$defs/input_mode"
+        },
+        "reply_to": {
+          "type": "string",
+          "minLength": 1
+        },
+        "card": {
+          "type": "string",
+          "minLength": 1
+        },
+        "thread": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [],

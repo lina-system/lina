@@ -25,8 +25,9 @@ reasoning-state behavior, on the ChatGPT and explicit API-key routes.
 Core computes cache identity separately from transmitting it. Assembly records
 exclusive item/tool positions in `RequestLayout`; turn preparation refreshes
 follow-up positions and selects admitted values before recording the digest.
-The current ContextPacket order is unchanged here; #878 owns its relocation,
-#880 owns the ChatGPT cache key, and #881 owns Claude prompt blocks and marks.
+The merged #878 layout places the input before the ContextPacket. Boundaries
+identify that input independently of packet length. #880 owns the ChatGPT cache
+key, and #881 owns Claude prompt blocks and marks.
 
 `Usage.CacheByLifetime` preserves independent read/write pointers by lifetime.
 Older aggregate values are retained without inventing bucket counts or adding

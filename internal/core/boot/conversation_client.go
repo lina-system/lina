@@ -58,7 +58,7 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 		return protocol.ItemDone{}, err
 	}
 	now := time.Now()
-	event, err := ledger.New(admission, r.materials).Admit(ctx, guard.EntryOwner, ledger.Input{ID: eventID, ConversationID: r.conversation, PersonID: r.person, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui", Language: string(language)}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: *p.InputID, Body: *p.Text})
+	event, err := ledger.New(admission, r.materials).AfterAdmission(r.bindInput).Admit(ctx, guard.EntryOwner, ledger.Input{ID: eventID, ConversationID: r.conversation, PersonID: r.person, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui", Language: string(language), ReplyTo: stringValue(p.ReplyTo), Card: stringValue(p.Card), Thread: stringValue(p.Thread)}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: *p.InputID, Body: *p.Text})
 	receipt := admission.receipt
 	if errors.Is(err, errAdmittedInput) {
 		event, err = r.journal().Get(ctx, eventID)
@@ -104,4 +104,11 @@ func (r *conversationRuntime) topicAuthorized(ctx context.Context, topic string)
 		}
 	}
 	return topic == "progress" && r.ownerViews != nil || topic == "running" && r.background != nil || topic == "core" || topic == "waiting" && r.decisions != nil
+}
+
+func stringValue(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
