@@ -169,7 +169,7 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				}
 				route.Adapter = &turnProvider{}
 			}
-			r, err := startConversation(t.Context(), root, "registration", 1, ctl, route, lifecycle.NewRegistry(nil), "owner", nil, nil)
+			r, err := startConversation(t.Context(), root, "registration", 1, ctl, route, lifecycle.NewRegistry(nil), "owner", nil, nil, throwawayState())
 			if err != nil {
 				t.Fatal(err)
 			}

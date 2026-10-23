@@ -130,6 +130,10 @@ type Config struct {
 	// AfterStep observes a completed boundary. It is used by deterministic crash
 	// tests and is never configured through command arguments or the environment.
 	AfterStep func(Step, Snapshot) error
+	// NoSync is a test seam: a test that runs Core over a state root it deletes
+	// opens canon and persona files without fsync. Production leaves it false,
+	// and no command argument or environment variable sets it.
+	NoSync bool
 }
 
 // Run owns one Core for an installed state root, until cancellation. It never
@@ -333,7 +337,11 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	var canon Canon
 	var conversation *conversationRuntime
 	if ownsConversation && len(recovery.Halt) == 0 {
-		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport)
+		var options []runtimeOption
+		if cfg.NoSync {
+			options = append(options, throwawayState())
+		}
+		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport, options...)
 		if openErr != nil {
 			return openErr
 		}

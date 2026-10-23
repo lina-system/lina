@@ -87,3 +87,7 @@ publish a hidden source.
 The scope check across holders (`memory.Store.RestrictedEvents`) reads protected
 event ids from `cite`, so it no longer decodes the JSON of every private or
 `never-leaves` item on each call.
+
+### Test-only synchronous opt-out
+
+`Config.NoSync` opens the writer with `synchronous=OFF` while keeping WAL and the fenced writer; `OpenSQLite` and `OpenSQLiteReader` stay durable for every other caller. Tests that bulk-create throwaway state roots set it, because each fixture otherwise pays for a commit sync per migration and write. `TestStoreSynchronousFollowsDurability` pins `synchronous=2` for the default and `0` for the opt-out.

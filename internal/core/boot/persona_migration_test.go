@@ -29,12 +29,12 @@ func TestPersonaSkillMigrationPreservesExistingAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	migrations := boot.ApplicationMigrations()
-	cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: migrations[:len(migrations)-1]}
+	cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: migrations[:len(migrations)-1], NoSync: true}
 	db, err := canon.Open(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := agents.Open(root, db)
+	store, err := agents.Open(root, db, agents.NoSync())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestPersonaSkillMigrationPreservesExistingAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close(context.Background())
-	store, err = agents.Open(root, db)
+	store, err = agents.Open(root, db, agents.NoSync())
 	if err != nil {
 		t.Fatal(err)
 	}

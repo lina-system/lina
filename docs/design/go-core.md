@@ -683,6 +683,7 @@ It saves each set of four layers and its work-method record as a Git commit in a
 Immutable `refs/revisions/<commit>` retain saved versions; `HEAD` anchors the first version and canon selects the current one.
 Each immutable file is written and synced in a private temporary file beside its destination, then installed without replacing an existing file and followed by a directory sync.
 Opening the store removes abandoned temporary files; concurrent writers compare only fully published bytes.
+Core opens the store without options, so every saved file is synced. A test may open a throwaway root with `agents.NoSync()` to skip those fsyncs; it never changes what Core writes.
 Unpublished objects after a failed write are never applied.
 `Prepare(turn, agent)` verifies the saved bytes and durably pins one revision to that turn; repeating it after a restart returns that revision, while a later turn selects the latest published revision.
 This is the persona part of preparation, not evidence that account, context or model-policy preparation succeeded.
@@ -1557,6 +1558,7 @@ It has three classes of data: canonical rows; FTS tables written in the same tra
 One writer goroutine owns one write connection.
 Readers open `query_only`.
 WAL and `synchronous=FULL`.
+Core always opens canon that way; only a test that opens its own throwaway state root may set `Config.NoSync`, which keeps WAL but drops commit sync through `synchronous=OFF`.
 No transaction spans a model, tool, Node or network call.
 Migrations are forward-only.
 The SQLite binding is chosen by [V2](runtime.md#runtime-acceptance) against four needs: FTS5, the online backup API, an optional sqlite-vec load verified against a manifest digest, and static builds.

@@ -48,7 +48,9 @@ func ReplayIntakeCase(ctx context.Context, c intakereplay.Case, router string) (
 	}
 	runtimeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	r, err := startConversation(runtimeCtx, root, "intake-replay", 1, ctl, nil, lifecycle.NewRegistry(nil), "replay-person", nil, nil)
+	// Replay state is deleted before this call returns, so its writes never
+	// need fsync for crash durability.
+	r, err := startConversation(runtimeCtx, root, "intake-replay", 1, ctl, nil, lifecycle.NewRegistry(nil), "replay-person", nil, nil, throwawayState())
 	if err != nil {
 		return nil, err
 	}

@@ -21,13 +21,13 @@ import (
 // synchronization. The caller owns the database and serializes its transactions.
 // Paths are filesystem paths, never driver URIs or in-memory databases.
 func OpenSQLite(ctx context.Context, path string) (*sql.DB, error) {
-	return openSQLite(ctx, path, false)
+	return openSQLite(ctx, path, false, true)
 }
 
 // OpenSQLiteReader opens an existing file read-only and sets query_only on every
 // connection. It does not change journal mode or create a missing database.
 func OpenSQLiteReader(ctx context.Context, path string) (*sql.DB, error) {
-	return openSQLite(ctx, path, true)
+	return openSQLite(ctx, path, true, true)
 }
 
 func databaseURI(path, mode string) (string, error) {
@@ -44,7 +44,7 @@ func databaseURI(path, mode string) (string, error) {
 	return u.String(), nil
 }
 
-func openSQLite(ctx context.Context, path string, reader bool) (*sql.DB, error) {
+func openSQLite(ctx context.Context, path string, reader, durable bool) (*sql.DB, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -87,6 +87,9 @@ func openSQLite(ctx context.Context, path string, reader bool) (*sql.DB, error) 
 		}
 		if !wal {
 			return errors.New("SQLite WAL mode unavailable")
+		}
+		if !durable {
+			return conn.Exec("PRAGMA synchronous=OFF")
 		}
 		return conn.Exec("PRAGMA synchronous=FULL")
 	})
