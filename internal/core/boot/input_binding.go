@@ -52,7 +52,7 @@ func (r *conversationRuntime) bindInput(ctx context.Context, tx *canon.Tx, input
 	if err != nil {
 		return err
 	}
-	_, err = ledger.New(questionTransaction{tx}, nil).Admit(ctx, guard.EntrySystem, ledger.Input{
+	_, err = ledger.AppendSystemSnapshot(ctx, tx, ledger.Input{
 		ID: inputBindingID(input.ID), ParentID: input.ID, ConversationID: input.ConversationID, AgentID: input.AgentID,
 		Surface: input.Surface, ScaffoldKind: inputBindingKind, OccurredAt: input.OccurredAt, RecordedAt: input.RecordedAt, TimeQuality: "recorded", Body: string(raw),
 		Relations: []ledger.Relation{{TargetID: input.ID, Kind: "view_of"}},
@@ -214,7 +214,12 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 		return s, err
 	}
 	for _, round := range rounds {
-		if round.Conversation != input.ConversationID || len(round.Decisions) > 0 {
+		if round.Conversation != input.ConversationID {
+			continue
+		}
+		s.Surfaces["work:"+round.ID] = round.Goal
+		s.Surfaces[round.ID] = round.Goal
+		if len(round.Decisions) > 0 {
 			continue
 		}
 		for _, q := range round.Questions {
@@ -265,6 +270,22 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 		}
 		q, e := waiting.NewConversationQuestions(questionTransaction{tx}).Get(ctx, ref)
 		if e == nil && q.Person == input.PersonID && q.Agent == input.AgentID && q.Conversation == input.ConversationID {
+			visible, e := waiting.ConversationQuestionVisible(ctx, tx, q)
+			if e != nil {
+				return s, e
+			}
+			if !visible {
+				continue
+			}
+			if address != "" {
+				var count int
+				if e = tx.QueryRowContext(ctx, "SELECT count(*) FROM channel_receipts WHERE address=? AND 'channel-input:'||inbox_id=?", address, q.Input).Scan(&count); e != nil {
+					return s, e
+				}
+				if count == 0 {
+					continue
+				}
+			}
 			target, e := bindingTarget(ctx, tx, input, q.Input)
 			if e != nil {
 				return s, e
@@ -299,42 +320,42 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 // Resolve an event or its reply's parent only inside the current conversation.
 func bindingTarget(ctx context.Context, tx *canon.Tx, input ledger.Event, ref string) (binding.Target, error) {
 	var raw string
-	err := tx.QueryRowContext(ctx, `SELECT b.body FROM conv_event e JOIN conv_event b ON b.parent_id=CASE WHEN e.speaker_kind='person' THEN e.id ELSE e.parent_id END AND b.scaffold_kind=? WHERE e.id=? AND e.conversation_id=? AND e.agent_id=?`, inputBindingKind, ref, input.ConversationID, input.AgentID).Scan(&raw)
+	// A notice's own run identity takes precedence over the input that started
+	// it. Several bundled runs remain unresolved, even when they share a parent.
+	err := tx.QueryRowContext(ctx, `SELECT body FROM conv_event WHERE id=? AND conversation_id=? AND agent_id=? AND scaffold_kind='background_notice'`, ref, input.ConversationID, input.AgentID).Scan(&raw)
 	if err == nil {
-		var d binding.Decision
-		err = json.Unmarshal([]byte(raw), &d)
-		return d.Target, err
+		var notices []struct{ Run, Person, Agent, Conversation string }
+		if err = json.Unmarshal([]byte(raw), &notices); err != nil {
+			return binding.Target{}, err
+		}
+		id := ""
+		for _, n := range notices {
+			if n.Run == "" || n.Person != input.PersonID || n.Agent != input.AgentID || n.Conversation != input.ConversationID {
+				return binding.Target{}, nil
+			}
+			if id != "" && id != n.Run {
+				return binding.Target{}, nil
+			}
+			id = n.Run
+		}
+		if id == "" {
+			return binding.Target{}, nil
+		}
+		return binding.Target{Class: "existing", ID: id, Kind: "run"}, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return binding.Target{}, err
 	}
-	// A notice about one background run owns that run, rather than whichever
-	// input happened to precede its delivery. Bundled notices stay ambiguous.
-	err = tx.QueryRowContext(ctx, `SELECT body FROM conv_event WHERE id=? AND conversation_id=? AND agent_id=? AND scaffold_kind='background_notice'`, ref, input.ConversationID, input.AgentID).Scan(&raw)
+	err = tx.QueryRowContext(ctx, `SELECT b.body FROM conv_event e JOIN conv_event b ON b.parent_id=CASE WHEN e.speaker_kind='person' THEN e.id ELSE e.parent_id END AND b.scaffold_kind=? WHERE e.id=? AND e.conversation_id=? AND e.agent_id=?`, inputBindingKind, ref, input.ConversationID, input.AgentID).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return binding.Target{}, nil
 	}
 	if err != nil {
 		return binding.Target{}, err
 	}
-	var notices []struct{ Run, Person, Agent, Conversation string }
-	if err = json.Unmarshal([]byte(raw), &notices); err != nil {
-		return binding.Target{}, err
-	}
-	id := ""
-	for _, n := range notices {
-		if n.Run == "" || n.Person != input.PersonID || n.Agent != input.AgentID || n.Conversation != input.ConversationID {
-			return binding.Target{}, nil
-		}
-		if id != "" && id != n.Run {
-			return binding.Target{}, nil
-		}
-		id = n.Run
-	}
-	if id == "" {
-		return binding.Target{}, nil
-	}
-	return binding.Target{Class: "existing", ID: id, Kind: "run"}, nil
+	var d binding.Decision
+	err = json.Unmarshal([]byte(raw), &d)
+	return d.Target, err
 }
 
 func (r *conversationRuntime) inputBindingPacket(ctx context.Context, input ledger.Event) (assemble.ContextPacket, error) {

@@ -8,6 +8,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/waiting"
+	"github.com/thisisjun786/lina/internal/core/work"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,8 +180,12 @@ func TestInputBindingNoticeAndScope(t *testing.T) {
 	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
 		t.Fatal(err)
 	}
+	parent, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "notice-parent", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	raw, _ := json.Marshal([]map[string]string{{"Run": "background", "Person": r.person, "Agent": r.agent, "Conversation": r.conversation}})
-	if _, err := r.journal().Admit(ctx, guard.EntryBackgroundNotice, ledger.Input{ID: "notice", ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "background_notice", Locator: "notice", OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", Body: string(raw)}); err != nil {
+	if _, err := r.journal().Admit(ctx, guard.EntryBackgroundNotice, ledger.Input{ID: "notice", ParentID: parent.ID, ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "background_notice", Locator: "notice", OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", Body: string(raw)}); err != nil {
 		t.Fatal(err)
 	}
 	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "reply-notice", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui", ReplyTo: "notice"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Continue"})
@@ -274,5 +280,97 @@ func TestInputBindingChannelWorkWithoutMemory(t *testing.T) {
 	}
 	if d.Target.ID != "garden" || d.Decider != "exact-reference" {
 		t.Fatal("work scope incorrectly requires memory scope", d)
+	}
+}
+
+func TestInputBindingLargeCandidateMetadata(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	title := strings.Repeat("Long title ", 2000)
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "long", Title: title, Kind: "project", State: "active", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "short-input", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Hello"})
+	if err != nil {
+		t.Fatal("unrelated work metadata rejected person input", err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(input.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Candidates) != 1 || d.Candidates[0].Title != strings.TrimSpace(title) {
+		t.Fatal("binding lost the offered title")
+	}
+}
+
+func TestInputBindingPublishedWorkCard(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	goal := work.Task{ID: "goal", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Garden", Done: "Checked result"}
+	if err := r.work.Create(ctx, goal); err != nil {
+		t.Fatal(err)
+	}
+	child := goal
+	child.ID = "child"
+	child.GoalID = goal.ID
+	if err := r.work.Create(ctx, child); err != nil {
+		t.Fatal(err)
+	}
+	round := waiting.Round{ID: "round", Goal: goal.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Deadline: now.Add(time.Hour), Questions: []waiting.Question{{ID: "choice", Prompt: "Format?", Recommendation: "A", Reason: waiting.SignificantChoice, Choices: []string{"A", "B"}, Default: "A", Dependents: []string{child.ID}}}}
+	if err := waiting.NewWorkRounds(r.db, r.work).Open(ctx, round); err != nil {
+		t.Fatal(err)
+	}
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "work-card-input", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui", Card: "work:round"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Check this"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(input.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.ID != goal.ID || d.Decider != "reply-or-card" {
+		t.Fatal(d)
+	}
+}
+
+func TestInputBindingWithdrawnQuestionCard(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "garden", Title: "Garden", Kind: "project", State: "active", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "question-source", "Garden")
+	q := waiting.ConversationQuestion{ID: "withdrawn-question", Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: "ask", Input: input.ID, AskedAt: now, QuestionDraft: waiting.QuestionDraft{Question: "Format?", Recommendation: "A", Choices: []string{"A", "B"}, Default: "A"}}
+	if err := waiting.NewConversationQuestions(r.db).Ask(ctx, q, 1); err != nil {
+		t.Fatal(err)
+	}
+	forgetQuestionInput(t, r, input)
+	answer, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "withdrawn-answer", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui", Card: q.ID}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(answer.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Decider != "no-rule" || !d.Unresolved {
+		t.Fatal("withdrawn question still decided binding", d)
 	}
 }

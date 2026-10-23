@@ -3,6 +3,7 @@ package e2e_test
 
 import (
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -25,14 +26,14 @@ func TestM2InputBindingInstalledCore(t *testing.T) {
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
 	defer unblock()
-	var recordID string
+	var recordID, questionID string
 	checkBinding := func(items []json.RawMessage, rule string) {
 		t.Helper()
 		found := false
 		for _, raw := range items {
 			var item struct{ Content string }
 			_ = json.Unmarshal(raw, &item)
-			if strings.Contains(item.Content, `"decider":"`+rule+`"`) && strings.Contains(item.Content, `"id":"`+recordID+`"`) {
+			if strings.Contains(html.UnescapeString(item.Content), `"decider":"`+rule+`"`) && strings.Contains(html.UnescapeString(item.Content), `"id":"`+recordID+`"`) {
 				found = true
 			}
 		}
@@ -66,6 +67,7 @@ func TestM2InputBindingInstalledCore(t *testing.T) {
 			if q.ID == "" {
 				t.Error("question missing")
 			}
+			questionID = q.ID
 			close(ready)
 			select {
 			case <-release:
@@ -75,16 +77,23 @@ func TestM2InputBindingInstalledCore(t *testing.T) {
 			emitResponse(w, "Choose a format.", true)
 		case 5:
 			checkBinding(request.Input, "offered-option")
-			emitPersonaCall(w, "read-live", "read_record", map[string]any{"id": recordID})
+			emitPersonaCall(w, "resolve", "resolve_question", map[string]any{"id": questionID, "kind": "answered", "quote": "2", "value": "list"})
 		case 6:
+			var q waiting.ConversationQuestion
+			_ = json.Unmarshal(assertAskResult(t, request.Input, "resolve", "ok", ""), &q)
+			if q.Resolution == nil || q.Resolution.Value != "list" {
+				t.Error("option did not resolve question")
+			}
+			emitPersonaCall(w, "read-live", "read_record", map[string]any{"id": recordID})
+		case 7:
 			if !strings.Contains(string(assertAskResult(t, request.Input, "read-live", "ok", "")), "Garden") {
 				t.Error("wrong project read")
 			}
 			emitResponse(w, "The project is checked.", true)
-		case 7:
+		case 8:
 			checkBinding(request.Input, "reply-or-card")
 			emitPersonaCall(w, "read-restored", "read_record", map[string]any{"id": recordID})
-		case 8:
+		case 9:
 			if !strings.Contains(string(assertAskResult(t, request.Input, "read-restored", "ok", "")), "Garden") {
 				t.Error("project did not survive restart")
 			}
@@ -141,7 +150,7 @@ func TestM2InputBindingInstalledCore(t *testing.T) {
 		}
 	}
 	waitIdle()
-	if calls.Load() != 6 {
+	if calls.Load() != 7 {
 		t.Fatalf("live calls=%d", calls.Load())
 	}
 	c.Close()
@@ -168,7 +177,7 @@ func TestM2InputBindingInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitIdle()
-	if calls.Load() != 8 {
+	if calls.Load() != 9 {
 		t.Fatalf("restored calls=%d", calls.Load())
 	}
 	db, err := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
@@ -176,11 +185,12 @@ func TestM2InputBindingInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	var persons, bindings, missing int
+	var persons, bindings, missing, completed int
 	for _, q := range []struct {
 		sql string
 		out *int
 	}{
+		{`SELECT count(*) FROM turn_runs WHERE state='completed'`, &completed},
 		{`SELECT count(*) FROM conv_event WHERE speaker_kind='person'`, &persons},
 		{`SELECT count(*) FROM conv_event WHERE scaffold_kind='input_binding'`, &bindings},
 		{`SELECT count(*) FROM conv_event p WHERE p.speaker_kind='person' AND (SELECT count(*) FROM conv_event b WHERE b.parent_id=p.id AND b.scaffold_kind='input_binding')<>1`, &missing},
@@ -189,7 +199,7 @@ func TestM2InputBindingInstalledCore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if persons != 4 || bindings != persons || missing != 0 {
-		t.Fatalf("person=%d bindings=%d missing=%d", persons, bindings, missing)
+	if persons != 4 || bindings != persons || missing != 0 || completed != 3 {
+		t.Fatalf("person=%d bindings=%d missing=%d completed=%d", persons, bindings, missing, completed)
 	}
 }
