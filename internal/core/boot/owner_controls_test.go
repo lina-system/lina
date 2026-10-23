@@ -23,7 +23,11 @@ import (
 
 func TestOwnerDigestAndControlsRegistered(t *testing.T) {
 	r := runRuntime(t)
-	r.startOwnerControls()
+	// This fixture adds background services after boot; reinstall its controls.
+	delete(r.identity.Operations, protocol.KindProgressDigestGet)
+	if err := r.startOwnerControls(); err != nil {
+		t.Fatal(err)
+	}
 	for _, kind := range []protocol.Kind{protocol.KindProgressDigestGet, protocol.KindFollowUp, protocol.KindMultiTaskControl} {
 		if _, ok := r.identity.Operations[kind]; !ok {
 			t.Errorf("Core operation %s missing", kind)
