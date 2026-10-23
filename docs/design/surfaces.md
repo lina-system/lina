@@ -209,6 +209,8 @@ The person writes intent, LINA organizes, and the person zooms in and out. A per
 
   Core retains the last explicit choice or newly admitted client input across restarts. Background channel activity and replay do not change it. A new surface whose last agent was removed uses the first-run fallback; a connected surface with a missing selection keeps its draft until an explicit choice.
 
+On initial connection and reconnection, the TUI refreshes agent metadata from Core before discovering conversation history when agent listing is available. Reopening the TUI against the same Core shows the resumed agent's current name in the header, composer and named replies, even when Welcome still contains only the agent selected at Core startup. This refresh does not require opening the agent list.
+
 ### Default view
 
 The person sees two things by default: the design at a glance, with how far every running piece of work has come (see Progress at a glance), and the list of what they must do or decide. Everything else is available on request.
@@ -275,6 +277,7 @@ Progress at a glance is one screen that shows how far every running 목표 and �
 - In an external channel the same view is a digest of the lines: what needs the person first, then one line for each running item, at most five and a count of the rest, with no bar and a link that opens this screen when the app is installed ([integrations.md](integrations.md#channels)).
 - `/progress` requests this digest in the TUI and a paired private channel. Counts and the optional screen link are metadata after the at-most-five display rows. `/waiting priority` and `/waiting lightest` request Core's order; the TUI waiting pane also uses `o` to switch it and retains that choice on refresh.
 - The same explicit controls work in both surfaces: `/stop <run>` requests a stop, `/stop all` stops the person's background runs and live workers (restricted to the bound conversation in a shared channel), and `/note <run> <text>` sends a follow-up only to that target. Bare `/stop` interrupts the current conversation. The TUI running pane offers `s` for the selected row. A worker stop acknowledgement means the request was delivered; its current state still comes from the worker adapter. A shared channel cannot display the owner's full digest or waiting list.
+- A channel control command and its reply appear immediately in connected clients viewing the same conversation, with the same speaker attribution and order after history reload or restart. Refused commands also return their recorded reply to that conversation.
 - A question in the conversation about how things are going is answered with the digest ([conversation-and-memory.md](conversation-and-memory.md#reply-shape)).
 
 ### Layers
@@ -435,7 +438,13 @@ The 할 일 views are lenses over the same records, computed by LINA Core ([work
 
 One list shows everything LINA is doing in the background for the person: background runs and delegated coding tasks alike. LINA Core owns it, and the app and the TUI show it.
 
-- A row is one run or task, with a one-line summary in plain words of what it does for the person. Rows are in three groups: in progress, waiting (not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a limit on background runs, or the person) and landed. Rows that need the person (input needed) and rows ready for review come first.
+Conversation-started workers also appear while their turn is active, even when
+the conversation turn that delegated them has ended. Each row names its owner
+persona before the worker tool and summarizes the person's request. An idle
+worker leaves the list; a completed worker turn alone is not verified delivery.
+An unavailable observation remains unknown rather than disappearing as done.
+
+- A row is one run, task or conversation-started worker, with a one-line summary in plain words of what it does for the person. Rows are in three groups: in progress, waiting (not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a limit on background runs, or the person) and landed. Rows that need the person (input needed) and rows ready for review come first.
 - The state words are those of the work cards ([work-and-delegation.md](work-and-delegation.md#progress-display)): working is in progress; waiting for a slot is waiting; input needed is "Waiting for me"; a landed complete or partial result is ready for review; failed and stopped are landed with their label. A landed row leaves the list once the person has opened or dismissed it, and stays reachable from its conversation.
 - A task that stalls or fails shows its state word on its row until it has been dispatched again once; a second failure becomes a decision for the person under "Waiting for me".
 - Within the attention-first ordering, ties use oldest start time and then a stable source key. An opened or dismissed landed row stays hidden after restart; an active row stays visible when opened.

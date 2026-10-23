@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -74,7 +75,7 @@ func TestM2ProgressControlsSurfaces(t *testing.T) {
 	}
 }
 func testProgressControlsSurfaces(t *testing.T, allSurface string) {
-	var fixture struct{ Digest, Order, Note string }
+	var fixture struct{ Digest, Order, Note, Refused string }
 	raw, err := os.ReadFile("../m2/progress-controls.json")
 	if err != nil {
 		t.Fatal(err)
@@ -250,8 +251,25 @@ func testProgressControlsSurfaces(t *testing.T, allSurface string) {
 	h.keys(terminal, "q")
 	tui("/stop "+ids[0], protocol.KindStop)
 	h.keys(terminal, "q")
+	// Subscribe before channel commands: history reload must not be required
+	// to see their committed inputs and responses on another surface.
+	observer, err := clientapi.DialWithCapabilities(h.ctx, socket, "channel-controls", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observer.Close()
+	topic := "conversation:" + conversation
+	if _, err = observer.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		t.Fatal(err)
+	}
+	if e, err := observer.Receive(h.ctx); err != nil || e.Kind != protocol.KindSnapshot {
+		t.Fatalf("conversation subscription: %s %v", e.Kind, err)
+	}
+	var command string
+	var liveKeys []string
 	send := func(id int, text string) {
 		t.Helper()
+		command = text
 		message := map[string]any{"message_id": id, "date": 1, "chat": map[string]any{"id": 100, "type": "private"}, "from": map[string]any{"id": 100}, "text": text}
 		updates <- string(mustJSON(t, map[string]any{"ok": true, "result": []any{map[string]any{"update_id": id, "message": message}}}))
 	}
@@ -261,6 +279,32 @@ func testProgressControlsSurfaces(t *testing.T, allSurface string) {
 		case text := <-sent:
 			if !strings.Contains(text, want) {
 				t.Fatalf("channel reply does not match %q: %q", want, text)
+			}
+			ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+			defer cancel()
+			for i, expected := range []string{command, text} {
+				for {
+					e, err := observer.Receive(ctx)
+					if err != nil {
+						t.Fatalf("channel command/reply missing from live conversation: %v", err)
+					}
+					item, ok := e.Payload.(protocol.ItemDone)
+					if !ok {
+						continue
+					}
+					speaker := protocol.ConversationSpeaker("person")
+					if i == 1 {
+						speaker = "agent"
+					}
+					if item.Text == nil || *item.Text != expected || item.Speaker == nil || *item.Speaker != speaker || item.AgentID == nil || *item.AgentID != agent || item.Stream == nil || item.Stream.Topic != topic {
+						t.Fatalf("live command/reply differs from channel: %+v", item)
+					}
+					if i == 0 && (item.PersonID == nil || *item.PersonID != person) || i == 1 && item.PersonID != nil {
+						t.Fatalf("live command/reply attribution: %+v", item)
+					}
+					liveKeys = append(liveKeys, item.Stream.Key)
+					break
+				}
 			}
 		case <-h.ctx.Done():
 			t.Fatal("channel control did not reply")
@@ -274,6 +318,8 @@ func testProgressControlsSurfaces(t *testing.T, allSurface string) {
 	reply("Note queued")
 	send(13, "/stop "+ids[1])
 	reply("Stop requested")
+	send(15, fixture.Refused)
+	reply("could not be applied")
 	reader, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +349,7 @@ func testProgressControlsSurfaces(t *testing.T, allSurface string) {
 		}
 	}
 	if allSurface == "channel" {
-		send(14, "/stop all")
+		send(16, "/stop all")
 		reply("Stop requested for 2 runs.")
 	} else {
 		tui("/stop all", protocol.KindMultiTaskControl)
@@ -327,6 +373,39 @@ func testProgressControlsSurfaces(t *testing.T, allSurface string) {
 	terminal.process.wait(t, 0)
 	h.expectTerminalRestored(terminal)
 	h.socket = socket
+	h.stopCore(core)
+	observer.Close()
+	// Restart uses the journal's persisted first-appearance order. It must
+	// retain exactly the channel rows seen live, with no duplicate controls.
+	core = h.command("-test.run=^TestProgressControlBootHelper$")
+	core.command.Path = os.Args[0]
+	core.command.Args[0] = os.Args[0]
+	core.command.Env = append(core.command.Env, "LINA_TEST_PROGRESS_ROOT="+h.root, "LINA_TEST_PROGRESS_SOCKET="+socket, "LINA_TEST_PROGRESS_HTTP="+platform.URL)
+	core.start(t)
+	h.connect(core).Close()
+	waitCoreReady(t, h)
+	restored, err := clientapi.DialWithCapabilities(h.ctx, socket, "channel-controls-restored", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	if _, err = restored.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		t.Fatal(err)
+	}
+	e, err := restored.Receive(h.ctx)
+	snapshot, ok := e.Payload.(protocol.Snapshot)
+	if err != nil || !ok {
+		t.Fatalf("restored conversation: %s %v", e.Kind, err)
+	}
+	var restoredKeys []string
+	for _, item := range snapshot.Items {
+		if strings.HasPrefix(item.Key, "channel-input:") || strings.HasPrefix(item.Key, "channel-control:") {
+			restoredKeys = append(restoredKeys, item.Key)
+		}
+	}
+	if !reflect.DeepEqual(liveKeys, restoredKeys) {
+		t.Fatalf("restart changed live channel order: live=%v restored=%v", liveKeys, restoredKeys)
+	}
 	h.stopCore(core)
 }
 

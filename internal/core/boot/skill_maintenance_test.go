@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/guard"
@@ -218,6 +219,97 @@ func TestSkillMaintenanceNoticeRetryUsesRecordedConversation(t *testing.T) {
 	}
 }
 
+func TestSkillMaintenanceUnavailableRecipientKeepsOutboxMoving(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expired=%t", expired), func(t *testing.T) {
+			r, other := maintenanceNoticeFixture(t)
+			notices, err := r.skills.MaintenanceNotices(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			admit := func(n skills.MaintenanceNotice, agent string) {
+				t.Helper()
+				now := time.Now()
+				_, err := r.journal().Admit(t.Context(), guard.EntrySystem, ledger.Input{ID: fmt.Sprintf("skill-maintenance:%d", n.Sequence), ConversationID: "main:" + agent, AgentID: agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "skill_change", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: n.Notice})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			admit(notices[0], other)
+			if _, err = r.skills.Undo(t.Context(), notices[0].Undo); err != nil {
+				t.Fatal(err)
+			}
+			notices, err = r.skills.MaintenanceNotices(t.Context())
+			if err != nil || len(notices) != 2 {
+				t.Fatalf("undo notices=%+v: %v", notices, err)
+			}
+			admit(notices[1], r.agent)
+			created, err := r.skills.Patch(t.Context(), skills.Patch{ID: "later", Files: skills.Bundle{"SKILL.md": {Text: "---\nname: later\ndescription: Retired.\n---\nRetired procedure."}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+				_, err := r.skills.MaintainTx(t.Context(), tx, skills.Maintenance{Kind: "prune", Target: created.Undo, Reason: "Retired."})
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			if err = r.agents.Delete(t.Context(), other, r.person, now); err != nil {
+				t.Fatal(err)
+			}
+			if expired {
+				if err = r.agents.Expire(t.Context(), now.Add(agents.TrashRetention)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// No cached view or delivery marker exists for the old recipient,
+			// as on startup. Both an admitted and a new later notice must pass it.
+			for range 2 {
+				if err = r.publishSkillMaintenance(t.Context()); err != nil {
+					t.Fatalf("unavailable recipient blocked outbox: %v", err)
+				}
+			}
+			snapshot, sub, err := r.topics.Subscribe("conversation:"+r.conversation, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sub.Close()
+			if snapshot.Snapshot == nil || len(snapshot.Snapshot.Items) != 2 || snapshot.Snapshot.Items[0].Key != "skill-maintenance:2" || snapshot.Snapshot.Items[1].Key != "skill-maintenance:3" {
+				t.Fatalf("lost, duplicate or rerouted notices: %+v", snapshot.Snapshot)
+			}
+			old, err := r.journal().Get(t.Context(), "skill-maintenance:1")
+			if err != nil || old.AgentID != other || old.ConversationID != "main:"+other {
+				t.Fatalf("changed original destination: %+v %v", old, err)
+			}
+			if !expired {
+				if err = r.agents.Restore(t.Context(), other, r.person, now.Add(time.Second)); err != nil {
+					t.Fatal(err)
+				}
+				if err = r.publishSkillMaintenance(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				restored, sub, err := r.topics.Subscribe("conversation:main:"+other, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				sub.Close()
+				count := 0
+				if restored.Snapshot != nil {
+					for _, item := range restored.Snapshot.Items {
+						if item.Key == "skill-maintenance:1" {
+							count++
+						}
+					}
+				}
+				if count != 1 {
+					t.Fatalf("restored recipient lost notice: %+v", restored.Snapshot)
+				}
+			}
+		})
+	}
+}
+
 func TestSkillMaintenanceRecoveryKeepsBoundedHistoryOrder(t *testing.T) {
 	for _, later := range []int{3, 199, 205} {
 		t.Run(fmt.Sprint(later), func(t *testing.T) {
@@ -310,5 +402,36 @@ func TestSkillMaintenanceNoticeRetriesFailedTopicPublication(t *testing.T) {
 	defer sub.Close()
 	if snapshot.Snapshot == nil || len(snapshot.Snapshot.Items) != 1 || snapshot.Snapshot.Items[0].Key != "skill-maintenance:1" {
 		t.Fatalf("committed position suppressed failed delivery: %+v", snapshot.Snapshot)
+	}
+}
+
+func TestSkillMaintenanceNoticeLookupFailureRemainsRetryable(t *testing.T) {
+	r, _ := maintenanceNoticeFixture(t)
+	if err := r.publishSkillMaintenance(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	r.skillMaintenance.delivered = map[int64]bool{}
+	rename := func(query string) {
+		t.Helper()
+		if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+			_, err := tx.ExecContext(t.Context(), query)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rename("ALTER TABLE agents RENAME TO unavailable_agents")
+	if err := r.publishSkillMaintenance(t.Context()); err == nil {
+		t.Fatal("recipient storage failure was swallowed")
+	}
+	if r.skillMaintenance.delivered[1] {
+		t.Fatal("failed lookup marked notice delivered")
+	}
+	rename("ALTER TABLE unavailable_agents RENAME TO agents")
+	if err := r.publishSkillMaintenance(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if !r.skillMaintenance.delivered[1] {
+		t.Fatal("recovered lookup did not complete delivery")
 	}
 }

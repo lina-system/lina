@@ -199,6 +199,12 @@ func (r *conversationRuntime) publishSkillMaintenance(ctx context.Context) error
 			// The ledger owns the destination even if agent ordering changed.
 			view, err = r.router.channelView(ctx, channels.Binding{Person: r.person, Agent: event.AgentID, Conversation: event.ConversationID})
 			if err != nil {
+				var refusal *clientsrv.OperationError
+				if errors.As(err, &refusal) && refusal.Code == protocol.ErrorOutOfScope {
+					// A missing or trashed recipient must not hold up other
+					// notices. Leave this one eligible if the agent is restored.
+					continue
+				}
 				return err
 			}
 			view.publicationMu.Lock()
