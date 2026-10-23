@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/lina/internal/core/assets"
 	memoryexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
@@ -191,5 +192,64 @@ func TestDeletedAgentTopicAuthorization(t *testing.T) {
 		if r.topicAuthorized(t.Context(), prefix+a) {
 			t.Fatal("deleted agent topic still authorized")
 		}
+	}
+}
+
+func TestMemoryListKeepsItemsWithOversizedEvidence(t *testing.T) {
+	for _, material := range []bool{false, true} {
+		t.Run(fmt.Sprint(material), func(t *testing.T) {
+			r, session, agent, _ := managementFixture(t)
+			store, err := assets.Open(t.Context(), r.root, r.db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			writer, err := assets.OpenMaterialWriter(t.Context(), store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.materials = &conversationMaterials{store: store, writer: writer, actor: assets.Actor{PersonID: r.person, AgentID: agent}}
+			older, err := r.Memory(t.Context(), session, protocol.MemoryRequest{Operation: textptr("remember"), AgentID: &agent, Text: textptr("earlier memory")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			count, size := 8, 16000
+			if material {
+				count, size = 1, 100000
+			}
+			var id string
+			for i := 0; i < count; i++ {
+				now := time.Now()
+				event, err := ledger.New(r.db, r.materials).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: fmt.Sprintf("large-%d", i), ConversationID: "large", AgentID: agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: strings.Repeat("<", size)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				receipt, err := memoryexec.NewMemory(r.db, r.materials, nil).Remember(t.Context(), memory.Write{Agent: agent, Person: r.person, Item: memory.Item{Kind: memory.Fact, Content: "prefers tea", Subject: memory.Subject{Kind: memory.Person, ID: r.person}, Basis: memory.Stated, Evidence: []memory.Evidence{{Kind: memory.Event, ID: event.ID, Precision: memory.Exact}}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				id = receipt.ID
+			}
+			result, err := r.Memory(t.Context(), session, protocol.MemoryRequest{Operation: textptr("list"), AgentID: &agent})
+			if err != nil || result.Items == nil || len(*result.Items) != 2 {
+				t.Fatalf("large quote blocked listing: %+v %v", result, err)
+			}
+			items := *result.Items
+			if items[0].ItemID != id || items[1].ItemID != *older.ItemID {
+				t.Fatal("item order or continuation lost")
+			}
+			if items[0].EvidenceDetails == nil {
+				t.Fatal("missing quote availability")
+			}
+			for _, ref := range *items[0].EvidenceDetails {
+				if ref.Quote != nil || ref.Status == nil || *ref.Status != "quote_too_large" {
+					t.Fatal("missing bounded-quote status")
+				}
+			}
+			raw, err := json.Marshal(result)
+			if err != nil || len(raw) > 512<<10 {
+				t.Fatalf("page exceeds budget: %d %v", len(raw), err)
+			}
+		})
 	}
 }
