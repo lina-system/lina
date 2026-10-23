@@ -20,7 +20,7 @@ tables = {}
 index_bytes = 0
 for name, size, owner in c.execute('SELECT d.name,sum(d.pgsize),coalesce(s.tbl_name,d.name) FROM dbstat d LEFT JOIN sqlite_schema s ON s.name=d.name GROUP BY d.name ORDER BY d.name'):
     tables[name] = size
-    if any(part in owner for part in ('search', 'fts', 'bigram')):
+    if any(part in owner for part in ('search', 'fts', 'bigram', 'recall')):
         index_bytes += size
 page_size = c.execute('PRAGMA page_size').fetchone()[0]
 result = dict(table_bytes=tables, index_bytes=index_bytes,

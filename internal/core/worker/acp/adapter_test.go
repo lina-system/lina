@@ -307,13 +307,16 @@ func agentFixture() {
 				if text == "rpc-error-exit" {
 					os.Exit(0)
 				}
-			case "permission", "question":
+			case "permission", "question", "refused-form":
 				pending, requestMode = f.ID, text
 				method := "session/request_permission"
 				params := json.RawMessage(`{"sessionId":"fixture","toolCall":{"toolCallId":"write","title":"Write result.txt","rawInput":{"path":"result.txt"}},"options":[{"optionId":"persist-allow","kind":"allow_always","name":"Always"},{"optionId":"one-allow","kind":"allow_once","name":"Once"},{"optionId":"persist-deny","kind":"reject_always","name":"Never"},{"optionId":"one-deny","kind":"reject_once","name":"Deny"}]}`)
-				if text == "question" {
+				if text == "question" || text == "refused-form" {
 					method = "elicitation/create"
 					params = json.RawMessage(`{"sessionId":"fixture","mode":"form","message":"Choose a name","requestedSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}`)
+				}
+				if text == "refused-form" {
+					params = json.RawMessage(`{"sessionId":"fixture","mode":"form","message":"Secret","requestedSchema":{"type":"object","properties":{"api_key":{"type":"string"}}}}`)
 				}
 				send(map[string]any{"jsonrpc": "2.0", "id": "decision", "method": method, "params": params})
 			case "exit":

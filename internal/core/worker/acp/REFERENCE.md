@@ -49,6 +49,19 @@ and C-29/C-60 in [Go Core](../../../../docs/design/go-core.md#work-engine).
   or verify a vendor release. This implements LINA's native ACP contract; no
   Hermes, Honcho, LCM-X or CRW behavior is copied.
 
+## Form projection (#1135)
+
+- **Seen:** The waiting-card bridge refuses secret-like field names and requires
+  a value for every projected field. ACP object schemas distinguish `required`
+  properties. Array items can name enum values or titled options. A schema miss
+  used to return a terminal refused outcome while the worker request stayed pending.
+- **Inferred:** Decline those field names before publishing a card. Mark properties
+  absent from `required` as optional and omit a blank answer. Show multi-select
+  values and titles in the question text. Return malformed for a schema miss so
+  the card stays open for a correction, decline, or cancel.
+- **Unknown:** No installed vendor form was exercised. This follows the ACP
+  adapter contract; no Hermes, Honcho, LCM-X or CRW behavior is copied.
+
 ## Session work tools (#749)
 
 - **Seen:** LINA's existing Core work-tool handlers validate `work.Receipt` and

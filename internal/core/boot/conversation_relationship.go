@@ -18,7 +18,7 @@ func (r *conversationRuntime) relationshipPacket(ctx context.Context, at time.Ti
 	if r.channelBinding != nil && !r.channelBinding.Scope.Memory {
 		return nil, nil
 	}
-	hits, err := memory.New(r.db).CurrentRelationship(ctx, memory.RecallScope{Agent: r.agent, Person: r.person, ExternalModel: true}, at.Unix())
+	hits, err := r.memoryStore().CurrentRelationship(ctx, memory.RecallScope{Agent: r.agent, Person: r.person, ExternalModel: true}, at.Unix())
 	if err != nil {
 		return nil, err
 	}

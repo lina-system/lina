@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/thisisjun786/lina/internal/core/a2a"
 	"github.com/thisisjun786/lina/internal/core/accounts"
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assets"
@@ -85,6 +86,8 @@ type conversationRuntime struct {
 	coordinator     *conversationRuntime
 
 	materials        *conversationMaterials
+	recallStop       context.CancelFunc
+	recallDone       chan struct{}
 	assets           *assets.Store
 	root             string
 	steering         map[string][]acceptedSteering
@@ -92,6 +95,9 @@ type conversationRuntime struct {
 	db               *canon.Store
 	accounts         *accounts.Store
 	vault            *secrets.Store
+	remoteAgents     *a2a.Service
+	a2aStop          context.CancelFunc
+	a2aDone          chan struct{}
 	webTransport     http.RoundTripper
 	signin           *accounts.SignIn
 	agents           *agents.Store
@@ -256,6 +262,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
+	if err = r.initA2A(relay); err != nil {
+		return nil, err
+	}
 	if err := addOperations(&r.identity, clientsrv.AccountOperations(r.person, r.accounts, relay)); err != nil {
 		return nil, err
 	}
@@ -297,6 +306,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 
+	if err = r.recoverA2A(ctx); err != nil {
+		return nil, err
+	}
 	if r.agent != "" {
 		if err = r.seedHistory(ctx); err != nil {
 			return nil, err
@@ -327,6 +339,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startGrowth(ctx, controls); err != nil {
 		return nil, err
 	}
+	r.startA2AObserver(ctx)
 	if err = r.startOwnerViews(ctx); err != nil {
 		return nil, err
 	}
@@ -372,6 +385,22 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.recallStop != nil {
+		r.recallStop()
+		select {
+		case <-r.recallDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if r.a2aStop != nil {
+		r.a2aStop()
+		select {
+		case <-r.a2aDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if r.exchangeStop != nil {
 		r.exchangeStop()
 		select {

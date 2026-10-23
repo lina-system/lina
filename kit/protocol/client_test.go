@@ -42,6 +42,8 @@ func concretePayloads() map[string]any {
 		"restart_status":     map[string]any{"owed": false},
 		"record_request":     map[string]any{"operation": "query", "view": "memos"},
 		"record_result":      map[string]any{"operation": "query", "rows": []any{}},
+		"a2a_request":        map[string]any{"operation": "list"},
+		"a2a_result":         map[string]any{"operation": "list", "connections": []any{}},
 		"web_request":        map[string]any{"operation": "status"},
 		"web_result":         map[string]any{"provider": "firecrawl", "configured": false},
 		"export_result":      map[string]any{"directory": "staging/export/synthetic", "manifest": "{}"},
