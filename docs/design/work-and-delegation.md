@@ -1425,7 +1425,7 @@ When there is more work than the person wants running, the person adjusts it fro
 - **Stop.** Stopping a goal makes it `stopped` (see Lifecycle). It is final, keeps what it produced, and takes the person's confirmation.
 - **Run limit.** The run limit is how many goals may have a step in progress at once. By default it is automatic: on each pass Core sets it to what the free slots and the quota rows of Capacity can carry, and never below one. The person can set a number instead or return it to automatic. A goal past the limit starts no new step. Lowering the limit stops nothing that runs; goals past it start nothing new.
 - **Queue.** Goals that have a ready step but no run slot wait in rank order. Each knows its place and its one reason: the run limit (`slot`), a worker's quota (`quota`) or host load (`load`). The reason is `quota` or `load` when the automatic limit fell because of that report.
-- **Shown on the line.** A paused goal's Now is 일시정지 (paused). A queued goal's Now is its reason and place, such as "자리 대기 · 3번째" (waiting for a slot, 3rd). These follow 확인 필요 in the order of Now (see Progress line).
+- **Shown on the line.** A paused goal's Now is 일시정지 (paused). A queued goal's Now is its reason and place, such as "자리 대기 · 3번째" (waiting for a slot, 3rd). These follow 확인 필요 in the order of Now (see Progress line), and such a goal is ordered with the lines that wait on something other than the person.
 
 ### Recovery
 
