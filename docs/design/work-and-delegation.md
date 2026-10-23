@@ -783,6 +783,10 @@ A canceled RPC wait does not interrupt a turn. Event overflow, malformed frames,
 EOF and unsupported server requests end the connection visibly and require
 reconciliation; they cannot become successful completion.
 
+A turn completion may arrive before its start reply, without a separate started
+notification. The start operation still returns that turn's identity for work
+admission and event correlation, while preserving its completed, idle state.
+
 `versions.json` in the Codex adapter is shared with the build manifest's
 `verifiedWorkerVersions.codex` list. Version 0.163.0 has an installed-worker
 session round trip (initialize, start, interrupt, idle input, model output and
