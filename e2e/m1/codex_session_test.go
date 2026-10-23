@@ -209,14 +209,8 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 		if scriptedCodingManager(t, w, req) {
 			return
 		}
-		names := map[string]bool{}
-		for _, raw := range req.Tools {
-			var d struct{ Name string }
-			json.Unmarshal(raw, &d)
-			names[d.Name] = true
-		}
 		for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot"} {
-			if !names[name] {
+			if !toolReachable(req.Tools, name) {
 				t.Errorf("Core did not offer %s", name)
 				emitResponse(w, "missing worker tool", true)
 				return
