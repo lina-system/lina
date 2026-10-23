@@ -1594,8 +1594,11 @@ operation is shown locally and never becomes a model prompt.
   supersedes that item with a newly sourced statement, retaining its scope and
   holder. `/memory forget <id>` uses Core's recoverable removal flow; the next
   recall and next model request exclude it. Results acknowledge committed ids.
-- `/agents` lists ids and names. `/agents create <name>` uses the LINA preset;
-  `/agents choose <id>` changes this client's conversation and memory focus;
+- `/agents` lists ids and names. Each entry shows the name, role and source
+  preset, then a labelled agent id and its `main:<agent_id>` conversation.
+  `/agents create <name>` uses the LINA preset;
+  `/agents choose <id>` takes either the agent id or that conversation id and
+  changes this client's conversation and memory focus;
   `/agents rename <id> <name>` keeps the id; `/agents delete <id>` uses the
   existing agent trash transition and ends its bindings. Selecting another
   agent drops the old conversation display and subscriptions, while Core keeps
