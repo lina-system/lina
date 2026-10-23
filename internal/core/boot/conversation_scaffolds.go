@@ -19,6 +19,8 @@ var modelContextScaffolds = []string{
 	"handoff_check",
 	"worker_session",
 	"worker_completion",
+	"question_default",
+	"question_answer",
 }
 
 var displayScaffolds = []string{
@@ -33,6 +35,8 @@ var displayScaffolds = []string{
 	"coding_handoff",
 	"timer",
 	"plan_rejection",
+	"question_default",
+	"question_answer",
 }
 
 // scaffoldSQLList quotes the fixed scaffold names for a SQL IN expression.

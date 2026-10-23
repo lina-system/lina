@@ -4,6 +4,7 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -227,7 +228,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	r.router = &conversationRouter{root: r, views: map[string]*conversationRuntime{r.agent: r}}
-	r.identity = clientsrv.Identity{PersonID: r.person, Agents: []protocol.Agent{{AgentID: r.agent, Name: first.Agent.Name}}, Operations: clientsrv.ConversationOperations(r.router), Topics: r.topics, AuthorizeTopic: r.topicAuthorized, TopicCapabilities: map[string]protocol.Capability{
+	r.identity = clientsrv.Identity{PersonID: r.person, Agents: []protocol.Agent{{AgentID: r.agent, Name: first.Agent.Name}}, Topics: r.topics, AuthorizeTopic: r.topicAuthorized, TopicCapabilities: map[string]protocol.Capability{
 		"core": clientsrv.ConversationCapability, "conversation:": clientsrv.ConversationCapability, "results:": clientsrv.ConversationCapability,
 	}}
 	if r.agent == "" {
@@ -236,7 +237,8 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if route == nil {
 		r.identity.Topics = nil
 		r.identity.TopicCapabilities = nil
-		r.identity.Operations = make(map[protocol.Kind]clientsrv.Operation)
+	} else if err := addOperations(&r.identity, clientsrv.ConversationOperations(r.router)); err != nil {
+		return nil, err
 	}
 	r.vault, err = secrets.OpenFiles(root)
 	if err != nil {
@@ -251,17 +253,17 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
-	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
-		r.identity.Operations[kind] = op
+	if err := addOperations(&r.identity, clientsrv.AccountOperations(r.person, r.accounts, relay)); err != nil {
+		return nil, err
 	}
-	for kind, op := range clientsrv.RecordOperations(r) {
-		r.identity.Operations[kind] = op
+	if err := addOperations(&r.identity, clientsrv.RecordOperations(r)); err != nil {
+		return nil, err
 	}
-	for kind, op := range clientsrv.WebOperations(r) {
-		r.identity.Operations[kind] = op
+	if err := addOperations(&r.identity, clientsrv.WebOperations(r)); err != nil {
+		return nil, err
 	}
-	for kind, op := range clientsrv.ReplayOperations(r) {
-		r.identity.Operations[kind] = op
+	if err := addOperations(&r.identity, clientsrv.ReplayOperations(r)); err != nil {
+		return nil, err
 	}
 	if err = r.startDecisions(ctx); err != nil {
 		return nil, err
@@ -278,10 +280,12 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.recoverWorkAuthority(ctx); err != nil {
 		return nil, err
 	}
-	for kind, op := range clientsrv.WorkOperations(r) {
-		r.identity.Operations[kind] = op
+	if err := addOperations(&r.identity, clientsrv.WorkOperations(r)); err != nil {
+		return nil, err
 	}
-	r.startWorkerLanes()
+	if err = r.startWorkerLanes(); err != nil {
+		return nil, err
+	}
 	if err = r.startWorkWaiting(ctx); err != nil {
 		return nil, err
 	}
@@ -298,14 +302,14 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	for kind, op := range clientsrv.ChannelOperations(r.channels) {
-		r.identity.Operations[kind] = op
+	if err := addOperations(&r.identity, clientsrv.ChannelOperations(r.channels)); err != nil {
+		return nil, err
 	}
-	for kind, op := range clientsrv.TalkOperations(r) {
-		r.identity.Operations[kind] = op
+	if err := addOperations(&r.identity, clientsrv.TalkOperations(r)); err != nil {
+		return nil, err
 	}
-	for kind, op := range clientsrv.ManagementOperations(r) {
-		r.identity.Operations[kind] = op
+	if err := addOperations(&r.identity, clientsrv.ManagementOperations(r)); err != nil {
+		return nil, err
 	}
 	if err = r.startSkillMaintenance(ctx); err != nil {
 		return nil, err
@@ -329,6 +333,15 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		if r.delegation != nil {
 			_ = r.delegation.close(ctx)
 			r.delegation = nil
+		}
+		// Retain the failed readiness stage for clients arriving after boot.
+		// Worker error text can contain private paths or provider messages.
+		var failure *delegationReadinessError
+		if errors.As(delegationErr, &failure) {
+			data, _ := json.Marshal(protocol.ReadinessFailure{Step: failure.step})
+			if publishErr := r.topics.Publish("core", clientsrv.TopicEvent{Kind: protocol.KindReadinessFailure, Key: "delegation", Data: data}); publishErr != nil {
+				fmt.Fprintln(os.Stderr, "Delegation readiness could not be published.")
+			}
 		}
 		fmt.Fprintln(os.Stderr, "Delegation is unavailable; other Core capabilities remain available.")
 	}

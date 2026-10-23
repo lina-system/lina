@@ -26,6 +26,10 @@ Rules:
 - The TypeScript types serve the LINA app on every platform, because the app is one React codebase ([surfaces.md](surfaces.md#app-front-end)).
 - Every generated type set parses and re-serializes every conformance fixture without loss.
 
+The Go generator embeds the canonical schema verbatim as a raw string so schema
+changes remain line-oriented in the generated source. It rejects a schema that
+contains a backtick, which would terminate the raw string.
+
 The client 1.0 codec remains strict for encoding and for Core's request boundary:
 unknown fields (including nested fields) and unknown kinds fail with `malformed`
 before dispatch. A client receive boundary validates the common envelope first.
@@ -353,6 +357,14 @@ Rules:
 - A background notice is sent to clients at the turn boundary at which LINA Core delivers it ([conversation-and-memory.md](conversation-and-memory.md#background-results)). A running-list update may arrive at any time and is display state only.
 
 The core topic carries a `connected` item with optional `shell_file_tools_available` (boolean), keyed once per boot. It represents the completed sandbox probe and is included in snapshots and live updates, including for a client connected during recovery. A false value produces one local setup notice in the TUI's language; it is not a conversation event or model input. The field carries no launcher paths or diagnostic cause.
+
+The same topic retains optional delegation initialization failures as
+`readiness_failure`, keyed `delegation`. Its existing `step` field names
+`delegation.configuration`, `delegation.worker` or `delegation.quota`; optional
+`stream` metadata allows live delivery and snapshot replay. These failures do
+not refuse conversation admission. The payload contains no worker error text,
+credentials or local paths. A boot without delegation configuration emits no
+delegation failure.
 
 ### Conversation payloads
 

@@ -730,6 +730,16 @@ and local repository path. Quota eligibility and host capacity always win over
 priority. Without rules, otherwise equal candidates retain the installed
 Antigravity-then-Codex order. These rules grant no worker permissions.
 
+Dispatch keeps worker eligibility in one factory registry. Explicit selections
+are Antigravity, headless Claude and the built-in ACP profiles; automatic
+selection uses Antigravity, Codex and installed ACP profiles in that order.
+Headless Claude remains explicit-only, and the provisional rules file accepts
+only Antigravity and Codex. Admission, the tool's worker enum and rule validation
+derive from those registrations. Startup converts legacy binary settings into
+factories; runtime readiness and selection use only configured factories. A
+returned task keeps its recorded worker, including a chooser-only worker such
+as Codex, without changing what a new task may explicitly select.
+
 Queued tasks may share a repository. Core claims their declared areas in the
 same fenced transaction as handoff, and only free areas can start. The claim
 continues through delivery and manager judgment until trusted application;
@@ -1124,6 +1134,17 @@ Delegation to a worker is ready when:
 2. the adapter's session opens (for Codex, `initialize`; for an ACP worker, `initialize` answering protocol version 1, then `session/new`; for another worker, the first step of its own protocol)
 
 When a check fails, delegation is reported as unsupported with its cause. An ACP worker that answers `session/new` with the authentication error (-32000) is reported as needs sign-in, not as broken. Conversation readiness is separate and can pass while worker readiness fails.
+
+The optional local graph scheduler also checks its initial quota observation
+before releasing recovered tasks. A failed or unanswered quota read disables
+that scheduler, with a fifteen-second deadline for the read. A successful read
+with unknown quota remains usable. Failed initialization closes the partial
+worker session and releases its activity lease; conversations, channels and
+background runs remain available. Core reports the failed configuration, worker
+or quota stage through `readiness_failure` on the `core` topic, including for
+clients connecting after startup. Worker error text and local paths are not
+exposed. Errors dispatching recovered tasks after readiness succeeds remain
+task failures and do not disable the scheduler or stop other workers.
 
 ### Assignment
 

@@ -205,6 +205,9 @@ var catalog = map[string]translation{
 	"notice.run_cancelled":   {"cancelled", "취소"},
 	"notice.run_needs_input": {"needs_input", "응답 필요"},
 
+	"notice.question_default": {"Using the stated default: ", "말씀드린 기본값으로 진행해요: "},
+	"notice.question_answer":  {"Recorded your response: ", "응답을 기록했어요: "},
+
 	"notice.persona_changed": {"Your speaking-style change is saved for the next reply. Say undo to restore it.", "말투 변경을 저장했어요. 다음 답변부터 적용돼요. 되돌리려면 취소해 달라고 말해 주세요."},
 	"notice.persona_undone":  {"Your previous speaking style is restored for the next reply.", "이전 말투로 되돌렸어요. 다음 답변부터 적용돼요."},
 	"notice.emotion_off":     {"Emotional expression is off.", "감정 표현을 껐어요."},
@@ -230,7 +233,7 @@ var catalog = map[string]translation{
 	"stale_group":            {"Changed; review and select again", "변경됨; 다시 확인하고 선택하세요"},
 	"card.stopped":           {"Stopped by Core restart", "Core 재시작으로 중지됨"},
 	"card.confirm":           {"Select a number, then Enter to confirm", "번호로 선택한 뒤 Enter로 확인"},
-	"card.targets_cut":       {"Targets do not fit; enlarge the terminal to confirm", "대상이 잘립니다; 터미널을 넓혀야 확인할 수 있습니다"},
+	"card.targets_cut":       {"Read all targets: PgUp/PgDn", "PgUp/PgDn으로 대상을 모두 읽어 주세요"},
 	"card.question_keys":     {"Tab: next field  Enter: send  Ctrl+D: decline  Ctrl+X: cancel", "Tab: 다음 항목  Enter: 전송  Ctrl+D: 거절  Ctrl+X: 취소"},
 	"card.escape":            {"Esc: close without deciding", "Esc: 결정하지 않고 닫기"},
 	"card.open":              {"F6: waiting for me", "F6: 내 결정 대기"},
