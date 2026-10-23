@@ -76,6 +76,13 @@ jobs:
           LINA_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
         run: |
           set -o pipefail
+          # build.sh hands LINA_SIGN_IDENTITY to codesign, which then requires that
+          # certificate in a keychain. Only a ref that imported the key names one;
+          # every other ref builds ad-hoc with the placeholder team.
+          if [[ "${LINA_SIGNING:-}" != 'true' ]]; then
+            export LINA_SIGN_IDENTITY=
+            export LINA_TEAM_ID=0000000000
+          fi
           ./build.sh 2>&1 | tee "$RUNNER_TEMP/build.log"
           {
             echo '## Build, sign and verify'
