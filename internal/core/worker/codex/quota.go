@@ -23,6 +23,20 @@ type quotaLimit struct {
 	observed map[string]time.Time
 }
 
+// CachedQuota returns the snapshot already maintained for this process.
+// It does not call the worker. A session that has not loaded quota returns nil.
+func (s *Session) CachedQuota() []provider.QuotaRow {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.quotaLoaded {
+		return nil
+	}
+	return s.quotaRows()
+}
+
 // Quota reads the account snapshot once; the ordered notification stream then
 // maintains it for this process lifetime. It never reads Core credentials.
 func (s *Session) Quota(ctx context.Context) ([]provider.QuotaRow, error) {

@@ -127,45 +127,50 @@ func TestTUIProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer listener.Close()
-		served := make(chan error, 1)
+		served := make(chan error, 2)
 		go func() {
-			conn, err := listener.Accept()
-			if err != nil {
-				served <- err
-				return
+			// Refuse both the preferred handshake and its one legacy fallback.
+			for range 2 {
+				conn, err := listener.Accept()
+				if err != nil {
+					served <- err
+					return
+				}
+				defer conn.Close()
+				conn.SetDeadline(time.Now().Add(5 * time.Second))
+				var request struct {
+					ID     string            `json:"id"`
+					Params protocol.Envelope `json:"params"`
+				}
+				if err := json.NewDecoder(conn).Decode(&request); err != nil {
+					served <- err
+					return
+				}
+				data, err := os.ReadFile("../../../protocol/fixtures/client/1.0/unsupported_combination.json")
+				if err != nil {
+					served <- err
+					return
+				}
+				var refusal protocol.Envelope
+				if err := json.Unmarshal(data, &refusal); err != nil {
+					served <- err
+					return
+				}
+				refusal.ReplyTo = &request.Params.MessageID
+				// Untrusted detail must not become terminal control sequences.
+				refusal.Error.Detail = "\x1b]52;c;payload\a"
+				served <- json.NewEncoder(conn).Encode(struct {
+					JSONRPC string            `json:"jsonrpc"`
+					ID      string            `json:"id"`
+					Result  protocol.Envelope `json:"result"`
+				}{"2.0", request.ID, refusal})
 			}
-			defer conn.Close()
-			conn.SetDeadline(time.Now().Add(5 * time.Second))
-			var request struct {
-				ID     string            `json:"id"`
-				Params protocol.Envelope `json:"params"`
-			}
-			if err := json.NewDecoder(conn).Decode(&request); err != nil {
-				served <- err
-				return
-			}
-			data, err := os.ReadFile("../../../protocol/fixtures/client/1.0/unsupported_combination.json")
-			if err != nil {
-				served <- err
-				return
-			}
-			var refusal protocol.Envelope
-			if err := json.Unmarshal(data, &refusal); err != nil {
-				served <- err
-				return
-			}
-			refusal.ReplyTo = &request.Params.MessageID
-			// Untrusted detail must not become terminal control sequences.
-			refusal.Error.Detail = "\x1b]52;c;payload\a"
-			served <- json.NewEncoder(conn).Encode(struct {
-				JSONRPC string            `json:"jsonrpc"`
-				ID      string            `json:"id"`
-				Result  protocol.Envelope `json:"result"`
-			}{"2.0", request.ID, refusal})
 		}()
 		checkExit(t, tuiCommand(t, binary, root, "--socket", socket), 78, "unsupported_combination")
-		if err := <-served; err != nil {
-			t.Fatal(err)
+		for range 2 {
+			if err := <-served; err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 	for _, args := range [][]string{nil, {"--socket="}, {"--unknown"}, {"--socket", "unused", "extra"}} {

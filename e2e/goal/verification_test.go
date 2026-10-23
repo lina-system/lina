@@ -234,7 +234,7 @@ func TestCoreRepairsFailedRuntimeVerification(t *testing.T) {
 		MainHost: func(context.Context) (work.Node, error) {
 			return work.Node{ID: "probe-main", Connected: true, ObservedAt: time.Now().Unix(), CPUCores: 2, CPULimit: 2, AvailableMemoryMB: 1024, MemoryLimitMB: 1024, AvailableDiskMB: 1024, DiskLimitMB: 1024, Workers: map[string]bool{"stub": true}}, nil
 		},
-		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+		Ready: func(ctx context.Context, e *work.Engine, person, _ string) error {
 			agent, err := fixtureWorkOwner(ctx, root)
 			if err != nil {
 				return err

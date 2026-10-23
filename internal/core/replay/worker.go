@@ -236,17 +236,7 @@ func Sandboxed(ctx context.Context, cfg SandboxConfig, initial WorkerInput) (out
 			return *frame.Outcome, nil
 		}
 		if frame.Read != nil {
-			call := *frame.Read
-			tool, ok := cfg.Reads[call.Name]
-			if !ok || tool.Validate == nil || tool.Execute == nil {
-				return out, ErrInvalid
-			}
-			if target, e := tool.Validate(call); e != nil || target != "" {
-				return out, ErrInvalid
-			}
-			result := tool.Execute(ctx, call)
-			result.ID = call.ID
-			if err = enc.Encode(workerFrame{Result: &result}); err != nil {
+			if err = answerRead(ctx, enc, cfg.Reads, *frame.Read); err != nil {
 				return out, err
 			}
 			continue
@@ -256,7 +246,7 @@ func Sandboxed(ctx context.Context, cfg SandboxConfig, initial WorkerInput) (out
 		}
 		request := *frame.Request
 		if initial.RuntimeTools {
-			request.Bridge = &workerBridge{enc: enc, scan: scan}
+			request.Bridge = &workerBridge{enc: enc, scan: scan, reads: cfg.Reads}
 		}
 		// The child owns only loop evolution. It cannot change the account, model,
 		// instructions, or offered tools selected by the authenticated operation.
@@ -325,7 +315,7 @@ func Request(ep Episode, candidates map[string]string, model, effort string, bui
 	instructions := strings.Join([]string{p.Core, p.DefaultVoice, p.UserVoice, p.GrowthSnapshot}, "\n")
 	switch ep.Evidence.Assembly.InstructionFormat {
 	case "": // Exact legacy layer assembly, still checked against its digest.
-	case "agent-v1", "persona-v1", "persona-tui-v1", "persona-tui-work-method-v1":
+	case "agent-v1", "persona-v1", "persona-tui-v1", "persona-tui-work-method-v1", "persona-tui-work-method-v2":
 		a := ep.Evidence.Assembly
 		if build == nil || a.AgentName == "" || a.OwnerPersonID == "" {
 			return provider.Request{}, Exclusion("missing_assembly")
@@ -353,21 +343,45 @@ func Request(ep Episode, candidates map[string]string, model, effort string, bui
 
 // workerBridge sends runtime calls back to the sandboxed loop's recorded-result
 // admission. The parent has no tool executor or authority to perform effects.
+// A live local read is answered on this same exchange: the sandbox emits it
+// before the runtime result, and the outer broker is blocked inside this call.
 type workerBridge struct {
-	enc  *json.Encoder
-	scan *bufio.Scanner
+	enc   *json.Encoder
+	scan  *bufio.Scanner
+	reads map[string]loop.Tool
 }
 
-func (b *workerBridge) Call(_ context.Context, call provider.ToolCall) (provider.ToolResult, error) {
+func (b *workerBridge) Call(ctx context.Context, call provider.ToolCall) (provider.ToolResult, error) {
 	if err := b.enc.Encode(workerFrame{Call: &call}); err != nil {
 		return provider.ToolResult{}, err
 	}
-	var f workerFrame
-	if err := readFrame(b.scan, &f); err != nil {
-		return provider.ToolResult{}, err
+	for {
+		var f workerFrame
+		if err := readFrame(b.scan, &f); err != nil {
+			return provider.ToolResult{}, err
+		}
+		if f.Read != nil {
+			if err := answerRead(ctx, b.enc, b.reads, *f.Read); err != nil {
+				return provider.ToolResult{}, err
+			}
+			continue
+		}
+		if f.ToolResult == nil || f.ToolResult.ID != call.ID {
+			return provider.ToolResult{}, ErrInvalid
+		}
+		return *f.ToolResult, nil
 	}
-	if f.ToolResult == nil || f.ToolResult.ID != call.ID {
-		return provider.ToolResult{}, ErrInvalid
+}
+
+func answerRead(ctx context.Context, enc *json.Encoder, reads map[string]loop.Tool, call provider.ToolCall) error {
+	tool, ok := reads[call.Name]
+	if !ok || !LocalRead(call.Name) || tool.Validate == nil || tool.Execute == nil {
+		return ErrInvalid
 	}
-	return *f.ToolResult, nil
+	if target, err := tool.Validate(call); err != nil || target != "" {
+		return ErrInvalid
+	}
+	result := tool.Execute(ctx, call)
+	result.ID = call.ID
+	return enc.Encode(workerFrame{Result: &result})
 }

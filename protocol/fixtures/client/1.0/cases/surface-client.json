@@ -1,0 +1,20 @@
+{
+  "side": "client",
+  "input": [
+    "normal/surface_welcome.json",
+    "normal/surface.json"
+  ],
+  "output": [
+    "normal/surface_welcome.json",
+    "normal/surface.json"
+  ],
+  "errors": [
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 2,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

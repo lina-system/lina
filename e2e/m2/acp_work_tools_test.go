@@ -70,8 +70,8 @@ func verifyACPWorkTools(t *testing.T, h *harness, fixture string, record dispatc
 	}
 	readACPFixture(t, fixture, "listed.json", &listed)
 	want := worker.WorkToolDeclarations()
-	if len(listed.Tools) != 4 {
-		t.Fatal("agent did not list four work tools")
+	if len(listed.Tools) != len(want) {
+		t.Fatal("agent did not list the shared work tools")
 	}
 	for i, tool := range listed.Tools {
 		var schema any
@@ -173,6 +173,12 @@ func verifyACPWorkToolsEnded(t *testing.T, h *harness, fixture string, _ dispatc
 
 const acpWorkToolsScript = `#!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
+function messageText(text) {
+ if (!text.startsWith('<lina-message ')) return text;
+ const match=text.match(/^<lina-message [^>]*><text>([\s\S]*)<\/text><\/lina-message>$/);
+ if (!match) throw Error('invalid worker message frame');
+ return match[1].replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi,(_,e)=>e[0]==='#'?String.fromCodePoint(e[1].toLowerCase()==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"})[e]);
+}
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -203,7 +209,7 @@ function mcp(server,token) {
  child.on('exit',()=>{for(const p of pending.values())p.reject(Error('MCP exited'))});
  return {call:(method,params={})=>new Promise((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n')}),close:()=>new Promise(resolve=>{child.on('exit',resolve);child.stdin.end()})};
 }
-const unwrap=response=>{if(response.error||response.result.isError)throw Error('work tool refused');return JSON.parse(response.result.content[0].text)};
+const unwrap=response=>{if(response.error||response.result.isError)throw Error('work tool refused');return JSON.parse(messageText(response.result.content[0].text))};
 let server,bridge;
 readline.createInterface({input:process.stdin}).on('line',async line=>{
  try {
@@ -232,7 +238,7 @@ readline.createInterface({input:process.stdin}).on('line',async line=>{
   if(answer.answer!=='Continue.'||answer.action!=='accept')throw Error('question answer lost');save('answered.json',answer);
   const coord=unwrap(await bridge.call('tools/call',{name:'coordinate',arguments:{request:'Preparing the result.'}}));
   if(!coord.accepted)throw Error('coordination not recorded');
-  const packet=m.params.prompt[0].text,definition=JSON.parse(packet.slice(packet.indexOf('{')));
+  const packet=m.params.prompt[0].text,definition=JSON.parse(messageText(packet).slice(messageText(packet).indexOf('{')));
   const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
   git('switch','-c',definition.branch);fs.writeFileSync('result.txt','ACP result\n');git('add','result.txt');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Create ACP result');
   const head=git('rev-parse','HEAD');

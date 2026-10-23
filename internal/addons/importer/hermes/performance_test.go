@@ -11,6 +11,7 @@ import (
 )
 
 func TestApplyRehearsesOncePerPlan(t *testing.T) {
+	t.Parallel()
 	for _, preview := range []bool{false, true} {
 		t.Run(map[bool]string{false: "direct", true: "after-preview"}[preview], func(t *testing.T) {
 			req := importRequest(t)
@@ -99,6 +100,7 @@ func TestApplyRehearsesOncePerPlan(t *testing.T) {
 }
 
 func TestRehearsalFailureIsRetainedWithoutWrites(t *testing.T) {
+	t.Parallel()
 	p, err := Prepare(t.Context(), importRequest(t))
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +129,7 @@ func TestRehearsalFailureIsRetainedWithoutWrites(t *testing.T) {
 }
 
 func TestRehearsalPreviewDoesNotChangeInventoryKinds(t *testing.T) {
+	t.Parallel()
 	p, err := Prepare(t.Context(), importRequest(t))
 	if err != nil {
 		t.Fatal(err)
@@ -164,6 +167,7 @@ func TestRehearsalPreviewDoesNotChangeInventoryKinds(t *testing.T) {
 }
 
 func TestRehearsalPreviewPreservesMappingDetails(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"owner_candidates", "uid_mapping", "uid_candidate_lineages"} {
 		t.Run(field, func(t *testing.T) {
 			p, err := Prepare(t.Context(), uidLineagesRequest(t))

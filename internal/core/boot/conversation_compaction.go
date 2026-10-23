@@ -175,6 +175,16 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		}
 		view.History = append(view.History, item)
 	}
+	// Pair every projected call with its receipt before the history becomes a
+	// request or a summary source, so a stored body stays in the ledger.
+	condensed := make([]provider.Item, len(view.History))
+	for i := range view.History {
+		condensed[i] = view.History[i].Item
+	}
+	condensed, _ = assemble.CondenseResultItems(condensed)
+	for i := range view.History {
+		view.History[i].Item = condensed[i]
+	}
 	in.MaxTokens = limit
 	in.Summary = nil
 	in.History = nil

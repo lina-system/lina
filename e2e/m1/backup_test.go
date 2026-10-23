@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/backup"
@@ -63,14 +64,76 @@ func TestM1BackupInstalledConversation(t *testing.T) {
 		}
 	}
 	h.stopCore(core)
-	// Reproduce the published v14 schema, retaining its completed conversation
-	// while removing later summary, sign-in, channel, exchange, display-order, growth, job, skill maintenance, naming-breach, run, work (including completion signals, worker quota, engine records and events, switch reservations and history), records (including operations, candidates, Korean search and to-do views), work-waiting, waiting-decision, starter/selection, merge-authority and coding-delegation tables.
+	// Keep the completed conversation while removing schema objects introduced
+	// after the published v14 fixture, using the repository's migration catalog.
 	legacy, err := canon.OpenSQLite(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = legacy.ExecContext(h.ctx, `DROP TABLE conversation_question_resolutions; DROP TABLE conversation_questions; DROP VIEW agent_done_breaches; DROP TABLE done_completions; DROP TABLE work_reviews; DROP TABLE exch_notices; DROP TABLE exch_origins; DROP TABLE artifact_changes; DROP TABLE work_worker_reservations; DROP TABLE work_switch_events; DROP TABLE work_switch_tasks; DROP TABLE work_switches; DROP TABLE naming_breaches; DROP TABLE record_candidates; DROP TABLE record_operations; DROP TABLE worker_quota; DROP TABLE agent_starters; DROP TABLE agent_selection; DROP TABLE timer_fire; DROP TABLE timer; DROP TABLE records_todo; DROP TABLE work_completion_origins; DROP TABLE work_completion_claims; DROP TABLE work_completions; DROP TABLE skill_maintenance_members; DROP TABLE skill_maintenance_notices; DROP TABLE skill_maintenance; DROP TABLE work_records; DROP TABLE work_events; DROP TABLE waiting_decisions; DROP TABLE coding_assignments; DROP TABLE coding_managers; DROP TABLE authority_delegations; DROP TRIGGER records_korean_insert; DROP TRIGGER records_korean_delete; DROP TABLE records_korean_bigram; DROP TABLE records_korean_fts; DELETE FROM search_index_config WHERE name='records_korean'; DROP TABLE channel_steering; DROP TABLE discord_buttons; DROP TABLE discord_presentations; DROP TABLE worker_recovery; DROP TABLE worker_dispatch; DROP TABLE authority_merges; DROP TABLE plan_rejections; DROP TABLE plan_confirmations; DROP TABLE plan_drafts; DROP TABLE result_saves; DROP TABLE result_heads; DROP TABLE work_waiting_decisions; DROP TABLE work_waiting_rounds; DROP TABLE records_edges; DROP TABLE records_text; DROP TABLE records_fts; DROP TABLE records_index_state; DROP TABLE records_index; DROP TABLE records_state; DROP TABLE work_active_runs; DROP TABLE work_cards; DROP TABLE work_ledger; DROP TABLE background_runs; DROP TABLE running_seen; DROP TABLE lane_notices; DROP TABLE lane_notice_events; DROP TABLE conversation_order; DROP TRIGGER import_range_closed; DROP TABLE import_rehearsal; DROP TABLE import_promotion; DROP TABLE import_seal; DROP TABLE import_conversation; DROP TABLE import_link; DROP TABLE import_source_span; DROP TABLE legacy_ref; DROP TABLE import_record; DROP TABLE import_event_span; DROP TABLE import_event_relation; DROP TABLE import_event; DROP TABLE import_batch; DROP TABLE exch_waiting; DROP TABLE exch_event; DROP TABLE exch_msg; DROP TABLE exchanges; DROP TABLE telegram_presentations; DROP TABLE telegram_buttons; DROP TABLE channel_outbound; DROP TABLE channel_receipts; DROP TABLE channel_actions; DROP TABLE channel_bindings; DROP TABLE channel_connections; DROP TRIGGER sum_revoke; DROP VIEW sum_affected; DROP TABLE sum_cover; DROP TABLE sum_edge; DROP TABLE sum_node; DROP TABLE sign_in_identities; DROP TABLE sign_in_host; DROP TABLE owner_binding; DROP TABLE agent_growth_steps; DROP TABLE moirai_jobs; DROP TABLE moirai_tasks; DROP TABLE moirai_aux; DROP TABLE moirai_applied; DROP TABLE moirai_reports; DROP TABLE budget_usage; DROP TABLE skill_heads; DROP TABLE skill_versions; DROP TABLE skill_undone; DROP TABLE skill_repo; PRAGMA user_version=14;`)
-
+	reference, err := canon.OpenSQLite(h.ctx, filepath.Join(t.TempDir(), "v14.sqlite"))
+	if err != nil {
+		legacy.Close()
+		t.Fatal(err)
+	}
+	defer reference.Close()
+	for _, migration := range canon.Migrations()[:14] {
+		if _, err = reference.ExecContext(h.ctx, migration.SQL); err != nil {
+			legacy.Close()
+			t.Fatal(err)
+		}
+	}
+	rows, err := legacy.QueryContext(h.ctx, `SELECT type,name FROM sqlite_schema
+WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+ORDER BY CASE type WHEN 'trigger' THEN 0 WHEN 'view' THEN 1 WHEN 'index' THEN 2 ELSE 3 END,name`)
+	if err != nil {
+		legacy.Close()
+		t.Fatal(err)
+	}
+	var removals []string
+	for rows.Next() {
+		var kind, name string
+		var retained int
+		if err = rows.Scan(&kind, &name); err == nil {
+			err = reference.QueryRowContext(h.ctx, "SELECT count(*) FROM sqlite_schema WHERE type=? AND name=?", kind, name).Scan(&retained)
+		}
+		if err != nil {
+			rows.Close()
+			legacy.Close()
+			t.Fatal(err)
+		}
+		// Canon creates its epoch fence outside the application migrations.
+		if retained == 0 && name != "canon_meta" {
+			removals = append(removals, "DROP "+kind+" IF EXISTS \""+strings.ReplaceAll(name, "\"", "\"\"")+"\";")
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err == nil {
+		_, err = legacy.ExecContext(h.ctx, strings.Join(removals, "\n")+"\nPRAGMA user_version=14;")
+	}
+	if err == nil {
+		// Later search migrations also insert catalog rows in this old table.
+		// Restore the published metadata so their upgrade can run again.
+		_, err = legacy.ExecContext(h.ctx, "DELETE FROM search_index_config")
+	}
+	if err == nil {
+		rows, err = reference.QueryContext(h.ctx, "SELECT name,tokenizer,fallback FROM search_index_config")
+		if err == nil {
+			for rows.Next() {
+				var name, tokenizer, fallback string
+				if err = rows.Scan(&name, &tokenizer, &fallback); err == nil {
+					_, err = legacy.ExecContext(h.ctx, "INSERT INTO search_index_config VALUES(?,?,?)", name, tokenizer, fallback)
+				}
+				if err != nil {
+					break
+				}
+			}
+			if err == nil {
+				err = rows.Err()
+			}
+			rows.Close()
+		}
+	}
 	legacy.Close()
 	if err != nil {
 		t.Fatal(err)
