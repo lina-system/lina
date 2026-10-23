@@ -403,7 +403,48 @@ remain Markdown, and the typed fields remain in the same versioned front matter.
 A deadline also requires `deadline_source`. `waiting_on` carries `who`, `since`
 and `next_check`; an assignee carries `kind` and `id`. Checklist items carry only
 `text` and `checked`. A repeat retains `rule`, the original `text`,
-`from_completion` and its current `next` occurrence; advancing it is #156.
+`from_completion`, an optional IANA `zone` (UTC when omitted) and its current
+`next` occurrence. Core retains the original start, completed count and
+exhaustion state internally; these are not model arguments. Completion advances
+the same record strictly beyond the current time and clears dependencies and
+checklist ticks for the next occurrence. Core also advances overdue records at
+startup and each minute, without calling a model. Date-only occurrences become
+overdue after their local day. An exhausted rule stops scheduling; an absence
+alone does not complete the task. Supported rules are daily, weekly, monthly or
+yearly with interval, by-day, by-month-day, count or until. Invalid rules are
+refused before publication. Timed recurrences preserve seconds and fractional seconds (up to Go time
+precision) and use the native timer's daylight-saving rules.
+
+The installed `propose_candidate` tool takes a source event id, exact quotation,
+title, note and confidence. An empty source refers to the current authenticated
+utterance. Core checks provenance and wording inside the fenced publication
+intent; source booleans and identities are not accepted as arguments. Direct
+owner commitments and self-directed requests with an exact matching action can
+pass the deterministic subset described in C-54. Unknown wording, unavailable
+sources, quotation mismatches and retracted evidence remain pending. The
+`list_candidates` tool returns durable numbered pages; confidence alone never
+adds a task. An automatic addition produces its saved record and undo handle,
+and undo cancels the new task without deleting its history. Replays do not
+repeat adoption, including after the original task is completed or canceled
+without undo. Replay and view aliases of an already adopted source/action
+remain pending without another record, undo handle or notice, across restart.
+A new independent commitment may add the same action once no open equivalent
+remains. Three rejected additions in a recognized class retains later items of
+that class as candidates.
+
+Recurring completion and advancement append one `record_occurrence` work-ledger
+event in the same checkpoint as the saved version. The event names the old and
+new occurrences and the reason; it creates neither a new task nor a worker card.
+Editing only the current next occurrence preserves the original recurrence
+anchor. Changing the recurrence rule starts the future series at its new next
+occurrence. Core's counters remain inaccessible to tool arguments.
+
+`promote_memo` takes a memo id and current revision and changes only its record
+kind and planning fields. Its title, note, id and path survive promotion. The
+committed receipt and conversation notice carry an undo handle; `undo_record`
+restores the prior memo as a new revision and refuses to overwrite a later edit.
+The durable publication intent includes the undo operation, so restart recovery
+retains both the change and the means to undo it.
 The record tool cannot write execution observations or complete delegated work.
 It may replace planning fields while preserving an already `completed` state,
 including on a to-do with an agent or worker assignee or a pull-request link.
@@ -621,6 +662,11 @@ window and reset. `e2e/m2/worker-quota-windows.json` covers the installed Core
 handoff and durable per-window state across restart.
 A successful `worker_quota` read from a routed conversation refreshes the shared
 dispatch service and wakes its chooser, including after a stop without a reset.
+The chooser merges observations per provider, account and window. A partial
+recovery remains usable when a healthy sibling retains its earlier observation
+time; older or absent measurements preserve the corresponding saved window.
+`e2e/m2/codex-quota-recovery.json` proves a sparse Codex recovery reaches the
+installed Core's dispatch cache and remains eligible after restart.
 
 The provisional worker rule table is read at startup from
 `system/core/worker-choice.json`. Its `rules` contain `worker`, `tags` and integer
