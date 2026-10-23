@@ -319,6 +319,7 @@ The Gemini adapter assembles its own stream by the same rules: deltas drive live
 **Quota.** Each account has quota rows, one per window the provider reports. A row holds:
 
 - the provider and the account;
+- the reported limit id and bucket, when available, independent of duration;
 - the window: five-hour, weekly, daily, per-minute, spend cap or unknown;
 - the share used, or unknown;
 - when the window resets, or unknown;
@@ -333,11 +334,23 @@ window does not block a healthy weekly window; only exhausted windows determine
 when the worker becomes eligible again. A stop without an identified exhausted
 window adds an unknown-window block with no reset, preserving the reported
 measurements rather than assigning the stop to a healthy window.
-Quota freshness is checked for each provider, account and window independently.
-A newer observation replaces only its matching window; an unchanged, older or
+Quota freshness is checked for each provider, account and bucket independently.
+Codex retains the limit id and primary, secondary or individual-limit bucket in
+optional `LimitID` and `Bucket` fields. A newer observation for the same bucket
+replaces an unknown duration when that duration becomes known. Different
+buckets remain separate even when their durations match. Rows without bucket
+identity keep their window-based matching only when the correspondence is
+unambiguous; historical bucket ids are never inferred. A measured legacy block
+without a matching identity remains blocked until its stated reset or a matching
+observation. Old JSON remains readable and older code ignores the added fields.
+A newer observation replaces only its matching bucket; an unchanged, older or
 missing sibling cannot discard that update or clear another window's block.
-An unknown-window stop inferred from an error clears on a newer observation
-for that account, without requiring every reported window to be refreshed.
+An unknown-window stop without a measured bucket, inferred from an error, clears
+on a newer observation for that account, without requiring every reported
+window to be refreshed.
+When a failed read leaves both provider and account unknown, the stop belongs
+to the worker. A newer observation from that worker clears it; observations
+from another worker do not. Known providers and accounts remain isolated.
 
 | Path | What the provider reports | Source of the rows |
 | --- | --- | --- |
