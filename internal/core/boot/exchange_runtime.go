@@ -133,7 +133,7 @@ func (r *conversationRuntime) receiveHandoff(ctx context.Context, receipt exchan
 		// Only the named record is offered. No search, personal memory, shell,
 		// forwarding, or arbitrary record reads are present in exchange requests.
 		if strings.HasPrefix(origin.Artifact.ID, "record:") {
-			if err = view.prepareRecordTools(turnID, bindings); err != nil {
+			if err = view.prepareRecordTools(turnID, record.ID+"-request", bindings); err != nil {
 				return err
 			}
 			target := strings.TrimPrefix(origin.Artifact.ID, "record:")

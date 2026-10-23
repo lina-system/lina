@@ -73,7 +73,7 @@ func TestHandoffToolsTrackReceiptAndCheckback(t *testing.T) {
 func TestArtifactOwnerRoutesSecondRecordWrite(t *testing.T) {
 	r := controlRuntime(t)
 	bindings := map[string]loop.Tool{}
-	if err := r.prepareRecordTools("create", bindings); err != nil {
+	if err := r.prepareRecordTools("create", "", bindings); err != nil {
 		t.Fatal(err)
 	}
 	create := provider.ToolCall{ID: "create", Name: "write_record", Arguments: `{"id":"","revision":"","kind":"document","title":"Draft","note":"Original"}`}
@@ -106,7 +106,7 @@ func TestArtifactOwnerRoutesSecondRecordWrite(t *testing.T) {
 	}
 	other := newConversationView(r, owner, "main:"+owner)
 	otherBindings := map[string]loop.Tool{}
-	if err := other.prepareRecordTools("edit", otherBindings); err != nil {
+	if err := other.prepareRecordTools("edit", "", otherBindings); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(map[string]string{"id": doc.ID, "revision": doc.Revision, "kind": "document", "title": "Draft", "note": "Other edit"})
@@ -134,7 +134,7 @@ func TestArtifactOwnerRoutesSecondRecordWrite(t *testing.T) {
 	}
 	channel := newConversationView(r, owner, "channel:shared")
 	channelBindings := map[string]loop.Tool{}
-	if err := channel.prepareRecordTools("channel-edit", channelBindings); err != nil {
+	if err := channel.prepareRecordTools("channel-edit", "", channelBindings); err != nil {
 		t.Fatal(err)
 	}
 	redirected := channelBindings[call.Name].Execute(t.Context(), call)
