@@ -15,25 +15,27 @@ import (
 )
 
 func replayInstructions(format string, p agents.Preparation, tools []provider.ToolDecl) (string, error) {
-	if format != "persona-tui-work-method-v1" {
+	if format != "persona-tui-work-method-v1" && format != "persona-tui-work-method-v2" {
 		p.WorkMethod = ""
 	}
-	switch format {
-	case "agent-v1", "persona-tui-v1", "persona-tui-work-method-v1", "persona-v1":
-	default:
-		return "", replay.Exclusion("missing_assembly")
+	build := assemble.LegacyInstructions
+	if format == "persona-tui-work-method-v2" {
+		build = assemble.Instructions
 	}
-	if format == "persona-tui-v1" || format == "persona-tui-work-method-v1" {
-		return assemble.TUIInstructions(p, tools)
-	}
-	text, err := assemble.Instructions(p, tools)
+	text, err := build(p, tools)
 	if err != nil {
 		return "", err
 	}
-	if format == "persona-v1" {
+	switch format {
+	case "agent-v1":
+		return text, nil
+	case "persona-tui-v1", "persona-tui-work-method-v1", "persona-tui-work-method-v2":
+		return assemble.TUIComposition(text), nil
+	case "persona-v1":
 		return assemble.PersonaCoreV1 + "\n\n" + text, nil
+	default:
+		return "", replay.Exclusion("missing_assembly")
 	}
-	return text, nil
 }
 func (r *conversationRuntime) replaySkill(ctx context.Context, id, commit string) (string, string, error) {
 	body, err := r.skills.ReadCommit(ctx, id, commit)
@@ -112,7 +114,7 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 		return nil, replay.Exclusion("missing_assembly")
 	}
 	core := assemble.PersonaCoreV1
-	if a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" {
+	if a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" || a.InstructionFormat == "persona-tui-work-method-v2" {
 		core += "\n" + assemble.TUIFormatting
 	}
 	request, report := assemble.Assemble(assemble.Input{

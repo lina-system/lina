@@ -1213,7 +1213,7 @@ their existing durable run JSON before sending.
 Implementation notes: [C-43 provider increment](../../kit/provider/REFERENCE.md#c-43-provider-increment).
 
 **C-44 Responses and Gemini adapters (new).**
-Responses adapter: Go standard-library HTTP and a bounded SSE reader, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function).
+Responses adapter: Go standard-library HTTP and a bounded SSE reader, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested when Core selected the reasoning-state capability, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function).
 Done items come from `response.output_item.done` only, and tool calls dispatch from done items only.
 Current-turn items are never sent altered or dropped.
 [V1](runtime.md#runtime-acceptance) decides the open fields.

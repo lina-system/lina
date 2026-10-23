@@ -1272,7 +1272,7 @@ Code-change work ends in a pull request that the worker opens, and goes through 
 
 ### Control
 
-- An idle thread receives `turn/start`. An active thread receives `turn/steer` with `expectedTurnId`. An idle ACP session receives `session/prompt`; an active one is steered only when the worker advertises steering, and otherwise its input waits for the turn to end.
+- An idle thread receives `turn/start`. An active thread receives `turn/steer` with `expectedTurnId`. An idle ACP session receives `session/prompt`; an active one is steered only when the worker advertises steering, and otherwise its input follows the recorded turn or pull delivery tier below.
 - Right before any input, LINA Core checks the thread, the turn, the process generation and the binding epoch again. A thread id alone never controls anything.
 - The protocol session and its process state establish whether a worker is active, waiting, dead or stalled; screen text never does. Recovery resumes the thread, or restarts a dead worker, once in the same work area before escalation, preserving the task, branch, receipts and the record of its review and CI fixes. Recovery does not grant another review-fix pass (see Stall and failure).
 - An open question or approval blocks ordinary input to that thread.
@@ -1281,6 +1281,40 @@ Code-change work ends in a pull request that the worker opens, and goes through 
 - A cancel is final only when `turn/completed` reports `interrupted`, or when the ACP `session/prompt` reply reports the stop reason `cancelled`.
 - Pause stops LINA's delivery to the work thread. It does not stop execution. Paused work never resumes automatically.
 - Close keeps files, branches, worktrees and receipts and never deletes the thread. `thread/archive` is sent only on an explicit close.
+
+### Steering delivery and receipts
+
+Every worker connection records its effective delivery tier and mechanism in
+its profile. A vendor name alone does not establish an input capability:
+
+- **push:** active-turn input and idle wake through the bound protocol.
+- **turn:** input at the next supported tool boundary. Core's ACP bridge uses
+  the next LINA tool result; it does not intercept the worker's native tools.
+- **pull:** an unread notice on each LINA tool result and `lina.check_inbox`.
+  A connection without a tool or input transport reports the inbox unavailable.
+
+An idle ACP session accepts `session/prompt`; starting it still requires its
+existing task owner's admission. Task-controlled steering never starts an extra
+execution. Core installs no hook or plugin in the person's settings. A stronger
+native mechanism is advertised only when that connection implements it.
+
+Each message has an id, sender, task and `<worker>:<session>` address. Core stores
+it before delivery and retains append-only work receipts: `stored`, `delivered`,
+`read`, `held` or `refused`. The sender can inspect these receipts in the worker
+snapshot and task ledger; changes also return to its conversation. Turn and pull
+senders are told “seen at the next step.” Delivery acknowledges the transport,
+not the worker's reading or completion of the task. `check_inbox` acknowledges
+read message IDs and may report acted IDs; Core records send-to-action time per
+message and tier, explicitly as a worker claim. Acknowledgements cannot name
+another session's messages or precede delivery.
+
+Known-unsent messages wait while the session is down or waiting for an answer
+and are delivered under the same session key after resume. A new session does
+not inherit another session's mail. Core claims a delivery before sending; an
+uncertain send stays held for reconciliation and is never automatically replayed.
+A task session that ends for good refuses its remaining unsent mail and tells
+the sender. Closing work preserves its receipts. These receipts neither accept
+a task result nor authorize new work.
 
 ### Completion signals
 

@@ -184,7 +184,7 @@ func TestWorkMethodRequestReplayKeepsPinnedRecord(t *testing.T) {
 	if report.Failure != "" {
 		t.Fatal(report.Failure)
 	}
-	ep := replay.Episode{WorkMethod: method, Persona: input.Persona, Items: request.Items, Evidence: ledger.RequestEvidence{CacheIdentity: request.CacheIdentity, Layout: request.Layout.Clone(), Model: request.Model, Tools: request.Tools, Assembly: ledger.Assembly{AgentID: input.AgentID, AgentName: input.AgentName, OwnerPersonID: input.OwnerPersonID, InstructionFormat: "persona-tui-work-method-v1"}}}
+	ep := replay.Episode{WorkMethod: method, Persona: input.Persona, Items: request.Items, Evidence: ledger.RequestEvidence{CacheIdentity: request.CacheIdentity, Layout: request.Layout.Clone(), Model: request.Model, Tools: request.Tools, Assembly: ledger.Assembly{AgentID: input.AgentID, AgentName: input.AgentName, OwnerPersonID: input.OwnerPersonID, InstructionFormat: "persona-tui-work-method-v2"}}}
 	restored, err := replay.Request(ep, nil, "", "", replayInstructions)
 	if err != nil {
 		t.Fatal(err)

@@ -14,7 +14,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/turn"
-	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -78,5 +77,6 @@ func (r *conversationRuntime) publishCompactionFailure(ctx context.Context, noti
 	}
 	s := record.Sizes
 	text := fmt.Sprintf("Request: %d\nThreshold: %d\nContext window: %d\nFixed: %d\nSummary: %d\nHistory: %d\nContext: %d\nInput: %d\nCurrent turn: %d", s.Total, s.Threshold, s.Window, s.Fixed, s.Summary, s.History, s.Packet, s.Input, s.Active)
-	return true, r.publish(ctx, protocol.KindResult, notice.ID, protocol.Result{ResultID: "result:" + notice.ID, Revision: "1", Type: protocol.ResultTypeDocumentDraft, Status: protocol.ResultStatusPreview, Title: design.Text(eventLanguage(notice), "reply.request_limit"), Summary: notice.Body.Text(), Text: &text, RevisedBy: r.agent, Provenance: protocol.ResultProvenance{AgentID: r.agent, ConversationID: r.conversation, TurnID: turnID}})
+	summary, speaker := notice.Body.Text(), protocol.ConversationSpeakerSystem
+	return true, r.publish(ctx, protocol.KindItemDone, notice.ID, protocol.ItemDone{Text: &summary, Speaker: &speaker, Details: &text})
 }

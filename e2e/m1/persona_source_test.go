@@ -134,15 +134,7 @@ func TestM1ShippedPersonaInstallAndTools(t *testing.T) {
 				if identity.AgentID == "" || identity.Name == "" || identity.Owner == "" {
 					t.Error("identity lost")
 				}
-				var enabled []json.RawMessage
-				if err := json.Unmarshal(instructionBlock(body.Instructions, "enabled_tools"), &enabled); err != nil || len(enabled) != len(body.Tools) || len(enabled) == 0 {
-					t.Error("tool declarations lost")
-				}
-				for i := range enabled {
-					if i < len(body.Tools) && string(mustJSON(t, enabled[i])) != string(mustJSON(t, body.Tools[i])) {
-						t.Error("declared tools differ")
-					}
-				}
+				assertEnabledToolNames(t, body.Instructions, body.Tools)
 				calls[identity.AgentID]++
 				if calls[identity.AgentID]%2 == 1 {
 					requests <- body.Instructions
@@ -256,5 +248,21 @@ func TestM1ShippedPersonaInstallAndTools(t *testing.T) {
 				t.Fatalf("warnings=%d want=%d", warnings, wantWarnings)
 			}
 		})
+	}
+}
+
+// Names identify the exact native declarations without duplicating schemas.
+func assertEnabledToolNames(t *testing.T, instructions string, tools []json.RawMessage) {
+	t.Helper()
+	var enabled []string
+	if err := json.Unmarshal(instructionBlock(instructions, "enabled_tools"), &enabled); err != nil || enabled == nil || len(enabled) != len(tools) {
+		t.Errorf("enabled tool names differ from native declarations: %v", err)
+		return
+	}
+	for i, raw := range tools {
+		var tool struct{ Name string }
+		if err := json.Unmarshal(raw, &tool); err != nil || tool.Name == "" || enabled[i] != tool.Name {
+			t.Errorf("enabled name %d differs from native declaration: %q, %s", i, enabled[i], raw)
+		}
 	}
 }

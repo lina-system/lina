@@ -9,6 +9,7 @@ func WorkToolDeclarations() []Tool {
 		return json.RawMessage(`{"type":"object","properties":{` + properties + `},"required":[` + required + `],"additionalProperties":false}`)
 	}
 	return []Tool{
+		{Namespace: "lina", Name: "check_inbox", Description: "Read steering for this session. Acknowledge message IDs with read after reading and acted after acting. Acknowledgements are claims, not verified task completion.", InputSchema: schema(`"read":{"type":"array","maxItems":128,"items":{"type":"string"}},"acted":{"type":"array","maxItems":128,"items":{"type":"string"}}`, "")},
 		{Namespace: "lina", Name: "read_projection", Description: "Read this assignment's task packet and revision. No other conversation, material or memory is authorized by this session.", InputSchema: schema("", "")},
 		{Namespace: "lina", Name: "ask", Description: "Ask the originating person a question and wait for their answer.", InputSchema: schema(`"question":{"type":"string"}`, `"question"`)},
 		{Namespace: "lina", Name: "coordinate", Description: "Send a coordination request to LINA Core in the originating conversation. This acknowledges receipt, not completion of the requested action.", InputSchema: schema(`"request":{"type":"string"}`, `"request"`)},
