@@ -1,0 +1,14 @@
+{
+  "refusals": [
+    {"kind": "cycle", "code": "graph_cycle"},
+    {"kind": "unknown", "code": "graph_unknown_step"},
+    {"kind": "area", "code": "graph_invalid_area"},
+    {"name": "가가가가가가가가가가가가가", "code": "graph_invalid_name"},
+    {"name": "Fix #762", "code": "graph_invalid_name"},
+    {"name": "Read PR 17", "code": "graph_invalid_name"},
+    {"name": "Merge dev", "code": "graph_invalid_name"},
+    {"name": "Edit result.txt", "code": "graph_invalid_name"},
+    {"name": "Run foundation", "code": "graph_invalid_name"},
+    {"name": "Finish change", "code": "graph_invalid_name"}
+  ]
+}
