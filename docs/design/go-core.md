@@ -1361,6 +1361,11 @@ type Definition struct {
   sandbox or approval setting is overridden. `refresh_work` reads the asking
   conversation's task cards and their current forge observations; it cannot
   assert merged state or request a merge.
+- Owner stop controls durably close scheduled cards before interrupting their
+  workers. Both generation-bound queued rows and conversation-scoped stop-all
+  use the scheduler's serialization boundary; interrupted completion cannot
+  release another stopped task. Unsettled effects retain their reservations
+  until Core observes termination, and cancellation survives ledger recovery.
 - Scheduler facts and their one waiting reason are events in `work_ledger` and
   replay into cards. All reservations are fenced canon transactions. Reactor
   serializes the worker-start response with even an immediate completion event;

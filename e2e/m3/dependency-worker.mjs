@@ -96,7 +96,15 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         thread.turns.push(thread.turn);thread.status={type:'active'};
         send({method:'turn/started',params:{threadId:thread.id,turn:{...thread.turn,status:'inProgress'}}});
         send({id,result:{turn:{...thread.turn,status:'inProgress'}}});
-        callTool(thread,'read_projection',{});
+        if (!cfg.stop) callTool(thread,'read_projection',{});
+        return;
+      }
+      case 'turn/interrupt': {
+        if (!cfg.stop) throw new Error('unexpected scheduled interruption');
+        const thread=threads.get(p.threadId);
+        thread.turn.status='interrupted';thread.status={type:'idle'};
+        send({id,result:{}});
+        send({method:'turn/completed',params:{threadId:thread.id,turn:thread.turn}});
         return;
       }
       default: send({id,error:{code:-32601,message:'unsupported fixture method'}});return;

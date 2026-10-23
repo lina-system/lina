@@ -22,7 +22,7 @@ import (
 )
 
 func TestM3DependencyReleaseInstalledCore(t *testing.T) {
-	testM3DependencyRelease(t, nil, nil, "")
+	testM3DependencyRelease(t, nil, nil, "", "")
 }
 
 func TestM3DelegationPresetLimits(t *testing.T) {
@@ -35,7 +35,7 @@ func TestM3DelegationPresetLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, preset := range scenario.Presets {
-		t.Run(preset, func(t *testing.T) { testM3DependencyRelease(t, nil, nil, preset) })
+		t.Run(preset, func(t *testing.T) { testM3DependencyRelease(t, nil, nil, preset, "") })
 	}
 }
 
@@ -53,7 +53,7 @@ func TestM3DependencyConflictReturnsOnce(t *testing.T) {
 	if err = json.Unmarshal(raw, &conflict); err != nil {
 		t.Fatal(err)
 	}
-	testM3DependencyRelease(t, nil, &conflict, "")
+	testM3DependencyRelease(t, nil, &conflict, "", "")
 }
 
 type delegationStartFailure struct {
@@ -80,10 +80,10 @@ func testM3DelegationStartFailure(t *testing.T, scenario string) {
 	if err := json.Unmarshal(raw, &fault); err != nil {
 		t.Fatal(err)
 	}
-	testM3DependencyRelease(t, &fault, nil, "")
+	testM3DependencyRelease(t, &fault, nil, "", "")
 }
 
-func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict, preset string) {
+func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict, preset, stopMode string) {
 	raw, err := os.ReadFile("../m3/dependency-release.json")
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +246,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			t.Fatal(err)
 		}
 	}
-	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": fault == nil && conflict == nil, "conflict": conflict})
+	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": fault == nil && conflict == nil && stopMode == "", "conflict": conflict, "stop": stopMode != ""})
 	gh := filepath.Join(h.root, "fixture-gh")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 	if err = os.WriteFile(gh, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s forge \"$@\"\n", quote(node), quote(program), quote(h.root))), 0700); err != nil {
@@ -258,6 +258,9 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		t.Fatal(err)
 	}
 	config := map[string]any{"codex": codex, "git": git, "gh": gh, "slots": 4, "repositories": map[string]any{"fixture/repo": map[string]string{"clone": clone, "base": "dev"}}}
+	if stopMode != "" {
+		config["slots"] = 1
+	}
 	if fault != nil {
 		failingGit := filepath.Join(h.root, "fixture-git")
 		marker := filepath.Join(h.root, "fetch-failed")
@@ -358,7 +361,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	answeredQuestions := map[string]bool{}
 	approvalAnswered := false
 	wantQuestions := 2
-	if fault != nil || conflict != nil {
+	if fault != nil || conflict != nil || stopMode != "" {
 		wantQuestions, approvalAnswered = 0, true
 	}
 	answerCtx, stopAnswers := context.WithTimeout(h.ctx, operationTimeout)
@@ -424,6 +427,90 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			case <-retry.C:
 			}
 		}
+	}
+	if stopMode != "" {
+		controls, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "stop-fixture", []protocol.Capability{{Name: "running", Version: "1.0"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer controls.Close()
+		control := func(payload protocol.Payload) protocol.Envelope {
+			t.Helper()
+			id, err := controls.Control(h.ctx, payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for {
+				frame, err := controls.Receive(h.ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if frame.ReplyTo == nil || *frame.ReplyTo != id {
+					continue
+				}
+				if frame.Error != nil {
+					t.Fatalf("scheduled stop failed: %+v", frame.Error)
+				}
+				return frame
+			}
+		}
+		active, queued := "", []string{}
+		for _, id := range taskIDs {
+			card, err := store.Get(h.ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if card.Active {
+				if active != "" {
+					t.Fatal("single-slot fixture started two workers")
+				}
+				active = id
+			} else {
+				queued = append(queued, id)
+			}
+		}
+		if active == "" || len(queued) != 2 {
+			t.Fatal("fixture did not retain queued work")
+		}
+		wantCount := "3"
+		if stopMode == "row_then_all" {
+			row := "task:" + queued[0] + ":0"
+			control(protocol.Stop{RunID: &row, ConversationID: &conversation})
+			await(queued[0], func(c work.Card) bool { return c.Scheduling.Closed && c.State == "stopped" })
+			wantCount = "2"
+		}
+		frame := control(protocol.MultiTaskControl{Action: "stop_all", ConversationID: &conversation})
+		result, ok := frame.Payload.(protocol.MultiTaskControl)
+		if !ok || result.Count == nil || string(*result.Count) != wantCount {
+			t.Fatalf("wrong scheduled stop count: %+v", frame)
+		}
+		await(active, func(c work.Card) bool { return !c.Active && c.State == "stopped" })
+		assertStopped := func() {
+			t.Helper()
+			for _, id := range taskIDs {
+				c, err := store.Get(h.ctx, id)
+				if err != nil || !c.Scheduling.Closed || c.State != "stopped" || c.Scheduling.CapacityHeld || c.Scheduling.AreaHeld {
+					t.Fatalf("stopped schedule changed: %+v %v", c, err)
+				}
+				if id != active {
+					if _, err := os.Stat(filepath.Join(h.root, id+".definition.json")); !os.IsNotExist(err) {
+						t.Fatalf("queued worker launched after stop: %s %v", id, err)
+					}
+				}
+			}
+		}
+		assertStopped()
+		controls.Close()
+		client.Close()
+		waiting.Close()
+		h.stopCore(core)
+		core = start()
+		client, conversation = conversationClient(t, h)
+		admittedTurn(t, h, client, conversation, "stopped-restart", "Refresh the stopped work.")
+		assertStopped()
+		client.Close()
+		h.stopCore(core)
+		return
 	}
 	if fault != nil {
 		failedID := ""

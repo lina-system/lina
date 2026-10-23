@@ -107,7 +107,11 @@ func (r *conversationRuntime) stopAllRuns(ctx context.Context, s clientsrv.Sessi
 	if err != nil {
 		return clientsrv.Result{}, err
 	}
-	count := 0
+	// Fence queued work before interrupts can report completion and free slots.
+	count, err := r.stopScheduled(ctx, s.PersonID, p.ConversationID, "")
+	if err != nil {
+		return clientsrv.Result{}, err
+	}
 	for _, record := range records {
 		if record.Origin.Person != s.PersonID || record.State == runs.Landed || p.ConversationID != nil && record.Origin.Conversation != *p.ConversationID {
 			continue
@@ -131,7 +135,9 @@ func (r *conversationRuntime) stopAllRuns(ctx context.Context, s clientsrv.Sessi
 		if err = r.ownerWorkerControl(ctx, s, "session:"+entry.thread.ID, p.ConversationID, e.MessageID, ""); err != nil {
 			return clientsrv.Result{}, err
 		}
-		count++
+		if !entry.scheduled {
+			count++
+		}
 	}
 	r.background.notify()
 	n := number(count)

@@ -43,6 +43,18 @@ func (r *Reactor) Wake(ctx context.Context) error {
 	defer r.mu.Unlock()
 	return r.release(ctx)
 }
+
+// Stop serializes durable cancellation with starts and completions. Callers
+// interrupt workers only after every selected card has been closed.
+func (r *Reactor) Stop(ctx context.Context, person, conversation, reference string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	count, err := r.store.StopScheduled(ctx, person, conversation, reference)
+	if err == nil && r.hooks.Changed != nil {
+		r.hooks.Changed(ctx)
+	}
+	return count, err
+}
 func (r *Reactor) release(ctx context.Context) error {
 	if r.hooks.Changed != nil {
 		defer r.hooks.Changed(ctx)

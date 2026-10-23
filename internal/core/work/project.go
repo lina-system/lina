@@ -58,7 +58,7 @@ func advance(c *Card, e Event) error {
 			c.Revision++
 			c.State = "working"
 		}
-	case "schedule_wait", "schedule_reserved", "schedule_observed", "schedule_conflict", "schedule_return", "schedule_input", "schedule_answered", "schedule_start_failed":
+	case "schedule_wait", "schedule_reserved", "schedule_observed", "schedule_conflict", "schedule_return", "schedule_input", "schedule_answered", "schedule_start_failed", "schedule_stopped":
 		if c.Task.Schedule == nil || e.Scheduling == nil {
 			return ErrState
 		}
@@ -81,6 +81,9 @@ func advance(c *Card, e Event) error {
 		}
 		if c.Scheduling.Closed {
 			c.State = "stopped"
+			if c.Scheduling.CapacityHeld {
+				c.State = "unknown"
+			}
 		}
 	case "started":
 		if c.Task.Schedule != nil && (!c.Scheduling.Reserved || !c.Scheduling.CapacityHeld || c.Scheduling.Landed || c.Scheduling.Closed || e.Run == nil || e.Run.Worker != c.Task.Schedule.Worker || e.Run.NodeID != c.Task.Schedule.Host) {
@@ -161,6 +164,9 @@ func advance(c *Card, e Event) error {
 		}
 		c.Active = false
 		c.Scheduling.CapacityHeld = false
+		if c.Scheduling.Closed {
+			c.Scheduling.AreaHeld = false
+		}
 		c.TurnStatus = e.Value
 		setOutcome(c)
 	case "unknown":
@@ -202,6 +208,10 @@ func advance(c *Card, e Event) error {
 	return nil
 }
 func setOutcome(c *Card) {
+	if c.Scheduling.Closed {
+		c.State = "stopped"
+		return
+	}
 	if c.Receipt != nil {
 		switch c.Receipt.Outcome {
 		case "ready_for_review":

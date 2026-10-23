@@ -377,6 +377,10 @@ external GitHub effect.
 `m3/dependency-area-overlap.json` first submits unordered areas for a
 wildcard-matched directory and a nested file. Core must reject the graph before
 the ordered directory/child graph in the release scenario can execute.
+`m3/dependency-stop.json` holds one real worker active with two queued cards.
+Protocol stop-all, and an individual queued-row stop followed by stop-all,
+must prevent any additional worker launch after interrupted completion and
+after Core restart. Cancellation counts each task once.
 Ordinary Git commands in the scheduled worktree must refuse base and tracking-ref
 writes, another task's branch update, and deletion of its own assigned branch.
 The same checks run after restart, while real worker commits, pushes, and Core's

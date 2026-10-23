@@ -1465,6 +1465,13 @@ contribute session rows. These rows do not alter the task or background-run stat
 - A running count, such as "2 running, 1 waiting for you", shows in the conversation header or composer.
 - A state change updates its row in place. It never opens a panel, moves focus, starts a message or interrupts a reply. A landing of one task of several is a row change and not a notice (see Notifications in [surfaces.md](surfaces.md)).
 - A landed row stays until the person has seen it, then it moves to history. Stopping works per row and for all rows ([surfaces.md](surfaces.md#running-list)).
+- For scheduled work, a stop durably closes the selected task or all tasks in
+  the authenticated person/conversation scope before active workers receive
+  interrupts. Queued cards can be stopped without a worker session. Completion,
+  quota changes, conflict observations and restart cannot dispatch a stopped
+  card. An active or uncertain execution keeps its area and capacity reservation
+  until termination is observed; a stop request does not assert a forge close,
+  a merge or successful delivery.
 - An agent exchange is not a row: it appears only in the agent talk log ([surfaces.md](surfaces.md#agent-talk-log)), and as a row of "Waiting for me" when the person is the decision owner.
 
 ## Observation, handover and discovery
