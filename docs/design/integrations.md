@@ -651,7 +651,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 
 - Only adapters of official platforms write. A write in the person's name is an outward effect under [main-authority.md](main-authority.md#messengers): off by default, turned on by the person per chat, and asked every time where it reaches other people.
 - A write runs through the effect ledger with the platform, account, chat, verb and argument hash. Where the platform takes a client message id, that id carries the idempotency key. An unknown outcome is settled by reading the chat and is never sent again.
-- What LINA sends returns through sync as the person's own record, linked to its effect.
+- What LINA sends returns through sync linked to its effect, with speaker kind `agent` and the requesting agent's id. It is never read as the person's words or learned as evidence about the person ([Messenger records](conversation-and-memory.md#messenger-records)).
 
 ### Disconnecting and deleting
 

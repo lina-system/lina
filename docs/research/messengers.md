@@ -115,7 +115,7 @@ murmur gathers KakaoTalk, Discord and iMessage into one local store on the owner
 | Spool of unmasked batches | The ledger. Each message is a messenger record admitted in a canon transaction and masked at admission. LINA keeps no unmasked copy; the murmur spool stays with the person as their backup. |
 | `messages` row | One messenger record: an event in the chat's messenger conversation ([Messenger records](../design/conversation-and-memory.md#messenger-records)) |
 | Key `(source, room_id, native_id)` and its UID | The legacy reference `(platform, account, message, chat/native id)`, unique, so a second sync or import adds nothing. An imported row also keeps `(murmur, data home, uid, <uid>)`. |
-| `author_id` equal to the person's own account, or `me` | Speaker kind `person`, when the platform route proves the connected account wrote it |
+| `author_id` equal to the person's own account, or `me` | Speaker kind `person`, when the platform route proves the connected account wrote it and it is not a write LINA made; a LINA write comes back as `agent`, linked to its effect |
 | Any other author | Speaker kind `external_participant`, with the platform id and display name. Memory about them only through a usable identity link ([Sender identity](#sender-identity)). |
 | `edited_ts` | A new revision event that `supersedes` the earlier one |
 | `deleted` | A deletion the platform reports hides the record through the one retraction path. A message missing from a later read is never a deletion. |
@@ -165,11 +165,11 @@ The matcher is measured before any learning about other people, and again on eve
 | Set | What it holds | Where it lives |
 | --- | --- | --- |
 | Synthetic | Generated people with identities on several platforms and the hard cases: the same name for different people; one person under different names; nickname changes over time; a family phone shared by two people; a recycled number; a team mailbox; a contact card listing two people's numbers; Slack ids in two workspaces; the person's own second account | `testdata`, in the repository |
-| Owner sample | At least 300 sender identities from the owner's sources, labelled by the owner with the people record each belongs to, or "unknown" | On the owner's machine only. The repository gets counts and rates, no names, ids or text. |
+| Owner sample | Sender identities from the owner's sources, labelled by the owner with the people record each belongs to, or "unknown". Enough of them that the matcher makes at least 300 usable links among them. | On the owner's machine only. The repository gets counts and rates, no names, ids or text. |
 
 Measures: precision of usable links (`exact` without ambiguity, and `confirmed` from accepted proposals), the share of identities linked automatically, how many ambiguous cases are flagged, top-1 precision of proposals, and repair: after a link is removed, no item cites it, and only that identity's messages are queued again.
 
-Gate: no wrong usable link on the synthetic set, and no wrong usable link among the owner's labelled identities. With 300 or more labelled identities and none wrong, the wrong-link rate is below 1 percent at 95 percent confidence (the rule of three). Until both hold, learning about other people stays off.
+Gate: no wrong usable link on the synthetic set, and at least 300 usable links in the owner's sample checked against the owner's labels with none wrong. Only usable links count as trials: unmatched, ambiguous and unknown identities say nothing about link correctness. With n usable links checked and none wrong, the wrong-link rate is below 3/n at 95 percent confidence (the rule of three), so 300 gives below 1 percent. With fewer than 300, the owner labels more identities; the report states the bound 3/n reached, and learning about other people stays off until the gate holds.
 
 ## Migration
 
@@ -209,7 +209,8 @@ Findings and remedies:
 6. A wrong identity match would file one person's words under another. Links need a shared identifier or the person's answer; ambiguous links are unusable; removing a link retracts what it produced; the evaluation gates learning.
 7. Other people's words reach outside services only as bounded extraction context and, when the person turns it on for a source, through the embedding endpoint. Secret spans never leave.
 8. Unofficial reads can get the account limited. The card cites the terms; the person accepts; the KakaoTalk add-on uses the tablet slot without forcing it.
-9. Supply chain: agent-messenger brings 22 runtime packages (Baileys, Thrift, Blessed and others). They are pinned by lockfile, run with no lifecycle scripts and are reviewed with every release.
+9. A message LINA sends in the person's name returns through sync from the person's own account. It is admitted as `agent`, linked to its effect, so model text never becomes evidence about the person.
+10. Supply chain: agent-messenger brings 22 runtime packages (Baileys, Thrift, Blessed and others). They are pinned by lockfile, run with no lifecycle scripts and are reviewed with every release.
 
 | Action | Policy |
 | --- | --- |
