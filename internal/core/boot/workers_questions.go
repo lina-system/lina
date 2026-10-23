@@ -131,6 +131,9 @@ func (q workerQuestions) Question(ctx context.Context, person, id string) (proto
 // Preserve the work-round answer attribution added on dev while routing worker
 // questions through the same existing bridge.
 func (q workerQuestions) AnswerQuestionMessage(ctx context.Context, person string, answer protocol.QuestionAnswer, messageID string) (protocol.DecisionOutcome, error) {
+	if answer.CardID != nil && strings.HasPrefix(*answer.CardID, conversationQuestionPrefix) {
+		return q.runtime.answerConversationQuestion(ctx, person, answer, messageID)
+	}
 	if answer.CardID != nil && strings.HasPrefix(*answer.CardID, "work:") {
 		return (runQuestions{runtime: q.runtime}).AnswerQuestionMessage(ctx, person, answer, messageID)
 	}

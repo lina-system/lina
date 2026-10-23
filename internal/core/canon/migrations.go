@@ -59,6 +59,7 @@ func Migrations() []Migration {
 		{Version: 45, SQL: recordOperationsSchema},
 		{Version: 46, SQL: WorkSwitchSchema},
 		{Version: 47, SQL: handoffsSchema},
+		{Version: 48, SQL: conversationQuestionsSchema},
 	}
 }
 
@@ -108,6 +109,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{47, "exch_origins"}, {47, "exch_notices"}, {47, "artifact_changes"},
 		{42, "agent_starters"}, {42, "agent_selection"},
 		{45, "record_operations"}, {45, "record_candidates"},
+		{48, "conversation_questions"}, {48, "conversation_question_resolutions"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {
