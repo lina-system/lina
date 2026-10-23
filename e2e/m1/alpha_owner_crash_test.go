@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -130,8 +131,10 @@ func alphaOwnerRecoveredReply(t *testing.T, h *harness, conversation string, att
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Every run records the retained bodies it attributed, so a later failure is
+	// measured against the same evidence instead of a disposable database.
+	alphaRecoveryReplyDiagnostic(t, h, db, conversation, attempt)
 	if reply.ID == "" || strings.TrimSpace(reply.Body) == "" {
-		alphaRecoveryReplyDiagnostic(t, h, db, conversation, attempt)
 		t.Fatal("recovered result has no completed reply in the originating conversation")
 	}
 	return reply
@@ -177,6 +180,7 @@ func alphaRecoveryReplyDiagnostic(t *testing.T, h *harness, db *canon.Store, con
 		return
 	}
 	bodies := alphaLedgerBodies{h.root}
+	retained := []map[string]any{}
 	for _, c := range candidates {
 		completion, completionErr := alphaEventBody(h.ctx, db, bodies, c.completion)
 		var fields struct{ Session, Turn, Status string }
@@ -190,8 +194,39 @@ func alphaRecoveryReplyDiagnostic(t *testing.T, h *harness, db *canon.Store, con
 			body, replyErr = alphaEventBody(h.ctx, db, bodies, c.reply)
 			replyBytes = len(body)
 		}
-		t.Logf("recovery delivery candidate: completion=%s conversation=%s input=%s agent=%s session=%s turn=%s status=%s delivery=%s completion_material=%t completion_error=%v reply=%s reply_conversation=%s reply_agent=%s scaffold=%s reply_material=%t reply_bytes=%d reply_error=%v", c.completion, c.conversation, c.input, c.agent, fields.Session, fields.Turn, fields.Status, c.state, c.completionMaterial, completionErr, c.reply, c.replyConversation, c.replyAgent, c.scaffold, c.replyMaterial, replyBytes, replyErr)
+		t.Logf("recovery delivery candidate: completion=%s conversation=%s input=%s agent=%s session=%s turn=%s status=%s delivery=%s completion_material=%t completion_bytes=%d completion_error=%v reply=%s reply_conversation=%s reply_agent=%s scaffold=%s reply_material=%t reply_bytes=%d reply_error=%v", c.completion, c.conversation, c.input, c.agent, fields.Session, fields.Turn, fields.Status, c.state, c.completionMaterial, len(completion), completionErr, c.reply, c.replyConversation, c.replyAgent, c.scaffold, c.replyMaterial, replyBytes, replyErr)
+		retained = append(retained, map[string]any{
+			"completion": c.completion, "conversation": c.conversation, "input": c.input, "agent": c.agent,
+			"session": fields.Session, "turn": fields.Turn, "status": fields.Status, "delivery": c.state,
+			"completion_material": c.completionMaterial, "completion_bytes": len(completion), "completion_error": alphaErrorText(completionErr),
+			"reply": c.reply, "reply_conversation": c.replyConversation, "reply_agent": c.replyAgent, "scaffold": c.scaffold,
+			"reply_material": c.replyMaterial, "reply_bytes": replyBytes, "reply_error": alphaErrorText(replyErr),
+		})
 	}
+	// A real-model failure must leave the metadata that attributes it, so the
+	// next investigation does not depend on a disposable database.
+	raw, err := json.MarshalIndent(map[string]any{"inline_limit": ledger.InlineBytes, "conversation": conversation, "input": attempt.Input, "session": attempt.Thread.ID, "turn": attempt.Thread.TurnID, "candidates": retained}, "", "  ")
+	if err != nil {
+		t.Logf("recovery delivery retention encode: %v", err)
+		return
+	}
+	if directory := os.Getenv("LINA_ALPHA_CAPTURES"); directory != "" {
+		directory = filepath.Join(directory, t.Name())
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Logf("recovery delivery retention: %v", err)
+			return
+		}
+		if err := os.WriteFile(filepath.Join(directory, "recovery-delivery.json"), append(raw, '\n'), 0600); err != nil {
+			t.Logf("recovery delivery retention: %v", err)
+		}
+	}
+}
+
+func alphaErrorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func alphaOwnerRecoveryRecords(t *testing.T, h *harness) []recovery.Record {
