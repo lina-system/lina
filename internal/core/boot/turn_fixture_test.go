@@ -45,8 +45,9 @@ type turnProvider struct {
 
 var _ provider.Adapter = (*turnProvider)(nil)
 
-func (*turnProvider) Provider() provider.ProviderID { return provider.ChatGPT }
-func (*turnProvider) Class() provider.Class         { return provider.ModelAPI }
+func (*turnProvider) Provider() provider.ProviderID                         { return provider.ChatGPT }
+func (*turnProvider) Capabilities(provider.ModelRef) provider.CapabilitySet { return nil }
+func (*turnProvider) Class() provider.Class                                 { return provider.ModelAPI }
 func (*turnProvider) Models(context.Context, lease.Lease, provider.Credential) (provider.ModelList, error) {
 	return provider.ModelList{}, fmt.Errorf("unexpected model discovery")
 }

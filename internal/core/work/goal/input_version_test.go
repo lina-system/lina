@@ -95,7 +95,7 @@ func TestInputVersionJudgmentsUseTheSameSignalFence(t *testing.T) {
 				repair.Repairs = "a"
 				old.Tasks = []Task{repair}
 			} else {
-				old.Criterion = &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: "old-output", Passed: true}
+				old.Criterion = &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "old-output", Passed: true}
 			}
 			if err := e.Signal(t.Context(), Signal{ID: "new-task-input", GoalID: "g", TaskID: "a"}); err != nil {
 				t.Fatal(err)

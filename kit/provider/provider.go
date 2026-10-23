@@ -137,6 +137,7 @@ func (c Credential) Authorize(r *http.Request) error {
 type Adapter interface {
 	Provider() ProviderID
 	Class() Class
+	Capabilities(ModelRef) CapabilitySet
 	Models(context.Context, lease.Lease, Credential) (ModelList, error)
 	Quota(context.Context, Credential) ([]QuotaRow, error)
 	Stream(context.Context, lease.Lease, Request) (Stream, error)
@@ -151,15 +152,18 @@ type Item = json.RawMessage
 type ToolDecl = json.RawMessage
 type FieldList []string
 type Request struct {
-	Credential   Credential
-	Model        ModelRef
-	Effort       Effort
-	Instructions string
-	Items        []Item
-	Tools        []ToolDecl
-	Fields       FieldList
-	Purpose      RunKind
-	Bridge       ToolBridge
+	CacheIdentity string
+	Layout        *RequestLayout
+	Capabilities  CapabilityUse
+	Credential    Credential
+	Model         ModelRef
+	Effort        Effort
+	Instructions  string
+	Items         []Item
+	Tools         []ToolDecl
+	Fields        FieldList
+	Purpose       RunKind
+	Bridge        ToolBridge
 }
 type ToolBridge interface {
 	Call(context.Context, ToolCall) (ToolResult, error)
@@ -207,15 +211,21 @@ type Money struct {
 	Micros   int64  `json:"micros"`
 }
 type Usage struct {
-	Input        *int64 `json:"input"`
-	Cached       *int64 `json:"cached"`
-	CacheWrite   *int64 `json:"cache_write"`
-	Output       *int64 `json:"output"`
-	Reasoning    *int64 `json:"reasoning"`
-	CostEstimate *Money `json:"cost_estimate"`
+	CacheByLifetime map[CacheLifetime]CacheUsage `json:"cache_by_lifetime,omitempty"`
+	Input           *int64                       `json:"input"`
+	Cached          *int64                       `json:"cached"`
+	CacheWrite      *int64                       `json:"cache_write"`
+	Output          *int64                       `json:"output"`
+	Reasoning       *int64                       `json:"reasoning"`
+	CostEstimate    *Money                       `json:"cost_estimate"`
 }
 
 func (u Usage) Valid() bool {
+	for lifetime, counts := range u.CacheByLifetime {
+		if lifetime == "" || counts.Read != nil && *counts.Read < 0 || counts.Write != nil && *counts.Write < 0 {
+			return false
+		}
+	}
 	for _, n := range []*int64{u.Input, u.Cached, u.CacheWrite, u.Output, u.Reasoning} {
 		if n != nil && *n < 0 {
 			return false

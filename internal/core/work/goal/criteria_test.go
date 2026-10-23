@@ -45,7 +45,7 @@ func TestCodeGoalRereadsAllCriteriaBeforeClose(t *testing.T) {
 		t.Fatalf("closed from cached lifecycle receipts: %+v", p)
 	}
 	for _, c := range goalCriteria(g) {
-		g.Checks = append(g.Checks, CriterionEvidence{Criterion: c.ID, GoalRevision: g.Revision, Round: g.CheckRound, Target: c.Check.Target, Revision: criterionRevision(g, c), Kind: c.Check.Kind, Ref: "core-read:" + c.ID, Passed: true})
+		g.Checks = append(g.Checks, CriterionEvidence{Criterion: c.ID, GoalRevision: g.Revision, Round: g.CheckRound, Target: c.Check.Target, Revision: criterionRevision(g, c), Kind: c.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "core-read:" + c.ID, Passed: true})
 	}
 	p, err = Derive(State{Goals: []Goal{g}}, time.Unix(100, 0))
 	if err != nil {
@@ -78,7 +78,7 @@ func TestCriterionObservationIsPinnedToGoalAndTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o := Observation{Status: OutcomeSucceeded, Criterion: &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: "old", Kind: a.Check.Kind, Ref: "read", Passed: true}}
+	o := Observation{Status: OutcomeSucceeded, Criterion: &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: "old", Kind: a.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "read", Passed: true}}
 	if err = e.Report(t.Context(), a.ID, 1, o); err == nil {
 		t.Fatal("accepted another revision's evidence")
 	}
@@ -95,7 +95,7 @@ func TestCriterionObservationIsPinnedToGoalAndTarget(t *testing.T) {
 func TestFailedCriterionAsksManagerOnceInsteadOfRepeatingCheck(t *testing.T) {
 	g := finishedGoal()
 	c := goalCriteria(g)[0]
-	g.Checks = []CriterionEvidence{{Criterion: c.ID, GoalRevision: g.Revision, Round: g.CheckRound, Target: c.Check.Target, Revision: criterionRevision(g, c), Kind: c.Check.Kind, Ref: "failed-check-output", Passed: false}}
+	g.Checks = []CriterionEvidence{{Criterion: c.ID, GoalRevision: g.Revision, Round: g.CheckRound, Target: c.Check.Target, Revision: criterionRevision(g, c), Kind: c.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "failed-check-output", Passed: false}}
 	p, err := Derive(State{Goals: []Goal{g}}, time.Unix(100, 0))
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestRepositoryCriterionUsesItsOwnMergedRevision(t *testing.T) {
 	if revision := criterionRevision(g, c); revision != "docs-merge" {
 		t.Fatalf("documentation check received foreign revision: %s", revision)
 	}
-	evidence := CriterionEvidence{Criterion: c.ID, GoalRevision: g.Revision, Round: g.CheckRound, Target: "docs", Revision: "docs-merge", Kind: RunEvidence, Ref: "docs-output", Passed: true}
+	evidence := CriterionEvidence{Criterion: c.ID, GoalRevision: g.Revision, Round: g.CheckRound, Target: "docs", Revision: "docs-merge", Kind: RunEvidence, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "docs-output", Passed: true}
 	if !currentEvidence(g, c, evidence) {
 		t.Fatal("target repository evidence rejected")
 	}
