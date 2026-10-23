@@ -1,6 +1,6 @@
 # Product families and agents
 
-This contract fixes what LINA is made of: the product families and their components, the agents the person creates, where canon lives and who writes it, how roles are shared, which platforms and installation modes exist, and how LINA is built and versioned. It is normative: implementations follow it, and any change to it is made in this file and joins `dev` under [integration.md](../policy/integration.md).
+This contract fixes what LINA is made of: the product families and their components, the agents the person creates, where canon lives and who writes it, how roles are shared, which platforms exist, and how LINA is built and versioned. It is normative: implementations follow it, and any change to it is made in this file and joins `dev` under [integration.md](../policy/integration.md).
 
 ## North star
 
@@ -18,7 +18,7 @@ This contract covers:
 - canon, its one writer, and the other kinds of state
 - agents: the persona unit, the two knowledge layers, what agents share, the speaker rule, and where agents speak: external channels and agent exchanges
 - roles and the two rules that every actor follows
-- supported platforms and installation modes
+- supported platforms
 - the repository, the artifacts and the kinds of version
 - what LINA owns itself for delegated work
 
@@ -30,7 +30,7 @@ LINA (Lifelong Intelligent Navigator & Ally) is a companion platform. The person
 
 Product text calls the personas the person creates agents, in Korean 에이전트. The coding tools that LINA delegates work to, such as Codex, Claude Code, Cursor, Gemini CLI, Grok and Antigravity, are workers ([work-and-delegation.md](work-and-delegation.md)); product text never calls them agents. LINA's own background helpers, the sub-agents, are neither: they have no persona, name, memory or conversation, run inside LINA Core, and are described in [work-and-delegation.md](work-and-delegation.md#background-runs).
 
-LINA is licensed under the Apache License, Version 2.0 ([LICENSE](../../LICENSE), [NOTICE](../../NOTICE)), and is not a sold product. The LINA repository holds LINA Core, the terminal UI, Node, LINA OS and the published protocol between the LINA app and LINA Core, and all of it is under that licence. The LINA app is open source under the same licence and is developed in its own public repository (see Repository, artifacts and versions). Every source file of the LINA repository carries `SPDX-License-Identifier: Apache-2.0`. The dependency rules in [dependencies.md](../policy/dependencies.md) keep every dependency that is linked into LINA permissive. Every client shows an about view that names the build's version and commit, with a link to that commit's source in the LINA repository when the build comes from it, and an agent's bot answers its `about` command with the same version, commit and link. No release gate, such as age verification, is required before a release.
+LINA is licensed under the Apache License, Version 2.0 ([LICENSE](../../LICENSE), [NOTICE](../../NOTICE)), and is not a sold product. The LINA repository holds LINA Core, the terminal UI, Node and the published protocol between the LINA app and LINA Core, and all of it is under that licence. The LINA app is open source under the same licence and is developed in its own public repository (see Repository, artifacts and versions). Every source file of the LINA repository carries `SPDX-License-Identifier: Apache-2.0`. The dependency rules in [dependencies.md](../policy/dependencies.md) keep every dependency that is linked into LINA permissive. Every client shows an about view that names the build's version and commit, with a link to that commit's source in the LINA repository when the build comes from it, and an agent's bot answers its `about` command with the same version, commit and link. No release gate, such as age verification, is required before a release.
 
 ## People
 
@@ -45,7 +45,7 @@ A person is a human LINA serves. Each person has a person id: stable, assigned b
 
 ## Product families and components
 
-There are three product families: LINA Core, LINA APP and LINA OS. Node is a separately installed device execution component of the LINA Core family. It is not a fourth family, not a feature of LINA APP and not a separate LINA. LIFE is a background world engine plus a personal feed in the LINA app. It is not a separate product.
+There are two product families: LINA Core and LINA APP. Node is a separately installed device execution component of the LINA Core family. It is not a third family, not a feature of LINA APP and not a separate LINA. LIFE is a background world engine plus a personal feed in the LINA app. It is not a separate product. LINA OS is a separate, optional project in [lina-os](https://github.com/thisisjun786/lina-os).
 
 Users see LINA APP as "the LINA app". No other app name is used.
 
@@ -53,7 +53,6 @@ Users see LINA APP as "the LINA app". No other app name is used.
 | --- | --- | --- | --- |
 | LINA Core | The engine and the terminal UI (`lina`). The canon of the main: agents, people, knowledge, work and grants. Inside it: the conversation engine ([conversation-and-memory.md](conversation-and-memory.md)), the work engine ([work-and-delegation.md](work-and-delegation.md)), the Moirai engine ([cognition-and-life.md](cognition-and-life.md)) and the skill system. The message gateway that dispatches agents to external channels ([integrations.md](integrations.md#channels)). Coordination of delegated work, approved scope and decisions. The person's model-provider accounts, their credentials and the provider adapters ([runtime.md](runtime.md#model-path)). | Device execution on another machine. GUI screens. Installation, update and recovery of an operating system. | Independent artifact with its own release cadence. `moirai-worker` is installed with it, and the Claude adapter's files ship in it ([runtime.md](runtime.md)). |
 | LINA APP | The LINA app on desktop and mobile: conversations with the person's agents, work threads, questions, results, settings and the LIFE personal feed. It shows and asks; the logic lives in LINA Core. Desktop and mobile have the same functions, flows and terms; only the layout differs by screen size ([surfaces.md](surfaces.md)). | Canon. Product logic. Execution on the device it runs on. A direct path to a model, a worker or an external channel. A second main. | Open source under Apache-2.0 in its own public repository; the framework (Flutter, native code per surface, or the web shell described in [surfaces.md](surfaces.md#app-front-end)) is set by the measured checks in [surfaces.md](surfaces.md#platform-adaptation); each platform build is an independent artifact with its own release cadence |
-| LINA OS | An integrated product on Omarchy 4 Linux that combines verified LINA Core, Node and LINA app artifacts with an operating, update and recovery environment and a Hangul input setup. It may offer to install a coding tool such as Codex as the user's own tool, which LINA then runs as a worker, and Node.js for the Claude adapter ([runtime.md](runtime.md)). Manifest-based installation, diagnosis and recovery. | Product logic of LINA Core, the LINA app or Node. Copies of their code or ledgers. A second canonical LINA Core. | Composition of pinned artifacts with its own release cadence |
 | Node | Device execution under a grant from the main, on the device where Node is installed, as if the main were sitting there. LINA uses many devices, local or remote, as one machine. Receipts for what it did. | Independent planning. Offline execution. Any canon. Screens. A second main. | Independent artifact per supported OS with its own release cadence |
 | LIFE | A background world engine that keeps a world, its time, its events and the daily activity of the person's agents, and a personal feed in the LINA app that shows the agents' activity, posts, reactions, media and conversation experiences ([cognition-and-life.md](cognition-and-life.md)). | A separate app, installer or login. A persona of its own. A connection to a real social network. A multi-person product. | The world engine runs on the main as part of the LINA Core family, because the LINA app holds no logic. The feed is part of the LINA app. |
 
@@ -137,39 +136,25 @@ Every actor follows two rules, and only these two are enforced:
 
 ## Platforms
 
-- The main runs LINA OS, either as the device operating system or in a VM. A LINA Core-only install on another Linux system works, but it is not the intended way to use LINA.
-- Node and the LINA app support Linux (Omarchy), macOS and Windows. For the LINA app, macOS usability comes first, and LINA OS and Linux come second ([surfaces.md](surfaces.md#app-front-end)).
+- The main runs on Linux, on a machine the person also uses (where the non-competition rules of [non-competition.md](non-competition.md) apply) or in a VM (where permissions stay inside the VM and LINA uses a Node on the host or another device to act there).
+- Node and the LINA app support Linux (Omarchy), macOS and Windows. They install independently; neither requires the other, and both connect to the one main. For the LINA app, macOS usability comes first, and Linux comes second ([surfaces.md](surfaces.md#app-front-end)).
 - On mobile, the LINA app supports iOS and Android. A mobile device never runs Node or LINA Core.
-- Platform limits of the sandbox and of coding work are in [runtime.md](runtime.md). The LINA app's platform builds and how it adapts to each platform are in [surfaces.md](surfaces.md).
+- Platform limits of the sandbox and of coding work, and the runtime compositions and what stays available when a piece is missing, are in [runtime.md](runtime.md). The LINA app's platform builds and how it adapts to each platform are in [surfaces.md](surfaces.md).
 
 ## Installation modes
 
-There are two intended installation modes. Both use the Linux filesystem of [filesystem.md](filesystem.md).
-
-- Device-OS install. LINA OS on a machine the user also uses. LINA works inside the user's environment, so the non-competition rules of [non-competition.md](non-competition.md) apply. Non-competition is the responsibility of this install, not of Node.
-- VM install. LINA OS as a virtual machine on an existing Mac, Windows or Linux host. This is LINA's own environment. Its permissions stay inside the VM sandbox and never reach the host. To act on the host or on any other user device, LINA uses a Node installed on that device.
-
-A desktop install is not a third mode. It is the LINA app and Node installed on an existing Mac, Windows or Linux machine and connected to the main of a device-OS or VM install.
-
-The LINA app and Node install independently. Installing the LINA app never requires Node, and installing Node never requires the LINA app. Both connect to the one main.
-
-LINA OS has three profiles:
-
-- Main. LINA Core, Node and the LINA app in one install, with exactly one update owner.
-- Headless main. The main profile with the local LINA app autostart turned off. Users reach it through a remote LINA app. Headless never makes the LINA app a second brain.
-- Connected device. Node and the LINA app, connected to the main. It never starts a second LINA Core.
-
-Each mode and profile is built from one of the runtime compositions in [runtime.md](runtime.md), which also defines what stays available when a piece is missing.
+LINA OS is a separate, optional project in [thisisjun786/lina-os](https://github.com/thisisjun786/lina-os).
+Its installation modes and profiles live in [lina-os `docs/design.md`](https://github.com/thisisjun786/lina-os/blob/main/docs/design.md).
 
 ## Repository, artifacts and versions
 
-LINA is the public monorepo `thisisjun786/lina`, which holds LINA Core, the terminal UI, Node, LINA OS and the published protocol between the LINA app and LINA Core. The LINA app lives in its own public repository, `thisisjun786/lina-app`, under the same licence. Work in the monorepo branches from `dev` and joins `dev` through the integration script after the local foundation verification passes ([integration.md](../policy/integration.md), [foundation.md](../policy/foundation.md)). `main` mirrors releases, and releases are immutable tags of the form `v0.0.1-alpha.YYYYMMDD.N` ([versioning.md](versioning.md), [releases.md](../policy/releases.md)). Issue #1 of the repository is its roadmap.
+LINA is the public monorepo `thisisjun786/lina`, which holds LINA Core, the terminal UI, Node and the published protocol between the LINA app and LINA Core. The LINA app lives in its own public repository, `thisisjun786/lina-app`, under the same licence. LINA OS is a separate, optional project in [thisisjun786/lina-os](https://github.com/thisisjun786/lina-os). Work in the monorepo branches from `dev` and joins `dev` through the integration script after the local foundation verification passes ([integration.md](../policy/integration.md), [foundation.md](../policy/foundation.md)). `main` mirrors releases, and releases are immutable tags of the form `v0.0.1-alpha.YYYYMMDD.N` ([versioning.md](versioning.md), [releases.md](../policy/releases.md)). Issue #1 of the repository is its roadmap.
 
 Users report problems and ideas in public: Core, the terminal UI and Node in the GitHub Issues of the LINA repository, the app in the Issues of the app repository, each with issue forms for a bug and for an idea. Ideas and open questions go to GitHub Discussions. Every client offers a report-a-problem action that drafts the issue and posts it only after the person confirms ([surfaces.md](surfaces.md#settings)). A person without a GitHub account has no route in the first release; a relay or an e-mail route is a later option.
 
 No code, database structure or fixture is ported from another LINA codebase. Planning records and the owner's existing intent card data come in as data, once, through the one-time import at the operational switch ([work-and-delegation.md](work-and-delegation.md)). Vendored upstream code follows [dependencies.md](../policy/dependencies.md).
 
-One source repository does not mean one release unit. LINA Core, the TUI, Node and the protocol files are built from one tag. The LINA app and LINA OS have their own artifacts and release cadences. Being in the monorepo is never a reason to merge release units.
+One source repository does not mean one release unit. LINA Core, the TUI, Node and the protocol files are built from one tag. The LINA app has its own artifacts and release cadence.
 
 There are three kinds of version (the version policy is in [versioning.md](versioning.md)):
 
@@ -179,7 +164,7 @@ There are three kinds of version (the version policy is in [versioning.md](versi
 | Protocol and capability version | Each connection: client and Node | Decides compatibility between installed components ([host-protocol.md](host-protocol.md)) |
 | LINA kit version | The LINA kit | Recorded in the release manifest of every build that uses the kit ([runtime.md](runtime.md)) |
 
-LINA OS consumes pinned artifacts: a specific verified LINA Core, Node and LINA app, fixed by manifest with version and digest. LINA OS duplicates no code and no ledger from the components it composes. Replacing the OS is separate from migrating or rolling back state schemas. The release manifest is defined in [runtime.md](runtime.md).
+Replacing the host OS is separate from migrating or rolling back state schemas. The release manifest is defined in [runtime.md](runtime.md).
 
 An integration candidate that includes the LINA app is complete only when the real desktop package and the verified LINA Core and Node are pinned together. Server-side readiness alone never completes it.
 
@@ -198,14 +183,9 @@ Operator functions live in the products:
 - coordination, scope, permissions, reporting and recovery in LINA Core
 - work, question and operating screens in the TUI and the LINA app
 - per-device execution in Node
-- manifest-based installation, diagnosis and recovery in LINA OS
 
 A command-line wrapper alone never counts as providing one of these functions. LINA Core takes over operator work from the operator tool through a single-owner switch ([work-and-delegation.md](work-and-delegation.md)).
 
 Model-provider accounts, their sign-in and model enablement are owned by LINA Core: one account per service, signed in by the person ([runtime.md](runtime.md#accounts-and-sign-in)). User-managed provider policy stays external.
 
 The tools used to develop LINA itself (operator tooling, issue trackers and GitHub) are facts of the development process, never product runtime dependencies.
-
-## Deferred
-
-- The Omarchy distribution method, the supported Omarchy versions and devices, and measured performance and compatibility: set by the LINA OS install-profile implementation and its measurements.

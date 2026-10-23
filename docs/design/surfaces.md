@@ -88,7 +88,7 @@ The app provides conversation with each agent and its threads, the agents screen
 
 The LINA app is one React application, written once in TypeScript and drawn with React DOM. In this file the interface is the React code that draws the screens, and the shell is the host around it. The shell is bundled with the app. It draws none of the interface and owns the window, the connection to LINA Core and the platform features the interface cannot reach. The terminal TUI is not part of the app: it stays Go on Bubble Tea (see TUI).
 
-macOS usability is the top priority of the app, and LINA OS and Linux come second. The first gate of the app milestone, described under Platform adaptation, runs on a real Mac.
+macOS usability is the top priority of the app, and Linux comes second. The first gate of the app milestone, described under Platform adaptation, runs on a real Mac.
 
 React Native, including its macOS fork, is not chosen. The macOS fork trails the core project by several releases, the current Expo release has no macOS target, multiline text input does not scroll on macOS under the new architecture (an open upstream fault) and the old architecture is no longer available, React Native has no Linux target, and the work panel needs the web ecosystem for its markdown, tables, diagrams, charts and diffs. Tauri and a native Swift shell are not candidates either. The app keeps one React DOM interface on every platform.
 
@@ -173,11 +173,10 @@ With Wails the web engine is the operating system's and LINA pins none; each che
 | Windows | Text scale, the title bar, keyboard shortcuts, notifications, text input |
 | Linux (Omarchy) | The active Omarchy theme, read from `~/.local/state/omarchy/current/theme/colors.toml` through a `~/.config/omarchy/themed/*.tpl` template and a hook in `~/.config/omarchy/hooks/theme-set.d/`; Hyprland window rules through a fixed app id, and Hyprland key bindings; the Omarchy shell for the bar, launcher entries and notifications; fcitx5-hangul for text input |
 
-- The React app, and any native code a platform gets, satisfies every rule in this file: the thin client, the design language, the "no web feel" bar, Korean input and accessibility. The app is accepted on macOS first; LINA OS and Linux follow.
+- The React app, and any native code a platform gets, satisfies every rule in this file: the thin client, the design language, the "no web feel" bar, Korean input and accessibility. The app is accepted on macOS first; Linux follows.
 - On desktop the app offers its own text size and high-contrast settings where the platform gives the app no signal.
 - On Omarchy the app draws no window shadow, rounded window corner or blur of its own; Hyprland draws the window. The TUI follows the active Omarchy theme as well.
 - The app on every platform uses the TypeScript protocol types generated from the JSON Schema ([host-protocol.md](host-protocol.md)).
-- LINA OS ships the LINA app ([product-families.md](product-families.md)). On Omarchy it is the Linux build, beside the TUI.
 
 ## No web feel
 
@@ -579,7 +578,7 @@ A surface never notifies about what it is already showing. Opening a notificatio
 
 **Developer view.** The switch that adds developer fields to the Details of work cards ([work-and-delegation.md](work-and-delegation.md)). It changes nothing in the default view.
 
-**Report a problem.** An action in the settings and in the about view of the LINA app and the TUI. The agent drafts the report: what happened, the app and Core versions, the operating system and the recent lines of the self-diagnosis log ([self-diagnosis-log.md](self-diagnosis-log.md)), whose events hold no personal content. It strips personal content from anything the person told it, shows the draft, and posts only after the person confirms. The post is a public issue on the tracker of the LINA repository in the person's name, so it is public posting and asks every time under [main-authority.md](main-authority.md#approval); an "always allow" never covers it. Ideas go to the repository's Discussions instead ([product-families.md](product-families.md#repository-artifacts-and-versions)).
+**Report a problem.** An action in the settings and in the about view of the LINA app and the TUI. The agent drafts the report: what happened, the app and Core versions, the operating system and the recent lines of the self-diagnosis log ([self-diagnosis-log.md](self-diagnosis-log.md)), whose events hold no personal content. It strips personal content from anything the person told it, shows the draft, and posts only after the person confirms. The post is a public issue on the tracker of the component it is about (Core, the TUI and Node in [lina](https://github.com/thisisjun786/lina), the app in [lina-app](https://github.com/thisisjun786/lina-app)) in the person's name, so it is public posting and asks every time under [main-authority.md](main-authority.md#approval); an "always allow" never covers it. Ideas go to that repository's Discussions instead ([product-families.md](product-families.md#repository-artifacts-and-versions)).
 
 ## Agents
 
@@ -699,7 +698,7 @@ Every text input of the app follows these field rules, which keep a composition 
 - "Sends exactly once" is tested at the LINA Core boundary: the conversation ledger shows one message. A last-character fault at the platform's input-method protocol level can affect every client, native ones included, so a test of the screen alone does not prove it.
 - These rules apply to the inputs of every component library of the app (see App front end).
 
-On Linux, LINA OS sets the input-method environment of the app (fcitx5 for GTK) explicitly as a precaution. Which path carries Hangul to the GTK4 shell, the compositor's text-input protocol or the fcitx5 GTK module, is decided by test, and the older protocol version 1 is not forced on Hyprland. The test runs with fcitx5 restarted and with Qt applications running. The app runs a start-up self-check and tells the person when the input-method path is not active.
+On Linux, the app's desktop entry sets the input-method environment (fcitx5 for GTK) explicitly as a precaution. Which path carries Hangul to the GTK4 shell, the compositor's text-input protocol or the fcitx5 GTK module, is decided by test, and the older protocol version 1 is not forced on Hyprland. The test runs with fcitx5 restarted and with Qt applications running. The app runs a start-up self-check and tells the person when the input-method path is not active.
 
 The TUI accepts the committed text the terminal's input method delivers, renders Korean text at its correct cell width and keeps the cursor on the correct cell.
 
