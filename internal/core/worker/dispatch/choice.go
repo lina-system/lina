@@ -433,11 +433,15 @@ func (s *Service) reserveWorker(ctx context.Context, r *Record, name string) err
 		if err = json.Unmarshal(raw, &saved); err != nil {
 			return err
 		}
-		if saved.State != "running" || len(saved.Tried) != len(r.Tried) || len(r.Tried) >= 2 {
+		if saved.Canceled || saved.Restored || saved.State != "running" || len(saved.Tried) != len(r.Tried) || len(r.Tried) >= 2 {
 			return work.ErrState
 		}
 		next := *r
 		next.Worker = name
+		next.Attempt = max(r.Attempt, r.GenerationBase+len(r.Tried)) + 1
+		next.Thread = nil
+		next.Snapshot = nil
+		next.PendingRequests = nil
 		next.Tried = append(append([]string(nil), r.Tried...), name)
 		if _, err = tx.ExecContext(ctx, "UPDATE worker_dispatch SET record=? WHERE id=?", mustJSON(next), r.ID); err != nil {
 			return err

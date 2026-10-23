@@ -47,6 +47,9 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 			return
 		}
 		if respondWorkerCompletion(w, req.Input, "") {
+			if failure && len(req.Tools) != 0 {
+				t.Error("failed worker reaction can start more work")
+			}
 			return
 		}
 		switch calls.Add(1) {

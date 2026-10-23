@@ -254,15 +254,17 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 		if scriptedCodingManager(t, w, req) {
 			return
 		}
+		// Outcome reactions report a result without granting execution tools.
+		// The explicit person/control turns below still require every control.
+		if respondWorkerCompletion(w, req.Input, fixture.Result) {
+			return
+		}
 		for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot"} {
 			if !toolReachable(req.Tools, name) {
 				t.Errorf("Core did not offer %s", name)
 				emitResponse(w, "missing worker tool", true)
 				return
 			}
-		}
-		if respondWorkerCompletion(w, req.Input, fixture.Result) {
-			return
 		}
 		n := calls.Add(1)
 		resuming := slowManager && n == 3

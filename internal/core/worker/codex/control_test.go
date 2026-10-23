@@ -64,16 +64,21 @@ func TestSnapshotCancellationDuringControl(t *testing.T) {
 			defer release()
 			watchdog, stop := context.WithTimeout(t.Context(), 3*time.Second)
 			defer stop()
-			for _, operation := range []string{"snapshot", "input"} {
+			for _, operation := range []string{"snapshot", "input", "recover", "reconcile"} {
 				ctx, cancel := context.WithCancel(t.Context())
 				observed := &observedControlContext{Context: ctx, observed: make(chan struct{})}
 				var result error
 				done := make(chan struct{})
 				go func() {
 					defer close(done)
-					if operation == "snapshot" {
+					switch operation {
+					case "snapshot":
 						_, result = s.Snapshot(observed, thread)
-					} else {
+					case "recover":
+						_, result = s.Recover(observed, thread, "/fixture", nil)
+					case "reconcile":
+						_, result = s.Reconcile(observed, thread)
+					case "input":
 						result = s.Input(observed, thread, worker.Input{Text: "queued input"})
 					}
 				}()

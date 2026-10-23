@@ -449,7 +449,12 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		declarations = nil
 		catalog = nil
 	}
-	if r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
+	if failedWorkerReaction(s.input) {
+		clear(s.bindings)
+		declarations = nil
+		catalog = nil
+	}
+	if !failedWorkerReaction(s.input) && r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
 		state, err := r.agents.State(ctx, r.agent)
 		if err != nil {
 			return turn.PreparedRequest{}, err

@@ -173,6 +173,16 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 		e.mu.Unlock()
 		return outcome, nil
 	}
+	if item.kind == "recovery" {
+		e.mu.Unlock()
+		outcome, err := e.answerRecovery(ctx, answer)
+		if err == nil && outcome == protocol.DecisionOutcomeResolved {
+			e.mu.Lock()
+			item.card.Card.Outcome = &outcome
+			e.mu.Unlock()
+		}
+		return outcome, err
+	}
 	var raw json.RawMessage
 	if item.kind == "acp" {
 		form, parseErr := acpadapter.ParseForm(item.event.Question.Params)
@@ -183,6 +193,7 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 			e.mu.Unlock()
 			return protocol.DecisionOutcomeRefused, nil
 		}
+
 	}
 	// Claim before sending: loss of the RPC is not permission to replay an answer.
 	outcome := protocol.DecisionOutcomeResolved

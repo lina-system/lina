@@ -181,6 +181,22 @@ func TestCursorReadinessThroughRunningCore(t *testing.T) {
 						return
 					}
 				}
+				// Work tools are deferred behind load_tools (tool groups, #758).
+				// Load dispatch_work first, as the ACP worker scenario does.
+				if requestCount.Load() == 0 {
+					declared := func(name string) bool {
+						for _, tool := range req.Tools {
+							if tool.Name == name {
+								return true
+							}
+						}
+						return false
+					}
+					if !declared("dispatch_work") && declared("load_tools") {
+						emitPersonaCall(w, "load-dispatch_work", "load_tools", map[string]any{"tools": []string{"dispatch_work"}})
+						return
+					}
+				}
 				if requestCount.Add(1) == 1 {
 					available := false
 					for _, tool := range req.Tools {

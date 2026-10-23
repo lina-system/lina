@@ -31,18 +31,20 @@ type Config struct {
 // One adapter owns one task attempt. A result ends its turn; Close reaps the
 // remaining process tree. It never installs settings or grants tool permission.
 type Adapter struct {
-	cfg     Config
-	owner   *proc.Owner
-	mu      sync.Mutex
-	started bool
-	thread  worker.Thread
-	spec    worker.StartSpec
-	state   worker.ThreadState
-	version string
-	result  Result
-	cancel  context.CancelFunc
-	done    chan struct{}
-	events  chan worker.Event
+	finish     *worker.Finish
+	effectSeen bool
+	cfg        Config
+	owner      *proc.Owner
+	mu         sync.Mutex
+	started    bool
+	thread     worker.Thread
+	spec       worker.StartSpec
+	state      worker.ThreadState
+	version    string
+	result     Result
+	cancel     context.CancelFunc
+	done       chan struct{}
+	events     chan worker.Event
 }
 
 var _ worker.Adapter = (*Adapter)(nil)
@@ -188,7 +190,12 @@ func (a *Adapter) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 	if !a.matches(t) {
 		return worker.ThreadSnapshot{}, ErrThread
 	}
-	return worker.ThreadSnapshot{Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Model: a.spec.Model, Capabilities: a.Capabilities(), Output: a.result.Result}, nil
+	var finish *worker.Finish
+	if a.finish != nil {
+		copy := *a.finish
+		finish = &copy
+	}
+	return worker.ThreadSnapshot{Finish: finish, EffectsKnown: finish != nil && !a.effectSeen, Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Model: a.spec.Model, Capabilities: a.Capabilities(), Output: a.result.Result}, nil
 }
 func (a *Adapter) Result() Result {
 	a.mu.Lock()

@@ -19,8 +19,9 @@ import (
 
 func TestM1ConversationCompactsRetainedHistory(t *testing.T) {
 	t.Parallel()
-	const turnCount = 16
+	const turnCount = 24
 	var turns, summaries atomic.Int32
+	var relationshipCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Instructions string
@@ -43,7 +44,32 @@ func TestM1ConversationCompactsRetainedHistory(t *testing.T) {
 			emitResponse(w, `{"unanswered_requests":"none","topics_and_conclusions":"Archives","completed_actions":"First archive recorded.","specific_values":"receipt 42","omitted_detail":"Repeated archive material"}`, true)
 			return
 		}
+		if relationshipCalls.Load() < 2 {
+			if relationshipCalls.Add(1) == 1 {
+				emitPersonaCall(w, "relationship", "record_relationship", map[string]any{"quote": "We are study partners."})
+			} else {
+				var result struct{ Output string }
+				if json.Unmarshal(req.Input[len(req.Input)-1], &result) != nil || !strings.Contains(result.Output, `"code":"ok"`) {
+					t.Error("relationship tool failed")
+				}
+				emitResponse(w, "Acknowledged.", true)
+			}
+			return
+		}
 		n := turns.Add(1)
+		relationship := false
+		for _, rawItem := range req.Input {
+			var item struct{ Role, Content string }
+			if json.Unmarshal(rawItem, &item) == nil && strings.Contains(item.Content, "relationship_view") && strings.Contains(item.Content, "We are study partners.") {
+				relationship = true
+				if item.Role != "user" {
+					t.Error("relationship acquired instruction authority")
+				}
+			}
+		}
+		if !relationship {
+			t.Errorf("turn %d lost optional relationship context despite fitting published history", n)
+		}
 		if summaries.Load() > 0 {
 			hasSummary := false
 			for _, rawItem := range req.Input {
@@ -78,6 +104,7 @@ func TestM1ConversationCompactsRetainedHistory(t *testing.T) {
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)
 	c, conversation := conversationClient(t, h)
+	admittedTurn(t, h, c, conversation, "relationship", "We are study partners.")
 	for i := range turnCount {
 		filler := "archive data "
 		if i == 0 {
@@ -113,12 +140,15 @@ func TestM1ConversationCompactsRetainedHistory(t *testing.T) {
 	}
 	defer db.Close(context.Background())
 	if err := db.Read(h.ctx, func(tx *canon.Tx) error {
-		var nodes, sources, inputs int
-		if err := tx.QueryRowContext(h.ctx, `SELECT (SELECT count(*) FROM sum_node WHERE conversation_id=? AND status='ready'),(SELECT count(*) FROM sum_cover c JOIN sum_node n ON n.id=c.node_id WHERE n.conversation_id=? AND c.reason=''),(SELECT count(*) FROM conv_event WHERE conversation_id=? AND speaker_kind='person')`, conversation, conversation, conversation).Scan(&nodes, &sources, &inputs); err != nil {
+		var nodes, sources, inputs, rawBytes int
+		if err := tx.QueryRowContext(h.ctx, `SELECT (SELECT count(*) FROM sum_node WHERE conversation_id=? AND status='ready'),(SELECT count(*) FROM sum_cover c JOIN sum_node n ON n.id=c.node_id WHERE n.conversation_id=? AND c.reason=''),(SELECT count(*) FROM conv_event WHERE conversation_id=? AND speaker_kind='person'),(SELECT sum(length(body)) FROM conv_event WHERE conversation_id=? AND speaker_kind='person')`, conversation, conversation, conversation, conversation).Scan(&nodes, &sources, &inputs, &rawBytes); err != nil {
 			return err
 		}
-		if nodes < 1 || sources < 2 || inputs != turnCount+1 {
+		if nodes < 1 || sources < 2 || inputs != turnCount+2 {
 			t.Errorf("summary proof nodes=%d sources=%d raw inputs=%d, want published summary, covered sources, all raw inputs", nodes, sources, inputs)
+		}
+		if rawBytes <= 128000 {
+			t.Errorf("raw history bytes=%d, must exceed the hard request budget", rawBytes)
 		}
 		return nil
 	}); err != nil {

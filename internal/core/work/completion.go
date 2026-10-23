@@ -26,6 +26,19 @@ type Completion struct {
 
 var gitHead = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 
+// SubmitIn composes a repository worker receipt with its terminal observation.
+// File-landings still require Service.Submit's snapshot preparation path.
+func SubmitIn(ctx context.Context, tx *canon.Tx, runID string, r Receipt) error {
+	card, err := taskCard(ctx, tx, r.RelationshipID)
+	if err != nil {
+		return err
+	}
+	if card.Task.Destination != "" {
+		return ErrInvalid
+	}
+	return appendEvent(ctx, tx, Event{Key: "receipt:" + r.EventID, TaskID: r.RelationshipID, Kind: "receipt", RunID: runID, Receipt: &r})
+}
+
 // FinishIn composes a trusted terminal observation with its producer's state.
 // No caller may react until the enclosing canon transaction has committed.
 func FinishIn(ctx context.Context, tx *canon.Tx, taskID, runID, status, head string) error {

@@ -31,6 +31,7 @@ func TestStaleCriterionResultDoesNotStopEngine(t *testing.T) {
 	started := make(chan Action, 1)
 	release := make(chan struct{})
 	blocked := make(chan Goal, 1)
+	observed := make(chan Action, 1)
 	driver := &fixtureDriver{run: func(a Action) (Observation, error) {
 		if a.Kind == CheckCriterion {
 			started <- a
@@ -43,6 +44,14 @@ func TestStaleCriterionResultDoesNotStopEngine(t *testing.T) {
 		return Observation{Status: OutcomeSucceeded}, nil
 	}}
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Driver: driver, Now: func() time.Time { return time.Unix(100, 0) }, Changed: func(_ context.Context, s State) error {
+		for _, a := range s.Actions {
+			if a.Kind == CheckCriterion && a.State == "finished" && len(a.Receipt) > 0 {
+				select {
+				case observed <- a:
+				default:
+				}
+			}
+		}
 		for _, g := range s.Goals {
 			if g.State == GoalBlocked {
 				select {
@@ -99,6 +108,19 @@ func TestStaleCriterionResultDoesNotStopEngine(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("current goal was not replanned")
 	}
+	// Replanning can finish before the released old check reports. Wait for
+	// its committed observation independently of the current goal's state.
+	select {
+	case observation := <-observed:
+		if observation.ID != old.ID {
+			t.Fatalf("unexpected check observation: %+v", observation)
+		}
+	case err = <-done:
+		done <- err
+		t.Fatalf("engine stopped before retaining old observation: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("old check observation was not retained")
+	}
 	s, err := e.Snapshot(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -145,5 +167,17 @@ func TestStaleManagerPlanCannotClearCorrection(t *testing.T) {
 	current := claimOnlyAction(t, e, PlanGoal)
 	if current.GoalRevision != s.Goals[0].Revision || current.GoalRevision == old.GoalRevision {
 		t.Fatalf("not replanned against correction: %+v", current)
+	}
+}
+
+func TestWorkerRecoveryRequiresCurrentActionScope(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	action := claimOnlyAction(t, e, Assign)
+	if allowed, err := e.CanContinue(t.Context(), action.ID); err != nil || !allowed {
+		t.Fatalf("current assignment refused: %v %v", allowed, err)
+	}
+	revisionEdit(t, e)
+	if allowed, err := e.CanContinue(t.Context(), action.ID); err != nil || allowed {
+		t.Fatalf("retired assignment recovered: %v %v", allowed, err)
 	}
 }
