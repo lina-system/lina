@@ -159,6 +159,8 @@ func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 		h.stopCore(core)
 		core = start()
 		c, conversation = conversationClient(t, h)
+		// Provider items retain the read-back call in model history; only the
+		// resulting persona reply counts as delivery to the conversation.
 		waitWorkerCanon(t, h, `SELECT count(*) FROM conv_event e JOIN conv_event p ON p.id=e.parent_id JOIN turn_runs t ON t.id='turn:'||p.id WHERE p.scaffold_kind='worker_completion' AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'') NOT IN ('result','provider_item') AND t.state='completed'`, 1)
 		voiced = 1
 	} else {
@@ -212,6 +214,38 @@ func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 	}
 	c.Close()
 	h.stopCore(core)
+	if pendingAtRestart {
+		assertWorkerOutcomeDeliveredOnce(t, h)
+	}
+}
+
+// Inspect the final committed state after restart, recall and shutdown. The
+// reply boundary alone cannot detect an extra completion with no reply yet.
+func assertWorkerOutcomeDeliveredOnce(t *testing.T, h *harness) {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	if err := db.Read(h.ctx, func(tx *canon.Tx) error {
+		for _, check := range []struct{ name, query string }{
+			{"worker completions", `SELECT count(*) FROM conv_event WHERE scaffold_kind='worker_completion'`},
+			{"completed follow-up turns", `SELECT count(*) FROM turn_runs t JOIN inbox i ON i.id=t.inbox_id JOIN conv_event e ON e.id=i.native_id WHERE i.source='worker-finish' AND e.scaffold_kind='worker_completion' AND t.state='completed'`},
+			{"agent replies", `SELECT count(*) FROM conv_event e JOIN conv_event p ON p.id=e.parent_id WHERE p.scaffold_kind='worker_completion' AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'') NOT IN ('result','provider_item')`},
+		} {
+			var count int
+			if err := tx.QueryRowContext(h.ctx, check.query).Scan(&count); err != nil {
+				return err
+			}
+			if count != 1 {
+				t.Errorf("%s after restart: count=%d want=1", check.name, count)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // Read-only observation of committed installed-Core state provides the restart

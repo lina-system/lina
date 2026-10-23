@@ -33,8 +33,12 @@ func TestAlphaWorkerCrashInstalledCore(t *testing.T) {
 			json.Unmarshal(req.Input[len(req.Input)-1], &last)
 		}
 		if last.Type == "function_call_output" {
-			if !strings.Contains(last.Output, `"active"`) {
-				t.Errorf("worker did not start: %s", last.Output)
+			var result struct {
+				Code   string
+				Output struct{ State string }
+			}
+			if err := json.Unmarshal([]byte(last.Output), &result); err != nil || result.Code != "ok" || result.Output.State != "active" {
+				t.Errorf("worker_start did not start an active worker: %s (%v)", last.Output, err)
 			}
 			emitResponse(w, "작업을 맡겼어요.", true)
 		} else {

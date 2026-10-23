@@ -21,19 +21,23 @@ import (
 // running observation cannot pass or fail based on the worker's duration.
 func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 	t.Parallel()
-	testConversationWorkerViews(t, false, false)
+	testConversationWorkerViews(t, false, false, "unicode")
 }
 
 func TestM2ConversationWorkerProgressInstalledCore(t *testing.T) {
 	t.Parallel()
 	for _, outcome := range []string{"success", "failure"} {
 		t.Run(outcome, func(t *testing.T) {
-			testConversationWorkerViews(t, true, outcome == "failure")
+			for _, glyphs := range []string{"unicode", "ascii"} {
+				t.Run(glyphs, func(t *testing.T) {
+					testConversationWorkerViews(t, true, outcome == "failure", glyphs)
+				})
+			}
 		})
 	}
 }
 
-func testConversationWorkerViews(t *testing.T, progress, failure bool) {
+func testConversationWorkerViews(t *testing.T, progress, failure bool, glyphs string) {
 	workdir := t.TempDir()
 	var calls atomic.Int32
 	var control map[string]any
@@ -99,7 +103,7 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 	if calls.Load() != 2 {
 		t.Fatalf("start rounds=%d", calls.Load())
 	}
-	terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 110, 40)
+	terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "LINA_GLYPHS=" + glyphs}, false, true, 110, 40)
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "\x12") // Ctrl+R
 	wait := func(predicate func(string) bool) string {
@@ -111,6 +115,10 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 			t.Fatalf("worker view: %v\n%s", err, screenText(screen))
 		}
 		return screenText(screen)
+	}
+	selectionMark := design.Dark().GlyphUnicodeAction
+	if glyphs == "ascii" {
+		selectionMark = design.Dark().GlyphAsciiAction
 	}
 	waitWorkCard := func(state string) {
 		t.Helper()
@@ -124,8 +132,7 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 			if state == "" {
 				return strings.TrimSpace(strings.Join(lines[2:len(lines)-1], "\n")) == ""
 			}
-			// Focus adds a selection marker before the card title.
-			return strings.Contains(lines[2], "Delegate a small file job. ") &&
+			return strings.HasPrefix(strings.TrimSpace(lines[2]), selectionMark+" Delegate a small file job. ") &&
 				strings.TrimSpace(lines[3]) == design.Text(design.English, "running.state."+state)
 		})
 	}
