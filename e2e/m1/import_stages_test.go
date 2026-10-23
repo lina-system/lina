@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -94,7 +95,11 @@ func TestM1StagedImportWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close(context.Background()) })
-	service, err := jobs.New(jobs.Config{Store: store, Epoch: 1, Definitions: map[string]jobs.Definition{scenario.JobID: {Agent: scenario.Agent, Apply: plan.ApplyJob}}})
+	var logicalTime atomic.Int64
+	// Keep due times in the past for the real worker's read-only snapshots.
+	// Advancing Core's clock explicitly avoids waiting for the job interval.
+	logicalTime.Store(time.Unix(1, 0).UnixNano())
+	service, err := jobs.New(jobs.Config{Store: store, Epoch: 1, Now: func() time.Time { return time.Unix(0, logicalTime.Load()) }, Definitions: map[string]jobs.Definition{scenario.JobID: {Agent: scenario.Agent, Apply: plan.ApplyJob}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,10 +119,14 @@ func TestM1StagedImportWorker(t *testing.T) {
 	stop := startJobService(t, h.ctx, service, socket, controls)
 	defer stop()
 	// --once adopts one task. Each conversation must survive a separate worker.
-	for range tasks {
+	for i := range tasks {
 		worker := h.command("--canon", path, "--socket", socket, "--once")
 		worker.start(t)
 		worker.wait(t, 0)
+		if got := jobWatermark(t, store, scenario.JobID); got != int64(i+1) {
+			t.Fatalf("after worker %d: watermark=%d", i+1, got)
+		}
+		logicalTime.Add(int64(time.Minute))
 	}
 	if got := jobWatermark(t, store, scenario.JobID); got != 2 {
 		t.Fatalf("watermark=%d", got)
