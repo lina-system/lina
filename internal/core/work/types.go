@@ -94,6 +94,9 @@ type GoalDecision struct {
 	Decision QuestionDecision
 }
 type Card struct {
+	StartedAt      time.Time          `json:"started_at,omitzero"`
+	FinishedAt     time.Time          `json:"finished_at,omitzero"`
+	Activity       string             `json:"activity,omitempty"`
 	Scheduling     Scheduling         `json:"scheduling,omitempty"`
 	WaitReason     *ScheduleWait      `json:"wait_reason,omitempty"`
 	Completion     *result.Completion `json:"completion,omitempty"`
@@ -127,6 +130,7 @@ type AcceptedCompletion struct {
 // Event has one payload selected by Kind. Events are admitted by Service only;
 // clients and workers never append arbitrary events or acceptance judgments.
 type Event struct {
+	RecordedAt     string                    `json:"recorded_at,omitempty"`
 	Scheduling     *Scheduling               `json:"scheduling,omitempty"`
 	WaitReason     *ScheduleWait             `json:"wait_reason,omitempty"`
 	Occurrence     *canon.RecordOccurrence   `json:"occurrence,omitempty"`

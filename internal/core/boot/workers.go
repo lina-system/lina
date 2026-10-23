@@ -56,6 +56,7 @@ type workerSession struct {
 	scheduled       bool
 	answered        func(context.Context, worker.Thread)
 	started         time.Time
+	activity        string
 	approvals       map[string]worker.Event
 	questions       map[string]*workerQuestion
 	output          string
@@ -621,6 +622,7 @@ func (e *workerSession) observe() {
 		e.origin.notifyOwnerViews()
 	}()
 	for event := range e.adapter.Events() {
+		e.observeActivity(event)
 		switch event.Kind {
 		case worker.ProgressEvent:
 			if event.Progress.Phase == "server_request_resolved" {

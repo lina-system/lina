@@ -100,7 +100,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitDeadline = time.Time{}
 		}
 	case activityTick:
-		if m.activityVisible() {
+		if m.activityInterval() > 0 {
 			m.content, _ = state.Reduce(m.content, state.Tick{Now: time.Time(msg)})
 			if !m.staticActivity() {
 				m.activityFrame++
@@ -210,6 +210,7 @@ func (m *shellModel) beginGeneration(msg shellBegin) {
 	if msg.Generation > m.generation {
 		m.generation = msg.Generation
 		m.conversation.pager = textPager{}
+		m.conversation.workFocused = false
 		m.talk = talkView{attempt: m.talk.attempt + 1}
 		m.channels = channelView{attempt: m.channels.attempt + 1}
 		m.web = webView{attempt: m.web.attempt + 1}

@@ -322,6 +322,8 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		observed := false
 		var progressSequence uint64
 		var progress progressBuffer
+		var activity string
+		var activitySequence uint64
 		progressTick := time.NewTicker(progressInterval)
 		defer progressTick.Stop()
 		recordProgress := func(summary string, progressErr error) error {
@@ -344,6 +346,13 @@ func (s *Service) execute(ctx context.Context, r Record) {
 					err = recordProgress(progress.Observe(*event.Progress, time.Now()))
 				} else if event.Finish != nil {
 					err = recordProgress(progress.Flush(time.Now(), true))
+				}
+				if next := worker.Activity(event); err == nil && next != "" && next != activity {
+					activitySequence++
+					err = service.ReportActivity(ctx, r.ID, run.ID, activitySequence, next)
+					if err == nil {
+						activity = next
+					}
 				}
 				if err != nil {
 					r.Code = "progress_failed"
