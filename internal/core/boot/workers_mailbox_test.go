@@ -14,8 +14,10 @@ import (
 
 type mailboxProbe struct {
 	workerProbe
-	tier    string
-	replies []json.RawMessage
+	tier      string
+	replies   []json.RawMessage
+	events    chan worker.Event
+	delivered chan struct{}
 }
 
 func (p *mailboxProbe) Name() string { return "fake" }
@@ -24,6 +26,17 @@ func (p *mailboxProbe) DeliveryProfile() worker.DeliveryProfile {
 }
 func (p *mailboxProbe) Steer(ctx context.Context, th worker.Thread, in worker.Input) error {
 	return p.Input(ctx, th, in)
+}
+func (p *mailboxProbe) Events() <-chan worker.Event { return p.events }
+func (p *mailboxProbe) Input(ctx context.Context, th worker.Thread, in worker.Input) error {
+	err := p.workerProbe.Input(ctx, th, in)
+	if p.delivered != nil {
+		select {
+		case p.delivered <- struct{}{}:
+		default:
+		}
+	}
+	return err
 }
 func (p *mailboxProbe) Answer(_ context.Context, _ worker.Thread, a worker.Answer) error {
 	p.replies = append(p.replies, a.Result)
@@ -174,6 +187,64 @@ func TestWorkerMailboxOfflineAddressAndUncertainDelivery(t *testing.T) {
 	}
 	if p.inputs != 1 {
 		t.Fatal("uncertain message resent", p.inputs)
+	}
+}
+
+func TestWorkerMailboxHoldsInputUntilNativeDecisionResolves(t *testing.T) {
+	r := controlRuntime(t)
+	th := worker.Thread{ID: "waiting", TaskID: "task", AttemptID: "attempt", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}
+	p := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Waiting, Pending: []worker.Request{{ID: "approval", Method: "session/request_permission"}}}}, tier: "turn"}
+	e := &workerSession{origin: r, thread: th, adapter: p, scheduled: true}
+	if err := e.ownerSteering(t.Context(), "waiting-message", "follow-up after the decision"); err != nil {
+		t.Fatal(err)
+	}
+	event := worker.Event{Thread: th, Kind: worker.ToolCallEvent, ToolCall: &worker.ToolCall{ID: "tool", Namespace: "lina", Name: "read_projection", Arguments: json.RawMessage(`{}`)}}
+	e.workTool(event)
+	messages, err := r.work.SteeringMessages(t.Context(), "fake:waiting")
+	if err != nil || len(messages) != 1 || messages[0].State != "held" {
+		t.Fatalf("ordinary input bypassed native decision: %+v %v", messages, err)
+	}
+	p.snapshot.State, p.snapshot.Pending = worker.Active, nil
+	e.workTool(event)
+	messages, err = r.work.SteeringMessages(t.Context(), "fake:waiting")
+	if err != nil || messages[0].State != "delivered" {
+		t.Fatalf("resolved decision did not release mail: %+v %v", messages, err)
+	}
+}
+
+func TestWorkerMailboxPushAfterAnswer(t *testing.T) {
+	r := controlRuntime(t)
+	th := worker.Thread{ID: "answer", TaskID: "task", AttemptID: "attempt", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}
+	p := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Waiting}}, tier: "push"}
+	e := &workerSession{origin: r, thread: th, adapter: p, scheduled: true, done: make(chan struct{}), close: func() error { return nil }}
+	if err := e.ownerSteering(t.Context(), "after-answer", "continue with the correction"); err != nil {
+		t.Fatal(err)
+	}
+	p.snapshot.State = worker.Active
+	e.answerDelivered(t.Context(), th)
+	e.answerDelivered(t.Context(), th)
+	if p.inputs != 1 {
+		t.Fatalf("answer did not deliver held push once: %d", p.inputs)
+	}
+}
+
+func TestWorkerMailboxPushOnResolvedEvent(t *testing.T) {
+	r := controlRuntime(t)
+	th := worker.Thread{ID: "resolved", TaskID: "task", AttemptID: "attempt", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}
+	p := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Waiting, Pending: []worker.Request{{ID: "approval", Method: "item/commandExecution/requestApproval", Params: json.RawMessage(`{}`)}}}}, tier: "push", events: make(chan worker.Event)}
+	e := &workerSession{origin: r, thread: th, adapter: p, scheduled: true, done: make(chan struct{}), close: func() error { return nil }, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
+	if err := e.ownerSteering(t.Context(), "while-waiting", "apply the correction"); err != nil {
+		t.Fatal(err)
+	}
+	go e.observe()
+	p.snapshot.State, p.snapshot.Pending = worker.Active, nil
+	p.events <- worker.Event{Thread: th, Kind: worker.ProgressEvent, Progress: &worker.Progress{Phase: "server_request_resolved", ItemID: "approval"}}
+	// The second send returns only after the resolved event has been handled.
+	p.events <- worker.Event{Thread: th, Kind: worker.ProgressEvent, Progress: &worker.Progress{Phase: "barrier"}}
+	close(p.events)
+	<-e.done
+	if p.inputs != 1 {
+		t.Fatalf("resolved event delivered push mail %d times", p.inputs)
 	}
 }
 
