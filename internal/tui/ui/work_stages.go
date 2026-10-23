@@ -122,17 +122,23 @@ func panelText(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func stageMark(status string, ascii bool) string {
+func (m *shellModel) stageMark(status string) string {
+	t := m.styles.tokens
 	marks := map[string][2]string{
-		"done": {"✓", "+"}, "superseded": {"✓", "+"}, "working": {"●", "*"},
-		"waiting": {"○", "o"}, "needs_input": {"!", "!"}, "failed": {"×", "x"},
-		"stopped": {"×", "x"}, "next": {"·", "."},
+		"done":        {t.GlyphUnicodeStageDone, t.GlyphAsciiStageDone},
+		"superseded":  {t.GlyphUnicodeStageDone, t.GlyphAsciiStageDone},
+		"working":     {t.GlyphUnicodeStageWorking, t.GlyphAsciiStageWorking},
+		"waiting":     {t.GlyphUnicodeStageWaiting, t.GlyphAsciiStageWaiting},
+		"needs_input": {t.GlyphUnicodeStageNeedsInput, t.GlyphAsciiStageNeedsInput},
+		"failed":      {t.GlyphUnicodeStageFailed, t.GlyphAsciiStageFailed},
+		"stopped":     {t.GlyphUnicodeStageFailed, t.GlyphAsciiStageFailed},
+		"next":        {t.GlyphUnicodeStageNext, t.GlyphAsciiStageNext},
 	}
 	mark, ok := marks[status]
 	if !ok {
-		return "?"
+		mark = [2]string{t.GlyphUnicodeUnknown, t.GlyphAsciiUnknown}
 	}
-	if ascii {
+	if m.styles.options.ASCII {
 		return mark[1]
 	}
 	return mark[0]
@@ -141,9 +147,10 @@ func stageMark(status string, ascii bool) string {
 func (m *shellModel) workStageRows(card state.WorkCard, width, height int) []string {
 	m.syncWorkStage(card)
 	v := &m.conversation.workStages
-	back, tail, marker := "‹", "…", "›"
+	t := m.styles.tokens
+	back, tail, marker := t.GlyphUnicodeBack, t.GlyphUnicodeOverflow, t.GlyphUnicodeAction
 	if m.styles.options.ASCII {
-		back, tail, marker = "<", "...", ">"
+		back, tail, marker = t.GlyphAsciiBack, t.GlyphAsciiOverflow, t.GlyphAsciiAction
 	}
 	clip := func(s string) string { return panelClip(s, width, tail) }
 	rows := []string{clip(back + " " + panelText(card.Name))}
@@ -183,7 +190,7 @@ func (m *shellModel) workStageRows(card state.WorkCard, width, height int) []str
 		if stage.Number != "" {
 			prefix += stage.Number + " "
 		}
-		rows = append(rows, clip(prefix+stageMark(stage.State, m.styles.options.ASCII)+" "+panelText(stage.Label)))
+		rows = append(rows, clip(prefix+m.stageMark(stage.State)+" "+panelText(stage.Label)))
 		if i == expanded {
 			for _, row := range m.workStepRows(stage.Steps, stepBudget, tail) {
 				rows = append(rows, clip(row))
@@ -271,7 +278,7 @@ func (m *shellModel) workStepRows(steps []state.WorkStageStep, budget int, tail 
 	}
 	rows := make([]string, 0, shown+1)
 	for _, step := range steps[:shown] {
-		rows = append(rows, "    "+stageMark(step.State, m.styles.options.ASCII)+" "+panelText(step.Name))
+		rows = append(rows, "    "+m.stageMark(step.State)+" "+panelText(step.Name))
 	}
 	if shown < len(steps) {
 		rows = append(rows, "    "+fmt.Sprintf(design.Text(m.styles.options.Language, "work.more"), tail, len(steps)-shown))
@@ -320,7 +327,7 @@ func (m *shellModel) workDetails() string {
 				if stageExpandable(stage) && m.conversation.workStages.expanded == stageKey(stage) {
 					for _, step := range stage.Steps {
 						if step.State != "superseded" {
-							lines = append(lines, stageMark(step.State, m.styles.options.ASCII)+" "+step.Name)
+							lines = append(lines, m.stageMark(step.State)+" "+step.Name)
 						}
 					}
 				}
