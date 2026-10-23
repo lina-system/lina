@@ -25,17 +25,31 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-type exchangeKnowledge struct{ r *conversationRuntime }
+type exchangeKnowledge struct {
+	r           *conversationRuntime
+	memoryEpoch uint64
+	memoryRefs  []turn.Reference
+}
 
 func (k exchangeKnowledge) Persona(ctx context.Context, delivery, agent string) (agents.Preparation, error) {
 	return k.r.agents.Prepare(ctx, delivery, agent)
 }
-func (k exchangeKnowledge) Common(ctx context.Context) ([]string, error) {
+func (k *exchangeKnowledge) Common(ctx context.Context) ([]string, error) {
 	// CommonOnly selects only the common holder; personal holders cannot
 	// enter this request. Recall also enforces revocation and never-leaves.
+	epoch, err := k.r.removals.Epoch(ctx)
+	if err != nil {
+		return nil, err
+	}
 	hits, err := memory.New(k.r.db).Recall(ctx, memory.RecallScope{Person: k.r.person, Agent: k.r.agent, CommonOnly: true, ExternalModel: true}, memory.Query{At: time.Now().Unix(), Limit: 32})
+	if err != nil {
+		return nil, err
+	}
+	k.memoryEpoch = epoch
+	k.memoryRefs = make([]turn.Reference, 0, len(hits))
 	var out []string
 	for _, hit := range hits {
+		k.memoryRefs = append(k.memoryRefs, turn.Reference{ID: hit.ID, Revision: strconv.FormatInt(hit.Revision, 10)})
 		raw, _ := json.Marshal(hit)
 		out = append(out, string(raw))
 	}
@@ -117,7 +131,8 @@ func (r *conversationRuntime) receiveHandoff(ctx context.Context, receipt exchan
 	// A separate lane and fresh Prepare keep both private conversations out.
 	done, err := r.queueReaction(ctx, record.ID, func(ctx context.Context, inputs *loop.Inputs) error {
 		defer inputs.Close()
-		prepared, err := store.Prepare(ctx, receipt.DeliveryID, record.To, time.Now(), exchangeKnowledge{view})
+		knowledge := &exchangeKnowledge{r: view}
+		prepared, err := store.Prepare(ctx, receipt.DeliveryID, record.To, time.Now(), knowledge)
 		if err != nil {
 			return err
 		}
@@ -183,6 +198,13 @@ func (r *conversationRuntime) receiveHandoff(ctx context.Context, receipt exchan
 		}
 		defer activity.Release()
 		_, err = turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: record.ID, InboxID: inboxID, InputEvent: record.ID + "-request", ReceivedAt: time.Now(), Prepare: func(context.Context) error { return nil }, Loop: loop.Config{RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime, Request: req, Tools: bindings, Inputs: inputs, Stream: func(ctx context.Context, q provider.Request) (provider.Stream, error) {
+			r.dispatchMu.RLock()
+			defer r.dispatchMu.RUnlock()
+			// The shared fence also protects follow-up rounds from committed
+			// corrections or removals of the common memory in this preparation.
+			if err := view.validateModelContext(ctx, knowledge.memoryEpoch, knowledge.memoryRefs); err != nil {
+				return nil, err
+			}
 			if err := r.exchangeAgent(ctx, record.To); err != nil {
 				return nil, err
 			}
