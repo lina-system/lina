@@ -34,10 +34,12 @@ type channelTransport func(*http.Request) (*http.Response, error)
 func (f channelTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func controlRuntime(t *testing.T) *conversationRuntime {
 	t.Helper()
-	root := filepath.Join(t.TempDir(), "state")
-	if err := os.Mkdir(root, 0700); err != nil {
+	// Test names can exceed the Unix socket path limit once jobs.sock is added.
+	root, err := os.MkdirTemp("", "lina-boot-")
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	ctl, err := ctlfiles.Open(root)
 	if err != nil {
 		t.Fatal(err)
