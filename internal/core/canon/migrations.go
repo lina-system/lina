@@ -66,6 +66,7 @@ func Migrations() []Migration {
 		{Version: 52, SQL: workerRecoverySchema},
 		{Version: 53, SQL: retractSearchDeltaSchema},
 		{Version: 54, SQL: citeSchema},
+		{Version: 55, SQL: inputBindingSchema},
 	}
 }
 
@@ -102,6 +103,7 @@ var publishedMigrationTables = []struct {
 	{42, "agent_starters"}, {42, "agent_selection"},
 	{45, "record_operations"}, {45, "record_candidates"},
 	{54, "cite"},
+	{55, "records_activity"},
 	{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
 }
 

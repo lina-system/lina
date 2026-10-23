@@ -507,32 +507,22 @@ func TestM2InstalledCodexLive(t *testing.T) {
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	// Core appends its ContextPacket after the current input. Its mandatory
-	// clock marks that boundary; retrieved evidence after it also has user
-	// role. Discovery can append call/results after the packet as well.
-	end := len(inputs)
-	for i, raw := range inputs {
-		var item struct{ Role, Content string }
-		if json.Unmarshal(raw, &item) != nil || item.Role != "developer" {
-			continue
-		}
-		stamp, refs, ok := strings.Cut(item.Content, "\nReferences: ")
-		var references []struct{ ID string }
-		if !ok || json.Unmarshal([]byte(refs), &references) != nil || len(references) != 1 || !strings.HasPrefix(references[0].ID, "clock:") {
-			continue
-		}
-		if _, err := time.Parse(time.RFC3339Nano, stamp); err == nil {
-			end = i
-			break
-		}
-	}
+	// History has no developer messages. The first developer item after the
+	// current input begins Core's ContextPacket, which can also contain user
+	// evidence. Classify the last user input before that packet, not retrieved
+	// context or the discovery call/results appended after it.
 	var item struct{ Role, Content string }
 	found := false
-	for i := end - 1; i >= 0; i-- {
-		item.Role, item.Content = "", ""
-		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
-			found = true
+	for _, raw := range inputs {
+		var next struct{ Role, Content string }
+		if json.Unmarshal(raw, &next) != nil {
+			continue
+		}
+		if next.Role == "developer" && found {
 			break
+		}
+		if next.Role == "user" {
+			item, found = next, true
 		}
 	}
 	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {

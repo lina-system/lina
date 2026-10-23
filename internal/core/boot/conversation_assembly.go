@@ -90,6 +90,11 @@ func (r *conversationRuntime) recordContextSources(ctx context.Context, packet a
 			for _, e := range item.Evidence {
 				source.Evidence = append(source.Evidence, ledger.Reference{ID: e.ID, Revision: e.Revision})
 			}
+		case item.Kind == assemble.Waiting && strings.HasPrefix(item.Origin, "input-binding:"):
+			source.Source = "input-binding-v1"
+			for _, ref := range item.Evidence {
+				source.Evidence = append(source.Evidence, ledger.Reference{ID: ref.ID})
+			}
 		case item.Kind == assemble.Clock && strings.HasPrefix(item.ID, "clock:"):
 			source.Source = "clock-v1"
 		case item.Kind == assemble.SkillBody:

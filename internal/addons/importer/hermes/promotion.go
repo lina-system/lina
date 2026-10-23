@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
 type PromotionPolicy struct {
@@ -55,6 +56,12 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 	for _, c := range p.conversations {
 		for _, r := range c.records {
 			if superseded[r.id] || hasFlag(r, "retracted") || strings.TrimSpace(r.body) == "" || len(ScanSecrets([]byte(r.body))) > 0 {
+				continue
+			}
+			// Unavailable bodies and secrets recognized only after JSON decoding
+			// cannot become verbatim promotion drafts or memory evidence.
+			masked, err := secrets.Mask(r.body)
+			if err != nil || len(masked.Spans()) != 0 {
 				continue
 			}
 			person := p.people[c.report.Profile]
