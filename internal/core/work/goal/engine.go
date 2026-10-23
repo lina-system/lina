@@ -591,8 +591,17 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			// or a plan for this revision. A late result is not a Core failure.
 			a.State = "finished"
 			a.Superseded = true
-			// Only reconcileRetired clears assessment markers. A late report
-			// for an already reconciled action must not clear a fresh assessment.
+			if a.Kind == PlanGoal && !a.RetirementReconciled {
+				// Clear the assessment with its receipt. Reconciliation finishes
+				// retirement before deriving a replacement; later reports must
+				// not clear that replacement's marker.
+				if t != nil && t.RepairedBy == "" {
+					t.RepairAsked = false
+					if err = put(v, "goal", g.ID, g); err != nil {
+						return err
+					}
+				}
+			}
 			if hasExternalEffect(a) && !currentActionTarget(g, a) && !effectSettled(a, o) {
 				// A different target cannot inherit this effect. Retain its
 				// lease and bounded observation wait until its outcome is known.
