@@ -70,6 +70,9 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 			if item.ID == "persona-settings:"+a.AgentID {
 				item.Origin = "persona-record:" + a.AgentID
 			}
+			if item.ID == "working-preference:"+a.AgentID {
+				item.Origin = "conversation-questions:" + a.AgentID
+			}
 			for _, e := range ref.Evidence {
 				item.Evidence = append(item.Evidence, assemble.Ref{ID: e.ID, Revision: e.Revision})
 			}

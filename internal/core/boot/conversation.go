@@ -351,6 +351,15 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 			_ = r.delegation.close(ctx)
 			r.delegation = nil
 		}
+		// Retain the failed readiness stage for clients arriving after boot.
+		// Worker error text can contain private paths or provider messages.
+		var failure *delegationReadinessError
+		if errors.As(delegationErr, &failure) {
+			data, _ := json.Marshal(protocol.ReadinessFailure{Step: failure.step})
+			if publishErr := r.topics.Publish("core", clientsrv.TopicEvent{Kind: protocol.KindReadinessFailure, Key: "delegation", Data: data}); publishErr != nil {
+				fmt.Fprintln(os.Stderr, "Delegation readiness could not be published.")
+			}
+		}
 		fmt.Fprintln(os.Stderr, "Delegation is unavailable; other Core capabilities remain available.")
 	}
 	if err = r.startCompletions(ctx); err != nil {
@@ -518,7 +527,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('provider_item','interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work','handoff_check','worker_session','worker_completion'))`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('provider_item','interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work','handoff_check','worker_session','worker_completion','question_default','question_answer'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind NOT IN ('person','forwarded') OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
@@ -672,6 +681,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	}()
 	var items []provider.Item
 	var events []ledger.Event
+	questions := &questionTurn{}
 	var memoryEpoch uint64
 	var memoryRefs []turn.Reference
 	var replyShapes reply.Shapes
@@ -719,7 +729,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, bindings)
+			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, bindings, questions)
 
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -764,6 +774,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
+			declarations = append(declarations, askQuestionDeclaration(), resolveQuestionDeclaration())
 			if r.channelBinding == nil || r.channelBinding.Scope.Memory {
 				declarations = append(declarations, coreexec.NameDeclaration())
 			}
@@ -882,6 +893,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Digest: assemble.Digest,
 	}
 	round := 0
+	questionRoundCalls := 0
 	filters := map[string]*conversationReplyStream{}
 	var completed []ledger.Admission
 	var saved []ledger.Event
@@ -953,6 +965,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		ResultCommitted: r.background.notify, ToolActivity: r.toolActivity, Loop: loop.Config{
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        bindings,
+			Before:       questions.before,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
 				return r.resultNotice(ctx, call, r.recordNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))))
 			},
@@ -962,6 +975,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					return nil, inputQueue.failure
 				}
 				round++
+				questionRoundCalls = 0
 				if err := r.setPhase(ctx, protocol.TurnPhaseWaitingModel); err != nil {
 					return nil, err
 				}
@@ -1046,7 +1060,13 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					now := time.Now()
 					completed = append(completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
 					return nil
-				case provider.ToolCallReady, provider.Terminal:
+				case provider.ToolCallReady:
+					questionRoundCalls++
+					return nil
+				case provider.Terminal:
+					if questionRoundCalls == 0 || r.route.Adapter.Class() == provider.AgentRuntime {
+						return questions.check(ctx)
+					}
 					return nil
 				}
 				return nil
