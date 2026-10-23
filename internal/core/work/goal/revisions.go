@@ -63,6 +63,9 @@ func applyCorrectionPlan(g *Goal, o Observation) error {
 	}
 	proposed.Checks = nil
 	proposed.Deployment, proposed.Verification = Proof{}, Proof{}
+	if proposed.ServiceTarget == "" {
+		proposed.TargetRevision = correctedLibraryTarget(proposed)
+	}
 
 	proposed.AssessedFailure = ""
 	proposed.AttentionID = ""
@@ -70,6 +73,26 @@ func applyCorrectionPlan(g *Goal, o Observation) error {
 	proposed.State = GoalRunning
 	*g = proposed
 	return nil
+}
+
+// Library verification reads every retained task's QA proof. Its representative
+// revision must still belong to that plan; historical repository merges remain
+// unchanged because retiring a task does not undo the merge.
+func correctedLibraryTarget(g Goal) string {
+	var target string
+	for _, task := range g.Tasks {
+		if !task.Merge.proves(task.Merge.Revision) {
+			continue
+		}
+		revision := taskResultRevision(task)
+		if revision == g.TargetRevision {
+			return revision
+		}
+		if target == "" {
+			target = revision
+		}
+	}
+	return target
 }
 
 // The correction barrier has settled these effects. Keep their receipts, but

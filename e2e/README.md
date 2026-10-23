@@ -1,5 +1,11 @@
 # Headless acceptance harness
 
+`m3/plan-invalid-response.json` exercises completed invalid JSON and cyclic
+planning responses through installed Core and Moirai. It restarts Core between
+Aux completion and Apply, verifies cached results, rejects a forged proposal,
+checks durable rejection and usage counts under duplicate application, and
+observes the next valid preview without publishing unconfirmed plan records.
+
 `m3/non-competition.json` runs installed Core's record tools through a local
 fixture provider and its public client socket. It checks a real saved record,
 refusal of an out-of-scope path used as an id, and preservation of an external
@@ -379,6 +385,13 @@ binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
 
+`m3/plan-drafting.json` exercises accepted goal discovery through model tools,
+Klotho drafting through a real Moirai worker and installed Core job socket,
+complete preview replacement, retirement of overlapping stale requests, stale confirmation refusal, one-version record
+creation, and idempotent confirmation across Core restarts. A loopback provider
+supplies only model output; all tool, job, result, protocol and records paths are
+production paths. No external credentials or services are used.
+
 `m3/operational-switch.json` exercises the owner-only switch on the real Core
 socket: missing approval, a failed transfer with explicit service restoration,
 a held external task, successful transfer, and a real Core-launched fixture
@@ -471,7 +484,11 @@ expansion with stage provenance, refresh, folding and reopening. It exercises
 Core's read path and TUI. `TestM3WorkerLanesLiveSession` additionally starts the
 installed stdio worker fixture through Core's conversation tools, makes it write
 a real artifact, and expands its runtime lane to show the worker output without
-calling the model. Vendor transport is synthetic; no personal account is used.
+calling the model. While the worker holds an interrupt reply, the developer page
+must return its session as unknown when the five-second snapshot context expires.
+Only then does the fixture release the interrupt, produce its result and allow
+the refreshed lane to report idle. Vendor transport is synthetic; no personal
+account is used.
 
 `m2/progress-waiting.json` uses the installed Core and synthetic stdio worker
 journey to read the owner progress capability and full waiting list during an

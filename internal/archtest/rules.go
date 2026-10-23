@@ -46,6 +46,8 @@ func moiraiLayer(name string) int {
 		return 4
 	case name == "internal/moirai":
 		return 3
+	case within(name, "internal/moirai/planning"):
+		return 2
 	case within(name, "internal/moirai/canon"):
 		return 2
 	case within(name, "internal/moirai/jobapi"):
