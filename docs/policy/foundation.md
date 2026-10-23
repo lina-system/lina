@@ -63,9 +63,14 @@ After a full run on `dev` (push, nightly or manual), the independent QA job
 reads the exact plan and newest shard result artifacts, including failures.
 `scripts/verify/post-merge-qa.mjs` opens or updates a `qa` issue for each failing
 Go top-level test, with nested failure lines, the tested head, first failing
-commit range and workflow run. A package timeout or panic also fails each started,
-unfinished test, with bounded package diagnostics. Completed tests retain their
-results; tests that never started are not reported as failures. Configure the
+commit range and workflow run. A package timeout or panic also fails each
+unfinished test still running, with bounded package diagnostics. A paused test
+without a later continue event remains unknown. Parents with unfinished children
+inherit failure only from a running descendant; waiting on paused children alone
+does not establish a scenario failure. Explicit subtest failures still fail their
+scenario. Completed tests retain their results;
+tests that never started are not reported as failures. The package and shard
+still fail, so unknown scenarios cannot make the foundation gate pass. Configure the
 repository's `QA_MILESTONE`
 variable to the current milestone number; a missing setting fails reporting
 instead of assigning findings to a guessed milestone.

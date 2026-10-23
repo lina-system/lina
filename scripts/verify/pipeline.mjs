@@ -126,15 +126,18 @@ export function goTestOutcomes(output) {
     let event;
     try { event = JSON.parse(line); } catch { continue; }
     if (!event?.Package) continue;
-    if (!packages.has(event.Package)) packages.set(event.Package, { output: '', started: new Set() });
+    if (!packages.has(event.Package)) packages.set(event.Package, { output: '', pending: new Map() });
     const pkg = packages.get(event.Package);
     if (event.Output) pkg.output = (pkg.output + event.Output).slice(-16000);
     if (!event.Test) {
       // Timeouts and panics can end a package without test-level fail events.
-      // Only tests actually started in this package can inherit that failure.
+      // Attribute through unfinished children: a resumed parent can be waiting
+      // for paused parallel children rather than executing scenario code.
       if (event.Action === 'fail') {
-        for (const key of pkg.started) {
-          const record = tests.get(key);
+        const pending = [...pkg.pending.keys()];
+        for (const [name, running] of pkg.pending) {
+          if (!running || pending.some(child => child.startsWith(name + '/'))) continue;
+          const record = tests.get(event.Package + ':' + name.split('/')[0]);
           if (record.result !== 'unknown') continue;
           record.result = 'fail';
           record.output = (record.output + pkg.output).slice(-16000);
@@ -146,9 +149,12 @@ export function goTestOutcomes(output) {
     const key = event.Package + ':' + name;
     if (!tests.has(key)) tests.set(key, { package: event.Package, test: name, result: 'unknown', output: '' });
     const record = tests.get(key);
-    if (event.Action === 'run') pkg.started.add(key);
+    if (['run', 'cont'].includes(event.Action)) pkg.pending.set(event.Test, true);
+    if (event.Action === 'pause') pkg.pending.set(event.Test, false);
+    if (['pass', 'fail', 'skip'].includes(event.Action)) pkg.pending.delete(event.Test);
     if (event.Output) record.output = (record.output + event.Output).slice(-16000);
-    if (event.Test === name && ['pass', 'fail', 'skip'].includes(event.Action)) record.result = event.Action;
+    // An explicit child failure is evidence even if its parent never finishes.
+    if (event.Action === 'fail' || event.Test === name && ['pass', 'skip'].includes(event.Action)) record.result = event.Action;
   }
   return [...tests.values()];
 }
