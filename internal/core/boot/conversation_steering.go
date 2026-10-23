@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package boot
+
+import (
+	"context"
+
+	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/provider"
+)
+
+type acceptedSteering struct {
+	event   ledger.Event
+	inboxID int64
+	runner  *conversationRuntime
+}
+
+// submitInput runs under the shared conversation's admission mutex. Channel
+// adapters reuse this coordinator, including steering during a live turn.
+func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, steer bool, runner *conversationRuntime) error {
+	items, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
+	if err != nil {
+		return err
+	}
+	if len(items) != 1 {
+		return assemble.ErrHistory
+	}
+	body := items[0]
+	if steer && r.lanes.Steer(r.conversation, body) {
+		r.steering[string(body)] = append(r.steering[string(body)], acceptedSteering{event: event, inboxID: inboxID, runner: runner})
+		return nil
+	}
+	_, err = r.queueReaction(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error { return runner.run(ctx, inputs, event, inboxID) })
+	return err
+}
+
+// Drained steering belongs to this turn; only the queue's final undrained
+// items are resubmitted as follow-ups, with their original durable identity.
+type conversationInputs struct {
+	runtime   *conversationRuntime
+	inputs    *loop.Inputs
+	failure   error
+	questions *questionTurn
+}
+
+func (q *conversationInputs) Drain() []provider.Item {
+	items := q.inputs.Drain()
+	for _, body := range items {
+		accepted, ok := q.runtime.takeSteering(body)
+		if !ok {
+			continue
+		}
+		if accepted.event.Surface.Kind == "channel" {
+			if err := q.runtime.db.Write(q.runtime.ctx, func(tx *canon.Tx) error {
+				_, err := tx.ExecContext(q.runtime.ctx, "INSERT INTO channel_steering(inbox_id) VALUES(?) ON CONFLICT DO NOTHING", accepted.inboxID)
+				return err
+			}); err != nil {
+				q.failure = err
+			}
+		}
+		if q.questions != nil {
+			if err := q.questions.consume(q.runtime.ctx, accepted); err != nil {
+				q.failure = err
+			}
+		}
+	}
+	return items
+}
+
+func (q *conversationInputs) Close() []provider.Item { return q.inputs.Close() }
+
+func (r *conversationRuntime) takeSteering(body provider.Item) (acceptedSteering, bool) {
+	if r.coordinator != nil {
+		return r.coordinator.takeSteering(body)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	pending := r.steering[string(body)]
+	if len(pending) == 0 {
+		return acceptedSteering{}, false
+	}
+	first := pending[0]
+	if len(pending) == 1 {
+		delete(r.steering, string(body))
+	} else {
+		r.steering[string(body)] = pending[1:]
+	}
+	return first, true
+}

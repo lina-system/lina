@@ -61,6 +61,68 @@ func areaFixtureFormat(t *testing.T, format string) (*Area, WorkspaceSpec, strin
 	t.Cleanup(func() { a.Close(context.Background()) })
 	return a, WorkspaceSpec{RepositoryID: "repo", Source: source, Base: base, Branch: "task/task-1"}, source
 }
+func TestAreaRegisteredWorktreeUsesConfiguredGit(t *testing.T) {
+	a, spec, source := areaFixture(t)
+	l := lease.New(func() {})
+	defer l.Release()
+	dir := filepath.Join(a.path, "tasks", "task-1")
+	remote := t.TempDir()
+	areaGit(t, source, "init", "--bare", remote)
+	areaGit(t, source, "remote", "add", "origin", remote)
+	areaGit(t, source, "worktree", "add", "-b", spec.Branch, dir, spec.Base)
+	git := a.git
+	a.git = "" // Core may boot without Git on PATH; delegation config supplies it.
+	if err := a.ProtectLinkedWorktree(t.Context(), l, git, "task-1", source, spec.Branch); err != nil {
+		t.Fatal(err)
+	}
+	areaGit(t, dir, "commit", "--allow-empty", "-m", "own assigned branch")
+	push := exec.Command(git, "-C", dir, "push", areaGit(t, dir, "remote", "get-url", "origin"), "HEAD:refs/heads/"+spec.Branch)
+	push.Env = []string{"PATH=", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+	if out, err := push.CombinedOutput(); err != nil {
+		t.Fatalf("assigned branch push: %v %s", err, out)
+	}
+	head := areaGit(t, dir, "rev-parse", "HEAD")
+	if got := areaGit(t, remote, "rev-parse", spec.Branch); got != head {
+		t.Fatalf("assigned branch was not published: %s", got)
+	}
+	command := exec.Command(git, "-C", dir, "update-ref", "refs/heads/main", head)
+	if out, err := command.CombinedOutput(); err == nil || !strings.Contains(string(out), "LINA protected ref") {
+		t.Fatalf("registered worktree changed protected ref: %v %s", err, out)
+	}
+}
+
+func TestAreaRegisteredWorktreePreservesUnrelatedHooks(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(map[bool]string{false: "default", true: "configured"}[explicit], func(t *testing.T) {
+			a, spec, source := areaFixture(t)
+			l := lease.New(func() {})
+			defer l.Release()
+			areaGit(t, source, "worktree", "add", "-b", spec.Branch, filepath.Join(a.path, "tasks", "task-1"), spec.Base)
+			hooks := filepath.Join(source, ".git", "hooks")
+			configured := ""
+			if explicit {
+				hooks = t.TempDir()
+				configured = hooks
+				areaGit(t, source, "config", "core.hooksPath", hooks)
+			}
+			path := filepath.Join(hooks, "pre-commit")
+			const existing = "#!/bin/sh\nexit 23\n"
+			if err := os.WriteFile(path, []byte(existing), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.ProtectLinkedWorktree(t.Context(), l, a.git, "task-1", source, spec.Branch); err == nil {
+				t.Fatal("replaced unrelated clone hooks")
+			}
+			if got := areaGit(t, source, "config", "--local", "--get", "--default", "", "core.hooksPath"); got != configured {
+				t.Fatalf("changed hooksPath: %q", got)
+			}
+			if got, err := os.ReadFile(path); err != nil || string(got) != existing {
+				t.Fatalf("changed existing hook: %q %v", got, err)
+			}
+		})
+	}
+}
+
 func TestAreaPinnedWorktreeAndProtectedRefs(t *testing.T) {
 	a, s, source := areaFixture(t)
 	l := lease.New(func() {})

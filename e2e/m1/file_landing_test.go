@@ -25,6 +25,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/kit/grant"
+	"github.com/thisisjun786/lina/kit/result"
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
@@ -126,7 +127,7 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		}
 	}
 	destination := t.TempDir()
-	raw = invoke("prepare_work", coreexec.PrepareWork{TaskID: scenario.TaskID, Title: scenario.Title, Done: scenario.Done, Destination: destination}, true)
+	raw = invoke("prepare_work", coreexec.PrepareWork{WorkKind: "document", TaskID: scenario.TaskID, Title: scenario.Title, Done: scenario.Done, Destination: destination}, true)
 	var workspace work.Workspace
 	if err = json.Unmarshal(raw, &workspace); err != nil {
 		t.Fatal(err)
@@ -249,8 +250,32 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	// acknowledgement so it cannot finish the next manual tool request.
 	client.Close()
 	client, conversation = conversationClient(t, h)
+	var completion result.CompletionRequest
+	if !committed {
+		var source coreexec.RecordReceipt
+		raw := invoke("write_record", coreexec.RecordWrite{Kind: "document", Title: "Primary source", Note: scenario.Output}, true)
+		if err := json.Unmarshal(raw, &source); err != nil {
+			t.Fatal(err)
+		}
+		raw = invoke("read_record", coreexec.RecordRead{ID: source.ID}, true)
+		var reopened coreexec.RecordReceipt
+		if err := json.Unmarshal(raw, &reopened); err != nil || reopened.Markdown != source.Markdown {
+			t.Fatalf("source readback: %s %v", raw, err)
+		}
+		reader, err := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sourceTurn string
+		err = reader.QueryRowContext(h.ctx, `SELECT turn_id FROM turn_calls WHERE call_id='fixture-call' AND json_extract(call,'$.Name')='read_record' ORDER BY rowid DESC LIMIT 1`).Scan(&sourceTurn)
+		reader.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		completion = result.CompletionRequest{WorkKind: "document", Evidence: []result.EvidenceReference{{Kind: "source_reopened", TurnID: sourceTurn, CallID: "fixture-call"}}}
+	}
 	land := func(ok bool) json.RawMessage {
-		return invoke("land_work_result", coreexec.LandWork{TaskID: c.Task.ID, ReceiptID: c.Receipt.EventID, Fingerprint: c.FileSnapshot.Fingerprint, Judgment: "Read the document and report against the fixture question."}, ok)
+		return invoke("land_work_result", coreexec.LandWork{TaskID: c.Task.ID, ReceiptID: c.Receipt.EventID, Fingerprint: c.FileSnapshot.Fingerprint, Judgment: "Read the document and report against the fixture question.", Completion: completion}, ok)
 	}
 	write := func(path, body string) {
 		t.Helper()
@@ -377,7 +402,24 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	if !c.Applied || c.State != "done" || c.FileEvidence == nil {
 		t.Fatalf("lost evidence: %+v", c)
 	}
+	wantCompletion, wantLabel, wantBreaches := "claimed", "not verified", 1
+	if !committed {
+		wantCompletion, wantLabel, wantBreaches = "done", "done", 0
+	}
+	if c.Completion == nil || c.Completion.State != wantCompletion || c.Completion.Label != wantLabel {
+		t.Fatalf("file hash readback replaced required document evidence: %+v", c.Completion)
+	}
 	land(true)
+	reader, readErr := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	var breaches int
+	readErr = reader.QueryRowContext(h.ctx, "SELECT count(*) FROM done_completions WHERE agent_id=? AND state='claimed'", c.Task.AgentID).Scan(&breaches)
+	reader.Close()
+	if readErr != nil || breaches != wantBreaches {
+		t.Fatalf("restart/retry duplicated task claim: %d %v", breaches, readErr)
+	}
 	entries, err = os.ReadDir(destination)
 	if err != nil || len(entries) != wantBundles {
 		t.Fatal("restart duplicated bundle")

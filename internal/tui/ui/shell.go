@@ -8,8 +8,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/layout"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/internal/tui/sanitize"
@@ -110,145 +108,14 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case shellBegin:
-		if msg.Generation > m.generation {
-			m.generation = msg.Generation
-			if m.conversation.pager.developer || m.conversation.pager.board != nil || m.conversation.pager.records != nil {
-				m.conversation.pager = textPager{}
-			}
-			m.talk = talkView{attempt: m.talk.attempt + 1}
-			m.channels = channelView{attempt: m.channels.attempt + 1}
-			m.web = webView{attempt: m.web.attempt + 1}
-			m.accounts = accountView{}
-			m.accountRows = nil
-			m.accountsKnown = false
-			m.memoryPage = nil
-			m.content, _ = state.Reduce(m.content, state.ConnectionLost{})
-			m.conversation.agentPending = m.conversation.id != ""
-			// Retain the visible window, but rediscover its subscriptions only
-			// after the selected agent is validated on the new connection.
-			for topic := range m.content.Topics {
-				if m.conversation.agentPending && (strings.HasPrefix(topic, "conversation:") || strings.HasPrefix(topic, "results:")) {
-					delete(m.content.Topics, topic)
-					delete(m.resyncPending, topic)
-				}
-			}
-			m.refreshBlocks()
-			m.status = ConnectionStatus{State: Retrying}
-			m.resyncSeen = make(map[resyncSignal]protocol.StreamCursor)
-			m.cardRequests = make(map[string]state.CardAnswerRequest)
-			m.content, _ = state.Reduce(m.content, state.ResetCardRequests{})
-		}
+		m.beginGeneration(msg)
 	case shellConnection:
-		if msg.Generation == m.generation {
-			m.status = msg.Status
-			if m.status.State == Live && m.conversation.agentPending && m.conversation.id == "" {
-				// Welcome alone does not supply a valid input destination.
-				m.status.State = Connecting
-			} else if m.status.State == Live && (m.conversation.agentPending || m.hasGap() || len(m.resyncPending) > 0) {
-				m.status.State = Resyncing
-			}
-		}
+		m.applyConnection(msg)
 	case shellData:
 		if msg.Generation != m.generation {
 			return m, nil
 		}
-		var projected *streamProjection
-		if frame, ok := msg.Message.(state.Frame); ok {
-			var decoder protocol.ClientDecoder
-			envelope, err := decoder.Decode(frame.Data)
-			if err == nil && envelope != nil {
-				if m.cardReply(*envelope) {
-					return m, nil
-				}
-				if envelope.Error != nil {
-					status := Refused
-					if envelope.Error.Code == protocol.ErrorUnavailable {
-						status = Recovering
-					}
-					if envelope.Error.Code == protocol.ErrorMalformed {
-						status = Failed
-					}
-					m.status = ConnectionStatus{State: status, Cause: envelope.Error.Code}
-				}
-				projection, err := projectStream(*envelope, m.styles.options.Language)
-				if err != nil {
-					m.status = ConnectionStatus{State: Failed, Cause: protocol.ErrorMalformed}
-					return m, nil
-				}
-				if projection.topic != "" {
-					if (strings.HasPrefix(projection.topic, "conversation:") && projection.topic != "conversation:"+m.conversation.id || strings.HasPrefix(projection.topic, "results:") && projection.topic != "results:"+m.conversation.id) && m.conversation.id != "" {
-						return m, nil
-					}
-					if projection.resync {
-						return m, m.markResync(projection)
-					}
-					if floor, pending := m.resyncPending[projection.topic]; pending && (!projection.snapshot || compareStreamCursor(projection.cursor, floor) < 0) {
-						return m, nil
-					}
-					msg.Message = projection.message
-					if snapshot, ok := msg.Message.(state.Snapshot); ok {
-						snapshot.ClientTime = m.now()
-						msg.Message = snapshot
-					}
-					projected = &projection
-				}
-			}
-		}
-		switch projectedMessage := msg.Message.(type) {
-		case state.Snapshot:
-			projectedMessage.Notify = !m.focused
-			msg.Message = projectedMessage
-		case state.ItemDone:
-			projectedMessage.Notify = !m.focused
-			msg.Message = projectedMessage
-		}
-		beforeCard, _ := m.content.CurrentCard()
-		var commands []state.Cmd
-		m.content, commands = state.Reduce(m.content, msg.Message)
-		for _, block := range m.content.Blocks {
-			if block.Topic == "core" && block.ShellFileToolsAvailable != nil && !*block.ShellFileToolsAvailable {
-				m.content, _ = state.Reduce(m.content, state.Notice{ID: "sandbox.unavailable", Code: "sandbox.unavailable"})
-			}
-		}
-		m.refreshBoard()
-		m.refreshRunning()
-		m.refreshProgress()
-		m.refreshBlocks()
-		m.refreshResultStreams(msg.Message)
-		m.refreshOpenCard()
-		afterCard, _ := m.content.CurrentCard()
-		if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
-			m.cardGate.CardChanged(m.now())
-		}
-		if projected != nil && m.content.Topics[projected.topic].OutOfSync {
-			if floor, exists := m.resyncPending[projected.topic]; !exists || compareStreamCursor(projected.cursor, floor) > 0 {
-				m.resyncPending[projected.topic] = projected.cursor
-			}
-		}
-		if projected != nil && projected.snapshot {
-			topic := m.content.Topics[projected.topic]
-			seq, _ := streamNumber(projected.cursor.Seq)
-			if m.content.Epoch == projected.cursor.Epoch && topic.Cursor >= seq && !topic.OutOfSync {
-				delete(m.resyncPending, projected.topic)
-			}
-			if !m.conversation.agentPending && len(m.resyncPending) == 0 && !m.hasGap() && m.status.State == Resyncing {
-				m.status = ConnectionStatus{State: Live}
-			}
-		}
-		if m.hasGap() {
-			m.status = ConnectionStatus{State: Resyncing}
-		}
-		var effects []tea.Cmd
-		if projected != nil && (projected.topic == "progress" || (projected.topic == "waiting" || projected.topic == "running") && m.conversation.pager.board != nil) && m.conversation.pager.open && (m.conversation.pager.waiting || m.conversation.pager.board != nil) {
-			effects = append(effects, m.waitingRequest())
-		}
-		for _, command := range commands {
-			generation := m.generation
-			effects = append(effects, func() tea.Msg {
-				return shellEffect{Generation: generation, Message: command(context.Background())}
-			})
-		}
-		return m, tea.Batch(effects...)
+		return m, m.applyData(msg.Message)
 	case shellEffect:
 		if msg.Generation != m.generation {
 			return m, nil
@@ -339,192 +206,167 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// Index only changed blocks. View then requests a bounded window from the
-// indexed stream rather than reflowing the entire history on each status tick.
-func (m *shellModel) refreshBlocks() {
-	next := make(map[string]shellBlock, len(m.content.Blocks))
+func (m *shellModel) beginGeneration(msg shellBegin) {
+	if msg.Generation > m.generation {
+		m.generation = msg.Generation
+		m.conversation.pager = textPager{}
+		m.talk = talkView{attempt: m.talk.attempt + 1}
+		m.channels = channelView{attempt: m.channels.attempt + 1}
+		m.web = webView{attempt: m.web.attempt + 1}
+		m.accounts = accountView{}
+		m.accountRows = nil
+		m.accountsKnown = false
+		m.memoryPage = nil
+		m.content, _ = state.Reduce(m.content, state.ConnectionLost{})
+		m.conversation.agentPending = m.conversation.id != ""
+		// Retain the visible window, but rediscover its subscriptions only
+		// after the selected agent is validated on the new connection.
+		for topic := range m.content.Topics {
+			if m.conversation.agentPending && (strings.HasPrefix(topic, "conversation:") || strings.HasPrefix(topic, "results:")) {
+				delete(m.content.Topics, topic)
+				delete(m.resyncPending, topic)
+			}
+		}
+		m.refreshBlocks()
+		m.status = ConnectionStatus{State: Retrying}
+		m.resyncSeen = make(map[resyncSignal]protocol.StreamCursor)
+		m.cardRequests = make(map[string]state.CardAnswerRequest)
+		m.content, _ = state.Reduce(m.content, state.ResetCardRequests{})
+	}
+}
+
+func (m *shellModel) applyConnection(msg shellConnection) {
+	if msg.Generation == m.generation {
+		m.status = msg.Status
+		if m.status.State == Live && m.conversation.agentPending && m.conversation.id == "" {
+			// Welcome alone does not supply a valid input destination.
+			m.status.State = Connecting
+		} else if m.status.State == Live && (m.conversation.agentPending || m.hasGap() || len(m.resyncPending) > 0) {
+			m.status.State = Resyncing
+		}
+	}
+}
+
+// projectFrame handles replies and stream admission before data reaches the reducer.
+// Unprojected frames still reach the reducer for welcome and decode diagnostics.
+func (m *shellModel) projectFrame(frame state.Frame) (*streamProjection, tea.Cmd, bool) {
+	var decoder protocol.ClientDecoder
+	envelope, err := decoder.Decode(frame.Data)
+	if err == nil && envelope != nil {
+		if m.cardReply(*envelope) {
+			return nil, nil, true
+		}
+		if envelope.Error != nil {
+			status := Refused
+			if envelope.Error.Code == protocol.ErrorUnavailable {
+				status = Recovering
+			}
+			if envelope.Error.Code == protocol.ErrorMalformed {
+				status = Failed
+			}
+			m.status = ConnectionStatus{State: status, Cause: envelope.Error.Code}
+		}
+		projection, err := projectStream(*envelope, m.styles.options.Language)
+		if err != nil {
+			m.status = ConnectionStatus{State: Failed, Cause: protocol.ErrorMalformed}
+			return nil, nil, true
+		}
+		if projection.topic != "" {
+			if (strings.HasPrefix(projection.topic, "conversation:") && projection.topic != "conversation:"+m.conversation.id || strings.HasPrefix(projection.topic, "results:") && projection.topic != "results:"+m.conversation.id) && m.conversation.id != "" {
+				return nil, nil, true
+			}
+			if projection.resync {
+				return nil, m.markResync(projection), true
+			}
+			if floor, pending := m.resyncPending[projection.topic]; pending && (!projection.snapshot || compareStreamCursor(projection.cursor, floor) < 0) {
+				return nil, nil, true
+			}
+			if snapshot, ok := projection.message.(state.Snapshot); ok {
+				snapshot.ClientTime = m.now()
+				projection.message = snapshot
+			}
+			return &projection, nil, false
+		}
+	}
+	return nil, nil, false
+}
+
+func (m *shellModel) applyData(message state.Msg) tea.Cmd {
+	var projected *streamProjection
+	if frame, ok := message.(state.Frame); ok {
+		var command tea.Cmd
+		var handled bool
+		projected, command, handled = m.projectFrame(frame)
+		if handled {
+			return command
+		}
+		if projected != nil {
+			message = projected.message
+		}
+	}
+	switch projectedMessage := message.(type) {
+	case state.Snapshot:
+		projectedMessage.Notify = !m.focused
+		message = projectedMessage
+	case state.ItemDone:
+		projectedMessage.Notify = !m.focused
+		message = projectedMessage
+	}
+	beforeCard, _ := m.content.CurrentCard()
+	var commands []state.Cmd
+	m.content, commands = state.Reduce(m.content, message)
 	for _, block := range m.content.Blocks {
-		if block.Card != nil {
-			card := *block.Card
-			for _, current := range m.content.Cards {
-				if current.ID == card.ID {
-					card = current
-					break
-				}
-			}
-			block.Text = m.cardSummary(card)
+		if block.Topic == "core" && block.ShellFileToolsAvailable != nil && !*block.ShellFileToolsAvailable {
+			m.content, _ = state.Reduce(m.content, state.Notice{ID: "sandbox.unavailable", Code: "sandbox.unavailable"})
 		}
-		cached, ok := m.blocks[block.ID]
-		if m.conversation.scroll > 0 && conversationBlock(block) && (!ok || cached.text != block.Text) {
-			if m.conversation.viewport.changed == nil {
-				m.conversation.viewport.changed = make(map[string]bool)
-			}
-			m.conversation.viewport.changed[block.ID] = true
-		}
-		if !ok || cached.revision != block.Revision || cached.text != block.Text || cached.done != block.Done {
-			config := render.Config{Width: max(1, m.size.Width)}
-			stream := render.NewStream(block.ID, config, nil)
-			if ok && !cached.done && !block.Done && strings.HasPrefix(block.Text, cached.text) {
-				stream = cached.stream
-				stream.Append(block.Revision, strings.TrimPrefix(block.Text, cached.text))
-			} else if block.Done {
-				stream.Seal(block.Revision, block.Text)
-			} else {
-				stream.Append(block.Revision, block.Text)
-			}
-			cached = shellBlock{block.Text, block.Revision, block.Done, stream}
-		}
-		next[block.ID] = cached
 	}
-	m.blocks = next
+	m.refreshAfterData(message)
+	afterCard, _ := m.content.CurrentCard()
+	if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
+		m.cardGate.CardChanged(m.now())
+	}
+	if projected != nil && m.content.Topics[projected.topic].OutOfSync {
+		if floor, exists := m.resyncPending[projected.topic]; !exists || compareStreamCursor(projected.cursor, floor) > 0 {
+			m.resyncPending[projected.topic] = projected.cursor
+		}
+	}
+	if projected != nil && projected.snapshot {
+		topic := m.content.Topics[projected.topic]
+		seq, _ := streamNumber(projected.cursor.Seq)
+		if m.content.Epoch == projected.cursor.Epoch && topic.Cursor >= seq && !topic.OutOfSync {
+			delete(m.resyncPending, projected.topic)
+		}
+		if !m.conversation.agentPending && len(m.resyncPending) == 0 && !m.hasGap() && m.status.State == Resyncing {
+			m.status = ConnectionStatus{State: Live}
+		}
+	}
+	if m.hasGap() {
+		m.status = ConnectionStatus{State: Resyncing}
+	}
+	var effects []tea.Cmd
+	if projected != nil && (projected.topic == "progress" || (projected.topic == "waiting" || projected.topic == "running") && m.conversation.pager.board != nil) && m.conversation.pager.open && (m.conversation.pager.waiting || m.conversation.pager.board != nil) {
+		effects = append(effects, m.waitingRequest())
+	}
+	effects = append(effects, m.effectCmds(commands)...)
+	return tea.Batch(effects...)
 }
 
-func (m *shellModel) View() tea.View {
-	view := tea.NewView(m.viewContent(true))
-	view.AltScreen = true
-	view.ReportFocus = true
-	view.KeyboardEnhancements.ReportEventTypes = true
-	if m.hasComposer() && m.status.State.active() {
-		plan := m.conversationPlan()
-		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.accounts.open && !m.web.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
-			view.Cursor = m.conversation.composer.Cursor()
-			if view.Cursor != nil {
-				view.Cursor.Position.X += m.styles.composerPromptWidth()
-				view.Cursor.Position.Y += plan.Composer.Y
-			}
-		}
-	}
-	return view
+func (m *shellModel) refreshAfterData(message state.Msg) {
+	m.refreshBoard()
+	m.refreshRunning()
+	m.refreshProgress()
+	m.refreshBlocks()
+	m.refreshResultStreams(message)
+	m.refreshOpenCard()
 }
 
-// Notices stay outside history. A capability notice is no longer current when
-// a later welcome grants a different set of lists.
-func (m *shellModel) localNotice() string {
-	if m.conversation.agentMissing {
-		return design.Text(m.styles.options.Language, "agents.choose_required")
+func (m *shellModel) effectCmds(commands []state.Cmd) []tea.Cmd {
+	var effects []tea.Cmd
+	for _, command := range commands {
+		generation := m.generation
+		effects = append(effects, func() tea.Msg {
+			return shellEffect{Generation: generation, Message: command(context.Background())}
+		})
 	}
-	for i := len(m.content.Notices) - 1; i >= 0; i-- {
-		code := m.content.Notices[i].Code
-		switch code {
-		case "sandbox.unavailable":
-			unavailable := false
-			for _, block := range m.content.Blocks {
-				if block.Topic == "core" && block.ShellFileToolsAvailable != nil {
-					unavailable = !*block.ShellFileToolsAvailable
-				}
-			}
-			if !unavailable {
-				continue
-			}
-		case "shell.lists_unavailable":
-			if m.hasCapability("running") || m.hasCapability("waiting") {
-				continue
-			}
-		case "shell.running_unavailable":
-			if m.hasCapability("running") || !m.hasCapability("waiting") {
-				continue
-			}
-		case "shell.waiting_unavailable":
-			if !m.hasCapability("running") || m.hasCapability("waiting") {
-				continue
-			}
-		}
-		return design.Text(m.styles.options.Language, code)
-	}
-	return ""
-}
-
-func (m *shellModel) viewContent(showNotice bool) string {
-	if c, ok := m.content.CurrentCard(); ok && m.size.Width >= 40 && m.size.Height >= 10 {
-		return m.cardContent(c)
-	}
-	if m.size.Width <= 0 || m.size.Height <= 0 {
-		return ""
-	}
-	if m.web.open {
-		return m.webContent()
-	}
-	if m.talk.open {
-		return m.talkContent()
-	}
-	if m.channels.open {
-		return m.channelContent()
-	}
-	if m.accounts.open {
-		return m.accountContent()
-	}
-	if m.hasComposer() && m.status.State.active() {
-		return m.conversationContent(showNotice)
-	}
-	plan := layout.Plan(m.size, layout.Caps{}, layout.Shape{ComposerRows: 1})
-	status := m.styles.presentation(m.status)
-	statusLine := status.Mark + " " + status.Label
-	if hint := m.quitHint(); hint != "" {
-		statusLine += "  " + hint
-	}
-	if m.status.Cause != "" || m.status.State == Retrying {
-		statusLine += "  " + status.Detail
-	}
-	if notice := m.localNotice(); showNotice && notice != "" {
-		statusLine += "  " + notice
-	}
-	clip := func(text string) string { return ansi.Truncate(text, m.size.Width, "") }
-	if plan.Tier == layout.TooSmall {
-		rows := make([]string, m.size.Height)
-		if plan.Notice.Height > 0 {
-			rows[0] = clip(design.Text(m.styles.options.Language, "shell.too_small"))
-		}
-		rows[plan.Status.Y] = clip(statusLine)
-		return strings.Join(rows, "\n")
-	}
-	if len(m.content.Blocks) == 0 || !m.status.State.active() {
-		lines := strings.Split(strings.TrimSuffix(m.styles.ScreenStatus(m.status), "\n"), "\n")
-		if hint := m.quitHint(); hint != "" {
-			lines = append(lines, clip(hint))
-		}
-		if notice := m.localNotice(); showNotice && notice != "" {
-			lines = append(lines, clip(m.styles.Muted.Render(notice)))
-		}
-		if len(lines) > m.size.Height {
-			lines = lines[:m.size.Height]
-			lines[len(lines)-1] = clip(statusLine)
-		}
-		return strings.Join(lines, "\n")
-	}
-	rows := make([]string, m.size.Height)
-	name := "lina"
-	if len(m.content.Agents) > 0 {
-		name = sanitize.Display(m.content.Agents[0].Name)
-	}
-	rows[plan.Header.Y] = clip(m.styles.Title.Render(name))
-	rows[plan.Status.Y] = clip(m.styles.Text.Render(statusLine))
-	rows[plan.Composer.Y] = clip(m.styles.Muted.Render(design.Text(m.styles.options.Language, "shell.composer")))
-	start := 0
-	for i, block := range m.content.Blocks {
-		if block.ID == m.content.Scroll.ID {
-			start = i
-			break
-		}
-	}
-	y, end := plan.Conversation.Y, plan.Conversation.Y+plan.Conversation.Height
-	for i := start; i < len(m.content.Blocks) && y < end; i++ {
-		block := m.content.Blocks[i]
-		cached := m.blocks[block.ID]
-		if cached.stream == nil {
-			continue
-		}
-		anchor := 0
-		if block.ID == m.content.Scroll.ID && cached.stream.Len() > 0 {
-			row := min(max(0, m.content.Scroll.Row), cached.stream.Len()-1)
-			anchor = cached.stream.At(row).Offset
-		}
-		for _, row := range cached.stream.Window(anchor, end-y, render.Config{Width: m.size.Width}, nil) {
-			rows[y] = clip(m.styles.Text.Render(row.Text))
-			y++
-		}
-	}
-	for i, line := range rows {
-		rows[i] = m.styles.Canvas.Width(m.size.Width).Render(line)
-	}
-	return strings.Join(rows, "\n")
+	return effects
 }

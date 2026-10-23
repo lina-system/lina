@@ -57,9 +57,13 @@ var shapes = []*regexp.Regexp{
 	regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`),
 }
 
-// Recognize our exact placeholder before the unquoted-value alternative, so
-// rechecking a masked record leaves punctuation after the placeholder intact.
-var assignment = regexp.MustCompile(`(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|token)["']?\s*[:=]\s*((?-i:` + regexp.QuoteMeta(secret.Placeholder) + `)|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;"'<>]+)`)
+// Recognize our exact placeholder only at a value boundary. That alternative
+// consumes the boundary without capturing it, preserving punctuation on recheck
+// while leaving a glued credential suffix to the captured value alternative.
+const assignmentBoundary = `(?:$|[\s,;"'<>}\]).])`
+
+var assignment = regexp.MustCompile(`(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|token)["']?\s*[:=]\s*(?:(?-i:` + regexp.QuoteMeta(secret.Placeholder) + `)` + assignmentBoundary + `|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;"'<>]+))`)
+var afterAssignment = regexp.MustCompile(`^` + assignmentBoundary)
 var authorization = regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]+)`)
 var privateKey = regexp.MustCompile(`-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----`)
 
@@ -87,8 +91,18 @@ func Mask(text string, flagged ...Span) (Masked, error) {
 	}
 	for _, pattern := range []*regexp.Regexp{assignment, authorization} {
 		for _, match := range pattern.FindAllStringSubmatchIndex(text, -1) {
-			if text[match[2]:match[3]] != secret.Placeholder {
-				spans = append(spans, Span{Start: match[2], End: match[3]})
+			start, end := match[2], match[3]
+			if start < 0 {
+				continue
+			}
+			if pattern == assignment && (text[start] == '"' || text[start] == '\'') && !afterAssignment.MatchString(text[end:]) {
+				// Keep the quotes when removing them would glue public text to
+				// the placeholder and make a later check mask that text too.
+				start++
+				end--
+			}
+			if text[start:end] != secret.Placeholder {
+				spans = append(spans, Span{Start: start, End: end})
 			}
 		}
 	}

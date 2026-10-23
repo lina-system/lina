@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
-import (
-	"encoding/json"
-	"reflect"
-)
+import "reflect"
 
 // InputVersion is fixed by Claim before dispatch. Signals change the ledger's
 // generation, never this token. A recovered read retains the same fence; a new
@@ -92,79 +89,4 @@ func effectSettled(a Action, o Observation) bool {
 		return false
 	}
 	return false
-}
-
-func hasExternalEffect(a Action) bool {
-	switch a.Kind {
-	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker, Merge, RunQA, Deploy:
-		return true
-	case InspectPR, Verify, Observe, Decide, PlanGoal, CheckCriterion:
-		return false
-	}
-	return false
-}
-
-// Reports retain superseded history and clear obsolete assessment markers.
-// Derivation completes retirement, releases an unused reservation, redoes a
-// pure judgment, or reads an already dispatched effect.
-// Reading uses the original effect key; it never spends a worker recovery or
-// bypasses authorization by executing a replacement operation.
-func (e *Engine) reconcileRetired(v *View) error {
-	for _, row := range v.Records("action") {
-		var a Action
-		if err := json.Unmarshal(row.Body, &a); err != nil {
-			return err
-		}
-		g, err := loadGoal(v, a.GoalID)
-		if err != nil {
-			return err
-		}
-		if err = e.hydrate(&g); err != nil {
-			return err
-		}
-		if a.State == "queued" && (changedInputs(g, a) || a.ObserveActionID == "" && !currentActionTarget(g, a)) {
-			a.State, a.Superseded = "finished", true
-		}
-		if a.State != "finished" || !a.Superseded || a.RetirementReconciled {
-			continue
-		}
-		t := goalTask(&g, a.TaskID)
-		var receipt Observation
-		_ = json.Unmarshal(a.Receipt, &receipt)
-		if a.Epoch == 0 && a.ObserveActionID == "" || settledRefusal(a) {
-			restoreDeniedAssignment(t, a)
-		} else if hasExternalEffect(a) && (currentActionTarget(g, a) || !effectSettled(a, receipt)) {
-			// Use a distinct report key so a delayed old completion cannot be
-			// accepted under the new read's token. Keep the original effect key.
-			next := a
-			if next.ObserveActionID == "" {
-				next.ObserveActionID = a.ID
-			}
-			if receipt.Handle != "" {
-				next.Handle = receipt.Handle
-			}
-			next.Superseded, next.RetirementReconciled = false, false
-			next.Receipt = nil
-			next.State, next.Epoch = "queued", 0
-			next.ObservedAt, next.ObserverEpoch = 0, 0
-			next.GoalRevision = g.Revision
-			next.InputVersion = inputVersion(g, next)
-			next.Sequence++
-			next.ID = actionID(next)
-			if err = put(v, "action", next.ID, next); err != nil {
-				return err
-			}
-		}
-		if a.Kind == PlanGoal && t != nil && t.RepairedBy == "" {
-			t.RepairAsked = false
-		}
-		a.RetirementReconciled = true
-		if err = put(v, "action", a.ID, a); err != nil {
-			return err
-		}
-		if err = put(v, "goal", g.ID, g); err != nil {
-			return err
-		}
-	}
-	return nil
 }

@@ -359,7 +359,8 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 
 **G2-07 Manager conformance check, one return, merge or close.** One check per delivered head against the work definition; one return for a missed definition, then merge or close.
-- Done when: a second check request for the same head is refused, while a fix generation with a new head gets one check; a failing required check is a Core-computed merge precondition that blocks without a verified verdict or P1 finding; a write-area violation is a Core-computed scope miss (`needs_changes`) without a model call; prose alone stores no verdict or finding. The worker owns CI and review fixes. Only a missed done condition, scope or design reference goes back once; a remaining gap closes the PR and leaves the task blocked.
+- Done when: a second check request for the same head is refused, while a fix generation with a new head gets one check; a failing required check is a Core-computed merge precondition that blocks without a verified verdict or P1 finding; missing or oversized change evidence finishes the review as blocked without a verdict or findings, even with an out-of-area path; with available evidence, a write-area violation is a Core-computed scope miss (`needs_changes`) without a model call; prose alone stores no verdict or finding. The worker owns CI and review fixes. Only a missed done condition, scope or design reference goes back once; a remaining gap closes the PR and leaves the task blocked.
+- Delivery increment (#144): a missed definition returns once with only P0/P1 ids; the same task/worktree/worker produces a new generation. A residual gap or terminal CI/review failure closes with its reason and blocks without verification. The existing merge service records application only after confirmation, releasing waiting work. `e2e/m2/delivery.json` covers return, merge, close and restart through installed Core.
 - Depends on: G2-02, G2-18, G2-19. Design refs: C-58; [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery).
 
 **G2-08 Worker stop, reconcile and one dispatch again.** Interrupts, snapshot reconcile, one dispatch again.
@@ -558,6 +559,33 @@ first-use installation, quota projection and idle process management.
 - Done when: a new request goes to another connected account when a subscription is near its limit and a one-line event is written; a started request is never resent; unknown quota is not treated as zero; pay-per-use is not started beyond the set budget.
 - Depends on: G2-25, G2-26. Design refs: C-48; [runtime.md](runtime.md#connected-accounts-and-automatic-setup).
 
+**G2-42 Provider capabilities.** Capability set per model, cache identity, layout marks and the evidence of what each request used ([#877](https://github.com/thisisjun786/lina/issues/877)).
+- Depends on: G1-08, G1-10. Design refs: C-43; [runtime.md](runtime.md#provider-capabilities).
+
+**G2-43 ContextPacket after the input.** The request layout puts the person's input before the ContextPacket ([#878](https://github.com/thisisjun786/lina/issues/878)).
+- Depends on: G1-10, G1-39. Design refs: C-11; [conversation-and-memory.md](conversation-and-memory.md#request-layout).
+
+**G2-44 Provider replay.** A fixed replay per provider that reports cache reads, writes, plain input and first-token time ([#879](https://github.com/thisisjun786/lina/issues/879)).
+- Depends on: G2-42, G1-39. Design refs: [runtime.md](runtime.md#provider-capabilities).
+
+**G2-45 ChatGPT cache identity.** `prompt_cache_key` per conversation once V1 accepts it ([#880](https://github.com/thisisjun786/lina/issues/880)).
+- Depends on: G2-42, G2-43, G2-44, G1-31. Design refs: C-44; [runtime.md](runtime.md#requests).
+
+**G2-46 Claude history blocks and cache marks.** One block per earlier turn with LINA's mark, 1-hour lifetime ([#881](https://github.com/thisisjun786/lina/issues/881)).
+- Depends on: G2-26, G2-42, G2-43, G2-44. Design refs: C-45; [runtime.md](runtime.md#provider-capabilities).
+
+**G2-47 Claude API-key route.** A model-API adapter over the Messages API beside the subscription route, with LINA's marks and batches ([#882](https://github.com/thisisjun786/lina/issues/882)).
+- Depends on: G1-08, G2-42, G2-43, G2-44. Design refs: [runtime.md](runtime.md#providers).
+
+**G2-48 Gemini batch and flex.** Background jobs on Gemini's Batch and Flex tiers, with fallback to a normal request ([#883](https://github.com/thisisjun786/lina/issues/883)).
+- Depends on: G2-27, G2-42, G2-44. Design refs: [runtime.md](runtime.md#provider-capabilities).
+
+**G2-49 Grok prompt order.** Cache-friendly prompts on the `grok` command route ([#884](https://github.com/thisisjun786/lina/issues/884)).
+- Depends on: G2-28, G2-42, G2-43, G2-44. Design refs: C-46; [runtime.md](runtime.md#provider-capabilities).
+
+**G2-50 Cache-aware compaction.** Early compaction when the cache has expired, and a summary request that reuses the cached prefix ([#885](https://github.com/thisisjun786/lina/issues/885)).
+- Depends on: G1-15, G1-38, G2-42, G2-43, G2-44. Design refs: [conversation-and-memory.md](conversation-and-memory.md#compaction-and-resume).
+
 ## LINA 3
 
 **Acceptance (LINA 3).**
@@ -636,6 +664,10 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Done when: every fetched record is reported imported, lost or unsupported; each is mapped to a LINA id once; a failed switch is rolled back explicitly; no product path resolves a source id.
 - Depends on: G2-01, G2-17, G2-22. Design refs: [work-and-delegation.md](work-and-delegation.md#operational-switch).
 
+**G3-20 Work panel and stage list.** One manager per 일 with its steps as a graph in the work ledger; the TUI work panel, a sidebar with one card per 일 (name, elapsed time, what it is doing now) that opens to a numbered stage list, never a graph; the person's priority, pause, stop and run limit, enforced by Core.
+- Done when: a step-graph revision is admitted or refused whole, and a refused step name holds no id; the frontier and the stage list are the same for the same ledger; a done stage never reopens; a worker session ends when its step lands; rank, pause and the run limit take effect on the next scheduling pass; the checks E1 to E14 of T-16 pass in a 120x34 PTY; the running count counts lines, not tasks.
+- Depends on: G1-18, G2-02, G2-13, G3-09. Design refs: C-55, C-57, T-07, T-12, T-16; [work-and-delegation.md](work-and-delegation.md#step-graph), [work-and-delegation.md](work-and-delegation.md#stages), [surfaces.md](surfaces.md#progress-at-a-glance).
+
 ### 3.D Evidence and phase acceptance
 
 **G3-12 Non-competition evidence on a Linux box.** Tiers 1 and 2 of the evidence ladder.
@@ -644,7 +676,7 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 
 **G3-13 Phase 3 acceptance run.** Run script and evidence record for LINA 3.
 - Done when: one record holds every field of the phase rules and a result per check; every Node transition is one the state table allows; given-back slices are listed as not delivered.
-- Depends on: G3-02, G3-06, G3-07, G3-09, G3-12, G3-15, G3-16, G3-17, G3-18. Design refs: Phase rules.
+- Depends on: G3-02, G3-06, G3-07, G3-09, G3-12, G3-15, G3-16, G3-17, G3-18, G3-20. Design refs: Phase rules.
 
 ## Ended ids
 
@@ -688,6 +720,8 @@ A number marked (P) is a starting value of this design. The others come from the
 | Stall cap; reconcile sweep | 3 hours; 5 minutes, from [work-and-delegation.md](work-and-delegation.md#stall-and-failure) | G2-02 |
 | TUI bounds | S1 to S11 (P) | G1-20 |
 | Claude adapter idle stop; concurrent turns per account | 10 minutes; 2 (P) | G2-26 |
+| Early compaction start when the cache has expired | 70% of the context window (P) | G2-50 |
+| Claude cache-mark lifetime | 1 hour, from [provider-optimization.md](../research/provider-optimization.md#retention) | G2-46, G2-47 |
 | Records repository with thousands of files | [3,000-file index and outside-change measurement](../../internal/core/records/MEASUREMENTS.md) | G2-22 |
 | Non-competition bounds | none yet; declared per test | G3-12 |
 

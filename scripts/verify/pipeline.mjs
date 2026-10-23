@@ -105,13 +105,52 @@ async function automation(root, env) {
     output += result.output;
     return result;
   };
-  if (workflows.length && (await invoke('actionlint', workflows)).status !== 0) {
+  // GitHub supports queue: max; pinned actionlint 1.7.12 predates that key.
+  // Keep all other concurrency syntax and workflow diagnostics enabled.
+  if (workflows.length && (await invoke('actionlint', ['-ignore',
+    '^unexpected key "queue" for "concurrency" section\\.', ...workflows])).status !== 0) {
     return { status: 1, output: 'actionlint failed:\n' + output };
   }
   for (const file of scripts) if ((await invoke(process.execPath, ['--check', file])).status !== 0) return { status: 1, output };
   if (!tests.length) return { status: 0, output: output + 'no test files\n' };
   const suite = await invoke(process.execPath, ['--test', ...tests]);
   return { status: suite.status, output };
+}
+
+// Keep test identity and bounded diagnostic lines for post-merge QA. Nested
+// failures belong to one top-level scenario, not separate duplicate issues.
+export function goTestOutcomes(output) {
+  const tests = new Map();
+  const packages = new Map();
+  for (const line of output.split('\n')) {
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (!event?.Package) continue;
+    if (!packages.has(event.Package)) packages.set(event.Package, { output: '', started: new Set() });
+    const pkg = packages.get(event.Package);
+    if (event.Output) pkg.output = (pkg.output + event.Output).slice(-16000);
+    if (!event.Test) {
+      // Timeouts and panics can end a package without test-level fail events.
+      // Only tests actually started in this package can inherit that failure.
+      if (event.Action === 'fail') {
+        for (const key of pkg.started) {
+          const record = tests.get(key);
+          if (record.result !== 'unknown') continue;
+          record.result = 'fail';
+          record.output = (record.output + pkg.output).slice(-16000);
+        }
+      }
+      continue;
+    }
+    const name = event.Test.split('/')[0];
+    const key = event.Package + ':' + name;
+    if (!tests.has(key)) tests.set(key, { package: event.Package, test: name, result: 'unknown', output: '' });
+    const record = tests.get(key);
+    if (event.Action === 'run') pkg.started.add(key);
+    if (event.Output) record.output = (record.output + event.Output).slice(-16000);
+    if (event.Test === name && ['pass', 'fail', 'skip'].includes(event.Action)) record.result = event.Action;
+  }
+  return [...tests.values()];
 }
 
 export async function executeTask(root, plan, id, log = console.error) {
@@ -153,6 +192,7 @@ export async function executeTask(root, plan, id, log = console.error) {
   return {
     schema: 1, id, kind: task.kind, head: plan.head, tree: plan.tree, digest: plan.digest,
     result: outcome.status === 0 ? 'success' : 'failure', started, finished, seconds: (finished - started) / 1000,
+    tests: task.kind === 'e2e' ? goTestOutcomes(outcome.output) : undefined,
     toolchain: outcome.toolchain ?? outcome.output.match(/^go1\.\d+\.\d+$/m)?.[0], timings,
   };
 }

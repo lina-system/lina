@@ -53,10 +53,13 @@ type workerSession struct {
 	thread          worker.Thread
 	packet          string
 	workdir         string
+	scheduled       bool
+	answered        func(context.Context, worker.Thread)
 	started         time.Time
 	approvals       map[string]worker.Event
 	questions       map[string]*workerQuestion
 	output          string
+	outputThread    worker.Thread // Scheduled output belongs to one exact execution.
 	process         lease.Lease
 	mu              sync.Mutex
 	active          map[string]lease.Lease
@@ -301,6 +304,12 @@ func (r *conversationRuntime) workerStartAssignment(ctx context.Context, turnID 
 }
 
 func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input) (tools.Result, error) {
+	return r.workerOperationWithOwner(ctx, name, turnID, input, in, false)
+}
+
+// Only the authenticated owner-control path can set owner. It is not a model
+// argument and permits steering an active scheduled turn, never starting one.
+func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input, owner bool) (tools.Result, error) {
 	if name == "worker_start" || name == "worker_input" || name == "worker_interrupt" {
 		defer r.notifyWorkerRunning()
 	}
@@ -445,6 +454,9 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		body, err := json.Marshal(map[string]any{"rows": rows})
 		return tools.Result{State: tools.Applied, Body: body}, err
 	}
+	if entry.scheduled && name == "worker_input" && !owner {
+		return tools.Result{State: tools.Failed, Body: workerError(errors.New("scheduled work is controlled by the scheduler"))}, nil
+	}
 	// Read the authoritative snapshot immediately before any control. The model's
 	// handle is compared to it; a thread id alone never authorizes input.
 	entry.control.Lock()
@@ -460,6 +472,9 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	if snap.Thread.TurnID != a.Turn || snap.Thread.ProcessGeneration != a.Generation || snap.Thread.BindingEpoch != a.Binding {
 		return tools.Result{State: tools.Failed, Body: workerError(errors.New("stale worker handle"))}, nil
 	}
+	if entry.scheduled && name == "worker_input" && snap.State != worker.Active {
+		return tools.Result{State: tools.Failed, Body: workerError(errors.New("scheduled worker is not active"))}, nil
+	}
 	var activity lease.Lease
 	if name == "worker_input" && snap.State == worker.Idle {
 		activity, err = r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Hard, Reason: "Codex turn"})
@@ -470,7 +485,7 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	// Keep the new activity private until its returned turn id is bound. A late
 	// finish for the prior turn can only release that prior turn's activity.
 	entry.mu.Lock()
-	if name == "worker_input" && r.work != nil {
+	if name == "worker_input" && !entry.scheduled && r.work != nil {
 		if snap.State == worker.Idle {
 			// Snapshot is an authoritative terminal observation too. A delayed
 			// finish notification cannot retain the old reservation or release
@@ -500,7 +515,20 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	}
 	switch name {
 	case "worker_input":
-		err = entry.adapter.Input(ctx, snap.Thread, worker.Input{Text: a.Text})
+		if entry.scheduled {
+			// Input may start an idle turn. Scheduled owner follow-ups must
+			// remain steer-only even if completion races this snapshot.
+			steerer, ok := entry.adapter.(interface {
+				Steer(context.Context, worker.Thread, worker.Input) error
+			})
+			if !ok {
+				err = errors.Join(worker.ErrInputRefused, errors.New("worker does not support active-turn steering"))
+			} else {
+				err = steerer.Steer(ctx, snap.Thread, worker.Input{Text: a.Text})
+			}
+		} else {
+			err = entry.adapter.Input(ctx, snap.Thread, worker.Input{Text: a.Text})
+		}
 	case "worker_interrupt":
 		err = entry.adapter.Interrupt(ctx, snap.Thread, worker.UserCancel)
 	}
@@ -523,24 +551,26 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 			entry.mu.Unlock()
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
-		// Input may observe an idle worker after our active snapshot and start
-		// another turn. Bind every accepted input before queued completions can
-		// acquire mu; ambiguity keeps a reservation that no old event can free.
-		key := "unknown:" + rand.Text()
-		if err == nil {
-			current, readErr := entry.adapter.Snapshot(ctx, snap.Thread)
-			if readErr == nil && current.Thread.TurnID != "" && current.State != worker.Unknown && current.State != worker.Dead {
-				key = current.Thread.TurnID
-			} else if readErr != nil {
-				err = readErr
+		if !entry.scheduled {
+			// Input may observe an idle worker after our active snapshot and start
+			// another turn. Bind every accepted input before queued completions can
+			// acquire mu; ambiguity keeps a reservation that no old event can free.
+			key := "unknown:" + rand.Text()
+			if err == nil {
+				current, readErr := entry.adapter.Snapshot(ctx, snap.Thread)
+				if readErr == nil && current.Thread.TurnID != "" && current.State != worker.Unknown && current.State != worker.Dead {
+					key = current.Thread.TurnID
+				} else if readErr != nil {
+					err = readErr
+				}
 			}
-		}
-		entry.reservationTurn = key
-		if snap.State == worker.Idle {
-			entry.active[key] = activity
-		} else if key != snap.Thread.TurnID {
-			entry.active[key] = entry.active[snap.Thread.TurnID]
-			delete(entry.active, snap.Thread.TurnID)
+			entry.reservationTurn = key
+			if snap.State == worker.Idle {
+				entry.active[key] = activity
+			} else if key != snap.Thread.TurnID {
+				entry.active[key] = entry.active[snap.Thread.TurnID]
+				delete(entry.active, snap.Thread.TurnID)
+			}
 		}
 	}
 	entry.mu.Unlock()

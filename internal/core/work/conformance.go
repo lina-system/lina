@@ -5,11 +5,22 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 // ConformanceIn commits a Core-owned delivery decision together with its review
 // record. The current receipt and observed head must still match at commit.
-func ConformanceIn(ctx context.Context, tx *canon.Tx, task, receipt, head, verdict, evidence string) error {
+func ConformanceIn(ctx context.Context, tx *canon.Tx, task, receipt, head, verdict, evidence string, proof ...result.CompletionRequest) error {
+	return conformanceIn(ctx, tx, task, receipt, head, verdict, evidence, "block:", proof...)
+}
+
+// BlockDeliveryIn records final delivery rejection separately from the initial
+// merge-precondition observation, without inventing a verified verdict.
+func BlockDeliveryIn(ctx context.Context, tx *canon.Tx, task, receipt, head, evidence string) error {
+	return conformanceIn(ctx, tx, task, receipt, head, "", evidence, "delivery-block:")
+}
+
+func conformanceIn(ctx context.Context, tx *canon.Tx, task, receipt, head, verdict, evidence, blockKey string, proof ...result.CompletionRequest) error {
 	var raw []byte
 	var card Card
 	if err := tx.QueryRowContext(ctx, "SELECT record FROM work_cards WHERE task_id=?", task).Scan(&raw); err != nil {
@@ -24,9 +35,9 @@ func ConformanceIn(ctx context.Context, tx *canon.Tx, task, receipt, head, verdi
 	if verdict == "unverified" {
 		return nil
 	}
-	e := Event{Key: "judge:" + receipt, TaskID: task, Kind: "judged", ReceiptID: receipt, Value: verdict, Evidence: evidence}
+	e := Event{Key: "judge:" + receipt, TaskID: task, Kind: "judged", ReceiptID: receipt, Value: verdict, Evidence: evidence, DoneRequest: firstProof(proof)}
 	if verdict == "" {
-		e.Key = "block:" + receipt
+		e.Key = blockKey + receipt
 		e.Kind = "blocked"
 	}
 	return appendEvent(ctx, tx, e)

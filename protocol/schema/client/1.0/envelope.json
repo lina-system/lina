@@ -2241,6 +2241,9 @@
         "run_id": {
           "type": "string",
           "minLength": 1
+        },
+        "completion": {
+          "$ref": "#/$defs/completion_status"
         }
       },
       "required": [
@@ -2696,6 +2699,9 @@
       "properties": {
         "step": {
           "type": "string"
+        },
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
         }
       },
       "required": [
@@ -4009,7 +4015,8 @@
             "run_status",
             "background_notice",
             "connected",
-            "disconnected"
+            "disconnected",
+            "readiness_failure"
           ],
           "x-go-type": "Kind"
         },
@@ -4318,6 +4325,22 @@
             "properties": {
               "payload": {
                 "$ref": "#/$defs/disconnected"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "readiness_failure"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/readiness_failure"
               }
             }
           }
@@ -5852,6 +5875,29 @@
       "required": [
         "state",
         "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "completion_state": {
+      "type": "string",
+      "enum": [
+        "done",
+        "claimed"
+      ]
+    },
+    "completion_status": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/completion_state"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "label"
       ],
       "additionalProperties": false
     }

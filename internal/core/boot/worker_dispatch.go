@@ -31,7 +31,8 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	binary, _ := proc.LookPath("agy")
 	codexBinary, _ := proc.LookPath("codex")
 	claude, _ := proc.LookPath("claude")
-	if binary == "" && codexBinary == "" && claude == "" {
+	acpFactories := dispatch.InstalledACPFactories(dispatch.Config{Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities})
+	if binary == "" && codexBinary == "" && claude == "" && len(acpFactories) == 0 {
 		return nil
 	}
 	gh, err := proc.LookPath("gh")
@@ -53,6 +54,8 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if codexBinary != "" {
 		factories = append(factories, dispatch.CodexFactory(codexBinary))
 	}
+	// Keep the established order when quota and choice rules are tied.
+	factories = append(factories, acpFactories...)
 	rules, err := dispatch.ReadRules(r.root)
 	if err != nil {
 		return err
@@ -83,14 +86,12 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 			}
 			// No receipt means the worker never delivered a judgeable result.
 			if card, err := r.work.Get(ctx, record.ID); err == nil && card.Receipt != nil {
-				if err = r.runCodingManager(ctx, a, "delivery", &record); err == nil {
-					if err = r.db.Read(ctx, func(tx *canon.Tx) error { var err error; a, err = readCoding(ctx, tx, record.ID); return err }); err != nil {
-						return err
-					}
-					managerVerdict = a.Verdict
-					if managerVerdict == "" {
-						managerVerdict = "blocked"
-					}
+				managerVerdict, err = r.deliverCoding(ctx, a, record)
+				if err != nil {
+					return err
+				}
+				if managerVerdict == "returned" {
+					return nil
 				}
 			}
 		}
@@ -106,7 +107,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 			text += "; denied: " + denial.DisplayName
 		}
 		if record.PR != nil {
-			text += fmt.Sprintf("; %s @ %s; adapter-derived receipt; Core check: %s; not merged", record.PR.URL, record.PR.Head, managerVerdict)
+			text += fmt.Sprintf("; %s @ %s; Core delivery: %s", record.PR.URL, record.PR.Head, managerVerdict)
 		}
 		parent, err := view.journal().Get(ctx, strings.TrimPrefix(record.Origin.Turn, "turn:"))
 		if err != nil {

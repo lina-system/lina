@@ -134,10 +134,10 @@ func TestFormElicitation(t *testing.T) {
 	finished := make(chan struct{})
 	c, ctx := fixture(t, func(a agent) {
 		a.initialize()
-		a.send(`{"jsonrpc":"2.0","id":"question","method":"elicitation/create","params":{"sessionId":"s","mode":"form","message":"Name","requestedSchema":{"type":"object","properties":{"name":{"type":"string"}}}}}`)
+		a.send(`{"jsonrpc":"2.0","id":null,"method":"elicitation/create","params":{"sessionId":"s","mode":"form","message":"Name","requestedSchema":{"type":"object","properties":{"name":{"type":"string"}}}}}`)
 		f := a.read()
 		var r acp.CreateElicitationResponse
-		if e := json.Unmarshal(f.Result, &r); e != nil || r.Decline == nil {
+		if e := json.Unmarshal(f.Result, &r); e != nil || r.Decline == nil || string(f.ID) != "null" {
 			t.Fatalf("form %s %v", f.Result, e)
 		}
 		a.send(`{"jsonrpc":"2.0","id":"url","method":"elicitation/create","params":{"mode":"url","url":"https://example.invalid"}}`)
@@ -151,6 +151,12 @@ func TestFormElicitation(t *testing.T) {
 	initialize(t, c, ctx)
 	select {
 	case r := <-c.Requests():
+		if r == nil {
+			t.Fatalf("elicitation connection closed: %v", c.Err())
+		}
+		if string(r.ID) != "null" {
+			t.Fatalf("elicitation ID %s", r.ID)
+		}
 		if e := r.Answer(ctx, acp.CreateElicitationResponse{Decline: &acp.CreateElicitationResponseDecline{}}); e != nil {
 			t.Fatal(e)
 		}

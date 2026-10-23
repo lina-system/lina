@@ -47,6 +47,7 @@ type ContextItem struct {
 }
 type ContextPacket []ContextItem
 type Input struct {
+	WorkMethod                     string
 	Core, AgentID, PersonaRevision string
 	AgentName, OwnerPersonID       string // Prepared identity; when present, the persona is projected once in Instructions.
 	Persona                        agents.Layers
@@ -217,7 +218,7 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 		if in.AgentName == "" || in.OwnerPersonID == "" {
 			return fail(Invalid)
 		}
-		instructions, err := Instructions(agents.Preparation{AgentID: in.AgentID, Name: in.AgentName, OwnerPersonID: in.OwnerPersonID, Layers: in.Persona}, r.Tools)
+		instructions, err := Instructions(agents.Preparation{AgentID: in.AgentID, Name: in.AgentName, OwnerPersonID: in.OwnerPersonID, Layers: in.Persona, WorkMethod: in.WorkMethod}, r.Tools)
 		if err != nil {
 			return fail(Invalid)
 		}

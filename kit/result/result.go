@@ -18,6 +18,8 @@ type Provenance struct {
 	TaskID         *string `json:"task_id"`
 }
 type Result struct {
+	ReplyType  string          `json:"reply_type,omitempty"`
+	Completion *Completion     `json:"completion,omitempty"`
 	ID         string          `json:"result_id"`
 	Revision   int             `json:"revision"`
 	Type       Type            `json:"type"`
@@ -34,21 +36,24 @@ type Result struct {
 // Card is the model-visible acknowledgement. The complete body is returned only
 // by Read. Earlier acknowledgements are immutable history items.
 type Card struct {
-	ID       string    `json:"result_id"`
-	Revision int       `json:"revision"`
-	Type     Type      `json:"type"`
-	Title    string    `json:"title"`
-	Summary  string    `json:"summary"`
-	Text     string    `json:"text"`
-	SavedAs  *SavedRef `json:"saved_as"`
+	Completion *Completion `json:"completion,omitempty"`
+	ID         string      `json:"result_id"`
+	Revision   int         `json:"revision"`
+	Type       Type        `json:"type"`
+	Title      string      `json:"title"`
+	Summary    string      `json:"summary"`
+	Text       string      `json:"text"`
+	SavedAs    *SavedRef   `json:"saved_as"`
 }
 type PresentRequest struct {
-	ID           string          `json:"result_id,omitempty"`
-	BaseRevision int             `json:"base_revision,omitempty"`
-	Type         Type            `json:"type"`
-	Title        string          `json:"title"`
-	Summary      string          `json:"summary"`
-	Body         json.RawMessage `json:"body"`
+	ReplyType    string             `json:"reply_type,omitempty"`
+	Completion   *CompletionRequest `json:"completion,omitempty"`
+	ID           string             `json:"result_id,omitempty"`
+	BaseRevision int                `json:"base_revision,omitempty"`
+	Type         Type               `json:"type"`
+	Title        string             `json:"title"`
+	Summary      string             `json:"summary"`
+	Body         json.RawMessage    `json:"body"`
 }
 type ReadRequest struct {
 	ID string `json:"result_id"`
@@ -73,4 +78,13 @@ type SavedRef struct {
 type SaveReceipt struct {
 	State   string    `json:"effect_state"`
 	SavedAs *SavedRef `json:"saved_as"`
+}
+
+// ValidReplyType checks a structural annotation, never natural-language intent.
+func ValidReplyType(kind string) bool {
+	switch kind {
+	case "", "chat", "status", "comparison", "candidates", "third_party":
+		return true
+	}
+	return false
 }

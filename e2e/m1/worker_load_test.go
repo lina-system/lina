@@ -55,7 +55,8 @@ func (load workerLoad) wrap(t *testing.T, p *process) {
 	// Linux parent-death signals track the thread that forked the child.
 	// A Go runtime thread can retire while the test process remains alive.
 	// The shell stays as bwrap's single-threaded parent until its child exits.
-	p.command.Args = append([]string{"/bin/sh", "-c", `"$@" & child=$!; wait "$child"`, "worker-load-parent"}, wrapped...)
+	// Save stdin before the asynchronous list replaces it with /dev/null.
+	p.command.Args = append([]string{"/bin/sh", "-c", `exec 3<&0; "$@" <&3 3<&- & child=$!; exec 3<&-; wait "$child"`, "worker-load-parent"}, wrapped...)
 	p.command.Path = "/bin/sh"
 	p.signal = func(signal os.Signal) error {
 		raw, err := os.ReadFile(pidfile)

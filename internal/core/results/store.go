@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -50,7 +51,7 @@ type Writer interface {
 type PreparedSave func(context.Context, result.SavedRef) error
 type Config struct {
 	Journal   Journal
-	Writer    Writer
+	Writer    Writer // Optional: nil permits previews and reads, but no saves.
 	Limits    result.Limits
 	TextRunes int
 }
@@ -60,7 +61,7 @@ type Store struct {
 }
 
 func New(db Canon, cfg Config) (*Store, error) {
-	if db == nil || cfg.Journal == nil || cfg.Writer == nil {
+	if db == nil || cfg.Journal == nil {
 		return nil, result.ErrMalformed
 	}
 	if cfg.TextRunes <= 0 {
@@ -92,7 +93,7 @@ func (s *Store) head(ctx context.Context, tx *canon.Tx, scope result.Scope, id s
 	return r, save.String, err
 }
 func (s *Store) Present(ctx context.Context, scope result.Scope, p result.PresentRequest) (result.Card, error) {
-	if !validScope(scope) || strings.TrimSpace(p.Title) == "" || utf8.RuneCountInString(p.Title) > 200 || strings.TrimSpace(p.Summary) == "" || utf8.RuneCountInString(p.Summary) > 600 || p.ID == "" && p.BaseRevision != 0 || p.ID != "" && p.BaseRevision <= 0 {
+	if !result.ValidReplyType(p.ReplyType) || !validScope(scope) || strings.TrimSpace(p.Title) == "" || utf8.RuneCountInString(p.Title) > 200 || strings.TrimSpace(p.Summary) == "" || utf8.RuneCountInString(p.Summary) > 600 || p.ID == "" && p.BaseRevision != 0 || p.ID != "" && p.BaseRevision <= 0 {
 		return result.Card{}, result.ErrMalformed
 	}
 	// Reject invalid input before decoding it for masking; duplicate fields must
@@ -112,7 +113,7 @@ func (s *Store) Present(ctx context.Context, scope result.Scope, p result.Presen
 	if err != nil {
 		return result.Card{}, err
 	}
-	r := result.Result{ID: p.ID, Revision: 1, Type: p.Type, Title: p.Title, Summary: p.Summary, Text: result.PlainText(body, nil), Body: raw, Status: "preview", RevisedBy: scope.AgentID, Provenance: result.Provenance{AgentID: scope.AgentID, ConversationID: scope.ConversationID, TurnID: scope.TurnID, TaskID: scope.TaskID}}
+	r := result.Result{ReplyType: p.ReplyType, ID: p.ID, Revision: 1, Type: p.Type, Title: p.Title, Summary: p.Summary, Text: result.PlainText(body, nil), Body: raw, Status: "preview", RevisedBy: scope.AgentID, Provenance: result.Provenance{AgentID: scope.AgentID, ConversationID: scope.ConversationID, TurnID: scope.TurnID, TaskID: scope.TaskID}}
 	if r.ID == "" {
 		r.ID = newID()
 	}
@@ -136,6 +137,17 @@ func (s *Store) Present(ctx context.Context, scope result.Scope, p result.Presen
 				return ErrOutOfScope
 			}
 			r.Revision = old.Revision + 1
+			if old.Completion != nil && p.Completion == nil {
+				p.Completion = &result.CompletionRequest{WorkKind: old.Completion.WorkKind}
+			}
+		}
+		if p.Completion != nil {
+			c := result.CompletionFor(ctx, *p.Completion)
+			c.ID, c.AgentID = "result:"+r.ID+":"+strconv.Itoa(r.Revision), scope.AgentID
+			r.Completion = &c
+			if err := canon.RecordDoneCompletion(ctx, tx, r.Completion); err != nil {
+				return err
+			}
 		}
 		event, err := s.cfg.Journal.Append(ctx, tx, scope, r)
 		if err != nil {
@@ -155,7 +167,7 @@ func (s *Store) Present(ctx context.Context, scope result.Scope, p result.Presen
 	if len(text) > s.cfg.TextRunes {
 		text = text[:s.cfg.TextRunes]
 	}
-	return result.Card{ID: r.ID, Revision: r.Revision, Type: r.Type, Title: r.Title, Summary: r.Summary, Text: string(text)}, nil
+	return result.Card{ID: r.ID, Revision: r.Revision, Type: r.Type, Title: r.Title, Summary: r.Summary, Text: string(text), Completion: r.Completion}, nil
 }
 func (s *Store) Read(ctx context.Context, scope result.Scope, p result.ReadRequest) (r result.Result, err error) {
 	if !validScope(scope) || p.ID == "" {
@@ -235,6 +247,9 @@ func (s *Store) Save(ctx context.Context, scope result.Scope, p result.SaveReque
 	key := SaveKey(p.ID, p.Revision, dest)
 	var publish PreparedSave
 	if prior == "" {
+		if s.cfg.Writer == nil {
+			return receipt, ErrOutOfScope
+		}
 		publish, err = s.cfg.Writer.Prepare(ctx, scope, snapshot, dest)
 		if err != nil {
 			return receipt, err

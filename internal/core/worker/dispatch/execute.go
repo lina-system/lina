@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,12 +168,18 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err != nil {
 		return
 	}
+	priorProtected := r.Protected
 	r.Protected = map[string]string{}
 	for _, line := range strings.Split(protected, "\n") {
 		ref, head, ok := strings.Cut(line, " ")
 		if ok && strings.HasPrefix(ref, "refs/heads/") {
 			r.Protected[ref] = head
 		}
+	}
+	if r.ReturnReceipt != "" && !maps.Equal(priorProtected, r.Protected) {
+		r.Protected = priorProtected
+		r.Code = "protected_ref_changed"
+		return
 	}
 	if err = s.save(ctx, r); err != nil {
 		return
@@ -275,7 +282,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			}
 			return
 		}
-		generation := len(r.Tried)
+		generation := r.GenerationBase + len(r.Tried)
 		run = work.Run{ID: fmt.Sprintf("%s:%d", r.ID, generation), TaskID: r.ID, Generation: generation, Worker: r.Worker, NodeID: s.cfg.Main}
 		// reserveWorker persisted this attempt before any launch. A crash is
 		// uncertain, never permission to consume another replacement.
@@ -293,6 +300,15 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			closeAdapter(context.Background())
 			return
 		}
+		// ACP agentInfo is available only after the session handshake.
+		r.Version, err = adapter.Version(ctx)
+		if err == nil {
+			err = s.save(ctx, r)
+		}
+		if err != nil {
+			closeAdapter(context.Background())
+			return
+		}
 		run.ThreadID, run.TurnID = thread.ID, thread.TurnID
 		admitted, settled = true, false
 		if err = service.Start(ctx, run); err != nil {
@@ -304,6 +320,17 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			handle, unbind = s.cfg.Bind(r, adapter, thread, r.Packet, workdir)
 		}
 		observed := false
+		var progressSequence uint64
+		var progress progressBuffer
+		progressTick := time.NewTicker(progressInterval)
+		defer progressTick.Stop()
+		recordProgress := func(summary string, progressErr error) error {
+			if progressErr != nil || summary == "" {
+				return progressErr
+			}
+			progressSequence++
+			return service.ReportProgress(ctx, r.ID, run.ID, progressSequence, summary)
+		}
 		for !observed {
 			select {
 			case event, ok := <-adapter.Events():
@@ -313,10 +340,28 @@ func (s *Service) execute(ctx context.Context, r Record) {
 					closeAdapter(context.Background())
 					return
 				}
+				if event.Progress != nil {
+					err = recordProgress(progress.Observe(*event.Progress, time.Now()))
+				} else if event.Finish != nil {
+					err = recordProgress(progress.Flush(time.Now(), true))
+				}
+				if err != nil {
+					r.Code = "progress_failed"
+					unbind()
+					closeAdapter(context.Background())
+					return
+				}
 				handle(event)
 				if event.Finish != nil {
 					finish = *event.Finish
 					observed = true
+				}
+			case now := <-progressTick.C:
+				if err = recordProgress(progress.Flush(now, false)); err != nil {
+					r.Code = "progress_failed"
+					unbind()
+					closeAdapter(context.Background())
+					return
 				}
 			case <-ctx.Done():
 				unbind()
@@ -324,6 +369,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 				return
 			}
 		}
+		progressTick.Stop()
 		quotaStop := finish.Status == worker.Failed && (finish.Failure == worker.QuotaFailure || finish.Failure == worker.RateLimitFailure || finish.Failure == worker.LoginFailure)
 		if quotaStop {
 			err = s.park(ctx, adapter)
@@ -370,6 +416,9 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	status, outcome := "completed", "ready_for_review"
 	if finish.Status != worker.Done {
 		status, outcome = "failed", "failed"
+		if finish.Status == worker.Interrupted {
+			status, outcome = "interrupted", "interrupted"
+		}
 		r.Code = finish.Code
 	} else {
 		r.Code = "pr_unverified"
@@ -407,6 +456,12 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	// The artifact contains source-labeled observations, never an acceptance or
 	// merge verdict. Strip remote prose before persisting; it is untrusted input.
 	if r.PR != nil {
+		r.FailureReason = r.PR.FailureReason()
+		if masked, err := secrets.Mask(r.FailureReason); err == nil {
+			r.FailureReason = masked.Text()
+		} else {
+			r.FailureReason = ""
+		}
 		for i := range r.PR.Reviews {
 			r.PR.Reviews[i].Body = ""
 		}
@@ -419,6 +474,9 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	}
 	evidence = []byte(masked.Text())
 	artifact := filepath.Join(taskRoot, "result.json")
+	if r.GenerationBase > 0 {
+		artifact = filepath.Join(taskRoot, fmt.Sprintf("result-%d.json", run.Generation))
+	}
 	if err = os.WriteFile(artifact, evidence, 0600); err != nil {
 		return
 	}

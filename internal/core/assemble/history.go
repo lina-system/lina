@@ -35,7 +35,7 @@ func History(events []ledger.Event, conversation, agent string, partner ...strin
 		if err != nil {
 			return nil, err
 		}
-		if e.ScaffoldKind == "prepare_ack" || e.ScaffoldKind == "request_assembly" || e.ScaffoldKind == "compaction_recorded" || e.ScaffoldKind == "result" {
+		if e.ScaffoldKind == "prepare_ack" || e.ScaffoldKind == "request_assembly" || e.ScaffoldKind == "compaction_recorded" || e.ScaffoldKind == "result" || e.ScaffoldKind == "reply_check" {
 			continue
 		}
 		if e.ScaffoldKind == "provider_item" {

@@ -29,7 +29,7 @@ type signInSession struct {
 	publish  func(context.Context, tea.Msg)
 	remote   bool
 	open     func(context.Context, string) error
-	peer     *clientapi.Client
+	peer     shellClient
 	pending  map[string]protocol.Kind
 	attempt  uint64
 	cancel   context.CancelFunc

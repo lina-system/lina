@@ -4,6 +4,7 @@ package secrets_test
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -16,7 +17,7 @@ func TestMaskPunctuationRoundTrip(t *testing.T) {
 		{"json_fields", `{"api_key":"syntheticcredential","token":"anothercredential"}`, `{"api_key":"` + secret.Placeholder + `","token":"` + secret.Placeholder + `"}`},
 		{"quoted_placeholder_prefix", `token="[REDACTED]syntheticcredential".`, "token=" + secret.Placeholder + "."},
 	}
-	for _, punctuation := range []string{".", ",", "}", ")", ";"} {
+	for _, punctuation := range []string{".", ",", "}", "]", ")", ";", "<", ">"} {
 		for _, quote := range []string{`"`, `'`} {
 			cases = append(cases, struct{ name, input, want string }{
 				quote + punctuation,
@@ -26,7 +27,7 @@ func TestMaskPunctuationRoundTrip(t *testing.T) {
 		}
 		// Unquoted real values retain the existing masking boundaries.
 		want := "token=" + secret.Placeholder
-		if punctuation == "," || punctuation == ";" {
+		if punctuation == "," || punctuation == ";" || punctuation == "<" || punctuation == ">" {
 			want += punctuation
 		}
 		cases = append(cases, struct{ name, input, want string }{
@@ -44,6 +45,52 @@ func TestMaskPunctuationRoundTrip(t *testing.T) {
 			}
 			assertMaskedRoundTrip(t, masked)
 		})
+	}
+}
+
+func TestMaskQuotedValueSuffix(t *testing.T) {
+	cases := []struct{ name, input, suffix string }{
+		{"double_path", `password="synthetic"/path`, "/path"},
+		{"single_path", `password='synthetic'/path`, "/path"},
+		{"word", `token="synthetic"public`, "public"},
+		{"unicode", `token='synthetic'한글`, "한글"},
+		{"operators", `api_key="synthetic"+=public`, "+=public"},
+		{"braces", `client_secret='synthetic'{public}`, "{public}"},
+		{"escaped_double_quote", `password="synthetic\"value"/path`, "/path"},
+		{"escaped_single_quote", `password='synthetic\'value'/path`, "/path"},
+		{"escaped_backslash", `password="synthetic\\"/path`, "/path"},
+		{"empty", `password=""/path`, "/path"},
+		{"placeholder", `token="[REDACTED]"/path`, "/path"},
+		{"placeholder_prefix", `token='[REDACTED]synthetic'/path`, "/path"},
+		{"adjacent", `token="synthetic"password='synthetic'/path`, "/path"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			masked, err := secrets.Mask(tc.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(masked.Text(), "synthetic") || !strings.HasSuffix(masked.Text(), tc.suffix) {
+				t.Fatalf("mask lost public text or kept a credential: %q", masked.Text())
+			}
+			assertMaskedRoundTrip(t, masked)
+		})
+	}
+}
+
+func TestMaskQuotedValueSuffixInJSON(t *testing.T) {
+	for _, input := range []string{
+		`{"text":"password=\"synthetic\"/path"}`,
+		`{"text":"{\"text\":\"password='synthetic'/path\"}"}`,
+	} {
+		masked, err := secrets.Mask(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !json.Valid([]byte(masked.Text())) || strings.Contains(masked.Text(), "synthetic") || !strings.Contains(masked.Text(), "/path") {
+			t.Fatalf("unsafe or damaged JSON: %q", masked.Text())
+		}
+		assertMaskedRoundTrip(t, masked)
 	}
 }
 

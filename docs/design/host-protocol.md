@@ -270,7 +270,7 @@ One connection reaches every agent of the main. A conversation kind, and a quest
 | Multi-task control | Control several tasks or background runs at once, including stop all |
 | Lifecycle | With `lifecycle` 1.0 negotiated, request a safe Core restart and read its durable owed/discharged status. |
 | Results | Receive typed results, read one by id, edit, save ([Typed results](#typed-results)) |
-| Progress | Read the progress view: a line for each running 목표 and 일 with its name, its stage and bar, what just finished, what comes next and whether it waits on the person, and the rows that need the person on top; receive changes to it; and ask for its digest, the short form that a channel shows ([surfaces.md](surfaces.md#progress-at-a-glance)). LINA Core computes the view and the digest, and a client only draws them. |
+| Progress | Read the progress view: a line for each running 목표 and 일 with its name, its stage and bar, what it is doing now, when its work started, its stage list ([work-and-delegation.md](work-and-delegation.md#stages)), its rank, pause and queue place, what just finished, what comes next and whether it waits on the person, and the rows that need the person on top; receive changes to it; send the person's move, pause, resume, stop and run-limit commands ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)); and ask for its digest, the short form that a channel shows ([surfaces.md](surfaces.md#progress-at-a-glance)). LINA Core computes the view and the digest, and a client only draws them. |
 | Waiting list | Read the list of what the person must do or decide in the order LINA Core ranks it, receive changes to it, ask for another of its orders, and answer a row |
 | Details | Read the audit trail behind a card, a result or an answer, and the activity log, when the person asks |
 | Channels | List channel connections, bindings and scopes; add a connection (the token passes to LINA Core once and is never returned); show a pairing code; bind an agent to a chat; change a scope; disconnect; receive channel state notices (connected, needs pairing, unreachable, messages possibly missed) |
@@ -354,6 +354,14 @@ Rules:
 
 The core topic carries a `connected` item with optional `shell_file_tools_available` (boolean), keyed once per boot. It represents the completed sandbox probe and is included in snapshots and live updates, including for a client connected during recovery. A false value produces one local setup notice in the TUI's language; it is not a conversation event or model input. The field carries no launcher paths or diagnostic cause.
 
+The same topic retains optional delegation initialization failures as
+`readiness_failure`, keyed `delegation`. Its existing `step` field names
+`delegation.configuration`, `delegation.worker` or `delegation.quota`; optional
+`stream` metadata allows live delivery and snapshot replay. These failures do
+not refuse conversation admission. The payload contains no worker error text,
+credentials or local paths. A boot without delegation configuration emits no
+delegation failure.
+
 ### Conversation payloads
 
 The first conversation product defines these additive client 1.0 fields. They
@@ -423,6 +431,8 @@ provider. Real model credentials and real model validation are outside these
 fixtures.
 
 ## Typed results
+
+The Core tool request may carry optional `reply_type` (`chat`, `status`, `comparison`, `candidates`, `third_party`) for reply-shape measurement. A draft may name its `recipient` and mark a block’s `audience` (`recipient` or `person`). Older bodies omit these fields. They are data annotations, not authority, and do not change the Result RPC envelope. Core uses the existing `summary`, `text` and provenance fields to publish the bounded presentation.
 
 Core presents anything that the person should open and keep apart from the chat text as one typed result: a table, a diagram, a chart, a comparison, a plan, an outline, a draft document or a file. A result of delegated work ([work-and-delegation.md](work-and-delegation.md)) is presented the same way when it is shown to the person. Results are data. How each type is drawn is defined in [surfaces.md](surfaces.md#result-surfaces), how a conversation stores and uses a result in [conversation-and-memory.md](conversation-and-memory.md#results), and how a result is saved in [materials-and-knowledge.md](materials-and-knowledge.md#saving-a-result).
 
@@ -703,3 +713,12 @@ Reconnect never replays it. An uncertain publication is not attempted again.
 Domain refusals include `ambiguous_date`, `records_changed`, `stale_revision`,
 `record_not_found`, `invalid_record` and `preview_expired`. Outside edits are
 never silently adopted. Neither request accepts a person identity or file path.
+
+### Completion labels on results
+
+A client `result` may include `completion: {state, label}`. The state is `done`
+or `claimed`; a claimed completion displays "not verified" separately from
+its unchanged title, summary and body. This does not change the result's
+`preview` or `saved` status. The detailed work kind, policy revision and evidence
+references remain in Core's result record and `read_result` response. The
+field is optional for historical cards and ordinary previews.

@@ -1,0 +1,8 @@
+{
+  "repository": "fixture/repo",
+  "tasks": [
+    {"key":"a","what":"Write the shared foundation","why":"Unblock dependent work","done":"artifact committed","areas":["shared"],"depends_on":[],"design":["DESIGN.md#work"]},
+    {"key":"b","what":"Extend the shared foundation","why":"Use the landed result","done":"dependent artifact committed","areas":["shared/b.txt"],"depends_on":["a"],"design":["DESIGN.md#work"]},
+    {"key":"c","what":"Write the independent result","why":"Make progress in parallel","done":"independent artifact committed","areas":["independent/**"],"depends_on":[],"design":["DESIGN.md#work"]}
+  ]
+}

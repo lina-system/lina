@@ -29,10 +29,11 @@ function parseRange(range) {
   return { base: range.slice(0, split), head: range.slice(split + 2) || 'HEAD' };
 }
 
-export function selectFoundation({ cwd = process.cwd(), range, full = false, log = console.error } = {}) {
+export function selectFoundation({ cwd = process.cwd(), range, full = false, event = 'local', e2e = false, log = console.error } = {}) {
   const started = Date.now();
   const root = toplevel(cwd);
   const clean = cleanTree(root);
+  if (!['local', 'pull_request', 'push', 'schedule', 'workflow_dispatch'].includes(event)) throw new Error('Unknown verification event: ' + event);
   if (full && range) throw new Error('--full and --range cannot be combined');
   const requested = parseRange(range);
   const head = resolveCommit(root, requested.head);
@@ -41,6 +42,7 @@ export function selectFoundation({ cwd = process.cwd(), range, full = false, log
     if (!head) throw new Error('Unknown candidate revision: ' + requested.head);
     if (head !== resolveCommit(root, 'HEAD')) throw new Error('Candidate ' + head + ' is not the checked-out HEAD; check out the candidate first.');
     scope = scopeFor({ base: full ? '' : requested.base ?? defaultBase(root, head), head, full, cwd: root });
+    scope = { ...scope, event, e2e: full || event !== 'pull_request' || e2e };
     const whitespace = scope.base ? git(root, ['diff', '--check', scope.base, scope.head])
       : git(root, ['show', '--format=', '--check', scope.head]);
     if (whitespace.status !== 0) throw new Error((whitespace.stdout + whitespace.stderr).trim());
@@ -81,8 +83,8 @@ export function finishFoundation(root, plan, outcomes, { note = true } = {}) {
   return evidence;
 }
 
-export async function foundation({ cwd = process.cwd(), range, full = false, note = true, jobs, log = console.error } = {}) {
-  const { root, plan } = selectFoundation({ cwd, range, full, log });
+export async function foundation({ cwd = process.cwd(), range, full = false, event = 'local', e2e = false, note = true, jobs, log = console.error } = {}) {
+  const { root, plan } = selectFoundation({ cwd, range, full, event, e2e, log });
   return finishFoundation(root, plan, await runPipeline(root, plan, { jobs, log }), { note });
 }
 
@@ -90,12 +92,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const { values } = parseArgs({ options: {
       range: { type: 'string' }, full: { type: 'boolean', default: false }, 'no-note': { type: 'boolean', default: false },
+      event: { type: 'string' }, e2e: { type: 'boolean', default: false },
       select: { type: 'string' }, plan: { type: 'string' }, shard: { type: 'string' }, out: { type: 'string' },
       results: { type: 'string' }, upstream: { type: 'string' }, jobs: { type: 'string' },
     } });
     let result;
     if (values.plan) {
-      if (values.range || values.full || values.select || values.jobs) throw new Error('A saved plan cannot be reselected');
+      if (values.range || values.full || values.select || values.jobs || values.event || values.e2e) throw new Error('A saved plan cannot be reselected');
       const root = toplevel(process.cwd());
       const plan = readPlan(values.plan, root);
       if (values.shard) {
@@ -109,12 +112,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
     } else if (values.select) {
       if (values.shard || values.results || values.out || values.upstream || values.jobs) throw new Error('Selection cannot execute or aggregate shards');
-      const { plan } = selectFoundation({ range: values.range, full: values.full });
+      const { plan } = selectFoundation({ range: values.range, full: values.full, event: values.event, e2e: values.e2e });
       writeJSON(values.select, plan);
       result = { head: plan.head, result: plan.selection.result, tasks: plan.tasks.map(task => ({ id: task.id, kind: task.kind })) };
     } else {
       if (values.shard || values.results || values.out || values.upstream) throw new Error('Shard options require --plan');
-      result = await foundation({ range: values.range, full: values.full, note: !values['no-note'], jobs: values.jobs === undefined ? undefined : Number(values.jobs) });
+      result = await foundation({ range: values.range, full: values.full, event: values.event, e2e: values.e2e, note: !values['no-note'], jobs: values.jobs === undefined ? undefined : Number(values.jobs) });
     }
     console.log(JSON.stringify(result));
     if (result.result !== 'success') {
