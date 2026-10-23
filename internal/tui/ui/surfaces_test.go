@@ -32,6 +32,7 @@ func TestSurfaceTextChoiceAndActionKeys(t *testing.T) {
 	block := state.Block{ID: "card", Kind: protocol.KindResult, Topic: "conversation:main:agent", Done: true}
 	projectConversationBlock(&block, card)
 	m.content.Blocks = []state.Block{block}
+	m.refreshResultStreams(state.Snapshot{})
 	m.openResultCard()
 	if !strings.Contains(m.conversation.pager.text, "[a]") || !strings.Contains(m.conversation.pager.text, "[3]") {
 		t.Fatal("missing card text")
@@ -39,6 +40,16 @@ func TestSurfaceTextChoiceAndActionKeys(t *testing.T) {
 	if cmd := m.pagerKey(tea.KeyPressMsg{Code: '2', Text: "2"}, "2"); cmd != nil {
 		t.Fatal("selection sent an action")
 	}
+	field := card.SurfaceControls.Fields[0]
+	if !strings.Contains(strings.Join(m.pagerLines(), "\n"), field.Label+": "+field.Choices[1].Label) {
+		t.Fatal("selected value not visible in rendered pager")
+	}
+	m.pagerKey(tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl}, "ctrl+e")
+	m.pagerKey(tea.KeyPressMsg{Code: 'x', Text: "EDIT-VISIBLE"}, "x")
+	if !strings.Contains(strings.Join(m.pagerLines(), "\n"), "EDIT-VISIBLE") {
+		t.Fatal("field draft not visible in rendered pager")
+	}
+	m.pagerKey(tea.KeyPressMsg{Code: tea.KeyEscape}, "esc")
 	cmd := m.pagerKey(tea.KeyPressMsg{Code: 'a', Text: "a"}, "a")
 	if cmd == nil {
 		t.Fatal("action key ignored")

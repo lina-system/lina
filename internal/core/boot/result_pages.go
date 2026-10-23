@@ -57,7 +57,7 @@ func resultTextPage(text string, offset int64) (string, *json.Number, error) {
 
 func (r *conversationRuntime) resultOperations() map[protocol.Kind]clientsrv.Operation {
 	return map[protocol.Kind]clientsrv.Operation{
-		protocol.KindResultGet:     {Capability: clientsrv.ConversationCapability, AdditionalCapabilities: []protocol.Capability{clientsrv.ResultsCapability}, Handle: r.readResultPage},
+		protocol.KindResultGet:     {Capability: clientsrv.ConversationCapability, Alternatives: []protocol.Capability{clientsrv.ResultsCapability}, Handle: r.readResultPage},
 		protocol.KindSurfaceAction: {Capability: clientsrv.ResultsCapability, Handle: r.surfaceAction},
 	}
 }

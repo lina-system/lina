@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/sanitize"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -139,16 +140,16 @@ func (m *shellModel) surfaceKey(msg tea.KeyMsg, name string) (bool, tea.Cmd) {
 	}
 	return false, nil
 }
-func (p *surfacePager) status() string {
+func (p *surfacePager) status(language design.Language) string {
 	if p == nil {
 		return ""
 	}
 	if p.busy {
-		return "\n\nSending…"
+		return "\n\n" + design.Text(language, "surface.sending")
 	}
 	fields := p.controls.Fields
 	if p.editing >= 0 {
-		return "\n\n" + sanitize.Display(fields[p.editing].Label) + ": " + sanitize.Display(p.edit) + "\nEnter · Esc"
+		return "\n\n" + sanitize.Display(fields[p.editing].Label) + ": " + sanitize.Display(p.edit) + "\n" + design.Text(language, "surface.edit_keys")
 	}
 	if len(fields) == 0 {
 		return ""
@@ -180,6 +181,6 @@ func (p *surfacePager) status() string {
 		}
 		lines = append(lines, sanitize.Display(field.Label+": "+value))
 	}
-	lines = append(lines, "Ctrl+E: edit fields · Esc: close")
+	lines = append(lines, design.Text(language, "surface.keys"))
 	return "\n\n" + strings.Join(lines, "\n")
 }

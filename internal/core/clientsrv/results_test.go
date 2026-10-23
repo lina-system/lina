@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -105,5 +106,39 @@ func TestSurfaceMinorNegotiatesThroughListener(t *testing.T) {
 	response = exchange(t, client, reader, request)
 	if response.Kind != protocol.KindItemDone || response.Error != nil || response.Protocol.Version != "1.1" {
 		t.Fatalf("action dispatch: %+v", response)
+	}
+}
+
+func TestResultsCapabilityCanReadWithoutConversationGrant(t *testing.T) {
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	var read atomic.Bool
+	identity := Identity{MainID: "main-test", Epoch: "1", Operations: map[protocol.Kind]Operation{
+		protocol.KindResultGet: {Capability: ConversationCapability, Alternatives: []protocol.Capability{ResultsCapability}, Handle: func(context.Context, Session, protocol.Envelope) (Result, error) {
+			read.Store(true)
+			return Result{Kind: protocol.KindItemDone, Payload: protocol.ItemDone{}}, nil
+		}},
+	}}
+	go func() { defer close(done); defer server.Close(); serveConn(server, identity) }()
+	t.Cleanup(func() { client.Close(); server.Close(); <-done })
+	client.SetDeadline(time.Now().Add(5 * time.Second))
+	reader := bufio.NewReader(client)
+	request := testHello(t)
+	request.Protocol.Version = "1.1"
+	hello := request.Payload.(protocol.Hello)
+	hello.ProtocolVersions = []string{"1.1"}
+	hello.Capabilities = []protocol.Capability{protocol.SurfaceResultsCapability()}
+	request.Payload = hello
+	response := exchange(t, client, reader, request)
+	welcome, ok := response.Payload.(protocol.Welcome)
+	if !ok || len(welcome.Capabilities) != 1 {
+		t.Fatalf("welcome: %+v", response)
+	}
+	request.Epoch = response.Epoch
+	request.Kind = protocol.KindResultGet
+	request.Payload = protocol.ResultGet{ResultID: "card"}
+	response = exchange(t, client, reader, request)
+	if response.Error != nil || !read.Load() {
+		t.Fatalf("results-only read: %+v", response)
 	}
 }

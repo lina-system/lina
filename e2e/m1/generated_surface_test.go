@@ -193,7 +193,13 @@ func TestGeneratedSurfaceInstalledCore(t *testing.T) {
 	waitScreen(t, h, terminal, design.Text(design.English, "live"))
 	waitScreen(t, h, terminal, "Dentist appointment")
 	h.keys(terminal, "\x0f")
-	snapshot := waitScreen(t, h, terminal, "이 시간으로 예약 요청")
+	waitScreen(t, h, terminal, "이 시간으로 예약 요청")
+	waitScreen(t, h, terminal, design.Text(design.English, "surface.keys"))
+	h.keys(terminal, "2")
+	snapshot := waitScreen(t, h, terminal, "되는 시간: 수 15:00")
+	if calls.Load() != 3 {
+		t.Fatal("editing the card started a model turn")
+	}
 	capture := screenText(snapshot)
 	t.Logf("SURFACE TUI CAPTURE\n%s\nEND SURFACE TUI CAPTURE", capture)
 	if path := os.Getenv("LINA_SURFACE_CAPTURE"); path != "" {
@@ -201,7 +207,7 @@ func TestGeneratedSurfaceInstalledCore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h.keys(terminal, "2a")
+	h.keys(terminal, "a")
 	waitScreen(t, h, terminal, "Saved your choice.")
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)

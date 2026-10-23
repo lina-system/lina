@@ -200,7 +200,6 @@ func TestConversationRegistrationSurface(t *testing.T) {
 			}
 			if routed {
 				want[protocol.KindSurfaceAction] = "results"
-				additional[protocol.KindResultGet] = []protocol.Capability{clientsrv.ResultsCapability}
 				for _, kind := range []protocol.Kind{protocol.KindConversationStart, protocol.KindHistoryGet, protocol.KindInput, protocol.KindInterrupt, protocol.KindResultGet} {
 					want[kind] = "conversation"
 				}

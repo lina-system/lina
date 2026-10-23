@@ -47,7 +47,7 @@ func (m *shellModel) openPager(text string) {
 
 func (m *shellModel) pagerText() string {
 	if !m.conversation.pager.transcript {
-		return m.conversation.pager.text + m.conversation.pager.surface.status()
+		return m.conversation.pager.text + m.conversation.pager.surface.status(m.styles.options.Language)
 	}
 	// Read the current projection, without retaining another history copy that
 	// could outlive authoritative replacements, revocation or a focus change.
@@ -258,7 +258,7 @@ func (m *shellModel) pagerRows() []render.StyledRow {
 	}
 	config := render.Config{Width: max(1, width)}
 	stream := m.resultStreams[m.conversation.pager.cardID].stream
-	if stream == nil || m.conversation.pager.result != nil {
+	if stream == nil || m.conversation.pager.result != nil || m.conversation.pager.surface != nil {
 		stream = render.NewStream("pager", config, nil)
 		stream.Seal(1, m.pagerText())
 	}

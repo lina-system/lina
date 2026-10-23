@@ -390,7 +390,7 @@ func (c *clientConnection) negotiateHello(envelope protocol.Envelope, answer *pr
 			}
 		}
 		for _, operation := range c.identity.Operations {
-			if operation.Handle != nil && (protocol.CapabilityIdentity(operation.Capability, capability) || protocol.HasCapability(operation.AdditionalCapabilities, capability)) {
+			if operation.Handle != nil && (protocol.CapabilityIdentity(operation.Capability, capability) || protocol.HasCapability(operation.AdditionalCapabilities, capability) || protocol.HasCapability(operation.Alternatives, capability)) {
 				return false
 			}
 		}
@@ -441,7 +441,11 @@ func (c *clientConnection) dispatch(ctx context.Context, topics *topicSession, i
 	if operation.CapabilityFor != nil {
 		required = operation.CapabilityFor(envelope)
 	}
-	if !exists || operation.Handle == nil || !protocol.HasCapability(c.session.Capabilities, required) {
+	granted := protocol.HasCapability(c.session.Capabilities, required)
+	for _, alternative := range operation.Alternatives {
+		granted = granted || protocol.HasCapability(c.session.Capabilities, alternative)
+	}
+	if !exists || operation.Handle == nil || !granted {
 		refuse(answer, protocol.ErrorCapabilityNotNegotiated, "capability not negotiated")
 	} else {
 		result, err := operation.Handle(ctx, c.facts(), envelope)
