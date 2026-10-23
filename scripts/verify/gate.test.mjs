@@ -6,6 +6,14 @@ import { evaluateGate } from './gate.mjs';
 const scope = { mode: 'full', head: '1'.repeat(40), docs: true, automation: true, dependencies: false, components: false, selectedComponents: [], unmapped: [] };
 const passed = { selection: { result: 'success' }, docs: { result: 'success' }, automation: { result: 'success' }, dependencies: { result: 'skipped' }, components: { result: 'skipped' } };
 
+test('storebench is registered and still requires successful verification', () => {
+  const selected = { ...scope, components: true, selectedComponents: ['storebench', 'lina'] };
+  assert.equal(evaluateGate(selected, { ...passed, components: { result: 'success' } }).result, 'success');
+  for (const result of ['failure', 'pending', 'skipped', undefined]) {
+    assert.equal(evaluateGate(selected, { ...passed, components: { result } }).result, 'failure');
+  }
+});
+
 test('operator takeover verification participates in the foundation gate', () => {
   const selected = { ...scope, components: true, selectedComponents: ['crw-takeover', 'lina'] };
   assert.equal(evaluateGate(selected, { ...passed, components: { result: 'success' } }).result, 'success');
