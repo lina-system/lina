@@ -278,8 +278,8 @@ durable input acknowledgement, live deltas, completed reply and turn completion.
 Restarting Core must restore the same canon conversation and item identities,
 order and text. A loopback fixture runs these assertions in CI and holds completion
 until the client observes a delta. The real journey skips only when opt-in or the
-API key is absent; configured failures fail acceptance. A provider probe alone
-does not establish this client-level journey.
+API key is absent, or when the host cannot install Core; configured failures fail
+acceptance. A provider probe alone does not establish this client-level journey.
 
 - `store` is `false` and `stream` is `true`, as the Sign in with ChatGPT surface requires. Every request carries the full input it needs.
 - The adapter sends only fields that the Sign in with ChatGPT request surface accepts. `input` is an array. Instructions go in `instructions` or in developer-role items, never in system-role items. The fields that surface lists as unsupported (among them output limits, sampling parameters, truncation, `user`, `metadata`, `prompt_cache_retention`, and `previous_response_id` over HTTP) are not sent on it. Function and custom tools are declared in the form that surface requires. A field the surface does not document enters the request field list only after V1 shows it is accepted.
