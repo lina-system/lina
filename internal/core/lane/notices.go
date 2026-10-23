@@ -145,6 +145,9 @@ func DeliveredNotices(ctx context.Context, tx *canon.Tx, conversation, locator s
 
 func (s *Notices) put(ctx context.Context, n Notice) error {
 	masked, err := secrets.Mask(n.Summary)
+	if err != nil {
+		return err
+	}
 	n.Summary = masked.DerivedText()
 	n.Landed = n.Landed.UTC()
 	data, err := json.Marshal(n)
