@@ -335,7 +335,14 @@ func insertRecord(ctx context.Context, tx *canon.Tx, item Item) (Item, error) {
 }
 func revision(ctx context.Context, tx *canon.Tx, item Item, raw []byte) error {
 	_, err := tx.ExecContext(ctx, "INSERT INTO memory_revision(item_id,revision,record) VALUES(?,?,?)", item.ID, item.Revision, raw)
-	return err
+	if err != nil {
+		return err
+	}
+	evidence, err := json.Marshal(item.Evidence)
+	if err != nil {
+		return err
+	}
+	return canon.WriteEvidenceCitations(ctx, tx, "memory", item.ID, item.Revision, evidence)
 }
 func readItem(ctx context.Context, tx *canon.Tx, id string) (Item, error) {
 	var raw []byte

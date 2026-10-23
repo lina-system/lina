@@ -90,7 +90,12 @@ func (m *shellModel) cardText() string {
 	return strings.Join(lines, "\n\n")
 }
 
-func conversationBlock(b state.Block) bool {
+func (m *shellModel) conversationBlock(b state.Block) bool {
+	// Waiting is global, but a question remains part of its originating
+	// conversation even after resolution or replay to a new client.
+	if b.Card != nil && b.Card.Kind == protocol.KindQuestion {
+		return m.conversation.id != "" && b.Card.ConversationID == m.conversation.id
+	}
 	return b.Topic != "core" && b.Topic != "running" && (b.Topic != "waiting" || b.Card != nil) && b.Topic != "progress" && b.Kind != protocol.KindTurnState && b.Kind != protocol.KindToolActivity
 }
 

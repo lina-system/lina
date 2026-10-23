@@ -24,7 +24,7 @@ type SealReport struct {
 func (p *Plan) Seal(ctx context.Context, db Canon, backup func(context.Context) (string, error)) (SealReport, error) {
 	report := SealReport{}
 	if backup == nil {
-		return report, ErrSnapshot
+		return report, invalidSnapshot("seal backup callback required")
 	}
 	needBackup := false
 	err := db.Write(ctx, func(tx *canon.Tx) error {
@@ -67,7 +67,7 @@ func (p *Plan) Seal(ctx context.Context, db Canon, backup func(context.Context) 
 		return report, err
 	}
 	if generation == "" {
-		return report, ErrSnapshot
+		return report, invalidSnapshot("seal backup generation required")
 	}
 	err = db.Write(ctx, func(tx *canon.Tx) error {
 		for _, c := range p.conversations {
@@ -191,7 +191,7 @@ func (p *Plan) Finish(ctx context.Context, db Canon, policy PromotionPolicy, acc
 			return seal, n, err
 		}
 		if generation == "" {
-			return seal, n, ErrSnapshot
+			return seal, n, invalidSnapshot("promotion backup generation required")
 		}
 		err = db.Write(ctx, func(tx *canon.Tx) error {
 			for _, id := range accepted {
