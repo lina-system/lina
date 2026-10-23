@@ -1,30 +1,32 @@
 {
   "evidence_type": "macos_bundle_build",
-  "recorded_at": "2026-10-23T22:05:00Z",
-  "product_source_commit": "0709af10de270583b99c335b38a0501346e2fd1d",
+  "recorded_at": "2026-10-23T23:14:12Z",
+  "product_source_commit": "ddd919a0ea85d7fd872f23cd693f85d7e0616a89",
   "workflow": ".github/workflows/macos-unlock-plugin.yml",
-  "run": "https://github.com/lina-system/lina/actions/runs/40030229768",
+  "run": "https://github.com/lina-system/lina/actions/runs/40038476991",
   "machine": {
     "runner": "macos-15-arm64",
+    "image_release": "20260907.0337.1",
     "os": "macOS 15.7.9",
     "os_build": "24G830",
     "arch": "arm64",
-    "compiler": "Apple clang 17.0.0 (clang-1700.0.13.5)",
+    "compiler": "Apple clang 17.0.0 (clang-1700.0.13.5), target arm64-apple-darwin24.6.0",
     "sdk": "MacOSX.sdk from Xcode 16.4"
   },
   "command": "LINA_TEAM_ID=0000000000 LINA_SIGN_IDENTITY= native/macos/unlock-plugin/build.sh",
   "result": "pass",
   "observed": [
     "The arm64 bundle built at build/LinaUnlock.bundle with the plug-in's five sources and the Security, CoreFoundation and bsm libraries.",
-    "codesign --verify --strict --verbose=2 printed 'valid on disk' and 'satisfies its Designated Requirement'.",
+    "codesign --verify --strict --verbose=2 printed 'build/LinaUnlock.bundle: valid on disk' and 'build/LinaUnlock.bundle: satisfies its Designated Requirement'.",
     "lipo -archs printed 'arm64', and codesign -dvvv reported 'Format=bundle with Mach-O thin (arm64)'.",
-    "The signature carried the hardened runtime: 'flags=0x10002(adhoc,runtime)' and 'Runtime Version=15.5.0'."
+    "The signature carried the hardened runtime: 'CodeDirectory v=20500 size=542 flags=0x10002(adhoc,runtime) hashes=10+3 location=embedded' and 'Runtime Version=15.5.0'.",
+    "The signature was ad-hoc: 'Signature=adhoc' and 'TeamIdentifier=not set'."
   ],
   "signing": {
     "identity": "ad-hoc",
     "team": "not set",
     "hardened_runtime": true,
-    "developer_id_run": "not run: the repository carries no Developer ID certificate, so the workflow took its ad-hoc path"
+    "developer_id_run": "not run: no macOS machine with LINA's Developer ID certificate is reachable, and the macos-signing environment holds no certificate secret, so the workflow's own guard keeps the Developer ID job from starting"
   },
   "not_verified": [
     "A Developer ID signature for LINA's team, which needs the certificate the owner keeps",
