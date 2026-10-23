@@ -31,6 +31,17 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         // Follow Core's packet: publish without updating protected tracking refs.
         git(thread.cwd,'push',git(thread.cwd,'remote','get-url','origin'),`HEAD:refs/heads/lina/${thread.id}`);
         writeFileSync(join(root,`${thread.id}.started`),String(thread.count));
+        if (cfg.outcomes) {
+          const outcome = cfg.outcomes[definition.key];
+          if (!outcome) throw new Error('dependent started without a merge');
+          const item = {type:'agentMessage',id:'final-report',text:outcome.output};
+          thread.turn.items.push(item);
+          send({method:'item/completed',params:{threadId:thread.id,turnId:thread.turn.id,item}});
+          thread.turn.status=outcome.status;thread.status={type:'idle'};
+          if(outcome.status==='failed')thread.turn.error={message:outcome.output,additionalDetails:null,codexErrorInfo:null};
+          send({method:'turn/completed',params:{threadId:thread.id,turn:thread.turn}});
+          return;
+        }
         const path=join(thread.cwd,folder,`${definition.key}.txt`), sha256=hash(readFileSync(path));
         const revision=hash(`${path}:${sha256}`), emitted=new Date().toISOString();
         const receipt={schema_version:1,relationshipId:thread.id,executionGeneration:1,attempt:1,revisionHash:revision,outcome:'ready_for_review',producer:'child',turnRef:{threadId:thread.id,turnId:thread.turn.id,turnStatus:'completed'},emittedAt:emitted,manifest:[{path,sha256}],provenance:[{artifact_id:`artifact-${definition.key}`,task_id:thread.id,node_id:thread.projection.node_id,path,sha256,observed_at:emitted}]};
@@ -101,7 +112,14 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         thread.turns.push(thread.turn);thread.status={type:'active'};
         send({method:'turn/started',params:{threadId:thread.id,turn:{...thread.turn,status:'inProgress'}}});
         send({id,result:{turn:{...thread.turn,status:'inProgress'}}});
-        if (!cfg.stop) callTool(thread,'read_projection',{});
+        if (!cfg.stop && !cfg.outcomes) callTool(thread,'read_projection',{});
+        return;
+      }
+      case 'turn/steer': {
+        const thread=threads.get(p.threadId);
+        if(!cfg.outcomes || thread.turn.id!==p.expectedTurnId || thread.turn.status!=='inProgress' || p.input[0].text!=='Report the outcome.')throw new Error('invalid owner follow-up');
+        send({id,result:{turnId:thread.turn.id}});
+        callTool(thread,'read_projection',{});
         return;
       }
       case 'turn/interrupt': {

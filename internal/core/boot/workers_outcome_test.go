@@ -8,6 +8,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/gateway"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -252,6 +253,14 @@ func TestWorkerCompletionReachesOriginatingChannelOnce(t *testing.T) {
 }
 
 func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
+	testWorkerOriginChannelScope(t, false)
+}
+
+func TestScheduledChannelScope(t *testing.T) {
+	testWorkerOriginChannelScope(t, true)
+}
+
+func testWorkerOriginChannelScope(t *testing.T, scheduled bool) {
 	for _, threaded := range []bool{false, true} {
 		name := "shared-main"
 		if threaded {
@@ -291,7 +300,7 @@ func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
 				}
 				source.Topic = "thread"
 			}
-			source.Scope.Memory, source.Scope.Tools = false, false
+			source.Scope.Memory, source.Scope.Tools = false, scheduled
 			if err := store.Bind(ctx, source); err != nil {
 				t.Fatal(err)
 			}
@@ -300,8 +309,20 @@ func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
 			if err := gateway.New(r.db, func(_ context.Context, d gateway.Delivery) error { delivery = d; return nil }).Admit(ctx, inbound); err != nil {
 				t.Fatal(err)
 			}
-			completion := ledger.Event{ParentID: "channel-input:" + strconv.FormatInt(delivery.InboxID, 10), ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "channel"}}
-			view, err := r.workerCompletionView(ctx, completion)
+			completion := ledger.Event{ParentID: "channel-input:" + strconv.FormatInt(delivery.InboxID, 10), ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "channel", Platform: source.Bot.Platform, ChatID: source.Chat}}
+			originView := func() (*conversationRuntime, error) { return r.workerCompletionView(ctx, completion) }
+			if scheduled {
+				input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: completion.ParentID, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: completion.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "work request"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				d := &delegationRuntime{root: r}
+				originView = func() (*conversationRuntime, error) {
+					view, _, err := d.origin(ctx, work.Task{PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Schedule: &work.Schedule{InputID: input.ID}})
+					return view, err
+				}
+			}
+			view, err := originView()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -311,12 +332,30 @@ func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
 			if err := view.validateChannel(ctx); err != nil {
 				t.Fatal(err)
 			}
+			if scheduled {
+				// A queued task must recheck the current tool ceiling before
+				// allocating a worktree or opening its worker session.
+				restricted := source
+				restricted.Scope.Tools = false
+				if err := store.Bind(ctx, restricted); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := originView(); err == nil {
+					t.Fatal("queued dispatch ignored revoked channel tool permission")
+				}
+				if err := store.Bind(ctx, source); err != nil {
+					t.Fatal(err)
+				}
+			}
 			// A revoked original route cannot fall back to the same persona on another
 			// platform, even though that other binding still has tools and memory.
 			if err := store.Disconnect(ctx, source.Bot, r.person); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := r.workerCompletionView(ctx, completion); err == nil {
+			if err := view.validateChannel(ctx); err == nil {
+				t.Fatal("running follow-up retained revoked channel permission")
+			}
+			if _, err := originView(); err == nil {
 				t.Fatal("completion fell back to an unrelated channel after revocation")
 			}
 		})
