@@ -354,6 +354,14 @@ Rules:
 
 The core topic carries a `connected` item with optional `shell_file_tools_available` (boolean), keyed once per boot. It represents the completed sandbox probe and is included in snapshots and live updates, including for a client connected during recovery. A false value produces one local setup notice in the TUI's language; it is not a conversation event or model input. The field carries no launcher paths or diagnostic cause.
 
+The same topic retains optional delegation initialization failures as
+`readiness_failure`, keyed `delegation`. Its existing `step` field names
+`delegation.configuration`, `delegation.worker` or `delegation.quota`; optional
+`stream` metadata allows live delivery and snapshot replay. These failures do
+not refuse conversation admission. The payload contains no worker error text,
+credentials or local paths. A boot without delegation configuration emits no
+delegation failure.
+
 ### Conversation payloads
 
 The first conversation product defines these additive client 1.0 fields. They
