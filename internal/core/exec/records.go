@@ -220,6 +220,14 @@ func WriteRecord(ctx context.Context, repo records.Repo, actor records.Actor, a 
 			if old := records.RepeatFromFront(front); old != nil && a.Todo.Repeat != nil && old.Rule == a.Todo.Repeat.Rule && old.FromCompletion == a.Todo.Repeat.FromCompletion && old.Zone == a.Todo.Repeat.Zone {
 				copy := *a.Todo.Repeat
 				copy.Start, copy.Completed, copy.Exhausted = old.Start, old.Completed, old.Exhausted
+				if copy.Start == "" {
+					copy.Start = old.Next
+				}
+				a.Todo.Repeat = &copy
+			}
+			if a.Todo.Repeat != nil && a.Todo.Repeat.Start == "" {
+				copy := *a.Todo.Repeat
+				copy.Start = copy.Next
 				a.Todo.Repeat = &copy
 			}
 			next, err := records.WithTodo(front, *a.Todo)
@@ -315,5 +323,6 @@ func RecordDeclarations() []provider.ToolDecl {
 		json.RawMessage(`{"type":"function","name":"write_record","description":"Save or revise a memo or knowledge document. For a new record use empty id and revision; Core allocates its id. For an edit use the id and latest revision from read_record and keep its kind. Supply the complete title and Markdown note. A stale revision or outside change is refused; read again before editing. Each saved change returns its id, revision and Markdown.","parameters":{"type":"object","properties":{"id":{"type":"string"},"revision":{"type":"string"},"kind":{"type":"string","enum":["memo","document"]},"title":{"type":"string"},"note":{"type":"string"}},"required":["id","revision","kind","title","note"],"additionalProperties":false}}`),
 	}
 	extendTodoDeclarations(declarations)
-	return append(declarations, recordActionDeclarations()...)
+	declarations = append(declarations, recordActionDeclarations()...)
+	return append(declarations, candidateDeclarations()...)
 }

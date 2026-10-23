@@ -174,4 +174,8 @@ func TestM2RecordRecurrencePromotionInstalledCore(t *testing.T) {
 	if err = db.QueryRowContext(h.ctx, "SELECT count(*) FROM conv_event WHERE scaffold_kind='record_change'").Scan(&notices); err != nil || notices != 2 {
 		t.Fatal("durable notices", notices, err)
 	}
+	var occurrences, completions int
+	if err = db.QueryRowContext(h.ctx, "SELECT count(*),coalesce(sum(json_extract(record,'$.occurrence.reason')='completed'),0) FROM work_ledger WHERE json_extract(record,'$.kind')='record_occurrence'").Scan(&occurrences, &completions); err != nil || occurrences != 2 || completions != 1 {
+		t.Fatal("recurrence ledger", occurrences, completions, err)
+	}
 }

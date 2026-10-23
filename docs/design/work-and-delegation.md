@@ -415,6 +415,26 @@ yearly with interval, by-day, by-month-day, count or until. Invalid rules are
 refused before publication. Timed recurrences use minute precision and the
 native timer's daylight-saving rules.
 
+The installed `propose_candidate` tool takes a source event id, exact quotation,
+title, note and confidence. An empty source refers to the current authenticated
+utterance. Core checks provenance and wording inside the fenced publication
+intent; source booleans and identities are not accepted as arguments. Direct
+owner commitments and self-directed requests with an exact matching action can
+pass the deterministic subset described in C-54. Unknown wording, unavailable
+sources, quotation mismatches and retracted evidence remain pending. The
+`list_candidates` tool returns durable numbered pages; confidence alone never
+adds a task. An automatic addition produces its saved record and undo handle,
+and undo cancels the new task without deleting its history. Replays do not
+repeat adoption. Three rejected additions in a recognized class retains later
+items of that class as candidates.
+
+Recurring completion and advancement append one `record_occurrence` work-ledger
+event in the same checkpoint as the saved version. The event names the old and
+new occurrences and the reason; it creates neither a new task nor a worker card.
+Editing only the current next occurrence preserves the original recurrence
+anchor. Changing the recurrence rule starts the future series at its new next
+occurrence. Core's counters remain inaccessible to tool arguments.
+
 `promote_memo` takes a memo id and current revision and changes only its record
 kind and planning fields. Its title, note, id and path survive promotion. The
 committed receipt and conversation notice carry an undo handle; `undo_record`

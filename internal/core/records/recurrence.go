@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thisisjun786/lina/internal/core/timers"
+	"github.com/thisisjun786/lina/kit/calendar"
 )
 
 func repeatTime(value, zone string) (time.Time, error) {
@@ -22,23 +22,23 @@ func repeatTime(value, zone string) (time.Time, error) {
 	}
 	return time.Parse(time.RFC3339, value)
 }
-func repeatSchedule(r Repeat) (timers.Schedule, time.Time, error) {
+func repeatSchedule(r Repeat) (calendar.Schedule, time.Time, error) {
 	zone := r.Zone
 	if zone == "" {
 		zone = "UTC"
 	}
 	current, err := repeatTime(r.Next, zone)
 	if err != nil {
-		return timers.Schedule{}, current, ErrAmbiguousDate
+		return calendar.Schedule{}, current, ErrAmbiguousDate
 	}
 	start := current
 	if r.Start != "" {
 		start, err = repeatTime(r.Start, zone)
 	}
 	if err != nil || r.Completed < 0 {
-		return timers.Schedule{}, current, ErrInvalid
+		return calendar.Schedule{}, current, ErrInvalid
 	}
-	s, err := timers.Recurrence(r.Rule, start, zone)
+	s, err := calendar.Recurrence(r.Rule, start, zone)
 	if err != nil {
 		return s, current, ErrInvalid
 	}

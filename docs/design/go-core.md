@@ -913,19 +913,49 @@ there is no separate client endpoint.
   completion, model-free advancement at Core restart, memo promotion and undo.
 - Recurrence uses the native timer parser's daily, weekly, monthly and yearly
   subset with interval, by-day, by-month-day, count and until. The public package
-  helper is `timers.Next(rule, from, zone)`. Existing series retain their start
+  helper is `timers.Next(rule, from, zone)`, backed by the pure shared
+  `kit/calendar` calculator so the two store families do not import each other. Existing series retain their start
   anchor; a completion-relative series anchors at completion. `repeat.zone`
   is an optional IANA name, defaulting to UTC for existing records. Core owns
   the stored start, completed count and exhausted flag; tool arguments cannot
   set them. Exhaustion stops scheduling without treating absence as completion.
   Completion commits the future occurrence in the same file and clears its
-  dependencies, waiting state, planned start and checklist ticks. Core runs
+  dependencies, waiting state, planned start and checklist ticks. The same
+  publication checkpoint appends a `record_occurrence` event to the work ledger,
+  including the prior occurrence, next occurrence, time and completion/advance
+  reason. These events create no delegated work card. Core runs
   overdue advancement at startup and each minute without a model or worker.
   Date-only occurrences remain due throughout their civil day. Timed
   recurrences have minute precision; the shared calendar resolves DST gaps
   and folds as C-26 specifies. Tests cover month ends, leap years and zone gaps.
 - Reminders and pre-warnings are timer rows (C-26).
-- Candidates are rows with a source, confidence and numbered handle. An automatic addition writes an undo handle to the undo log.
+- Candidates are durable rows with a ledger source, exact quotation, confidence
+  and numbered handle. Installed `propose_candidate` and `list_candidates`
+  tools share the existing person/agent authority, leases and effect receipts.
+  An empty source resolves to the authenticated turn's retained input event.
+  Models and clients cannot supply source facts, owner, speaker or source hash.
+  At the fenced publication-intent write, Core resolves native provenance,
+  owner, agent, speaker, replay/view lineage, visibility and the exact retained
+  utterance again. Large immutable bodies are verified outside the transaction;
+  their metadata is re-read inside it. Missing, foreign, retracted, secret-bearing
+  or mismatched evidence remains pending without a record or undo operation.
+- The deterministic language subset recognizes direct owner commitments
+  (`I will`, `I'll`, `I promise to`, `내가 …할게`, `나는 …하겠다`) and owner-directed
+  requests (`Remind me to`, `I need to`). The full utterance must match the quote,
+  and the proposed title must match its action after whitespace/case normalization.
+  Other wording and sources stay candidates. This does not treat a model's
+  interpretation or confidence as a source fact. Existing open titles and source
+  links prevent duplicate additions. An undone source hash cannot be reintroduced
+  through a replay alias. Three rejected additions in one recognized class is
+  the initial fallback threshold; further items remain candidates. Numbered
+  pages retain unanswered proposals and define an explicit scope for presenting
+  a group, without automatically accepting it.
+- Automatic additions commit their numbered candidate, record and undo receipt
+  through the existing publication journal. A committed intent is the recovery
+  decision; restart finishes that exact decision without dispatching a tool or
+  reclassifying source text. The headless `e2e/m2/record-candidates.json` scenario
+  covers verified admission, forged and missing evidence, duplicate refusal,
+  notices, undo, and pending/rejected persistence after restart.
 
 `promote_memo` and `undo_record` use the existing authenticated record-tool
 registry. Promotion preserves the memo's id, path, title and note, sets its kind

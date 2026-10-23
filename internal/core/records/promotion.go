@@ -21,6 +21,7 @@ type recordOperation struct {
 	Handle, Person, Agent, Notice string
 	Undo                          bool
 	Candidate                     int64
+	Validate                      func(context.Context, *canon.Tx) error `json:"-"`
 }
 
 type RecordNotice struct{ Handle, Agent, Notice, UndoRevision string }

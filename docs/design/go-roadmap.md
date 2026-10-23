@@ -450,7 +450,11 @@ completion conditions to repository tests and installed Core scenarios.
   advancement, plus memo promotion and revision-guarded undo. Its
   [installed-Core scenario](../../e2e/m2/record-recurrence-promotion.json) verifies
   these record operations and model-free recurrence recovery after restart.
-  Candidate source admission remains part of #156's completion requirements.
+  [The candidate scenario](../../e2e/m2/record-candidates.json) verifies automatic
+  addition from retained owner evidence, pending unverifiable sources, duplicate
+  refusal, undo notices and restart retention. Source facts are re-resolved by
+  Core inside its fenced publication intent; no source-registration endpoint is
+  added.
 - #674 permits planning edits that preserve delegated completion. Its
   [installed-Core scenario](../../e2e/m2/todo-completed-planning.json) checks
   saved tags, priority and checklist, the completed state and restart durability.

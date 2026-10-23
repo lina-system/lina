@@ -58,8 +58,9 @@ type Store struct {
 	db   Canon
 	// PublicationHook is a fault-injection seam for deterministic crash tests.
 	// Production leaves it nil. An error after the intent is durably recoverable.
-	PublicationHook func(string) error
-	Now             func() time.Time
+	PublicationHook       func(string) error
+	Now                   func() time.Time
+	ReadCandidateMaterial func(context.Context, string, int64) (string, error)
 }
 
 var recordsMu sync.Mutex // Includes every handle, including the result saver.
@@ -252,6 +253,8 @@ func (s *Store) commitLocked(ctx context.Context, c Change, a Actor, operation *
 	if err != nil {
 		return "", err
 	}
+	var occurrence *canon.RecordOccurrence
+	requestedCompletion := candidate.state == "completed"
 	parent, files, err := s.snapshot(ctx)
 	if err != nil {
 		return "", err
@@ -288,6 +291,16 @@ func (s *Store) commitLocked(ctx context.Context, c Change, a Actor, operation *
 		if err != nil {
 			return "", err
 		}
+		if previous.todo != nil && previous.todo.Repeat != nil && candidate.todo != nil && candidate.todo.Repeat != nil {
+			before, after := previous.todo.Repeat, candidate.todo.Repeat
+			if before.Next != after.Next || before.Completed != after.Completed || before.Exhausted != after.Exhausted {
+				reason := "advanced"
+				if requestedCompletion && previous.state != "completed" {
+					reason = "completed"
+				}
+				occurrence = &canon.RecordOccurrence{Record: c.ID, At: now.UTC().Format(time.RFC3339Nano), From: before.Next, Next: after.Next, Reason: reason, Exhausted: after.Exhausted}
+			}
+		}
 		if old.Path == c.Path && bytes.Equal(old.Data, c.Data) {
 			return rev, nil
 		}
@@ -322,8 +335,15 @@ func (s *Store) commitLocked(ctx context.Context, c Change, a Actor, operation *
 	}
 	p := publication{Parent: parent, Commit: commit, Path: c.Path, Blob: blob, OldPath: old.Path, OldBlob: oldBlob}
 	p.Operation = operation
+	p.Occurrence = occurrence
 	intent = true
 	if err = s.remember(ctx, token, p); err != nil {
+		if errors.Is(err, errCandidatePending) {
+			intent = false
+			if releaseErr := s.release(ctx, token); releaseErr != nil {
+				return "", errors.Join(ErrUncertain, releaseErr)
+			}
+		}
 		return "", err
 	}
 	if err = s.publicationStep("intent"); err != nil {

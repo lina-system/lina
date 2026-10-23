@@ -2,6 +2,7 @@
 package records
 
 import (
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ func TestRepeatRefusesUnsupportedRules(t *testing.T) {
 }
 
 func TestRecurringCompletionAdvancesFuture(t *testing.T) {
-	s, _, _ := setup(t)
+	s, _, db := setup(t)
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	s.Now = func() time.Time { return now }
 	c := Change{ID: "repeat", Path: "inbox/repeat.md", Data: todoDocument("repeat", "repeat: {\"rule\":\"FREQ=MONTHLY\",\"next\":\"2020-01-31\"}\n")}
@@ -34,6 +35,12 @@ func TestRecurringCompletionAdvancesFuture(t *testing.T) {
 	next, err := time.Parse(time.DateOnly, d.todo.Repeat.Next)
 	if err != nil || !next.After(now) || d.todo.State != "open" {
 		t.Fatalf("completion did not advance a single live record to the future: %+v, %v", d.todo, err)
+	}
+	var n int
+	if err = db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM work_ledger WHERE task_id='record:repeat' AND json_extract(record,'$.kind')='record_occurrence' AND json_extract(record,'$.occurrence.reason')='completed'").Scan(&n)
+	}); err != nil || n != 1 {
+		t.Fatal("completion missing from work ledger", n, err)
 	}
 }
 

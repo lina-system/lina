@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-package timers
+package calendar
 
 import (
 	"strings"
