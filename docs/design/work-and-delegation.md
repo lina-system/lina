@@ -1120,8 +1120,16 @@ Card observations are coalesced at 250 ms intervals, with a final flush before
 the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
-The adapter advertises progress, completion and work tools. Native ACP approval/question
-routing, steering, quota and recovery remain separate integrations;
+The adapter advertises progress, completion, work tools, approvals and questions. ACP
+requests use the existing worker authority and waiting-card bridge, preserving
+the originating conversation. Cards identify the ACP worker; Codex cards retain
+their existing behavior. Form fields preserve string, number, integer, boolean
+and enum values; multi-select arrays use a text field containing a JSON array.
+Core validates the requested schema before consuming an accepted form answer.
+Secret and unsupported forms are declined without requesting secret input.
+A pending native decision leaves the prompt's work tools available; prompt
+completion expires both decision and work-tool requests.
+Steering, quota and recovery remain separate integrations;
 requesting a capability that is not implemented fails before dispatch.
 
 #### Claude Code through ACP
@@ -1312,6 +1320,7 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 - When the worker asks for an approval (for Codex: a command, a file change or permissions; for an ACP worker: `session/request_permission`), the adapter routes the request to the originating conversation, and the person's answer goes back to the worker. On a remote device the Node relays both.
 - Scheduled workers use the same conversation bridge. A worker's request withdrawal stops its matching question or approval card. Later answers cannot reach the worker, and other tasks keep their pending decisions. The scheduled task returns to working only when no request remains pending; withdrawal does not release its execution capacity or write-area lease.
 - For an ACP worker, the person's once maps to the worker's `allow_once` option and deny to `reject_once`. LINA never selects `allow_always` or `reject_always`, because they change the rules the worker remembers in the person's setup. A cancel answers every pending request of the turn with `cancelled`, as the protocol requires.
+- ACP answers are bound to the active session, turn, process generation and binding epoch. Duplicate, stale and foreign answers cannot reach the worker. If an offered once option is missing or ambiguous, Core cancels the turn rather than selecting a remembered option. Approval answers use the existing durable claim before delivery; a restart stops unused approvals, and form answers are never replayed.
 - The worker's own sandbox and approval mode decide what it asks. LINA imposes no sandbox or approval policy of its own on a worker.
 - Arguments of the worker's tools are never rewritten (`updatedInput` is never used).
 - A linked worktree shares the common `.git`, so the protected-ref check is what keeps a worker's result to its own branch (see GitHub writes and merges).

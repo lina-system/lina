@@ -56,6 +56,8 @@ type Adapter struct {
 	state           worker.ThreadState
 	version         string
 	turn            uint64
+	nextRequest     uint64
+	requests        map[string]*pendingDecision
 	cancelled       bool
 	result          Result
 	events          chan worker.Event
@@ -72,7 +74,7 @@ func New(cfg Config) *Adapter {
 }
 func (a *Adapter) Name() string { return a.cfg.Profile.Name }
 func (a *Adapter) Capabilities() worker.CapabilitySet {
-	return worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools}
+	return worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.AskQuestions}
 }
 func (a *Adapter) Events() <-chan worker.Event                        { return a.events }
 func (a *Adapter) Quota(context.Context) ([]provider.QuotaRow, error) { return nil, nil }
@@ -267,20 +269,16 @@ func (a *Adapter) Interrupt(ctx context.Context, t worker.Thread, why worker.Rea
 		a.mu.Unlock()
 		return ErrThread
 	}
-	if a.state != worker.Active {
+	if a.state != worker.Active && a.state != worker.Waiting {
 		a.mu.Unlock()
 		return fmt.Errorf("%w: ACP session is not active", worker.ErrInputRefused)
 	}
 	c := a.client
 	a.cancelled = true
+	a.requests = nil
+	a.state = worker.Active
 	a.mu.Unlock()
 	return c.Cancel(ctx, wire.SessionID(t.ID))
-}
-func (a *Adapter) Answer(ctx context.Context, t worker.Thread, answer worker.Answer) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return a.answerTool(t, answer)
 }
 func (a *Adapter) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadSnapshot, error) {
 	if err := ctx.Err(); err != nil {
@@ -294,7 +292,7 @@ func (a *Adapter) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 	if !a.matches(t) {
 		return worker.ThreadSnapshot{}, ErrThread
 	}
-	return worker.ThreadSnapshot{Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Capabilities: a.Capabilities(), Output: a.result.Output}, nil
+	return worker.ThreadSnapshot{Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Capabilities: a.Capabilities(), Output: a.result.Output, Pending: a.pendingLocked()}, nil
 }
 func (a *Adapter) Result() Result {
 	a.mu.Lock()

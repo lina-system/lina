@@ -144,7 +144,7 @@ func (s *toolServer) call(request clientapi.WorkerToolRequest) clientapi.WorkerT
 	for _, tool := range a.spec.Tools {
 		known = known || tool.Name == request.Name && tool.Namespace == "lina"
 	}
-	if !known || a.state != worker.Active || len(a.pending) >= 32 {
+	if !known || a.state != worker.Active && a.state != worker.Waiting || len(a.pending) >= 32 {
 		a.mu.Unlock()
 		return refused
 	}
@@ -179,7 +179,7 @@ func (a *Adapter) answerTool(t worker.Thread, answer worker.Answer) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	pending, ok := a.pending[answer.RequestID]
-	if !a.matches(t) || a.state != worker.Active || !ok || pending.thread != t {
+	if !a.matches(t) || a.state != worker.Active && a.state != worker.Waiting || !ok || pending.thread != t {
 		return ErrThread
 	}
 	var response struct {

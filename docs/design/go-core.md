@@ -2397,6 +2397,14 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   It creates no run for a refused session; the next opened session uses the next actual run generation.
   Other start errors retain their uncertain outcome.
   The Cursor installed-Core scenario in `e2e/m2/cursor_worker_test.go` exercises this path.
+- ACP approval and form events use the existing `boot` worker bridge. The
+  adapter retains single-use request handles and validates offered once options
+  and form values before sending. Snapshots expose pending requests as waiting;
+  cancel and prompt completion invalidate them. Core's existing authority claim
+  consumes approval answers before delivery and stops unused answers on restart.
+  No new storage format or migration is introduced. The headless scenario in
+  `e2e/m2/acp_decisions_test.go` exercises owner answers through the running Core.
+
 - Each ACP session declares one `lina worker-tools` stdio MCP server in `session/new`.
   Core owns a private Unix socket for that session. The bridge authenticates a per-session token and routes calls as bound `worker.ToolCallEvent` observations to the existing work-tool handlers.
   Only active turns admit calls; turn completion expires pending calls, and session teardown removes its socket. No worker configuration is installed or changed.

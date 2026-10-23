@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	acpadapter "github.com/thisisjun786/lina/internal/core/worker/acp"
 	"github.com/thisisjun786/lina/kit/protocol"
 	wire "github.com/thisisjun786/lina/third_party/codex-app-server/upstream"
 )
@@ -31,6 +32,13 @@ func (e *workerSession) askWorker(event worker.Event, text string) {
 func (e *workerSession) requestQuestion(event worker.Event) {
 	req := event.Question
 	switch req.Method {
+	case "elicitation/create":
+		form, err := acpadapter.ParseForm(req.Params)
+		if err != nil {
+			e.bridgeFailure(err)
+			return
+		}
+		e.presentQuestion(event, req.ID, "acp", form.Message, form.Fields, form.Targets)
 	case "item/tool/requestUserInput":
 		var params wire.ToolRequestUserInputParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -175,14 +183,27 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 		}
 		return outcome, err
 	}
+	var raw json.RawMessage
+	if item.kind == "acp" {
+		form, parseErr := acpadapter.ParseForm(item.event.Question.Params)
+		if parseErr == nil {
+			raw, parseErr = form.Reply(answer)
+		}
+		if parseErr != nil {
+			e.mu.Unlock()
+			return protocol.DecisionOutcomeRefused, nil
+		}
+
+	}
 	// Claim before sending: loss of the RPC is not permission to replay an answer.
 	outcome := protocol.DecisionOutcomeResolved
 	item.card.Card.Outcome = &outcome
 	event, requestID, kind := item.event, item.requestID, item.kind
 	fields := item.card.Form.Fields
 	e.mu.Unlock()
-	var raw json.RawMessage
 	switch kind {
+	case "acp":
+		// Validated before claiming the card; raw retains the typed form values.
 	case "tool":
 		text := ""
 		if answer.Values != nil {

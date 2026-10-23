@@ -183,7 +183,7 @@ func TestAllStopReasonsAndWorkerCancel(t *testing.T) {
 }
 func TestInvalidStartDoesNotLaunch(t *testing.T) {
 	a, ctx, l, s := fixture(t)
-	s.Required = worker.CapabilitySet{worker.RequestApprovals}
+	s.Required = worker.CapabilitySet{worker.SteerTurn}
 	if _, err := a.Start(ctx, l, s); err == nil {
 		t.Fatal("unsupported capability accepted")
 	}
@@ -241,10 +241,12 @@ func agentFixture() {
 		send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "fixture", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": text}}}})
 	}
 	var pending json.RawMessage
+	var requestMode string
 	for scan.Scan() {
 		var f struct {
 			ID     json.RawMessage
 			Method string
+			Result json.RawMessage
 			Params struct {
 				Cwd        string
 				McpServers []json.RawMessage
@@ -254,7 +256,7 @@ func agentFixture() {
 		if json.Unmarshal(scan.Bytes(), &f) != nil {
 			os.Exit(12)
 		}
-		if f.Method == os.Getenv("ACP_ERROR_METHOD") {
+		if f.Method != "" && f.Method == os.Getenv("ACP_ERROR_METHOD") {
 			send(map[string]any{"jsonrpc": "2.0", "id": f.ID, "error": map[string]any{"code": json.RawMessage(os.Getenv("ACP_SESSION_ERROR")), "message": "private-account-detail"}})
 			continue
 		}
@@ -276,6 +278,15 @@ func agentFixture() {
 		case "session/prompt":
 			text := f.Params.Prompt[0].Text
 			switch text {
+			case "permission", "question":
+				pending, requestMode = f.ID, text
+				method := "session/request_permission"
+				params := json.RawMessage(`{"sessionId":"fixture","toolCall":{"toolCallId":"write","title":"Write result.txt","rawInput":{"path":"result.txt"}},"options":[{"optionId":"persist-allow","kind":"allow_always","name":"Always"},{"optionId":"one-allow","kind":"allow_once","name":"Once"},{"optionId":"persist-deny","kind":"reject_always","name":"Never"},{"optionId":"one-deny","kind":"reject_once","name":"Deny"}]}`)
+				if text == "question" {
+					method = "elicitation/create"
+					params = json.RawMessage(`{"sessionId":"fixture","mode":"form","message":"Choose a name","requestedSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}`)
+				}
+				send(map[string]any{"jsonrpc": "2.0", "id": "decision", "method": method, "params": params})
 			case "exit":
 				os.Exit(0)
 			case "unknown":
@@ -292,6 +303,18 @@ func agentFixture() {
 			default:
 				reply(f.ID, map[string]any{"stopReason": text})
 			}
+		case "":
+			if string(f.ID) != `"decision"` {
+				os.Exit(15)
+			}
+			os.WriteFile("answer.json", f.Result, 0600)
+			if strings.Contains(string(f.Result), "cancelled") || strings.Contains(string(f.Result), `"action":"cancel"`) {
+				continue
+			}
+			if requestMode == "permission" && strings.Contains(string(f.Result), "one-allow") {
+				os.WriteFile("result.txt", []byte("approved"), 0600)
+			}
+			reply(pending, map[string]any{"stopReason": "end_turn"})
 		case "session/cancel":
 			progress("Cancel received")
 			for {

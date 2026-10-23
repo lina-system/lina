@@ -33,6 +33,22 @@ and C-29/C-60 in [Go Core](../../../../docs/design/go-core.md#work-engine).
   and remains opt-in. Synthetic tests do not verify a vendor release. This
   change implements the existing ACP contract, not a CRW or Hermes port.
 
+## Approval and form routing (#748)
+
+- **Seen:** The pinned ACP v1 types distinguish `allow_once`, `reject_once`,
+  `allow_always` and `reject_always`. `kit/acp` retains request handles, consumes
+  each answer once, expires them on prompt completion, and sends pending
+  cancellation replies before `session/cancel`. Core's existing worker bridge
+  authenticates owner answers, claims approvals before delivery and stops unused
+  answers across epochs. Its form values support strings, numbers and booleans.
+- **Inferred:** Bind each handle to its current Core thread and expose an opaque,
+  monotonically increasing request ID. Only select a unique offered once option;
+  reject permanent options even if supplied directly to `Answer`. A form's
+  declared schema must validate its answer before the handle is consumed.
+- **Unknown:** Synthetic tests do not establish vendor support for elicitation,
+  or verify a vendor release. This implements LINA's native ACP contract; no
+  Hermes, Honcho, LCM-X or CRW behavior is copied.
+
 ## Session work tools (#749)
 
 - **Seen:** LINA's existing Core work-tool handlers validate `work.Receipt` and

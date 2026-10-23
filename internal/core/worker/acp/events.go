@@ -29,8 +29,7 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 				permissions = nil
 				continue
 			}
-			if p != nil {
-				a.finish(th, worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure, Code: "approval_unsupported"})
+			if p != nil && !a.permission(th, p) {
 				return
 			}
 		case r, ok := <-requests:
@@ -38,8 +37,7 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 				requests = nil
 				continue
 			}
-			if r != nil {
-				a.finish(th, worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure, Code: "question_unsupported"})
+			if r != nil && !a.question(th, r) {
 				return
 			}
 		case result := <-replies:
@@ -60,6 +58,14 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 				}
 			}
 		drained:
+			// Requests are enqueued before the prompt reply. They are already expired
+			// in the shared client and must not become requests of the next turn.
+			for len(permissions) > 0 {
+				<-permissions
+			}
+			for len(requests) > 0 {
+				<-requests
+			}
 			if result.Err != nil {
 				a.finish(th, worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: "prompt_failed"})
 				return
@@ -138,7 +144,8 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 }
 func (a *Adapter) finish(th worker.Thread, f worker.Finish) {
 	a.mu.Lock()
-	if a.state == worker.Active {
+	a.requests = nil
+	if a.state == worker.Active || a.state == worker.Waiting {
 		close(a.turnEnded)
 	}
 	a.state = worker.Idle
