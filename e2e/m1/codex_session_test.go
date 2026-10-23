@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -508,50 +507,36 @@ func TestM2InstalledCodexLive(t *testing.T) {
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	// ContextPacket evidence and discovery results follow the current input.
-	// Skip those, but stop at a newer person or external input so a completion
-	// retained in history cannot consume a later turn.
-	var content string
-	for i := len(inputs) - 1; i >= 0; i-- {
-		var item struct{ Role, Content string }
-		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" && !fixtureContextEvidence(item.Content) {
-			content = item.Content
+	// History has no developer messages. The first developer item after the
+	// current input begins Core's ContextPacket, which can also contain user
+	// evidence. Classify the last user input before that packet, not retrieved
+	// context or the discovery call/results appended after it.
+	var item struct{ Role, Content string }
+	found := false
+	for _, raw := range inputs {
+		var next struct{ Role, Content string }
+		if json.Unmarshal(raw, &next) != nil {
+			continue
+		}
+		if next.Role == "developer" && found {
 			break
 		}
+		if next.Role == "user" {
+			item, found = next, true
+		}
 	}
-	if !strings.Contains(content, `<external_evidence origin="worker-session:`) {
+	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
 		return false
 	}
 	if result == "" {
 		emitResponse(w, "Worker finished.", true)
-	} else if strings.Contains(content, result) {
+	} else if strings.Contains(item.Content, result) {
 		emitResponse(w, "Worker outcome: "+result, true)
 	} else {
 		emitResponse(w, "Worker stopped.", true)
 	}
 	return true
 }
-
-// Core appends references to every ContextPacket item. Decode the external
-// envelope so its escaped reference array can be distinguished from input.
-func fixtureContextEvidence(content string) bool {
-	_, raw, ok := strings.Cut(content, "\n")
-	var evidence struct {
-		XMLName xml.Name `xml:"external_evidence"`
-		Text    string   `xml:",chardata"`
-	}
-	if !ok || xml.Unmarshal([]byte(raw), &evidence) != nil {
-		return false
-	}
-	const suffix = "\nReferences: "
-	index := strings.LastIndex(evidence.Text, suffix)
-	if index < 0 {
-		return false
-	}
-	var refs []struct{ ID string }
-	return json.Unmarshal([]byte(evidence.Text[index+len(suffix):]), &refs) == nil && len(refs) > 0 && refs[0].ID != ""
-}
-
 func receiveWorkerFollowups(t *testing.T, h *harness, c *clientapi.Client, count int) []protocol.Envelope {
 	t.Helper()
 	var frames []protocol.Envelope

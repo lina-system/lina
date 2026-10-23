@@ -205,3 +205,5 @@ func prepareScheduledManagerRuntime(t *testing.T, r *conversationRuntime, adapte
 		t.Fatal(err)
 	}
 }
+
+func (*scheduledManagerAdapter) Capabilities(provider.ModelRef) provider.CapabilitySet { return nil }

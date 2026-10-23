@@ -47,6 +47,13 @@ Failure coverage also includes:
   trailing context, tool discovery, later inputs and result text that appears
   only in retrieved context.
 
+- `TestM2WorkerDelayedCompletionOutput`: the model fixture selects the latest
+  scenario input or worker result even when user-role ContextPacket evidence
+  follows it. After recovery, a delayed first-turn completion arrives between
+  the second turn's output and finish. The scenario checks file read-back,
+  both stored outputs, one worker start, two worker turns and result reactions,
+  and a non-live result snapshot after another restart.
+
 - `TestM2TimersInstalledCore`: the scripted provider selects the latest input
   or tool result, skipping the following ContextPacket instructions and external
   evidence. Installed Core creates a job result and a reminder, saves changed
