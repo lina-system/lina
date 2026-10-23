@@ -23,12 +23,13 @@ type Operation struct {
 // Session contains connection facts established by Core. No request payload
 // supplies its person, epoch or decider eligibility.
 type Session struct {
-	ConnectionID string
-	Capabilities []protocol.Capability
-	PersonID     string
-	Epoch        uint64
-	ClientID     string
-	CanDecide    bool
+	ProtocolVersion string
+	ConnectionID    string
+	Capabilities    []protocol.Capability
+	PersonID        string
+	Epoch           uint64
+	ClientID        string
+	CanDecide       bool
 }
 
 // Result leaves envelope identity and correlation under the listener's control.

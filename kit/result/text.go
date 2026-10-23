@@ -25,6 +25,8 @@ func PlainText(b Body, m Measurer) string {
 		}
 	}
 	switch v := b.(type) {
+	case *Surface:
+		return v.plainText()
 	case *Summary:
 		for _, s := range v.Outline {
 			add(s.Heading)

@@ -26,3 +26,12 @@ The three operations use the existing tool registry, authority gate and leases, 
 ### CP-05 result save key
 
 The #104 implementation hashes the unambiguous tuple of result id, revision, `result_save` and the normalized destination; call ids, turns and boot epochs do not change it.
+
+### Generated cards
+
+`present_surface` uses the same result scope, authority and revision transaction.
+Its body is a bounded A2UI message batch. `PresentSurface` folds against the current
+surface privately, then `Present` rechecks the base revision while committing the
+whole body and text. A failed fold or a concurrent revision publishes nothing.
+`deleteSurface` becomes an empty tombstone; the result id and history remain.
+No database migration or renderer dependency is added.

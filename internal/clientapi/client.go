@@ -90,15 +90,19 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string, capabi
 	}()
 	clientID := rand.Text()
 	peer, platform := "lina-tui", runtime.GOOS+"/"+runtime.GOARCH
+	versions := []string{"1.0"}
+	if protocol.HasCapability(capabilities, protocol.SurfaceResultsCapability()) {
+		versions = []string{"1.1", "1.0"}
+	}
 	hello := protocol.Envelope{
-		Protocol: protocol.Protocol{Name: "client", Version: "1.0"},
+		Protocol: protocol.Protocol{Name: "client", Version: versions[0]},
 		Kind:     protocol.KindHello, MessageID: rand.Text(), AttemptID: rand.Text(),
 		Sender: protocol.Sender{Party: protocol.PartyClient, ID: clientID}, Epoch: "0",
 		SentAt: time.Now().UTC().Format(time.RFC3339Nano), EffectState: protocol.EffectNone,
 		SourceRefs: []protocol.SourceRef{},
 		Payload: protocol.Hello{
 			Party: protocol.PartyClient, ID: clientID, ProductVersion: productVersion, Peer: &peer, Platform: &platform,
-			ProtocolVersions: []string{"1.0"}, Capabilities: append([]protocol.Capability{}, capabilities...),
+			ProtocolVersions: versions, Capabilities: append([]protocol.Capability{}, capabilities...),
 		},
 	}
 	request := struct {
@@ -135,15 +139,16 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string, capabi
 	}
 	welcome, ok := envelope.Payload.(protocol.Welcome)
 	if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone ||
-		welcome.ProtocolVersion != "1.0" || welcome.MainID != envelope.Sender.ID || welcome.Epoch != envelope.Epoch {
+		!slices.Contains(versions, welcome.ProtocolVersion) || welcome.MainID != envelope.Sender.ID || welcome.Epoch != envelope.Epoch {
 		return nil, errors.New("invalid welcome")
 	}
-	seen := make(map[protocol.Capability]bool)
+	seen := make(map[[2]string]bool)
 	for _, granted := range welcome.Capabilities {
-		if seen[granted] || !slices.Contains(capabilities, granted) {
+		key := [2]string{granted.Name, granted.Version}
+		if seen[key] || !slices.ContainsFunc(capabilities, func(offered protocol.Capability) bool { return protocol.CapabilitySubset(granted, offered) }) {
 			return nil, errors.New("invalid granted capability")
 		}
-		seen[granted] = true
+		seen[key] = true
 	}
 
 	// Stop and join cancellation before clearing the handshake deadline. A

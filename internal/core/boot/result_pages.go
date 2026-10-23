@@ -24,6 +24,10 @@ func authoredResultWire(value result.Result, summary string) protocol.Result {
 		Title: value.Title, Summary: summary, Text: &text, RevisedBy: value.RevisedBy,
 		Provenance: protocol.ResultProvenance{AgentID: value.Provenance.AgentID, ConversationID: value.Provenance.ConversationID, TurnID: value.Provenance.TurnID, TaskID: value.Provenance.TaskID},
 	}
+	if value.Type == result.SurfaceType {
+		body := json.RawMessage(value.Body)
+		p.Body = &body
+	}
 	if value.Completion != nil {
 		p.Completion = &protocol.CompletionStatus{State: protocol.CompletionState(value.Completion.State), Label: value.Completion.Label}
 	}
@@ -48,7 +52,8 @@ func resultTextPage(text string, offset int64) (string, *json.Number, error) {
 
 func (r *conversationRuntime) resultOperations() map[protocol.Kind]clientsrv.Operation {
 	return map[protocol.Kind]clientsrv.Operation{
-		protocol.KindResultGet: {Capability: clientsrv.ConversationCapability, Handle: r.readResultPage},
+		protocol.KindResultGet:     {Capability: clientsrv.ConversationCapability, AdditionalCapabilities: []protocol.Capability{clientsrv.ResultsCapability}, Handle: r.readResultPage},
+		protocol.KindSurfaceAction: {Capability: clientsrv.ResultsCapability, Handle: r.surfaceAction},
 	}
 }
 

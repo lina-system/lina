@@ -488,7 +488,40 @@ The closed list of types for version 1.0:
 
 One more type, `app`, is reserved for a later view that a plugin supplies ([integrations.md](integrations.md)). It is not part of version 1.0, no party sends or accepts it, and its fallback is the tool's text result.
 
-Two types for generated UI, `surface` (an A2UI v0.9 card from LINA's catalog) and `mock` (a drawn mock whose body references its page bundle and PNG as assets), and the client kind `surface_action` are reserved for a later minor version. Their rules are in [surfaces.md](surfaces.md#generated-ui). Until that version no party sends or accepts them; a client that does not render them gets their `text`. A `surface` body is data under the rules below: it names catalog widgets and data, never code or a URL to fetch.
+Client **1.1** adds `surface`, an A2UI v0.9 card, and `surface_action`. The
+canonical [client schema](../../protocol/schema/client/1.0/envelope.json) retains
+its original path and defines both 1.0 and 1.1. A 1.0 envelope cannot contain a
+surface or surface action. `mock` remains reserved for a later minor version.
+
+A `surface` body has `version: "v0.9"`, `catalogId: "lina.cards"`,
+`catalogVersion: "1.0"`, `surfaceId`, `components`, `dataModel` and `deleted`.
+It contains one complete validated component tree rooted at `root`. Core folds
+one bounded batch of `createSurface`, `updateComponents`, `updateDataModel` and
+`deleteSurface` messages into one revision. A failed batch changes nothing.
+A deletion is a retained revision with `deleted: true`, empty components and
+data, and no actions. It remains readable in history and export.
+
+The `results` capability version `1.0` carries `types` and `catalogs` arrays in
+hello and welcome. The versioned catalog id is `lina.cards/1.0`. Welcome grants
+the intersection. A client negotiating 1.1 and this capability gets surface card
+fields and complete Core text; `body` is included only when it lists both
+`surface` and `lina.cards/1.0`. Other clients receive an ordinary text output
+item, including on replay. Existing 1.0 result behavior remains available.
+
+`surface_action` carries `result_id`, `revision`, `action`, `values` and
+`input_id`. Core resolves the person, agent and conversation from the authenticated
+connection and stored result. It validates the current revision and the exact
+fields of the named action. A bound input uses its widget's value schema;
+constant context values must match the card. A single choice accepts a string
+or a one-item list and is delivered as a string. Unknown actions or fields are
+`malformed`, old revisions are `stale_revision`, inaccessible results are
+`out_of_scope`, and a missing capability is `capability_not_negotiated`.
+
+Core records the press as owner input and inserts it in the durable conversation
+inbox in the same transaction as a revision recheck. `input_id` deduplicates
+retries. A press is queued for the next turn; it does not steer the active turn
+or answer an approval. Subsequent tools use their normal authority checks.
+The detailed rendering contract is [Generated cards](surfaces.md#generated-cards).
 
 Rules:
 
