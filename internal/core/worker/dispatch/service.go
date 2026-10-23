@@ -89,6 +89,8 @@ type Record struct {
 	PR              *antigravity.PullRequest   `json:"pull_request,omitempty"`
 	Denied          []antigravity.DeniedAction `json:"denied_actions,omitempty"`
 	Announced       bool                       `json:"announced"`
+	ChangedFiles    []string                   `json:"changed_files,omitempty"`
+	DesignText      map[string]string          `json:"design_at_base,omitempty"`
 }
 
 // TaskDefinition exposes the actual assigned branch while retaining the

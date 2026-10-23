@@ -14,7 +14,9 @@ import (
 )
 
 func (s *Session) Start(ctx context.Context, l lease.Lease, spec worker.StartSpec) (worker.Thread, error) {
-	s.control.Lock()
+	if err := s.control.Lock(ctx); err != nil {
+		return worker.Thread{}, err
+	}
 	defer s.control.Unlock()
 	if err := lease.Do(ctx, l, func(context.Context) error { return nil }); err != nil {
 		return worker.Thread{}, err
@@ -151,7 +153,9 @@ func (s *Session) bound(t worker.Thread, turn bool) error {
 	return nil
 }
 func (s *Session) Input(ctx context.Context, t worker.Thread, in worker.Input) error {
-	s.control.Lock()
+	if err := s.control.Lock(ctx); err != nil {
+		return errors.Join(worker.ErrInputRefused, err)
+	}
 	defer s.control.Unlock()
 	if strings.TrimSpace(in.Text) == "" {
 		return errors.Join(worker.ErrInputRefused, errors.New("empty worker input"))
@@ -200,7 +204,9 @@ func (s *Session) Interrupt(ctx context.Context, t worker.Thread, why worker.Rea
 	default:
 		return errors.New("invalid interrupt reason")
 	}
-	s.control.Lock()
+	if err := s.control.Lock(ctx); err != nil {
+		return err
+	}
 	defer s.control.Unlock()
 	s.mu.Lock()
 	err := s.bound(t, true)
@@ -219,7 +225,9 @@ func (s *Session) Interrupt(ctx context.Context, t worker.Thread, why worker.Rea
 	return s.call(ctx, string(wire.ClientRequestTurnInterruptMethodTurnInterrupt), wire.V2TurnInterruptParams{ThreadId: t.ID, TurnId: t.TurnID}, &response)
 }
 func (s *Session) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadSnapshot, error) {
-	s.control.Lock()
+	if err := s.control.Lock(ctx); err != nil {
+		return worker.ThreadSnapshot{}, err
+	}
 	defer s.control.Unlock()
 	s.mu.Lock()
 	err := s.bound(t, false)

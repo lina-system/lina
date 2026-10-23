@@ -59,7 +59,8 @@ func Migrations() []Migration {
 		{Version: 45, SQL: recordOperationsSchema},
 		{Version: 46, SQL: WorkSwitchSchema},
 		{Version: 47, SQL: handoffsSchema},
-		{Version: 48, SQL: workerRecoverySchema},
+		{Version: 48, SQL: workReviewsSchema},
+		{Version: 49, SQL: workerRecoverySchema},
 	}
 }
 
@@ -93,7 +94,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{20, "conversation_order"},
 		{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
 		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
-		{31, "worker_dispatch"}, {48, "worker_recovery"},
+		{31, "worker_dispatch"}, {49, "worker_recovery"},
 		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 
 		{34, "waiting_decisions"},
@@ -103,6 +104,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
 		{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
 		{30, "authority_merges"},
+		{48, "work_reviews"},
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
 		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
 		{37, "work_events"}, {37, "work_records"},

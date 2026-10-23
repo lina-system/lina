@@ -39,7 +39,8 @@ func assertClaudeReceipt(t *testing.T, h *harness, mode string) {
 			Result    string
 		}
 		PR *struct {
-			Head string `json:"headRefOid"`
+			Head   string                    `json:"headRefOid"`
+			Checks []struct{ Status string } `json:"statusCheckRollup"`
 		} `json:"pull_request"`
 	}
 	if err = json.Unmarshal(raw, &evidence); err != nil {
@@ -62,8 +63,8 @@ func assertClaudeReceipt(t *testing.T, h *harness, mode string) {
 			t.Fatalf("receipt must retain result and PR: %s", raw)
 		}
 	} else if mode == "pending" {
-		if card.Receipt.Outcome != "blocked_needs_input" || evidence.PR != nil {
-			t.Fatal("pending checks became delivery")
+		if card.Receipt.Outcome != "blocked_needs_input" || evidence.PR == nil || len(evidence.PR.Checks) != 1 || evidence.PR.Checks[0].Status != "IN_PROGRESS" || card.Verdict != "" || card.Applied {
+			t.Fatal("pending evidence was lost or became accepted delivery")
 		}
 	} else if card.Receipt.Outcome != "failed" {
 		t.Fatal("failed worker became delivery")
