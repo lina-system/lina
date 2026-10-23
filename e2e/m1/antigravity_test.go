@@ -160,10 +160,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 				if scenario.Conformance {
 					encoded, _ := json.Marshal(req.Input)
-					manager := false
-					for _, tool := range req.Tools {
-						manager = manager || tool.Name == "coding_decision"
-					}
+					manager := toolReachable(req.Tools, "coding_decision")
 					var last struct{ Type string }
 					if len(req.Input) > 0 {
 						_ = json.Unmarshal(req.Input[len(req.Input)-1], &last)
