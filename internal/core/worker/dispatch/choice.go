@@ -13,24 +13,34 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
+	"github.com/thisisjun786/lina/internal/core/worker/claudecode"
 	"github.com/thisisjun786/lina/internal/core/worker/codex"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
 type Factory struct {
-	Name string
-	Open func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error)
+	Name     string
+	Explicit bool // Accept a named selection in a new work definition.
+	Chooser  bool // Participate when the work definition omits a worker.
+	Rules    bool // Accept priorities in the provisional choice table.
+	Open     func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error)
 }
 
 func AntigravityFactory(cfg Config) Factory {
-	return Factory{Name: "antigravity", Open: func(ctx context.Context, l lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+	return Factory{Name: "antigravity", Explicit: true, Chooser: true, Rules: true, Open: func(ctx context.Context, l lease.Lease) (worker.Adapter, func(context.Context) error, error) {
 		a := antigravity.New(antigravity.Config{Binary: cfg.Binary, Environment: cfg.Environment, Epoch: cfg.Epoch, Leaser: cfg.Activities})
 		return a, a.Close, nil
 	}}
 }
+func ClaudeFactory(cfg Config) Factory {
+	return Factory{Name: "claude", Explicit: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+		a := claudecode.New(claudecode.Config{Binary: cfg.ClaudeBinary, Environment: cfg.Environment, Epoch: cfg.Epoch, Leaser: cfg.Activities})
+		return a, a.Close, nil
+	}}
+}
 func CodexFactory(binary string) Factory {
-	return Factory{Name: "codex", Open: func(ctx context.Context, l lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+	return Factory{Name: "codex", Chooser: true, Rules: true, Open: func(ctx context.Context, l lease.Lease) (worker.Adapter, func(context.Context) error, error) {
 		a, err := codex.Open(ctx, l, codex.Config{Executable: binary})
 		if err != nil {
 			return nil, nil, err
@@ -278,6 +288,10 @@ func mergeQuotaObservations(prior, incoming []provider.QuotaRow) []provider.Quot
 // unknown/absent rows remain usable. Each selected session is owned by this
 // attempt, and every unused probe is closed before handoff.
 func (s *Service) selectWorker(ctx context.Context, l lease.Lease, r Record) (worker.Adapter, func(context.Context) error, error) {
+	factories := s.workersFor(r)
+	if len(factories) == 0 && (r.Definition.Worker != "" || r.ReturnReceipt != "") {
+		return nil, nil, errors.New("worker unavailable")
+	}
 	type opened struct {
 		a     worker.Adapter
 		close func(context.Context) error
@@ -290,7 +304,7 @@ func (s *Service) selectWorker(ctx context.Context, l lease.Lease, r Record) (wo
 			v.close(context.Background())
 		}
 	}()
-	for _, f := range s.workersFor(r) {
+	for _, f := range factories {
 		cached, err := s.quota(ctx, f.Name)
 		if err != nil {
 			return nil, nil, err
