@@ -153,7 +153,7 @@ func (w *capacityWorld) Execute(ctx context.Context, a work.Action) (work.Observ
 	proof := work.Proof{Revision: a.Revision, Ref: filepath.Join(w.root, a.Revision), Passed: passed}
 	out := work.Observation{Status: work.OutcomeSucceeded, Proof: proof}
 	if a.Kind == work.CheckCriterion {
-		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: proof.Ref, Passed: passed}
+		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &work.CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: proof.Ref, Passed: passed}
 	}
 	return out, nil
 }
