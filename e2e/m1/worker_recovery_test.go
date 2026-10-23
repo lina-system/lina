@@ -139,13 +139,14 @@ func recoveryWorkerFixture() {
 			}
 			steered = true
 			// Persist real work, but emit no event that could repair Core's binding.
-			_ = os.WriteFile(filepath.Join(dir, "followup-result.txt"), []byte("Follow-up work survived."), 0600)
 			file, err := os.OpenFile(filepath.Join(dir, "steer-count"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 			if err != nil {
 				os.Exit(91)
 			}
 			_, _ = file.WriteString("1")
 			_ = file.Close()
+			// The artifact is the crash barrier: publish it after the send count.
+			_ = os.WriteFile(filepath.Join(dir, "followup-result.txt"), []byte("Follow-up work survived."), 0600)
 			if mode != "steer_pending" {
 				reply(map[string]any{"turnId": expected})
 			}
