@@ -92,6 +92,24 @@ jobs:
             cat "$RUNNER_TEMP/signature.log"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check the signature flags
+        working-directory: native/macos/unlock-plugin
+        env:
+          TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          report=$(codesign -dvvv build/LinaUnlock.bundle 2>&1)
+          printf '%s\n' "$report"
+          # The hardened runtime stays on in both paths; only the team comes from
+          # the Developer ID identity.
+          if ! grep -Eq 'flags=0x[0-9a-f]+\(([a-z]+,)*runtime(,[a-z]+)*\)' <<<"$report"; then
+            echo 'the bundle is missing the hardened runtime flag' >&2
+            exit 1
+          fi
+          if [[ "$LINA_SIGNING" == 'true' ]]; then
+            grep -Fxq "TeamIdentifier=$TEAM_ID" <<<"$report" ||
+              { echo "the bundle is not signed for the Developer ID team" >&2; exit 1; }
+          fi
       - name: Keep the bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
