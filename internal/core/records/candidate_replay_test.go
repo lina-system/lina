@@ -12,6 +12,7 @@ import (
 )
 
 func TestCandidateAliasesCannotRepeatFinishedAdoption(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"completed", "canceled"} {
 		for _, alias := range []string{"replay", "view", "chain"} {
 			t.Run(state+"/"+alias, func(t *testing.T) {
