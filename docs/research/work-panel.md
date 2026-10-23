@@ -85,6 +85,14 @@ Complaints in public trackers:
 - In C, one tracker returns 519 issues for "subagent visibility" and 586 for "todo list" (full-text search, noisy). Typical complaints: you cannot see what a subagent does or whether it is stuck; no progress for 15 minutes or more; background output floods the main chat; the checklist shows only 5 items or goes stale; week-old or idle items vanish from the list; grouping by repository buries active work; a needs-input dot stays after the work finished; users ask for a progress board beside the chat.
 - In D: a waiting mark shown after the process died; tasks that die with no notice; a list that needs a compact mode past 10 sessions; no alert when a confirmation is needed; a flood of notifications on startup.
 
+## Too much work
+
+On 2026-10-23 the owner also asked for a way to adjust when there is too much work. The evidence for each part:
+
+- **Limits exist everywhere, but hidden limits confuse.** Our prototype caps jobs per host and refuses a task when no local slot is free; one host still ran 17 jobs at once. B caps 5 tasks per model lane and a global max(8, 2 × cores), and queues the rest first in, first out. Its users report sessions stuck "waiting" until they found the setting, and a limit of 1 that silently overflowed to fallback models. Products in C cap concurrent tasks by plan (3 to 60) or keep 3 sessions live. So the limit is shown when the person sets it, and a waiting card says why and its place.
+- **Lists need a compact form and a state filter.** In D, users ask for a compact mode past 10 sessions. In C, filters by state (needs attention, archived) and groups by state are common, and users ask for waiting and just-finished items at the top. Complaints about items that silently drop off the list mean that folding must keep a count and never hide anything without saying so.
+- **The person sets order and pause; the machine enforces them.** The orchestrators decide readiness in code. Our design already keeps capacity and dispatch in Core. Order, pause and the run limit become recorded commands that apply on the next scheduling pass, so their effect can be checked from the ledger rather than from timing.
+
 ## What changed in the proposal
 
 | Proposal | Evidence | Decision |
@@ -98,6 +106,7 @@ Complaints in public trackers:
 | Order: needs you, running, waiting outside, done; fold done; cap rows | Products group by state, cap rows with "+N more" and never hide running rows | Kept, with one change: the overflow row gives only the hidden count and the hidden needs-you count, under the owner's wording rule. |
 | A count such as "2 at once" on a parallel stage | The owner's wording rule: a few words per stage; [the owner-session research](m4-owner-agent-sessions.md) finds that status reports and notices must be short and stripped | Changed. The label names the first step and the number of the others. |
 | Elapsed time | The owner's card; products show an age on every row; complaints about work that looks hung | Kept on the 일's card only. Worker rows under a stage show the worker and its state word, without time; run records stay in Details. |
+| Adjusting when there is too much work | The owner's addition of 2026-10-23; hidden caps and silent overflow in B; compact-mode and filter requests in C and D | Added: compact view and state filter; priority up and down, pause, resume and stop on a card; a run limit, automatic by default, with each waiting card's reason and place. Core enforces them on the next scheduling pass. |
 | The model's own checklist as the plan display | Two products turned it off by default; users call it stale | Not used. The stage list comes from the ledger, and Now changes only on a step or wait event. |
 
 ## Follow-up measurement

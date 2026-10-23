@@ -579,8 +579,8 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Done when: every fetched record is reported imported, lost or unsupported; each is mapped to a LINA id once; a failed switch is rolled back explicitly; no product path resolves a source id.
 - Depends on: G2-01, G2-17, G2-22. Design refs: [work-and-delegation.md](work-and-delegation.md#operational-switch).
 
-**G3-19 Work panel and stage list.** One manager per 일 with its steps as a graph in the work ledger; the TUI work panel, a sidebar with one card per 일 (name, elapsed time, what it is doing now) that opens to a numbered stage list, never a graph.
-- Done when: a step-graph revision is admitted or refused whole, and a refused step name holds no id; the frontier and the stage list are the same for the same ledger; a done stage never reopens; a worker session ends when its step lands; the checks E1 to E9 of T-16 pass in a 120x34 PTY; the running count counts lines, not tasks.
+**G3-19 Work panel and stage list.** One manager per 일 with its steps as a graph in the work ledger; the TUI work panel, a sidebar with one card per 일 (name, elapsed time, what it is doing now) that opens to a numbered stage list, never a graph; the person's priority, pause, stop and run limit, enforced by Core.
+- Done when: a step-graph revision is admitted or refused whole, and a refused step name holds no id; the frontier and the stage list are the same for the same ledger; a done stage never reopens; a worker session ends when its step lands; rank, pause and the run limit take effect on the next scheduling pass; the checks E1 to E14 of T-16 pass in a 120x34 PTY; the running count counts lines, not tasks.
 - Depends on: G1-18, G2-02, G2-13, G3-09. Design refs: C-55, C-57, T-07, T-12, T-16; [work-and-delegation.md](work-and-delegation.md#step-graph), [work-and-delegation.md](work-and-delegation.md#stages), [surfaces.md](surfaces.md#progress-at-a-glance).
 
 ### 3.D Evidence and phase acceptance

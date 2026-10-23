@@ -16,7 +16,7 @@ This contract covers:
 - splitting work into tasks, the step graph of a goal and its stage list, area leases, parallel hand-off, completion events, stall handling and the running list
 - workers: the coding tools the user installed or signed in to (Codex, Claude Code, Antigravity and Cursor), the adapter boundary, the Codex adapter, compatibility, readiness, assignment, control and approvals
 - the task packet (the work definition handed to the worker), LINA's work tools and the completion receipt of a worker, the worker's review and CI fixes, and the manager session's check of a delivery against the work definition before Core merges or closes
-- run to done: the goal above its tasks, its done condition and lifecycle, the next-action table, waits on the outside world, capacity from host load, recovery, evidence before close, the cases that stop and ask, and what the person sees, for code and non-code work alike
+- run to done: the goal above its tasks, its done condition and lifecycle, the next-action table, waits on the outside world, capacity from host load, the order, pause and run limit the person sets, recovery, evidence before close, the cases that stop and ask, and what the person sees, for code and non-code work alike
 - effects and unknown outcomes inside work
 - GitHub work on delegated tasks: what the worker writes, and LINA Core's merge or close
 - the progress display data (work cards, progress lines and the running list), observation, handover and discovery of work, and what the person is told of work: outcomes and decisions
@@ -1416,6 +1416,17 @@ Every ready task starts at once, limited only by the person's quota and by what 
 - When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work. Before claiming a queued worker action, including after restart or an authorization wait, Core rechecks the current host report, worker availability, quota and capacity against the other reservations. An ineligible unstarted award is retired and its task returns to its runnable stage in the same transaction, without spending an attempt or recovery. Derivation places it again or records a host-capacity wait; claimed effects keep their reservations until observed.
 - A ready task that cannot start has one visible reason, as Parallel hand-off says.
 
+### Order, pause and run limit
+
+When there is more work than the person wants running, the person adjusts it from the work panel ([surfaces.md](surfaces.md#progress-at-a-glance)). Core decides and enforces order, limits and pausing without a model call; a client only shows the result and sends the person's choice. Each choice is a recorded command, and it takes effect on the next derivation after its commit, the next scheduling pass.
+
+- **Order.** Every goal has a rank. A new goal takes the last rank. Moving a goal up or down swaps its rank with its neighbour among the goals that are not final. Rank comes before the placement order of Capacity: ready steps of a higher-ranked goal are placed first, then the order of Capacity applies.
+- **Pause.** A paused goal gets no new step and no further input to its work threads, under the pause rule of Control; what is in progress ends its current turn and stops there. Its waits keep their deadlines. Resume returns it to its rank. A paused goal never resumes by itself.
+- **Stop.** Stopping a goal makes it `stopped` (see Lifecycle). It is final, keeps what it produced, and takes the person's confirmation.
+- **Run limit.** The run limit is how many goals may have a step in progress at once. By default it is automatic: on each pass Core sets it to what the free slots and the quota rows of Capacity can carry, and never below one. The person can set a number instead or return it to automatic. A goal past the limit starts no new step. Lowering the limit stops nothing that runs; goals past it start nothing new.
+- **Queue.** Goals that have a ready step but no run slot wait in rank order. Each knows its place and its one reason: the run limit (`slot`), a worker's quota (`quota`) or host load (`load`). The reason is `quota` or `load` when the automatic limit fell because of that report.
+- **Shown on the line.** A paused goal's Now is 일시정지 (paused). A queued goal's Now is its reason and place, such as "자리 대기 · 3번째" (waiting for a slot, 3rd). These follow 확인 필요 in the order of Now (see Progress line).
+
 ### Recovery
 
 - The goal definition is canon in the 일 or 목표 record in the records repository; the work ledger holds its execution state (criteria status and evidence, tasks, waits and state). A restart loses no goal: Core resolves the goal record by the id and revision referenced in the ledger and reads its execution state from the ledger, reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
@@ -1500,7 +1511,7 @@ LINA asks the person only in these cases. Each is one row in "Waiting for me", i
 4. Something only the person can do: sign, attend, pay in person, decide between people.
 5. A task whose one recovery failed, or a criterion that failed with no repair inside the scope.
 
-Everything else is decided by LINA and shown as in progress: whether to start, in what order, how many at once, which worker, whether to retry, how to split, and every reversible edit. A question that is not on this list is a defect of the work engine, as Default posture says.
+Everything else is decided by LINA and shown as in progress: whether to start, in what order, how many at once, which worker, whether to retry, how to split, and every reversible edit. A question that is not on this list is a defect of the work engine, as Default posture says. The person can still change the order, pause or the run limit at any time (see Order, pause and run limit); LINA never asks about them.
 
 Independent questions known for one goal are submitted as one row round,
 with one deadline and a default for every question. A second open round for
@@ -1702,7 +1713,7 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 
 - The stage of an 일 whose work runs as a goal is the current entry of its stage list (see Stages). Otherwise it is the stage of its plan that holds its open 할 일, and an 일 with no stages of its own has four: 설계 (design) while its plan is not confirmed, 만드는 중 (building) while any of its 할 일 is open, 확인 (checking) when every 할 일 has completed and the done condition is being checked, and 끝 (done) when the done condition is met. The bar is the share of its 할 일 that are completed, each counted equally.
 - The progress of a 목표 is the share of its 일 that are done, and its stage is that of its least advanced running 일.
-- Now is, in this order: 확인 필요 (needs you) and the subject of its row while a row of "Waiting for me" belongs to it; else the name of the earliest-started step in progress, followed by the number of the other steps in progress ("로그인 화면 수정 외 1"); else 대기 (waiting) and its one reason or wait; else the stage word 설계, 확인 or 끝. It changes only when a step starts or ends, or a wait or row opens or closes.
+- Now is, in this order: 확인 필요 (needs you) and the subject of its row while a row of "Waiting for me" belongs to it; else 일시정지 (paused) while the person has paused it; else the name of the earliest-started step in progress, followed by the number of the other steps in progress ("로그인 화면 수정 외 1"); else its queue reason and place, or 대기 (waiting) and its one reason or wait (see Order, pause and run limit); else the stage word 설계, 확인 or 끝. It changes only when a step starts or ends, a wait or row opens or closes, or the goal's pause, rank or place changes.
 - Started is when the goal was handed over, or when a run that serves no goal started. Elapsed time runs from it to now, or to the finish of a done line.
 - A value that cannot be observed is unknown and is shown as unknown, never as zero, as the rule of Plans says. A line says done only when the done condition is met.
 - A 목표 has a line when one of its 일 runs or something waits on the person. An 일 that belongs to a 목표 is a line below it, and an 일 that stands alone is a line of its own. A goal that is a single 할 일, and a background run that serves no goal, is a line of its own whose stage list is its one step. A finished item leaves the lines once the person has seen it.

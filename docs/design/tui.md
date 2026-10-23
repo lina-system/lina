@@ -609,6 +609,10 @@ The work panel is the primary way to see work in the TUI: a sidebar at the right
 - Cards keep Core's order: waiting on the person, running, waiting on something outside, done. Done cards fold into one row. When the cards do not fit, the last row (`…`, or `...` in ASCII) gives the number of hidden cards and, when any of them waits on the person, how many. Cards that wait on the person are hidden last. The numbers always equal the hidden cards.
 - The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time.
 
+**Views.** Ctrl+P on the focused panel switches between cards and a compact view of one row per 일: the name, then Now, then the elapsed time right-aligned; Now shrinks first. Left and Right change the state filter: all, needs you, running, waiting, done. The title shows the filter when it is not all, and fold and count rows then count only that state.
+
+**Adjusting.** On a selected card, Shift+Up and Shift+Down move the 일 up or down in priority, Space pauses or resumes it, and Delete asks to stop it: the card's second row asks for Enter to confirm, and any other key cancels. `-` and `+` lower and raise the run limit by one, and `0` returns it to automatic; the title shows the limit only when the person set one. These keys are not letters, so they work while a Korean input method is on. The TUI sends each choice to Core and changes nothing locally: a card moves, pauses or shows its place only when Core's update arrives ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)). While the panel has focus, the footer shows these keys as whole hints (T-10).
+
 **Stage list.** Enter on a card opens the 일 view in the panel: a row with the 일's name and a back mark (`‹`, or `<` in ASCII), then one row per entry of its stage list ([work-and-delegation.md](work-and-delegation.md#stages)):
 
 ```
@@ -628,7 +632,7 @@ The work panel is the primary way to see work in the TUI: a sidebar at the right
 - When the entries do not fit, the leading done entries fold into one row that keeps the last done entry visible, and the entries after the first next one fold into a count. The current stage never folds. Expanded steps fold like cards: waiting on the person first, then working, waiting and done, then a count row.
 - Ctrl+O opens the Details of the selected card, entry or step in the pager. Esc goes back one level: from the steps to the stage list, from the stage list to the cards, and from the cards to the composer with its draft.
 
-**Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place.
+**Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place.
 
 **Updates.** Topic updates replace cards in place. They never move focus, scroll the conversation, change the draft or close an opened 일 view. From Core's commit of a work event to the PTY frame that shows the changed card, the 95th percentile is at most 500 ms and the maximum at most 1 s with 50 일 running (P).
 
@@ -645,8 +649,13 @@ The work panel is the primary way to see work in the TUI: a sidebar at the right
 | E7 workers | Bracketed worker rows appear only under the expanded steps of an open entry. |
 | E8 latency | Over 50 step transitions injected at N = 50, the time from Core's recorded commit to the first PTY frame showing the change meets the bound above. |
 | E9 calm | During E8 the draft, the focus and the conversation's reading anchor are unchanged. |
+| E10 views | At N = 20 and 50, the compact view shows every shown card in one row with its name, Now and elapsed time, and each filter shows only cards in that state, with count rows counting only them. |
+| E11 order | After a move key, the next scheduling pass that Core records places the 일's ready steps by its new rank, and the next frame shows the card in its new place. |
+| E12 pause | After Space, the next pass dispatches no step of that 일 and its card shows 일시정지; after Space again its steps dispatch on the next pass; after Delete and Enter the 일 is `stopped`, and after Delete and another key nothing changes. |
+| E13 limit | Over 20 일 with the limit set to 1, to 3 and to automatic, after every pass at most the limit's number of 일 have a step in progress, and each 일 past it with no step in progress shows its reason and place in rank order; a changed limit takes effect on the next pass. |
+| E14 shortage | When a stub worker reports its quota exhausted, or the host report shows no free capacity, the next pass lowers the running count, and the cards past it show the quota or load reason with their place. |
 
-The run records N, the frames, the measured times and each result. A miss is investigated before a bound changes. The evaluation does not establish whether Core's Now lines and the manager's step names are good words for the person, which needs a check against human labels, or whether the person asks "what is running" less often; the research note names the field measurement for that.
+E11 to E14 read the pass from Core's ledger, not from timing. The run records N, the frames, the measured times and each result. A miss is investigated before a bound changes. The evaluation does not establish whether Core's Now lines and the manager's step names are good words for the person, which needs a check against human labels, or whether the person asks "what is running" less often; the research note names the field measurement for that.
 
 ## Results, cards and the pager (T-13)
 
