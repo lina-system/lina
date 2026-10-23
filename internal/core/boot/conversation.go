@@ -75,6 +75,8 @@ type acceptedSteering struct {
 }
 
 type conversationRuntime struct {
+	// Installed only by the isolated intake replay command, never by Core boot.
+	intakeReplay func(context.Context, ledger.Event) error
 	artifactInit    sync.Once
 	artifactMu      *sync.Mutex
 	exchangeStop    context.CancelFunc
@@ -562,6 +564,9 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 	}
 	if err = r.publish(ctx, protocol.KindItemDone, eventID, answer); err != nil {
 		return protocol.ItemDone{}, err
+	}
+	if r.intakeReplay != nil {
+		return answer, r.intakeReplay(ctx, event)
 	}
 	err = r.submitInput(event, receipt.ID, p.Mode == nil || *p.Mode == protocol.InputModeSteer, r)
 	return answer, err
