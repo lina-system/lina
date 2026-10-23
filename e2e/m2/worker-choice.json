@@ -21,7 +21,7 @@
     {
       "name": "quota-exhausted",
       "choice": "double-quota",
-      "expected": "worker_failed"
+      "expected": "quota"
     },
     {
       "name": "success",
