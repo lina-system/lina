@@ -1106,6 +1106,13 @@ One adapter drives every worker that speaks the Agent Client Protocol, version 1
 | Grok | `grok --no-auto-update agent stdio`, never with `--always-approve` | `grok --version`; its `initialize` puts the version only in `_meta` |
 | Added agent | The command and arguments the person entered | `agentInfo.version`, or unknown |
 
+Grok's installation and readiness version comes from `grok --version`. Its
+handshake observation separately records `_meta.agentVersion` and known standard
+capability names. Missing or malformed version metadata is unknown. Core retains
+no other handshake metadata, including host details, authentication descriptions
+or metadata nested inside capabilities. Advertised capabilities are observations;
+they do not enable operations the adapter has not implemented.
+
 - **Start.** Core starts the profile's command as a stdio child with the person's environment, removing only LINA's own model credential. `initialize` declares no file system or terminal capability, so the worker uses its own tools, and declares form elicitation. An answer other than protocol version 1 fails the handshake. The answered capabilities become the adapter's capability set: approvals and progress always, steering only with the steering extension, recovery only with `loadSession` or `session/resume`, quota only where a source below exists.
 - **Session.** `session/new` carries the worktree as `cwd` and LINA's tool server as the only entry of `mcpServers`; the worker's own MCP servers stay in its own configuration. LINA calls `session/set_config_option` only to apply a model or effort that the worker profile names, and never changes the session mode. The task packet goes out as the first `session/prompt`.
 - **Events.** Message, thought, tool-call and plan updates are progress; `usage_update` is usage; plan entries become stage summaries labelled as the worker's report. An unknown update keeps its JSON and never ends a turn. Sub-agent updates are unstable in version 1 and are not consumed; a worker's own sub-agents stay inside its turn.
@@ -1130,6 +1137,11 @@ Card observations are coalesced at 250 ms intervals, with a final flush before
 the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
+A JSON-RPC error reply to the prompt is an observed worker failure, including
+when the process exits immediately after replying. Core records the failed turn
+and an adapter-derived receipt without retaining the remote error message or
+data. The reply alone does not settle external effects: unresolved effects keep
+the existing recovery fence until reconciliation.
 The adapter advertises progress, completion, work tools, approvals and questions. ACP
 requests use the existing worker authority and waiting-card bridge, preserving
 the originating conversation. Cards identify the ACP worker; Codex cards retain

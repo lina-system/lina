@@ -36,6 +36,7 @@ func TestNameIsCommonKnowledge(t *testing.T) {
 
 func TestNameCorrectionsRetainIdentityAndAliasesAcrossAgents(t *testing.T) {
 	db := database(t)
+	defer func() { assertMemoryCitations(t, db) }()
 	in := proposal("A", "The computer is Cedar.")
 	in.Item.Kind = Name
 	in.Item.Subject = Subject{Kind: World, ID: "computer"}
