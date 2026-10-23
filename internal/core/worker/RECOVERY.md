@@ -51,3 +51,14 @@ without an exact turn remains held after restart. The separate
 `e2e/m2/worker-followup-recovery.json` scenario kills installed Core after a
 follow-up produces a file without notifications: an acknowledged turn is read
 back and its result delivered once, while a missing reply retains uncertainty.
+
+#1132 uses Codex's input admission callback under the adapter control lock to
+separate steering from a new turn, including completion between Core's first
+snapshot and input. Steering retains its exact turn, reservation and activity
+even when the reply, post-input snapshot or checkpoint fails. A definitive
+refusal restores the prior record. Adapters without admission callbacks retain
+the conservative new-turn intent. The follow-up recovery scenario also kills
+installed Core after steering without a reply or after a failed snapshot, then
+verifies exact-turn readback, one result delivery, reservation release and no
+replayed input. Model and worker endpoints are synthetic; Core, files and SQLite
+are real.

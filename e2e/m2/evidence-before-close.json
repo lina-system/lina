@@ -1,0 +1,8 @@
+{
+  "modes": ["evidence-mismatch", "evidence-changed", "evidence-later"],
+  "criteria": [
+    {"id":"event","statement":"The event is at 09:00 in room A","check":{"kind":"read","method":"calendar.read","target":"calendar:event","expected":{"time":"09:00","place":"A"}}},
+    {"id":"citations","statement":"The document's cited passage resolves","check":{"kind":"citation","method":"document.citations","target":"document"}},
+    {"id":"answer","statement":"The document answers the question","check":{"kind":"judgment","method":"document.judge","target":"document","rubric":"Contains the requested worker result"}}
+  ]
+}

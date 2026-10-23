@@ -180,7 +180,7 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 	h, start := alphaOwnerHarness(t, true)
 	workdir := t.TempDir()
 	core := start()
-	c, _ := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
+	c, conversation := conversationClient(t, h, protocol.Capability{Name: "waiting", Version: "1.0"})
 	waitingTopic := "waiting"
 	if _, err := c.Subscribe(h.ctx, protocol.Subscribe{Topic: &waitingTopic}); err != nil {
 		t.Fatal(err)
@@ -205,17 +205,11 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 		switch p := frame.Payload.(type) {
 		case protocol.TurnState:
 			if p.Active != nil && !*p.Active {
-				workerText, _ := alphaLastWorkerOutput(t, h)
-				if alphaNameRequest(workerText) {
-					spokenQuestion = workerText
-				}
+				spokenQuestion = alphaSpokenQuestion(t, h, conversation)
 			}
 		case protocol.ItemDone:
 			if p.Speaker != nil && *p.Speaker == protocol.ConversationSpeakerAgent && p.Text != nil {
-				workerText, _ := alphaLastWorkerOutput(t, h)
-				if alphaNameRequest(workerText) {
-					spokenQuestion = workerText
-				}
+				spokenQuestion = alphaSpokenQuestion(t, h, conversation)
 			}
 		case protocol.ApprovalRequest:
 			alphaLiveApproval(t, h, terminal, p)
@@ -242,7 +236,9 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 	} else {
 		// A worker can finish its turn with a question. Verify its durable source,
 		// then answer through the same conversation so LINA must route the reply.
-		alphaScreen(t, h, terminal, "question-in-conversation", alphaNameRequest, "")
+		alphaScreen(t, h, terminal, "question-in-conversation", func(screen string) bool {
+			return alphaQuestionVisible(spokenQuestion, screen)
+		}, "")
 		h.keys(terminal, "\x1b[200~이름은 민준이야. 그 답을 같은 Codex 작업자에게 전하고 작업을 계속해 줘.\x1b[201~\r")
 	}
 	// A spoken question leaves the worker idle until its continuation starts;
@@ -368,6 +364,63 @@ func alphaNameRequest(text string) bool {
 		}
 	}
 	return false
+}
+
+func alphaQuestionVisible(reply, screen string) bool {
+	// The request and handoff can both mention a name. Match a question from
+	// the committed reply, allowing Markdown removal and terminal wrapping.
+	plain := func(text string) string {
+		text = strings.NewReplacer("**", "", "__", "", "`", "", "*", "", "#", "").Replace(text)
+		return strings.Join(strings.Fields(text), "")
+	}
+	for _, line := range strings.Split(reply, "\n") {
+		if alphaNameRequest(line) && strings.Contains(plain(screen), plain(line)) {
+			return true
+		}
+	}
+	return false
+}
+
+func alphaSpokenQuestion(t *testing.T, h *harness, conversation string) string {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	var reply string
+	err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		// An ItemDone or inactive TurnState is only a wake-up. The reply must
+		// belong to this worker completion and its own completed turn.
+		rows, err := tx.QueryContext(h.ctx, `
+SELECT coalesce(json_extract(w.body,'$.output'),''), coalesce(e.body,'')
+FROM conv_event w
+JOIN inbox i ON i.native_id=w.id AND i.source='worker-finish' AND i.conversation=w.conversation_id
+JOIN turn_runs t ON t.inbox_id=i.id AND t.conversation=w.conversation_id AND t.state='completed'
+JOIN conv_event e ON e.parent_id=w.id AND e.conversation_id=w.conversation_id AND e.agent_id=w.agent_id
+WHERE w.conversation_id=? AND w.scaffold_kind='worker_completion'
+ AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'')=''
+ORDER BY e.rowid DESC`, conversation)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var workerText, text string
+			if err := rows.Scan(&workerText, &text); err != nil {
+				return err
+			}
+			if alphaNameRequest(workerText) && alphaNameRequest(text) {
+				reply = text
+				break
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reply
 }
 
 func alphaLastWorkerOutput(t *testing.T, h *harness) (string, int) {
