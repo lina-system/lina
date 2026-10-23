@@ -9,6 +9,7 @@ import (
 )
 
 func TestMockCannotBypassChecksThroughPresentResult(t *testing.T) {
+	t.Parallel()
 	s, _, _, _ := setup(t)
 	body := result.Mock{Request: "Tasks", Checklist: []result.MockItem{{ID: "tasks", Description: "Tasks", Action: "none"}}, Page: result.AssetRef{ID: "page", Revision: 1}, PNG: result.AssetRef{ID: "png", Revision: 1}, StopReason: "all_passed"}
 	for _, id := range []string{"elements", "controls", "tokens", "network", "errors", "layout_390", "layout_1280"} {
@@ -21,6 +22,7 @@ func TestMockCannotBypassChecksThroughPresentResult(t *testing.T) {
 }
 
 func TestMockPublicationIdempotenceAndRevisionOwnership(t *testing.T) {
+	t.Parallel()
 	s, _, _, _ := setup(t)
 	body := result.Mock{Request: "Tasks", Checklist: []result.MockItem{{ID: "tasks", Description: "Tasks", Action: "none"}}, Page: result.AssetRef{ID: "page", Revision: 1}, PNG: result.AssetRef{ID: "png", Revision: 1}, StopReason: "all_passed"}
 	for _, id := range []string{"elements", "controls", "tokens", "network", "errors", "layout_390", "layout_1280"} {
