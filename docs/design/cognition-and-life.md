@@ -127,6 +127,7 @@ Persona storage, revisions and injection are defined in [conversation-and-memory
 Jev is an optional fast judge that only Atropos uses. Atropos uses it only for closed choices that rules can't settle:
 
 - the intent of this utterance and the response mode
+- which item the person's input is about, when the rules of [What a message is about](conversation-and-memory.md#what-a-message-is-about) leave it open
 - the ranking of context candidates
 - where a request goes when the routing rules of [work-and-delegation.md](work-and-delegation.md) leave it open: an answer in the conversation, a task for a worker, a background run for research or analysis, work for a device's Node, or a question to the person
 - which installed worker takes a task, when the choice rules of [work-and-delegation.md](work-and-delegation.md#choosing-the-worker) leave it open, among the workers whose adapters LINA supports and that have quota and capacity left
