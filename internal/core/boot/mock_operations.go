@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
@@ -25,7 +26,18 @@ func (r *conversationRuntime) mockOperation(ctx context.Context, session clients
 	}
 	p := e.Payload.(protocol.MockRequest)
 	agent, ok := strings.CutPrefix(p.ConversationID, "main:")
-	if !ok || agent == "" {
+	if !ok {
+		if err := r.db.Read(ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT agent FROM result_heads WHERE id=? AND person=? AND conversation=?", p.ResultID, session.PersonID, p.ConversationID).Scan(&agent)
+		}); err != nil {
+			return clientsrv.Result{}, outsideManagement()
+		}
+		binding, err := r.channelBindingFor(ctx, p.ConversationID, agent)
+		if err != nil || binding.Person != session.PersonID || binding.Unreachable {
+			return clientsrv.Result{}, outsideManagement()
+		}
+	}
+	if agent == "" {
 		return clientsrv.Result{}, outsideManagement()
 	}
 	if _, err := r.agents.Get(ctx, agent); err != nil {
@@ -108,7 +120,8 @@ func (r *conversationRuntime) mockOperation(ctx context.Context, session clients
 		if engine == nil {
 			return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorUnavailable}
 		}
-		scope.TurnID = "mock-build:" + *e.IdempotencyKey
+		keyHash := sha256.Sum256([]byte(session.PersonID + "\x00" + *e.IdempotencyKey))
+		scope.TurnID = "mock-build:" + hex.EncodeToString(keyHash[:])
 		goal, err := mockGoal(scope, value, body, *p.Target, *p.Repositories, *e.IdempotencyKey)
 		if err != nil {
 			return clientsrv.Result{}, malformedManagement()

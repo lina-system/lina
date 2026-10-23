@@ -12,7 +12,9 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/records"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
+	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/result"
 )
 
@@ -95,6 +97,23 @@ func TestMockOperationsKeepScopeHistoryAndWorkReference(t *testing.T) {
 	p.Body, _ = json.Marshal(body)
 	if _, err = store.PresentMock(t.Context(), scope, p, run); err != nil {
 		t.Fatal(err)
+	}
+	tool := r.buildMockTool("build-turn")
+	args, _ := json.Marshal(mockBuildInput{ResultID: first.ID, Revision: 2, Target: "screen", Repositories: repos})
+	call := provider.ToolCall{Name: "build_mock", ID: "native-build", Arguments: string(args)}
+	if out := tool.Execute(t.Context(), call); out.Code != loop.OK {
+		t.Fatalf("conversation handoff: %+v", out)
+	}
+	if out := tool.Execute(t.Context(), call); out.Code != loop.OK {
+		t.Fatal("native handoff replay failed")
+	}
+	state, err := r.workEngine.engine.Snapshot(t.Context())
+	if err != nil || len(state.Goals) != 2 {
+		t.Fatal("native handoff did not create exactly one work goal")
+	}
+	call.Arguments = strings.TrimSuffix(string(args), "}") + `,"person_id":"other"}`
+	if out := tool.Execute(t.Context(), call); out.Code != loop.Invalid {
+		t.Fatal("model supplied an authority identity")
 	}
 	read(session, request, "")                    // old revision stays readable
 	read(session, build, protocol.ErrorMalformed) // build requires the stable native key

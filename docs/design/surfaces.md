@@ -664,9 +664,11 @@ Client 1.1's `mocks` capability reads any retained revision, downloads its pinne
 page/PNG asset in bounded chunks, and requests a work handoff. A build names the
 current revision, screen or mini-app target and repository scope, with an
 idempotency key. Core carries the complete mock reference and checklist into the
-normal work engine and coding-owner route. It grants no new effect or deployment
+normal work engine and coding-owner route. The conversation uses `build_mock`
+for the same operation, binding the person, agent and conversation from its turn. It grants no new effect or deployment
 authority. Earlier revisions remain readable but cannot initiate a new build.
-Text-only TUI/channel adapters receive every checklist item and explicit
+The connected person may also export a mock from an owned, still-bound channel
+conversation. Text-only TUI/channel adapters receive every checklist item and explicit
 `lina mock-export` actions. Image-capable clients can fetch the pinned PNG;
 the current channel sender contract carries text only.
 
