@@ -160,8 +160,7 @@ func (m miniAppEffects) Run(ctx context.Context, req miniapps.EffectRequest) (mi
 	if err != nil {
 		return miniapps.EffectResult{State: "refused", Code: string(out.State)}, nil
 	}
-	switch out.State {
-	case tools.Applied:
+	if out.State == tools.Applied {
 		return miniapps.EffectResult{State: "applied", Summary: summary(tool, req.Name)}, nil
 	}
 	return miniapps.EffectResult{State: "refused", Code: string(out.State)}, nil
