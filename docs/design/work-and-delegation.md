@@ -1114,6 +1114,11 @@ The lifecycle adapter in #747 registers `claude-acp`, `cursor`, `gemini` and
 `grok` with `dispatch_work`; `claude` retains the headless adapter pending the
 worker evaluation. Each attempt records its version again after session
 initialization and reports an unverified version while continuing the task.
+Gemini CLI installation reads its version through `gemini --acp` and
+`initialize`, without opening a session or requiring sign-in. Dispatch uses the
+same profile and shared ACP adapter. A `session/new` authentication refusal
+reports Gemini as needing sign-in; a successful prompt still needs observed
+Git and PR evidence before Core derives a completion receipt.
 Synthetic protocol tests do not add vendor versions to the verified list.
 Progress is masked and recorded on the active work card as `worker_report`,
 using the existing ledger. Stream fragments retain their masking context in
