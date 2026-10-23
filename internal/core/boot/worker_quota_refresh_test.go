@@ -34,8 +34,7 @@ func TestRoutedWorkerQuotaRefreshesDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := newConversationView(root, root.agent, root.conversation)
-	r.workers.sessions["thread"] = &workerSession{adapter: &quotaRefreshProbe{}, origin: r}
-	t.Cleanup(func() { delete(r.workers.sessions, "thread") })
+	addWorkerFixtureSessions(t, r, map[string]*workerSession{"thread": {adapter: &quotaRefreshProbe{}, origin: r}})
 	in, err := workerSchema("worker_quota", json.RawMessage(`{"session":"thread"}`))
 	if err != nil {
 		t.Fatal(err)
