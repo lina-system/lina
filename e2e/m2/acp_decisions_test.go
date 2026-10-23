@@ -37,7 +37,7 @@ import (
 // GitHub boundary are synthetic; dispatch, worktrees, commits and cards are real.
 func TestACPDecisionsThroughRunningCore(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("installed worker capacity requires Linux host sampling")
+		t.Skip("requires Linux and bubblewrap binding /proc/loadavg")
 	}
 	bwrap, err := exec.LookPath("bwrap")
 	if err != nil {
