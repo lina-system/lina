@@ -86,6 +86,9 @@ func recoveryWorkerFixture() {
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
 			if turns == 1 {
 				_ = os.WriteFile(filepath.Join(dir, "recovery-result.txt"), []byte("The worker preserved its work."), 0600)
+				if mode == "disconnect_restart" {
+					return // Persisted work survives loss of both worker and Core.
+				}
 				if mode == "disconnect" {
 					go func() {
 						for {
@@ -116,7 +119,7 @@ func recoveryWorkerFixture() {
 				time.Sleep(time.Millisecond)
 			}
 			status := "failed"
-			if mode == "completed" || mode == "disconnect" {
+			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" {
 				status = "completed"
 			}
 			items := []any{map[string]any{"type": "agentMessage", "id": "message", "text": "Retained worker result."}}
@@ -136,6 +139,7 @@ func recoveryWorkerFixture() {
 // one continuation, a second-failure decision, retained files and no third turn
 // across restart. Its disconnect case confirms successful output after a
 // transport-loss notice without another worker turn or duplicate response.
+// disconnect_restart also kills Core after the provisional reaction commits.
 // No authenticated worker account is used.
 func TestM2WorkerRecovery(t *testing.T) {
 	var scenario struct {
@@ -160,7 +164,7 @@ func TestM2WorkerRecovery(t *testing.T) {
 					return
 				}
 				step := calls.Add(1)
-				if mode == "disconnect" && step == 4 {
+				if (mode == "disconnect" || mode == "disconnect_restart") && step == 4 {
 					context, err := json.Marshal(req.Input)
 					if err != nil || !bytes.Contains(context, []byte("Retained worker result.")) {
 						t.Error("confirmed worker output missing from result response context")
@@ -207,6 +211,9 @@ func TestM2WorkerRecovery(t *testing.T) {
 				// Admit and react to the transport failure before terminal readback.
 				waitRecovery(t, h, func() bool { return workerRecoveryReactions(t, h) == 1 })
 			} else {
+				if mode == "disconnect_restart" {
+					waitRecovery(t, h, func() bool { return workerRecoveryReactions(t, h) == 1 })
+				}
 				core.killAndWait() // SIGKILL: no graceful worker or Core checkpoint.
 			}
 			before := calls.Load()
@@ -254,7 +261,7 @@ func TestM2WorkerRecovery(t *testing.T) {
 				}
 				return rec.State == want && rec.ObservedAt > 0
 			})
-			if mode == "disconnect" {
+			if mode == "disconnect" || mode == "disconnect_restart" {
 				db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 				if err != nil {
 					t.Fatal(err)
@@ -287,11 +294,11 @@ func TestM2WorkerRecovery(t *testing.T) {
 			}
 			client.Close()
 			reactions := 0
-			if mode == "completed" || mode == "disconnect" {
+			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" {
 				reactions = 1
 			}
 			priorReactions := 0
-			if mode == "disconnect" {
+			if mode == "disconnect" || mode == "disconnect_restart" {
 				priorReactions = 1
 			}
 			waitRecovery(t, h, func() bool {
