@@ -58,7 +58,9 @@ Failure coverage also includes:
 - `TestM3WorkPanelEvaluation` records the fixed T-16 corpus
   ([`work-panel.json`](../m3/work-panel.json)) through installed Core and the
   real TUI at 120x34 in both languages and glyph modes, then reports E1 to E14
-  from the frames and Core's own card order. `TestM3WorkPanelChecksRejectWrongFrames`
+  from the frames and Core's own card order. The driver admits each 일's corpus
+  graph as a step-graph revision before recording its work, and checks Core's
+  projected stage list against the graph. `TestM3WorkPanelChecksRejectWrongFrames`
   is its self-test: it breaks one thing per check and requires that check to
   fail. A check whose input the build does not publish yet reports missing
   input, never a pass.

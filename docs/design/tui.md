@@ -704,13 +704,16 @@ E11 to E14 read the pass from Core's ledger, not from timing. The run records N,
 
 The harness and its self-test live in `TestM3WorkPanelEvaluation` and
 `TestM3WorkPanelChecksRejectWrongFrames`. The fixture carries the fixed cases,
-the graph corpus and the name corpus; the driver seeds each case into installed
-Core's ledger as a fixture manager's recorded work with stub worker sessions,
-reads Core's own card order and fields as its oracle, and records every settled
-120x34 frame in both languages and glyph modes. A check whose input the build
-does not publish yet is reported as missing and never as a pass: E4 and E8 to
-E9 need the injected step transitions of #771, E6 and E7 the opened 일 view of
-#770, and E11 to E14 the scheduling passes of #772 and #773. The self-test
+the graph corpus and the name corpus. The driver acts as the fixture manager: it
+admits each 일's graph through Core's goal engine as a step-graph revision, then
+records the 일's work with a stub worker session against that goal. It reads
+Core's own card order, card fields and projected stage list as its oracle — the
+stage list must match the corpus graph in steps, depth and parallel groups, so a
+lost blocker fails the run — and records every settled 120x34 frame in both
+languages and glyph modes. A check whose input the build does not publish yet is
+reported as missing and never as a pass: E4 and E8 to E9 need the injected step
+transitions of #771, E6 and E7 the opened 일 view of #770, and E11 to E14 the
+scheduling passes of #772 and #773. The self-test
 builds a well-formed recording, changes one thing per check, and requires that
 check to fail and the others to stay green except where they read the same
 evidence.

@@ -173,7 +173,6 @@ func parsePanelFrame(f panelFrame, c panelCase) frameFacts {
 			y++
 		}
 		body := actionMark.ReplaceAllString(row, "")
-		card.Body = body
 		if m := elapsedTail.FindStringSubmatchIndex(body); m != nil {
 			card.Elapsed = body[m[2]:m[3]]
 			body = strings.TrimRight(body[:m[0]], " ")
@@ -181,6 +180,9 @@ func parsePanelFrame(f panelFrame, c panelCase) frameFacts {
 			card.Elapsed = unknown
 			body = strings.TrimRight(strings.TrimSuffix(body, unknown), " ")
 		}
+		// Body is the card's content without its elapsed column, so a reader
+		// cannot mistake a time for activity.
+		card.Body = body
 		card.Name = strings.TrimSpace(body)
 		out.Cards = append(out.Cards, card)
 	}
@@ -509,6 +511,13 @@ func panelHasNow(facts frameFacts, name, now string) bool {
 	return false
 }
 
+// panelElapsedOnly reports a string that is nothing but an elapsed value, which
+// is what a compact row truncated after its name would be left with.
+func panelElapsedOnly(text string) bool {
+	_, ok := panelElapsedMinutes(strings.TrimSpace(text))
+	return ok
+}
+
 func checkCounts(r *panelRecording) panelVerdict {
 	v := panelVerdict{Check: "E5 counts"}
 	v.Input = true
@@ -789,8 +798,10 @@ func checkViews(r *panelRecording) panelVerdict {
 					// The compact row carries the name and Now together; the card
 					// view's Now line is E2's check.
 					if f.View == "compact" {
-						rest := strings.TrimSpace(strings.TrimPrefix(shown.Body, panelClipCells(card.Name, 6)))
-						if rest == "" || strings.HasSuffix(rest, panelClipCells(card.Name, 6)) {
+						// The compact row holds the name, then Now. A row that
+						// holds only the name has lost its activity.
+						activity := strings.TrimSpace(strings.TrimPrefix(shown.Body, panelClipCells(card.Name, 6)))
+						if activity == "" || strings.HasPrefix(activity, "${") || panelElapsedOnly(activity) {
 							v.Detail = fmt.Sprintf("%s/%s: the compact row for %q has no Now", c.Name, f.Label, shown.Name)
 							return v
 						}
@@ -851,12 +862,11 @@ func checkOrder(r *panelRecording) panelVerdict {
 				v.Detail = fmt.Sprintf("%s: the moved 일 did not change rank", c.Name)
 				return v
 			}
-			for _, started := range pass.Started {
-				for _, other := range pass.Started {
-					if rankOf(pass.Rank, started) > rankOf(pass.Rank, other) {
-						v.Detail = fmt.Sprintf("%s: pass %d started a lower-ranked 일 first", c.Name, pass.Seq)
-						return v
-					}
+			// Started is the dispatch order, so each start must outrank the next.
+			for i := 1; i < len(pass.Started); i++ {
+				if rankOf(pass.Rank, pass.Started[i-1]) > rankOf(pass.Rank, pass.Started[i]) {
+					v.Detail = fmt.Sprintf("%s: pass %d started a lower-ranked 일 first", c.Name, pass.Seq)
+					return v
 				}
 			}
 			if len(pass.Started) > 0 && pass.Started[0] != pass.Moved {
@@ -976,15 +986,10 @@ func checkLimit(r *panelRecording) panelVerdict {
 			v.Input = true
 			limits[pass.Limit] = true
 			// Steps already running when the limit falls finish; nothing new
-			// starts past it, and the 일 with a step in progress never exceed it.
-			inProgress := append([]string{}, pass.Running...)
-			for _, id := range pass.Started {
-				if !contains(inProgress, id) {
-					inProgress = append(inProgress, id)
-				}
-			}
-			if pass.Limit > 0 && len(inProgress) > pass.Limit {
-				v.Detail = fmt.Sprintf("%s: pass %d leaves %d 일 with a step in progress under the limit %d", c.Name, pass.Seq, len(inProgress), pass.Limit)
+			// starts past it, so only a pass that starts a step must stay within
+			// the limit.
+			if pass.Limit > 0 && len(pass.Started) > 0 && len(pass.Running)+len(pass.Started) > pass.Limit {
+				v.Detail = fmt.Sprintf("%s: pass %d starts a step with %d running under the limit %d", c.Name, pass.Seq, len(pass.Running), pass.Limit)
 				return v
 			}
 			for id, reason := range pass.Reasons {
@@ -1037,7 +1042,9 @@ func checkShortage(r *panelRecording) panelVerdict {
 				v.Detail = fmt.Sprintf("%s: the automatic limit was not lowered after %s", c.Name, pass.Shortage)
 				return v
 			}
-			if len(pass.Running) > pass.Limit || len(pass.Started) > 0 {
+			// Healthy running steps continue; the lowered limit only stops new
+			// starts and holds the running count once they end.
+			if len(pass.Started) > 0 || len(pass.Running) > pass.Limit && !pass.Draining {
 				v.Detail = fmt.Sprintf("%s: pass %d started or ran past the lowered limit", c.Name, pass.Seq)
 				return v
 			}

@@ -82,6 +82,23 @@ func TestM3WorkPanelChecksRejectWrongFrames(t *testing.T) {
 				}
 			}
 		}},
+		// The compact row must still carry Now; a row that keeps only its name
+		// and its elapsed time does not satisfy the view.
+		{"E10 views", func(r *panelRecording) {
+			c := &r.Cases[2]
+			card := c.Cards[1]
+			for i := range c.Frames {
+				if c.Frames[i].View != "compact" || c.Frames[i].Filter != "" {
+					continue
+				}
+				for y, row := range c.Frames[i].Panel {
+					if strings.Contains(row, panelClipCells(card.Name, 4)) && strings.Contains(row, card.Now) {
+						c.Frames[i].Panel[y] = strings.Replace(row, card.Now, "", 1)
+						return
+					}
+				}
+			}
+		}},
 		{"E11 order", func(r *panelRecording) {
 			pass := &r.Cases[2].Passes[1]
 			pass.Rank = reversed(pass.Rank)
@@ -132,6 +149,68 @@ func TestM3WorkPanelChecksRejectWrongFrames(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestM3WorkPanelChecksAllowRunningStepsToDrain covers the other half of E13
+// and E14: lowering a limit never stops steps that already run, so a pass that
+// starts nothing may hold more running 일 than the new limit.
+func TestM3WorkPanelChecksAllowRunningStepsToDrain(t *testing.T) {
+	base := syntheticPanelRecording(t)
+	// A pass that starts nothing may hold more running 일 than a limit lowered
+	// underneath it; a pass that starts a step may not.
+	for _, tc := range []struct {
+		name     string
+		check    string
+		shortage string
+		started  []string
+		want     bool
+	}{
+		{"limit drains", "E13 limit", "", nil, true},
+		{"limit starts past it", "E13 limit", "", []string{"extra"}, false},
+		{"quota drains", "E14 shortage", "quota", nil, true},
+		{"quota starts", "E14 shortage", "quota", []string{"extra"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := cloneRecording(base)
+			c := &r.Cases[2]
+			ids := rankOfIDs(c)
+			started := []string{}
+			for range tc.started {
+				started = append(started, ids[3])
+			}
+			pass := panelSchedulePass{Seq: 99, Command: "limit", Limit: 1, Rank: ids, Running: ids[:3], Started: started, Draining: tc.started == nil}
+			if tc.shortage != "" {
+				pass.Command, pass.Shortage = "", tc.shortage
+				pass.Reasons = map[string]string{ids[3]: tc.shortage}
+				pass.Places = map[string]int{ids[3]: 1}
+			}
+			c.Passes = append(c.Passes, pass)
+			checked := false
+			for _, verdict := range evaluateWorkPanel(&r) {
+				if verdict.Check != tc.check {
+					if verdict.Input && !verdict.Passed {
+						t.Fatalf("%s broke as well: %s", verdict.Check, verdict.Detail)
+					}
+					continue
+				}
+				checked = true
+				if !verdict.Input || verdict.Passed != tc.want {
+					t.Fatalf("%s: input=%t passed=%t, want pass=%t (%s)", verdict.Check, verdict.Input, verdict.Passed, tc.want, verdict.Detail)
+				}
+			}
+			if !checked {
+				t.Fatalf("%s was not evaluated", tc.check)
+			}
+		})
+	}
+}
+
+func rankOfIDs(c *panelCase) []string {
+	out := []string{}
+	for _, card := range c.Cards {
+		out = append(out, card.ID)
+	}
+	return out
 }
 
 func cloneRecording(r *panelRecording) panelRecording {
@@ -340,9 +419,49 @@ func syntheticPasses(c panelCase, at time.Time) []panelSchedulePass {
 	return passes
 }
 
+// syntheticStages groups the diamond graph by blocker depth, as the stage list
+// does: one entry per depth, and a depth with several steps is one entry.
+func syntheticStages(t *testing.T, fixture panelFixture, graph string) []panelStageEntry {
+	t.Helper()
+	var steps []panelStep
+	for _, g := range fixture.Graphs {
+		if g.ID == graph {
+			var err error
+			if steps, err = expandPanelGraph(g); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	depth := map[int]int{}
+	byDepth := map[int][]panelStep{}
+	highest := 0
+	for _, step := range steps {
+		number := 1
+		for _, after := range step.After {
+			number = max(number, depth[after]+1)
+		}
+		depth[step.Index] = number
+		byDepth[number] = append(byDepth[number], step)
+		highest = max(highest, number)
+	}
+	out := []panelStageEntry{}
+	for number := 1; number <= highest; number++ {
+		group := byDepth[number]
+		entry := panelStageEntry{Number: number, Kind: "stage", State: "next", Label: group[0].Name}
+		for _, step := range group {
+			entry.Steps = append(entry.Steps, panelStageStep{Name: step.Name, State: "next"})
+		}
+		if len(group) > 1 {
+			entry.Label = fmt.Sprintf("%s 외 %d", group[0].Name, len(group)-1)
+		}
+		out = append(out, entry)
+	}
+	return append(out, panelStageEntry{Kind: "checking", Label: "checking", State: "next"})
+}
+
 func syntheticStageView(t *testing.T, fixture panelFixture, card panelCard) panelStageView {
 	t.Helper()
-	entries := panelStageEntries(t, fixture, "diamond")
+	entries := syntheticStages(t, fixture, "diamond")
 	for i := range entries {
 		entries[i].Open = i == 0
 	}

@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/progress"
+	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/design"
@@ -38,11 +41,11 @@ type panelFixture struct {
 type panelGraphFixture struct {
 	ID    string
 	Steps []struct {
-		Name     string
-		After    []int
-		Count    int
-		AfterAll bool
-	}
+		Name     string `json:"name"`
+		After    []int  `json:"after"`
+		Count    int    `json:"count"`
+		AfterAll bool   `json:"after_all"`
+	} `json:"steps"`
 }
 
 // panelStep is one expanded step of the corpus. Index is its position in the
@@ -53,7 +56,8 @@ type panelStep struct {
 	After []int
 }
 
-// panelCard is one 일 as Core projects it, with the graph the corpus assigns.
+// panelCard is one 일 as Core projects it. Goal is the goal record that owns
+// the 일's graph, Stages is Core's own stage list for it.
 type panelCard struct {
 	ID      string
 	Name    string
@@ -63,6 +67,8 @@ type panelCard struct {
 	Started time.Time
 	Commit  time.Time
 	Graph   string
+	Goal    string
+	Stages  []panelStageEntry
 }
 
 // panelFrame is one settled 120x34 frame. Commit is the latest work-ledger
@@ -147,6 +153,9 @@ type panelSchedulePass struct {
 	Reasons  map[string]string
 	Places   map[string]int
 	Shortage string
+	// Draining marks a pass whose running steps predate a lowered limit and
+	// are finishing; it starts nothing.
+	Draining bool
 }
 
 // panelTransition is one injected step change with its commit and the frame
@@ -177,6 +186,11 @@ func loadPanelFixture(t *testing.T) panelFixture {
 		t.Fatalf("fixed corpus incomplete: %+v", fixture)
 	}
 	want := []int{1, 6, 4, 84, 6}
+	// The expanded edges are the corpus, not just its step count: a graph that
+	// lost its blockers still has the right length.
+	// single; chain; diamond; fan-out of 1/82/1 with the last step after all
+	// 83 that precede it; two independent chains of three.
+	carets := []int{0, 5, 4, 165, 4}
 	for i, graph := range fixture.Graphs {
 		steps, err := expandPanelGraph(graph)
 		if err != nil {
@@ -184,6 +198,13 @@ func loadPanelFixture(t *testing.T) panelFixture {
 		}
 		if len(steps) != want[i] {
 			t.Fatalf("graph %s has %d steps, want %d", graph.ID, len(steps), want[i])
+		}
+		edges := 0
+		for _, step := range steps {
+			edges += len(step.After)
+		}
+		if edges != carets[i] {
+			t.Fatalf("graph %s has %d blockers, want %d", graph.ID, edges, carets[i])
 		}
 	}
 	for _, c := range fixture.Cases {
@@ -457,10 +478,10 @@ func panelFrameCommit(cards []panelCard) time.Time {
 	return latest
 }
 
-// seedPanelCorpus writes the fixed corpus into installed Core's work ledger
-// before startup, as the fixture manager's recorded work: one task per 일 with
-// a stub worker session, the graph the corpus assigns at its position, and the
-// waiting cards last. It returns the cards and the latest commit.
+// seedPanelCorpus writes the fixed corpus through installed Core before startup,
+// as the fixture manager's recorded work. Each 일 first gets its corpus graph as
+// an admitted goal step graph; then the 일's task with a stub worker session is
+// recorded against that goal, with the waiting cards last.
 func seedPanelCorpus(t *testing.T, h *harness, fixture panelFixture, n, waiting int) []panelCard {
 	t.Helper()
 	db, closeStore := installedAcceptanceStore(t, h)
@@ -477,6 +498,19 @@ func seedPanelCorpus(t *testing.T, h *harness, fixture panelFixture, n, waiting 
 		t.Fatal(err)
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256(content))
+	engine, store := panelManager(t, h, db)
+	defer store.Close()
+	// The fixture manager admits each 일's graph first, in its own transaction,
+	// then the 일's work is recorded in one write.
+	goals := make([]string, n)
+	for i := range n {
+		id := fmt.Sprintf("corpus-%03d", i)
+		goalID, err := panelAdmitGraph(h.ctx, engine, id, fixture.Names[i%len(fixture.Names)], person, agent, fixture.Graphs[i%len(fixture.Graphs)])
+		if err != nil {
+			t.Fatalf("%s: admit graph: %v", id, err)
+		}
+		goals[i] = goalID
+	}
 	cards := make([]panelCard, 0, n)
 	if err := db.Write(h.ctx, func(tx *canon.Tx) error {
 		for i := range n {
@@ -487,7 +521,9 @@ func seedPanelCorpus(t *testing.T, h *harness, fixture panelFixture, n, waiting 
 			if i >= n-waiting {
 				state = "needs_input"
 			}
-			task := work.Task{ID: id, PersonID: person, AgentID: agent, ConversationID: "main:" + agent, Title: name, Done: "Sample verified", ArtifactRoots: []string{h.root}}
+			graph := fixture.Graphs[i%len(fixture.Graphs)]
+			goalID := goals[i]
+			task := work.Task{ID: id, GoalID: goalID, PersonID: person, AgentID: agent, ConversationID: "main:" + agent, Title: name, Done: "Sample verified", ArtifactRoots: []string{h.root}}
 			run := work.Run{ID: id + ":run", TaskID: id, Generation: 1, Worker: "fixture", ThreadID: id, TurnID: id, NodeID: "fixture"}
 			at := time.Now().UTC().Add(-time.Duration(42+i*65) * time.Minute)
 			if state == "waiting" {
@@ -535,17 +571,163 @@ func seedPanelCorpus(t *testing.T, h *harness, fixture panelFixture, n, waiting 
 					return err
 				}
 			}
-			graph := fixture.Graphs[i%len(fixture.Graphs)]
-			if _, err := expandPanelGraph(graph); err != nil {
-				return err
-			}
-			cards = append(cards, panelCard{ID: id, Name: name, State: card.State, Graph: graph.ID, Commit: cardCommit(events)})
+			cards = append(cards, panelCard{ID: id, Name: name, State: card.State, Graph: graph.ID, Goal: goalID, Commit: cardCommit(events)})
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Core's own projection of each 일's graph is the oracle the checks and the
+	// opened view use. Reading it here also proves the corpus reached the
+	// ledger whole: step count, names and blockers.
+	for i := range cards {
+		stages, err := panelGoalStages(t, h, db, cards[i].Goal, person)
+		if err != nil {
+			t.Fatalf("%s: Core has no stage list: %v", cards[i].ID, err)
+		}
+		cards[i].Stages = stages
+		if err = panelGraphMatches(cards[i].Graph, fixture, stages); err != nil {
+			t.Fatalf("%s: %v", cards[i].ID, err)
+		}
+	}
 	return cards
+}
+
+// panelManager is the fixture manager: installed Core's goal engine on the
+// installed store. Core runs the same engine after it starts.
+func panelManager(t *testing.T, h *harness, db *canon.Store) (*goal.Engine, *records.Store) {
+	t.Helper()
+	repo, err := records.Open(h.root, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := goal.NewEngine(goal.Config{DB: db, Records: panelDefinitions{repo}, Epoch: 1, Now: time.Now})
+	if err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	return engine, repo
+}
+
+// panelDefinitions adapts the records store to the goal engine.
+type panelDefinitions struct{ repo *records.Store }
+
+func (d panelDefinitions) Read(ctx context.Context, id string) (goal.DefinitionRecord, string, error) {
+	r, rev, err := d.repo.Read(ctx, id)
+	if errors.Is(err, records.ErrNotFound) {
+		err = goal.ErrDefinitionMissing
+	}
+	return goal.DefinitionRecord{ID: r.ID, Path: r.Path, Data: r.Data}, rev, err
+}
+
+func (d panelDefinitions) Commit(ctx context.Context, c goal.DefinitionChange, person, agent string) (string, error) {
+	return d.repo.Commit(ctx, records.Change{ID: c.ID, Base: c.Base, Path: c.Path, Data: c.Data}, records.Actor{Person: person, Agent: agent})
+}
+
+// panelAdmitGraph writes one 일's whole fixed graph through Core's goal engine:
+// the goal record, then the graph revision with its step names and blockers.
+func panelAdmitGraph(ctx context.Context, engine *goal.Engine, id, name, person, agent string, graph panelGraphFixture) (string, error) {
+	goalID := "goal-" + id
+	g := goal.Goal{ID: goalID, Person: person, Agent: agent, Conversation: "main:" + agent, Summary: name, Done: "The sample is verified", NoServiceReason: "plan", Scope: goal.GoalScope{Repositories: []string{"fixture"}, Includes: graph.ID + ".md"}, Criteria: []goal.Criterion{{ID: "outcome", Statement: "The sample is verified", Check: goal.CriterionCheck{Kind: goal.RunEvidence, Method: "acceptance", Target: "fixture"}}}}
+	if err := engine.Admit(ctx, g); err != nil {
+		return "", err
+	}
+	steps, err := expandPanelGraph(graph)
+	if err != nil {
+		return "", err
+	}
+	admitted := make([]goal.Step, 0, len(steps))
+	for _, step := range steps {
+		item := goal.Step{ID: fmt.Sprintf("s%d", step.Index), Name: step.Name, Done: "Produce " + step.Name, Repository: "fixture", Base: "dev", Area: fmt.Sprintf("%s/s%d.txt", graph.ID, step.Index), Worker: "fixture", Resources: goal.Resources{CPU: 0.01, MemoryMB: 1, DiskMB: 1}}
+		for _, after := range step.After {
+			item.DependsOn = append(item.DependsOn, fmt.Sprintf("s%d", after))
+		}
+		admitted = append(admitted, item)
+	}
+	if _, err = engine.SubmitStepGraph(ctx, goalID, person, agent, "main:"+agent, 0, admitted); err != nil {
+		return "", err
+	}
+	return goalID, nil
+}
+
+// panelGoalStages reads the stage list Core projects for one 일's graph.
+func panelGoalStages(t *testing.T, h *harness, db *canon.Store, goalID, person string) ([]panelStageEntry, error) {
+	t.Helper()
+	var stages []progress.Stage
+	err := db.Read(h.ctx, func(tx *canon.Tx) error {
+		var err error
+		stages, err = progress.GoalStages(h.ctx, tx, goalID, person, design.English)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]panelStageEntry, 0, len(stages))
+	for _, stage := range stages {
+		entry := panelStageEntry{Number: stage.Number, Kind: string(stage.Kind), Label: stage.Label, State: string(stage.State)}
+		for _, step := range stage.Steps {
+			entry.Steps = append(entry.Steps, panelStageStep{Name: step.Name, State: string(step.State)})
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+// panelGraphMatches checks that the ledger's stage list is the corpus graph:
+// the same steps at the same depth, so a lost blocker moves a step and fails.
+func panelGraphMatches(graph string, fixture panelFixture, stages []panelStageEntry) error {
+	var want []panelStep
+	for _, g := range fixture.Graphs {
+		if g.ID == graph {
+			var err error
+			if want, err = expandPanelGraph(g); err != nil {
+				return err
+			}
+		}
+	}
+	if want == nil {
+		return fmt.Errorf("unknown graph %q", graph)
+	}
+	names := make([]string, 0, len(want))
+	for _, step := range want {
+		names = append(names, step.Name)
+	}
+	got := []string{}
+	entries := 0
+	for _, entry := range stages {
+		if entry.Kind != "stage" {
+			continue
+		}
+		entries++
+		for _, step := range entry.Steps {
+			if step.State == string(progress.StepSuperseded) {
+				continue
+			}
+			got = append(got, step.Name)
+		}
+	}
+	slices.Sort(names)
+	slices.Sort(got)
+	if !slices.Equal(names, got) {
+		return fmt.Errorf("the ledger holds %d of the corpus graph %q's %d steps", len(got), graph, len(names))
+	}
+	// Each graph has its own depth: a chain of six numbers six stages, a diamond
+	// three, and the 82-wide fan-out three.
+	depth := map[string]int{"single": 1, "chain": 6, "diamond": 3, "fan": 3, "two-chains": 3}
+	if entries != depth[graph] {
+		return fmt.Errorf("graph %q numbers %d stages, want %d", graph, entries, depth[graph])
+	}
+	groups := 0
+	for _, entry := range stages {
+		if len(entry.Steps) > 1 {
+			groups++
+		}
+	}
+	// Two independent chains put two steps in each of their three stages.
+	if groups != map[string]int{"diamond": 1, "fan": 1, "two-chains": 3}[graph] {
+		return fmt.Errorf("graph %q has %d parallel groups", graph, groups)
+	}
+	return nil
 }
 
 // cardCommit is when the event that set the card's current state was recorded.
@@ -556,43 +738,4 @@ func cardCommit(events []work.Event) time.Time {
 		}
 	}
 	return time.Time{}
-}
-
-// panelStageEntries is the stage list Core projects for a card's graph. The
-// harness records it as the oracle an opened view is compared with.
-func panelStageEntries(t *testing.T, fixture panelFixture, graph string) []panelStageEntry {
-	t.Helper()
-	state := progress.StepNext
-	for _, g := range fixture.Graphs {
-		if g.ID != graph {
-			continue
-		}
-		steps, err := expandPanelGraph(g)
-		if err != nil {
-			t.Fatal(err)
-		}
-		revision := progress.Revision{}
-		for _, step := range steps {
-			item := progress.Step{ID: fmt.Sprintf("s%d", step.Index), Name: step.Name, State: state}
-			for _, after := range step.After {
-				item.DependsOn = append(item.DependsOn, fmt.Sprintf("s%d", after))
-			}
-			revision.Steps = append(revision.Steps, item)
-		}
-		stages, err := progress.Stages([]progress.Revision{revision}, goal.GoalRunning, design.English)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out := make([]panelStageEntry, 0, len(stages))
-		for _, stage := range stages {
-			entry := panelStageEntry{Number: stage.Number, Kind: string(stage.Kind), Label: stage.Label, State: string(stage.State)}
-			for _, step := range stage.Steps {
-				entry.Steps = append(entry.Steps, panelStageStep{Name: step.Name, State: string(step.State)})
-			}
-			out = append(out, entry)
-		}
-		return out
-	}
-	t.Fatalf("unknown graph %q", graph)
-	return nil
 }
