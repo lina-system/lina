@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,17 @@ function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8', env: cleanEnv() });
   assert.ifError(result.error);
   return result;
+}
+
+// A case-insensitive filesystem cannot hold two colliding paths, so a fixture
+// cannot express the collision. The check itself still reads the index.
+function skipCaseInsensitive(t) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'lina-case-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(path.join(dir, 'probe'), '');
+  if (!existsSync(path.join(dir, 'PROBE'))) return false;
+  t.skip('case-insensitive filesystem cannot hold both paths');
+  return true;
 }
 
 function fixture(t, files) {
@@ -237,6 +248,32 @@ test('headings in code and comments cannot satisfy an anchor', (t) => {
   for (const anchor of ['fenced', 'nested', 'tilde', 'indented', 'comment', 'not-a-heading']) {
     assert.ok(result.stderr.includes(`broken anchor guide.md#${anchor}`), result.stderr);
   }
+});
+
+test('tracked paths that differ only by case fail', (t) => {
+  if (skipCaseInsensitive(t)) return;
+  const { check } = fixture(t, {
+    'docs/Guide.md': '# Guide\n',
+    'docs/guide.md': '# Guide\n',
+    'docs/other.md': '# Other\n',
+  });
+  const result = check();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /docs\/Guide\.md and docs\/guide\.md: tracked paths differ only by case/);
+});
+
+test('collisions in non-document paths fail', (t) => {
+  if (skipCaseInsensitive(t)) return;
+  const { check } = fixture(t, { 'a/Package.go': 'package a\n', 'a/package.go': 'package a\n' });
+  const result = check();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /a\/Package\.go and a\/package\.go: tracked paths differ only by case/);
+});
+
+test('distinct paths that differ by more than case pass', (t) => {
+  const { check } = fixture(t, { 'docs/Guide.md': '# Guide\n', 'docs/guide-notes.md': '# Notes\n' });
+  const result = check();
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test('external URLs, bare fragments, non-Markdown fragments, and code links stay excluded', (t) => {

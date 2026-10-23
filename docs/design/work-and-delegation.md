@@ -885,11 +885,18 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
   dispatch, and a recovered task's setup failure cannot disable delegation or
   terminate another task that was started in the same release event.
 - A quota or rate-limit finish is recorded before queued graph tasks are
-  reconsidered. When that finish has no exhausted window, the worker stays
-  blocked until its reset or a later measurement shows the limit below the cap.
-  The snapshot that missed the failure, and any older or unknown snapshot, does
-  not clear the stop. Rows from concurrent sessions merge per reported bucket
-  and window; a newer row in one window does not replace another window.
+  reconsidered. Measured exhausted windows are the stopped limits. When none
+  are exhausted, the stop follows every cached limit tied for the highest
+  reported usage; a snapshot that reports no usage follows every row it
+  contains, so one reported window is that limit. Each stopped limit keeps the
+  reset its own row reported, including when usage is still under the cap.
+  The worker stays blocked until every stopped limit reaches its own reset or
+  a later measurement shows that same limit below the cap. A newer row for
+  another window or limit does not clear the stop, and a healthy window's
+  reset cannot extend an exhausted one. The snapshot that missed the failure,
+  and any older or unknown snapshot, does not clear the stop. Rows from
+  concurrent sessions merge per reported bucket and window; a newer row in
+  one window does not replace another window.
 - When slots are free, the manager may start a dependent task as a stacked pull request on an open predecessor. It records the predecessor and its head as the task's base, and Core checks capacity and disjoint write-area leases before dispatch. The dependency remains: the dependent cannot land before the predecessor. The worker brings the stack onto the landed base and owns its resulting checks to green before the manager checks the delivery.
 
 ## Workers
@@ -1360,12 +1367,17 @@ message and tier, explicitly as a worker claim. Acknowledgements cannot name
 another session's messages or precede delivery.
 
 Known-unsent messages wait while the session is down or waiting for an answer
-and are delivered under the same session key after resume. A new session does
-not inherit another session's mail. Core claims a delivery before sending; an
-uncertain send stays held for reconciliation and is never automatically replayed.
-A task session that ends for good refuses its remaining unsent mail and tells
-the sender. Closing work preserves its receipts. These receipts neither accept
-a task result nor authorize new work.
+and are delivered under the same session key after that wait ends. Answering
+the pending question or approval is that resume for push mail: Core retries
+known-unsent push mail once the thread is active and no request remains,
+without waiting for another turn start or `check_inbox`. Turn and pull mail
+still leave at the next supported tool boundary, and only after those pending
+requests have cleared. A new session does not inherit another session's mail.
+Core claims a delivery before sending; an uncertain send stays held for
+reconciliation and is never automatically replayed. A task session that ends
+for good, including a scheduled task that completes or is interrupted, refuses
+its remaining unsent mail and tells the sender. Closing work preserves its
+receipts. These receipts neither accept a task result nor authorize new work.
 
 ### Completion signals
 
@@ -2247,6 +2259,7 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 | Next | The next 할 일 or stage, in a phrase |
 | Waiting on the person | Whether a row of "Waiting for me" belongs to it, and how many |
 
+- Each goal's name is that goal's own sentence. A sentence that cannot be read leaves only that goal without its name; every other goal keeps the sentence that can still be read.
 - The stage of an 일 whose work runs as a goal is the current entry of its stage list (see Stages). Otherwise it is the stage of its plan that holds its open 할 일, and an 일 with no stages of its own has four: 설계 (design) while its plan is not confirmed, 만드는 중 (building) while any of its 할 일 is open, 확인 (checking) when every 할 일 has completed and the done condition is being checked, and 끝 (done) when the done condition is met. The bar is the share of its 할 일 that are completed, each counted equally.
 - The progress of a 목표 is the share of its 일 that are done, and its stage is that of its least advanced running 일.
 - Now is, in this order: 확인 필요 (needs you) and the subject of its row while a row of "Waiting for me" belongs to it; else 일시정지 (paused) while the person has paused it; else the name of the earliest-started step in progress, followed by the number of the other steps in progress ("로그인 화면 수정 외 1"); else its queue reason and place, or 대기 (waiting) and its one reason or wait (see Order, pause and run limit); else the stage word 설계, 확인 or 끝. It changes only when a step starts or ends, a wait or row opens or closes, or the goal's pause, rank or place changes.

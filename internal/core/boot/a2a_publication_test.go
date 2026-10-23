@@ -22,7 +22,9 @@ import (
 	"time"
 
 	a2a "github.com/thisisjun786/lina/internal/core/a2a/publication"
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/authority"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
@@ -183,5 +185,79 @@ func TestPublishedWorkerQuestionRequiresInput(t *testing.T) {
 	session.questions["q"].card.Card.Outcome = &outcome
 	if p.waitingQuestion(rec) {
 		t.Fatal("resolved question still requires input")
+	}
+}
+
+func TestDeletedPublishedPersonaDoesNotBlockPublication(t *testing.T) {
+	root := controlRuntime(t)
+	root.publications.stop()
+	<-root.publications.done
+	other, err := root.agents.Create(t.Context(), agents.Create{Name: "Other", PersonID: root.person, Preset: "lina"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	oauth := a2a.OAuth{Issuer: "https://issuer.example", Audience: "a2a", IntrospectionURL: "https://issuer.example/introspect", ClientID: "core", Scopes: []string{"tasks"}}
+	authenticator := a2a.Authenticator{OAuth: oauth, Secret: func() (secret.Secret, error) { return secret.New("Y29yZTpmaXh0dXJl"), nil }, Transport: channelTransport(func(*http.Request) (*http.Response, error) {
+		body := fmt.Sprintf(`{"active":true,"iss":"https://issuer.example","aud":"a2a","exp":%d,"sub":"caller","client_id":"client","scope":"tasks","token_type":"Bearer"}`, now.Add(time.Hour).Unix())
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})}
+	principal, err := authenticator.Authenticate(t.Context(), "Bearer synthetic-access")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition := a2a.Definition{ID: "write", Name: "Task", Description: "Task", Seconds: 3600}
+	binding := a2a.Binding{Subject: principal.Subject, Client: principal.Client, Expires: principal.Expires, MaxActive: 2, Definitions: []string{"write"}}
+	publication := func(agent string) a2a.Publication {
+		return a2a.Publication{ID: "pub-" + agent, Agent: agent, Conversation: "main:" + agent, Name: "Published", Description: "Approved tasks", URL: "https://core.example/a2a/" + agent, Definitions: []a2a.Definition{definition}, Bindings: []a2a.Binding{binding}}
+	}
+	livePub, deletedPub := publication(root.agent), publication(other.ID)
+	root.publications.server.Config = func() (a2a.Config, error) {
+		return a2a.Config{Enabled: true, OAuth: oauth, Publications: []a2a.Publication{livePub, deletedPub}}, nil
+	}
+	admit := func(pub a2a.Publication, message string) a2a.Record {
+		t.Helper()
+		rec, err := root.publications.store.Admit(t.Context(), pub, binding, definition, principal, a2a.SendRequest{Message: a2a.Message{MessageID: message, Role: "ROLE_USER", Parts: []a2a.Part{{Data: json.RawMessage(`{"task":"write","input":"bounded data"}`)}}}}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rec
+	}
+	live := admit(livePub, "live-message")
+	deleted := admit(deletedPub, "deleted-message")
+	if err = root.agents.Delete(t.Context(), other.ID, root.person, now); err != nil {
+		t.Fatal(err)
+	}
+	root.publications.sweep(t.Context())
+	deleted, err = root.publications.store.Read(t.Context(), deleted.Task.ID)
+	if err != nil || deleted.Task.Status.State != a2a.Rejected {
+		t.Fatalf("queued task for a deleted persona was not rejected: %+v %v", deleted.Task.Status, err)
+	}
+	// The rejected record is the newest pending row, so its delivery runs first.
+	if err = root.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "UPDATE a2a_tasks SET updated=? WHERE id=?", "9999-01-01T00:00:00.000000000Z", deleted.Task.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	root.publications.sweep(t.Context())
+	if !root.publications.recovered.Load() {
+		t.Fatal("deleted persona blocked publication recovery")
+	}
+	live, err = root.publications.store.Read(t.Context(), live.Task.ID)
+	if err != nil || !live.Published {
+		t.Fatalf("unrelated terminal notice was not delivered: published=%t err=%v", live.Published, err)
+	}
+	deleted, err = root.publications.store.Read(t.Context(), deleted.Task.ID)
+	if err != nil || deleted.Published {
+		t.Fatal("deleted persona notice was settled before restore", err)
+	}
+	if err = root.agents.Restore(t.Context(), other.ID, root.person, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	root.publications.sweep(t.Context())
+	deleted, err = root.publications.store.Read(t.Context(), deleted.Task.ID)
+	if err != nil || !deleted.Published || !root.publications.recovered.Load() {
+		t.Fatalf("restored persona notice was not delivered: published=%t recovered=%t err=%v", deleted.Published, root.publications.recovered.Load(), err)
 	}
 }
