@@ -1066,8 +1066,10 @@ worker control. Unstarted completion follow-ups resume from canon after restart;
 a claimed turn is never replayed and a committed reply is not duplicated.
 A successful completion committed before the restart settles that exact turn's
 recovery record, so a restart never presents the finished session as an unknown
-live placeholder or recovers it again. Failed and transport-loss notices stay
-unknown until the thread is read.
+live placeholder or recovers it again. The same applies when the record write
+failed and the session then closed without a restart: settling it removes the
+closed session, so views read the recorded outcome. Failed and transport-loss
+notices stay unknown until the thread is read.
 Channel replies follow the completion back to its original input, retaining that
 input's address and the existing outbound delivery identity across restart.
 Recovery resolves the retained channel inbox address and its current most-specific
