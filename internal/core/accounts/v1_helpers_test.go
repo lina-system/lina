@@ -83,13 +83,16 @@ func probeV1Responses(ctx context.Context, credential provider.Credential, model
 	// Four rounds at most: the route may answer the tool round before it returns
 	// any reasoning item, and the round trip needs a later request to carry it.
 	for round := 0; round < 4 && !missing; round++ {
-		if round > 0 && encrypted {
-			resent = true
-		}
+		carrying := encrypted
 		items, calls, err := v1Turn(ctx, request, endpoint)
 		if err != nil {
-			report.EncryptedRoundTrip = encrypted && resent
+			report.EncryptedRoundTrip = resent
 			return report, err
+		}
+		// The round trip counts only once a request that carried the encrypted
+		// item completed; a refusal of that request is a failed round trip.
+		if carrying {
+			resent = true
 		}
 		report.CompletedTurns++
 		report.StoreFalseStreamTrue = true
@@ -150,7 +153,7 @@ func probeV1Responses(ctx context.Context, credential provider.Credential, model
 			break
 		}
 	}
-	report.EncryptedRoundTrip = encrypted && resent
+	report.EncryptedRoundTrip = resent
 	if missing || report.CompletedTurns < 3 || !report.EncryptedRoundTrip {
 		return report, errV1Incomplete
 	}

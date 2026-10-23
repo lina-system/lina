@@ -184,6 +184,33 @@ func TestV1ProbeRecordsFieldObservationsWhenTheTurnLoopFails(t *testing.T) {
 	}
 }
 
+func TestV1ProbeRequiresTheCarryingRequestToComplete(t *testing.T) {
+	reasoning := `{"id":"reason-one","type":"reasoning","summary":[],"encrypted_content":"synthetic-encrypted-state"}`
+	turns := 0
+	transport := v1Script(func(r *http.Request) (*http.Response, error) {
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		if bytes.Contains(raw, []byte(`"content":"Respond with OK."`)) {
+			return v1SSE(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}`), nil
+		}
+		turns++
+		if turns == 1 {
+			return v1SSE(reasoning, `{"type":"function_call","name":"probe_echo","call_id":"call-one","arguments":"{\"input\":\"echo\"}"}`, `{"type":"function_call","name":"apply_patch","call_id":"call-two","arguments":"{\"input\":\"patch\"}"}`), nil
+		}
+		// The request that carries the encrypted item is refused.
+		return &http.Response{StatusCode: 400, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":"invalid_request_error"}}`))}, nil
+	})
+	result, err := probeV1Responses(t.Context(), provider.NewCredential("synthetic", provider.LoopbackOAuth, "synthetic-token"), "synthetic-model", v1Endpoint{transport: transport})
+	if err == nil {
+		t.Fatal("refused carrying request was accepted")
+	}
+	if result.EncryptedRoundTrip || result.CompletedTurns != 1 {
+		t.Fatalf("round trip claimed without a completed carrying request: %+v", result)
+	}
+}
+
 func TestV1ProbeSendsToAnExplicitResponsesEndpoint(t *testing.T) {
 	var path, authorization, model string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
