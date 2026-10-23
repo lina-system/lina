@@ -1,0 +1,31 @@
+name: Feature
+description: A new capability or a change in behaviour.
+labels: [feature]
+body:
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: The person's goal and what stops it today.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: The observable behaviour, not the implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      value: |
+        - [ ] 
+    validations:
+      required: true
+  - type: textarea
+    id: depends
+    attributes:
+      label: Depends on
+      description: Issues that must close first, as #n.
