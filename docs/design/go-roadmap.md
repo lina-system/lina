@@ -379,6 +379,54 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Parent acceptance (#139): the merge scenario also moves the head between PR identity and review reads, requires one refreshed observation and blocks admission until explicit head acceptance. Unit cases cover repeated head movement, a return to the original head and a failed refresh.
 - Depends on: G1-05, G1-07. Design refs: C-58; [integrations.md](integrations.md#github).
 
+**G2-30 ACP client.** Generated Agent Client Protocol version 1 types and the stdio client in `kit/acp`, shared by the ACP workers and the Grok provider ([#746](https://github.com/thisisjun786/lina/issues/746)).
+- Done when: version 1 is accepted and any other version refused; prompts, updates, every stop reason, a permission answer, a cancel and a load replay round-trip through the generated types; unknown variants keep their JSON; regeneration reproduces the committed types.
+- Depends on: G2-04. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
+
+**G2-31 ACP worker adapter.** One `worker.Adapter` for every ACP worker: profiles, start, prompt, progress, completion and cancel, wired into `dispatch_work` ([#747](https://github.com/thisisjun786/lina/issues/747)).
+- Done when: a dispatched task runs in its worktree on a synthetic ACP agent to an adapter-derived receipt; process exit with an open prompt is a failure; a cancel is final only on the `cancelled` reply; LINA's model credential is absent from the child.
+- Depends on: G2-30, G2-18. Design refs: C-29, C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
+
+**G2-32 ACP approvals and questions.** Permission requests and form questions to the originating conversation ([#748](https://github.com/thisisjun786/lina/issues/748)).
+- Done when: the agent writes only after the owner's once answer arrives as `allow_once`; deny returns `reject_once`; `allow_always` and `reject_always` are never sent; a cancel answers pending requests with `cancelled`.
+- Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#approvals).
+
+**G2-33 Work tools for ACP workers.** `lina worker-tools`, a per-session stdio MCP server named in `session/new` ([#749](https://github.com/thisisjun786/lina/issues/749)).
+- Done when: the four `lina` tools are listed from the one session server; a receipt is bound to its session's turn, generation and epoch; a foreign or late token is refused; the worker's own configuration is unchanged.
+- Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#lina-tools-for-workers).
+
+**G2-34 ACP typed failures and quota.** Errors, stop reasons, the session-failure extension and named vendor rate-limit metadata ([#750](https://github.com/thisisjun786/lina/issues/750)).
+- Done when: -32000 is needs sign-in; a reported rate limit or exhausted quota parks the worker and hands the packet on once; a Claude Code rate-limit event becomes a quota row; silence stays unknown.
+- Depends on: G2-31. Design refs: C-57, C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
+
+**G2-35 ACP once-only recovery.** Restart once in the same worktree and resume or load the recorded session ([#751](https://github.com/thisisjun786/lina/issues/751)).
+- Done when: after `kill -9` of the agent the recorded session is loaded once and the task finishes; replayed history is not new progress; a second death becomes a decision row.
+- Depends on: G2-08, G2-31. Design refs: C-29, C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
+
+**G2-36 Claude Code through ACP.** The pinned `claude-agent-acp` program, installed on first use without optional packages, always running the person's `claude` ([#752](https://github.com/thisisjun786/lina/issues/752)).
+- Done when: the program installs from its lockfile with integrity checked and no optional package; the profile runs the person's `claude` path and records its version; a missing `claude` makes only this worker unsupported.
+- Depends on: G2-31, G2-32. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#claude-code-through-acp).
+
+**G2-37 Cursor through ACP.** `cursor-agent acp` on the ACP adapter; replaces G3-10 ([#210](https://github.com/thisisjun786/lina/issues/210)).
+- Done when: the version comes from `cursor-agent --version`; -32000 is needs sign-in and delegation moves on; a synthetic signed-in session reaches an adapter-derived receipt.
+- Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
+
+**G2-38 Gemini CLI through ACP.** `gemini --acp` on the ACP adapter, separate from the Gemini provider ([#753](https://github.com/thisisjun786/lina/issues/753)).
+- Done when: install detects `gemini` and records its version; -32000 is needs sign-in; a synthetic signed-in session reaches an adapter-derived receipt.
+- Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
+
+**G2-39 Grok through ACP.** The person's `grok` command as an ACP worker, separate from the Grok provider ([#759](https://github.com/thisisjun786/lina/issues/759)).
+- Done when: the version comes from `grok --version` and `--always-approve` is never passed; -32000 is needs sign-in; a synthetic signed-in session reaches an adapter-derived receipt, recording only the version and capabilities of the handshake.
+- Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
+
+**G2-40 Added ACP workers.** Any other ACP agent the person names by command and arguments ([#754](https://github.com/thisisjun786/lina/issues/754)).
+- Done when: an added profile is loaded, shown as unverified and receives a task; a malformed one is refused with its cause; it cannot replace a built-in name.
+- Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
+
+**G2-41 Worker evaluation.** The same small task through every worker connection, scored per dimension ([#760](https://github.com/thisisjun786/lina/issues/760)).
+- Done when: the evidence record marks every candidate observed, blocked or not observed with versions and per-dimension results, and names the connection kept for Claude Code.
+- Depends on: G2-32, G2-34, G2-35, G2-36, G2-37, G2-38, G2-39. Design refs: [worker-protocols.md](../research/worker-protocols.md#evaluation-defined-before-building).
+
 ### 2.C Memory and growth upkeep
 
 **G2-12 Skill pruning and merging job.** Prune and merge stale or duplicate skills.
@@ -425,7 +473,7 @@ from completed, rolled-back and pre-swap attempts.
 
 **G2-15 Phase 2 acceptance run.** Run script and evidence record for LINA 2.
 - Done when: one record holds every field of the phase rules and a result per check; the interruption injection now stops a running task and its citations pass; Codex and Claude Code versions are recorded.
-- Depends on: G2-05, G2-07, G2-08, G2-12, G2-13, G2-14, G2-20, G2-21, G2-24, G2-27, G2-28, G2-29. Design refs: Phase rules.
+- Depends on: G2-05, G2-07, G2-08, G2-12, G2-13, G2-14, G2-20, G2-21, G2-24, G2-27, G2-28, G2-29, G2-41. Design refs: Phase rules.
 
 ### 2.F Records and to-dos
 
@@ -498,9 +546,9 @@ first-use installation, quota projection and idle process management.
 - Done when: a turn returns provider state items as received; a missing key is needs sign-in with no fallback; quota comes from error codes and LINA's own count.
 - Depends on: G1-08, G1-31. Design refs: C-44; [runtime.md](runtime.md#gemini).
 
-**G2-28 Grok adapter.** ACP client over the installed `grok` command, approvals routed to Core, telemetry off.
+**G2-28 Grok adapter.** ACP client over the installed `grok` command, approvals routed to Core, telemetry off. It uses the shared `kit/acp` client of G2-30.
 - Done when: a turn runs with the command's tools restricted and LINA tools offered; a permission request reaches Core's approval path and returns; telemetry switches are set off; a missing command makes only this provider unsupported.
-- Depends on: G1-05, G1-08, G1-31. Design refs: C-46; [runtime.md](runtime.md#grok).
+- Depends on: G1-05, G1-08, G1-31, G2-30. Design refs: C-46, C-60; [runtime.md](runtime.md#grok).
 
 **G2-29 Quota-aware routing.** Router over quota rows; no pay-per-use beyond the setting.
 - Done when: a new request goes to another connected account when a subscription is near its limit and a one-line event is written; a started request is never resent; unknown quota is not treated as zero; pay-per-use is not started beyond the set budget.
@@ -530,6 +578,10 @@ Failure injections: a Node disconnect, a silent partition, a Node reboot, a revo
 **G3-15 Plugin catalog, connect card and OAuth.** Signed catalog, registration order, PKCE, connect card.
 - Done when: a catalog file with a bad signature or an older version is rejected; each registration mode is exercised by a fixture in order; the first request asks the scopes the manifest or the 401 challenge names, and an `insufficient_scope` answer asks the earlier scopes together with the new ones; a 401 refreshes once; `invalid_grant` shows needs sign-in; the connect card is a labeled block in the TUI and a question from a plugin appears as prompts.
 - Depends on: G1-18, G1-21, G1-31, G3-01. Design refs: C-34, T-14; [integrations.md](integrations.md#oauth-for-mcp-servers).
+
+**G3-19 A2A design.** Publishing a LINA agent as an A2A agent and calling remote A2A agents; design only, before any code ([#756](https://github.com/thisisjun786/lina/issues/756)).
+- Done when: the contract states what a published agent offers and how a LINA agent or Node calls a remote one under a grant, citing the A2A version it targets, and its implementation issues are filed.
+- Depends on: G3-01. Design refs: [worker-protocols.md](../research/worker-protocols.md#a2a); [integrations.md](integrations.md).
 
 ### 3.B Node and devices
 
@@ -561,9 +613,7 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Done when: overlapping areas are never in flight together; a dependent is released only after the predecessor is confirmed merged; a task nothing depends on never waits; a waiting task shows exactly one reason; an unmergeable pull request goes back once to its worker; the developer view shows one lane for each worker, folded to one line by default.
 - Depends on: G2-02, G2-07, G2-18. Design refs: C-57, T-14; [work-and-delegation.md](work-and-delegation.md#parallel-hand-off).
 
-**G3-10 Cursor adapter.** The user's installed `cursor-agent`, running headless with `stream-json`; implementation and installed-version confirmation belong to [#210](https://github.com/thisisjun786/lina/issues/210).
-- Done when: readiness records the installed version and sign-in state, with not signed in reported as unsupported delegation; one headless run per task streams progress from its worktree; process exit plus the final stream event ends the run, while exit 0 without a final event is unknown; interrupt stops the run and once-only recovery resumes the same chat id in the same work area; quota or rate-limit replies park the worker until reset without spending a retry; the adapter is an opt-in account of the person. Exact flags, stream events and control behavior are to be confirmed by #210.
-- Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
+**G3-10 Cursor adapter.** Moved to LINA 2 as G2-37: Cursor runs through the ACP adapter, carried by [#210](https://github.com/thisisjun786/lina/issues/210). The id is not reused.
 
 **G3-16 Antigravity adapter.** Headless child; success from the pull request.
 - Implementation evidence: `internal/core/worker/antigravity`, Core's durable
@@ -590,7 +640,7 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 
 **G3-13 Phase 3 acceptance run.** Run script and evidence record for LINA 3.
 - Done when: one record holds every field of the phase rules and a result per check; every Node transition is one the state table allows; given-back slices are listed as not delivered.
-- Depends on: G3-02, G3-06, G3-07, G3-09, G3-10, G3-12, G3-15, G3-16, G3-17, G3-18. Design refs: Phase rules.
+- Depends on: G3-02, G3-06, G3-07, G3-09, G3-12, G3-15, G3-16, G3-17, G3-18. Design refs: Phase rules.
 
 ## Ended ids
 
@@ -605,7 +655,7 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 | G3-08 Machine-specific placement spike | cancelled | Machine-specific placement is not a contract. |
 | G3-11 Skill curator | duplicate of G2-12 | Pruning and merging is one job. |
 
-Ids G1-27 and G2-07 keep their number with a changed subject. No other id changed meaning.
+Ids G1-27 and G2-07 keep their number with a changed subject. G3-10 moved to G2-37. No other id changed meaning.
 
 ## Cut lines
 
@@ -614,8 +664,8 @@ A given-back slice moves to the start of the next phase and is listed as not del
 | Phase | Given back, in order | Never given back |
 | --- | --- | --- |
 | LINA 1 | Telegram (G1-25) and exchanges (G1-26), which then start LINA 2; the Hermes import (G1-27); prepared summaries (G1-38) | Epoch and recovery (G1-02), approvals (G1-05), ledger (G1-10), retraction (G1-14), the turn budget and background runs (G1-32, G1-33), restart fence (G1-24) |
-| LINA 2 | Discord (G2-21), Gemini and Grok adapters (G2-27, G2-28), skill pruning (G2-12), persona growth (G2-20), the progress digest for channels (part of G2-13) | The delegation core (G2-01, G2-02, G2-04, G2-07, G2-08, G2-18, G2-19), records (G2-22, G2-23), update (G2-14) |
-| LINA 3 | Antigravity and Cursor (G3-16, G3-10), the macOS seat lease (G3-07), plan drafting (G3-17), the CRW takeover (G3-18), mobile transport (part of G3-06) | Node gate and reconcile (G3-03, G3-04), outward-effect marks (G3-02), splitting and parallel hand-off (G3-09) |
+| LINA 2 | Discord (G2-21), Gemini and Grok adapters (G2-27, G2-28), the Cursor, Gemini CLI, Grok and added ACP workers (G2-37 to G2-40), skill pruning (G2-12), persona growth (G2-20), the progress digest for channels (part of G2-13) | The delegation core (G2-01, G2-02, G2-04, G2-07, G2-08, G2-18, G2-19), records (G2-22, G2-23), update (G2-14) |
+| LINA 3 | Antigravity (G3-16), the macOS seat lease (G3-07), plan drafting (G3-17), the CRW takeover (G3-18), mobile transport (part of G3-06) | Node gate and reconcile (G3-03, G3-04), outward-effect marks (G3-02), splitting and parallel hand-off (G3-09) |
 
 ## Numbers to set by measurement
 

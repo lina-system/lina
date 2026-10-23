@@ -46,7 +46,7 @@ Kit seams, following [runtime.md](runtime.md#lina-kit):
 | --- | --- | --- |
 | `provider` (`responses`, `gemini`, `grokacp`, `claudeproc`) | The adapters | The secret store; retries |
 | `loop`, `tools`, `sandbox`, `proc` | Loop core, executor, sandbox wrapper, environment builder, process groups | State paths |
-| `protocol`, `rpc`, `result`, `materials` | Generated types, JSON-RPC line peer, typed-body validation and rendering, parsing, citation check, web fetch | A database writer |
+| `protocol`, `rpc`, `acp`, `result`, `materials` | Generated types, JSON-RPC line peer, the Agent Client Protocol client (C-60), typed-body validation and rendering, parsing, citation check, web fetch | A database writer |
 | `grant`, `lease`, `secret`, `diag` | The Authorization check shared by Core and Node, leases, a placeholder-printing secret type, closed enums | Persona, skills, knowledge scope |
 
 Callers pass state locations, persona, skills and knowledge scope.
@@ -635,7 +635,7 @@ streamed reply and restart persistence with a stub vendor runtime. Automatic
 account setup, first-use installation, quota projection and idle pooling remain
 #168; this increment's explicit route launches one process per request.
 
-**C-46 Grok adapter (new).** A Go Agent Client Protocol client over the `grok` command on stdio, best effort. The steps are `initialize`, session create with LINA tools handed as MCP servers, prompt, updates, permission requests routed to Core's approval path, and cancel. Telemetry and trace upload are switched off explicitly. Account state comes from a cheap authenticated call, not from the command's files.
+**C-46 Grok adapter (new).** A Go Agent Client Protocol client over the `grok` command on stdio, best effort. It uses the shared `kit/acp` client of C-60; only the provider rules below differ from a worker. The steps are `initialize`, session create with LINA tools handed as MCP servers, prompt, updates, permission requests routed to Core's approval path, and cancel. Telemetry and trace upload are switched off explicitly. Account state comes from a cheap authenticated call, not from the command's files.
 
 **C-47 Accounts, credentials and sign-in (new).**
 
@@ -1351,7 +1351,7 @@ type Adapter interface {
 ```
 
 - The common event kinds are progress, usage, finish, question, approval and work-tool call. Each event has one matching payload and a thread identity; malformed combinations are rejected. A finish distinguishes done, interrupted and typed failures (quota, rate limit, login expiry, connection and worker errors). Done ends a turn and is not a delivery verdict. Thread controls carry the turn id, process generation and binding epoch for reconciliation.
-- Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches). Claude Code, Antigravity and Cursor (`cursor-agent`) as headless children with streaming output. Cursor uses `stream-json`, process exit plus a final stream event, and session resume by chat id; these are to be confirmed against the installed version in [#210](https://github.com/thisisjun786/lina/issues/210).
+- Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches). Claude Code, Cursor, Gemini CLI, Grok and added agents through the one ACP adapter of C-60. Antigravity as a headless child with streaming output. The Claude Code headless adapter below remains until the worker evaluation chooses between it and the ACP profile.
 - #132 connects session start, input, interrupt and snapshot to Core's normal conversation tool registry. Launch receipts record the installed version and control handle; version and terminal-output notices survive in conversation history. The per-session process belongs to Core, and hard activity is held per active turn. Session completion is not task delivery; full work dispatch, recovery, approvals and dynamic work tools remain their separate roadmap steps.
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)). Approvals go to the originating conversation. A worker on another device is started and relayed by that device's Node.
 - A process group kill is the stop. A cut turn's effects are unknown until `Snapshot` and a read of GitHub settle them.
@@ -1397,6 +1397,29 @@ adapter does not advertise unsupported approval replies, steering or work tools;
 manager design acceptance, parallel scheduling and merge remain their own flows.
 See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-adapter)
 for the evidence boundary and account-free acceptance limits.
+
+**C-60 ACP client and ACP workers (new).** Contract: [work-and-delegation.md](work-and-delegation.md#acp-adapter). Evidence: [worker-protocols.md](../research/worker-protocols.md).
+
+- `kit/acp` is the client of Agent Client Protocol version 1 over stdio, one JSON message per line on the `kit/rpc` line peer. Its Go types are generated from the JSON Schema of a pinned ACP release (Apache-2.0) and committed under `third_party/` with the vendoring rules of [dependencies.md](../policy/dependencies.md), as the Codex app-server types are: never edited by hand, regenerated on sync, request ids keep their string or integer identity, and unknown variants keep their wire JSON.
+- `initialize` sends protocol version 1 and fails the handshake on any other answer. The client declares form elicitation and no `fs` or `terminal` capability; it answers `fs/*` and `terminal/*` with method-not-found. Version 2 changes how a turn ends and is a separate, verified change.
+- `internal/core/worker/acp` implements C-29 on that client. A profile holds the worker name, the command and arguments, the environment variables it sets (such as `CLAUDE_CODE_EXECUTABLE`), the version probe and the vendor rate-limit key it may read. Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added profiles come from an editable settings file defined by their own issue.
+- An ACP session id is the thread id. ACP version 1 has no turn id, so Core assigns one per `session/prompt` request and binds every update, request and reply of that request to it, with the process generation and binding epoch.
+
+| ACP message | `worker.Event` |
+| --- | --- |
+| `session/update`: message, thought, tool call, tool-call update, plan | progress |
+| `usage_update`, usage in the `session/prompt` reply | usage |
+| `session/prompt` reply | finish: `end_turn` done; `cancelled` interrupted; `refusal`, `max_tokens`, `max_turn_requests` failed as a worker error naming the stop reason |
+| JSON-RPC error on a request; session-failure extension | finish failed: -32000 login expiry; extension kinds map to quota, rate limit, login or connection |
+| `session/request_permission` | approval |
+| `elicitation/create` (form) | question |
+| A tool call on LINA's session MCP server | work-tool call |
+| Process exit while a `session/prompt` is open | finish failed: connection |
+
+- LINA's session MCP server is `lina worker-tools`, a stdio subcommand of `cmd/lina`. Core opens no new listener for it: the worker starts it from the `session/new` entry, and it connects to Core's local client socket with a token bound to one session. Core accepts each call only for that session's current turn, generation and epoch.
+- `Snapshot` has no protocol read in ACP version 1. It returns Core's record of the session: state, pending requests and the last message. After a Core restart the state is unknown until once-only recovery loads the session again.
+- `Quota` returns rows only from the session-failure extension and a profile's named rate-limit key; with neither, it returns none and the chooser treats the worker as unknown.
+- Every child is owned through `kit/proc` and reaped with its process tree; LINA's own model credential is removed from its environment.
 
 **C-57 Work definition, choice and splitting (new).**
 
@@ -1626,4 +1649,4 @@ Titles are the headings above. Earlier ids C-01 to C-42 keep their number where 
 - Kept: C-03 to C-07, C-15, C-16, C-19, C-26, C-32, C-33, C-38, C-40.
 - Changed: C-01, C-02, C-08 to C-14, C-17, C-18, C-20 to C-25, C-27 to C-30, C-34, C-35, C-39, C-42. Contract decisions replace the earlier ones. The main cases: the Moirai worker is a separate service, there is no hidden sandbox mode, no automatic replay, no automatic retries by Core, six tool classes and per-agent ceilings withdrawn, workers unconfined, survival tier withdrawn, key pinning withdrawn.
 - Withdrawn: C-31 (confirmation list; the approval rule decides), C-36 (desk and work Mac; placement is not a contract), C-37 (model proxy instance; the proxy is removed), C-41 (placement across machines; parallel hand-off decides).
-- New: C-43 to C-59.
+- New: C-43 to C-60.
