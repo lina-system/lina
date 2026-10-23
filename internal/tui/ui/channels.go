@@ -305,3 +305,14 @@ func (m *shellModel) channelScopeText(s protocol.ChannelScope) string {
 	}
 	return strings.Join([]string{text(s.Reads), text(s.Writes), text(tools), text(memory)}, "; ")
 }
+
+func (m *shellModel) channelReply(attempt uint64, e protocol.Envelope) {
+	if m.channels.open && attempt == m.channels.attempt {
+		m.channels.busy = false
+		if e.Error != nil {
+			m.channels.code = string(e.Error.Code)
+		} else if p, ok := e.Payload.(protocol.ChannelResult); ok {
+			m.channelResponse(p)
+		}
+	}
+}

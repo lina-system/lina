@@ -60,6 +60,8 @@ func TestRules(t *testing.T) {
 		{"TUI excludes third party", "internal/tui/state/file.go", `package state; import _ "example.com/client"`, "TUI"},
 		{"TUI near prefix", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/internal/clientapis"`, "TUI"},
 		{"TUI typed client", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/internal/clientapi"`, ""},
+		{"TUI shared masking", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/kit/secret"`, ""},
+		{"TUI masking near prefix", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/kit/secrets"`, "TUI"},
 		{"TUI protocol", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/kit/protocol"`, ""},
 		{"TUI design", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/internal/design"`, ""},
 		{"TUI sibling", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/internal/tui/state"`, ""},

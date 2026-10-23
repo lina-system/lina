@@ -76,7 +76,7 @@ acceptance remains the T-08 spike gate.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
 - It uses only the client connection. Its types are the Go types generated from the schema ([host-protocol.md](host-protocol.md#schema-and-generated-types)).
 - Protocol errors and Core logs go to the status line and a log, never into the conversation ([host-protocol.md](host-protocol.md#client-connection)). `TEA_TRACE` and `TEA_DEBUG` stay unset, and panic output is masked.
-- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol` and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
+- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol`, the shared masking primitives in `kit/secret`, and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
 - Trust: the socket's user check and the rule for who may decide an approval are Core's ([go-core.md](go-core.md), C-42). The TUI shows a refusal as a refusal and adds no rule of its own.
 - Parity with the LINA app comes from the shared conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)). The app is not designed here.
 
@@ -329,8 +329,9 @@ Overlays form a stack and the top one receives keys first: agent list, command p
 The decision overlay occupies the conversation surface and keeps the connection
 status row. Its targets wrap at cell boundaries and can be read with Up/Down or
 Page Up/Page Down. Confirmation stays disabled unless the entire target area
-fits. A small terminal retains the size notice and status instead of an actionable
-card; enlarging it recomputes visibility.
+has been read across those pages. Paging never skips a row hidden by the
+continuation hint. A small terminal retains the size notice and status instead
+of an actionable card; resizing discards the reading record.
 
 Width tiers (P):
 
@@ -789,7 +790,7 @@ The approval record is Core's. The TUI shows it and sends the person's decision 
 
 **The card** shows what the contract says an approval request shows, the requesting agent with its recommendation first, and its choices ([main-authority.md](main-authority.md#approval)). Doing nothing means the action will not run. A request that a channel cannot present waits here ([main-authority.md](main-authority.md#channels)).
 
-- Target fields are never truncated. If they do not fit, a details view opens and confirm is disabled while any target field is cut.
+- Target fields are never truncated. If they do not fit, the details view scrolls. Confirmation becomes available only after every target page has been displayed, including every wrapped row. The reading record belongs to the open card's identity, epoch, revision and terminal dimensions; a changed revision or size discards it. Closing the card or reconnecting also clears it. Reading all pages permits a separate one-time confirmation; scrolling itself never decides anything.
 - Requests of one scope are one card. A changed group returns stale; the card refreshes and the person selects again.
 - A decision is two steps: select, then a separate confirm key. Keys are press-only. Esc closes the view and decides nothing. No free-text path answers an approval, and no `/approve` exists.
 - Outcomes the TUI handles: resolved, already resolved elsewhere, withdrawn, expired (not performed), stale epoch or group, and refused. A pending approval is stopped by a Core restart ([runtime.md](runtime.md#recovery)), and the card says so.
@@ -1076,6 +1077,21 @@ type Stream interface {
 
 ## Input and commands (T-10)
 
+Chat pastes are masked with the same credential-shape and structured-value
+scanner as Core before they reach the composer, local echo, undo or sent-input
+recall. The complete insertion is scanned before the composer length limit to cover
+a value pasted after a credential field name or a token split across pastes. If that replacement changes surrounding draft text, the
+cursor moves to the end of the masked draft. Ordinary pastes keep their insertion
+position. Masking precedes the composer length limit. Invalid structured input
+that cannot be masked safely becomes a placeholder. Dedicated sign-in and API
+key fields keep their separate hidden-input path. These detectors recognize
+known shapes; they do not identify every possible arbitrary secret. Core still
+masks every input before ledger storage and derivation.
+`TestM1TUIChatPasteInstalledCore` exercises the installed Core and a 120×34 PTY,
+checking the unsent draft, local echo, sent-input recall, provider input,
+persistent files and restored conversation. It scans terminal output as well
+as settled screens, so an intermediate leaked frame also fails.
+
 Keys are data in `internal/tui/ui/keys.go`: action catalog id, key spellings,
 footer priority and optional compact label. `/help` and `?` on a completely empty
 draft (no text or attachments) open the same local shortcut sheet in the existing
@@ -1343,6 +1359,14 @@ separate selection/confirmation presses, durable attribution and terminal cleanu
 The test creates no additional authority service. `e2e/m1/tui-cards.json` races
 two socket clients, changes a group after display, and drives the recording-writer
 bell replay assertion.
+
+`TestM2TUILongWorkerApprovalInstalledCore` runs the installed Core and TUI in a
+120x34 PTY with a synthetic model and Codex stdio peer. It reads a command's
+multi-page targets, selects Allow once and confirms separately, answers the
+worker's question, and verifies the worker's artifact and the conversation result.
+UI regressions cover skipped pages, wrapped targets, revision and size changes,
+reopening, reconnecting and press-only confirmation. The real-model owner
+acceptance remains in #853 and runs after #900 reaches dev.
 
 `e2e/m1/tui-questions.json` exercises a flat question through a separately
 running Core listener and the production client adapter. The question source
