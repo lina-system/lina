@@ -261,6 +261,12 @@ Every client connection acts for one person ([product-families.md](product-famil
 
 One connection reaches every agent of the main. A conversation kind, and a question asked in a conversation, names the conversation by its conversation id, and the conversation's participating agents follow from it. A request that starts a conversation names its participating agent by agent id. Every history item and every conversation event carries the agent id of the agent that spoke or acted, next to the person id where a person acted ([product-families.md](product-families.md)). A system-originated event, such as a background notice, carries the agent id of the conversation's agent and is marked as system-originated.
 
+A question's `conversation_id` remains its display scope when delivered or
+replayed on the person's global `waiting` topic, including after resolution.
+Clients retain that id when projecting the card into a conversation transcript.
+Global waiting access to pending questions does not make them history in other
+conversations.
+
 | Capability | What the client can do |
 | --- | --- |
 | Conversation | Start a conversation with an agent, send a message, interrupt, read history, subscribe to events, receive connect and disconnect notices |
@@ -455,6 +461,15 @@ A result has these fields:
 | `saved_as` | Null while `preview`; otherwise the reference to the saved material or record |
 | `revised_by` | The person id or the agent id that made this revision |
 | `provenance` | `{ agent_id, conversation_id, turn_id, task_id }`. `task_id` is null unless delegated work (a task or a background run) produced the result; it then holds that task's or run's id. |
+
+Authored conversation cards may carry the first text page with `next`, a UTF-8
+byte offset. The `conversation` capability's `result_get` reads the retained
+text with `result_id`, `conversation_id`, `revision` and optional `offset`
+(default zero). Each `result` response carries at most 64 KiB of text and an
+optional `next`; absence of `next` means the text is complete. Pages never split
+a code point. Core binds reads to the connected person and an existing agent's
+main conversation. A changed revision returns `stale_revision`, so a reader
+cannot join pages from different revisions. These reads create no model turn.
 
 The sources a body relies on travel in the envelope's `source_refs`. The `summary` field exists on every result; the `summary` type is a result whose body is an outline.
 

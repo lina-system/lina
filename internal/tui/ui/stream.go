@@ -331,6 +331,7 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 			block.TurnActive = *p.Active
 		}
 	case protocol.Result:
+		block.ResultID, block.ResultRevision, block.ResultPaged = p.ResultID, string(p.Revision), p.Next != nil
 		if p.RunID != nil {
 			block.RunID = *p.RunID
 		}
@@ -366,6 +367,7 @@ func projectCard(payload protocol.Payload, epoch string, revision uint64) *state
 	case protocol.Question:
 		wire = p.Card
 		card.Kind = protocol.KindQuestion
+		card.ConversationID = p.ConversationID
 		card.Form = p.Form
 	default:
 		return nil

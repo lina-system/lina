@@ -153,8 +153,9 @@ func testM3DelegationStartFailure(t *testing.T, scenario string) {
 }
 
 type dependencyReleaseOptions struct {
-	missingManager bool
-	outcomes       scheduledOutcomeScenario
+	missingManager  bool
+	outcomes        scheduledOutcomeScenario
+	sharedAncestors int
 }
 
 func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict, preset, stopMode string, options ...dependencyReleaseOptions) {
@@ -167,6 +168,9 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	raw, err := os.ReadFile("../m3/dependency-release.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if option.sharedAncestors != 0 {
+		raw = sharedAncestorScenario(t, raw, option.sharedAncestors)
 	}
 	var scenario any
 	if err = json.Unmarshal(raw, &scenario); err != nil {
@@ -573,7 +577,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			approvalAnswered = true
 		}
 	}
-	if len(taskIDs) != 3 {
+	if len(taskIDs) != 3+option.sharedAncestors {
 		t.Fatalf("no dispatched graph: %v", taskIDs)
 	}
 	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
@@ -602,8 +606,8 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			t.Fatalf("scheduled task lost manager ownership or source delivery: %s %v", raw, err)
 		}
 	}
-	if managerCalls.Load() != 6 {
-		t.Fatalf("expected three durable manager judgments, got %d model calls", managerCalls.Load())
+	if managerCalls.Load() != int32(2*len(taskIDs)) {
+		t.Fatalf("expected %d durable manager judgments, got %d model calls", len(taskIDs), managerCalls.Load())
 	}
 	await := func(id string, predicate func(work.Card) bool) work.Card {
 		t.Helper()
@@ -812,7 +816,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	}
 	admittedTurn(t, h, client, conversation, "refresh-input", "Observe the landed foundation.")
 	b = await(taskIDs[1], func(c work.Card) bool { return c.Run != nil && !c.Active && c.TurnStatus == "completed" })
-	for _, id := range taskIDs {
+	for _, id := range taskIDs[:3] {
 		dir := filepath.Join(h.root, "work", "tasks", id)
 		if _, err = os.Stat(dir); err != nil {
 			t.Fatal(err)
@@ -833,6 +837,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	if err != nil || string(result) != "verified fixture result\n" {
 		t.Fatalf("missing worker result: %q %v", result, err)
 	}
+	assertSharedAncestorsQueued(t, h, store, taskIDs[3:])
 	client.Close()
 	h.stopCore(core)
 	core = start()
@@ -845,6 +850,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		t.Fatal("scheduler rewrote parent clone local base")
 	}
 	assertProtectedRefs()
+	assertSharedAncestorsQueued(t, h, store, taskIDs[3:])
 	client.Close()
 	h.stopCore(core)
 }

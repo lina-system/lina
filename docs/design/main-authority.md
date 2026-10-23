@@ -316,6 +316,17 @@ An external channel is one more surface that carries the owner's input to an age
 - In a channel the choices are once and deny. "Always allow" is set in the app, where the reach of a standing grant is visible, and it does not appear in the owner's own chat either.
 - Every answer is recorded with the choice, the person (by the paired id), the agent that asked, and the platform's message and chat ids. The message is then edited to show the decision and its buttons are removed. A button on a request that is already answered, or from an earlier epoch, is answered with a short note and removed.
 
+### Messengers
+
+A messenger source reads the person's own messenger accounts ([integrations.md](integrations.md#messengers)). Connecting the source covers reading it. Acting in the person's name there is an outward effect:
+
+- Only platforms whose terms allow automating the account have writes. On the others no write is offered and no write grant can be made, and the source says why.
+- Writes are off by default. The person turns them on for one chat of one source and names the verbs: send, reply, edit, delete, upload, react or mark read. This write grant is recorded with the person, the agents it names (or every agent) and the date, is listed with the standing grants and is revoked there. It is not the approval of any one write.
+- Send, reply, edit, upload, deletion for everyone and mark read reach other people and cannot be taken back. Each asks every time, with the choices once and deny, and the request shows the chat, who will see it and the text. The person cannot grant a standing right to post in a chat.
+- A reaction can be removed. Under the chat's write grant it runs without asking and is reported in one line with one action to undo it.
+- Preset effect limits apply first. A messaging plugin for the same account obeys the same write grant.
+- Reads never change the platform's state: no read receipt, presence, typing, join or leave.
+
 ## Deferred
 
 - Grant expiry values, the heartbeat interval and the maximum stop latency: set by measurement during Node implementation acceptance.

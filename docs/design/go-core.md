@@ -1232,6 +1232,10 @@ The protocol is one JSON message per line on stdio.
 - Core to adapter: `start` (system text, items, tool declarations, model, effort), `tool_result`, `cancel`, `ping`.
 - Adapter to Core: `init` (tools, MCP servers and plugins the runtime loaded), `delta`, `item_done`, `tool_call`, `usage`, `limit`, `terminal` (reason, session id, cost estimate), `error`.
 - Core refuses the turn if `init` lists anything LINA did not put there.
+- Ending the stream context or a pending `Next` context terminates the request,
+  unblocks its stdio reads and writes, and makes `Next` return the context error
+  even if the runtime is silent. The runtime and its supervisor are reaped
+  without requiring a separate `Close`; `Close` remains an idempotent join.
 - First use installs the SDK from the release lockfile ([runtime.md](runtime.md#provider-adapters)); it is never shipped in LINA artifacts.
 
 Implementation notes: [C-45 runtime increment](../../adapters/claude/REFERENCE.md#c-45-runtime-increment).
@@ -2365,6 +2369,10 @@ Implementation notes: [C-29 dispatch integration](../../internal/core/worker/dis
 
 Worker recovery implementation and acceptance scenarios are described in
 [the package notes](../../internal/core/worker/RECOVERY.md).
+Conversation-worker input persists its uncertain intent before dispatch and its
+accepted turn binding before returning success, independently of notifications.
+Unknown admission retains the directory reservation and cannot be settled by
+the previous turn's completion or replayed after restart.
 
 **C-60 ACP client and ACP workers (new).**
 Contract: [work-and-delegation.md](work-and-delegation.md#acp-adapter).
@@ -2395,6 +2403,11 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
 - A definitive authentication refusal during `session/new` returns `worker.ErrNeedsSignIn` only after child cleanup, before any prompt.
   Dispatch retains the worker/version/code as readiness evidence and lets the existing chooser try another eligible worker.
   It creates no run for a refused session; the next opened session uses the next actual run generation.
+  A refused session excludes that worker only from the current task's attempts;
+  new tasks recheck readiness without a persistent quota block. Startup clears
+  a legacy unmeasured worker-wide stop only when dispatch history contains
+  readiness refusals and no potentially executed attempt for that worker.
+  Measured or ambiguous quota blocks remain intact.
   Other start errors retain their uncertain outcome.
   The Cursor installed-Core scenario in `e2e/m2/cursor_worker_test.go` exercises this path.
 - ACP approval and form events use the existing `boot` worker bridge. The
@@ -2468,6 +2481,11 @@ type Definition struct {
 - Core does not split work itself.
   The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)).
   Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
+  Shared dependency paths must not multiply graph traversal: reachability is
+  bounded by the graph's vertices and edges, including negative queries.
+  Missing dependencies, cycles and unordered overlaps still reject the whole
+  admission before any task is created.
+  Implementation notes: [C-57 graph validation](../../internal/core/work/REFERENCE.md#c-57-graph-validation).
 - `Chooser` ranks installed workers by quota, situation rules and measured host capacity.
   OK quota precedes warning and unknown; absent quota is unknown and usable.
   Any blocked window excludes the worker until its explicit reset.
@@ -2702,6 +2720,7 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
 - `progress.Compute` builds one line per running 일 and 목표 per [work-and-delegation.md](work-and-delegation.md#progress-line): name, stage word and bar, just finished (the outcome line of the latest landing, built from structured fields and the title), next, and a waiting mark.
   Unobserved values are unknown, never zero.
   State words are codes; clients own the Korean and English catalogs.
+- Worker title/current-step observations are carried on the existing adapter event, fenced to its execution, and retained in the work ledger only when changed. Progress Now uses the same defanged observation in durable and conversation-started work. The optional observation adds no endpoint or required client field; old records retain the activity fallback.
 - Conversation-worker progress consumes the same `workerListSource` observations and `runs.RunningList` projection as the running list.
   Adapter snapshots are collected outside canonical transactions; idle sessions are absent, unavailable snapshots remain unknown, and failed sessions use the same `running_seen` acknowledgement.
   The optional execution-state code is distinct from the unobserved plan stage, percent, last task and next task.
