@@ -116,6 +116,8 @@ const (
 )
 
 type Goal struct {
+	Conversation      string              `json:"conversation"`
+	Turn              string              `json:"turn"`
 	RecordID          string              `json:"record_id"`
 	RecordRevision    string              `json:"record_revision"`
 	DefinitionPending bool                `json:"definition_pending"`

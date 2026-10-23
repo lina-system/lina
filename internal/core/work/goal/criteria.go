@@ -77,6 +77,16 @@ func criterionRevision(g Goal, c Criterion) string {
 		}
 		return ""
 	}
+	// Repository outcomes use that repository's observed merge, independently
+	// of the service repository. A missing merge cannot borrow another head.
+	if !strings.HasPrefix(c.ID, "code:") && has(g.Scope.Repositories, c.Check.Target) {
+		if revision := g.MergedRevisions[c.Check.Target]; revision != "" {
+			return revision
+		}
+		if len(g.Scope.Repositories) != 1 || len(g.MergedRevisions) != 0 {
+			return ""
+		}
+	}
 	return targetRevision(g)
 }
 func validCriteria(g Goal, pendingCorrection bool) bool {
