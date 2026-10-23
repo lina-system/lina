@@ -2,6 +2,7 @@
   "cases": [
     {"name":"success","expected":"ready_for_review"},
     {"name":"scope","expected":"ready_for_review"},
+    {"name":"scope-oversized","expected":"change_evidence_unavailable"},
     {"name":"failed-check","expected":"pr_unverified"},
     {"name":"prose","expected":"ready_for_review"},
     {"name":"findings","expected":"ready_for_review"}

@@ -65,7 +65,8 @@ func (s *workerListSource) refresh(ctx context.Context) error {
 		s.workers.mu.Lock()
 		if !s.workers.closed {
 			for id, e := range s.workers.sessions {
-				if e.origin.person == s.person {
+				// Scheduled work already contributes its durable task card.
+				if !e.scheduled && e.origin.person == s.person {
 					entries[id] = e
 				}
 			}

@@ -34,3 +34,20 @@ fixture judgments are fixed by [the pin](pin/REFERENCE.md).
   owning services; accepting a receipt is not evidence of successful execution.
 - Vendor worker adapters and workspace creation have their own implementation
   issues. No CRW executable, relay, hook or review loop is used here.
+
+## Scheduler observations for #208
+
+Read-only CRW reference at the same pinned commit:
+`docs/relay/dag-scheduler.md` (ready set and edge satisfaction),
+`internal/relay/dagsched/capacity.go`, and `integration.go`.
+
+- **Seen:** readiness has one reason; acceptance alone does not satisfy an
+  integrated edge; integration observation and capacity release share a store
+  transaction. Missing capacity measurements do not imply free slots.
+- **Inferred:** LINA reserves dispatch and write areas in its fenced canon
+  transaction before an external start, retains uncertain starts on recovery,
+  and distinguishes execution completion from an observed merged pull request.
+  A duplicate event cannot create another worker or send another conflict return.
+- **Unknown:** these references do not establish LINA's worker or forge behavior.
+  CRW permits some nonexclusive overlaps; LINA's stricter design requires every
+  overlapping area to remain exclusive. No CRW command or runtime is used.

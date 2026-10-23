@@ -70,6 +70,7 @@ func TestM1TUIRecovery(t *testing.T) {
 	fixtures := tuiFixtures(t)
 	done := make(chan error, 1)
 	go func() {
+		defer close(done)
 		for index, steps := range scenario.Connections {
 			clock := &scenarioClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 			core, err := fakecore.New(fixtures, clock, steps)
@@ -92,7 +93,7 @@ func TestM1TUIRecovery(t *testing.T) {
 				want = fakecore.ErrDisconnected
 			}
 			if !errors.Is(err, want) {
-				done <- fmt.Errorf("connection %d: got %v, want %v", index, err, want)
+				done <- fmt.Errorf("connection %d: got %w, want %v", index, err, want)
 				return
 			}
 		}
@@ -141,5 +142,14 @@ reconnected:
 		if strings.Contains(line, notice) {
 			t.Fatal("replayed epoch notice")
 		}
+	}
+	// Observe the peer's EOF before deferred cancellation can race its read.
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("fake recovery peer: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("fake recovery peer did not finish after client quit")
 	}
 }

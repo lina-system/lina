@@ -58,6 +58,9 @@ func (s *Service) Recover(ctx context.Context, epoch string) error {
 	return s.recoverFileCopies(ctx)
 }
 func (s *Service) Create(ctx context.Context, t Task) error {
+	if t.Schedule != nil {
+		return s.Schedule(ctx, []Task{t})
+	}
 	if t.ID == "" || t.AgentID == "" || t.ConversationID == "" || strings.TrimSpace(t.Title) == "" || strings.TrimSpace(t.Done) == "" {
 		return ErrInvalid
 	}

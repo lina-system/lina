@@ -92,6 +92,9 @@ func (s *Service) SummaryPage(ctx context.Context, id string, offset int64) (str
 		state = c.Completion.Label
 	}
 	b.WriteString(state + ": " + c.Task.Title + "\n")
+	if c.WaitReason != nil {
+		b.WriteString("waiting: " + c.WaitReason.Kind + ": " + c.WaitReason.Target + "\n")
+	}
 	for _, stage := range c.Stages {
 		b.WriteString(stage.Name + " (" + stage.Source + "): " + stage.Summary + "\n")
 	}

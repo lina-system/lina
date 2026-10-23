@@ -40,6 +40,7 @@ type codingAssignment struct {
 	Delegated                        bool
 	Verdict                          string
 	VerdictHead, VerdictReceipt      string
+	Delivery                         codingDelivery
 }
 
 type codingTurn struct {

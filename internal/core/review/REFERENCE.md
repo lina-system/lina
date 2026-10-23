@@ -19,3 +19,10 @@ GitHub's contents API. No upstream implementation is copied or executed.
 The issue's owner correction and #272 select the existing manager check. The
 original C-58 background reviewer and failed-check P1 mapping are superseded.
 No reference review loop is executed; only the finding data boundary is reused.
+
+#144 also read the local CRW `internal/review/finding.go` read-only.
+Seen: grades and unverified results remain distinct structured data. Inferred:
+LINA returns a P0/P1 subset without changing finding ids and retains the other
+records. Unknown: that reference establishes neither LINA's one-return
+allowance nor its GitHub close or merge authority. Those come from the owner
+correction and Judgment and delivery. No CRW review or relay was executed.

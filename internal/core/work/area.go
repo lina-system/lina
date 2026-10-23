@@ -113,13 +113,17 @@ func (s WorkspaceSpec) validate(id string) error {
 // Core commands use fixed arguments and an explicit environment. Source
 // repository hooks, user Git aliases and injected GIT_* settings never run.
 func (a *Area) command(ctx context.Context, l lease.Lease, dir string, args ...string) (string, error) {
-	if a.git == "" {
+	return a.commandWithGit(ctx, l, a.git, dir, args...)
+}
+
+func (a *Area) commandWithGit(ctx context.Context, l lease.Lease, git, dir string, args ...string) (string, error) {
+	if git == "" {
 		return "", ErrInvalid
 	}
 	var out, stderr bytes.Buffer
 	env := []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0"}
 	args = append([]string{"-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=always"}, args...)
-	err := a.owner.Run(ctx, l, proc.Command{Path: a.git, Dir: dir, Env: env, Args: args, Stdout: &out, Stderr: &stderr})
+	err := a.owner.Run(ctx, l, proc.Command{Path: git, Dir: dir, Env: env, Args: args, Stdout: &out, Stderr: &stderr})
 	if err != nil {
 		return "", fmt.Errorf("work git: %w", err)
 	}
@@ -276,10 +280,14 @@ func (a *Area) bindTaskBranch(ctx context.Context, l lease.Lease, w Workspace, c
 	if err != nil || filepath.Dir(rel) != worktrees {
 		return ErrState
 	}
-	ref := "refs/heads/" + w.Spec.Branch + "\n"
+	return bindTaskRef(a.root, rel, worktrees, w.Spec.Branch)
+}
+
+func bindTaskRef(root *os.Root, rel, worktrees, branch string) error {
+	ref := "refs/heads/" + branch + "\n"
 	// A branch can contain more than one task id. Reserve its exact name for
 	// one allocation even before either worker has created the branch.
-	d, err := a.root.Open(worktrees)
+	d, err := root.Open(worktrees)
 	if err != nil {
 		return err
 	}
@@ -293,7 +301,7 @@ func (a *Area) bindTaskBranch(ctx context.Context, l lease.Lease, w Workspace, c
 			continue
 		}
 		other := filepath.Join(worktrees, entry.Name())
-		body, err := a.root.ReadFile(filepath.Join(other, "lina-task-ref"))
+		body, err := root.ReadFile(filepath.Join(other, "lina-task-ref"))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -304,7 +312,7 @@ func (a *Area) bindTaskBranch(ctx context.Context, l lease.Lease, w Workspace, c
 			return ErrState
 		}
 	}
-	return a.writeAreaFile(filepath.Join(rel, "lina-task-ref"), ref, 0600)
+	return writeAreaFile(root, filepath.Join(rel, "lina-task-ref"), ref, 0600)
 }
 
 // Bundle captures the exact named branch, including its complete object history.
@@ -349,7 +357,11 @@ func (a *Area) installGuard(dir string) (err error) {
 }
 
 func (a *Area) writeAreaFile(path, body string, mode os.FileMode) (err error) {
-	if info, e := a.root.Lstat(path); e == nil {
+	return writeAreaFile(a.root, path, body, mode)
+}
+
+func writeAreaFile(root *os.Root, path, body string, mode os.FileMode) (err error) {
+	if info, e := root.Lstat(path); e == nil {
 		if !info.Mode().IsRegular() {
 			return ErrInvalid
 		}
@@ -357,15 +369,15 @@ func (a *Area) writeAreaFile(path, body string, mode os.FileMode) (err error) {
 		return e
 	}
 	temp := filepath.Join(filepath.Dir(path), ".reference-"+rand.Text())
-	f, err := a.root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	f, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}
-	defer a.root.Remove(temp)
+	defer root.Remove(temp)
 	_, err = f.WriteString(body)
 	err = errors.Join(err, f.Sync(), f.Close())
 	if err != nil {
 		return err
 	}
-	return a.root.Rename(temp, path)
+	return root.Rename(temp, path)
 }

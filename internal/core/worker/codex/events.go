@@ -100,7 +100,14 @@ func (s *Session) notification(raw []byte) error {
 		event.Kind = worker.UsageEvent
 		event.Usage = &provider.Usage{Input: &u.InputTokens, Cached: &u.CachedInputTokens, Output: &u.OutputTokens, Reasoning: &u.ReasoningOutputTokens}
 	case n.AccountRateLimitsUpdated != nil:
-		return s.quotaUpdated(raw)
+		if err := s.quotaUpdated(raw); err != nil {
+			return err
+		}
+		select {
+		case s.quotaWake <- struct{}{}:
+		default:
+		}
+		return nil
 	case n.ServerRequestResolved != nil:
 		return s.resolved(n.ServerRequestResolved.Params)
 	case n.ThreadStatusChanged != nil:
