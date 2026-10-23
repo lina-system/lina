@@ -23,6 +23,25 @@ func conversationClient(t *testing.T, h *harness, extra ...protocol.Capability) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { c.Close() })
+	// Probe before subscribing: a recovering worker can publish turn events
+	// immediately after the snapshot. Those events are not input refusals and
+	// must remain available to the caller. Only recovery's explicit refusal
+	// permits another empty input probe.
+	for {
+		if _, err = c.Input(h.ctx, protocol.Input{}); err != nil {
+			t.Fatal(err)
+		}
+		ready, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ready.Error != nil && ready.Error.Code == protocol.ErrorMalformed {
+			break
+		}
+		if ready.Error == nil || ready.Error.Code != protocol.ErrorUnavailable {
+			t.Fatal("unexpected readiness refusal")
+		}
+	}
 	if _, err = c.History(h.ctx, protocol.HistoryGet{}); err != nil {
 		t.Fatal(err)
 	}
@@ -40,23 +59,6 @@ func conversationClient(t *testing.T, h *harness, extra ...protocol.Capability) 
 	}
 	if snapshot, err := c.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
 		t.Fatal("no history snapshot")
-	}
-	// Empty input probes admission without creating a message. Only recovery's
-	// explicit refusal permits another probe.
-	for {
-		if _, err = c.Input(h.ctx, protocol.Input{}); err != nil {
-			t.Fatal(err)
-		}
-		ready, err := c.Receive(h.ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ready.Error != nil && ready.Error.Code == protocol.ErrorMalformed {
-			break
-		}
-		if ready.Error == nil || ready.Error.Code != protocol.ErrorUnavailable {
-			t.Fatal("unexpected readiness refusal")
-		}
 	}
 	return c, *history.ConversationID
 }
