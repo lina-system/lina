@@ -70,7 +70,7 @@ func Read(path string) (Manifest, error) {
 // Validate checks the required metadata and artifact records.
 func (m Manifest) Validate() error {
 	for route, capabilities := range m.ProviderCapabilities {
-		if route != "chatgpt" && route != "responses_api_key" && route != "claude" {
+		if route != "chatgpt" && route != "responses_api_key" && route != "claude" && route != "apple" {
 			return fmt.Errorf("unknown provider route")
 		}
 		if !capabilities.Valid() {
