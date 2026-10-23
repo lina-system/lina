@@ -98,6 +98,8 @@ func runResultOpenLocalized(t *testing.T, language design.Language) {
 		}
 	}
 	assertLocalizedRun("running strip", screenText(strip))
+	// Restored rows can arrive before the connection permits opening a result.
+	waitScreen(t, h, terminal, design.Text(language, "live"))
 	h.keys(terminal, "\x12") // Running: the owner opens a landed row.
 	list := waitScreen(t, h, terminal, design.Text(language, "running.keys"))
 	assertLocalizedRun("running list", screenText(list))
