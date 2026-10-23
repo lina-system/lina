@@ -20,7 +20,8 @@
     "streams/run_status.json",
     "streams/background_notice.json",
     "streams/connected.json",
-    "streams/disconnected.json"
+    "streams/disconnected.json",
+    "streams/readiness_failure.json"
   ],
   "output": [
     "normal/snapshot.json",
@@ -42,9 +43,11 @@
     "streams/run_status.json",
     "streams/background_notice.json",
     "streams/connected.json",
-    "streams/disconnected.json"
+    "streams/disconnected.json",
+    "streams/readiness_failure.json"
   ],
   "errors": [
+    "",
     "",
     "",
     "",
@@ -67,7 +70,7 @@
     ""
   ],
   "outcome": {
-    "accepted": 20,
+    "accepted": 21,
     "malformed": 0,
     "unknown_kinds": 0
   }
