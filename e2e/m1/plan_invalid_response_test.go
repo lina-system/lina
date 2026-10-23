@@ -133,7 +133,7 @@ func runPlanInvalidResponseScenario(t *testing.T, fixture string) {
 	conv.Close()
 	h.stopCore(core)
 	core = start()
-	conv, conversation = conversationClient(t, h)
+	conv, _ = conversationClient(t, h)
 	request.Epoch = epoch()
 	again, err := api.Aux(ctx, request)
 	if err != nil || string(again.Output) != string(first.Output) || auxiliary.Load() != 1 {

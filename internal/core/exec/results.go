@@ -41,8 +41,13 @@ func key(v any) string {
 }
 func output(v any) json.RawMessage { raw, _ := json.Marshal(v); return raw }
 func refusal(err error) json.RawMessage {
+	if errors.Is(err, result.ErrSurfaceValidation) {
+		return output(map[string]any{"version": "v0.9", "error": map[string]any{"code": "VALIDATION_FAILED", "surfaceId": "", "path": "/", "message": "Card does not match lina.cards 1.0."}})
+	}
 	code := "unavailable"
 	switch {
+	case errors.Is(err, result.ErrSurfaceValidation):
+		code = "VALIDATION_FAILED"
 	case errors.Is(err, result.ErrMalformed), errors.Is(err, tools.ErrInvalid):
 		code = "malformed"
 	case errors.Is(err, errNotAuthorized):
@@ -75,7 +80,7 @@ func ResultTools(registry *tools.Registry, service ResultService, scope result.S
 		intent = &copy
 	}
 	bindings := map[string]loop.Tool{}
-	for _, name := range []string{"present_result", "read_result", "save_result"} {
+	for _, name := range []string{"present_result", "present_surface", "read_result", "save_result"} {
 		schema := func(raw json.RawMessage) (tools.Input, error) {
 			if len(raw) > (1<<20)+4096 {
 				return tools.Input{}, result.ErrMalformed
@@ -83,12 +88,17 @@ func ResultTools(registry *tools.Registry, service ResultService, scope result.S
 			var normalized any
 			target := "result:new:" + scope.ConversationID
 			switch name {
-			case "present_result":
+			case "present_result", "present_surface":
 				var p result.PresentRequest
 				if err := result.Decode(raw, &p); err != nil {
 					return tools.Input{}, err
 				}
-				if _, err := result.Validate(p.Type, p.Body, result.Limits{}); err != nil {
+				if name == "present_surface" {
+					var batch result.SurfaceBatch
+					if p.Type != result.SurfaceType || result.Decode(p.Body, &batch) != nil || len(batch.Messages) == 0 || len(p.Body) > 64<<10 {
+						return tools.Input{}, result.ErrSurfaceValidation
+					}
+				} else if _, err := result.Validate(p.Type, p.Body, result.Limits{}); err != nil {
 					return tools.Input{}, err
 				}
 				if !result.ValidReplyType(p.ReplyType) || p.Title == "" || p.Summary == "" || p.ID == "" && p.BaseRevision != 0 || p.ID != "" && p.BaseRevision <= 0 {
@@ -135,10 +145,22 @@ func ResultTools(registry *tools.Registry, service ResultService, scope result.S
 		}, Name: name, Schema: schema, Conc: 1, Deadline: 30 * time.Second, Placement: tools.Core}
 		handler := func(ctx context.Context, _ lease.Lease, in tools.Input) (tools.Result, error) {
 			switch name {
-			case "present_result":
+			case "present_result", "present_surface":
 				var p result.PresentRequest
 				_ = json.Unmarshal(in.Arguments, &p)
-				card, err := service.Present(ctx, scope, p)
+				var card result.Card
+				var err error
+				if name == "present_surface" {
+					presenter, ok := service.(interface {
+						PresentSurface(context.Context, result.Scope, result.PresentRequest) (result.Card, error)
+					})
+					if !ok {
+						return tools.Result{State: tools.Failed, Body: refusal(result.ErrSurfaceValidation)}, nil
+					}
+					card, err = presenter.PresentSurface(ctx, scope, p)
+				} else {
+					card, err = service.Present(ctx, scope, p)
+				}
 				if err != nil {
 					return tools.Result{State: tools.Failed, Body: refusal(err)}, nil
 				}
@@ -202,7 +224,7 @@ func ResultTools(registry *tools.Registry, service ResultService, scope result.S
 				call.Auth.Person = scope.PersonID
 				call.Auth.Agent = scope.AgentID
 				switch name {
-				case "present_result":
+				case "present_result", "present_surface":
 					var p result.PresentRequest
 					_ = json.Unmarshal(in.Arguments, &p)
 					call.Auth.Revision = strconv.Itoa(p.BaseRevision)
@@ -245,5 +267,10 @@ func ResultDeclarations() []provider.ToolDecl {
 	}
 	present, _ := json.Marshal(map[string]any{"type": "function", "name": "present_result", "description": "Present a complete typed result. summary is the verdict shown first. Optional reply_type: status, comparison, candidates, third_party or chat. For candidates, one table row or comparison target is one artifact option. A table body has columns [{name,type:text|number|date|boolean,unit}], rows [[values]], optional totals [values]. A comparison body has targets [{label,old,new,hunks:[{old_start,old_count,new_start,new_count}]}], apply:null. A document_draft has blocks (kind: paragraph, text), from_summary:null, optional recipient; blocks may name audience as recipient or person. This does not send or save the result. A reported completion includes completion.work_kind and evidence references to successful tool calls (turn_id, call_id, kind); an empty turn_id means this turn. Missing required evidence is recorded as claimed and shown as not verified. Editing requires result_id and base_revision.", "parameters": map[string]any{"type": "object", "properties": props, "required": []string{"type", "title", "summary", "body"}, "additionalProperties": false}})
 	read := provider.ToolDecl(`{"type":"function","name":"read_result","description":"Read a result card in this conversation, including its completion evidence and current revision.","parameters":{"type":"object","properties":{"result_id":{"type":"string"}},"required":["result_id"],"additionalProperties":false}}`)
-	return []provider.ToolDecl{present, read}
+	surface, _ := json.Marshal(map[string]any{"type": "function", "name": "present_surface", "description": "Present a generated card from lina.cards 1.0, A2UI wire version v0.9. Set type to surface; body is {messages:[...]}. Submit the entire batch in one call. Start with createSurface {surfaceId,catalogId:lina.cards}; updateComponents carries a flat components array with root id root; updateDataModel carries surfaceId, optional JSON pointer path and value; deleteSurface removes a card. Allowed components: Text, Column, Row, List, Card, Divider, Button, CheckBox, ChoicePicker, TextField, DateTimeInput, WorkRow. Text uses text; layouts use children ids; Card/Button use child id; Button and WorkRow use action:{event:{name,context:{field:value or {path:/field}}}}. ChoicePicker uses options:[{label,value}], value:{path:/field}, variant:mutuallyExclusive or multipleSelection. WorkRow uses title,state,elapsed,action. No colors, icons, URLs, code, approval or sign-in controls. Updates require result_id and base_revision. Input is delivered as a person message on the next turn and gives no effect approval.", "parameters": map[string]any{"type": "object", "properties": props, "required": []string{"type", "title", "summary", "body"}, "additionalProperties": false}})
+	var declaration map[string]any
+	_ = json.Unmarshal(surface, &declaration)
+	declaration["parameters"].(map[string]any)["properties"].(map[string]any)["type"] = map[string]any{"type": "string", "enum": []string{"surface"}}
+	surface, _ = json.Marshal(declaration)
+	return []provider.ToolDecl{present, read, surface}
 }

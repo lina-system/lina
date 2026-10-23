@@ -24,6 +24,7 @@ func uidLineagesRequest(t *testing.T) Request {
 }
 
 func TestImportUIDAcrossLineages(t *testing.T) {
+	t.Parallel()
 	req := uidLineagesRequest(t)
 	p, err := Prepare(t.Context(), req)
 	if err != nil {
@@ -123,6 +124,7 @@ func TestImportUIDAcrossLineages(t *testing.T) {
 }
 
 func TestImportUIDLineagesStayProfileScoped(t *testing.T) {
+	t.Parallel()
 	req := uidLineagesRequest(t)
 	other := req.Profiles[0]
 	other.ID, other.AgentID = "other-profile", "other-agent"
@@ -151,6 +153,7 @@ func TestImportUIDLineagesStayProfileScoped(t *testing.T) {
 }
 
 func TestImportUIDLineageVersions(t *testing.T) {
+	t.Parallel()
 	for _, matching := range []bool{true, false} {
 		name := "unmatched_version"
 		if matching {

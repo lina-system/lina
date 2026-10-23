@@ -27,6 +27,7 @@ func (m *shellModel) openResultCard() tea.Cmd {
 		return nil
 	}
 	m.conversation.pager.cardID = card.ID
+	m.openSurface(card.ResultID, card.ResultRevision, card.SurfaceControls)
 	if !card.ResultPaged || !m.mutationsAllowed() {
 		return nil
 	}
@@ -62,6 +63,9 @@ func (m *shellModel) resultPageResponse(request protocol.ResultGet, page protoco
 		return &request, nil
 	}
 	p.text = sanitize.Display(p.result.text.String())
+	if page.Type == protocol.ResultTypeSurface && page.SurfaceControls != nil {
+		m.openSurface(page.ResultID, string(page.Revision), page.SurfaceControls)
+	}
 	if p.followEnd {
 		p.offset = len(m.pagerLines())
 	}

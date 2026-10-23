@@ -401,32 +401,6 @@ func (m *shellModel) cardSummary(card state.Card) string {
 	}
 	return sanitize.Display(text)
 }
-func (m *shellModel) waitingLine() string {
-	count := 0
-	summary := ""
-	for _, card := range m.content.Cards {
-		if card.Outcome == "" {
-			count++
-			if summary == "" {
-				summary = card.Agent + ": " + card.Summary
-			}
-		}
-	}
-	if count == 0 {
-		supported := false
-		for _, cap := range m.content.Capabilities {
-			supported = supported || cap.Name == "waiting"
-		}
-		if !supported {
-			return design.Text(m.styles.options.Language, "shell.cards")
-		}
-	}
-	text := design.Text(m.styles.options.Language, "card.open") + " (" + strconv.Itoa(count) + ")"
-	if summary != "" {
-		text += "  " + sanitize.Display(summary)
-	}
-	return text
-}
 
 func (m *shellModel) cardPaste(text string) tea.Cmd {
 	card, ok := m.content.CurrentCard()

@@ -20,6 +20,12 @@ import (
 // Settings arrive on stdin, never argv or conversation history. The same
 // authenticated client connection carries the existing browser sign-in relay.
 func runA2A(args []string) int {
+	if len(args) > 0 && args[0] == "publish" {
+		return runA2APublication(args[1:])
+	}
+	return runA2ARemote(args)
+}
+func runA2ARemote(args []string) int {
 	flags := flag.NewFlagSet("lina a2a", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	socket := flags.String("socket", "", "Core client socket")

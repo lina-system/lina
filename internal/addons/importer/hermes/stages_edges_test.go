@@ -26,6 +26,7 @@ func sqlSource(t *testing.T, path, query string) {
 	}
 }
 func TestImportNamespacesAndSourceImmutability(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	p2 := req.Profiles[0]
 	p2.ID = "other-profile"
@@ -67,6 +68,7 @@ func TestImportNamespacesAndSourceImmutability(t *testing.T) {
 	}
 }
 func TestImportRejectsChangedSourceAndDestination(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	db := importStore(t)
 	p, err := Prepare(t.Context(), req)
@@ -96,6 +98,7 @@ func TestImportRejectsChangedSourceAndDestination(t *testing.T) {
 	assertCount(t, db, "import_event", 3)
 }
 func TestReverseUsesAdoptedRecordAndRejectsDamage(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	db := importStore(t)
 	p, err := Prepare(t.Context(), req)
@@ -129,6 +132,7 @@ func TestReverseUsesAdoptedRecordAndRejectsDamage(t *testing.T) {
 	}
 }
 func TestImportUIDVersionsEngineAndForks(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	sqlSource(t, req.Profiles[0].LCMPath, `INSERT INTO messages(store_id,session_id,source,conversation_id,role,content,timestamp) VALUES(9,'synthetic-session','cli','synthetic-conversation','assistant','revised',105);
  INSERT INTO host_uid_bindings(store_id,uid,lineage_key,kind,binding_version) VALUES(9,'synthetic-message-2','home:synthetic-session','version',1),(0,'engine-generated','home:synthetic-session','engine',1)`)
@@ -170,6 +174,7 @@ func typedRow(fields map[string]any) Row {
 	return r
 }
 func TestHonchoMatchingRetainsSpeakerEvidenceAndHistory(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	sqlSource(t, req.Profiles[0].StatePath, `INSERT INTO sessions(id,source,started_at) VALUES('scheduled','cron',120); INSERT INTO messages(id,session_id,role,content,timestamp) VALUES(20,'scheduled','user','automated prompt',120)`)
 	w := honchoWorkspace{profile: "profile", workspace: "workspace"}
@@ -227,6 +232,7 @@ func TestHonchoMatchingRetainsSpeakerEvidenceAndHistory(t *testing.T) {
 	assertCount(t, db, "sum_node", 0)
 }
 func TestImportSidecarsAndSensitiveBodies(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	db := importStore(t)
 	req.Materials, _ = importMaterials(t, db)
@@ -271,6 +277,7 @@ func TestImportSidecarsAndSensitiveBodies(t *testing.T) {
 func bytesHash(data []byte) string { h := sha256.Sum256(data); return hex.EncodeToString(h[:]) }
 
 func TestImportCrossConversationRelations(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	sqlSource(t, req.Profiles[0].LCMPath, `INSERT INTO messages(store_id,session_id,source,conversation_id,role,content,timestamp) VALUES(20,'elsewhere','cron','another-conversation','user','background',120); INSERT INTO message_relations(relation_id,store_id,kind,related_store_id) VALUES(5,20,'supersedes',1)`)
 	p, err := Prepare(t.Context(), req)
@@ -286,6 +293,7 @@ func TestImportCrossConversationRelations(t *testing.T) {
 	}
 }
 func TestCanonicalRowStorageClasses(t *testing.T) {
+	t.Parallel()
 	r := typedRow(map[string]any{"null": nil, "empty": "", "blob": []byte{0, 255}, "integer": int64(9223372036854775807), "real": float64(1.25), "text": "한글\x00bytes"})
 	if err := checkRow(r); err != nil {
 		t.Fatal(err)
@@ -307,6 +315,7 @@ func TestCanonicalRowStorageClasses(t *testing.T) {
 	}
 }
 func TestHonchoMatchesCompressedSessionCopies(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	sqlSource(t, req.Profiles[0].StatePath, `UPDATE sessions SET end_reason='compression' WHERE id='synthetic-session'; INSERT INTO sessions(id,source,started_at,parent_session_id) VALUES('resumed','cli',105,'synthetic-session'); INSERT INTO messages(id,session_id,role,content,timestamp,message_uid) VALUES(10,'resumed','user','Synthetic request',100,'synthetic-message-1')`)
 	req.Profiles[0].OwnerChannels = append(req.Profiles[0].OwnerChannels, OwnerChannel{SessionID: "resumed", Source: "cli"})
@@ -326,6 +335,7 @@ func TestHonchoMatchesCompressedSessionCopies(t *testing.T) {
 }
 
 func TestHistoryLinksAndRetractionsStayOutsideMemory(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	w := honchoWorkspace{profile: "profile", workspace: "workspace", messages: []Row{typedRow(map[string]any{"id": "m", "session_id": "synthetic-session", "role": "user", "content": "Synthetic request", "timestamp": float64(100)})}, history: []Row{
 		typedRow(map[string]any{"kind": "review_log", "id": "deleted", "conclusion_id": "old", "deleted": "true", "content": "logged old text"}),
@@ -367,6 +377,7 @@ func TestHistoryLinksAndRetractionsStayOutsideMemory(t *testing.T) {
 }
 
 func TestDuplicateSourceRelationsKeepBothReferences(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	sqlSource(t, req.Profiles[0].LCMPath, `INSERT INTO message_relations(relation_id,store_id,kind,related_store_id) VALUES(2,2,'view_of',1)`)
 	p, err := Prepare(t.Context(), req)
@@ -383,6 +394,7 @@ func TestDuplicateSourceRelationsKeepBothReferences(t *testing.T) {
 	assertCount(t, db, "import_event_relation", 1)
 }
 func TestPerConversationResumeAndJobValidation(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	second := req.Profiles[0]
 	second.ID = "second"

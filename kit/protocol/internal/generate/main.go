@@ -257,7 +257,7 @@ func generate(data []byte) ([]byte, error) {
 			}
 		}
 	}
-	fmt.Fprintln(&b, "// Payload is the closed set of client 1.0 payload types.\ntype Payload interface { isPayload() }")
+	fmt.Fprintln(&b, "// Payload is the closed set of client 1.0/1.1 payload types.\ntype Payload interface { isPayload() }")
 	seen := map[string]bool{}
 	for _, kind := range kind.Enum {
 		typ := name(payloads[kind])
