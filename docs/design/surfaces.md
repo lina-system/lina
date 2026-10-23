@@ -113,7 +113,7 @@ The packaged app records its idle memory on Linux and macOS in the release manif
 
 The app has one window. The work panel is a route of that window, not a second window or a frame, so what the person edits in the panel enters the conversation's context without crossing a bridge (see Layout).
 
-**UI components.** The interface's components come from two libraries and LINA's own code, on one token set. The agent views (see Agent surfaces) use affectUI Pro. Every other component uses Untitled UI React (React Aria with Tailwind), copied into the app as source. The paid components and the shared token theme live in one private UI repository of the owner that the app repository consumes, and the LINA-specific screens stay in the app repository. The affectUI variables and the Untitled theme tokens map to the one LINA theme, with light and dark values (see Tokens under One design language). The Korean input rules of this file apply to the inputs of both libraries. A release build is minified and ships no source maps, the app package holds no component source file, and no paid component source appears in a public issue, a log or a crash report. The access key to a paid library is a secret, held as a CI secret or in a vault and never in a repository, a log or a commit.
+**UI components.** The app uses only open-source components with a licence compatible with Apache-2.0, plus LINA's own code, on one token set. No paid or source-restricted UI kit is used: the app repository is public, so every component's source ships with it. Commercial kits may be read for ideas; their source is never copied in. The Korean input rules of this file apply to every input. A release build is minified and ships no source maps.
 
 ## One design language
 
@@ -392,13 +392,13 @@ The work and knowledge surface is built from pages and views. Screen detail is t
 
 The work surface combines these pages with a list and board of 할 일 in the manner of a team tracker, and with the workers on each 할 일 shown beside it. Component mapping for the app (see UI components under App front end; screen detail is the app's, built after LINA Core and the TUI):
 
-- A 할 일 row with its workers: the workers on a 할 일 are the coding workers of [work-and-delegation.md](work-and-delegation.md#workers) (Codex, Claude Code, Cursor, Gemini CLI, Grok, Antigravity and agents the person added), not persona agents. The row shows each worker as a small logo avatar (the Untitled avatar, company-logo variant) with a status dot (working, waiting for the person, done, failed), and several workers on one 할 일 (for example one codes and one reviews) as an avatar group. Beside them is one stage bar: queued, working, PR open, review, CI, merged, or failed or needs you. Progress is a stage and never a percentage, because workers report no real percent and LINA invents none. Stage and status come from the work engine's own records (the worker's session state, the pull request, its review and CI results), never from the worker's own report. Opening the row shows the affectUI Agent Inbox row for that run, and the Delegate Board lets the person drag a 할 일 onto a worker or leave it on Auto. Persona agents (for example Lina) appear separately, as the owner of the 일, and never among the worker avatars.
-- The list and board of 할 일: the affectUI Task Board (columns, drag, quick add, detail panel, label filters, compact view) with Untitled tables, filter bars, command menus and tabs; the affectUI Filter Menu and Command Menu where an agent view needs them.
-- An 일 summary: the affectUI Project Card (a progress ring with one segment per 할 일).
-- Agents at work: the affectUI Agent Inbox (the main progress view), Agent Lanes, Agent Tree, Delegate Board (drag a 할 일 onto a worker), Agent Steering, Agent Plan and Tool Call Card, as Agent surfaces describes.
-- Pages: an Untitled rich text editor as the page editor, Untitled tree views for optional sub-page navigation, Untitled activity feeds for page history and the affectUI Comments Panel; relations and backlinks are a small component of LINA's own.
-- The calendar view: Untitled calendars and date pickers.
-- Decisions for the person: the affectUI Decision Inbox, Approval Card and Permission Request.
+- A 할 일 row with its workers: the workers on a 할 일 are the coding workers of [work-and-delegation.md](work-and-delegation.md#workers) (Codex, Claude Code, Cursor, Gemini CLI, Grok, Antigravity and agents the person added), not persona agents. The row shows each worker as a small logo avatar (company-logo variant) with a status dot (working, waiting for the person, done, failed), and several workers on one 할 일 (for example one codes and one reviews) as an avatar group. Beside them is one stage bar: queued, working, PR open, review, CI, merged, or failed or needs you. Progress is a stage and never a percentage, because workers report no real percent and LINA invents none. Stage and status come from the work engine's own records (the worker's session state, the pull request, its review and CI results), never from the worker's own report. Opening the row shows the agent inbox row for that run, and the delegate board lets the person drag a 할 일 onto a worker or leave it on Auto. Persona agents (for example Lina) appear separately, as the owner of the 일, and never among the worker avatars.
+- The list and board of 할 일: a task board (columns, drag, quick add, detail panel, label filters, compact view) with tables, filter bars, command menus and tabs.
+- An 일 summary: a project card (a progress ring with one segment per 할 일).
+- Agents at work: an agent inbox (the main progress view), agent lanes, an agent tree, a delegate board (drag a 할 일 onto a worker), agent steering, an agent plan and tool call cards, as Agent surfaces describes.
+- Pages: a rich text editor as the page editor, tree views for optional sub-page navigation, activity feeds for page history and a comments panel; relations and backlinks are a small component of LINA's own.
+- The calendar view: calendars and date pickers.
+- Decisions for the person: a decision inbox, approval cards and permission requests.
 
 ### Intent cards
 
@@ -466,7 +466,7 @@ An unavailable observation remains unknown rather than disappearing as done.
 
 ### Agent surfaces
 
-The agent views of the app are drawn with affectUI Pro components (see App front end). Each shows data that LINA Core already computes. The TUI and the chat digest show the same data as text.
+The agent views of the app are drawn with the app's own open-source components (see App front end). Each shows data that LINA Core already computes. The TUI and the chat digest show the same data as text.
 
 - **Board.** On a wide screen the progress view (see Progress at a glance) is drawn as a board of three columns: Waiting for me, Running (in progress, and waiting on something other than the person) and Done (landed, until the person has seen it). The first column comes first. A card is one line of the progress view and unfolds in place to its last steps in plain words, with Approve, Reject, Retry and Open where they apply. A general user sees one plain line for each card, with no model name, tool-call or search count, id or pull request number. A power user (power settings) may also see the model and the counts.
 - **Steering.** The person adds to running background work without waiting for it: a note queued for the run's next step, which is the follow-up of the running list, or an interrupt, which is a stop.
@@ -642,7 +642,7 @@ Every text input of the app follows these field rules, which keep a composition 
 - On WebKit-based engines (the shell on macOS, iOS and, until a test shows otherwise, WebKitGTK on Linux), Korean composition does not reliably raise composition events. The field drives its state from before-input and input events as well, including the replacement-text input type that the engine sends when a syllable is composed again, and installs no custom input-method bridge over the field.
 - While a composition is active, the app writes no state back into the field, does not reconcile its DOM, and applies no length limit, trim or other transformation. A draft is saved by reading the field only, and the app reconciles once after the composition ends.
 - "Sends exactly once" is tested at the LINA Core boundary: the conversation ledger shows one message. A last-character fault at the platform's input-method protocol level can affect every client, native ones included, so a test of the screen alone does not prove it.
-- These rules apply to the inputs of every component library of the app, the paid ones included (see App front end).
+- These rules apply to the inputs of every component library of the app (see App front end).
 
 On Linux, LINA OS sets the input-method environment of the app (fcitx5 for GTK) explicitly as a precaution. Which path carries Hangul to the GTK4 shell, the compositor's text-input protocol or the fcitx5 GTK module, is decided by test, and the older protocol version 1 is not forced on Hyprland. The test runs with fcitx5 restarted and with Qt applications running. The app runs a start-up self-check and tells the person when the input-method path is not active.
 
