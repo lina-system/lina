@@ -879,6 +879,43 @@ LINA Core, or the Node on a remote device, starts every worker as a child proces
 - LINA installs no hook, plugin or setting in a worker to obtain a signal.
 - A worker that reports a typed failure (an error code, an authentication or billing category, a rate-limit category) produces a failure event with that type.
 
+### Claude Code headless adapter
+
+Core resolves the person's installed `claude` and launches it in the task
+worktree with `--print --output-format stream-json --verbose`, sending the task
+packet on stdin. Its login, provider, permissions, instructions and integrations
+remain its own. Core adds no hook, plugin, skill, permission bypass or settings
+file. The installed version is recorded and reported as unverified until an
+account-backed round trip establishes compatibility.
+
+A `system/init` message binds the session and must match the requested cwd and
+any explicit model. Assistant messages supply progress; the final `result`
+supplies usage and ends the turn immediately, even while the process remains
+alive. Core then reaps the process tree before releasing its activity. EOF
+without a result, malformed messages, mismatched sessions, error results and
+permission denials are failures. Other informational messages cannot complete a
+turn. Interactive approvals, work tools, resume and steering are not advertised
+by this one-attempt headless adapter.
+
+With `claude`, `git` and `gh` installed, `dispatch_work` can select `worker:
+"claude"`. Existing omitted selections remain Antigravity. The same authorized,
+committed admission and assigned worktree rules apply. No schema migration is
+needed: the optional worker selection stays in the durable task definition.
+An unavailable selected executable yields `worker_unavailable` without a
+substitute worker. A final success is only a worker report. Core reads the
+assigned branch's PR, current head, checks and review before recording readiness;
+pending or missing evidence cannot become delivery. The artifact preserves the
+final result and PR observations, masks secrets, omits denial tool inputs and
+marks receipt provenance `adapter-derived`. Acceptance and merge remain separate.
+Results return to the originating conversation and survive restart without
+replaying execution.
+
+`e2e/m2/claude-worker.json` covers result-before-exit, real file and commit
+creation, the derived receipt, denied permissions, missing results, pending PR
+checks and restart. The installed Core and Git work are real; the Claude and
+GitHub boundaries are synthetic. This establishes the integration contract,
+not authenticated worker execution or a verified Claude version.
+
 ### Antigravity headless adapter
 
 Core resolves the installed `agy` executable and runs it as a supervised child
