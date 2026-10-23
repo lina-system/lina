@@ -32,6 +32,7 @@ type darwinProcess struct {
 	target   string // the command the owner itself wrapped
 	confined bool
 	identity processIdentity
+	watcher  *watcher
 	stop     sync.Once
 	stopErr  error
 	stopped  chan struct{}
@@ -68,10 +69,17 @@ func (p *darwinProcess) start() error {
 		return fmt.Errorf("read command identity: %w", err)
 	}
 	p.identity = identity
+	if w, err := newWatcher(identity); err == nil {
+		p.watcher = w
+	}
 	return nil
 }
 
-func (p *darwinProcess) release() {}
+func (p *darwinProcess) release() {
+	if p.watcher != nil {
+		p.watcher.close()
+	}
+}
 
 func (p *darwinProcess) kill() error {
 	p.stop.Do(func() {
@@ -100,9 +108,7 @@ func (p *darwinProcess) terminate() error {
 			err = nil
 		}
 	}
-	if p.identity.uniqueID != 0 {
-		err = errors.Join(err, killDescendants(p.identity))
-	}
+	err = errors.Join(err, killDescendants(p.watcher, p.identity))
 	return errors.Join(err, killTokenProcesses(p.token))
 }
 
@@ -121,12 +127,23 @@ func (p *darwinProcess) wait() error {
 	return errors.Join(p.cmd.Wait(), p.stopErr)
 }
 
-// killDescendants kills every live process below root and repeats until a scan
-// finds none. The tracked set keeps identities discovered in earlier scans, so
-// a child forked just before its parent was killed and reaped still resolves to
-// the tree. Killed processes cannot fork again, so the sweep ends.
-func killDescendants(root processIdentity) error {
-	tracked := map[uint64]struct{}{root.uniqueID: {}}
+// killDescendants kills every live process recorded for this command and
+// repeats until a scan finds none. Records come from the watcher, so a
+// descendant whose parent was reaped, or which changed its own session or
+// process group, is still killed.
+func killDescendants(w *watcher, root processIdentity) error {
+	tracked := make(map[uint64]struct{})
+	if w != nil {
+		w.scan()
+		w.mu.Lock()
+		for id := range w.tracked {
+			tracked[id] = struct{}{}
+		}
+		w.mu.Unlock()
+	}
+	if root.uniqueID != 0 {
+		tracked[root.uniqueID] = struct{}{}
+	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		states, err := processStates()

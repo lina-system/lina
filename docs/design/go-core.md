@@ -1456,6 +1456,7 @@ Linux process ownership uses the explicit per-command `proc-supervise` helper wi
 It kills and waits for the whole descendant tree, including `setsid`/`setpgid` escapes and orphans, before returning.
 The tests cover owner shutdown, cancellation, normal leader exit and owner process death.
 macOS denies `setsid` and `setpgid` in the command's Seatbelt policy, applied by the owner or by the sandbox launcher, so no descendant can leave its process group; a host without the launcher fails closed.
+While the command runs, the owner watches `EVFILT_PROC` fork notifications for the leader and every recorded descendant, so a descendant is recorded even when its parent was already reaped.
 The owner then kills the group while the leader is unreaped, and sweeps kernel-recorded parent identities and the inherited owner token as defence in depth.
 The sweep keeps the identities it discovered in earlier scans, and it reads the full short BSD info record so an unreaped zombie is never signalled again.
 The native macOS tests cover a refused escape and a cleared-environment descendant that outlives its intermediate parent.
