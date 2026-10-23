@@ -64,6 +64,8 @@ func TestMaskedRecordRejectsPlaceholderValueSuffix(t *testing.T) {
 	for _, record := range []string{
 		`{"text":"token=[REDACTED]livecredential","spans":[]}`,
 		`{"text":"token=[REDACTED]livecredential","spans":[{"start":6,"end":16,"sensitivity":"secret"}]}`,
+		`{"text":"token=\"livecredential\"/path","spans":[]}`,
+		`{"text":"token=\"[REDACTED]livecredential\"/path","spans":[]}`,
 	} {
 		if err := json.Unmarshal([]byte(record), &masked); !errors.Is(err, secrets.ErrSpan) {
 			t.Errorf("unsafe stored record accepted: %v", err)

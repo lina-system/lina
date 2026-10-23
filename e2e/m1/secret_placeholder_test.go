@@ -16,13 +16,25 @@ import (
 
 func TestM1SecretPlaceholderInstalledCore(t *testing.T) {
 	t.Parallel()
+	secretMaskInstalledCore(t, "secret-placeholder.json")
+}
+
+func TestM1SecretQuotedValueInstalledCore(t *testing.T) {
+	t.Parallel()
+	secretMaskInstalledCore(t, "secret-quoted-value.json")
+}
+
+func secretMaskInstalledCore(t *testing.T, fixture string) {
+	t.Helper()
 	var scenario struct {
 		Input, Reply string
 		MaskedInput  string `json:"masked_input"`
 		MaskedReply  string `json:"masked_reply"`
 		Forbidden    []string
+		PublicInput  []string `json:"public_input"`
+		PublicReply  []string `json:"public_reply"`
 	}
-	data, err := os.ReadFile("secret-placeholder.json")
+	data, err := os.ReadFile(fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,8 +58,14 @@ func TestM1SecretPlaceholderInstalledCore(t *testing.T) {
 			return
 		}
 		assertSafe(request.Input)
-		if !strings.Contains(string(mustJSON(t, request.Input)), "INPUT-269") {
-			t.Error("provider request lost public input")
+		public := append([]string(nil), scenario.PublicInput...)
+		if calls.Load() > 0 {
+			public = append(public, scenario.PublicReply...)
+		}
+		for _, want := range public {
+			if !strings.Contains(string(mustJSON(t, request.Input)), want) {
+				t.Errorf("provider request lost public text %q", want)
+			}
 		}
 		calls.Add(1)
 		emitResponse(w, scenario.Reply, true)
@@ -66,7 +84,7 @@ func TestM1SecretPlaceholderInstalledCore(t *testing.T) {
 		}
 	}
 	if !inputSeen || !replySeen {
-		t.Error("live conversation did not retain masked input and reply punctuation")
+		t.Error("live conversation did not retain masked input and reply text")
 	}
 	c.Close()
 	h.stopCore(core)
@@ -90,7 +108,7 @@ func TestM1SecretPlaceholderInstalledCore(t *testing.T) {
 	encoded := string(mustJSON(t, snapshot))
 	for _, want := range []string{scenario.MaskedInput, scenario.MaskedReply} {
 		if !strings.Contains(encoded, string(mustJSON(t, want))) {
-			t.Error("restart lost masked history or punctuation")
+			t.Error("restart lost masked history or public text")
 		}
 	}
 	// Read the restored conversation into a new model request as well.

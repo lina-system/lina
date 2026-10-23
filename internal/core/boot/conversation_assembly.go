@@ -12,7 +12,20 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/kit/provider"
 )
+
+// Keep the configured route's conservative byte budget while counting all
+// assembled instructions, context, history and tool declarations.
+func conversationRequestSize(request provider.Request) int {
+	n := len(request.Instructions)
+	for _, items := range [][]provider.Item{request.Items, request.Tools} {
+		for _, item := range items {
+			n += len(item)
+		}
+	}
+	return n
+}
 
 // This whitelist is intentionally narrower than ContextPacket: personal memory
 // and all other context sources must remain reconstructible from their stores.
@@ -21,7 +34,7 @@ func personaStateItem(item assemble.ContextItem, agent, conversation string) boo
 		return false
 	}
 	switch item.ID {
-	case "persona:" + agent + ":revision", "persona-expression:" + agent, "persona-settings:" + agent, "persona-methodology:" + agent:
+	case "persona:" + agent + ":revision", "persona-expression:" + agent, "persona-settings:" + agent, "persona-methodology:" + agent, "working-preference:" + agent:
 		return item.Kind == assemble.Commitments
 	case "persona-emotion:" + agent + ":" + conversation:
 		return item.Kind == assemble.Clock

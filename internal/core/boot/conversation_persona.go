@@ -24,18 +24,6 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
-// Keep the configured route's conservative byte budget while counting all
-// assembled instructions, context, history and tool declarations.
-func conversationRequestSize(request provider.Request) int {
-	n := len(request.Instructions)
-	for _, items := range [][]provider.Item{request.Items, request.Tools} {
-		for _, item := range items {
-			n += len(item)
-		}
-	}
-	return n
-}
-
 func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string) (grant.Grant, grant.Environment, error) {
 	r.personaMu.Lock()
 	g, ok := r.personaGrants[id]
@@ -98,7 +86,7 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: strconv.FormatInt(a.Revision, 10)}, nil
 }
 
-func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID string, input ledger.Event, persona agents.Preparation, settings agents.State, at time.Time, bindings map[string]loop.Tool) ([]assemble.Skill, assemble.ContextPacket, error) {
+func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID string, input ledger.Event, persona agents.Preparation, settings agents.State, at time.Time, bindings map[string]loop.Tool, questions *questionTurn) ([]assemble.Skill, assemble.ContextPacket, error) {
 	versions, err := r.skills.Catalog(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -137,6 +125,11 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 		bindings[spec.Name] = turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID)
 	}
 	scope.StateRevision = agents.StateRevision(settings)
+	questionPreference, err := r.prepareQuestionTool(ctx, turnID, input, agents.ProjectWorkMethod(persona, settings), bindings, questions)
+	if err != nil {
+		return nil, nil, err
+	}
+	packet = append(packet, questionPreference)
 	scope.ExpressionRevision = agents.ExpressionRevision(settings)
 	stateAuth := auth
 	stateAuth.GrantID = turnID + ":state"

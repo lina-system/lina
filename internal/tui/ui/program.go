@@ -16,7 +16,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/design"
-	"github.com/thisisjun786/lina/internal/tui/sanitize"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -25,29 +24,42 @@ import (
 // concrete conversation/results subscriptions after welcome.
 var shellCapabilities = []protocol.Capability{{Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 
-type clientPeer struct{ client *clientapi.Client }
+// shellClient is the request surface used by the shell and its sessions.
+// Transport negotiation and validated receives remain in clientapi.
+type shellClient interface {
+	Close() error
+	Subscribe(context.Context, protocol.Subscribe) (string, error)
+	Agent(context.Context, protocol.AgentRequest) (string, error)
+	History(context.Context, protocol.HistoryGet) (string, error)
+	Talk(context.Context, protocol.AgentTalkGet) (string, error)
+	ExpandTalk(context.Context, protocol.AgentTalkExpand) (string, error)
+	Web(context.Context, protocol.WebRequest) (string, error)
+	Channel(context.Context, protocol.ChannelRequest) (string, error)
+	Input(context.Context, protocol.Input) (string, error)
+	Interrupt(context.Context, protocol.Interrupt) (string, error)
+	Account(context.Context, protocol.AccountRequest) (string, error)
+	SignInListening(context.Context, protocol.SignInListening) (string, error)
+	SignInRedirect(context.Context, protocol.SignInRedirect) (string, error)
+	Control(context.Context, protocol.Payload) (string, error)
+	Progress(context.Context, protocol.ProgressGet) (string, error)
+	Waiting(context.Context, protocol.WaitingGet) (string, error)
+	Running(context.Context, protocol.RunningGet) (string, error)
+	Record(context.Context, protocol.RecordRequest) (string, error)
+	Memory(context.Context, protocol.MemoryRequest) (string, error)
+}
 
-func (p clientPeer) Welcome() protocol.Welcome { return p.client.Welcome }
-func (p clientPeer) Receive(ctx context.Context) (protocol.Envelope, error) {
-	return p.client.Receive(ctx)
-}
-func (p clientPeer) AnswerApproval(ctx context.Context, answer protocol.ApprovalAnswer) (string, error) {
-	return p.client.AnswerApproval(ctx, answer)
-}
-func (p clientPeer) AnswerQuestion(ctx context.Context, answer protocol.QuestionAnswer) (string, error) {
-	return p.client.AnswerQuestion(ctx, answer)
-}
-func (p clientPeer) Close() error { return p.client.Close() }
-func (p clientPeer) Subscribe(ctx context.Context, request protocol.Subscribe) (string, error) {
-	return p.client.Subscribe(ctx, request)
-}
+type clientPeer struct{ *clientapi.Client }
+
+func (p clientPeer) Welcome() protocol.Welcome { return p.Client.Welcome }
+
+var _ shellClient = clientPeer{}
 
 type programEvent struct {
 	message      tea.Msg
 	acknowledged chan error
 }
 
-func runClientShell(parent context.Context, socket, version string, input io.Reader, display *display, terminal bool) (result error) {
+func runClientShell(parent context.Context, dial connectionDial, input io.Reader, display *display, terminal bool) (result error) {
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(context.Canceled)
 	model := newShell(environmentOptions(os.Getenv), time.Now)
@@ -92,13 +104,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- connectionLoop(ctx, func(ctx context.Context) (connectionPeer, error) {
-			client, err := clientapi.DialWithCapabilities(ctx, socket, version, shellCapabilities)
-			if err != nil {
-				return nil, err
-			}
-			return clientPeer{client}, nil
-		}, waitRetry, func(message tea.Msg) error {
+		done <- connectionLoop(ctx, dial, waitRetry, func(message tea.Msg) error {
 			event := programEvent{message: message, acknowledged: make(chan error, 1)}
 			select {
 			case events <- event:
@@ -129,11 +135,10 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 	defer signin.close()
 	management := &managementSession{model: model, pending: make(map[string]protocol.Payload)}
 	var peer connectionPeer
+	var client shellClient
 	pending := make(map[string]state.SendRequest)
-	channelPending := make(map[string]uint64)
-	webPending := make(map[string]uint64)
-	talkPending := make(map[string]uint64)
-	var agentListID, reconnectAgent, historyID string
+	replies := make(replyTracker)
+	discovery := &discoverySession{model: model}
 	var stopInput func() error
 	defer func() {
 		if stopInput != nil {
@@ -147,16 +152,13 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			signin.close()
 			clear(pending)
 			clear(management.pending)
-			clear(channelPending)
-			clear(webPending)
-			clear(talkPending)
-			agentListID, reconnectAgent, historyID = "", "", ""
+			clear(replies)
+			discovery.reset()
 		}
 		if attached, ok := message.(shellPeer); ok {
 			peer = attached.Peer
-			if client, ok := peer.(clientPeer); ok {
-				signin.peer = client.client
-			}
+			client, _ = peer.(shellClient)
+			signin.peer = client
 			w := peer.Welcome()
 			// Welcome may advertise only the default. Retain the selected
 			// display name while list/history discovery validates its identity.
@@ -201,18 +203,8 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				}
 				// Nonterminal input only reads quit after the handshake; it has
 				// no draft destination to discover before reporting live.
-				if client, ok := peer.(clientPeer); ok && terminal {
-					// Initial history can restore an agent absent from Welcome,
-					// just as reconnect history can. Refresh names before either.
-					if model.hasCapability("agents") && (model.conversation.agentPending || model.hasCapability("conversation")) {
-						model.conversation.agentPending = true
-						reconnectAgent = model.activeAgent()
-						agentListID, err = client.client.Agent(ctx, protocol.AgentRequest{Operation: stringPointer("list")})
-					} else if history := model.discoveryHistory(); history != nil && model.hasCapability("conversation") {
-						reconnectAgent = model.activeAgent()
-						historyID, err = client.client.History(ctx, *history)
-					}
-					if err != nil {
+				if client != nil && terminal {
+					if err := discovery.start(ctx, client); err != nil {
 						return err
 					}
 				}
@@ -223,8 +215,8 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if request.Generation != model.generation {
 				return nil
 			}
-			if client, ok := peer.(clientPeer); ok {
-				return management.request(ctx, client.client, request.Request)
+			if client != nil {
+				return management.request(ctx, client, request.Request)
 			}
 			return nil
 		}
@@ -232,18 +224,18 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if request.Generation != model.generation || request.Attempt != model.talk.attempt {
 				return nil
 			}
-			if client, ok := peer.(clientPeer); ok {
+			if client != nil {
 				var id string
 				var err error
 				if request.ExchangeID == "" {
-					id, err = client.client.Talk(ctx, protocol.AgentTalkGet{})
+					id, err = client.Talk(ctx, protocol.AgentTalkGet{})
 				} else {
-					id, err = client.client.ExpandTalk(ctx, protocol.AgentTalkExpand{ExchangeID: &request.ExchangeID, Cursor: request.Cursor})
+					id, err = client.ExpandTalk(ctx, protocol.AgentTalkExpand{ExchangeID: &request.ExchangeID, Cursor: request.Cursor})
 				}
 				if err != nil {
 					return err
 				}
-				talkPending[id] = request.Attempt
+				replies.track(id, request.Attempt, model.talkReply)
 			}
 			return display.showShell(model)
 		}
@@ -251,12 +243,12 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if request.Generation != model.generation || request.Attempt != model.web.attempt {
 				return nil
 			}
-			if client, ok := peer.(clientPeer); ok {
-				id, err := client.client.Web(ctx, request.Request)
+			if client != nil {
+				id, err := client.Web(ctx, request.Request)
 				if err != nil {
 					return err
 				}
-				webPending[id] = request.Attempt
+				replies.track(id, request.Attempt, model.webReply)
 			}
 			return display.showShell(model)
 		}
@@ -264,12 +256,12 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if request.Generation != model.generation || request.Attempt != model.channels.attempt {
 				return nil
 			}
-			if client, ok := peer.(clientPeer); ok {
-				id, err := client.client.Channel(ctx, request.Request)
+			if client != nil {
+				id, err := client.Channel(ctx, request.Request)
 				if err != nil {
 					return err
 				}
-				channelPending[id] = request.Attempt
+				replies.track(id, request.Attempt, model.channelReply)
 			}
 			return display.showShell(model)
 		}
@@ -283,7 +275,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			if bell, ok := effect.Message.(state.CardBell); ok {
 				return display.notifyCard(model, bell)
 			}
-			if client, ok := peer.(clientPeer); ok {
+			if client != nil {
 				switch request := effect.Message.(type) {
 				case state.SendRequest:
 					if model.conversation.id == "" || model.conversation.agentMissing || model.conversation.agentPending {
@@ -294,14 +286,14 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 					if request.Mode == state.InputQueue {
 						mode = protocol.InputModeQueue
 					}
-					id, err := client.client.Input(ctx, protocol.Input{ConversationID: &model.conversation.id, InputID: &request.Key, Text: &request.Draft.Text, Mode: &mode})
+					id, err := client.Input(ctx, protocol.Input{ConversationID: &model.conversation.id, InputID: &request.Key, Text: &request.Draft.Text, Mode: &mode})
 					if err != nil {
 						model.reduceInput(state.SendResult{Gen: request.Gen, Key: request.Key, Failed: true})
 						return err
 					}
 					pending[id] = request
 				case state.InterruptRequest:
-					_, err := client.client.Interrupt(ctx, protocol.Interrupt{ConversationID: &model.conversation.id})
+					_, err := client.Interrupt(ctx, protocol.Interrupt{ConversationID: &model.conversation.id})
 					return err
 				}
 			}
@@ -311,95 +303,25 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				var decoder protocol.ClientDecoder
 				e, err := decoder.Decode(frame.Data)
 				if err == nil && e != nil {
-					if e.ReplyTo != nil && *e.ReplyTo == historyID {
-						historyID = ""
-						if model.conversation.agentPending && model.activeAgent() == reconnectAgent && e.Error != nil {
-							if model.discoveryFailed(e.Error.Code) {
-								peer.Close()
-							}
+					if consumed, redraw, err := discovery.response(ctx, client, peer, *e); consumed {
+						if err != nil {
+							return err
+						}
+						if redraw {
 							return display.showShell(model)
 						}
+						return nil
 					}
-					if e.ReplyTo != nil && *e.ReplyTo == agentListID {
-						agentListID = ""
-						if !model.conversation.agentPending || model.activeAgent() != reconnectAgent {
-							return nil
-						}
-						p, ok := e.Payload.(protocol.AgentResult)
-						if e.Error != nil {
-							if model.discoveryFailed(e.Error.Code) {
-								peer.Close()
-							}
-						} else if !ok || p.Agents == nil || p.Operation == nil || *p.Operation != "list" {
-							return errStream
-						} else {
-							model.content.Agents = append([]protocol.Agent(nil), (*p.Agents)...)
-							for i := range model.content.Agents {
-								model.content.Agents[i].Name = sanitize.Display(model.content.Agents[i].Name)
-							}
-							if history := model.reconnectHistory(model.content.Agents); history != nil {
-								if client, ok := peer.(clientPeer); ok && model.hasCapability("conversation") {
-									reconnectAgent = model.activeAgent()
-									historyID, err = client.client.History(ctx, *history)
-									if err != nil {
-										return err
-									}
-								} else {
-									model.agentDiscoveryDone()
-								}
-							}
-						}
-						return display.showShell(model)
-					}
-					if client, ok := peer.(clientPeer); ok {
-						if consumed, err := management.response(ctx, client.client, *e); consumed {
+					if client != nil {
+						if consumed, err := management.response(ctx, client, *e); consumed {
 							if err != nil {
 								return err
 							}
 							return display.showShell(model)
 						}
 					}
-					if e.ReplyTo != nil {
-						if attempt, ok := talkPending[*e.ReplyTo]; ok {
-							delete(talkPending, *e.ReplyTo)
-							if model.talk.open && attempt == model.talk.attempt {
-								model.talk.busy = false
-								if e.Error != nil {
-									model.talk.code = string(e.Error.Code)
-								} else if p, ok := e.Payload.(protocol.AgentTalk); ok {
-									model.talkResponse(p)
-								}
-							}
-							return display.showShell(model)
-						}
-					}
-					if e.ReplyTo != nil {
-						if attempt, ok := webPending[*e.ReplyTo]; ok {
-							delete(webPending, *e.ReplyTo)
-							if model.web.open && attempt == model.web.attempt {
-								model.web.busy = false
-								if e.Error != nil {
-									model.web.code = string(e.Error.Code)
-								} else if p, ok := e.Payload.(protocol.WebResult); ok {
-									model.web.configured = p.Configured
-								}
-							}
-							return display.showShell(model)
-						}
-					}
-					if e.ReplyTo != nil {
-						if attempt, ok := channelPending[*e.ReplyTo]; ok {
-							delete(channelPending, *e.ReplyTo)
-							if model.channels.open && attempt == model.channels.attempt {
-								model.channels.busy = false
-								if e.Error != nil {
-									model.channels.code = string(e.Error.Code)
-								} else if p, ok := e.Payload.(protocol.ChannelResult); ok {
-									model.channelResponse(p)
-								}
-							}
-							return display.showShell(model)
-						}
+					if replies.response(*e) {
+						return display.showShell(model)
 					}
 					if consumed, err := signin.response(*e); consumed {
 						if err != nil {
