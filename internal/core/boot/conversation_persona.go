@@ -57,6 +57,10 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	if g.Identity.Profile == "worker-session" {
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: strconv.FormatUint(r.epoch, 10)}, nil
 	}
+	if g.Identity.Profile == "results" {
+		env, err := r.resultEnvironment(ctx, g)
+		return g, env, err
+	}
 	if g.Identity.Profile == "records" {
 		env, err := r.recordEnvironment(ctx, g)
 		return g, env, err
@@ -72,7 +76,7 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 		revision, err := r.work.Revision(ctx, strings.TrimPrefix(g.Scope[0].Target, "work:"))
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: revision}, err
 	}
-	if g.Identity.Profile == "relationship" || g.Identity.Profile == "names" {
+	if g.Identity.Profile == "relationship" || g.Identity.Profile == "names" || g.Identity.Profile == "planning" {
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: g.Identity.Revision}, nil
 	}
 	if g.Identity.Profile == "persona-state" || g.Identity.Profile == "persona-expression" {

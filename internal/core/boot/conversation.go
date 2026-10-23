@@ -44,6 +44,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/reply"
+	"github.com/thisisjun786/lina/internal/core/results"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -61,6 +62,7 @@ import (
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/result"
 	builtin "github.com/thisisjun786/lina/skills"
 )
 
@@ -122,6 +124,10 @@ type conversationRuntime struct {
 	records          *records.Store
 	recordCaptureMu  sync.Mutex
 	recordCaptures   map[string]*recordCapture
+	planResults      *results.Store
+	plans            *results.Planning
+	planning         *planningRuntime
+	planningMu       sync.Mutex
 	persona          *coreexec.Persona
 	personaAuthority *authority.Service
 	personaGrants    map[string]grant.Grant
@@ -223,6 +229,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	r.records.ReadCandidateMaterial = func(ctx context.Context, id string, revision int64) (string, error) {
 		return r.materials.Read(ctx, ledger.Material{ID: id, Revision: revision})
+	}
+	if err = r.initPlanning(); err != nil {
+		return nil, err
 	}
 	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
 	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant,
@@ -327,6 +336,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		r.identity.Operations[kind] = op
 	}
 	if err = r.startSkillMaintenance(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startPlanning(ctx); err != nil {
 		return nil, err
 	}
 	if err = r.startGrowth(ctx, controls); err != nil {
@@ -788,6 +800,11 @@ func (r *conversationRuntime) events(ctx context.Context, through string) ([]led
 	return events, nil
 }
 func (r *conversationRuntime) seedHistory(ctx context.Context) error {
+	if r.plans != nil {
+		if err := r.publishPlanRejections(ctx); err != nil {
+			return err
+		}
+	}
 	items, err := r.historyItems(ctx)
 	if err != nil {
 		return err
@@ -808,6 +825,22 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			return err
 		}
 		text := e.Body.Text()
+		if e.ScaffoldKind == "result" {
+			var value result.Result
+			if err := json.Unmarshal([]byte(text), &value); err != nil {
+				return err
+			}
+			var err error
+			if value.Type == result.PlanType {
+				err = r.publish(ctx, protocol.KindResult, value.ID, planWire(value))
+			} else if e.SpeakerKind == guard.Agent {
+				err = r.publishResult(ctx, value)
+			}
+			if err != nil {
+				return err
+			}
+			continue
+		}
 		if e.ScaffoldKind == "background_notice" {
 			var notices []lane.Notice
 			if err := json.Unmarshal([]byte(text), &notices); err != nil {
@@ -904,6 +937,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		delete(r.personaGrants, turnID+":relationship")
 		delete(r.personaGrants, turnID+":names")
 		delete(r.personaGrants, turnID+":coding")
+		for id := range r.personaGrants {
+			if strings.HasPrefix(id, turnID+":results:") {
+				delete(r.personaGrants, id)
+			}
+		}
 		r.personaMu.Unlock()
 
 	}()
@@ -967,10 +1005,16 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.preparePlanningTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if err := r.prepareWorkTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
 			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			if err := r.prepareResultTools(turnID, input, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
 			if err := r.prepareRecordTools(turnID, input.ID, bindings); err != nil {
@@ -991,8 +1035,10 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
+			declarations = append(declarations, coreexec.ResultDeclarations()...)
 			declarations = append(declarations, workDeclarations...)
 			declarations = append(declarations, methodologyDeclarations()...)
+			declarations = append(declarations, coreexec.PlanningDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
 			webProvider, err := r.selectedWebProvider()
 			if err != nil {
@@ -1035,6 +1081,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					}
 					bindings[name] = tool
 				}
+			}
+			if err := r.bindDoneEvidence(ctx, persona, bindings); err != nil {
+				return turn.PreparedRequest{}, err
 			}
 			packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 			if err != nil {

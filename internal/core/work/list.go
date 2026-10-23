@@ -87,7 +87,11 @@ func (s *Service) SummaryPage(ctx context.Context, id string, offset int64) (str
 		return "", 0, ErrState
 	}
 	var b strings.Builder
-	b.WriteString(c.State + ": " + c.Task.Title + "\n")
+	state := c.State
+	if c.State == "done" && c.Completion != nil {
+		state = c.Completion.Label
+	}
+	b.WriteString(state + ": " + c.Task.Title + "\n")
 	if c.WaitReason != nil {
 		b.WriteString("waiting: " + c.WaitReason.Kind + ": " + c.WaitReason.Target + "\n")
 	}

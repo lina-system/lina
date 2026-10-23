@@ -1,5 +1,11 @@
 # Headless acceptance harness
 
+`m3/plan-invalid-response.json` exercises completed invalid JSON and cyclic
+planning responses through installed Core and Moirai. It restarts Core between
+Aux completion and Apply, verifies cached results, rejects a forged proposal,
+checks durable rejection and usage counts under duplicate application, and
+observes the next valid preview without publishing unconfirmed plan records.
+
 `m3/non-competition.json` runs installed Core's record tools through a local
 fixture provider and its public client socket. It checks a real saved record,
 refusal of an out-of-scope path used as an id, and preservation of an external
@@ -414,6 +420,13 @@ retain the failed attempt without its reservations or a duplicate dispatch.
 through a correction turn. Core returns it to the same worker exactly once,
 requires input for the remaining conflict, and retains the dependent's gate
 until the forge merge. Repeated observation and restart cannot resend work.
+
+`m3/plan-drafting.json` exercises accepted goal discovery through model tools,
+Klotho drafting through a real Moirai worker and installed Core job socket,
+complete preview replacement, retirement of overlapping stale requests, stale confirmation refusal, one-version record
+creation, and idempotent confirmation across Core restarts. A loopback provider
+supplies only model output; all tool, job, result, protocol and records paths are
+production paths. No external credentials or services are used.
 
 `m3/operational-switch.json` exercises the owner-only switch on the real Core
 socket: missing approval, a failed transfer with explicit service restoration,

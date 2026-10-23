@@ -115,6 +115,9 @@ func (r *conversationRuntime) recordRow(ctx context.Context, row records.Row, bo
 		}
 	}
 	if v := row.Todo; v != nil {
+		if v.Completion != nil {
+			add("completion", v.Completion.Label)
+		}
 		add("when", v.When)
 		add("deadline", v.Deadline)
 		if v.Important {
