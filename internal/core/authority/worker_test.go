@@ -26,6 +26,7 @@ func requestWorker(t *testing.T, f *fixture) authority.Approval {
 }
 
 func TestWorkerApprovalRejectsInvalidRequest(t *testing.T) {
+	t.Parallel()
 	for name, change := range map[string]func(*authority.Approval){
 		"effect":              func(a *authority.Approval) { a.EffectKey = "" },
 		"person":              func(a *authority.Approval) { a.Person = "" },
@@ -38,6 +39,7 @@ func TestWorkerApprovalRejectsInvalidRequest(t *testing.T) {
 		"trailing arguments":  func(a *authority.Approval) { a.Arguments = json.RawMessage(`{} {}`) },
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			f := setup(t)
 			a := workerApproval()
 			change(&a)
@@ -52,6 +54,7 @@ func TestWorkerApprovalRejectsInvalidRequest(t *testing.T) {
 }
 
 func TestWorkerApprovalRequiresPresentation(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.surfaceAvailable = false
 	if _, err := f.service.RequestWorkerApproval(t.Context(), workerApproval()); !errors.Is(err, authority.ErrNoSurface) {
@@ -72,6 +75,7 @@ func TestWorkerApprovalRequiresPresentation(t *testing.T) {
 }
 
 func TestWorkerApprovalOwnsIdentityAndScope(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	in := workerApproval()
 	in.ID, in.ScopeKey, in.Plugin = "injected", "shared-scope", ""
@@ -112,11 +116,13 @@ func TestWorkerApprovalOwnsIdentityAndScope(t *testing.T) {
 }
 
 func TestWorkerApprovalFingerprintBindsArgumentsAndOrigin(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	a := requestWorker(t, f)
 	if err := f.service.Answer(t.Context(), a.ID, owner(f), authority.Decision{Choice: authority.Once}); err != nil {
 		t.Fatal(err)
 	}
+	// Subtests share one stored approval, so they stay sequential.
 	for name, change := range map[string]func(*authority.Approval){
 		"arguments":    func(a *authority.Approval) { a.Arguments = json.RawMessage(`{"command":"replacement"}`) },
 		"person":       func(a *authority.Approval) { a.Person = "other" },
@@ -147,8 +153,10 @@ func TestWorkerApprovalFingerprintBindsArgumentsAndOrigin(t *testing.T) {
 }
 
 func TestWorkerApprovalUsesAuthenticatedAnswer(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	a := requestWorker(t, f)
+	// Subtests share one pending approval, so they stay sequential.
 	for _, test := range []struct {
 		name   string
 		change func(*authority.Decider)

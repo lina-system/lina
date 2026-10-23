@@ -4,6 +4,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,10 +106,17 @@ func TestACPRecoveryThroughRunningCore(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				live := false
 				for _, event := range ledger {
 					if strings.Contains(event.Value, "REPLAY_ONLY") {
 						t.Fatal("loaded history was published as new progress")
 					}
+					if strings.Contains(event.Value, "LIVE_AFTER_RESTORE") {
+						live = true
+					}
+				}
+				if mode != "fresh" && mode != "unknown-effect" && mode != "completed-tool" && !live {
+					t.Fatal("live update after the restore response was lost")
 				}
 				if strings.Contains(string(record.Result), "REPLAY_ONLY") {
 					t.Fatal("loaded history leaked into the new result")
@@ -142,11 +150,19 @@ func coordinateBeforeACPDeath(t *testing.T, h *harness, fixture string) {
 	if err != nil || response.Error != "" || json.Unmarshal(response.Result, &mcp) != nil || mcp.IsError || len(mcp.Content) != 1 {
 		t.Fatal("coordination failed", err)
 	}
+	var frame struct {
+		Kind string `xml:"speaker_kind,attr"`
+		Work string `xml:"work_id,attr"`
+		Text string `xml:"text"`
+	}
 	var ack struct {
 		Accepted bool
 		EventID  string `json:"event_id"`
 	}
-	if json.Unmarshal([]byte(mcp.Content[0].Text), &ack) != nil || !ack.Accepted || ack.EventID == "" {
+	if xml.Unmarshal([]byte(mcp.Content[0].Text), &frame) != nil || frame.Kind != "tool" || frame.Work == "" {
+		t.Fatal("coordination result is not a tool frame")
+	}
+	if json.Unmarshal([]byte(frame.Text), &ack) != nil || !ack.Accepted || ack.EventID == "" {
 		t.Fatal("coordination not acknowledged")
 	}
 	// The real Core acknowledged the call, committed its request and cleared
@@ -260,6 +276,12 @@ func waitACPDecision(t *testing.T, h *harness, id string) {
 
 const acpRecoveryScript = `#!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
+function messageText(text) {
+ if (!text.startsWith('<lina-message ')) return text;
+ const match=text.match(/^<lina-message [^>]*><text>([\s\S]*)<\/text><\/lina-message>$/);
+ if (!match) throw Error('invalid worker message frame');
+ return match[1].replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi,(_,e)=>e[0]==='#'?String.fromCodePoint(e[1].toLowerCase()==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"})[e]);
+}
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -307,7 +329,9 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
    if(mode==='fresh')session='fresh-session';
    if(m.method==='session/load')for(let i=0;i<1024;i++)progress('REPLAY_ONLY '+i);
   }
-  reply(m.id,m.method==='session/new'?{sessionId:session}:{});break;
+  reply(m.id,m.method==='session/new'?{sessionId:session}:{});
+  if(m.method!=='session/new')progress('LIVE_AFTER_RESTORE');
+  break;
  case 'session/prompt':
   if(m.params.sessionId!==session)throw Error('wrong prompt session');
   pending=m.id;packet=m.params.prompt[0].text;
@@ -317,7 +341,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   const timer=setInterval(()=>{
    if(!fs.existsSync(file('release')))return;
    clearInterval(timer);
-   const definition=JSON.parse(packet.slice(packet.indexOf('{')));
+   const definition=JSON.parse(messageText(packet).slice(messageText(packet).indexOf('{')));
    const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
    git('switch','-c',definition.branch);
    fs.unlinkSync('retained.txt');fs.writeFileSync('result.txt','ACP recovered result\n');git('add','result.txt');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Finish recovered work');

@@ -144,7 +144,7 @@ The LINA app is one React codebase in TypeScript, hosted by a shell on each plat
 - Motion is restrained: gentle springs with no exaggerated bounce, and nothing moves unless a state changes. One or two small signature interactions carry LINA's delight; everything else is familiar.
 - Every feed has an end.
 
-**Tokens.** One design token source, in the Design Tokens Community Group (DTCG) format, holds color, type, spacing, radius, motion and icon size, with light, dark and high-contrast values for every role. A build generates the app's CSS custom properties, with light, dark and high-contrast sets, and the TUI's Lip Gloss palette from it. No component or TUI view hard-codes a visual value. The foundation gate fails when a generated file drifts from the source or a text and background pair falls below WCAG 2.2 AA contrast ([foundation.md](../policy/foundation.md)). The LINA repository's `DESIGN.md` holds the rules that people and coding tools follow when they build screens, with do's and don'ts; its token values are generated from the token source and never edited by hand. The DTCG source lives in `design/tokens/`. `scripts/tokens.mjs` generates `internal/design`, CSS custom properties, the SVG mark and the tables in `DESIGN.md`; its check mode compares these without writing. The app's future shared TypeScript components consume these generated CSS properties. One shared component is the citation chip: it names the cited source and opens the viewer at the cited passage through its passage anchor ([materials-and-knowledge.md](materials-and-knowledge.md)), so a citation looks and behaves the same everywhere.
+**Tokens.** One design token source, in the Design Tokens Community Group (DTCG) format, holds color, type, spacing, radius, motion and icon size, with light, dark and high-contrast values for every role. A build generates the app's CSS custom properties, with light, dark and high-contrast sets, the TUI's Lip Gloss palette, and the launcher panel's Swift constants from it. No component or TUI view hard-codes a visual value. The foundation gate fails when a generated file drifts from the source or a text and background pair falls below WCAG 2.2 AA contrast ([foundation.md](../policy/foundation.md)). The high-contrast set is dark and reaches 7:1 on canvas and surface, because the launcher panel uses it under Increase Contrast. The LINA repository's `DESIGN.md` holds the rules that people and coding tools follow when they build screens, with do's and don'ts; its token values are generated from the token source and never edited by hand. The DTCG source lives in `design/tokens/`. `scripts/tokens.mjs` generates `internal/design`, CSS custom properties, the launcher's dynamic `NSColor` values and layout constants, the SVG mark and the tables in `DESIGN.md`; its check mode compares these without writing. The app's future shared TypeScript components consume these generated CSS properties. One shared component is the citation chip: it names the cited source and opens the viewer at the cited passage through its passage anchor ([materials-and-knowledge.md](materials-and-knowledge.md)), so a citation looks and behaves the same everywhere.
 
 **Icons.** One icon source serves every surface: one cross-platform licensed icon set, such as Lucide or Phosphor, delivered to the app as React components, and LINA's own icons drawn on the same grid. SF Symbols are licensed only for Apple platforms, so they are not part of it. The TUI maps each icon to a text glyph. A state icon always appears with its text label. An agent is marked by its face and its name (see How agents are presented).
 
@@ -620,7 +620,7 @@ LINA can show UI it makes from the person's words, in three parts, built in this
 | Generated card | A2UI messages that pick and fill widgets from LINA's catalog | None | Only as a request from the app's own widgets | A `surface` result |
 | Mini app | A small web app from LINA's fixed template | Yes, on its own origin | Only its declared reads and requests | A tool in "내 도구" |
 
-`mock` and `surface` are result types of a later protocol version ([host-protocol.md](host-protocol.md#typed-results)). A client that does not render them gets their `text`.
+`mock` is a client 1.1 result type; `surface` remains reserved ([host-protocol.md](host-protocol.md#typed-results)). A client that does not render a mock gets its `text`.
 
 ### Drawn mocks
 
@@ -632,6 +632,51 @@ LINA can show UI it makes from the person's words, in three parts, built in this
 - "Build this" hands the mock and its checklist to the work engine as the reference for a screen or a mini app.
 - The scoring is set before drawing. The run first writes the request as a checklist: what must be on screen and what each control does. A revision is shown only when executable checks pass: every checklist item is there, no control does something that was not asked, only design tokens are used, no remote resource is named, and the page draws without an error or sideways scrolling at 390 and 1280 points wide. A failing draw is redrawn at most three times without new input from the person. It stops early when every check passes, and stops when a redraw passes no more checks than the one before. A model's judgment of how well a mock matches is not a check until it agrees with the owner's labels on at least 50 cases.
 
+The Core background tool uses `Result: "mock"`. Its goal is the request; feedback
+also supplies `Mock: { result_id, revision }`. Core retains the checklist before
+asking for the first page, and retains every candidate and per-dimension check
+before advancing. The initial draw is followed by at most three redraws.
+`all_passed`, `no_improvement` and `redraw_limit` are the recorded stop reasons;
+a renderer/model failure is `mock_unavailable`. Failed candidates remain private
+run evidence and never replace the last visible revision. A restart resumes the
+committed phase; publication is idempotent under the native run id. Accepted
+follow-ups during drawing start a fresh checklist/redraw budget, retain the
+interrupted candidates, and draw from the latest candidate with the new input.
+Once all checks are committed, publication is frozen: additional live steering
+is refused, and feedback uses the published result revision instead. No accepted
+follow-up can be silently discarded.
+
+The shared template lives in `design/`: generated token CSS, base styles and
+bundled Pretendard. Mocks use structural XHTML with fixed local interactions:
+toggle a named element, select a local option, or edit a local input. Each control
+must match a checklist id and action. The generated fragment cannot supply code,
+style, a remote resource, navigation or a form submission. The template supplies
+the only script and styles. This restriction is part of mock validation, not an
+extra capability granted to the page. Mini-app workers receive a starter from
+the same template in the page bundle; their host still owns reads and requests.
+
+The main draws PNGs with installed Chromium/Chrome through DevTools Protocol,
+in a disposable profile with the browser sandbox enabled. It checks visible
+checklist labels, declared interactions, browser errors and horizontal overflow
+at 390 and 1280 CSS pixels. The exported bundle contains the static page and
+sandboxed phone/desktop frames. Each frame grants only scripts, with no same
+origin, forms, navigation, popups or downloads. The page's CSP permits only the
+fixed style/script hashes and embedded font; connections and remote resources
+are denied. No session, cookie or Core bridge enters the page. Missing Chromium
+is a failure; no placeholder PNG or model score substitutes for a browser check.
+
+Client 1.1's `mocks` capability reads any retained revision, downloads its pinned
+page/PNG asset in bounded chunks, and requests a work handoff. A build names the
+current revision, screen or mini-app target and repository scope, with an
+idempotency key. Core carries the complete mock reference and checklist into the
+normal work engine and coding-owner route. The conversation uses `build_mock`
+for the same operation, binding the person, agent and conversation from its turn. It grants no new effect or deployment
+authority. Earlier revisions remain readable but cannot initiate a new build.
+The connected person may also export a mock from an owned, still-bound channel
+conversation. Text-only TUI/channel adapters receive every checklist item and explicit
+`lina mock-export` actions. Image-capable clients can fetch the pinned PNG;
+the current channel sender contract carries text only.
+
 ### Generated cards
 
 - An agent may answer with a card so that a reply that asks the person to pick or fill in something is not a wall of text: a few choices, a short form, a date, a few progress rows. The app draws the card with its own widgets from A2UI messages.
@@ -639,6 +684,10 @@ LINA can show UI it makes from the person's words, in three parts, built in this
 - LINA's catalog, `lina.cards`, has a version and holds these widgets, each with its data schema: Text, Column, Row, List, Card, Divider, Button, CheckBox, ChoicePicker, TextField, DateTimeInput, and LINA's WorkRow, one line of running work. It leaves out the widgets that fetch a URL (Image, Video, AudioPlayer), Modal, and the `openUrl` function. A table, chart, diagram, plan or document is a typed result, never a card.
 - LINA Core checks every message against the catalog and its schemas before anything reaches a client. An unknown widget, field, catalog or version refuses the whole card. The refusal goes to the agent in A2UI's `VALIDATION_FAILED` form, never to the person. A client never relies on its renderer's own tolerance.
 - LINA Core folds an agent's messages into whole revisions of one `surface` result, whose body is the components and the data model. A client never receives a partial or invalid card. LINA Core also writes the result's `text`.
+- Catalog 1.0 uses explicit child id lists, literal values and JSON pointer data bindings. Functions, child templates, custom validation expressions, concealed inputs and theme fields are outside this catalog. The canonical widget schemas are the `surface_widget_*` definitions in the [client schema](../../protocol/schema/client/1.0/envelope.json). WorkRow carries `title`, `state`, `elapsed` and an event action. Core checks unique ids, a connected acyclic tree, resolved bindings, allowed choices and unique action names. Cards and batches are bounded to 64 KiB, 256 components/messages, tree depth 32 and 26 actions.
+- One `present_surface` tool call carries the entire A2UI batch, title and summary; updates name the result id and base revision. Updates replace component definitions by id and data at a JSON pointer. Detached old components are omitted from the resulting tree. Deletion keeps a tombstone revision with no interactive controls. Validation errors use A2UI's version, error code, surface id, path and message fields as a private tool result.
+- Action schemas come from the catalog controls and their event context. A bound editable field may change within that control's schema; a constant context field may not change. Neither an action name nor any value grants authority or answers a Core approval.
+- The TUI opens a card from its result entry. Number keys select choices, action keys `a`–`z` submit, and Ctrl+E edits bound fields in reading order. A selection or draft stays local until submission. Core rejects a submission if the card revision has changed. Esc closes the card. External channels use the complete text and conversation link.
 - The app draws the card's frame and the face and name of the agent that sent it. A card cannot set its own name, icon or colors, and cannot look like an approval, a question from LINA or a sign-in.
 - What the person types or picks in a card is display state until they press one of its buttons. The app then sends `surface_action` with the result, the revision, the action name and the values it carries. LINA Core checks it against the action's schema, records it as the person's input, and gives it to the agent at the next turn boundary. A press is never lost when no turn is running. An effect that follows from it has the same posture and approvals as any tool call ([main-authority.md](main-authority.md#approval)). An action never carries an approval, and an action on an old revision is refused as stale.
 - In the TUI the `text` lists the card in reading order, numbers each choice and gives each action a key. The TUI sends the same `surface_action`. A channel shows the `text` with a link to open the card in the app.
@@ -665,7 +714,7 @@ LINA can show UI it makes from the person's words, in three parts, built in this
 
 - On macOS, LINA's launcher replaces Raycast and Spotlight, so that the person can turn both off, without copying Raycast's structure. The atomic feature map, with each feature's decision, where it runs, its macOS permission, its acceptance check, its sources and the bar numbers, is in [raycast-feature-map.md](../research/raycast-feature-map.md). This section fixes the decisions.
 - The launcher opens from a global shortcut. It takes ⌘Space from Spotlight only through a guided switch: the person turns Spotlight's shortcut off in System Settings, LINA names clashes (input source switching, Siri, Raycast) and notices when Spotlight holds ⌘Space again, and "back to Spotlight" reverses the steps. LINA never edits the system's preference files.
-- Whatever the person says from the launcher goes into the main conversation of the agent the person talked with last, or of another agent the person names in the launcher, and the answer continues there. The panel shows a short reply with "open in conversation". When nothing matches, Return sends the line to the agent, and web search is the next row. One key puts the selected text, the Finder selection or a dropped file into the message; the selection is read through Accessibility, never through the clipboard. The agent conversation replaces Raycast AI.
+- Whatever the person says from the launcher goes into the main conversation of the agent the person talked with last, or of another agent the person names in the launcher, and the answer continues there. The panel shows a short reply with "open in conversation". When nothing matches, Return sends the line to the agent, and web search is the next row. One key puts the selected text, the Finder selection or a dropped file into the message; the selection is read through Accessibility, never through the clipboard. The agent conversation replaces Raycast AI. The line, its short form and the message locator use the client `launcher` capability, and pending approvals use the existing `waiting` capability ([host-protocol.md](host-protocol.md#launcher-capability)).
 - The panel is native Swift on macOS: an AppKit non-activating panel that floats above the person's apps without deactivating them, joins the current Space and full-screen apps, opens on the active display, and draws the system's own Liquid Glass, following light and dark, the accent color, Reduce Transparency, Reduce Motion and Increase Contrast. The query field, the result list, the hotkey, key handling and the system integrations (menu bar extra, Services, Share sheet, App Intents and Focus filter, drag out of results, VoiceOver labels) are native. Agent replies and mini apps render inside the panel in a prewarmed view of the app's interface. Text, separator and accent colors, spacing, radius and motion come from the one token source through a generated Swift file; glass and corner shape are the system's. The launcher is the one surface that uses the platform's own materials, because it must feel like part of macOS.
 - Keys follow the Mac: arrows choose, Return runs the default action, ⌘Return the second (reveal in Finder for a file, and ⌘R as in Spotlight), ⌥Return the third, Tab lists the actions, ⌘K opens the action panel, ⌘1–9 run the Nth result and Esc goes back one step, then closes. Keys typed while the panel opens are kept, Korean composes from the first key, and keys the input method consumes during a composition (Return, Esc, ⌥Return for Hanja) go to it first.
 - Open-to-visible and first-result times are measured against Spotlight on the same Mac by the method in the feature map. The launcher's medians and 90th percentiles are at most Spotlight's, with no lost keys.

@@ -60,8 +60,8 @@
   --lina-space-inline: 8px;
   --lina-space-page: 32px;
   --lina-space-section: 24px;
-  --lina-type-body: "Pretendard", "sans-serif";
-  --lina-type-code: "ui-monospace", "monospace";
+  --lina-type-body: "Pretendard", sans-serif;
+  --lina-type-code: ui-monospace, monospace;
   --lina-type-line-height: 1.5;
   --lina-type-size: 16px;
   --lina-type-title-weight: 700;
@@ -127,8 +127,8 @@
   --lina-space-inline: 8px;
   --lina-space-page: 32px;
   --lina-space-section: 24px;
-  --lina-type-body: "Pretendard", "sans-serif";
-  --lina-type-code: "ui-monospace", "monospace";
+  --lina-type-body: "Pretendard", sans-serif;
+  --lina-type-code: ui-monospace, monospace;
   --lina-type-line-height: 1.5;
   --lina-type-size: 16px;
   --lina-type-title-weight: 700;
@@ -194,8 +194,8 @@
   --lina-space-inline: 8px;
   --lina-space-page: 32px;
   --lina-space-section: 24px;
-  --lina-type-body: "Pretendard", "sans-serif";
-  --lina-type-code: "ui-monospace", "monospace";
+  --lina-type-body: "Pretendard", sans-serif;
+  --lina-type-code: ui-monospace, monospace;
   --lina-type-line-height: 1.5;
   --lina-type-size: 16px;
   --lina-type-title-weight: 700;

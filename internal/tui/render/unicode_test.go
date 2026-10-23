@@ -106,7 +106,7 @@ func FuzzChunkedStream(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, input string, w, chunk uint8) {
 		if len(input) > 4096 {
-			t.Skip()
+			t.Skip("input over 4096 bytes")
 		}
 		width, step := 1+int(w%80), 1+int(chunk%31)
 		config := Config{Width: width, Mode: Graphemes}

@@ -270,6 +270,7 @@ conversations.
 | Capability | What the client can do |
 | --- | --- |
 | Conversation | Start a conversation with an agent, send a message, interrupt, read history, subscribe to events, receive connect and disconnect notices |
+| Launcher | Send a one-line message to the last or a named agent's main conversation, receive its short form and a message locator ([Launcher capability](#launcher-capability)) |
 | Agent management | List the main's agents, create an agent from a preset or a description, rename, tune and delete an agent. LINA Core records each change with the person id. |
 | Work records | List, read, capture, edit, complete and reorder 목표 (goal), 일 (project), 할 일 (to-do), 계속 챙기는 것 (area) and memos; read the views (오늘 (today), 예정 (upcoming), 언제든 (anytime), 나중에 (later), the flow board) and the candidates; answer a proposal to add or split, and undo a promotion, an addition or an archive. Each is a request to LINA Core, and LINA Core computes the views. |
 | Memory | Remember, correct, forget and move an item between layers, open an item's evidence, expand a ledger event or a summary, run a memory import (rehearsal, run, report) and answer its promotion batches ([conversation-and-memory.md](conversation-and-memory.md)) |
@@ -386,7 +387,7 @@ acceptance alone does not grant a capability.
 | `history` | `conversation_id`, `agent_id`, and optional `snapshot`. The installed implementation discovers the concrete conversation; its subscription delivers the authoritative window. |
 | `input` | Nonempty `conversation_id`, `input_id`, `text` (at most 16,384 Unicode characters), and optional `mode` (`steer` or `queue`). Missing mode means steering when a turn is active and a new turn otherwise. Queue starts a follow-up through the same conversation lane. |
 | `interrupt` | Nonempty `conversation_id`; cancels the active turn with the person's typed cause. It does not terminate Core, close the client or cancel unrelated work. |
-| `item_done` | Existing `text` and stream metadata, with optional `echo_key`, `speaker` (`person`, `agent`, `system`, `forwarded`), `agent_id`, and `person_id`. Forwarded channel content keeps its speaker kind and carries no person id, both live and in restored history. `echo_key` is the admitted input id, allowing replacement of one local echo. |
+| `item_done` | Existing `text` and stream metadata, with optional `echo_key`, `speaker` (`person`, `agent`, `system`, `forwarded`), `agent_id`, and `person_id`. System notices may include optional `details` (at most 4,096 Unicode characters), shown only when opened and never treated as an authored result. Forwarded channel content keeps its speaker kind and carries no person id, both live and in restored history. `echo_key` is the admitted input id, allowing replacement of one local echo. |
 | `output_delta` | Existing text delta and stream metadata, with optional `agent_id`. The same topic/key becomes the completed item. |
 | `turn_state` | Existing stream metadata and optional `active` boolean plus `agent_id`. Optional `phase` is `waiting_model`, `streaming`, `tool` or `stopping`; optional `tool_name` is a trusted display name from the tool registry's display catalog. Clients do not parse activity from display text. |
 | `tool_activity` | Core-to-client display event with optional `stream` and `agent_id`, required string `call_id`, required string `tool_name` (the registry's display catalog label), and required `status` (`started` or `finished`). `finished` requires `outcome` (`ok` or `failed`) and a nonnegative numeric `duration_ms`; `started` forbids both. Optional `target` (at most 160 characters) and `summary` (at most 8192 characters) contain only explicitly Core-approved display text. Arguments and raw output are never fields of this event. |
@@ -440,6 +441,34 @@ The generated receivers exercise `conversation/` fixtures on both sides.
 provider. Real model credentials and real model validation are outside these
 fixtures.
 
+### Launcher capability
+
+The `launcher` capability (1.0) adds `launcher_request`, `launcher_result` and the
+`launcher` topic's `launcher_reply` items. A request carries `request_id`, an
+opaque `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`, `text` (1–16,384 Unicode characters)
+and an optional `agent_id`. Core resolves the named agent, otherwise the person's
+last selected agent and then the default agent, and admits the line through the
+existing conversation input path into that agent's `main:<agent>` conversation.
+There is no launcher-only conversation. The line is admitted as a follow-up, never
+as steering, so a line that arrives while the agent already runs a turn keeps its
+own turn and its replies always carry its request id. The request id is the input
+id, so a repeated request returns the original admission and starts no second
+turn; Core keeps the agent that first admitted the line, even after the person
+selects another agent. The request id is reserved for the launcher, so an
+`input` with an id in that namespace is refused as malformed. The result names
+the request, the conversation and the agent with an `applied` effect.
+
+The short form streams on the `launcher` topic keyed by `request_id`. Each
+`launcher_reply` carries the request, conversation and agent, the visible short
+`text` produced by the same reply budget as the conversation, and `done`.
+`message_id` locates the conversation item that holds the reply; a client opens
+that conversation at the item. The final event is `done: true`, and Core sends it
+after a stop or failure too, so a panel never waits on a stream that ended. The
+full reply and any typed result remain in the conversation. Pending approvals are
+read through the existing `waiting` capability; the launcher capability adds no
+second approval list. The launcher topic is available only to the authenticated
+person's connection and grants no device, clipboard or model authority.
+
 ## Typed results
 
 The Core tool request may carry optional `reply_type` (`chat`, `status`, `comparison`, `candidates`, `third_party`) for reply-shape measurement. A draft may name its `recipient` and mark a block’s `audience` (`recipient` or `person`). Older bodies omit these fields. They are data annotations, not authority, and do not change the Result RPC envelope. Core uses the existing `summary`, `text` and provenance fields to publish the bounded presentation.
@@ -488,7 +517,74 @@ The closed list of types for version 1.0:
 
 One more type, `app`, is reserved for a later view that a plugin supplies ([integrations.md](integrations.md)). It is not part of version 1.0, no party sends or accepts it, and its fallback is the tool's text result.
 
-Two types for generated UI, `surface` (an A2UI v0.9 card from LINA's catalog) and `mock` (a drawn mock whose body references its page bundle and PNG as assets), and the client kind `surface_action` are reserved for a later minor version. Their rules are in [surfaces.md](surfaces.md#generated-ui). Until that version no party sends or accepts them; a client that does not render them gets their `text`. A `surface` body is data under the rules below: it names catalog widgets and data, never code or a URL to fetch.
+Client **1.1** adds `surface`, an A2UI v0.9 card, `surface_action` and the
+separately negotiated `mock` type described below. The
+canonical [client schema](../../protocol/schema/client/1.0/envelope.json) retains
+its original path and defines both 1.0 and 1.1. A 1.0 envelope cannot contain a
+surface or surface action. An updated client first offers 1.1; if an installed
+older Core explicitly refuses that version, it may reconnect once within the
+same handshake deadline using a 1.0 envelope and capabilities without new fields.
+This retries negotiation only, never a person input or operation.
+
+A `surface` body has `version: "v0.9"`, `catalogId: "lina.cards"`,
+`catalogVersion: "1.0"`, `surfaceId`, `components`, `dataModel` and `deleted`.
+It contains one complete validated component tree rooted at `root`. Core folds
+one bounded batch of `createSurface`, `updateComponents`, `updateDataModel` and
+`deleteSurface` messages into one revision. A failed batch changes nothing.
+A deletion is a retained revision with `deleted: true`, empty components and
+data, and no actions. It remains readable in history and export.
+
+The `results` capability version `1.0` carries `types` and `catalogs` arrays in
+hello and welcome. The versioned catalog id is `lina.cards/1.0`. Welcome grants
+the intersection. Core derives `surface_controls` (action keys, names, resolved
+values and bindings; ordered field labels, current values and numbered choices)
+from the validated tree. Clients use those descriptors for local form state;
+they do not infer validation or authority from the catalog. A client negotiating 1.1 and this capability gets surface card
+fields and complete Core text (bounded surface text is never paginated); `body` and `surface_controls` are included only when it lists both
+`surface` and `lina.cards/1.0`. Other clients receive an ordinary text output
+item, including on replay. Existing 1.0 result behavior remains available.
+
+`surface_action` carries `result_id`, `revision`, `action`, `values` and
+`input_id`. Core resolves the person, agent and conversation from the authenticated
+connection and stored result. It validates the current revision and the exact
+fields of the named action. A bound input uses its widget's value schema;
+constant context values must match the card. A single choice accepts a string
+or a one-item list and is delivered as a string. Unknown actions or fields are
+`malformed`, old revisions are `stale_revision`, inaccessible results are
+`out_of_scope`, and a missing capability is `capability_not_negotiated`.
+
+Core records the press as owner input and inserts it in the durable conversation
+inbox in the same transaction as a revision recheck. `input_id` deduplicates
+retries. A press is queued for the next turn; it does not steer the active turn
+or answer an approval. Subsequent tools use their normal authority checks.
+The detailed rendering contract is [Generated cards](surfaces.md#generated-cards).
+
+Client 1.1 adds `mock`. Its closed body contains `request`, `checklist` (id,
+description, local action and target), `page` and `png` asset references,
+`previous` (null or a result id/revision), `stop_reason: "all_passed"` and seven
+passing executable `checks`. No HTML is in the body. Earlier candidates and
+stop reasons belong to the private run state. Only Core's checked renderer may
+publish a mock; ordinary `present_result` cannot create or replace one.
+
+The `mocks` capability, version 1.0 on client 1.1, adds `mock_request` and
+`mock_response`. Requests bind `conversation_id`, `result_id` and `revision`.
+`read` returns that retained revision. `asset` names `page` or `png`, with an
+optional byte `offset`; the response carries a pinned asset reference, MIME type,
+base64 `data` (at most 48 KiB decoded) and optional `next` byte offset. It never
+accepts a path or arbitrary asset id. `build` also needs `target` (`screen` or
+`mini_app`), `repositories` and the envelope's stable `idempotency_key`; it returns
+`goal_id`. Builds require the current revision and use normal work authority.
+Reads authorize the connected person and the named agent/conversation before
+looking up immutable history. Invalid or foreign references are refused without
+revealing their contents.
+
+Client 1.0 never receives the new kinds or result type: mock cards become ordinary
+text output items, including in history snapshots. Client 1.1 without `mocks`
+receives the mock's text without its body. The canonical client schema family
+currently retains its `client/1.0/envelope.json` path and explicitly validates
+both envelope versions; 1.1 fixtures live separately.
+
+
 
 Rules:
 
@@ -537,6 +633,13 @@ never sends `hello`, receives a LINA grant or becomes a Node. Publishing a
 persona exposes a separate Core A2A listener on the tailnet, not the `client`
 or `node` listener. Core alone maps authenticated incoming work and remote observations
 to canonical local tasks and results.
+
+The publication listener serves only its Agent Cards, versioned A2A JSON-RPC/SSE
+and task-authorized artifact downloads. It uses the owner's TLS configuration
+and verifies the local tailscaled address before binding. It registers no host
+protocol handler. The owner receives publication progress, approvals and typed
+results through the existing conversation, waiting and result projections;
+the external caller receives only the separate A2A task projection.
 
 A Node can call a remote agent as part of a task the main dispatched. Its
 grant must name the approved remote connection and allowed call/data scope.
@@ -689,6 +792,17 @@ never means zero. Stage and unknown are codes localized by the client. An option
 `state` uses the `running_state` display codes for an observed conversation-worker
 execution state; it does not supply a plan stage or completion verdict. Older
 clients may omit this additional presentation field.
+
+An optional `stages` array carries a line's stage list, in order, as Core computed
+it ([work-and-delegation.md](work-and-delegation.md#stages)). An entry has its
+`kind` (`stage`, `design`, `checking` or `done`), a `label`, a `state`, and, for a
+numbered entry, its `number`. An entry state and a step state are one of `next`,
+`waiting`, `working`, `needs_input`, `failed`, `stopped`, `unknown`, `done` and
+`superseded`; the client localizes them. A `steps` array lists the entry's steps
+with a name, a state and the instant a step started; it holds no step id, and a
+line holds no identity at all. A line without a stage list omits the field, which
+older clients ignore. The stage word of a goal line is the label of its current
+stage entry.
 
 The optional `started_at` and `finished_at` fields are RFC 3339 instants recorded
 by Core; `now` is Core's short current-activity line. The TUI applies its snapshot

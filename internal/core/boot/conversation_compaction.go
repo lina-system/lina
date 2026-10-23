@@ -121,6 +121,9 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 					}
 					input.Records = append(input.Records, item)
 				}
+				// A one-event reload keeps the full arguments. Pair the rebuilt
+				// sources before the auxiliary request, as a live summary does.
+				input.Records = condenseSummaryRecords(input.Records)
 				text, err := auxiliary.Summarize(ctx, input)
 				if err != nil {
 					return compaction.Output{}, err
@@ -168,6 +171,9 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		}
 		view.History = append(view.History, item)
 	}
+	// Pair every projected call with its receipt before the history becomes a
+	// request. Summary generation reloads sources and pairs them again below.
+	view.History = condenseSummaryRecords(view.History)
 	in.MaxTokens = limit
 	in.Summary = nil
 	in.History = nil
@@ -226,6 +232,9 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 			}
 			segment.Records[i] = item
 		}
+		// project reloads one event, so the paired receipt is not visible yet.
+		// Condense the resolved sources together before the auxiliary request.
+		segment.Records = condenseSummaryRecords(segment.Records)
 		return auxiliary.Summarize(ctx, segment)
 	}
 	c := &conversationCompaction{builder: builder, pending: map[string]bool{}, preparations: r.summaryState().candidates()}
@@ -264,4 +273,27 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		callback(c)
 	}
 	return request, report, nil
+}
+
+// condenseSummaryRecords replaces a completed presentation's arguments with the
+// bounded reference once the call and its receipt are in the same projection.
+// Reloading one ledger event cannot see that receipt, so callers apply this
+// after the paired sources are resolved together.
+func condenseSummaryRecords(records []compaction.Record) []compaction.Record {
+	if len(records) == 0 {
+		return records
+	}
+	items := make([]provider.Item, len(records))
+	for i := range records {
+		items[i] = records[i].Item
+	}
+	items, changed := assemble.CondenseResultItems(items)
+	if !changed {
+		return records
+	}
+	out := append([]compaction.Record(nil), records...)
+	for i := range out {
+		out[i].Item = items[i]
+	}
+	return out
 }

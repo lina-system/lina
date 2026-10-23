@@ -14,6 +14,7 @@ const modules = new Set(['go.mod', 'go.sum', 'go.work', 'go.work.sum', 'kit/go.m
 
 export function registryFor(cwd) {
   // Older trees and minimal verification fixtures may not have these packages yet.
+  const generatedui = existsSync(join(cwd, 'design/template.go')) ? ['./design/...'] : [];
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
   const core = existsSync(join(cwd, 'internal/core')) ? ['./internal/core/...'] : [];
@@ -34,7 +35,7 @@ export function registryFor(cwd) {
     { name: 'storebench', module: '.', directories: ['internal/core/storebench/'], files: [], packages: ['./internal/core/storebench/...'] },
     { name: 'crw-takeover', module: '.', directories: ['tools/crw-takeover/'], files: [], packages: ['./tools/crw-takeover/...'] },
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', 'testdata/crw/', 'testdata/provider-replay/', ...addonDirectories, ...clientDirectories, 'third_party/codex-app-server/'], files: ['doc.go'], packages: ['.', './cmd/lina/...', ...architecture, ...buildinfo, ...persona, ...skills, ...core, ...addonPackages, ...clientPackages, ...e2e, ...vendored], binary: 'lina' },
+    { name: 'lina', module: '.', directories: ['design/', 'cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', 'testdata/crw/', 'testdata/provider-replay/', ...addonDirectories, ...clientDirectories, 'third_party/codex-app-server/'], files: ['doc.go'], packages: ['.', ...generatedui, './cmd/lina/...', ...architecture, ...buildinfo, ...persona, ...skills, ...core, ...addonPackages, ...clientPackages, ...e2e, ...vendored], binary: 'lina' },
     { name: 'moirai-worker', module: '.', directories: ['cmd/moirai-worker/', 'internal/moirai/'], files: [], packages: ['./cmd/moirai-worker/...', './internal/moirai/...'], binary: 'moirai-worker' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];
@@ -53,13 +54,16 @@ const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{'
 export function kind(path) {
   if (['scripts/verify/test-times.json', 'scripts/verify/bwrap.apparmor'].includes(path)) return 'automation';
   if (path.startsWith('adapters/claude/') || path.startsWith('adapters/claude-acp/')) return 'automation';
+  // Native parts carry their own portable tests; the automation check compiles
+  // and runs them, so a change under native/ selects it.
+  if (path.startsWith('native/')) return 'automation';
   if (path.startsWith('third_party/')) return 'dependencies';
   if (path === 'packaging/README.md') return 'docs';
   if (path === 'packaging/sqlite-vec/build.sh') return 'automation';
   if (/^packaging\/sqlite-vec\/(?:README|NOTICE)\.md$/.test(path)) return 'docs';
   if (path === 'scripts/verify/dependency-exceptions.json' || path === 'THIRD-PARTY-NOTICES.md') return 'dependencies';
   if (modules.has(path)) return 'modules';
-  if (path === 'DESIGN.md' || /^design\/tokens\/[^/]+\.(?:json|css|svg)$/.test(path)) return 'automation';
+  if (path === 'DESIGN.md' || /^design\/tokens\/[^/]+\.(?:json|css|svg|swift)$/.test(path)) return 'automation';
   if (/^evidence\/(?:brand|generated-ui)\/[^/]+\.png$/.test(path)) return 'docs';
   if (componentOf(path)) return 'components';
   if (documents.has(path) || /^docs\/(?:policy|design|research)\/[^/]+\.md$/.test(path)

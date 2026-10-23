@@ -130,7 +130,7 @@ func (q workerQuestions) Question(ctx context.Context, person, id string) (proto
 		return q.runtime.a2aQuestion(ctx, person, id)
 	}
 	if !strings.HasPrefix(id, "worker-request:") {
-		return (runQuestions{runtime: q.runtime}).Question(ctx, person, id)
+		return runQuestions(q).Question(ctx, person, id)
 	}
 	e, item, err := q.find(person, id)
 	if err != nil {
@@ -152,7 +152,7 @@ func (q workerQuestions) AnswerQuestionMessage(ctx context.Context, person strin
 		return q.runtime.answerConversationQuestion(ctx, person, answer, messageID)
 	}
 	if answer.CardID != nil && strings.HasPrefix(*answer.CardID, "work:") {
-		return (runQuestions{runtime: q.runtime}).AnswerQuestionMessage(ctx, person, answer, messageID)
+		return runQuestions(q).AnswerQuestionMessage(ctx, person, answer, messageID)
 	}
 	return q.AnswerQuestion(ctx, person, answer)
 }
@@ -166,7 +166,7 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 		return protocol.DecisionOutcomeRefused, nil
 	}
 	if !strings.HasPrefix(*answer.CardID, "worker-request:") {
-		return (runQuestions{runtime: q.runtime}).AnswerQuestion(ctx, person, answer)
+		return runQuestions(q).AnswerQuestion(ctx, person, answer)
 	}
 	e, item, err := q.find(person, *answer.CardID)
 	if err != nil {
@@ -214,7 +214,14 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 	e.mu.Unlock()
 	switch kind {
 	case "acp":
-		// Validated before claiming the card; raw retains the typed form values.
+		// Preserve constrained values; provenance travels in ACP metadata.
+		var result map[string]json.RawMessage
+		err = json.Unmarshal(raw, &result)
+		if err == nil {
+			meta, _ := json.Marshal(map[string]string{"lina/message": worker.FrameMessage(person, "person", event.Thread.TaskID, *answer.CardID+":answer", string(raw))})
+			result["_meta"] = meta
+			raw, err = json.Marshal(result)
+		}
 	case "tool":
 		text := ""
 		if answer.Values != nil {
@@ -222,7 +229,7 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 				text = *value.String
 			}
 		}
-		raw = toolReply(map[string]any{"answer": text, "action": answer.Answer}, answer.Answer == protocol.QuestionAnswerActionAccept)
+		raw = framedToolReply(person, "person", event.Thread.TaskID, *answer.CardID+":answer", map[string]any{"answer": text, "action": answer.Answer}, answer.Answer == protocol.QuestionAnswerActionAccept)
 	case "input":
 		response := wire.ToolRequestUserInputResponse{Answers: map[string]wire.ToolRequestUserInputAnswer{}}
 		for _, field := range fields {
@@ -230,7 +237,7 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 			if answer.Answer == protocol.QuestionAnswerActionAccept && answer.Values != nil {
 				value := (*answer.Values)[field.Name]
 				if value.String != nil {
-					values = append(values, *value.String)
+					values = append(values, worker.FrameMessage(person, "person", event.Thread.TaskID, *answer.CardID+":answer", *value.String))
 				}
 			}
 			response.Answers[field.Name] = wire.ToolRequestUserInputAnswer{Answers: values}
@@ -248,6 +255,9 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 		}
 		// No requested form is present in the pinned schema; do not grant it.
 		raw, err = json.Marshal(wire.McpServerElicitationRequestResponse{Action: action})
+	}
+	if err == nil && event.Thread.TaskID != "" {
+		err = worker.ResetMessages(ctx, e.origin.db, event.Thread.TaskID, *answer.CardID+":answer")
 	}
 	if err == nil {
 		err = e.origin.workerNotice(ctx, e.input, *answer.CardID+":answer", "Your response to the worker was recorded.")

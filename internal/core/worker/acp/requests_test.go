@@ -3,6 +3,8 @@ package acp
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -52,6 +54,15 @@ func TestPermissionAnswersAreOnceOnly(t *testing.T) {
 			answer := func(id string) worker.Answer {
 				return worker.Answer{RequestID: r.ID, Result: json.RawMessage(`{"outcome":{"outcome":"selected","optionId":"` + id + `"}}`)}
 			}
+			key, _, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.spec.ApprovalKey = key
+			if err := a.Answer(ctx, th, answer(option)); err == nil {
+				t.Fatal("unsigned configured Core approval accepted")
+			}
+			a.spec.ApprovalKey = nil
 			for _, bad := range []string{"persist-allow", "persist-deny", "invented"} {
 				if err := a.Answer(ctx, th, answer(bad)); err == nil {
 					t.Fatal("unsafe option sent", bad)

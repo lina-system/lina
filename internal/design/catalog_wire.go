@@ -4,6 +4,7 @@ package design
 
 func init() {
 	register(map[string]translation{
+		"select":                    {"Choose", "선택"},
 		"claimed":                   {"not verified", "미검증"},
 		"record_request":            {"Record request", "기록 요청"},
 		"record_result":             {"Record result", "기록 결과"},
@@ -93,6 +94,9 @@ func init() {
 		"conversation_start":        {"Start conversation", "대화 시작"},
 		"input":                     {"Message", "메시지"},
 		"interrupt":                 {"Interrupt", "중단"},
+		"launcher_request":          {"Launcher line", "런처 입력"},
+		"launcher_result":           {"Launcher line accepted", "런처 입력 접수"},
+		"launcher_reply":            {"Launcher reply", "런처 답변"},
 		"history_get":               {"Load history", "기록 불러오기"},
 		"history":                   {"History", "기록"},
 		"subscribe":                 {"Follow updates", "업데이트 받기"},

@@ -199,9 +199,13 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				"core": {Name: "waiting", Version: "1.0"}, "waiting": {Name: "waiting", Version: "1.0"}, "progress": {Name: "progress", Version: "1.0"},
 			}
 			if routed {
+				want[protocol.KindSurfaceAction] = "results"
+				want[protocol.KindMockRequest] = "mocks"
+
 				for _, kind := range []protocol.Kind{protocol.KindConversationStart, protocol.KindHistoryGet, protocol.KindInput, protocol.KindInterrupt, protocol.KindResultGet} {
 					want[kind] = "conversation"
 				}
+				want[protocol.KindLauncherRequest] = "launcher"
 				for _, kind := range []protocol.Kind{protocol.KindStop, protocol.KindRunningGet, protocol.KindFollowUp, protocol.KindMultiTaskControl} {
 					want[kind] = "running"
 				}
@@ -209,6 +213,7 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				for _, topic := range []string{"core", "conversation:", "results:"} {
 					topics[topic] = protocol.Capability{Name: "conversation", Version: "1.0"}
 				}
+				topics["launcher"] = protocol.Capability{Name: "launcher", Version: "1.0"}
 				topics["running"] = protocol.Capability{Name: "running", Version: "1.0"}
 			}
 			if len(r.identity.Operations) != len(want) {

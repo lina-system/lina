@@ -65,6 +65,9 @@ func (s *Service) run(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if r.Brief.Result == "mock" {
+		return s.drawMock(ctx, r)
+	}
 	var scopeFailed atomic.Bool
 	cfg := loop.Config{Request: provider.Request{CacheIdentity: provider.RunCacheIdentity(id), Model: s.cfg.Model, Purpose: provider.Background, Instructions: instructions}, Tools: map[string]loop.Tool{}}
 	if r.Origin.Job != "" {
@@ -231,7 +234,14 @@ func (s *Service) run(ctx context.Context, id string) error {
 		}
 		return &trackedStream{Stream: st, finished: func(meta provider.Meta) error {
 			s.activity(id, -1)
-			return s.update(context.WithoutCancel(ctx), id, func(r *Record) error { r.Usage = append(r.Usage, meta.Usage); return nil })
+			return s.update(context.WithoutCancel(ctx), id, func(r *Record) error {
+				r.Usage = append(r.Usage, meta.Usage)
+				// A deferred submission names itself only after the answer.
+				if meta.Batch != "" && len(r.Requests) > 0 {
+					r.Requests[len(r.Requests)-1].Batch = meta.Batch
+				}
+				return nil
+			})
 		}}, nil
 	}
 	cfg.Observe = func(ctx context.Context, _ provider.Event) error { return s.touch(ctx, id) }

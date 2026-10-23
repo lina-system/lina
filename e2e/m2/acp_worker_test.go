@@ -566,10 +566,17 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 type harness struct {
 	ctx          context.Context
 	root, socket string
+	logs         *bytes.Buffer
 }
 
 const acpAgentScript = `#!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
+function messageText(text) {
+ if (!text.startsWith('<lina-message ')) return text;
+ const match=text.match(/^<lina-message [^>]*><text>([\s\S]*)<\/text><\/lina-message>$/);
+ if (!match) throw Error('invalid worker message frame');
+ return match[1].replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi,(_,e)=>e[0]==='#'?String.fromCodePoint(e[1].toLowerCase()==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"})[e]);
+}
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -603,10 +610,11 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   fs.writeFileSync(path.join(root,'cwd'),process.cwd());reply(m.id,{sessionId:'acp-fixture'});break;
  case 'session/prompt':
   pending=m.id;packet=m.params.prompt[0].text;progress('Working on result.txt');
+  if(process.env.LINA_ACP_CASE==='invalid-stop-exit'){reply(pending,{stopReason:'bogus'});process.exit(0)}
   if(process.env.LINA_ACP_CASE==='cancel')break;
   release(()=>{
    if(process.env.LINA_ACP_CASE==='exit')process.exit(0);
-   const definition=JSON.parse(packet.slice(packet.indexOf('{')));
+   const definition=JSON.parse(messageText(packet).slice(messageText(packet).indexOf('{')));
    const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
    git('switch','-c',definition.branch);fs.writeFileSync('result.txt','ACP result\n');git('add','result.txt');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Create ACP result');
    const head=git('rev-parse','HEAD');
@@ -734,12 +742,6 @@ func seedMethodologyAgents(t *testing.T, h *harness, person, selected string) ma
 		}
 	}
 	return ids
-}
-
-type methodologyRequest struct {
-	Instructions string
-	Tools        []struct{ Name string }
-	Input        []json.RawMessage
 }
 
 func makeInstallBundle(t *testing.T, base, lina, node string) string {

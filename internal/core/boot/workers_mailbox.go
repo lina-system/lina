@@ -27,8 +27,11 @@ func steeringID(person, session, key string) string {
 }
 func (e *workerSession) mailboxKey() string { return e.adapter.Name() + ":" + e.thread.ID }
 func (e *workerSession) storeSteering(ctx context.Context, key, text string) (work.SteeringMessage, error) {
+	return e.storeSteeringFrom(ctx, key, text, e.origin.agent, "agent")
+}
+func (e *workerSession) storeSteeringFrom(ctx context.Context, key, text, sender, kind string) (work.SteeringMessage, error) {
 	p := worker.Delivery(e.adapter)
-	return e.origin.work.StoreSteering(ctx, work.SteeringMessage{ID: steeringID(e.origin.person, e.mailboxKey(), key), Session: e.mailboxKey(), TaskID: e.thread.TaskID, Person: e.origin.person, Agent: e.origin.agent, Conversation: e.origin.conversation, Text: text, Tier: p.Tier, Mechanism: p.Mechanism, SentAt: time.Now().UTC()})
+	return e.origin.work.StoreSteering(ctx, work.SteeringMessage{Sender: sender, SpeakerKind: kind, ID: steeringID(e.origin.person, e.mailboxKey(), key), Session: e.mailboxKey(), TaskID: e.thread.TaskID, Person: e.origin.person, Agent: e.origin.agent, Conversation: e.origin.conversation, Text: text, Tier: p.Tier, Mechanism: p.Mechanism, SentAt: time.Now().UTC()})
 }
 func (e *workerSession) steeringState(ctx context.Context, m work.SteeringMessage, state, reason string) error {
 	if err := e.origin.work.SteeringState(ctx, m.Session, m.ID, state, reason, time.Now().UTC()); err != nil {
@@ -97,8 +100,9 @@ func (e *workerSession) deliverSteering(ctx context.Context, m work.SteeringMess
 		activity.Release()
 		return tools.Failed, err
 	}
-	// Preserve the person's message verbatim; the id is a separate context label.
-	text := fmt.Sprintf("LINA steering message %s. After reading, call lina.check_inbox with read=[this id]; after acting, report acted=[this id].\n\n%s", m.ID, m.Text)
+	// The durable record keeps original text for the UI. Only the worker-bound
+	// projection is framed; old records with no source stay system evidence.
+	text := worker.FrameMessage(m.Sender, m.SpeakerKind, m.TaskID, m.ID, m.Text)
 	state, err := e.inputWorker(ctx, snap, text, activity)
 	if err != nil {
 		if state == tools.Failed {
@@ -116,9 +120,14 @@ func (e *workerSession) deliverSteering(ctx context.Context, m work.SteeringMess
 func (e *workerSession) ownerSteering(ctx context.Context, key, text string) error {
 	e.control.Lock()
 	defer e.control.Unlock()
-	m, err := e.storeSteering(ctx, key, text)
+	m, err := e.storeSteeringFrom(ctx, key, text, e.origin.person, "person")
 	if err != nil {
 		return err
+	}
+	if m.TaskID != "" {
+		if err := worker.ResetMessages(ctx, e.origin.db, m.TaskID, "person-steering:"+m.ID); err != nil {
+			return err
+		}
 	}
 	if m.State == "delivered" || m.State == "read" {
 		return nil
@@ -219,6 +228,13 @@ func (e *workerSession) mailboxReply(ctx context.Context, event worker.Event, ra
 		return nil, nil, err
 	}
 	profile := worker.Delivery(e.adapter)
+	mayDeliver := profile.Tier == "turn" || event.ToolCall.Name == "check_inbox"
+	if mayDeliver && len(messages) > 0 {
+		mayDeliver, err = e.mailboxMayDeliver(ctx, event)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	var selected []work.SteeringMessage
 	unread := 0
 	for _, m := range messages {
@@ -226,7 +242,7 @@ func (e *workerSession) mailboxReply(ctx context.Context, event worker.Event, ra
 			continue
 		}
 		unread++
-		if (profile.Tier == "turn" || event.ToolCall.Name == "check_inbox") && (m.State == "stored" || m.State == "held" && m.Reason != "delivery_uncertain") {
+		if mayDeliver && (m.State == "stored" || m.State == "held" && m.Reason != "delivery_uncertain") {
 			if err = e.origin.work.SteeringState(ctx, m.Session, m.ID, "held", "delivery_uncertain", time.Now().UTC()); err != nil {
 				return nil, nil, err
 			}
@@ -236,7 +252,12 @@ func (e *workerSession) mailboxReply(ctx context.Context, event worker.Event, ra
 	if unread == 0 {
 		return raw, nil, nil
 	}
-	content, err := json.Marshal(map[string]any{"delivery": profile, "unread": unread, "steering": selected, "notice": "Read steering at this step. Call lina.check_inbox to fetch mail or acknowledge read IDs; report acted IDs after acting."})
+	framed := append([]work.SteeringMessage(nil), selected...)
+	for i := range framed {
+		m := &framed[i]
+		m.Text = worker.FrameMessage(m.Sender, m.SpeakerKind, m.TaskID, m.ID, m.Text)
+	}
+	content, err := json.Marshal(map[string]any{"delivery": profile, "unread": unread, "steering": framed, "notice": "Read steering at this step. Call lina.check_inbox to fetch mail or acknowledge read IDs; report acted IDs after acting."})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -244,7 +265,7 @@ func (e *workerSession) mailboxReply(ctx context.Context, event worker.Event, ra
 	if err = json.Unmarshal(raw, &reply); err != nil {
 		return nil, nil, err
 	}
-	reply.ContentItems = append(reply.ContentItems, wire.V2DynamicToolCallOutputContentItem{InputText: &wire.V2DynamicToolCallOutputContentItemInputText{Text: string(content)}})
+	reply.ContentItems = append(reply.ContentItems, wire.V2DynamicToolCallOutputContentItem{InputText: &wire.V2DynamicToolCallOutputContentItemInputText{Text: worker.FrameMessage("core", "tool", event.Thread.TaskID, e.requestKey(event.ToolCall.ID)+":mailbox", string(content))}})
 	raw, err = json.Marshal(reply)
 	return raw, selected, err
 }
@@ -287,10 +308,16 @@ func (r *conversationRuntime) offlineSteering(ctx context.Context, person, sessi
 	}
 	message.ID = steeringID(person, message.Session, key)
 	message.Text = text
+	message.Sender, message.SpeakerKind = person, "person"
 	message.SentAt = time.Now().UTC()
 	saved, err := r.work.StoreSteering(ctx, message)
 	if err != nil {
 		return err
+	}
+	if saved.TaskID != "" {
+		if err := worker.ResetMessages(ctx, r.db, saved.TaskID, "person-steering:"+saved.ID); err != nil {
+			return err
+		}
 	}
 	if saved.Reason == "delivery_uncertain" || saved.State != "stored" && saved.State != "held" {
 		return nil
@@ -333,6 +360,43 @@ func (r *conversationRuntime) mailboxNotice(ctx context.Context, parent ledger.E
 		return err
 	}
 	return r.workerNotice(ctx, parent, id, text)
+}
+
+// Ordinary steering waits for native decisions and Core's question cards. The
+// tool being answered is itself a pending request on Codex and is not a blocker.
+func (e *workerSession) mailboxMayDeliver(ctx context.Context, event worker.Event) (bool, error) {
+	snap, err := e.adapter.Snapshot(ctx, event.Thread)
+	if err != nil {
+		return false, err
+	}
+	if snap.Thread != event.Thread || snap.State == worker.Dead || snap.State == worker.Unknown || snap.State == worker.Idle {
+		return false, nil
+	}
+	if snap.State == worker.Waiting && len(snap.Pending) == 0 {
+		return false, nil
+	}
+	for _, request := range snap.Pending {
+		if request.ID != event.ToolCall.ID {
+			return false, nil
+		}
+	}
+	e.recoveryMu.Lock()
+	state := e.recovery.State
+	e.recoveryMu.Unlock()
+	if state == "unknown" || state == "retrying" || state == "decision" || state == "parked" {
+		return false, nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.approvals) > 0 {
+		return false, nil
+	}
+	for _, q := range e.questions {
+		if q.card.Card.Outcome == nil {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func offlineDelivery(name string) worker.DeliveryProfile {

@@ -35,6 +35,8 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
+type workerCallIdentityKey struct{}
+
 type workerRuntime struct {
 	recoveryWake chan struct{}
 	recoveryStop context.CancelFunc
@@ -280,6 +282,7 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, preparation *too
 			r.personaGrants[auth.GrantID] = g
 			r.personaMu.Unlock()
 			defer func() { r.personaMu.Lock(); delete(r.personaGrants, auth.GrantID); r.personaMu.Unlock() }()
+			ctx = context.WithValue(ctx, workerCallIdentityKey{}, turn.EffectKey(turnID, name, in.Target, call.ID))
 			return turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID).Execute(context.WithValue(ctx, steeringCallKey{}, call.ID), call)
 		}}
 	}
@@ -376,7 +379,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 			return tools.Result{State: tools.Failed}, err
 		}
 		entry := &workerSession{origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, started: time.Now(), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
-		adapter, err := codex.Open(r.ctx, process, codex.Config{Bind: entry.bindRecovery})
+		adapter, err := codex.Open(r.ctx, process, codex.Config{Bind: entry.bindRecovery, ApprovalKey: r.personaAuthority.WorkerApprovalKey()})
 		if err != nil {
 			process.Release()
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
@@ -396,7 +399,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
 		release = false // A launch error may have started a turn; retain its reservation.
-		thread, err := entry.start(ctx, worker.StartSpec{TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
+		thread, err := entry.start(ctx, worker.StartSpec{ApprovalKey: r.personaAuthority.WorkerApprovalKey(), TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
 		if err != nil {
 			activity.Release()
 			if entry.reservation == "" {
@@ -535,15 +538,41 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 		}
 	}
 	if name == "worker_input" {
+
+		sender, kind := r.agent, "agent"
+		if owner {
+			sender, kind = r.person, "person"
+		}
+		id, _ := ctx.Value(workerCallIdentityKey{}).(string)
+		if owner {
+			id = turn.EffectKey(r.conversation, "owner_worker_input", snap.Thread.ID, turnID)
+		}
+		if id == "" {
+			id = rand.Text()
+		}
+		if owner && snap.Thread.TaskID != "" {
+			if err := worker.ResetMessages(ctx, r.db, snap.Thread.TaskID, "owner:"+id); err != nil {
+				activity.Release()
+				return tools.Result{State: tools.Failed}, err
+			}
+		} else if input.SpeakerKind == guard.Person && input.ID != "" && snap.Thread.TaskID != "" {
+			if err := worker.ResetMessages(ctx, r.db, snap.Thread.TaskID, "person:"+input.ID); err != nil {
+				activity.Release()
+				return tools.Result{State: tools.Failed}, err
+			}
+		}
+		if !owner && snap.Thread.TaskID != "" {
+			if err := worker.AdmitMessage(ctx, r.db, snap.Thread.TaskID, id, a.Text); err != nil {
+				activity.Release()
+				return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+			}
+		}
+
 		var state tools.State
 		var inputErr error
 		if r.work != nil {
 			var message work.SteeringMessage
-			callKey, _ := ctx.Value(steeringCallKey{}).(string)
-			if callKey == "" {
-				callKey = string(in.Arguments)
-			}
-			message, inputErr = entry.storeSteering(ctx, r.agent+":"+r.conversation+":"+turnID+":"+callKey, a.Text)
+			message, inputErr = entry.storeSteeringFrom(ctx, id, a.Text, sender, kind)
 			if inputErr == nil {
 				state, inputErr = entry.deliverSteering(ctx, message, snap, activity)
 			} else {
@@ -551,8 +580,9 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 				state = tools.Failed
 			}
 		} else {
-			state, inputErr = entry.inputWorker(ctx, snap, a.Text, activity)
+			state, inputErr = entry.inputWorker(ctx, snap, worker.FrameMessage(sender, kind, snap.Thread.TaskID, id, a.Text), activity)
 		}
+
 		if inputErr != nil {
 			result := tools.Result{State: state, Body: workerError(inputErr)}
 			if state == tools.Unknown {
@@ -583,6 +613,7 @@ func (e *workerSession) result(ctx context.Context, t worker.Thread) (tools.Resu
 	return e.encode(snap), nil
 }
 func (e *workerSession) start(ctx context.Context, spec worker.StartSpec) (worker.Thread, error) {
+	spec.TaskPacket = worker.FrameMessage(e.origin.agent, "agent", spec.TaskID, spec.AttemptID+":start", spec.TaskPacket)
 	thread, err := e.adapter.Start(ctx, e.process, spec)
 	if err != nil {
 		closeErr := e.close()
@@ -654,6 +685,7 @@ func (e *workerSession) observe() {
 			if event.Progress.Phase == "server_request_resolved" {
 				_ = e.trackRecoveryRequest(event.Progress.ItemID, false)
 				e.stopRequest(event.Progress.ItemID)
+				e.answerDelivered(e.origin.ctx, event.Thread)
 			}
 			if event.Progress.Phase == "item_completed" && event.Progress.Text != "" {
 				outputs[event.Thread] = event.Progress.Text
