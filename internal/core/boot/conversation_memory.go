@@ -28,7 +28,7 @@ func (r *conversationRuntime) events(ctx context.Context, through string) ([]led
 			query += ` AND (speaker_kind NOT IN ('person','forwarded') OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
 			args = append(args, through)
 		}
-		query += ` ORDER BY rowid DESC LIMIT 200`
+		query += ` ORDER BY rowid DESC`
 		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
 			return err

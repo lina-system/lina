@@ -2,6 +2,7 @@
 package compaction
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -58,5 +59,47 @@ func TestAuxiliaryInstructionsReachResponsesWire(t *testing.T) {
 	}
 	if strings.Contains(wire.Input[0].Content, "value 42") || !strings.Contains(wire.Input[1].Content, "fact") {
 		t.Fatal("source data escaped its separate user envelope")
+	}
+}
+
+func TestCompactionRetainsConversationPrefixOnResponsesWire(t *testing.T) {
+	cfg, err := responses.BuildConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := json.RawMessage(`{"type":"function","name":"read_file","parameters":{"type":"object"}}`)
+	prefix := message("fixed catalog")
+	source := message("receipt 42")
+	client := &http.Client{Transport: summaryTransport(func(r *http.Request) (*http.Response, error) {
+		var wire struct {
+			Instructions string
+			Input, Tools []json.RawMessage
+		}
+		if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
+			t.Fatal(err)
+		}
+		if wire.Instructions != "fixed persona" || len(wire.Tools) != 1 || !bytes.Equal(wire.Tools[0], tool) || len(wire.Input) != 3 || !bytes.Equal(wire.Input[0], prefix) || !bytes.Equal(wire.Input[1], source) {
+			t.Fatalf("compaction changed the cached prefix: %+v", wire)
+		}
+		if !strings.Contains(string(wire.Input[2]), "unanswered_requests") {
+			t.Fatal("summary instruction did not follow the segment")
+		}
+		body := "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":" + string(summaryItem(t)) + "}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	adapter, err := responses.New(cfg, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := lease.New(func() {})
+	defer l.Release()
+	aux := Auxiliary{RetainPrefix: true, Request: provider.Request{Model: "model", Credential: provider.NewCredential("account", provider.APIKey, "synthetic-token"), Instructions: "fixed persona", Items: []provider.Item{prefix}, Tools: []provider.ToolDecl{tool}}, Stream: func(ctx context.Context, r provider.Request) (provider.Stream, error) {
+		if r.Purpose != provider.Auxiliary || r.Bridge != nil {
+			t.Fatal("compaction acquired tool execution")
+		}
+		return adapter.Stream(ctx, l, r)
+	}}
+	if _, err := aux.Summarize(t.Context(), PassSegment{Records: []Record{{ID: "source", Item: source}}}); err != nil {
+		t.Fatal(err)
 	}
 }
