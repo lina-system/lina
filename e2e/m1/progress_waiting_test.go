@@ -14,6 +14,15 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM2ProgressWaitingInstalledCore (m2/progress-waiting.json) uses the
+// installed Core and synthetic stdio worker journey to read the owner progress
+// capability and full waiting list during an approval and a question. It checks
+// unknown plan values, display lines without internal identities, removal after
+// the original authenticated answers, a real worker-written artifact, empty
+// resolved sources after Core restart, and external record edits/restoration
+// arriving on an already-open progress subscription without a new query. The
+// worker and provider are fixtures; Core, tools, protocol and persistence are
+// real.
 func TestM2ProgressWaitingInstalledCore(t *testing.T) {
 	t.Parallel()
 	var fixture struct {

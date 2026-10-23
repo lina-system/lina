@@ -162,11 +162,31 @@ func mobileHistoryRows(t *testing.T, history protocol.History) []partialHistoryR
 	return rows
 }
 
+// TestM3WebSocketInstalledCore (m3/websocket.json) runs installed Core through
+// an HTTP upgrade on its authenticated Unix client socket. A headless WebSocket
+// client discovers and subscribes to the conversation, submits an input, and
+// receives the committed acknowledgement, a live delta and the completed
+// result. The fixture provider requests the real change_persona tool and checks
+// its execution result. Core restart must restore the conversation rows and
+// apply the saved tool effect to the next turn without replaying the provider
+// request. The Unix-socket and tailnet companions compare stored input/result
+// identities and contents across restart. Neither claims a physical mobile
+// device or two-host tailnet test. All identities, model responses and stored
+// values are synthetic.
 func TestM3WebSocketInstalledCore(t *testing.T) {
 	t.Parallel()
 	websocketConversation(t, false)
 }
 
+// TestM3WebSocketTailnetCore runs the m3/websocket.json conversation and
+// change_persona journey through production Core boot and the
+// Tailscale-authenticated listener over TCP, substituting only LocalAPI
+// responses and physical addresses. It installs the executable
+// hosting boot so normal build-digest checks remain enabled. Like the Unix-socket
+// companion, it compares
+// stored input/result identities and contents across restart. It does not claim a
+// physical mobile device or two-host tailnet test. All identities, model
+// responses and stored values are synthetic.
 func TestM3WebSocketTailnetCore(t *testing.T) {
 	t.Parallel()
 	websocketConversation(t, true)

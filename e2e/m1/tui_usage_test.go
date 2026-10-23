@@ -15,6 +15,9 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
+// TestM2TUIUsageUnknownInstalledCore runs m2/tui-usage.json through installed
+// Core and a real PTY TUI. It checks unknown quota independently of status and
+// reported plan at 100 and 40 columns. Account data are synthetic.
 func TestM2TUIUsageUnknownInstalledCore(t *testing.T) {
 	var fixture struct {
 		Labels, Commands []string
