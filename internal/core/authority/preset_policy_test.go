@@ -14,9 +14,11 @@ import (
 )
 
 func TestRestrictedPresetRefusesUnclassifiedBeforeApprovalOrDispatch(t *testing.T) {
+	t.Parallel()
 	for _, preset := range []string{"investing", "legal"} {
 		for _, outward := range []bool{false, true} {
 			t.Run(preset+map[bool]string{false: "/local", true: "/outward"}[outward], func(t *testing.T) {
+				t.Parallel()
 				f := setup(t)
 				err := f.store.Write(t.Context(), func(tx *canon.Tx) error {
 					_, err := tx.ExecContext(t.Context(), "INSERT INTO agents(id,name,preset,revision,state) VALUES(?,?,?,?,?)", "agent", "Renamed persona", preset, 1, []byte(`{}`))
@@ -80,10 +82,12 @@ func classifiedTool(t *testing.T, f *fixture, class tools.EffectClass, placement
 }
 
 func TestPresetEffectMatrixAndRefusalEvidence(t *testing.T) {
+	t.Parallel()
 	for _, preset := range []string{"investing", "legal", "system", "dev"} {
 		for _, class := range []tools.EffectClass{tools.Research, tools.Calculation, tools.PrivateDraft, tools.LocalWrite, tools.InvestmentOrder, tools.BindingExecution, tools.ExternalEffect, tools.CommandEffect, tools.WorkerEffect, tools.Unclassified} {
 			for _, placement := range []tools.Placement{tools.Core, tools.Node} {
 				t.Run(preset+"/"+string(class)+"/"+string(placement), func(t *testing.T) {
+					t.Parallel()
 					f := setup(t)
 					setPreset(t, f, "agent", preset)
 					classifiedTool(t, f, class, placement, false)
@@ -129,6 +133,7 @@ func TestPresetEffectMatrixAndRefusalEvidence(t *testing.T) {
 }
 
 func TestDelegationIntersectsOriginAndReceiverAndSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	setPreset(t, f, "origin", "investing")
 	setPreset(t, f, "legal-agent", "legal")
@@ -174,6 +179,7 @@ func TestDelegationIntersectsOriginAndReceiverAndSurvivesRestart(t *testing.T) {
 }
 
 func TestRestrictedWorkerApprovalNeverRaisesAnApproval(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	setPreset(t, f, "agent", "legal")
 	request := workerApproval()
@@ -187,6 +193,7 @@ func TestRestrictedWorkerApprovalNeverRaisesAnApproval(t *testing.T) {
 }
 
 func TestAcceptedMergeCannotBypassRestrictedOrigin(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	setPreset(t, f, "agent", "legal")
 	merges := authority.NewMerges(f.store, 7)
@@ -207,7 +214,9 @@ func TestAcceptedMergeCannotBypassRestrictedOrigin(t *testing.T) {
 }
 
 func TestApprovalAndStandingGrantCannotLiftPresetCeiling(t *testing.T) {
+	t.Parallel()
 	t.Run("accepted approval", func(t *testing.T) {
+		t.Parallel()
 		f := setup(t)
 		f.register(t, true, nil)
 		if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -226,6 +235,7 @@ func TestApprovalAndStandingGrantCannotLiftPresetCeiling(t *testing.T) {
 		}
 	})
 	t.Run("standing network grant", func(t *testing.T) {
+		t.Parallel()
 		f := setup(t)
 		setPreset(t, f, "agent", "legal")
 		s := spec(false)
