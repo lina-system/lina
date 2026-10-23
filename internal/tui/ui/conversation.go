@@ -115,14 +115,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.conversation.pager.tool = true
 			return nil
 		}
-		if card, ok := m.selectedCard(); ok && card.RunID != "" {
-			return m.runningRequest(card.RunID, "open", nil)
-		}
-		m.openPager(m.cardText())
-		if card, ok := m.selectedCard(); ok {
-			m.conversation.pager.cardID = card.ID
-		}
-		return nil
+		return m.openResultCard()
 	case "ctrl+w":
 		m.openPager(m.topicText("waiting"))
 		m.conversation.pager.waiting = true
@@ -142,11 +135,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "enter":
 		if m.conversation.cardsFocused {
-			if card, ok := m.selectedCard(); ok && card.RunID != "" {
-				return m.runningRequest(card.RunID, "open", nil)
-			}
-			m.openPager(m.cardText())
-			return nil
+			return m.openResultCard()
 		}
 		text := strings.TrimSpace(m.content.Draft.Text)
 		if text == "/help" {

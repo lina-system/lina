@@ -48,3 +48,13 @@ an interactive LCM row remains unproven despite a confirmed session map. Tests
 check per-profile report counts, immutable source bytes, candidate eligibility,
 and rejection by the person-memory writer. Source matching and promotion
 approval remain separate stages; these fixtures do not claim to implement them.
+
+`delivery.sql` extends the host fixture with the registered gateway delivery
+ledger. Tests also cover its pre-`adapter_profile` layout and reject unrelated
+tables or column drift. Its synthetic retry row is counted and explicitly
+omitted from memory import. `current-kinds.sql` adds an observational alias
+candidate and a composite group with ordered members, including its head.
+Rehearsal inventories the kinds; import preserves their source rows and links
+without treating the alias as a confirmed host identity. The installed CLI
+reconciliation scenario imports these fixtures, seals and backs up canon,
+and reads promoted results from Core after restart.

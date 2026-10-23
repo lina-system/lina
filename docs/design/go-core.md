@@ -1232,6 +1232,10 @@ The protocol is one JSON message per line on stdio.
 - Core to adapter: `start` (system text, items, tool declarations, model, effort), `tool_result`, `cancel`, `ping`.
 - Adapter to Core: `init` (tools, MCP servers and plugins the runtime loaded), `delta`, `item_done`, `tool_call`, `usage`, `limit`, `terminal` (reason, session id, cost estimate), `error`.
 - Core refuses the turn if `init` lists anything LINA did not put there.
+- Ending the stream context or a pending `Next` context terminates the request,
+  unblocks its stdio reads and writes, and makes `Next` return the context error
+  even if the runtime is silent. The runtime and its supervisor are reaped
+  without requiring a separate `Close`; `Close` remains an idempotent join.
 - First use installs the SDK from the release lockfile ([runtime.md](runtime.md#provider-adapters)); it is never shipped in LINA artifacts.
 
 Implementation notes: [C-45 runtime increment](../../adapters/claude/REFERENCE.md#c-45-runtime-increment).
