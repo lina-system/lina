@@ -2798,15 +2798,18 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
   They remain answerable through the existing authenticated question/approval forms.
   Implementation notes: [C-55 waiting migration](../../internal/core/waiting/REFERENCE.md#c-55-waiting-migration).
 - Canon closes its change notification only after a committed mutation; read callbacks and rollbacks remain quiet.
-  Core coalesces those events and live worker changes for 250 ms, rereads the sources, and publishes the replaced overview when its contents or the full waiting list change.
+  Core coalesces those events and live worker changes for 100 ms, rereads the sources, and publishes the replaced overview when its contents or the full waiting list change.
+  The coalescing window leaves room inside the 250 ms (P) bound from a goal commit to its changed line, so the projection itself still fits.
   A change below Home's five-row limit still advances the overview cursor, causing an open full waiting view to reread its sources.
   Subscriptions reread before their snapshot.
-  While the progress topic has observers, a five-second reconciliation tick also rereads filesystem-backed sources, using the same 250 ms coalescing.
+  While the progress topic has observers, a five-second reconciliation tick also rereads filesystem-backed sources, using the same coalescing.
   This detects outside record edits and restoration without unrelated canon writes.
   The timer stops with Core; idle installs without observers do not perform these periodic source reads, and unchanged snapshots still publish no frame.
   The headless `e2e/m2/progress-waiting.json` scenario covers installed Core, an actual stdio child, approval and question disappearance, a worker-created artifact and restart without provider replay.
 - Implementation notes: [C-55 progress digest increment](../../internal/core/progress/REFERENCE.md#c-55-progress-digest-increment).
-- The stage list is projected from the admitted step graph revisions and the step states observed with them, with no separate stage record; a done stage keeps its number and its steps. Implementation notes: [C-55 stage list increment](../../internal/core/progress/REFERENCE.md#c-55-stage-list-increment).
+- The stage list is projected from the admitted step graph revisions and the step states observed with them, with no separate stage record; a done stage keeps its number and its steps.
+  A goal line reaches the progress view with its Now, start instant and stage entries, and its stage word is the current entry.
+  Implementation notes: [C-55 stage list increment](../../internal/core/progress/REFERENCE.md#c-55-stage-list-increment) and [C-55 progress line increment](../../internal/core/progress/REFERENCE.md#c-55-progress-line-increment).
 - Explicit TUI and paired-channel commands use the same Core operations: `/progress`, `/waiting priority|lightest`, `/stop <run>`, `/stop all` and `/note <run> <text>`.
   Bare `/stop` interrupts the current conversation.
   Targeted controls recheck the person and optional conversation; stop-all captures the person's live background runs and worker sessions in private surfaces, and only the bound conversation in a shared channel.

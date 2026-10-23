@@ -22,3 +22,15 @@ A superseded step leaves the counts but stays in its stage.
 `progress.GoalStages` reads the revisions from the `goal.step_graph` work events and the newest task states from the current goal record, so a restart projects the same list.
 An unknown or another person's goal returns `goal.GraphUnavailable`.
 The line's stage word and the published entries remain with #765; the TUI drawing remains with #770.
+
+### C-55 progress line increment
+
+#765 publishes the line's Now, start and stage entries.
+`progress.Goals` projects each goal with work in flight or something waiting on the person from `work_records`, so the projection runs in the same snapshot as the work cards.
+The title is the goal's own sentence from its canonical record, because the execution ledger never holds that prose; a missing title uses the untitled word.
+The start is the recorded hand-over instant, and a legacy goal with no instant stays unknown rather than claiming a later time.
+Now follows the order of the design: a step that needs the person, then the earliest-started working step with the number of the others, then the stage word, then the wait.
+The stage word is the lowest-numbered stage entry that is not done.
+`Line.Stages` carries the entries, and the line holds no step id; `StageStep.ID` stays on the projection side.
+`e2e/m3/progress-line.json` drives a headless Core whose first step lands from an injected worker result: the subscribed topic carries the entries, the changed line arrives within 250 ms of the commit, exactly one line changes, and a recomputation that changes no line publishes no frame.
+`internal/core/boot/progress_line_test.go` checks the same projection and wire shape without a socket.
