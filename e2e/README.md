@@ -421,8 +421,9 @@ before running the real readiness check, and outputs and durable state are
 checked for credential disclosure.
 
 `m3/crw-takeover.json` runs the operator import binary against an installed Core's
-stopped state root, checks exclusive ownership and idempotent retry, removes the
-source snapshot, then exercises the running Core's record tools. Imported evidence
+stopped state root, checks exclusive ownership and idempotent retry, then exercises
+the running Core's record tools. A backup restores into a fresh destination; the
+source snapshot is removed before the restored Core starts. Imported evidence
 is found through search and read by LINA id, source-id lookup fails, a new result
 is saved, and restart keeps the imported identity. The board shows canonical
 states for complete and incomplete issues and milestones, including earlier
