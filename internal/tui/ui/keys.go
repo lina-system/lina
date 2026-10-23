@@ -53,6 +53,8 @@ var keyBindings = []keyBinding{
 	{"interrupt", []string{"/stop", "/stop <run>", "/stop all", "/note <run> <text>"}, 7, "", "commands"},
 	{"shortcuts.queue", []string{"/queue <text>"}, 8, "", "commands"},
 	{"web.heading", []string{"/web"}, 9, "", "commands"},
+	{"records.heading", []string{"/records", "/memos"}, 10, "", "commands"},
+	{"records.add", []string{"/add <text>"}, 11, "", "commands"},
 }
 
 func bindingsFor(section string) []keyBinding {

@@ -54,6 +54,7 @@ wire and exported Go names, for example `output_delta`, `KindOutputDelta` and
 | Details and readiness | `details_get`, `details`, `readiness_failure` |
 | Agent management | `agent_request`, `agent_result` |
 | Work records | `work_request`, `work_result` |
+| Record views and capture | `record_request`, `record_result` |
 | Accounts | `account_request`, `account_result` |
 | Memory | `memory_request`, `memory_result`, `memory_import_progress`, `memory_promotion_batch` |
 | Channels | `channel_request`, `channel_result`, `channel_state` |
