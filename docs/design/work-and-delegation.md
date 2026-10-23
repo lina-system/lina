@@ -812,6 +812,8 @@ The work of a goal is a graph of steps inside and a numbered list outside. The p
 - **Refusal.** A refused submission commits neither tasks nor a graph revision. It returns one machine code: `graph_cycle`, `graph_unknown_step` (including duplicate keys or blockers), `graph_invalid_area`, or `graph_invalid_name`. Other malformed work is `graph_invalid`; editing or removing started work is `graph_started_step`; a version conflict is `graph_stale_revision`. A missing goal and a caller outside its owning scope both return `graph_unavailable`. Names are measured by grapheme display width, including wide characters and combining marks, and are never shortened or rewritten to pass. Mechanical refusal covers issue/PR references, paths and filenames, branch/id notation and technical tokens, plus the graph's keys, base branches and known check names. Control and invisible formatting characters cannot hide a technical token. A name-only revision preserves worker claims and results; changing unstarted work retires only undispatched reservations and uses the normal execution fences for in-flight effects.
 - **Names.** The manager names each step in a few plain words of the person's language, at most 24 display cells (P): the thing the step does, such as "숙소 고르기" or "로그인 화면 수정", with no explanation ([surfaces.md](surfaces.md#default-view)). Core refuses a name that holds an issue or pull request number, a branch, a path, a check name or an id, the same rule as a line of the running list. Naming is judgment; the refusal is mechanical.
 - **Frontier.** After every event Core commits for a goal, the derivation of Next action computes the goal's ready frontier: the steps that have not started and whose blockers have all landed, or that have a recorded stacked start (see Parallel hand-off). Each frontier step whose write area, quota and capacity allow it is dispatched in that derivation, in the placement order of Capacity; one that cannot start shows its one reason. A step outside the frontier never starts. The frontier is computed from the ledger alone, without a model call, and two derivations over the same ledger give the same frontier in the same order.
+- **Kinds and landing.** Graph submissions may mix `task` (the default), `background` and `wait` steps. A background step carries a `start_run` brief and resource request; it uses the existing run service and lands from its stored complete result. A wait names either a date (`at`, Unix seconds) or a canonical record and its current revision with a deadline. Core closes it only after observing the date or a different owner-visible record revision. An expired unchanged record needs a decision. Waits hold no worker capacity or write-area lease. Code predecessors release on observed merge, background predecessors on complete stored results, and wait predecessors on their closing observation; a completion claim alone releases none of them. An incomplete background result stays visible for a manager decision.
+- **One placement pass.** The ready frontier includes steps held by area, quota or capacity, in deadline, dependency depth, goal creation time, goal id and step id order. Core reserves every compatible start in that pass, accounting for earlier reservations in the same pass. A quota hold is distinct from a host-capacity hold. Graph storage order and event delivery order do not set placement order; recovery observes existing claimed starts instead of issuing them again.
 - **Stages are display.** The stage list (see Stages) is a projection of the graph. A stage never holds work back: a step starts when it is in the frontier, even while an earlier stage still has steps running.
 - **Live sessions.** A worker session is live only while its step is in progress or its pull request is being operated on. When the step has landed or been closed, Core ends the worker's process without closing its thread or session (see Control). Files, branches, receipts and the recorded thread or session id remain, and a later execution generation resumes it the way that worker's recovery does (see Codex adapter and ACP adapter). The number of live sessions therefore follows the frontier, never the history of the goal.
 
@@ -1598,7 +1600,7 @@ A goal is in one of these states. The person sees them only through the progress
 | `stopped` | The person stopped the goal. What it produced is kept. |
 | `blocked` | Work cannot go on without the person, and a row says why: recovery is exhausted, or evidence failed with no repair inside the scope. |
 
-`done` and `stopped` are final. A `blocked` goal resumes when the person answers its row. Revision of the goal moves it back to `running` from any state but `stopped`.
+`stopped` is final. A `done` goal remains complete while its evidence stays current; a later observed target change reopens it as described under Evidence before close. A `blocked` goal resumes when the person answers its row. Revision of the goal moves it back to `running` from any state but `stopped`.
 
 **The liveness rule.** A goal that is not final always has at least one of these: a task or background run in progress, a named wait with a wake condition and a deadline, a recovery in progress, or a row in "Waiting for me". Core checks the rule after every transition it commits for the goal. A goal that has none is orphaned. Core then runs the derivation of the next action at once. When the derivation finds nothing to do, Core gives the manager session one turn that names the gap: the open criteria and the fact that nothing will move them. When that turn records no task, wait or decision either, the goal becomes `blocked` with a row that says in plain words that LINA could not find a way to finish it and what is missing. A goal never ends silently and never sits idle with open criteria.
 
@@ -1666,6 +1668,15 @@ evidence. Unchanged work in the retained scope keeps its landed results.
 ### Next action
 
 After every event Core commits for a goal, Core derives the goal's next actions from the current ledger and the goal record. The event itself carries no instruction: it only says that something changed, and Core reads the current state before it acts (see Event-driven flow). The same derivation runs for every goal that is not final once at startup and in each reconcile sweep, so a lost event costs at most one sweep. Mechanics run in Core without a model call. A model turn happens only where judgment is needed: splitting work, writing a work definition or brief, checking a result against the done condition, or drafting text for the person or for someone else. The table lists who acts.
+
+Task, background-run and wait starts share the step frontier and its durable
+claims. Background completion wakes derivation through the run's stored result;
+record waits reread their owner-visible source on change and at expiry, and date
+waits use a timer. Neither kind borrows code merge or QA evidence. A mixed goal
+retains the merge, QA, deployment and runtime checks of each code task.
+For a graph containing only runs and waits with no service, the ordered stored
+results form the verification revision. Core rereads each result before checking
+the goal; `step.read` checks one named step and `steps.read` checks all results.
 
 A task's pull-request change signal invalidates its cached head, check, review and manager proofs, including while it waits for another task's merge slot. Core reads the pull request again before deriving a merge from those proofs.
 
@@ -1794,6 +1805,32 @@ A goal closes as `done` only when every criterion has evidence that Core collect
 - the manager's judgment against the criterion's written rubric, recorded with what it read.
 
 A worker's receipt, a model's sentence, a completed turn, a command's exit code alone, a pending check and an effect with an unknown outcome are never evidence. At `checking`, Core reads every piece of evidence again rather than trusting what it stored, so a document edited or an event moved after it was checked reopens its criterion. One check per criterion is enough; no panel of verifiers is used.
+
+The execution ledger retains the collected record or check output, not only its
+reference. Citation checks retain their result and the passages read, with each
+source's target, revision and content. A rubric judgment retains the exact
+criterion rubric, the judgment and the same source information. Unsupported
+evidence kinds and references without these contents cannot meet a criterion.
+An external-effect criterion records the expected fields of its target. Core
+compares them with the read-back record; extra record fields are allowed, while
+requested nested fields, arrays and scalar types must match. A connector's
+success flag cannot override a mismatch.
+
+Before closure, the installed Core reads every collected item again, including
+the actual external record and retained command output. It checks the goal
+revision and checking round again when committing closure. Re-reads run independently
+for each goal under the work runner, so slow connectors cannot block Core startup
+or unrelated work. An invalidated round retires its undispatched and authorization-
+waiting checks; a late grant cannot revive them. A changed, missing or
+unreadable item reopens the goal to `running` and starts a fresh checking round;
+prior observations and worker results remain in history. An integration's target
+change hint also invalidates criteria that read that target as a source. Repeated
+hints are idempotent and a delayed old check cannot satisfy the new round.
+Startup and the existing five-minute safety sweep re-read met evidence, including
+completed goals, so a missed hint cannot leave changed evidence accepted forever.
+These reads never repeat the underlying worker, merge, deployment or plugin
+effect. Failed fresh criteria return to the existing manager repair/attention path.
+Older records that contain only evidence references require fresh checks.
 
 For a non-code file task, its work definition records an absolute destination
 folder. The worker writes deliverables under `out/` and its report at
@@ -1934,6 +1971,12 @@ or an executable. The file contains:
   uses the existing argument-bound approval path; registration grants no public
   deployment approval. A private deployment remains subject to preset limits
   and the current goal's scope.
+- Optional `evidence_checks`: method names bound to a `repository`, fixed
+  `target`, evidence `kind` and read-only `command`. These connect external
+  records, citation checks and rubric judgments to a goal in that repository's
+  scope. The method cannot replace a built-in lifecycle check. An external read
+  requires the criterion's `expected` record fields. Registration supplies the
+  reader, never authority to perform the effect being verified.
 
 QA and outcome checks run in a disposable checkout of the observed merge commit.
 Deploy uses that same pinned revision. Core passes `LINA_GOAL_REVISION`,
@@ -1945,6 +1988,14 @@ code without this evidence cannot complete a stage. An explicit deployment failu
 it is not retried automatically. A deployment also requires
 an independent probe of the running service; the deploy command's output alone
 does not prove it is running.
+
+For criterion checks Core also supplies `LINA_GOAL_CHECK`, containing the
+criterion's check definition. An evidence connector returns the same envelope
+with `collected`: an external `record`; check `output`; citation `output` and
+`reads`; or `rubric`, `judgment` and `reads`. Each read has `target`, `revision`
+and `content`. Core retains this data and enforces the kind and expected-field
+requirements above. The ordinary repository check format remains supported;
+its retained structured output supplies its check evidence.
 
 Core captures protected refs before starting the worker, re-reads the PR's current
 head, checks and review, requires the dev manager's verified verdict, and merges
@@ -2009,7 +2060,7 @@ Two permissively licensed sources shaped this section; LINA keeps none of their 
 Effect states and idempotency keys are defined in [host-protocol.md](host-protocol.md), the effect ledger in [runtime.md](runtime.md), and epochs, reconciliation and the task owner's disposition of irreversible effects in [main-authority.md](main-authority.md). Work applies them as follows:
 
 - When LINA Core restarts, running worker turns are cut. Their effects are unknown. After the restart LINA Core reconciles with `thread/resume` and a `thread/read` snapshot.
-- Before sending conversation-worker input that can start a follow-up turn, Core persists an uncertain intent with its directory reservation. The prior turn's completion cannot settle that intent. Core checkpoints the accepted turn binding independently of notifications. A definitive refusal restores the prior binding and releases an unused reservation; a missing binding or failed checkpoint retains uncertainty without replay or guessing a turn on restart. Steering preserves the recovery allowance.
+- Before sending conversation-worker input that can start a follow-up turn, Core persists an uncertain intent with its directory reservation. The prior turn's completion cannot settle that intent. Core checkpoints the accepted turn binding independently of notifications. A definitive refusal restores the prior binding and releases an unused reservation; a missing binding or failed checkpoint retains uncertainty without replay or guessing a turn on restart. The adapter identifies steering versus a new turn at its serialized input boundary, before dispatch. Steering retains the exact existing turn and recovery allowance in its uncertain intent; a lost reply or failed post-input read can still be reconciled against that turn without replaying input. Only input that can start a new turn excludes the previous turn as evidence.
 - On reconnect, LINA Core reconciles with `thread/loaded/list` and `thread/read`. When a pending server request does not arrive again, the attempt is marked unknown and needing attention, and the originating conversation is told.
 - When a Node restarts or disconnects, the effects of its running turn are unknown and are reconciled. On a Node policy cancel the Node sends `turn/interrupt` and reports STOPPED or UNKNOWN.
 - A GitHub write or merge with an unknown outcome is settled by reading GitHub's state ([integrations.md](integrations.md)). It is never repeated automatically.

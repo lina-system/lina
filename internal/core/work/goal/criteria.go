@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
-import "strings"
+import (
+	"encoding/json"
+	"reflect"
+	"strings"
+)
 
 type EvidenceKind string
 
 const (
 	ReadEvidence     EvidenceKind = "read"
 	RunEvidence      EvidenceKind = "check"
+	CitationEvidence EvidenceKind = "citation"
 	JudgmentEvidence EvidenceKind = "judgment"
 )
 
@@ -21,11 +26,12 @@ type GoalDecision struct {
 	MessageID string `json:"message_id"`
 }
 type CriterionCheck struct {
-	Kind   EvidenceKind `json:"kind"`
-	Method string       `json:"method"`
-	Target string       `json:"target"`
-	TaskID string       `json:"task_id,omitempty"`
-	Rubric string       `json:"rubric,omitempty"`
+	Kind     EvidenceKind    `json:"kind"`
+	Method   string          `json:"method"`
+	Target   string          `json:"target"`
+	TaskID   string          `json:"task_id,omitempty"`
+	Rubric   string          `json:"rubric,omitempty"`
+	Expected json.RawMessage `json:"expected,omitempty"`
 }
 type Criterion struct {
 	ID        string         `json:"id"`
@@ -33,14 +39,15 @@ type Criterion struct {
 	Check     CriterionCheck `json:"check"`
 }
 type CriterionEvidence struct {
-	Criterion    string       `json:"criterion"`
-	GoalRevision int64        `json:"goal_revision"`
-	Round        int64        `json:"round"`
-	Target       string       `json:"target"`
-	Revision     string       `json:"revision"`
-	Kind         EvidenceKind `json:"kind"`
-	Ref          string       `json:"ref"`
-	Passed       bool         `json:"passed"`
+	Criterion    string             `json:"criterion"`
+	GoalRevision int64              `json:"goal_revision"`
+	Round        int64              `json:"round"`
+	Target       string             `json:"target"`
+	Revision     string             `json:"revision"`
+	Kind         EvidenceKind       `json:"kind"`
+	Ref          string             `json:"ref"`
+	Passed       bool               `json:"passed"`
+	Collected    *CollectedEvidence `json:"collected,omitempty"`
 }
 
 // The code lifecycle adds mandatory checks to the person's outcome criteria.
@@ -53,6 +60,9 @@ func goalCriteria(g Goal) []Criterion {
 		}
 	}
 	for _, t := range g.Tasks {
+		if stepKind(t.Kind) != TaskStep {
+			continue
+		}
 		out = append(out, Criterion{ID: "code:merge:" + t.ID, Statement: "Task merged", Check: CriterionCheck{Kind: ReadEvidence, Method: "merge.read", Target: t.Repository, TaskID: t.ID}}, Criterion{ID: "code:qa:" + t.ID, Statement: "QA passed on current merged result", Check: CriterionCheck{Kind: RunEvidence, Method: "qa.read", Target: t.Repository, TaskID: t.ID}})
 	}
 	if g.ServiceTarget != "" {
@@ -66,9 +76,15 @@ func goalCriteria(g Goal) []Criterion {
 	return out
 }
 func criterionRevision(g Goal, c Criterion) string {
+	if c.Check.Method == "steps.read" {
+		return targetRevision(g)
+	}
 	if c.Check.TaskID != "" {
 		for _, t := range g.Tasks {
 			if t.ID == c.Check.TaskID {
+				if stepKind(t.Kind) != TaskStep {
+					return t.Result.Revision
+				}
 				if c.Check.Method == "qa.read" {
 					return taskResultRevision(t)
 				}
@@ -117,7 +133,7 @@ func validCriteria(g Goal, pendingCorrection bool) bool {
 		}
 		seen[c.ID] = true
 		switch c.Check.Kind {
-		case ReadEvidence, RunEvidence:
+		case ReadEvidence, RunEvidence, CitationEvidence:
 			if c.Check.Rubric != "" {
 				return false
 			}
@@ -126,6 +142,9 @@ func validCriteria(g Goal, pendingCorrection bool) bool {
 				return false
 			}
 		default:
+			return false
+		}
+		if len(c.Check.Expected) > 0 && (c.Check.Kind != ReadEvidence || !recordObject(c.Check.Expected)) {
 			return false
 		}
 		if c.Check.TaskID != "" {
@@ -138,7 +157,7 @@ func validCriteria(g Goal, pendingCorrection bool) bool {
 			}
 		}
 		if strings.HasPrefix(c.ID, "code:") {
-			if canonical[c.ID] != c {
+			if !reflect.DeepEqual(canonical[c.ID], c) {
 				return false
 			}
 		} else {
@@ -153,12 +172,12 @@ func validCriteria(g Goal, pendingCorrection bool) bool {
 	return custom > 0
 }
 func currentEvidence(g Goal, c Criterion, e CriterionEvidence) bool {
-	return e.Criterion == c.ID && e.GoalRevision == g.Revision && e.Round == g.CheckRound && e.Round > 0 && e.Target == c.Check.Target && e.Revision == criterionRevision(g, c) && e.Revision != "" && e.Kind == c.Check.Kind && strings.TrimSpace(e.Ref) != ""
+	return e.Criterion == c.ID && e.GoalRevision == g.Revision && e.Round == g.CheckRound && e.Round > 0 && e.Target == c.Check.Target && e.Revision == criterionRevision(g, c) && e.Revision != "" && e.Kind == c.Check.Kind && strings.TrimSpace(e.Ref) != "" && e.Collected.Valid(c.Check)
 }
 func criterionMet(g Goal, c Criterion) bool {
 	for _, e := range g.Checks {
 		if currentEvidence(g, c, e) {
-			return e.Passed
+			return e.Passed && e.Collected.Matches(c.Check)
 		}
 	}
 	return false
@@ -171,8 +190,11 @@ func taskResultRevision(t Task) string {
 	return t.Merge.Revision
 }
 func taskDone(t Task) bool {
+	if stepKind(t.Kind) != TaskStep {
+		return stepLanded(t)
+	}
 	return t.Stage == TaskDone && t.Merge.proves(t.Merge.Revision) && t.QA.proves(taskResultRevision(t))
 }
 func freshTask(t Task) bool {
-	return t.PRGeneration == 0 && t.Continuations == 0 && t.ThreadHandle == "" && t.Stage == TaskReady && t.Attempt == 0 && t.Head == "" && t.NodeID == "" && t.Merge == (Proof{}) && t.QA == (Proof{}) && t.PR == (PRState{}) && t.Recoveries == 0 && t.Conflicts == 0 && t.QARepairs == 0 && !t.EffectsSettled && t.RepairedBy == "" && t.ResultRevision == "" && !t.RepairAsked
+	return t.Result == (Proof{}) && t.PRGeneration == 0 && t.Continuations == 0 && t.ThreadHandle == "" && t.Stage == TaskReady && t.Attempt == 0 && t.Head == "" && t.NodeID == "" && t.Merge == (Proof{}) && t.QA == (Proof{}) && t.PR == (PRState{}) && t.Recoveries == 0 && t.Conflicts == 0 && t.QARepairs == 0 && !t.EffectsSettled && t.RepairedBy == "" && t.ResultRevision == "" && !t.RepairAsked
 }

@@ -90,11 +90,11 @@ type executionWorkspace struct {
 }
 
 type executionAttempt struct {
-	settledConnection bool
 	thread            worker.Thread
 	run               work.Run
 	finish            worker.Finish
 	observation       observation
+	settledConnection bool
 }
 
 func (e *execution) closeDeferred() {

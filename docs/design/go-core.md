@@ -1156,6 +1156,7 @@ type Class uint8       // ModelAPI, AgentRuntime
 type Adapter interface {
 	Provider() ProviderID
 	Class() Class
+	Capabilities(model ModelRef) CapabilitySet // missing names are unsupported
 	Models(ctx context.Context, l lease.Lease, c Credential) (ModelList, error) // display data, not entitlement
 	Quota(ctx context.Context, c Credential) ([]QuotaRow, error)  // unknown is a value
 	Stream(ctx context.Context, l lease.Lease, r Request) (Stream, error)
@@ -1166,6 +1167,9 @@ type Credential struct { // handed in for one call
 	// The private bearer prints as a placeholder and only Authorize can apply it.
 }
 type Request struct {
+	CacheIdentity string // versioned digest, not a provider field by itself
+	Layout *RequestLayout // exclusive item/tool positions
+	Capabilities CapabilityUse // Core-selected values, checked before sending
 	Credential Credential // supplied for this call, never read from a store
 	Model   ModelRef
 	Effort  Effort
@@ -1183,7 +1187,7 @@ type Stream interface {
 	Meta() Meta                              // request id, fidelity class, usage, runtime session id
 	Close() error                            // cancel and join the request
 }
-type Usage struct{ Input, Cached, CacheWrite, Output, Reasoning *int64; CostEstimate *Money } // nil is unknown
+type Usage struct{ Input, Cached, CacheWrite, Output, Reasoning *int64; CostEstimate *Money; CacheByLifetime map[CacheLifetime]CacheUsage } // nil is unknown
 type QuotaRow struct { // the fields of runtime.md#usage-and-cost; a nil value is unknown, a reset time is never invented
 	Provider ProviderID; Account AccountID; Window Window
 	UsedPct *float64; ResetsAt *time.Time; State QuotaState; Source QuotaSource; Observed time.Time
@@ -1199,6 +1203,12 @@ The ledger names the class per request.
 - `Usage` splits cache writes by lifetime.
   An adapter only applies what Core chose.
   It never chooses a capability itself and never needs one to succeed.
+
+Request evidence carries optional `CacheIdentity`, `Layout` and `Capabilities`
+JSON fields. The digest covers them when present; records predating these fields
+keep their original digest interpretation. No evidence or usage table changes
+or backfills are required. Background runs retain request assembly evidence in
+their existing durable run JSON before sending.
 
 Implementation notes: [C-43 provider increment](../../kit/provider/REFERENCE.md#c-43-provider-increment).
 
