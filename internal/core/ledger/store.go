@@ -328,7 +328,7 @@ func prepare(entry guard.Entry, in Input) (Event, error) {
 		return Event{}, ErrInvalid
 	}
 	switch in.Surface.Kind {
-	case "tui", "app", "launcher", "agent_exchange", "manager":
+	case "tui", "app", "launcher", "agent_exchange", "manager", "a2a":
 		if in.Surface.Platform != "" || in.Surface.ChatID != "" {
 			return Event{}, ErrInvalid
 		}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
@@ -41,12 +42,12 @@ func (r *conversationRuntime) History(ctx context.Context, s clientsrv.Session, 
 }
 
 func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p protocol.Input) (protocol.ItemDone, error) {
-	return r.admitInput(ctx, s, p, "tui")
+	return r.admitInput(ctx, s, p, "tui", nil)
 }
 
 // admitInput is the one durable admission path. The launcher adds no second
 // conversation or inbox: it only names the surface and the launcher thread.
-func (r *conversationRuntime) admitInput(ctx context.Context, s clientsrv.Session, p protocol.Input, surface string) (protocol.ItemDone, error) {
+func (r *conversationRuntime) admitInput(ctx context.Context, s clientsrv.Session, p protocol.Input, surface string, check func(context.Context, *canon.Tx) error) (protocol.ItemDone, error) {
 	if err := r.authorize(s, p.ConversationID); err != nil {
 		return protocol.ItemDone{}, err
 	}
@@ -58,7 +59,7 @@ func (r *conversationRuntime) admitInput(ctx context.Context, s clientsrv.Sessio
 	}
 	digest := sha256.Sum256([]byte(r.person + "\x00" + r.conversation + "\x00" + *p.InputID))
 	eventID := "input:" + hex.EncodeToString(digest[:])
-	admission := &conversationAdmission{db: r.db, person: r.person, agent: r.agent, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
+	admission := &conversationAdmission{check: check, db: r.db, person: r.person, agent: r.agent, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
 	language, err := r.inputLanguage(ctx, *p.Text)
 	if err != nil {
 		return protocol.ItemDone{}, err

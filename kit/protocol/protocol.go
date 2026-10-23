@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package protocol provides generated client 1.0 types and a strict JSON codec.
+// Package protocol provides generated client 1.0/1.1 types and a strict JSON codec.
 // Reserved payloads name future implementation work; accepting their empty
 // shape does not implement that capability. Framing and negotiation live above
 // this package.

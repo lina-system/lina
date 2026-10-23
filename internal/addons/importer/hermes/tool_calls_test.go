@@ -18,6 +18,7 @@ import (
 )
 
 func TestImportedToolCallsReachExpansionAndSummary(t *testing.T) {
+	t.Parallel()
 	for _, source := range []SQLiteSource{HermesLCM, HermesState} {
 		for _, content := range []any{"Inspecting the archive.", nil} {
 			name := string(source) + "/content"
@@ -152,6 +153,7 @@ func TestImportedToolCallsReachExpansionAndSummary(t *testing.T) {
 }
 
 func TestImportedToolCallSecretsStayPrivate(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	src, err := canon.OpenSQLite(t.Context(), req.Profiles[0].LCMPath)
 	if err != nil {
@@ -193,6 +195,7 @@ func TestImportedToolCallSecretsStayPrivate(t *testing.T) {
 }
 
 func TestImportedToolCallUnknownPayloadsStayReadable(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, calls string
 		valid       bool
@@ -266,6 +269,7 @@ func TestImportedToolCallUnknownPayloadsStayReadable(t *testing.T) {
 }
 
 func TestImportedToolCallQuotedSecrets(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	src, err := canon.OpenSQLite(t.Context(), req.Profiles[0].LCMPath)
 	if err != nil {
@@ -306,6 +310,7 @@ func TestImportedToolCallQuotedSecrets(t *testing.T) {
 }
 
 func TestImportedToolCallNumericSecrets(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	src, err := canon.OpenSQLite(t.Context(), req.Profiles[0].LCMPath)
 	if err != nil {
@@ -346,6 +351,7 @@ func TestImportedToolCallNumericSecrets(t *testing.T) {
 }
 
 func TestImportedToolCallMaskingFailureReported(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	src, err := canon.OpenSQLite(t.Context(), req.Profiles[0].LCMPath)
 	if err != nil {
@@ -404,6 +410,7 @@ func TestImportedToolCallMaskingFailureReported(t *testing.T) {
 // with tool calls still needs the live JSON projection, so the seal publishes
 // that projection inline and leaves the original sidecar on the import record.
 func TestImportedMaterialToolCallsKeepLiveProjection(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	db := importStore(t)
 	writer, store := importMaterials(t, db)

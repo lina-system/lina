@@ -30,8 +30,13 @@ func negotiate(rows []Combination, peer, platform string, versions []string, off
 	}
 	capabilities := []protocol.Capability{}
 	for _, capability := range selected.Capabilities {
-		if slices.Contains(offered, capability) && !slices.Contains(capabilities, capability) {
-			capabilities = append(capabilities, capability)
+		if capability.Name == "results" && selected.ProtocolVersion == "1.0" {
+			continue
+		}
+		for _, offer := range offered {
+			if protocol.CapabilityIdentity(offer, capability) && !protocol.HasCapability(capabilities, capability) {
+				capabilities = append(capabilities, protocol.IntersectCapability(capability, offer))
+			}
 		}
 	}
 	return selected.ProtocolVersion, capabilities, true

@@ -19,6 +19,7 @@ func valueStream(values string) provider.Stream {
 }
 
 func TestCarriedValuesCondenseOnlyAtBoundAndNeverTruncate(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"fits", "overflow", "failed", "still oversized", "root only"} {
 		t.Run(mode, func(t *testing.T) {
 			previous := strings.Repeat("가", 8191) // 24573 UTF-8 bytes.
@@ -76,6 +77,7 @@ func TestCarriedValuesCondenseOnlyAtBoundAndNeverTruncate(t *testing.T) {
 }
 
 func TestCarriedValuesKeepCorrectionsAsLaterHistory(t *testing.T) {
+	t.Parallel()
 	previous := Text{Requests: "none", Topics: "reservation", Actions: "none", Values: "Monday: receipt 42", Omitted: "none"}
 	for _, added := range []string{"Tuesday: receipt 84 replaces 42", "none", previous.Values} {
 		aux := Auxiliary{Request: provider.Request{Model: "model"}, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
@@ -93,6 +95,7 @@ func TestCarriedValuesKeepCorrectionsAsLaterHistory(t *testing.T) {
 }
 
 func TestCarriedValuesRejectMalformedRootBeforeModel(t *testing.T) {
+	t.Parallel()
 	aux := Auxiliary{Request: provider.Request{Model: "model"}, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Fatal("malformed stored summary reached model")
 		return nil, nil
@@ -106,6 +109,7 @@ func TestCarriedValuesRejectMalformedRootBeforeModel(t *testing.T) {
 // retain their exact spelling across successive compactions, including restart
 // serialization, without requiring a model to copy them correctly.
 func TestSuccessiveSummaryCarriesExactValues(t *testing.T) {
+	t.Parallel()
 	for _, prefix := range []bool{false, true} {
 		t.Run(fmt.Sprint(prefix), func(t *testing.T) {
 			var root provider.Item

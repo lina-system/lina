@@ -15,7 +15,6 @@ import (
 	"os/signal"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -192,13 +191,6 @@ func (q *observations) yes(prompt string) (bool, error) {
 	default:
 		return false, errors.New("answer yes or no; unknown is not a passing observation")
 	}
-}
-func (q *observations) number(prompt string) (float64, error) {
-	line, err := q.line(prompt)
-	if err != nil {
-		return 0, err
-	}
-	return strconv.ParseFloat(line, 64)
 }
 
 type frameMsg struct {

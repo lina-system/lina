@@ -46,6 +46,7 @@ func (m expansionMaterials) Read(ctx context.Context, ref ledger.Material) (stri
 	return string(data), err
 }
 func TestExpansionReadsFullMaterialAndReportsMissingBytes(t *testing.T) {
+	t.Parallel()
 	db, cfg := passDB(t)
 	root := filepath.Dir(cfg.Path)
 	store, err := assets.Open(t.Context(), root, db)

@@ -129,3 +129,8 @@ still require their services; receive-boundary cases alone do not execute them.
 
 Node's stale-epoch, reboot and lost-receipt fixtures belong to the Node protocol
 version, outside this client 1.0 corpus.
+
+The surface fixtures carry protocol 1.1. They cover the lina.cards catalog,
+choice values, whole bodies, and refusal of surface/action frames in 1.0.
+The corpus directory retains its original name so existing consumers keep
+loading the same conformance suite.
