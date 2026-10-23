@@ -643,3 +643,12 @@ Reconnect never replays it. An uncertain publication is not attempted again.
 Domain refusals include `ambiguous_date`, `records_changed`, `stale_revision`,
 `record_not_found`, `invalid_record` and `preview_expired`. Outside edits are
 never silently adopted. Neither request accepts a person identity or file path.
+
+### Completion labels on results
+
+A client `result` may include `completion: {state, label}`. The state is `done`
+or `claimed`; a claimed completion displays "not verified" separately from
+its unchanged title, summary and body. This does not change the result's
+`preview` or `saved` status. The detailed work kind, policy revision and evidence
+references remain in Core's result record and `read_result` response. The
+field is optional for historical cards and ordinary previews.

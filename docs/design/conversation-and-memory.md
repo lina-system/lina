@@ -577,7 +577,7 @@ A methodology is the judgment an agent applies to one kind of work. It comes fro
 Rules every methodology inherits:
 
 1. Decide reversible things and say what was done in one line. Ask once, with one recommendation, for what is irreversible, external, costly or public; never offer a menu. A question or a stated direction from the person is answered, not executed; an imperative is executed. Alternative artifacts offered for the person's choice, up to the work-method record's candidate count and with one marked favourite, are not a menu.
-2. Verify before reporting and say what was checked. Keep verified, estimated and unknown apart. Done means observed where the person uses it, with the evidence kind the work-method record requires for that kind of work ([preset-work-methods.md](preset-work-methods.md#done-evidence)); another agent's or a worker's report stays a labelled claim until reproduced.
+2. Verify before reporting and say what was checked. Keep verified, estimated and unknown apart. Done means observed where the person uses it, with the evidence kind the work-method record requires for that kind of work ([preset-work-methods.md](preset-work-methods.md#done-evidence)); another agent's or a worker's report stays a labelled claim until reproduced. Core records missing evidence as a claim with a separate "not verified" card label and an agent breach; it never rewrites the reply.
 3. Do not re-explain or re-confirm what is decided.
 4. Reports are short, conclusion first, and silent when nothing changed.
 5. Quote the person's words and never intensify them. A joke or an exaggeration is not derived into a fact.

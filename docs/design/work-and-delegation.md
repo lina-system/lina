@@ -453,6 +453,10 @@ retains both the change and the means to undo it.
 The record tool cannot write execution observations or complete delegated work.
 It may replace planning fields while preserving an already `completed` state,
 including on a to-do with an agent or worker assignee or a pull-request link.
+A new completion also carries the work-kind evidence described in
+[preset-work-methods.md](preset-work-methods.md#done-evidence). Without it, the
+record is `claimed`, its view says "not verified", and its agent receives one
+completion breach. A claimed predecessor still blocks its dependents.
 The completion guard applies to transitions into `completed`; preserving that
 state does not permit changing an execution observation.
 
@@ -477,7 +481,7 @@ starts with `overdue` for their separate block. Completed and canceled tasks are
 excluded from personal active lenses. Upcoming selects any future start,
 deadline or current recurrence; anytime retains all undated active tasks,
 including backlog; later selects backlog. The week lens covers seven calendar
-days beginning at `day`. Board and list include all five planning states and
+days beginning at `day`. Board and list include the five planning states and unverified `claimed` completions, and
 return the fields needed to group by project, assignee, priority or tag. Pages
 remain ordered by id with an exclusive `after` cursor, matching record search.
 
@@ -1187,6 +1191,16 @@ The completion receipt is how a worker reports back, and the only receipt a work
 | `DONE`, `NOOP` | ready for review | `DONE` is never `verified`. |
 | `BLOCKED`, `UNSAFE`, `NEEDS_HUMAN` | input needed | The original word is kept and shown. |
 | `BUDGET_EXHAUSTED` | stopped or failed | Decided by the budget policy. |
+
+Completion evidence is separate from this receipt and from a manager verdict.
+A task may retain an observed delivery or apply while its completion is
+`claimed` under [Done evidence](preset-work-methods.md#done-evidence). Task
+cards and running-work details expose that distinction. A file hash read-back
+proves the copied bytes; it does not by itself satisfy `source_reopened` for a
+document or `owner_path_run` for code. `prepare_work` accepts `work_kind`, and
+`land_work_result` accepts `completion` evidence for that kind. Git work always
+requires code evidence. These additions do not alter the worker receipt schema
+or allow an unobserved worker to complete.
 
 ### Remote devices
 

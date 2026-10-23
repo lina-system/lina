@@ -59,6 +59,7 @@ func Migrations() []Migration {
 		{Version: 45, SQL: recordOperationsSchema},
 		{Version: 46, SQL: WorkSwitchSchema},
 		{Version: 47, SQL: handoffsSchema},
+		{Version: 48, SQL: doneEvidenceSchema + ResultSchema},
 	}
 }
 
@@ -106,6 +107,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{37, "work_events"}, {37, "work_records"},
 		{44, "naming_breaches"},
 		{47, "exch_origins"}, {47, "exch_notices"}, {47, "artifact_changes"},
+		{48, "done_completions"}, {48, "result_heads"}, {48, "result_saves"},
 		{42, "agent_starters"}, {42, "agent_selection"},
 		{45, "record_operations"}, {45, "record_candidates"},
 	} {

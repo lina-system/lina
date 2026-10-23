@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -26,17 +27,7 @@ var (
 
 // Schema is installed by Core in a numbered migration after the ledger. Heads
 // contain only locators; the ledger is the sole store of preview content.
-const Schema = `
-CREATE TABLE result_heads (
- id TEXT PRIMARY KEY NOT NULL, person TEXT NOT NULL, agent TEXT NOT NULL,
- conversation TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0),
- event_id TEXT NOT NULL, save_key TEXT
-);
-CREATE TABLE result_saves (
- key TEXT PRIMARY KEY NOT NULL, result_id TEXT NOT NULL UNIQUE REFERENCES result_heads(id),
- state TEXT NOT NULL CHECK(state IN ('unknown','applied')), reference BLOB NOT NULL
-);
-`
+const Schema = canon.ResultSchema
 
 type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
@@ -139,6 +130,17 @@ func (s *Store) Present(ctx context.Context, scope result.Scope, p result.Presen
 				return ErrOutOfScope
 			}
 			r.Revision = old.Revision + 1
+			if old.Completion != nil && p.Completion == nil {
+				p.Completion = &result.CompletionRequest{WorkKind: old.Completion.WorkKind}
+			}
+		}
+		if p.Completion != nil {
+			c := result.CompletionFor(ctx, *p.Completion)
+			c.ID, c.AgentID = "result:"+r.ID+":"+strconv.Itoa(r.Revision), scope.AgentID
+			r.Completion = &c
+			if err := canon.RecordDoneCompletion(ctx, tx, r.Completion); err != nil {
+				return err
+			}
 		}
 		event, err := s.cfg.Journal.Append(ctx, tx, scope, r)
 		if err != nil {
@@ -158,7 +160,7 @@ func (s *Store) Present(ctx context.Context, scope result.Scope, p result.Presen
 	if len(text) > s.cfg.TextRunes {
 		text = text[:s.cfg.TextRunes]
 	}
-	return result.Card{ID: r.ID, Revision: r.Revision, Type: r.Type, Title: r.Title, Summary: r.Summary, Text: string(text)}, nil
+	return result.Card{ID: r.ID, Revision: r.Revision, Type: r.Type, Title: r.Title, Summary: r.Summary, Text: string(text), Completion: r.Completion}, nil
 }
 func (s *Store) Read(ctx context.Context, scope result.Scope, p result.ReadRequest) (r result.Result, err error) {
 	if !validScope(scope) || p.ID == "" {

@@ -72,7 +72,10 @@ func TestM3WorkerLanesInstalledCore(t *testing.T) {
 		t.Fatalf("missing worker sessions: %+v", page)
 	}
 	first, second := (*page.Lanes)[0], (*page.Lanes)[1]
-	if first.Worker != second.Worker || first.LaneID == second.LaneID || first.State != "done" || second.State != "unknown" {
+	if !strings.Contains(strings.Join(first.Details, "\n"), "not verified") {
+		t.Fatalf("missing completion label: %+v", first)
+	}
+	if first.Worker != second.Worker || first.LaneID == second.LaneID || first.State != "claimed" || second.State != "unknown" {
 		t.Fatalf("worker identity/outcome lost: %+v", *page.Lanes)
 	}
 	wait := func(predicate func(string) bool) string {
