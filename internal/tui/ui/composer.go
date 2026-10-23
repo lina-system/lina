@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
 	"github.com/thisisjun786/lina/internal/tui/state"
+	"github.com/thisisjun786/lina/kit/secret"
 )
 
 func newConversationView(styles Styles) conversationView {
@@ -56,7 +57,19 @@ func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	m.syncComposer()
+	// Mask before the textarea can truncate or retain a pasted credential.
+	// The second pass also covers a value pasted after an existing "token=".
+	_, pasted := msg.(tea.PasteMsg)
+	if paste, ok := msg.(tea.PasteMsg); ok {
+		paste.Content = maskChatPaste(paste.Content)
+		msg = paste
+	}
 	c, command := m.conversation.composer.Update(msg)
+	if pasted {
+		if masked := maskChatPaste(c.Value()); masked != c.Value() {
+			c.SetValue(masked)
+		}
+	}
 	m.conversation.composer = c
 	draft := m.content.Draft
 	if draft.Text != c.Value() {
@@ -69,6 +82,15 @@ func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
 	draft.Text = c.Value()
 	m.content, _ = state.Reduce(m.content, state.EditDraft{Draft: draft})
 	return command
+}
+
+// A rejected structured value must not fall back to its original bytes.
+func maskChatPaste(text string) string {
+	masked, err := secret.Mask(text)
+	if err != nil {
+		return secret.Placeholder
+	}
+	return masked.Text()
 }
 
 func (m *shellModel) reduceInput(msg state.Msg) tea.Cmd {

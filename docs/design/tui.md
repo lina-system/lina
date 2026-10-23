@@ -76,7 +76,7 @@ acceptance remains the T-08 spike gate.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
 - It uses only the client connection. Its types are the Go types generated from the schema ([host-protocol.md](host-protocol.md#schema-and-generated-types)).
 - Protocol errors and Core logs go to the status line and a log, never into the conversation ([host-protocol.md](host-protocol.md#client-connection)). `TEA_TRACE` and `TEA_DEBUG` stay unset, and panic output is masked.
-- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol` and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
+- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol`, the shared masking primitives in `kit/secret`, and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
 - Trust: the socket's user check and the rule for who may decide an approval are Core's ([go-core.md](go-core.md), C-42). The TUI shows a refusal as a refusal and adds no rule of its own.
 - Parity with the LINA app comes from the shared conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)). The app is not designed here.
 
@@ -1065,6 +1065,17 @@ type Stream interface {
 - OSC 8 links are emitted only for absolute `http`, `https` and `mailto` destinations. Other destinations retain their label without an active hyperlink; decoded text is sanitized before layout.
 
 ## Input and commands (T-10)
+
+Chat pastes are masked with the same credential-shape and structured-value
+scanner as Core before they reach the composer, local echo, undo or sent-input
+recall. The complete draft is scanned again to cover a value pasted after a
+credential field name. If that replacement changes surrounding draft text, the
+cursor moves to the end of the masked draft. Ordinary pastes keep their insertion
+position. Masking precedes the composer length limit. Invalid structured input
+that cannot be masked safely becomes a placeholder. Dedicated sign-in and API
+key fields keep their separate hidden-input path. These detectors recognize
+known shapes; they do not identify every possible arbitrary secret. Core still
+masks every input before ledger storage and derivation.
 
 Keys are data in `internal/tui/ui/keys.go`: action catalog id, key spellings,
 footer priority and optional compact label. `/help` and `?` on a completely empty
