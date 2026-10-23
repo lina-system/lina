@@ -52,6 +52,16 @@ transactional adoption path. These storage boundaries are LINA requirements.
 
 ## Implementation notes
 
+JSON display masking uses the shared decoded-string scanner at publication and
+material readback. Original `import_event_span` and `import_source_span` offsets
+remain byte-addressed and unchanged. A masking failure publishes an inline
+placeholder and retains `body_masking_error` in the native event's origin.
+`SealReport.UnavailableBodies` and `BodyFailures` count and identify these events
+on both first import and retry. The original sidecar remains referenced by
+`import_event` even when the native event uses the inline fallback. No migration
+is needed. `TestM1ImportJSONMasking` exercises installed import, verified backup,
+repeat import, safe promotion and a restarted Core's memory API with synthetic data.
+
 Design authority: [Go Core](../../../../docs/design/go-core.md) and the contracts it cites.
 These notes retain implementation and validation history from the cited increments;
 they do not establish current acceptance or change the contracts.
@@ -99,3 +109,9 @@ Empty import tables do not load an adapter or start a run.
   event, or asserting that one constituent is a view of another.
 - **unknown** — Other delivery table layouts and binding/relation kinds are
   not registered. The actual installation revision was not available here.
+
+Tool-call projections use the same JSON display scanner and unavailable-body
+reporting as other imported bodies. Scalar credential preparation failures also
+become `body_masking_error`, with originals and retry reports retained. The final
+scalar coverage check reads decoded JSON; scanning serialized escapes as plain
+text would discard already-masked quoted arguments.

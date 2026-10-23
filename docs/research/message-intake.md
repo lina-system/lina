@@ -153,7 +153,7 @@ A question is warranted only when two targets still tie after everything Core an
 
 ### Replay file format
 
-Run `lina intake-replay /path/to/cases.jsonl`. The file is UTF-8 JSON Lines,
+Run `lina intake-replay /path/to/cases.jsonl` for the two historical baselines, or `lina intake-replay --core /path/to/cases.jsonl` for production admission rules and ranked candidates. The file is UTF-8 JSON Lines,
 one version 1 case per line, up to 1 MiB per case. A malformed or oversized line
 is counted and later lines still run. Empty, missing and unreadable files are
 counted too. Unknown fields, invalid targets, duplicate case/item ids and dangling

@@ -16,12 +16,16 @@ import (
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
-type Store struct{ db *canon.Store }
+type Canon interface {
+	Read(context.Context, func(*canon.Tx) error) error
+	Write(context.Context, func(*canon.Tx) error) error
+}
+type Store struct{ db Canon }
 
-func New(db *canon.Store) *Store { return &Store{db: db} }
-func normalize(s string) string  { return strings.Join(strings.Fields(strings.ToLower(s)), " ") }
-func present(s string) bool      { return strings.TrimSpace(s) != "" }
-func validScope(s Scope) bool    { return s == Local || s == Private || s == NeverLeaves }
+func New(db Canon) *Store       { return &Store{db: db} }
+func normalize(s string) string { return strings.Join(strings.Fields(strings.ToLower(s)), " ") }
+func present(s string) bool     { return strings.TrimSpace(s) != "" }
+func validScope(s Scope) bool   { return s == Local || s == Private || s == NeverLeaves }
 func scopeRank(s Scope) int {
 	if s == NeverLeaves {
 		return 2
@@ -331,7 +335,14 @@ func insertRecord(ctx context.Context, tx *canon.Tx, item Item) (Item, error) {
 }
 func revision(ctx context.Context, tx *canon.Tx, item Item, raw []byte) error {
 	_, err := tx.ExecContext(ctx, "INSERT INTO memory_revision(item_id,revision,record) VALUES(?,?,?)", item.ID, item.Revision, raw)
-	return err
+	if err != nil {
+		return err
+	}
+	evidence, err := json.Marshal(item.Evidence)
+	if err != nil {
+		return err
+	}
+	return canon.WriteEvidenceCitations(ctx, tx, "memory", item.ID, item.Revision, evidence)
 }
 func readItem(ctx context.Context, tx *canon.Tx, id string) (Item, error) {
 	var raw []byte

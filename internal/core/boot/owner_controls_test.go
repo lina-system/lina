@@ -195,7 +195,7 @@ func TestChannelControlRecoversAdmissionBeforeClaim(t *testing.T) {
 		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM channel_steering WHERE inbox_id=?", receipt.ID).Scan(&claimed); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM conv_event WHERE parent_id=?", id).Scan(&replies); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM conv_event WHERE parent_id=? AND speaker_kind='agent'", id).Scan(&replies); err != nil {
 			return err
 		}
 		if claimed != 1 || replies != 1 {

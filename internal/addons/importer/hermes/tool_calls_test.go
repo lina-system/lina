@@ -340,3 +340,58 @@ func TestImportedToolCallNumericSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestImportedToolCallMaskingFailureReported(t *testing.T) {
+	req := importRequest(t)
+	src, err := canon.OpenSQLite(t.Context(), req.Profiles[0].LCMPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments := strings.Repeat("[", 66) + `"synthetic-private-value"` + strings.Repeat("]", 66)
+	calls, _ := json.Marshal([]any{map[string]any{"id": "deep", "type": "function", "function": map[string]string{"name": "read_file", "arguments": arguments}}})
+	_, err = src.Exec("UPDATE messages SET tool_calls=? WHERE store_id=2", string(calls))
+	src.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Prepare(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	db := importStore(t)
+	if _, err = p.Import(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := Resolve(t.Context(), db, LegacyKey{string(HermesLCM), "profile", "messages", "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backups := 0
+	for range 2 {
+		report, err := p.Seal(t.Context(), db, func(context.Context) (string, error) { backups++; return "backup", nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.UnavailableBodies != 1 || len(report.BodyFailures) != 1 || report.BodyFailures[0].EventID != ref.RecordID || report.BodyFailures[0].Reason != "invalid_secret_span" {
+			t.Fatalf("missing masking failure report: %+v", report)
+		}
+	}
+	if backups != 1 {
+		t.Fatalf("backups=%d", backups)
+	}
+	e, err := ledger.New(db, nil).Get(t.Context(), ref.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(e.Body.Text(), "invalid_secret_span") || strings.Contains(e.Body.Text(), "synthetic-private-value") || len(e.Body.Spans()) == 0 {
+		t.Fatalf("unsafe fallback: %q", e.Body.Text())
+	}
+	row, err := Reverse(t.Context(), db, ref.Key)
+	if err != nil || row.text("tool_calls") != string(calls) || RowHash(row) != ref.SourceHash {
+		t.Fatalf("original calls changed: %v", err)
+	}
+	if _, err = p.Verify(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -136,9 +136,16 @@ func (r *terminalRenderer) showView(view tea.View, size tea.WindowSizeMsg, flush
 			return nil
 		}
 		original := view
+		repair := ""
+		if view.AltScreen {
+			repair = alignedUnicodeRows(view.Content, size.Width, size.Height)
+		}
+		// Repairs belong to this exact frame and must finish before the next
+		// view can replace them, even for callers that do not request a fence.
+		flush = flush || repair != ""
 		var written <-chan error
 		if flush {
-			view.WindowTitle, written = r.frames.next()
+			view.WindowTitle, written = r.frames.next(repair)
 		}
 		if r.size != size {
 			// Output is wrapped for raw mode, so Bubble Tea cannot query its
