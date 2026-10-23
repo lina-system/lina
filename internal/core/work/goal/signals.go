@@ -85,9 +85,7 @@ func (e *Engine) Signal(ctx context.Context, s Signal) error {
 				return err
 			}
 			if a.GoalID == g.ID && a.TaskID == t.ID && a.State != "finished" {
-				if a.State == "queued" && a.Kind == Merge && a.ObserveActionID == "" {
-					a.State = "finished"
-				} else {
+				if !retireSignaledMerge(&a) {
 					a.Signal = hex.EncodeToString(sum[:])
 					a.Deadline = e.cfg.Now().Unix()
 					if a.State == "queued" && a.Epoch == 0 && a.ObserveActionID == "" && a.GoalRevision == g.Revision && currentActionTarget(g, a) {

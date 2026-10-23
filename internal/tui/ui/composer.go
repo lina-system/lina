@@ -3,7 +3,6 @@
 package ui
 
 import (
-	"context"
 	"fmt"
 
 	"charm.land/bubbles/v2/textarea"
@@ -83,10 +82,5 @@ func (m *shellModel) reduceInput(msg state.Msg) tea.Cmd {
 	m.content, commands = state.Reduce(m.content, msg)
 	m.syncComposer()
 	m.refreshBlocks()
-	var effects []tea.Cmd
-	for _, command := range commands {
-		generation := m.generation
-		effects = append(effects, func() tea.Msg { return shellEffect{Generation: generation, Message: command(context.Background())} })
-	}
-	return tea.Batch(effects...)
+	return tea.Batch(m.effectCmds(commands)...)
 }

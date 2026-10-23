@@ -17,9 +17,9 @@ func replayDenial(e Effect) error {
 	code := e.DenialCode
 	if code == "" {
 		code = e.Basis
-		// Legacy grant refusals were recorded only for stale writes. The
-		// mismatch may be with the grant's revision, not the observed target.
-		if code == "grant" && e.Write {
+		// Legacy grant refusals record stale writes and revision-tracked reads.
+		// The mismatch may be with the grant's revision, not the observed target.
+		if code == "grant" {
 			code = grant.ErrStaleRevision.Error()
 		}
 	}
