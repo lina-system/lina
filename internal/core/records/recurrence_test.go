@@ -2,11 +2,80 @@
 package records
 
 import (
+	"errors"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestExhaustedRecurringCompletionLedger(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		name := "normal"
+		if interrupted {
+			name = "recovery"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, root, db := setup(t)
+			now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+			s.Now = func() time.Time { return now }
+			c := Change{ID: "exhausted", Path: "inbox/exhausted.md", Data: todoDocument("exhausted", "repeat: {\"rule\":\"FREQ=DAILY;COUNT=1\",\"next\":\"2020-01-01\"}\n")}
+			commit(t, s, c)
+			if err := s.AdvanceRecurring(t.Context(), actor, now); err != nil {
+				t.Fatal(err)
+			}
+			r, rev, err := s.Read(t.Context(), c.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := parseDocument(r.Data)
+			if err != nil || before.state != "open" || !before.todo.Repeat.Exhausted {
+				t.Fatal("expected an exhausted open series", before, err)
+			}
+			c.Base, c.Data = rev, []byte(strings.Replace(string(r.Data), `state: "open"`, `state: "completed"`, 1))
+			if interrupted {
+				s.PublicationHook = func(stage string) error {
+					if stage == "file" {
+						return errors.New("interrupted completion")
+					}
+					return nil
+				}
+			}
+			_, err = s.Commit(t.Context(), c, actor)
+			if (!interrupted && err != nil) || (interrupted && !errors.Is(err, ErrUncertain)) {
+				t.Fatal("completion publication", err)
+			}
+			recovered, err := Open(root, db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer recovered.Close()
+			r, rev, err = recovered.Read(t.Context(), c.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, err := parseDocument(r.Data)
+			if err != nil || after.state != "completed" || *after.todo.Repeat != *before.todo.Repeat {
+				t.Fatal("completion changed exhausted schedule", after, err)
+			}
+			// Repeating the saved write and editing its note are not completions.
+			c.Base, c.Data = rev, r.Data
+			c.Base = commit(t, recovered, c)
+			c.Data = append(c.Data, []byte("\nCompletion note.\n")...)
+			commit(t, recovered, c)
+			if err = recovered.Rebuild(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			var events, completed int
+			err = db.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*),coalesce(sum(json_extract(record,'$.occurrence.reason')='completed' AND json_extract(record,'$.occurrence.exhausted')=1 AND json_extract(record,'$.occurrence.from')='2020-01-01' AND json_extract(record,'$.occurrence.next')='2020-01-01'),0) FROM work_ledger WHERE task_id='record:exhausted' AND json_extract(record,'$.kind')='record_occurrence'").Scan(&events, &completed)
+			})
+			if err != nil || events != 2 || completed != 1 {
+				t.Fatalf("exhausted completion ledger: events=%d completed=%d, want 2 and 1: %v", events, completed, err)
+			}
+		})
+	}
+}
 
 func TestRepeatRefusesUnsupportedRules(t *testing.T) {
 	for _, rule := range []string{"FREQ=MINUTELY", "FREQ=DAILY;UNKNOWN=1", "FREQ=DAILY;COUNT=2;UNTIL=20261231T000000Z", "FREQ=MONTHLY;BYMONTHDAY=0"} {

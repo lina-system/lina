@@ -20,8 +20,8 @@ func TestM2ClaudeWorkerThroughInstalledCore(t *testing.T) {
 
 func assertClaudeReceipt(t *testing.T, h *harness, mode string) {
 	t.Helper()
-	if mode == "exit-zero" {
-		assertClaudeUnknownExecution(t, h)
+	if code := claudeUnknownCode(mode); code != "" {
+		assertClaudeUnknownExecution(t, h, code)
 		return
 	}
 	files, err := filepath.Glob(filepath.Join(h.root, "work", "runs", "*", "result.json"))
@@ -70,9 +70,9 @@ func assertClaudeReceipt(t *testing.T, h *harness, mode string) {
 	}
 }
 
-// A clean process exit without a result frame does not settle the execution.
+// A missing or malformed result frame does not settle the execution.
 // Reopen its durable state after Core stops to verify the switch fence remains.
-func assertClaudeUnknownExecution(t *testing.T, h *harness) {
+func assertClaudeUnknownExecution(t *testing.T, h *harness, code string) {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(h.root, "work", "runs", "*", "result.json"))
 	if err != nil || len(files) != 0 {
@@ -98,7 +98,17 @@ func assertClaudeUnknownExecution(t *testing.T, h *harness) {
 		t.Fatal(err)
 	}
 	card, err := work.New(db).Get(h.ctx, record.ID)
-	if err != nil || record.State != "unknown" || record.Code != "missing_result" || record.WorkerName() != "claude" || len(record.Result) != 0 || reservations == 0 || card.Run == nil || card.Run.Worker != "claude" || card.Receipt != nil {
+	if err != nil || record.State != "unknown" || record.Code != code || record.WorkerName() != "claude" || len(record.Result) != 0 || reservations != 5 || !card.Active || card.Run == nil || card.Run.Worker != "claude" || card.Receipt != nil {
 		t.Fatalf("missing result lost durable uncertainty: record=%+v card=%+v reservations=%d err=%v", record, card, reservations, err)
 	}
+}
+
+func claudeUnknownCode(mode string) string {
+	switch mode {
+	case "exit-zero":
+		return "missing_result"
+	case "invalid_message", "session_mismatch", "invalid_result", "invalid_init", "invalid_usage":
+		return mode
+	}
+	return ""
 }

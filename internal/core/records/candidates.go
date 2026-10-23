@@ -43,14 +43,15 @@ func (s *Store) ProposeCandidate(ctx context.Context, a Actor, input CandidateIn
 	if a.Person == "" || a.Agent == "" || input.Source == "" || len(input.Source) > 512 || len(input.Quotation) > 1<<20 || strings.TrimSpace(input.Title) == "" || len(input.Title) > 512 || strings.ContainsAny(input.Title, "\r\n") || len(input.Note) > 1<<20 || math.IsNaN(input.Confidence) || input.Confidence < 0 || input.Confidence > 1 {
 		return Candidate{}, ErrInvalid
 	}
-	if _, _, err := s.snapshot(ctx); err != nil {
+	_, files, err := s.snapshot(ctx)
+	if err != nil {
 		return Candidate{}, err
 	}
 	bodies := s.candidateBodies(ctx, a, input.Source)
 	encoded, _ := json.Marshal(input)
 	key := equivalentTitle(input.Title)
 	var number int64
-	err := s.db.Write(ctx, func(tx *canon.Tx) error {
+	err = s.db.Write(ctx, func(tx *canon.Tx) error {
 		_, err := tx.ExecContext(ctx, "INSERT INTO record_candidates(person,source,source_revision,class,equivalence,proposal) VALUES(?,?,?,?,?,?) ON CONFLICT(person,source,equivalence) DO NOTHING", a.Person, input.Source, "", "unknown", key, encoded)
 		if err != nil {
 			return err
@@ -124,7 +125,14 @@ func (s *Store) ProposeCandidate(ctx context.Context, a Actor, input CandidateIn
 		_, err = tx.ExecContext(ctx, "UPDATE record_candidates SET class=?,source_revision=? WHERE number=? AND person=? AND status='pending'", class, revision, number, a.Person)
 		return err
 	}
-	_, err = s.commitLocked(ctx, Change{ID: id, Path: "inbox/candidate-" + strconv.FormatInt(number, 10) + ".md", Data: data}, a, op)
+	stem := "inbox/candidate-" + strconv.FormatInt(number, 10)
+	name := stem + ".md"
+	// The repository mutex keeps allocation and publication together. Ordinary
+	// records may already occupy the numbered path or any of its suffixes.
+	for suffix := 2; files[name] != ""; suffix++ {
+		name = stem + "-" + strconv.Itoa(suffix) + ".md"
+	}
+	_, err = s.commitLocked(ctx, Change{ID: id, Path: name, Data: data}, a, op)
 	if errors.Is(err, errCandidatePending) {
 		return c, nil
 	}
