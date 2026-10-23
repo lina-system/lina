@@ -3,6 +3,7 @@
 package boot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +12,9 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/compaction"
+	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -89,5 +92,67 @@ func TestConversationCompactionFailureRecoveryAndRetraction(t *testing.T) {
 	raw, _ := json.Marshal(request.Items)
 	if calls != 3 || strings.Contains(string(raw), "private-marker-42") || !strings.Contains(string(raw), "public content") {
 		t.Fatalf("stale summary reused after retraction: calls=%d request=%s", calls, raw)
+	}
+}
+
+func TestConversationCompactionPreservesStandingProfile(t *testing.T) {
+	for _, large := range []bool{false, true} {
+		t.Run(map[bool]string{false: "below-threshold", true: "summarized"}[large], func(t *testing.T) {
+			r, _, agent, _ := managementFixture(t)
+			r.agent, r.conversation = agent, "profile-source"
+			source := queuedContextEvent(t, r, "profile-source", "I prefer concise answers.", guard.EntryOwner, "")
+			_, err := coreexec.NewMemory(r.db, nil, nil).Remember(t.Context(), memory.Write{Person: r.person, Agent: agent, Item: memory.Item{
+				Kind: memory.Preference, Content: "I prefer concise answers.", Subject: memory.Subject{Kind: memory.Person, ID: r.person}, Basis: memory.Stated, Standing: true, Evidence: []memory.Evidence{{Kind: memory.Event, ID: source.ID, Precision: memory.Exact}},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.conversation = "main:" + agent
+			r.route, err = modelpath.ResponsesFromEnv(func(key string) string {
+				return map[string]string{"LINA_RESPONSES_BASE_URL": "http://127.0.0.1:1", "LINA_RESPONSES_MODEL": "fixture-model", "LINA_RESPONSES_API_KEY": "synthetic-key"}[key]
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if large {
+				queuedContextEvent(t, r, "old", strings.Repeat("old ", 2500), guard.EntryOwner, "")
+				queuedContextEvent(t, r, "reply", strings.Repeat("public ", 1800), guard.EntryAgent, "")
+			}
+			current := queuedContextEvent(t, r, "current", "Continue", guard.EntryOwner, "")
+			items, refs, _, events, err := r.modelContext(t.Context(), current.ID)
+			if err != nil || len(refs) != 1 {
+				t.Fatalf("profile setup failed: refs=%v err=%v", refs, err)
+			}
+			profile := items[0]
+			calls := 0
+			stream := func(_ context.Context, request provider.Request) (provider.Stream, error) {
+				calls++
+				for _, item := range request.Items {
+					if bytes.Equal(item, profile) {
+						t.Fatal("standing profile entered summary generation")
+					}
+				}
+				text, _ := json.Marshal(compaction.Text{Requests: "none", Topics: "archive", Actions: "read", Values: "archive", Omitted: "repeated text"})
+				item, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": string(text)}}})
+				return &handoffRuntimeStream{events: []provider.Event{{Kind: provider.ItemDone, Item: item}, {Kind: provider.Terminal}}}, nil
+			}
+			in := assemble.Input{AgentID: agent, PersonaRevision: "fixture", Model: "fixture-model", Core: "core", Current: items[len(items)-1], History: items[:len(items)-1], MaxTokens: 22000}
+			request, report, err := r.compactConversation(t.Context(), in, events, stream)
+			if err != nil || report.Failure != "" {
+				t.Fatalf("compaction: %v %+v", err, report)
+			}
+			count := 0
+			for _, item := range request.Items {
+				if bytes.Equal(item, profile) {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("standing-profile projection occurs %d times, want 1", count)
+			}
+			if large != (calls == 1) {
+				t.Fatalf("summary calls=%d for large=%v", calls, large)
+			}
+		})
 	}
 }

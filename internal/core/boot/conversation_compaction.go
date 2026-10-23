@@ -3,6 +3,7 @@
 package boot
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -31,8 +32,25 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	if fixed < 0 || len(events) == 0 {
 		return provider.Request{}, report, assemble.ErrHistory
 	}
+	projected, err := assemble.History(events[:len(events)-1], r.conversation, r.agent)
+	if err != nil {
+		return provider.Request{}, report, err
+	}
+	prefixCount := len(in.History) - len(projected)
+	if prefixCount < 0 {
+		return provider.Request{}, report, assemble.ErrHistory
+	}
+	for i, item := range projected {
+		if !bytes.Equal(item, in.History[prefixCount+i]) {
+			return provider.Request{}, report, assemble.ErrHistory
+		}
+	}
+	// Standing-profile projections are rebuilt from current memory, not ledger
+	// events. Keep them beside the fixed request prefix, outside compaction.
+	profile := append([]provider.Item(nil), in.History[:prefixCount]...)
 	current := events[len(events)-1]
 	view := compaction.View{Request: request, Fixed: request.Items[:fixed], Packet: request.Items[fixed+len(in.History) : len(request.Items)-1], Input: compaction.Record{ID: current.ID, Item: in.Current, User: current.SpeakerKind == guard.Person}}
+	view.Fixed = append(append([]provider.Item(nil), view.Fixed...), profile...)
 	project := func(ctx context.Context, id string) (compaction.Record, error) {
 		event, err := r.journal().Get(ctx, id)
 		if err != nil {
@@ -59,7 +77,7 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	// segment, never this turn's input or transient ContextPacket.
 	auxiliaryRequest := request
 	auxiliaryRequest.Credential = r.route.Request(nil).Credential
-	auxiliaryRequest.Items = view.Fixed
+	auxiliaryRequest.Items = request.Items[:fixed] // Profiles must not become summary source text.
 	auxiliary := compaction.Auxiliary{Request: auxiliaryRequest, RetainPrefix: true, Stream: stream}
 	store := compaction.New(r.db)
 	frontier, err := store.Frontier(ctx, r.conversation)
@@ -152,8 +170,11 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		return provider.Request{}, report, err
 	}
 	in.MaxTokens = limit
-	in.Summary = fitted.View.Root
-	in.History = nil
+	in.Summary = nil
+	in.History = append([]provider.Item(nil), profile...)
+	if len(fitted.View.Root) > 0 {
+		in.History = append(in.History, fitted.View.Root)
+	}
 	for _, item := range fitted.View.History {
 		in.History = append(in.History, item.Item)
 	}
