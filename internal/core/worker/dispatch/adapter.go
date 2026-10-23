@@ -19,6 +19,20 @@ type attempt interface {
 
 type observation func() (json.RawMessage, []antigravity.DeniedAction)
 
+// WorkerAvailable reports the adapter registrations used by explicit dispatch.
+// A dispatcher for another worker does not establish this worker's readiness.
+func (s *Service) WorkerAvailable(name string) bool {
+	if s == nil {
+		return false
+	}
+	for _, f := range s.cfg.Workers {
+		if f.Name == name && f.Open != nil {
+			return true
+		}
+	}
+	return name == "antigravity" && s.cfg.Binary != "" || name == "claude" && s.cfg.ClaudeBinary != ""
+}
+
 // Keep vendor results intact in the artifact while sharing the durable dispatch
 // and PR evidence path. Nothing is inferred from worker prose.
 func (s *Service) attempt(name string) (attempt, observation, error) {

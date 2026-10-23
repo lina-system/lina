@@ -22,6 +22,10 @@ type codeGoalDriver struct {
 }
 
 func (d *codeGoalDriver) inputs(ctx context.Context, a goal.Action) (goal.State, goal.Goal, goal.Task, codeRepository, error) {
+	return d.resolveInputs(ctx, a, false)
+}
+
+func (d *codeGoalDriver) resolveInputs(ctx context.Context, a goal.Action, observe bool) (goal.State, goal.Goal, goal.Task, codeRepository, error) {
 	s, err := d.engine.Snapshot(ctx)
 	if err != nil {
 		return s, goal.Goal{}, goal.Task{}, codeRepository{}, err
@@ -47,6 +51,16 @@ func (d *codeGoalDriver) inputs(ctx context.Context, a goal.Action) (goal.State,
 				break
 			}
 		}
+		if observe {
+			switch a.Kind {
+			case goal.Assign, goal.Resume, goal.RepairConflict, goal.RepairQA, goal.ContinueWorker:
+				// GoalRecord verifies the original conversation/action binding.
+				// Its retained receipt needs neither a current repository grant
+				// nor an installed connection to observe a completed worker.
+				return s, g, task, codeRepository{}, nil
+			case goal.InspectPR, goal.Merge, goal.RunQA, goal.Deploy, goal.Verify, goal.Observe, goal.Decide, goal.PlanGoal, goal.CheckCriterion:
+			}
+		}
 		name := task.Repository
 		if name == "" && a.Check != nil && a.Check.Method != "deploy.read" && a.Check.Method != "runtime.probe" {
 			name = a.Check.Target
@@ -58,8 +72,13 @@ func (d *codeGoalDriver) inputs(ctx context.Context, a goal.Action) (goal.State,
 			name = g.Scope.Repositories[0]
 		}
 		repo, ok := d.connections.Repositories[name]
-		if !ok || !slices.Contains(g.Scope.Repositories, name) || (task.ID != "" && (task.Base != repo.Base || task.Worker != "antigravity")) {
+		if !ok || !observe && !slices.Contains(g.Scope.Repositories, name) || (task.ID != "" && (task.Base != repo.Base || task.Worker != "antigravity")) {
 			break
+		}
+		if observe {
+			// Corrections retain tasks until their effects settle. Deployment
+			// observation additionally verifies its original connection intent.
+			return s, g, task, repo, nil
 		}
 		serviceRepository := g.ServiceRepository
 		if serviceRepository == "" && len(g.Scope.Repositories) == 1 {
@@ -134,7 +153,7 @@ func (d *codeGoalDriver) Execute(ctx context.Context, a goal.Action) (goal.Obser
 	}
 	switch a.Kind {
 	case goal.Assign:
-		definition := dispatch.Definition{Repository: repo.Clone, Base: repo.Base, Branch: "lina/goal-" + codingID(g.ID, t.ID, a.ID)[:24], What: t.Done, Why: g.Summary, Scope: []string{g.Scope.Includes}, NotTouch: []string{g.Scope.Excludes}, Done: t.Done, DesignRefs: repo.DesignRefs, WriteArea: strings.Split(t.Area, ",")}
+		definition := dispatch.Definition{Worker: t.Worker, Repository: repo.Clone, Base: repo.Base, Branch: "lina/goal-" + codingID(g.ID, t.ID, a.ID)[:24], What: t.Done, Why: g.Summary, Scope: []string{g.Scope.Includes}, NotTouch: []string{g.Scope.Excludes}, Done: t.Done, DesignRefs: repo.DesignRefs, WriteArea: strings.Split(t.Area, ",")}
 		return d.runtime.runGoalWorker(ctx, g, a, definition)
 	case goal.Resume, goal.RepairConflict, goal.RepairQA, goal.ContinueWorker:
 		// The installed Antigravity adapter has no resume capability. Keep its
@@ -166,7 +185,7 @@ func (d *codeGoalDriver) Execute(ctx context.Context, a goal.Action) (goal.Obser
 	return goal.Observation{}, goal.ErrInvalid
 }
 func (d *codeGoalDriver) Observe(ctx context.Context, a goal.Action) (goal.Observation, error) {
-	s, g, t, repo, err := d.inputs(ctx, a)
+	s, g, t, repo, err := d.resolveInputs(ctx, a, true)
 	if err != nil {
 		return goal.Observation{}, err
 	}

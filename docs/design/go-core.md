@@ -896,8 +896,11 @@ there is no separate client endpoint.
   the published files.
 - `write_record(kind: todo)` accepts sentence-only capture and complete optional
   planning fields. It preserves them on text-only edits. Exact dates are checked
-  before publication; unresolved input returns `ambiguous_date`. Dependency
-  targets are owner-scoped and a recursive index query rejects cycles under the
+  before publication; unresolved input returns `ambiguous_date`. All to-do date
+  fields reject noncanonical timestamp syntax and offsets or instants outside
+  SQLite's date range before changing files, history or the index. Valid fractional
+  seconds and offset spellings are preserved for board/list and dated queries.
+  Dependency targets are owner-scoped and a recursive index query rejects cycles under the
   repository writer lock. The existing revision CAS and durable tool receipts
   apply unchanged. The tool cannot set work execution state or complete a
   delegated task. Planning-field edits may preserve an already `completed`
@@ -909,6 +912,8 @@ there is no separate client endpoint.
   today/upcoming/anytime queries, rescheduling and restart after index loss.
   `e2e/m2/todo-completed-planning.json` covers editing a completed delegated
   to-do through Core and retaining its fields and completion after restart.
+  `e2e/m2/todo-timestamps.json` covers timestamp refusals in all date fields,
+  an invalid edit, and valid timed tasks in board/list and dated views.
   Recurrence advancement, candidates and memo promotion remain #156.
 - Recurrence is Core's own parser for the subset (daily, weekly, monthly, yearly; interval; by-day; by-month-day; count; until) plus the from-completion flag. `Next(rule, from, zone)` advances only to a future occurrence. A table-driven corpus covers month ends and zone gaps.
 - Reminders and pre-warnings are timer rows (C-26).
@@ -1291,8 +1296,9 @@ headless process (`--print --output-format stream-json --verbose`). The matching
 `result` ends the turn before process exit; missing results, invalid messages,
 reported errors and permission denials fail. Core owns and reaps the child tree.
 `dispatch_work` accepts `worker: "claude"` through the same durable admission,
-work allocation, PR checks and manager boundary as Antigravity. Omitted worker
-selection retains Antigravity for existing requests and stored records. The
+work allocation, PR checks and manager boundary as Antigravity. An explicit
+selection keeps that adapter; omitted selection uses the quota and situation
+chooser in C-57, with Antigravity first among otherwise equal candidates. The
 artifact retains the final result alongside the independently read PR; receipt
 provenance is `adapter-derived`. No worker settings or integrations are installed.
 The headless `e2e/m2/claude-worker.json` scenario exercises installed Core, actual
