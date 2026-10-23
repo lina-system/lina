@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 // Compile and run the portable cores of the locked-Mac native parts: the unlock
-// plug-in's decision core and the lock guard with its install, uninstall and
-// rollback. Both keep every Security, socket, launchd and clock call behind an
-// interface, so these checks run on Linux with a C compiler and no macOS SDK.
+// plug-in's decision core and entry points, and the lock guard with its install,
+// uninstall and rollback. Security, socket, launchd and clock calls use interfaces
+// or fakes, so these checks run on Linux with a C compiler and no macOS SDK.
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,10 +19,12 @@ const targets = [
       'src/lina_unlock.c',
       'src/mechanism.c',
       'src/engine_from_callbacks.c',
+      'src/plugin_darwin.c',
       'tests/fake_host.c',
       'tests/test_decide.c',
       'tests/test_deadline.c',
       'tests/test_mechanism.c',
+      'tests/test_plugin.c',
       'tests/main.c',
     ],
   },
