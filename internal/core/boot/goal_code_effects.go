@@ -120,16 +120,22 @@ func (r *conversationRuntime) mergeGoalPR(ctx context.Context, record dispatch.R
 	}
 	merges := authority.NewMerges(r.db, r.epoch)
 	ref := ghclient.Ref{Repository: repository, Number: record.PR.Number}
+	binding := authority.MergeBinding{ID: record.ID, Person: record.Origin.Person, Agent: record.Owner, Repository: repository, Number: ref.Number, Base: record.Definition.Base, Clone: record.Definition.Repository, Protected: record.Protected}
 	var result ghclient.MergeResult
 	var err error
 	if observe {
+		// Another actor may have merged before our preflight created a row.
+		// Recover bookkeeping from the retained dispatch, without Accept/Begin
+		// or a merge command. Bind also refuses a conflicting existing row.
+		if err = merges.Bind(ctx, binding); err != nil {
+			return goal.Observation{}, err
+		}
 		result, err = r.workerGitHub.ReadLanded(ctx, ref, record.Definition.Base, a.Revision, "")
 	} else {
 		// Re-read the full current-head review and manager binding at dispatch.
 		if _, err = r.inspectGoalPR(ctx, record, repository); err != nil {
 			return goal.Observation{}, err
 		}
-		binding := authority.MergeBinding{ID: record.ID, Person: record.Origin.Person, Agent: record.Owner, Repository: repository, Number: ref.Number, Base: record.Definition.Base, Clone: record.Definition.Repository, Protected: record.Protected}
 		if err = merges.Bind(ctx, binding); err != nil {
 			return goal.Observation{}, err
 		}
