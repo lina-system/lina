@@ -49,9 +49,11 @@ func (s *conversationRouter) Launcher(ctx context.Context, session clientsrv.Ses
 
 // launcherAgent keeps a repeated request with the agent that first admitted it.
 // Admission deduplication is per conversation, so resolving the retry from the
-// person's current selection could admit the same line in a second agent.
+// person's current selection could admit the same line in a second agent. The
+// lookup uses the same inbox source as every client line, so request ids
+// admitted before this capability shipped stay retryable.
 func (r *conversationRuntime) launcherAgent(ctx context.Context, session clientsrv.Session, p protocol.LauncherRequest) (string, error) {
-	first, err := inbox.New(r.db).Find(ctx, launcherInputSource, launcherThreadPrefix+p.RequestID)
+	first, err := inbox.New(r.db).Find(ctx, "client", launcherThreadPrefix+p.RequestID)
 	switch {
 	case err == nil:
 		return strings.TrimPrefix(first.Conversation, "main:"), nil
@@ -79,7 +81,7 @@ func (r *conversationRuntime) launcherInput(ctx context.Context, s clientsrv.Ses
 	thread := launcherThreadPrefix + p.RequestID
 	mode := protocol.InputModeQueue
 	input := protocol.Input{ConversationID: &r.conversation, InputID: &thread, Text: &p.Text, Thread: &thread, Mode: &mode}
-	return r.admitInput(ctx, s, input, "launcher", launcherInputSource, nil)
+	return r.admitInput(ctx, s, input, "launcher", nil)
 }
 
 // publishLauncherReply streams the visible short form, never the full reply.
