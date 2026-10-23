@@ -12,8 +12,8 @@
   "observations": [
     {
       "kind": "request_surface",
-      "revision": "2c36abaf2feb1e218a0a7a17b89154ed6ad663fe",
-      "observed_at": "2026-10-23T21:24:26Z",
+      "revision": "7e88cf2b18c1320768b94406359420236fa83c21",
+      "observed_at": "2026-10-23T21:37:06Z",
       "route": "the person's Responses-compatible model gateway for their ChatGPT plan; not LINA's sign-in route",
       "lina_sign_in_route": false,
       "model": "gpt-6-astra",
@@ -72,7 +72,10 @@
   ],
   "accepted_tool_declarations": {
     "form": "additional_tools developer item",
-    "tools": ["probe_echo", "apply_patch"],
+    "tools": [
+      "probe_echo",
+      "apply_patch"
+    ],
     "accepted": true
   }
 }
