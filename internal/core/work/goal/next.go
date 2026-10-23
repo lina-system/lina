@@ -367,7 +367,12 @@ func Derive(state State, now time.Time) (Plan, error) {
 	mergeSlots := map[string]bool{}
 	for _, g := range goals {
 		if err := validateGoalState(g, g.DefinitionPending); err != nil {
-			return plan, err
+			// Invalid canonical corrections are fenced per goal. Keep their
+			// outstanding leases below, and let observation settle their effects
+			// while unrelated goals continue deriving work.
+			if !g.DefinitionPending || g.AssessedFailure != "definition:"+g.RecordRevision {
+				return plan, err
+			}
 		}
 		for _, t := range g.Tasks {
 			for _, a := range state.Actions {
