@@ -1,5 +1,5 @@
 {
-  "cases": ["followup_reply", "followup_pending"],
+  "cases": ["followup_reply", "followup_pending", "steer_snapshot_failure", "steer_pending"],
   "input": "Delegate a file task, then continue it after completion.",
   "followup": "Continue the work in the same directory.",
   "artifact": "followup-result.txt",

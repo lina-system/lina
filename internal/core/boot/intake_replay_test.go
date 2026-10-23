@@ -3,6 +3,7 @@ package boot
 
 import (
 	"bytes"
+	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"os"
@@ -91,4 +92,40 @@ func TestIntakeReplayReadsPersistedState(t *testing.T) {
 	if question.SpeakerKind != guard.System {
 		t.Fatal("question lost provenance", question)
 	}
+}
+
+func TestIntakeReplayProductionRules(t *testing.T) {
+	f, err := os.Open("../intakereplay/testdata/synthetic.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	report := intakereplay.Run(t.Context(), f, ReplayIntakeCase, "core-rules")
+	if report.Excluded != 0 || report.Scored != report.Selected || report.Scored == 0 {
+		t.Fatalf("incomplete replay: %+v", report)
+	}
+	covered := map[string]int{}
+	for _, result := range report.Results {
+		if len(result.Bindings) != 1 || len(result.Bindings[0].Candidates) > 8 {
+			t.Fatalf("%+v", result)
+		}
+		rule := result.Bindings[0].Decider
+		covered[rule]++
+		if (rule == "reply-or-card" || rule == "offered-option") && result.Score.Passed != 1 {
+			t.Fatalf("inexact Core rule: %+v", result)
+		}
+		if result.ID == "aged-focus" && result.Bindings[0].Target.Class != "none" {
+			t.Fatal("aged focus remained default", result)
+		}
+	}
+	for _, rule := range []string{"reply-or-card", "exact-reference", "offered-option", "no-rule"} {
+		if covered[rule] == 0 {
+			t.Fatal("missing rule coverage", rule)
+		}
+	}
+	raw, err := json.Marshal(report.Summaries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("public intake summaries: %s", raw)
 }

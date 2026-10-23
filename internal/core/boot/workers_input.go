@@ -82,18 +82,39 @@ func (e *workerSession) inputWorker(ctx context.Context, snap worker.ThreadSnaps
 	}
 	prior := e.recovery
 	store := recovery.Recovery{DB: e.origin.db}
-	if prior.ID != "" {
+	steering := false
+	admit := func(isSteering bool) error {
+		steering = isSteering
+		if prior.ID == "" {
+			return nil
+		}
 		intent := prior
-		intent.State, intent.Thread.TurnID, intent.Finish = "unknown", "", nil
-		// Remember which turn cannot be evidence of this pending continuation.
-		intent.RetryFrom = prior.Thread.TurnID
+		intent.State, intent.Finish = "unknown", nil
+		if steering {
+			intent.Thread = snap.Thread
+		} else {
+			// The previous turn cannot settle a pending new continuation.
+			intent.Thread.TurnID, intent.RetryFrom = "", prior.Thread.TurnID
+		}
 		intent.Reservation, intent.ObservedAt = e.reservation, 0
 		if err := store.Put(ctx, intent); err != nil {
-			return tools.Failed, errors.Join(err, release())
+			return err
 		}
 		e.recovery = intent
+		return nil
 	}
-	err := e.adapter.Input(ctx, snap.Thread, worker.Input{Text: text})
+	var err error
+	if adapter, ok := e.adapter.(interface {
+		InputWithAdmission(context.Context, worker.Thread, worker.Input, func(steering bool) error) error
+	}); ok {
+		err = adapter.InputWithAdmission(ctx, snap.Thread, worker.Input{Text: text}, admit)
+	} else {
+		// Without an adapter admission boundary, input may start a new turn.
+		if err := admit(false); err != nil {
+			return tools.Failed, errors.Join(err, release())
+		}
+		err = e.adapter.Input(ctx, snap.Thread, worker.Input{Text: text})
+	}
 	if errors.Is(err, worker.ErrInputRefused) {
 		if releaseErr := release(); releaseErr != nil {
 			return tools.Unknown, errors.Join(err, releaseErr)
@@ -110,12 +131,18 @@ func (e *workerSession) inputWorker(ctx context.Context, snap worker.ThreadSnaps
 	// Even an active snapshot can become idle inside Input and start a new
 	// turn. Persist its exact binding without waiting for a started event.
 	key := "unknown:" + rand.Text()
+	if steering {
+		// A lost reply or snapshot cannot erase a known steering target.
+		key = snap.Thread.TurnID
+	}
 	if err == nil {
 		current, readErr := e.adapter.Snapshot(ctx, snap.Thread)
 		if readErr != nil {
 			err = readErr
 		} else if current.Thread.TurnID == "" || current.State == worker.Unknown || current.State == worker.Dead {
 			err = errors.New("worker input binding is unknown")
+		} else if steering && current.Thread != snap.Thread {
+			err = errors.New("worker steering binding changed")
 		} else {
 			if prior.ID != "" {
 				next := e.recovery
