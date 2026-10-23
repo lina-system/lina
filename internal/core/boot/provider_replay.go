@@ -43,6 +43,7 @@ func providerReportOutput(report replay.ProviderReport, err error) (protocol.Rep
 	text := string(raw)
 	return protocol.ReplayResult{Output: &text}, nil
 }
+
 func replaySourceDigest(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
@@ -145,7 +146,14 @@ func (r *conversationRuntime) providerFixture(ctx context.Context, s clientsrv.S
 			}
 			segment.Records = append(segment.Records, compaction.Record{ID: fmt.Sprintf("history-%d", i), Item: item, User: m.Role == "user"})
 		}
-		aux := compaction.Auxiliary{RetainPrefix: true, Request: provider.Request{Model: base.Model, Effort: base.Effort, Instructions: base.Instructions, Items: base.Items[:fixed], Tools: base.Tools, Fields: base.Fields, Layout: base.Layout, CacheIdentity: base.CacheIdentity, Capabilities: base.Capabilities}}
+		// Baseline measures the request Core sent before it carried the
+		// conversation's cache boundary: the same bytes minus the layout, so a
+		// provider with explicit marks cannot serve it from the cache.
+		var layout *provider.RequestLayout
+		if !f.Summary.Baseline {
+			layout = base.Layout
+		}
+		aux := compaction.Auxiliary{RetainPrefix: true, Request: provider.Request{Model: base.Model, Effort: base.Effort, Instructions: base.Instructions, Items: base.Items[:fixed], Tools: base.Tools, Fields: base.Fields, Layout: layout, CacheIdentity: base.CacheIdentity, Capabilities: base.Capabilities}}
 		summary, err := aux.SummaryRequest(segment)
 		if err != nil {
 			return providerReportOutput(report, err)
@@ -154,6 +162,7 @@ func (r *conversationRuntime) providerFixture(ctx context.Context, s clientsrv.S
 		stream := report.Observe("summary", 1, r.route.Route, time.Now, func() (provider.Stream, error) {
 			return r.route.Adapter.Stream(ctx, activity, summary)
 		})
+		var called bool
 		for {
 			event, err := stream.Next(ctx)
 			if errors.Is(err, io.EOF) {
@@ -163,14 +172,22 @@ func (r *conversationRuntime) providerFixture(ctx context.Context, s clientsrv.S
 				stream.Close()
 				return providerReportOutput(report, err)
 			}
-			// A tool call is not a summary. It stays in the measurement as a
-			// failed row rather than running anything.
-			if event.Kind == provider.ToolCallReady || event.Kind == provider.Terminal {
+			// A tool call is not a summary. The row keeps its measurement but
+			// reports the failure, and nothing runs.
+			if event.Kind == provider.ToolCallReady {
+				called = true
+				replay.Reject(stream, "summary_tool_call")
+				break
+			}
+			if event.Kind == provider.Terminal {
 				break
 			}
 		}
 		if err := stream.Close(); err != nil {
 			return providerReportOutput(report, err)
+		}
+		if called {
+			return providerReportOutput(report, errors.New("summary_tool_call"))
 		}
 	}
 	return providerReportOutput(report, nil)
