@@ -156,6 +156,15 @@ Core alone uses its explicit administrative command path to maintain the base
 refs and clean up assigned branches. This repository guard is not a worker
 plugin or OS confinement: workers use their own runtime setup, and a process
 running as the user can deliberately bypass a Git hook. Core never resets or cleans another task's checkout.
+Scheduler allocations from registered clones install this same guard and exact
+branch binding before starting the worker. The clone's remote and local base
+remain unchanged. Existing unrelated executable hooks or a custom hooks path
+refuse the allocation rather than being disabled; a guard failure is a known
+pre-dispatch failure. Core's fixed Git administration can still fetch the next
+landed base and create a dependent worktree under the shared guard.
+Scheduled workers publish to origin's URL directly: a named-remote push also
+updates local tracking refs, which remain protected. The target remote and
+assigned branch are unchanged, and publication never disables the guard.
 The installed-Core [headless work-area scenario](../../e2e/m2/work-area.json)
 allocates two real linked worktrees, rejects cross-task branch updates, deletion
 and renaming into a reserved branch, commits on each assigned branch, and retains
@@ -583,6 +592,8 @@ The manager is a prepared dev turn in the existing conversation engine. It recei
 
 For `worker_start`, manager admission runs before the worker execution registry, under the calling turn's cancellation lifecycle. Waiting for the shared manager lane and completing the manager turn do not consume the worker's 30-second start deadline. Core issues the start grant and records the worker effect only after admission succeeds, then rechecks the durable delegation before launch. Admission failure or cancellation creates no worker-start effect, so it cannot leave an unlaunched worker with an unknown outcome that blocks an identical retry. Once worker execution begins, the existing receipt and unknown-outcome rules still apply.
 
+`schedule_work` validates the graph before manager admission, then obtains the same durable dev binding and assignment judgment for every task before admitting the graph or starting a worker. A missing live dev identity is reported without a worker effect. The work cards name dev and its manager conversation as owner; the existing coding assignments retain the originating conversation and effect ceiling for delivery, refresh, stop controls, recovery, and conflict returns. Retrying an admitted definition reuses its judgment. Recovery requires that durable admission and a live dev owner; a legacy queued task without manager admission cannot start a worker.
+
 `dispatch_work` retains the asking conversation as the delivery destination and records dev as the work owner with the manager conversation. The installed worker owns code and its PR; Core observes the current PR head, checks, review and produced artifact receipts. The same manager conversation judges delivery against its retained definition. A manager's verified verdict is separate from merge or deployment. Missing evidence stays unverified. `worker_start` sessions also run under dev ownership and return questions, approvals and results through the originating conversation; their completion alone remains an unverified claim.
 
 Git work allocated with `prepare_work` has the same dev owner and manager binding; non-coding work keeps its original owner. The requesting conversation can retain its own delegated result through that recorded binding. For PR delivery, Core retains the exact observed base/head, sanitized change evidence and review metadata. A bounded or unavailable change observation cannot become a verified manager verdict. The return notice distinguishes the worker/PR observation from the manager's verdict and from a merge.
@@ -763,6 +774,13 @@ The manager session splits work into tasks that one worker can finish as one pul
 ### Write areas
 
 - Every task declares a write area in its work definition. Two tasks whose write areas overlap are dependent: LINA Core orders them and never runs them together.
+- Graph admission is atomic. Missing dependencies, cycles, empty or invalid areas,
+  and unordered overlapping areas within one graph are refused before any task
+  is created. Area identity is the registered repository, shared across clones
+  and conversations. Relative globs support `*`, `?`, character classes and `**`
+  as a whole path component. A matched directory, including one matched by a
+  wildcard, includes its descendants. Intersection checks include files not yet created;
+  unrelated graphs with overlapping areas wait on the existing lease.
 - Goal dispatch compares repository-relative paths and glob intersections across all goals in the same repository. A matched directory includes its descendants, and `**` can cross directory boundaries. Different spellings of an overlapping area do not create separate leases; disjoint areas remain eligible in parallel.
 - LINA Core holds an area lease for each task from hand-off until the task has landed, is closed or is abandoned. The lease follows the liveness of the task's worker (see Liveness): a task judged abandoned frees its lease, and nothing else frees it earlier.
 - Hotspot files are shared resources: dependency manifests and lockfiles, generated code, registries and index files, changelogs, and any file that recent history shows many tasks changing. A task that needs a hotspot file takes the whole hotspot area, or the change moves into one dedicated task that the others depend on.
@@ -805,6 +823,31 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
 - The manager session selects work and its order; the work engine reserves capacity, obtains Node bids and dispatches the recorded assignments. The one-coordinator rule of the Work engine holds: a worker is never used through its own team or coordinator feature.
 - When a task has landed, the work engine releases at once every task that was waiting only on it.
 - A task that cannot start has exactly one visible reason: a dependency, an area held by another task, a worker out of quota, or host capacity.
+- Graph admission checks the authenticated originating preset's worker-effect
+  ceiling before creating tasks. Each task retains its originating turn's
+  policy binding; startup recovery and conflict return recheck it before worker
+  effects. A restricted preset cannot gain worker authority through a relay.
+- The deterministic reason order is dependency (by task id), area holder (by task
+  id), worker quota, then host capacity. The running list and task Details use
+  that same reason. A terminal worker turn frees execution capacity, while its
+  area remains held until a Core-owned forge read confirms merged or closed.
+  An open/queued pull request, a receipt, or a successful merge request cannot
+  satisfy the dependency. Merge observation does not create a verified verdict.
+- Dispatch reservations and the single conflict-return claim precede worker
+  input in the canon ledger. Repeated wakes cannot duplicate either effect.
+  Recovery rebuilds reservations; an uncertain start or correction is retained
+  for reconciliation, never automatically repeated. Completion, new graph,
+  quota notification/reset and a refreshed forge observation release eligible
+  tasks. A five-minute reconciliation observes inactive pull requests for lost
+  signals; it does not perform a model call or a merge.
+- A known failure before worker dispatch settles that attempt as failed and
+  frees capacity and its area for other tasks in the same release event. It
+  neither lands the failed task nor replays setup after recovery; any prepared
+  worktree remains preserved. Errors after sending a start retain reservations
+  until the outcome is reconciled.
+  This also applies during startup recovery: readiness is established before
+  dispatch, and a recovered task's setup failure cannot disable delegation or
+  terminate another task that was started in the same release event.
 - When slots are free, the manager may start a dependent task as a stacked pull request on an open predecessor. It records the predecessor and its head as the task's base, and Core checks capacity and disjoint write-area leases before dispatch. The dependency remains: the dependent cannot land before the predecessor. The worker brings the stack onto the landed base and owns its resulting checks to green before the manager checks the delivery.
 
 ## Workers
@@ -1868,7 +1911,8 @@ transactions read those copied observations and the canonical owner names.
 Rows are scoped to the requesting person and name the owner agent before
 the worker. An idle session leaves the list without asserting that the task is
 verified; a new active turn makes it visible again. Unknown observations stay
-unknown. These rows do not alter the task or background-run state mappings.
+unknown. Scheduled workers retain their durable task rows and do not also
+contribute session rows. These rows do not alter the task or background-run state mappings.
 
 - A row is one task, one background run or one conversation-started worker. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
 - The states map onto the work card states: working is in progress; waiting, paused and input needed are waiting; done is landed. A stalled or failed task shows its state word until it is dispatched again (see Stall and failure).
@@ -1876,6 +1920,13 @@ unknown. These rows do not alter the task or background-run state mappings.
 - A running count, such as "2 running, 1 waiting for you", shows in the conversation header or composer. It counts progress lines other than 목표 lines (see Progress line), by their state, so it grows with the 일 the person reads and not with the number of workers; the rows of this list are counted in the list itself.
 - A state change updates its row in place. It never opens a panel, moves focus, starts a message or interrupts a reply. A landing of one task of several is a row change and not a notice (see Notifications in [surfaces.md](surfaces.md)).
 - A landed row stays until the person has seen it, then it moves to history. Stopping works per row and for all rows ([surfaces.md](surfaces.md#running-list)).
+- For scheduled work, a stop durably closes the selected task or all tasks in
+  the authenticated person/conversation scope before active workers receive
+  interrupts. Queued cards can be stopped without a worker session. Completion,
+  quota changes, conflict observations and restart cannot dispatch a stopped
+  card. An active or uncertain execution keeps its area and capacity reservation
+  until termination is observed; a stop request does not assert a forge close,
+  a merge or successful delivery.
 - An agent exchange is not a row: it appears only in the agent talk log ([surfaces.md](surfaces.md#agent-talk-log)), and as a row of "Waiting for me" when the person is the decision owner.
 
 ## Observation, handover and discovery

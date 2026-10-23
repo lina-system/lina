@@ -1475,6 +1475,7 @@ type Definition struct {
 }
 ```
 
+- The agent drafts graph definitions with the `schedule_work` tool. Core validates required fields, glob syntax and that the design reference resolves in the repository at the base commit, and renders the task packet. Before graph admission or worker dispatch, each task receives a durable dev-manager binding and assignment judgment through the shared coding admission. The task records dev ownership; its coding assignment retains the originating conversation and inherited effect ceiling for delivery and controls. Missing dev or a failed judgment creates no runnable graph.
 - The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves to a Markdown section in the repository at the base commit before admission. Before invoking the manager, it persists the pinned commit and definition snapshot in a non-runnable `admitting` record. Retries resume that snapshot; only manager success moves it to `queued`. Core renders the task packet with the assignment id, base commit and complete definition. Code examples are not design sections.
 - Klotho drafting runs through Moirai's job API and the Core auxiliary model
   route. The worker validates the proposed structure and holds no write or
@@ -1493,6 +1494,72 @@ type Definition struct {
 - #138 connects the chooser to `dispatch_work` with Antigravity and Codex. The optional `system/core/worker-choice.json` table has `provisional: true` and `rules` of `{worker, tags, priority}`; all tags must match the definition's kind or repository. Quota and capacity cannot be overridden. Equal candidates retain installation order (Antigravity, then Codex). Core reads the table at startup and rejects malformed rules. The initial resource estimate is one CPU, 512 MiB memory and 1024 MiB disk per active reservation, deducted from the measured main-host resources. Canon migration 43 replaces the repository-wide unique index with fenced area claims and durable worker quota. A late quota snapshot cannot erase a newer observed stop; admission rechecks quota before reserving the attempt.
 - Dispatch compares glob intersections before launch, including directory descendants and `**`, and validates result files with the same path language. A terminal worker event does not free the area. Applied work releases it; uncertain effects retain it through restart. Canon commit notifications, quota updates and explicit reset timers wake selection, with a one-minute safety sweep for host changes. A queued record retains one wait reason: area, quota or capacity. `e2e/m2/worker-choice.json` exercises the installed Core path with real file and Git effects and synthetic worker/GitHub streams.
 - `Scheduler.Release` runs on events (landed, new task, quota change, a parked worker's reset), not on a poll. It starts every task whose dependencies landed, whose area lease is free and whose worker has quota. Area leases live from hand-off to landed, closed or abandoned. Concurrency is the free slots that the reported load and resources of the main host and each Node allow, with no fixed count per repository ([work-and-delegation.md](work-and-delegation.md#capacity)). A task that cannot start shows exactly one reason.
+- The first local scheduler connection is enabled by the installation's private
+  `system/core/delegation.json`: absolute `codex`, `git` and `gh` executable paths,
+  a reported local `slots` capacity (re-read on each wake), and a `repositories`
+  map from canonical lowercase `owner/repo` to its `clone` and `base`. Executables and clone
+  paths are installation inputs, never model arguments. Without that file the
+  graph tools are not advertised. The existing single-worker `dispatch_work`
+  tool retains its input and behavior. Remote Node admission remains separate.
+  An unavailable worker executable, failed handshake or initial quota observation
+  disables these optional graph tools and closes partial worker resources; Core
+  still starts conversation, channels and background runs.
+  Readiness is checked before releasing persisted queued work. Errors while
+  releasing recovered tasks remain task failures: they do not close the ready
+  runtime, stop other workers, or remove the graph tools.
+  The initial quota read has its own fifteen-second deadline. A worker that
+  initializes but never answers quota is closed and disables only delegation;
+  its unresponsive optional endpoint cannot indefinitely hold Core startup.
+- `schedule_work` admits a graph of definitions (key, what, why, done, areas,
+  dependencies and design sections) scoped to the authenticated conversation.
+  Before admission it checks the origin's immutable preset and inherited turn
+  ceiling for `WorkerEffect`, and binds that ceiling to every scheduled task.
+  Recovery and conflict correction recheck the origin and task bindings before
+  any repository setup or worker input; delegation cannot widen a preset limit.
+  Core resolves design references at the registered base, mints stable task ids
+  from the turn/call/key, creates `lina/<task-id>` branches and separate worktrees,
+  fetches and pins the remote base without moving the clone's local base branch,
+  verifies that it contains each dependency's observed merge commit,
+  installs the shared work-area protected-ref guard and the worktree's exact
+  assigned-branch binding before dispatch, and refuses an incompatible existing
+  hook configuration rather than replacing it. Only Core's fixed administrative
+  Git commands bypass that guard to fetch bases and allocate worktrees. It then
+  starts the installed Codex App Server through the existing
+  `worker.Adapter` session implementation. The execution packet directs a worker
+  to publish its assigned branch to origin's URL, preserving the guarded local
+  tracking refs. No model,
+  sandbox or approval setting is overridden. `refresh_work` reads the asking
+  conversation's task cards and their current forge observations; it cannot
+  assert merged state or request a merge.
+- Owner stop controls durably close scheduled cards before interrupting their
+  workers. Both generation-bound queued rows and conversation-scoped stop-all
+  use the scheduler's serialization boundary; interrupted completion cannot
+  release another stopped task. Unsettled effects retain their reservations
+  until Core observes termination, and cancellation survives ledger recovery.
+- Scheduler facts and their one waiting reason are events in `work_ledger` and
+  replay into cards. All reservations are fenced canon transactions. Reactor
+  serializes the worker-start response with even an immediate completion event;
+  only the matching thread/turn releases the slot. Unknown external outcomes
+  retain reservations. A terminal provider connection failure frees execution
+  capacity; only a lost App Server observation leaves the execution unknown.
+  A failure known to precede the worker start settles the task as failed and
+  releases its execution and area reservations immediately. Recovery retains
+  that failed attempt without replaying setup or deleting any prepared worktree.
+  A conflict is returned to the same worker once, with the
+  claim durable before input; a second conflicting head requires input.
+- Scheduled sessions register with the existing originating-conversation worker
+  question and approval bridge. Channel tasks keep their recorded conversation
+  instead of moving replies or evidence into the agent's main conversation.
+  Replies are bound to their worker thread/turn;
+  all pending requests must be answered before the task returns to working.
+  Ordinary `worker_input` cannot start a scheduled session outside scheduler
+  admission. Task ids are stable opaque identifiers that remain valid unmasked
+  metadata; their spelling carries no authority.
+- Scheduled assignments declare the existing LINA `read_projection`, `ask`,
+  `coordinate` and `submit_receipt` work tools and route each call through the
+  same bound worker-session bridge. A submitted receipt is retained as
+  unverified worker evidence in the originating conversation; it cannot grant
+  merge authority or satisfy a dependency.
 - One task, one worker, one worktree, one branch, created by Core with the Git command from a parent clone in `work/clones/`. #127 wires `prepare_work` and `retain_work_result` into the running conversation tool registry. `work.Area` owns leased Git subprocesses through `kit/proc`, detached allocation at the pinned base, protected refs and branch bundles. Core closes its process owner during shutdown.
 - The developer lane projection reads current `work_cards` in a canon snapshot through `internal/core/progress`. Installed Core registers read-only `progress_get` under `worker_lanes` 1.0, independently of a provider route. `after` is an opaque source/id cursor; `progress.lanes` contains up to 32 current worker sessions and `next_cursor` only when another visible session exists. Rows carry run/task/persona identity, persona name, worker, thread, turn, node, generation, task state/title and source-labeled stage details. Display fields are bounded before transport. Core authorizes the installation's person and excludes explicitly foreign-person tasks and deleted personas; legacy unowned records belong to the installation. Tasks without a run and superseded generations do not create lanes. A finished worker turn remains distinct from Core-verified task completion. Refresh rereads authoritative state; this view neither dispatches work nor infers scheduler transitions. Boot appends the installed worker runtime's sessions after durable work pages, using their adapter snapshots and masking output before display. These snapshots share one five-second page context, including time spent waiting for a worker control to finish. Expiry or caller cancellation returns unknown session rows with their identities preserved; it neither cancels the worker nor allows conflicting controls to overlap. Idle means only the worker turn ended; it is not a work verdict.
 - The CRW pin is the start gate for the work ledger records: a pin record and a LINA fixture runner whose expected values come from the fixture ([work-and-delegation.md](work-and-delegation.md#start-gate)).

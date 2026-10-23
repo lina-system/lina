@@ -78,6 +78,10 @@ func fixture() {
 			reply(map[string]any{"userAgent": "fixture/99.0.0", "codexHome": os.Getenv("CODEX_HOME"), "platformFamily": "unix", "platformOs": "linux"})
 		case "initialized":
 			initialized = true
+		case "account/rateLimits/read":
+			rate := map[string]any{"primary": map[string]any{"usedPercent": 100, "resetsAt": time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).Unix()}}
+			reply(map[string]any{"rateLimits": rate})
+			notify("account/rateLimits/updated", map[string]any{"rateLimits": rate})
 		case "thread/start":
 			if !initialized || len(r.Params) != 1 {
 				os.Exit(86)

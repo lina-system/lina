@@ -16,6 +16,37 @@ node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note] [--job
 
 The script clears `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and every other `GIT_*` environment variable on entry; it works on the repository it runs in and takes the range as an argument. A run that integration or a release relies on happens in a clean worktree of the exact commit, in an environment that holds no credentials.
 
+The legacy component runner (`check-components.mjs`, phase `all`) compiles
+acceptance packages once per candidate with `go test -c` into the
+check's disposable directory. The produced binary enumerates its tests and runs
+up to four disjoint batches in the package's directory with `-test.count=1` and
+`-test.timeout=6m` and Go's `-test.paniconexit0` guard against early successful
+process exit. Results are never cached. Verbose batch output identifies the
+active scenario if the shared components deadline expires. Packages without
+test files still receive their normal build, vet and analyzer checks.
+
+PR #559's [CI run 39825375534](https://github.com/thisisjun786/lina/actions/runs/39825375534)
+exhausted the 895-second components budget: the first acceptance batch passed
+in 240.206 seconds, and the second was terminated after its remaining 331.116
+seconds. Reusing the candidate's compiled test binary removes the repeated Go
+package loading and linking for enumeration and each batch. A real regression
+requires one compilation while executing every test, subtest, example and fuzz
+seed once. The component and per-batch deadlines remain unchanged.
+
+[Run 39835581651](https://github.com/thisisjun786/lina/actions/runs/39835581651)
+subsequently reached a batch's six-minute diagnostic timeout while
+`TestM3WebSocketInstalledCore` had run for two seconds. The growing corpus now
+uses four disjoint batches to leave more room below that deadline. Compilation
+still occurs once, and every test, subtest, example and fuzz seed runs once.
+A controlled-clock regression executes a 720-second corpus after 150 seconds
+of preparation: the former two-batch layout reaches the diagnostic timeout,
+while four batches each take 180 seconds and finish in the same total 870
+seconds. This regression explicitly retains the original 895-second budget, independently
+of the later shared-budget change on dev described below. In
+[run 39844541882](https://github.com/thisisjun786/lina/actions/runs/39844541882),
+the four batches took 103.420, 62.245, 107.837 and 107.949 seconds; the full
+foundation gate passed in 697 seconds within the original budget.
+
 ## Pull request CI
 
 The [CI workflow](../../.github/workflows/ci.yml) checks pull requests targeting `dev` (and the owner-requested `codex/ln-369-*` stack), pushes to `dev`, a nightly schedule, and manual runs. Every job checks out the event's `github.sha` with full history and without persisting Git credentials. A pull request selects the diff from its base SHA to its merge commit from `refs/pull/<number>/merge`. PRs exclude e2e by default; the `e2e` label selects reached scenarios, and adding or removing it starts a fresh selection. Pushes, nightly runs and manual runs select the full suite. Post-merge runs have distinct concurrency groups so a newer push does not cancel running or pending verification.
@@ -268,7 +299,7 @@ fail the check. The root and adapter npm projects have independent lockfiles.
 PR #523's [CI run 39785658738](https://github.com/thisisjun786/lina/actions/runs/39785658738)
 reached the six-minute package limit while the current TUI lifecycle scenario
 had run for two seconds. That branch initially used a ten-minute package diagnostic deadline. The
-legacy acceptance batching from #127 covers that corpus with three disjoint
+legacy acceptance batching from #127 covers that corpus with four disjoint
 six-minute batches inside the shared components budget described above.
 Individual operation deadlines and acceptance assertions remain in force;
 timeout or missing observations still fail verification.
@@ -278,8 +309,9 @@ passed its first acceptance batch in 245.6 seconds, then reached the second
 batch's six-minute diagnostic deadline during `TestM2UpdateDataOperations`;
 the current `slow-backup` subtest had run for 24 seconds. No assertion failed.
 Components used 800.9 seconds of the existing 895-second command budget.
-The legacy component runner uses three disjoint batches to leave room for uneven scenario
-durations, preserving every test, example and fuzz seed exactly once. A virtual
+That branch introduced three disjoint batches to leave room for uneven scenario
+durations. The legacy component runner now uses four batches, preserving every
+test, example and fuzz seed exactly once. A virtual
 clock regression models a 400-second group of long scenarios alongside shorter
 ones and requires the full corpus to finish under the unchanged package and
 shared deadlines.
