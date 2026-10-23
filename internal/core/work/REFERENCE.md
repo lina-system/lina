@@ -51,3 +51,15 @@ Read-only CRW reference at the same pinned commit:
 - **Unknown:** these references do not establish LINA's worker or forge behavior.
   CRW permits some nonexclusive overlaps; LINA's stricter design requires every
   overlapping area to remain exclusive. No CRW command or runtime is used.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-57 work area integration
+
+#127 wires `prepare_work` and `retain_work_result` into the running conversation tool registry.
+`work.Area` owns leased Git subprocesses through `kit/proc`, detached allocation at the pinned base, protected refs and branch bundles.
+Core closes its process owner during shutdown.
