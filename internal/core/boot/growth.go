@@ -63,43 +63,43 @@ func (r *conversationRuntime) startGrowth(ctx context.Context, controls *ctlfile
 	jobCtx, cancel := context.WithCancel(ctx)
 	r.growth.stop, r.growth.done = cancel, make(chan error, 1)
 	go func() { r.growth.done <- jobs.Serve(jobCtx, listener, growthJobAPI{r}) }()
-	management := r.identity.Operations[protocol.KindAgentRequest]
-	growthCapability := protocol.Capability{Name: "growth", Version: "1.0"}
-	required := func(e protocol.Envelope) protocol.Capability {
-		if p, ok := e.Payload.(protocol.AgentRequest); ok && p.Operation != nil {
-			switch *p.Operation {
-			case "growth_adopt", "growth_notices", "growth_undo":
-				return growthCapability
+	return r.wrapOperation(protocol.KindAgentRequest, func(management clientsrv.Operation) clientsrv.Operation {
+		growthCapability := protocol.Capability{Name: "growth", Version: "1.0"}
+		required := func(e protocol.Envelope) protocol.Capability {
+			if p, ok := e.Payload.(protocol.AgentRequest); ok && p.Operation != nil {
+				switch *p.Operation {
+				case "growth_adopt", "growth_notices", "growth_undo":
+					return growthCapability
+				}
 			}
+			return management.Capability
 		}
-		return management.Capability
-	}
-	r.identity.Operations[protocol.KindAgentRequest] = clientsrv.Operation{
-		Capability:             management.Capability,
-		AdditionalCapabilities: []protocol.Capability{growthCapability},
-		CapabilityFor:          required,
-		Handle: func(ctx context.Context, session clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
-			if required(e) == growthCapability {
-				p := e.Payload.(protocol.AgentRequest)
-				if p.AgentID == nil {
-					return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
+		return clientsrv.Operation{
+			Capability:             management.Capability,
+			AdditionalCapabilities: []protocol.Capability{growthCapability},
+			CapabilityFor:          required,
+			Handle: func(ctx context.Context, session clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
+				if required(e) == growthCapability {
+					p := e.Payload.(protocol.AgentRequest)
+					if p.AgentID == nil {
+						return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
+					}
+					if session.PersonID != r.person {
+						return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorOutOfScope}
+					}
+					view, err := r.router.view(ctx, session, *p.AgentID)
+					if err != nil {
+						return clientsrv.Result{}, err
+					}
+					if err = view.ensureGrowth(ctx); err != nil {
+						return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorUnavailable}
+					}
+					return view.growthOperation(ctx, session, e)
 				}
-				if session.PersonID != r.person {
-					return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorOutOfScope}
-				}
-				view, err := r.router.view(ctx, session, *p.AgentID)
-				if err != nil {
-					return clientsrv.Result{}, err
-				}
-				if err = view.ensureGrowth(ctx); err != nil {
-					return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorUnavailable}
-				}
-				return view.growthOperation(ctx, session, e)
-			}
-			return management.Handle(ctx, session, e)
-		},
-	}
-	return nil
+				return management.Handle(ctx, session, e)
+			},
+		}
+	})
 }
 
 // ensureGrowth binds immutable job policy and tools to this conversation view.

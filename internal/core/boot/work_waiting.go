@@ -18,18 +18,12 @@ func (r *conversationRuntime) startWorkWaiting(ctx context.Context) error {
 	if err := r.workWaiting.Expire(ctx, time.Now()); err != nil {
 		return err
 	}
-	refresh := r.identity.RefreshTopic
-	r.identity.RefreshTopic = func(ctx context.Context, topic string) error {
-		if refresh != nil {
-			if err := refresh(ctx, topic); err != nil {
-				return err
-			}
-		}
+	r.chainRefresh(func(ctx context.Context, topic string) error {
 		if topic == "waiting" {
 			return r.publishWorkQuestions(ctx)
 		}
 		return nil
-	}
+	})
 	watch, cancel := context.WithCancel(ctx)
 	r.waitingStop, r.waitingDone = cancel, make(chan struct{})
 	go func() { defer close(r.waitingDone); r.workWaiting.Run(watch, r.publishWorkQuestions) }()

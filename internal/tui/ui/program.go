@@ -16,7 +16,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/design"
-	"github.com/thisisjun786/lina/internal/tui/sanitize"
 	"github.com/thisisjun786/lina/internal/tui/state"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -138,10 +137,8 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 	var peer connectionPeer
 	var client shellClient
 	pending := make(map[string]state.SendRequest)
-	channelPending := make(map[string]uint64)
-	webPending := make(map[string]uint64)
-	talkPending := make(map[string]uint64)
-	var agentListID, reconnectAgent, historyID string
+	replies := make(replyTracker)
+	discovery := &discoverySession{model: model}
 	var stopInput func() error
 	defer func() {
 		if stopInput != nil {
@@ -155,10 +152,8 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 			signin.close()
 			clear(pending)
 			clear(management.pending)
-			clear(channelPending)
-			clear(webPending)
-			clear(talkPending)
-			agentListID, reconnectAgent, historyID = "", "", ""
+			clear(replies)
+			discovery.reset()
 		}
 		if attached, ok := message.(shellPeer); ok {
 			peer = attached.Peer
@@ -209,17 +204,7 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 				// Nonterminal input only reads quit after the handshake; it has
 				// no draft destination to discover before reporting live.
 				if client != nil && terminal {
-					// Initial history can restore an agent absent from Welcome,
-					// just as reconnect history can. Refresh names before either.
-					if model.hasCapability("agents") && (model.conversation.agentPending || model.hasCapability("conversation")) {
-						model.conversation.agentPending = true
-						reconnectAgent = model.activeAgent()
-						agentListID, err = client.Agent(ctx, protocol.AgentRequest{Operation: stringPointer("list")})
-					} else if history := model.discoveryHistory(); history != nil && model.hasCapability("conversation") {
-						reconnectAgent = model.activeAgent()
-						historyID, err = client.History(ctx, *history)
-					}
-					if err != nil {
+					if err := discovery.start(ctx, client); err != nil {
 						return err
 					}
 				}
@@ -250,7 +235,7 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 				if err != nil {
 					return err
 				}
-				talkPending[id] = request.Attempt
+				replies.track(id, request.Attempt, model.talkReply)
 			}
 			return display.showShell(model)
 		}
@@ -263,7 +248,7 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 				if err != nil {
 					return err
 				}
-				webPending[id] = request.Attempt
+				replies.track(id, request.Attempt, model.webReply)
 			}
 			return display.showShell(model)
 		}
@@ -276,7 +261,7 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 				if err != nil {
 					return err
 				}
-				channelPending[id] = request.Attempt
+				replies.track(id, request.Attempt, model.channelReply)
 			}
 			return display.showShell(model)
 		}
@@ -318,45 +303,14 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 				var decoder protocol.ClientDecoder
 				e, err := decoder.Decode(frame.Data)
 				if err == nil && e != nil {
-					if e.ReplyTo != nil && *e.ReplyTo == historyID {
-						historyID = ""
-						if model.conversation.agentPending && model.activeAgent() == reconnectAgent && e.Error != nil {
-							if model.discoveryFailed(e.Error.Code) {
-								peer.Close()
-							}
+					if consumed, redraw, err := discovery.response(ctx, client, peer, *e); consumed {
+						if err != nil {
+							return err
+						}
+						if redraw {
 							return display.showShell(model)
 						}
-					}
-					if e.ReplyTo != nil && *e.ReplyTo == agentListID {
-						agentListID = ""
-						if !model.conversation.agentPending || model.activeAgent() != reconnectAgent {
-							return nil
-						}
-						p, ok := e.Payload.(protocol.AgentResult)
-						if e.Error != nil {
-							if model.discoveryFailed(e.Error.Code) {
-								peer.Close()
-							}
-						} else if !ok || p.Agents == nil || p.Operation == nil || *p.Operation != "list" {
-							return errStream
-						} else {
-							model.content.Agents = append([]protocol.Agent(nil), (*p.Agents)...)
-							for i := range model.content.Agents {
-								model.content.Agents[i].Name = sanitize.Display(model.content.Agents[i].Name)
-							}
-							if history := model.reconnectHistory(model.content.Agents); history != nil {
-								if client != nil && model.hasCapability("conversation") {
-									reconnectAgent = model.activeAgent()
-									historyID, err = client.History(ctx, *history)
-									if err != nil {
-										return err
-									}
-								} else {
-									model.agentDiscoveryDone()
-								}
-							}
-						}
-						return display.showShell(model)
+						return nil
 					}
 					if client != nil {
 						if consumed, err := management.response(ctx, client, *e); consumed {
@@ -366,47 +320,8 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 							return display.showShell(model)
 						}
 					}
-					if e.ReplyTo != nil {
-						if attempt, ok := talkPending[*e.ReplyTo]; ok {
-							delete(talkPending, *e.ReplyTo)
-							if model.talk.open && attempt == model.talk.attempt {
-								model.talk.busy = false
-								if e.Error != nil {
-									model.talk.code = string(e.Error.Code)
-								} else if p, ok := e.Payload.(protocol.AgentTalk); ok {
-									model.talkResponse(p)
-								}
-							}
-							return display.showShell(model)
-						}
-					}
-					if e.ReplyTo != nil {
-						if attempt, ok := webPending[*e.ReplyTo]; ok {
-							delete(webPending, *e.ReplyTo)
-							if model.web.open && attempt == model.web.attempt {
-								model.web.busy = false
-								if e.Error != nil {
-									model.web.code = string(e.Error.Code)
-								} else if p, ok := e.Payload.(protocol.WebResult); ok {
-									model.web.configured = p.Configured
-								}
-							}
-							return display.showShell(model)
-						}
-					}
-					if e.ReplyTo != nil {
-						if attempt, ok := channelPending[*e.ReplyTo]; ok {
-							delete(channelPending, *e.ReplyTo)
-							if model.channels.open && attempt == model.channels.attempt {
-								model.channels.busy = false
-								if e.Error != nil {
-									model.channels.code = string(e.Error.Code)
-								} else if p, ok := e.Payload.(protocol.ChannelResult); ok {
-									model.channelResponse(p)
-								}
-							}
-							return display.showShell(model)
-						}
+					if replies.response(*e) {
+						return display.showShell(model)
 					}
 					if consumed, err := signin.response(*e); consumed {
 						if err != nil {
