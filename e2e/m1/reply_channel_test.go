@@ -120,9 +120,10 @@ func TestTypedResultReachesTelegramAcrossRestart(t *testing.T) {
 				return nil, r.Context().Err()
 			}
 		case strings.HasSuffix(r.URL.Path, "/sendMessage"):
-			if err := r.ParseForm(); err != nil {
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				return nil, err
 			}
+			defer r.MultipartForm.RemoveAll()
 			if r.FormValue("chat_id") != "100" {
 				t.Errorf("wrong reply destination: %s", r.FormValue("chat_id"))
 			}
