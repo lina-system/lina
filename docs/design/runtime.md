@@ -298,6 +298,12 @@ does not establish this client-level journey.
 
 Each provider adapter declares a capability set for each model it serves: the provider features that can cut billed input or waiting time. Core decides which to use, by fixed rules, from the request layout, the capability set, the ledger's times and the usage that providers report. No model makes this choice. The measurements behind these rules are in [provider-optimization.md](../research/provider-optimization.md).
 
+The model boundary exposes a named capability set per model. A missing name is
+unsupported, including for models absent from an adapter's declarations. The
+model list provides no capability defaults. Core intersects the declaration with
+the build's route admission set and any narrower adapter configuration before choosing values. Adapters refuse a
+requested capability outside either set before starting HTTP or a runtime.
+
 A capability is used only under all of these rules:
 
 - **Recoverable.** Core still assembles the full request from the ledger and records its digest before sending it. A capability changes only how the request travels or what the provider keeps, never what LINA records as the request. A cache miss, expired cache or provider state, a refused field or an outage costs only tokens or time. The request then goes in full without the capability, and a started request is never sent again ([Failures and retries](#failures-and-retries)).
@@ -317,13 +323,19 @@ A capability is used only under all of these rules:
 The rules for each capability:
 
 - **Request order.** Requests follow the [request layout](conversation-and-memory.md#request-layout): fixed parts first, history, the person's input, then the ContextPacket. Within a conversation the tools and tool choice stay unchanged, apart from tools loaded on demand. A failed-worker notice retains those declarations while Core disables its tool execution; declaration presence grants no permission. Compaction preserves the input-before-packet order; its summary request excludes both the current input and packet, including the standing profile.
-- **Cache identity.** Core derives one identity per conversation: a digest of the main id, the agent id and the conversation id. A background run uses its run id. The identity holds no name or text, and it stays for the life of the conversation, across compactions.
+- **Cache identity.** Core derives one identity per conversation: a SHA-256 digest of a versioned, unambiguous tuple of the main id, the agent id and the conversation id. A background run hashes its run id under a separate domain. The identity holds no name or text, and it stays for the life of the conversation, across compactions and restarts. Epochs and request contents never enter it. Deriving and recording this identity does not admit its transmission to a provider.
 - **Cache marks.** Core marks four boundaries of every request:
   - after the fixed part (items 1 to 4 of the request layout, without plugin tools loaded on demand);
   - after the person's input of the previous turn;
   - after the person's input of the current turn;
   - in a follow-up request, after the newest item of the turn.
   An adapter whose provider needs explicit marks places them there; the others ignore them. The Claude adapter sends each earlier turn as its own text block of the runtime prompt and marks the last one, then sends the person's input and the ContextPacket.
+  Boundaries are exclusive counts in the request's item and tool arrays. The
+  fixed boundary excludes tools loaded on demand. A missing previous input or
+  newest follow-up item has no boundary; Core does not substitute external
+  user-role evidence for a person's input. Follow-ups retain the initial
+  boundaries and update the newest position after transforms. The request
+  digest covers these positions and all selected capability values.
 - **Cache lifetime.** Claude marks use 1 hour, set once per query on the runtime. A 1-hour write costs more only on the tokens added since the last request, while an expired 5-minute mark makes the next request write the whole history again. ChatGPT, Gemini and Grok keep their route's default, and LINA sends no lifetime field that V1 or V4 has not accepted.
 - **Reasoning state.** Every reasoning item, thinking block and thought signature returns unchanged in later requests, earlier turns included. Removing one changes the cached prefix as well as the model's state.
 - **Compaction.** Compaction and its summary request reuse the cache as [Compaction and resume](conversation-and-memory.md#compaction-and-resume) says.
@@ -360,6 +372,7 @@ The Gemini adapter assembles its own stream by the same rules: deltas drive live
 ### Usage and cost
 
 - Usage comes from what each provider reports: the `usage` of a model-API response, the usage an agent runtime reports with a turn, and the usage events a worker reports, such as Codex's `thread/tokenUsage/updated`. It keeps the tokens read from and written to the provider's cache, with writes split by lifetime where the provider reports that. An unreported value is unknown, never zero.
+- Usage may additionally carry `cache_by_lifetime`, keyed by the reported lifetime, with independent optional `read` and `write` counts. Missing buckets or counts remain unknown. Existing aggregate cache counts remain independent reported totals; budget settlement does not add the buckets to input or output again. This is an optional addition to stored usage JSON, with no table migration or backfill.
 - The total budget covers conversation requests (turns in external channels and turns of agent exchanges included), background runs, the model calls of background jobs, worker threads, the sub-threads a worker starts, auxiliary reasoning. Development replays report their usage in output artifacts without changing canon or its budget totals. Every agent draws on the one budget, and each usage record names the agent it served, the account it used and, for a background run, the run.
 - Budget totals count tokens. A cost figure is shown only when the provider or runtime reports one, and is labelled an estimate when it is computed on the client (the Claude runtime's is). A plan route has no cost. Catalog prices and zero values are not actual cost.
 - LINA Core reserves and settles the budget. At the limit the conversation stops sending requests, a background run waits with its checkpoint and says what is done and what is not instead of being wrapped up, and workers are interrupted under the budget policy of [work-and-delegation.md](work-and-delegation.md). The Codex goal token budget is not used. This budget is the person's usage; it is not the turn budget, which only decides where work runs ([Turn budget](#turn-budget)).
@@ -802,8 +815,11 @@ The initial JSON object contains these required fields; later implementation iss
 | `kitVersion` | Positive integer read from `kit/VERSION`, initially `1`. |
 | `sqlite` | Object with binding `module`, exact `version`, Go `moduleSum` (`h1:`), `sqliteVersion`, `wasmSHA256` (64 lowercase hex characters), `execution: "wazero"`, and `sqliteVec` (exact `version` and `sha256` of the complete custom Wasm engine; older manifests may have null). |
 | `providers.chatgpt` | `adapter: "responses"`, `retryCount: 0`, and `requestFields`, the explicit array of allowed top-level request fields. |
+| `providerCapabilities` | Route names mapped to admitted capability-name arrays. New builds include every implemented route, including empty sets. Older manifests without this optional field remain readable; absence grants no capability. |
 | `verifiedWorkerVersions` | Optional object mapping worker names to verified version arrays; `codex` uses bare versions from the adapter's `versions.json`, such as `["0.163.0"]`. |
 | `binaries` | Array of objects with `name` (basename), `size` (positive byte count), and `sha256` (64 lowercase hexadecimal characters). Includes both `lina` and `lina-node`, with platform suffixes. |
+
+The writer copies route admission sets from `kit/provider/capabilities.json`. The Responses descriptor also records its admitted `capabilities`; a per-request choice cannot widen that set. Unrecognized or unadmitted capabilities fail validation.
 
 The writer copies `providers` from `kit/provider/responses/manifest.json` and checks its adapter identity and zero retry count. The Responses adapter reads that configuration from the generated manifest, validates required and forbidden fields, and permits per-request narrowing only. The initial list is exercised by scripted wires; live V1 acceptance remains required before conversation acceptance.
 
@@ -1041,7 +1057,7 @@ Foundation keeps one local command and one required CI result. PRs select docs, 
 - Whether the Claude subscription route through the Agent SDK is allowed for LINA: the SDK's overview says third-party products may not offer claude.ai login without approval ([research](../research/provider-optimization.md#result)). Confirmed with the vendor before the release that depends on it. A Claude API-key route over the Messages API is planned as its own implementation.
 - The keep-alive interval of an idle ChatGPT refresh token, the warning period before a Claude token's year ends, the idle period after which the Claude adapter stops, and the number of concurrent turns per Claude account: set during implementation acceptance of the provider adapters.
 - Which quota source a Claude token supports (the runtime's events, the usage report, or both): decided by a live test in V4.
-- Where a model's context window comes from when its adapter reports none: set by the implementation issue that ships the provider adapters.
+- Model-specific tokenizers and authoritative context-window metadata for the remaining provider routes. Until both are available, the adapter uses the conservative byte budget in [Compaction and resume](conversation-and-memory.md#compaction-and-resume).
 - Narrowing a plugin server's network to named hosts: needs a filter in the sandbox wrapper; chosen at implementation acceptance of the plugin system, and until then the allowance is network on or off.
 - The starting values of the turn budget (acknowledgement, soft and hard budget, tool deadline), which only set the hand-off point: tuned by measurement during implementation acceptance of the conversation engine, on waiting time and completion quality together (rework, corrections and "that is not what I asked"), never on waiting time alone.
 - Replay uses immutable history references, pinned persona and recorded request configuration; missing reconstructible assembly excludes the turn. Raw ContextPackets remain unstored.

@@ -514,7 +514,9 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 				scenario.beforeFinish(t, h, fixture, record)
 			}
 			write(filepath.Join(fixture, "release"), "", 0600)
-			wait("terminal observation", func() bool { return read() && (record.State == "finished" || record.State == "unknown") })
+			wait("terminal observation", func() bool {
+				return read() && (record.State == "finished" || record.State == "unknown" || record.State == "decision")
+			})
 			if scenario.afterFinish != nil {
 				scenario.afterFinish(t, h, fixture, record)
 			}
@@ -523,7 +525,7 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			}
 			switch mode {
 			case "exit":
-				if record.State != "unknown" || record.Code != "prompt_failed" || card.Receipt != nil {
+				if record.State != "decision" || record.Code != "prompt_failed" || record.Attempt != 2 || record.Recoveries != 1 || card.Receipt == nil || card.Receipt.Outcome != "failed" {
 					t.Fatal("open prompt exit became done", record, card)
 				}
 			case "cancel":

@@ -36,6 +36,18 @@ import (
 // sources rather than Plan.Keys, the import report, or stored legacy_ref fields.
 func TestM1ImportReconciliation(t *testing.T) {
 	t.Parallel()
+	runImportReconciliation(t, false)
+}
+
+// Exercise ambiguous UIDs through the installed CLI, seal/backup and a running
+// Core, using the same independent source-row oracle as ordinary imports.
+func TestM1ImportUIDLineages(t *testing.T) {
+	t.Parallel()
+	runImportReconciliation(t, true)
+}
+
+func runImportReconciliation(t *testing.T, uidLineages bool) {
+	t.Helper()
 
 	var fixture struct {
 		Profile            string
@@ -56,6 +68,10 @@ func TestM1ImportReconciliation(t *testing.T) {
 	}
 	if err = json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
+	}
+	if uidLineages {
+		fixture.ExpectedReferences += 10
+		fixture.ExpectedEvents += 4
 	}
 	h, start := installedConversationHarness(t, "")
 	// This scenario runs Core plus five importer commands and checks both
@@ -97,6 +113,15 @@ func TestM1ImportReconciliation(t *testing.T) {
 		}
 		if _, err = srcDB.ExecContext(h.ctx, string(ddl)+"\n"+src.Setup+";\n"+string(extra)); err != nil {
 			t.Fatal(err)
+		}
+		if uidLineages {
+			overlay, err := os.ReadFile("../../testdata/hermes/uid-lineages-" + src.Kind + ".sql")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = srcDB.ExecContext(h.ctx, string(overlay)); err != nil {
+				t.Fatal(err)
+			}
 		}
 		names, err := srcDB.QueryContext(h.ctx, `SELECT name FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name`)
 		if err != nil {
@@ -211,6 +236,14 @@ func TestM1ImportReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkCounts(rehearsal.Rehearsal.Tables)
+	if uidLineages {
+		if rehearsal.Rehearsal.AmbiguousUIDRows != 6 || len(rehearsal.Rehearsal.UIDLineageMappings) != 6 {
+			t.Fatalf("ambiguous rows not reported: %+v", rehearsal.Rehearsal)
+		}
+	} else if rehearsal.Rehearsal.AmbiguousUIDRows != 0 || len(rehearsal.Rehearsal.UIDLineageMappings) != 0 {
+		t.Fatal("ordinary import reported ambiguous UIDs")
+	}
+	uidMappings := rehearsal.Rehearsal.UIDLineageMappings
 	kinds := map[string]int{}
 	for _, table := range rehearsal.Rehearsal.Inventory {
 		for kind, count := range table.Kinds {
@@ -238,6 +271,9 @@ func TestM1ImportReconciliation(t *testing.T) {
 		if err = decoder.Decode(&result); err != nil {
 			t.Fatal(err)
 		}
+		if result.Import.AmbiguousUIDRows != len(uidMappings) || !reflect.DeepEqual(uidMappings, result.Import.UIDLineageMappings) || !reflect.DeepEqual(uidMappings, rehearsal.Rehearsal.UIDLineageMappings) {
+			t.Fatal("mapping report changed between rehearsal and import")
+		}
 		checkCounts(result.Seal.Verification.Tables)
 		if result.Seal.Verification.Rows != len(wantRows) {
 			t.Fatalf("verified rows=%d want=%d", result.Seal.Verification.Rows, len(wantRows))
@@ -250,6 +286,9 @@ func TestM1ImportReconciliation(t *testing.T) {
 			t.Fatalf("second import added rows: %+v", result)
 		}
 		checkImportReferences(t, h.ctx, path, wantRows)
+		if uidLineages {
+			checkImportedUIDMappings(t, h.ctx, path, fixture.Profile, uidMappings)
+		}
 		checkRecall(0)
 	}
 	// A positive control makes an always-empty recall implementation fail too.
@@ -296,6 +335,61 @@ func TestM1ImportReconciliation(t *testing.T) {
 	}
 	if !reflect.DeepEqual(prior, importCanonCounts(t, h.ctx, path)) {
 		t.Fatal("unknown schema wrote destination rows")
+	}
+}
+
+func checkImportedUIDMappings(t *testing.T, ctx context.Context, path, profile string, mappings []hermes.UIDLineageMapping) {
+	t.Helper()
+	db, err := canon.OpenSQLiteReader(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var raw string
+	if err = db.QueryRowContext(ctx, "SELECT report FROM import_rehearsal").Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var retained hermes.RehearsalReport
+	if err = json.Unmarshal([]byte(raw), &retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained.AmbiguousUIDRows != 6 || !reflect.DeepEqual(retained.UIDLineageMappings, mappings) {
+		t.Fatal("retained batch report lost UID decisions")
+	}
+	for i, want := range []struct{ host, lcm, root, lineage, reason string }{
+		{"1", "", "synthetic-session", "", "multiple_root_lineages"},
+		{"2", "2", "synthetic-session", "home:synthetic-session", "session_root"},
+		{"3", "", "synthetic-session", "", "multiple_root_lineages"},
+		{"10", "2", "synthetic-session", "home:synthetic-session", "session_root"},
+		{"11", "9", "fork", "home:fork", "session_root"},
+		{"12", "", "reset", "", "no_root_lineage"},
+	} {
+		got := mappings[i]
+		if got.Source != (hermes.LegacyKey{System: "hermes-state", Instance: profile, Kind: "messages", Key: want.host}) || got.SessionRoot != want.root || got.Lineage != want.lineage || got.Reason != want.reason || len(got.CandidateLineages) != 2 {
+			t.Fatalf("mapping %d: %+v, want %+v", i, got, want)
+		}
+		var eventID string
+		if err = db.QueryRowContext(ctx, `SELECT record_id FROM legacy_ref WHERE system='hermes-state' AND instance=? AND kind='messages' AND key=?`, profile, want.host).Scan(&eventID); err != nil {
+			t.Fatal(err)
+		}
+		if eventID != got.EventID {
+			t.Fatalf("reported destination differs: %+v", got)
+		}
+		if want.lcm != "" {
+			var lcmID string
+			if err = db.QueryRowContext(ctx, `SELECT record_id FROM legacy_ref WHERE system='hermes-lcm' AND instance=? AND kind='messages' AND key=?`, profile, want.lcm).Scan(&lcmID); err != nil || lcmID != eventID {
+				t.Fatalf("host %s mapped to %s, want LCM %s (%s): %v", want.host, eventID, want.lcm, lcmID, err)
+			}
+		} else {
+			var copies int
+			if err = db.QueryRowContext(ctx, `SELECT count(*) FROM legacy_ref WHERE kind='messages' AND record_id=?`, eventID).Scan(&copies); err != nil || copies != 1 {
+				t.Fatalf("standalone row %s absorbed other messages: %d, %v", want.host, copies, err)
+			}
+		}
+		var published int
+		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM conv_event WHERE id=?", eventID).Scan(&published); err != nil || published != 1 {
+			t.Fatalf("mapped event not published: %s, %d, %v", eventID, published, err)
+		}
 	}
 }
 

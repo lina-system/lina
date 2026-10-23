@@ -183,10 +183,15 @@ func (a *Adapter) admitMessage(ctx context.Context, in gateway.Admitter, m messa
 		return errUnavailable
 	}
 	m.Content = strings.ReplaceAll(m.Content, headers.Get("Authorization"), "[redacted]")
+	reply := ""
+	if m.Referenced != nil {
+		reply = m.Referenced.ID
+	}
 	body, _ := json.Marshal(struct {
-		ID   string `json:"message_id"`
-		Text string `json:"text"`
-	}{m.ID, m.Content})
+		ReplyTo string `json:"reply_to,omitempty"`
+		ID      string `json:"message_id"`
+		Text    string `json:"text"`
+	}{reply, m.ID, m.Content})
 	return in.Admit(ctx, gateway.Inbound{Address: addr, NativeID: id, Sender: m.Author.ID, Direct: m.Guild == "", Addressed: addressed, PreviousCursor: previous, Cursor: cursor, Body: body})
 }
 func (a *Adapter) button(ctx context.Context, q interaction, previous, cursor, token string) error {

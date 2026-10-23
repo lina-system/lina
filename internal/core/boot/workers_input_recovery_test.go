@@ -25,6 +25,13 @@ func (p *inputRecoveryProbe) Input(ctx context.Context, th worker.Thread, in wor
 	return p.transferProbe.Input(ctx, th, in)
 }
 
+func (p *inputRecoveryProbe) InputWithAdmission(ctx context.Context, th worker.Thread, in worker.Input, admit func(steering bool) error) error {
+	if err := admit(p.next == th.TurnID); err != nil {
+		return errors.Join(worker.ErrInputRefused, err)
+	}
+	return p.Input(ctx, th, in)
+}
+
 func TestWorkerInputRecoveryAdmission(t *testing.T) {
 	for _, mode := range []string{"idle", "active_to_idle", "steer", "refused", "uncertain", "intent_failure", "checkpoint_failure"} {
 		t.Run(mode, func(t *testing.T) {
@@ -74,7 +81,11 @@ func TestWorkerInputRecoveryAdmission(t *testing.T) {
 			}
 			entry.adapter = &inputRecoveryProbe{transferProbe: base, beforeInput: func() {
 				rec := read()
-				if rec.State != "unknown" || rec.Thread.TurnID != "" || rec.Finish != nil || rec.Reservation == "" || rec.Reservation != entry.reservation || rec.Retries != prior.Retries {
+				wantTurn := ""
+				if mode == "steer" {
+					wantTurn = prior.Thread.TurnID
+				}
+				if rec.State != "unknown" || rec.Thread.TurnID != wantTurn || rec.Finish != nil || rec.Reservation == "" || rec.Reservation != entry.reservation || rec.Retries != prior.Retries {
 					t.Errorf("input reached worker without durable uncertain intent: %+v reservation=%q", rec, entry.reservation)
 				}
 			}}

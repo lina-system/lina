@@ -18,13 +18,7 @@ import (
 // Keep the configured route's conservative byte budget while counting all
 // assembled instructions, context, history and tool declarations.
 func conversationRequestSize(request provider.Request) int {
-	n := len(request.Instructions)
-	for _, items := range [][]provider.Item{request.Items, request.Tools} {
-		for _, item := range items {
-			n += len(item)
-		}
-	}
-	return n
+	return provider.RequestBytes(request)
 }
 
 // This whitelist is intentionally narrower than ContextPacket: personal memory
@@ -90,6 +84,11 @@ func (r *conversationRuntime) recordContextSources(ctx context.Context, packet a
 			for _, e := range item.Evidence {
 				source.Evidence = append(source.Evidence, ledger.Reference{ID: e.ID, Revision: e.Revision})
 			}
+		case item.Kind == assemble.Waiting && strings.HasPrefix(item.Origin, "input-binding:"):
+			source.Source = "input-binding-v1"
+			for _, ref := range item.Evidence {
+				source.Evidence = append(source.Evidence, ledger.Reference{ID: ref.ID})
+			}
 		case item.Kind == assemble.Clock && strings.HasPrefix(item.ID, "clock:"):
 			source.Source = "clock-v1"
 		case item.Kind == assemble.SkillBody:
@@ -104,4 +103,22 @@ func (r *conversationRuntime) recordContextSources(ctx context.Context, packet a
 		out = append(out, source)
 	}
 	return out, nil
+}
+
+func (r *conversationRuntime) conversationBudget() (int, func(provider.Request) int) {
+	if r.route != nil {
+		if adapter, ok := r.route.Adapter.(provider.RequestSizer); ok {
+			return adapter.RequestBudget(r.route.Model)
+		}
+	}
+	return 128000, conversationRequestSize
+}
+
+// Selection lives in Core composition; route configuration and run flows do not
+// import assembly policy from another flow family.
+func (r *conversationRuntime) selectProviderCapabilities(request provider.Request) (provider.Request, error) {
+	supported, admitted := r.route.Capabilities(request.Model)
+	var err error
+	request.Capabilities, err = assemble.SelectCapabilities(request, supported, admitted)
+	return request, err
 }

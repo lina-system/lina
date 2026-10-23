@@ -49,7 +49,7 @@ func restoreWorkerAward(t *Task, a Action, floorAtZero, effectsSettled bool) {
 	if a.Kind == Assign {
 		t.NodeID = ""
 	}
-	if !reserves(a) {
+	if !workerAction(a.Kind) {
 		return
 	}
 	refundRecovery(t, a.Kind, floorAtZero)

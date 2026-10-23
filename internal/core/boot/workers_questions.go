@@ -124,6 +124,9 @@ func (q workerQuestions) find(person, id string) (*workerSession, *workerQuestio
 	return nil, nil, errors.New("worker question unavailable")
 }
 func (q workerQuestions) Question(ctx context.Context, person, id string) (protocol.Question, error) {
+	if strings.HasPrefix(id, "a2a:") {
+		return q.runtime.a2aQuestion(ctx, person, id)
+	}
 	if !strings.HasPrefix(id, "worker-request:") {
 		return (runQuestions{runtime: q.runtime}).Question(ctx, person, id)
 	}
@@ -154,6 +157,9 @@ func (q workerQuestions) AnswerQuestionMessage(ctx context.Context, person strin
 
 func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answer protocol.QuestionAnswer) (protocol.DecisionOutcome, error) {
 	defer q.runtime.notifyOwnerViews()
+	if answer.CardID != nil && strings.HasPrefix(*answer.CardID, "a2a:") {
+		return q.runtime.answerA2AQuestion(ctx, person, answer)
+	}
 	if answer.CardID == nil {
 		return protocol.DecisionOutcomeRefused, nil
 	}

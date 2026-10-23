@@ -51,7 +51,7 @@ func TestM2TimerRecoveryInstalledCore(t *testing.T) {
 			Output  string `json:"output"`
 			Content string `json:"content"`
 		}
-		if err := json.Unmarshal(fixtureLatestInput(req.Input), &last); err != nil {
+		if err := json.Unmarshal(req.Input[len(req.Input)-1], &last); err != nil {
 			t.Error(err)
 			return
 		}
@@ -106,12 +106,41 @@ func TestM2TimerRecoveryInstalledCore(t *testing.T) {
 			}
 			return
 		}
-		if strings.Contains(last.Content, "Check timer recovery.") {
-			emitPersonaCall(w, "invalid", "create_timer", map[string]any{"schedule": timers.Schedule{Start: time.Now().Add(24 * time.Hour).UTC().Truncate(time.Minute), Zone: "UTC", RRule: scenario.InvalidRule}, "action": timers.Action{Kind: "reminder", Text: "Unsupported interval"}})
-		} else {
+		// Core appends context after the current input. Find the newest
+		// scenario input, skipping context and earlier conversation turns.
+		for i := len(req.Input) - 1; i >= 0; i-- {
+			var item struct{ Role, Content string }
+			if json.Unmarshal(req.Input[i], &item) != nil || item.Role != "user" {
+				continue
+			}
+			if item.Content == "Check timer recovery." {
+				emitPersonaCall(w, "invalid", "create_timer", map[string]any{"schedule": timers.Schedule{Start: time.Now().Add(24 * time.Hour).UTC().Truncate(time.Minute), Zone: "UTC", RRule: scenario.InvalidRule}, "action": timers.Action{Kind: "reminder", Text: "Unsupported interval"}})
+				return
+			}
+			_, body, _ := strings.Cut(item.Content, "\n")
+			var event struct {
+				Speaker string `json:"speaker_kind"`
+				Text    string `json:"text"`
+			}
+			if json.Unmarshal([]byte(body), &event) != nil || event.Speaker != "system" {
+				continue
+			}
+			_, payload, _ := strings.Cut(event.Text, "\n")
+			var action timers.Action
+			if json.Unmarshal([]byte(payload), &action) != nil || action.Kind != "sensor" {
+				continue
+			}
+			if action.Record == "" || action.Record != source.ID {
+				t.Errorf("sensor source=%q, want %q", action.Record, source.ID)
+				emitResponse(w, "Unexpected sensor source.", true)
+				return
+			}
 			reactions.Add(1)
-			emitPersonaCall(w, "read", "read_record", coreexec.RecordRead{ID: source.ID})
+			emitPersonaCall(w, "read", "read_record", coreexec.RecordRead{ID: action.Record})
+			return
 		}
+		t.Error("missing timer recovery input")
+		emitResponse(w, "Unexpected input.", true)
 	})))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)

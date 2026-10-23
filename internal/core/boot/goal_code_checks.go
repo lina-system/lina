@@ -22,10 +22,11 @@ import (
 )
 
 type codeCheckOutput struct {
-	Revision string `json:"revision"`
-	Target   string `json:"target"`
-	Passed   *bool  `json:"passed"`
-	Evidence string `json:"evidence"`
+	Collected *goal.CollectedEvidence `json:"collected,omitempty"`
+	Revision  string                  `json:"revision"`
+	Target    string                  `json:"target"`
+	Passed    *bool                   `json:"passed"`
+	Evidence  string                  `json:"evidence"`
 }
 type codeCheckRecord struct {
 	Command string          `json:"command"`
@@ -60,8 +61,12 @@ func (d *codeGoalDriver) runCheck(ctx context.Context, g goal.Goal, a goal.Actio
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	env := proc.WorkerEnvironment()
-	env = proc.Environment(env, "LINA_GOAL_REVISION", "LINA_GOAL_TARGET", "LINA_GOAL_ACTION")
+	env = proc.Environment(env, "LINA_GOAL_REVISION", "LINA_GOAL_TARGET", "LINA_GOAL_ACTION", "LINA_GOAL_CHECK")
 	env = append(env, "LINA_GOAL_REVISION="+a.Revision, "LINA_GOAL_TARGET="+target, "LINA_GOAL_ACTION="+a.ID)
+	if a.Check != nil {
+		check, _ := json.Marshal(a.Check)
+		env = append(env, "LINA_GOAL_CHECK="+string(check))
+	}
 	dir := repo.Clone
 	if checkout {
 		git, err := proc.LookPath("git")

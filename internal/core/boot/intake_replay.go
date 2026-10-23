@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/lina/internal/core/binding"
 	"os"
 	"time"
 
@@ -29,7 +30,7 @@ func ReplayIntakeCase(ctx context.Context, c intakereplay.Case, router string) (
 	if reason := intakereplay.Validate(c); reason != "" {
 		return nil, errors.New(reason)
 	}
-	if router != "focus-only" && router != "rules-then-focus" {
+	if router != "focus-only" && router != "rules-then-focus" && router != "core-rules" {
 		return nil, errors.New("unknown router")
 	}
 	root, err := os.MkdirTemp("", "lina-ir-")
@@ -60,7 +61,13 @@ func ReplayIntakeCase(ctx context.Context, c intakereplay.Case, router string) (
 	if err = r.seedIntakeReplay(ctx, *c.State, c.Input); err != nil {
 		return nil, err
 	}
+	savedID := "replay-binding"
+	r.intakeSnapshot = router == "core-rules"
 	r.intakeReplay = func(ctx context.Context, event ledger.Event) error {
+		if router == "core-rules" {
+			savedID = inputBindingID(event.ID)
+			return nil
+		}
 		state, input, err := r.readIntakeReplay(ctx)
 		if err != nil {
 			return err
@@ -75,7 +82,7 @@ func ReplayIntakeCase(ctx context.Context, c intakereplay.Case, router string) (
 	if _, err = r.Input(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Input{InputID: &id, Text: &c.Input.Text}); err != nil {
 		return nil, err
 	}
-	saved, err := r.journal().Get(ctx, "replay-binding")
+	saved, err := r.journal().Get(ctx, savedID)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +92,17 @@ func ReplayIntakeCase(ctx context.Context, c intakereplay.Case, router string) (
 	}
 	if saved.SpeakerKind != guard.System || parent.PersonID != r.person || parent.Origin.Locator != id {
 		return nil, errors.New("invalid replay binding provenance")
+	}
+	if router == "core-rules" {
+		var d binding.Decision
+		if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+			return nil, err
+		}
+		ids := make([]string, len(d.Candidates))
+		for n, i := range d.Candidates {
+			ids[n] = i.ID
+		}
+		return []intakereplay.Binding{{Target: d.Target, Decider: d.Decider, Candidates: ids}}, nil
 	}
 	err = json.Unmarshal([]byte(saved.Body.Text()), &result)
 	return result, err
@@ -237,4 +255,52 @@ func (r *conversationRuntime) readIntakeReplay(ctx context.Context) (intakerepla
 		}
 	}
 	return *s, stored.Input, nil
+}
+
+// The replay's fixed clock, prior focus and native surface/question metadata
+// are stored facts. Work titles and states still come from the actual stores.
+func replayBindingMetadata(ctx context.Context, tx *canon.Tx, state *binding.State, input *binding.Input) error {
+	var raw string
+	if err := tx.QueryRowContext(ctx, "SELECT body FROM conv_event WHERE id='replay-context'").Scan(&raw); err != nil {
+		return err
+	}
+	var stored intakeContext
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return err
+	}
+	state.Clock = stored.State.Clock
+	state.Focus = stored.State.Focus
+	state.FocusAgeSeconds = stored.State.FocusAgeSeconds
+	state.Surfaces = stored.State.Surfaces
+	input.ReplyTo, input.Card, input.Thread = stored.Input.ReplyTo, stored.Input.Card, stored.Input.Thread
+	state.Questions = nil
+	for n := range stored.State.Questions {
+		if err := tx.QueryRowContext(ctx, "SELECT body FROM conv_event WHERE id=?", fmt.Sprintf("replay-question-%d", n)).Scan(&raw); err != nil {
+			return err
+		}
+		var q binding.Question
+		if err := json.Unmarshal([]byte(raw), &q); err != nil {
+			return err
+		}
+		state.Questions = append(state.Questions, q)
+	}
+	visible := state.Items[:0]
+	for _, item := range state.Items {
+		for _, saved := range stored.State.Items {
+			if item.ID == saved.ID {
+				visible = append(visible, item)
+				break
+			}
+		}
+	}
+	state.Items = visible
+	for n := range state.Items {
+		for _, saved := range stored.State.Items {
+			if saved.ID == state.Items[n].ID {
+				state.Items[n].Names = saved.Names
+				state.Items[n].Links = saved.Links
+			}
+		}
+	}
+	return nil
 }
