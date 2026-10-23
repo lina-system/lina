@@ -424,7 +424,11 @@ checked for credential disclosure.
 stopped state root, checks exclusive ownership and idempotent retry, removes the
 source snapshot, then exercises the running Core's record tools. Imported evidence
 is found through search and read by LINA id, source-id lookup fails, a new result
-is saved, and restart keeps the imported identity. This operator-only test and
+is saved, and restart keeps the imported identity. The board shows canonical
+states for complete and incomplete issues and milestones, including earlier
+milestone publications interrupted before journal acknowledgement. Retry and
+restart preserve those records' saved revisions and projected deadline sources.
+This operator-only test and
 fixture are excluded from release archives together with the takeover tool.
 
 `m2/claude-worker.json` runs `dispatch_work` with `worker=claude` through
