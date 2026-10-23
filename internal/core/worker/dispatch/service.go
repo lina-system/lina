@@ -226,8 +226,8 @@ func (s *Service) Close(ctx context.Context) error {
 
 var branchName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 
-func validate(d Definition) error {
-	if d.Worker != "" && !slices.Contains(explicitWorkers(), d.Worker) {
+func validate(d Definition, factories ...Factory) error {
+	if d.Worker != "" && !slices.Contains(explicitWorkers(factories...), d.Worker) {
 		return work.ErrInvalid
 	}
 	if !filepath.IsAbs(d.Repository) || filepath.Clean(d.Repository) != d.Repository || !branchName.MatchString(d.Base) || !branchName.MatchString(d.Branch) || d.Branch == d.Base || d.Branch == "main" || d.Branch == "master" || d.Branch == "dev" || strings.TrimSpace(d.What) == "" || strings.TrimSpace(d.Why) == "" || strings.TrimSpace(d.Done) == "" || len(d.Scope) == 0 || len(d.DesignRefs) == 0 || len(d.WriteArea) == 0 {
@@ -267,7 +267,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 		if err != nil || masked.Text() != c.Arguments {
 			return d, work.ErrInvalid
 		}
-		if err := validate(d); err != nil {
+		if err := validate(d, s.cfg.Workers...); err != nil {
 			return d, err
 		}
 		d.Skill, err = skills.MethodID(d.Kind, d.Skill)
@@ -533,8 +533,17 @@ func (s *Service) sync() {
 		}
 	}
 }
-func Declaration() provider.ToolDecl {
-	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to an available installed worker; worker optionally names an explicit selection. Core allocates a detached task worktree from a local GitHub clone. It appends the generated task ID to the requested branch unless already present, and returns the assigned branch. The worker creates that branch. Supply the complete authorized task, design sections, done condition and write area. The dev manager checks the definition before Core returns a task receipt; completion returns to this conversation. The worker uses its own permissions and login. Optional kind selects a development method from skill_index methodology=dev; skill overrides it with one catalog ID. Core includes that version in the task packet.","parameters":{"type":"object","properties":{"worker":{"type":"string","enum":` + string(mustJSON(explicitWorkers())) + `},"kind":{"type":"string"},"skill":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
+
+// Declaration includes this Core's added workers without widening another
+// service's admission or changing the built-in compatibility declaration.
+func (s *Service) Declaration() provider.ToolDecl {
+	return declaration(s.cfg.Workers)
+}
+
+func Declaration() provider.ToolDecl { return declaration(nil) }
+
+func declaration(factories []Factory) provider.ToolDecl {
+	return provider.ToolDecl(`{"type":"function","name":"dispatch_work","description":"Delegate a code change to an available installed worker; worker optionally names an explicit selection. Core allocates a detached task worktree from a local GitHub clone. It appends the generated task ID to the requested branch unless already present, and returns the assigned branch. The worker creates that branch. Supply the complete authorized task, design sections, done condition and write area. The dev manager checks the definition before Core returns a task receipt; completion returns to this conversation. The worker uses its own permissions and login. Optional kind selects a development method from skill_index methodology=dev; skill overrides it with one catalog ID. Core includes that version in the task packet.","parameters":{"type":"object","properties":{"worker":{"type":"string","enum":` + string(mustJSON(explicitWorkers(factories...))) + `},"kind":{"type":"string"},"skill":{"type":"string"},"repository":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"scope":{"type":"array","items":{"type":"string"}},"not_touch":{"type":"array","items":{"type":"string"}},"done":{"type":"string"},"design_refs":{"type":"array","items":{"type":"string"}},"write_area":{"type":"array","items":{"type":"string"}}},"required":["repository","base","branch","what","why","scope","not_touch","done","design_refs","write_area"],"additionalProperties":false}}`)
 }
 
 type output struct{ bytes.Buffer }

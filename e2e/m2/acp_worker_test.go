@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -54,6 +55,8 @@ func TestACPWorkersThroughRunningCore(t *testing.T) {
 }
 
 type acpScenario struct {
+	profiles                   string
+	startupWarnings            []string
 	name, worker, binary, mode string
 	script                     string
 	parallel                   bool
@@ -147,6 +150,9 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			}
 			h.socket = installed.Socket
 			installedBinary := filepath.Join(state, "system/bin/lina")
+			if scenario.profiles != "" {
+				write(filepath.Join(state, "system/core/worker-profiles.json"), scenario.profiles, 0600)
+			}
 			git := func(args ...string) string {
 				t.Helper()
 				c := exec.CommandContext(ctx, filepath.Join(bin, "git"), args...)
@@ -171,7 +177,12 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			fixtureErrors := make(chan error, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var req struct {
-					Tools []struct{ Name string }
+					Tools []struct {
+						Name       string
+						Parameters struct {
+							Properties map[string]struct{ Enum []string }
+						}
+					}
 					Input []json.RawMessage
 				}
 				if e := json.NewDecoder(r.Body).Decode(&req); e != nil {
@@ -251,7 +262,9 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 				if requestCount.Add(1) == 1 {
 					available := false
 					for _, tool := range req.Tools {
-						available = available || tool.Name == "dispatch_work"
+						if tool.Name == "dispatch_work" {
+							available = slices.Contains(tool.Parameters.Properties["worker"].Enum, scenario.worker)
+						}
 					}
 					offered <- available
 					if !available {
@@ -285,6 +298,11 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 					c.Process.Signal(syscall.SIGTERM)
 					select {
 					case e := <-done:
+						for _, cause := range scenario.startupWarnings {
+							if !strings.Contains(logs.String(), cause) {
+								t.Errorf("startup did not report %q: %s", cause, &logs)
+							}
+						}
 						if e != nil {
 							t.Errorf("Core exit: %v %s", e, &logs)
 						}

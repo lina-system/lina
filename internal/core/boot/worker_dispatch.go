@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/lease"
 	"math"
+	"os"
 	"path/filepath"
 	"runtime"
 
@@ -34,7 +35,13 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	binary, _ := proc.LookPath("agy")
 	codexBinary, _ := proc.LookPath("codex")
 	claude, _ := proc.LookPath("claude")
-	acpFactories := dispatch.InstalledACPFactories(dispatch.Config{Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities})
+	acpConfig := dispatch.Config{Root: r.root, Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities}
+	acpFactories := dispatch.InstalledACPFactories(acpConfig)
+	addedFactories, problems := dispatch.AddedACPFactories(acpConfig)
+	for _, problem := range problems {
+		fmt.Fprintln(os.Stderr, problem)
+	}
+	acpFactories = append(acpFactories, addedFactories...)
 	if binary == "" && codexBinary == "" && claude == "" && len(acpFactories) == 0 {
 		return nil
 	}
