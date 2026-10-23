@@ -1463,6 +1463,10 @@ Antigravity worker runs through the existing dispatch service, with its own
 credentials, a separate worktree and the dev manager's assignment and delivery
 judgments. An adapter without resume support preserves interrupted work and asks
 for attention; it never starts a duplicate execution to imitate a resume.
+The host reports Antigravity ready only when that adapter is registered; a
+dispatcher serving another worker is insufficient. An unavailable worker leaves
+the task waiting without allocating a workspace. Dispatch pins the task's
+selected worker.
 
 The owner registers repository connections in `system/code-work.json` under the
 installed state root. This is a private regular file with mode `0600`, outside
@@ -1525,6 +1529,16 @@ receipt and releases that effect's target reservation in one transaction. It
 checks the original actor, target and action binding, refuses a live invocation,
 and cannot release a subsequent writer's reservation. The deployment is not
 issued again.
+
+If another actor merges after inspection and before Core creates its merge
+binding, observation restores that binding from the retained dispatch and
+confirms the exact PR head and landed commit. It issues no merge command or new
+merge authorization. A scope correction does not prevent observation of an
+already dispatched worker: Core reads its original person, agent, conversation,
+turn and action receipt even when the repository has left the scope or its
+connection is no longer installed. New execution still requires the current
+scope. Settling the old receipt releases its reservation so the corrected plan
+can proceed.
 
 The installed-binary acceptance uses fixture worker and GitHub executables, real
 Git commits, registered check commands and a local HTTP service. It proves one

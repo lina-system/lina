@@ -3,7 +3,9 @@ package e2e_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -49,7 +51,7 @@ func TestM2InstalledCodeGoalTool(t *testing.T) {
 
 func TestM2InstalledCodeGoalDriver(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"private", "public", "failed-deploy", "restart-deploy", "restart-unhealthy-probe"} {
+	for _, mode := range []string{"private", "public", "failed-deploy", "restart-deploy", "restart-unhealthy-probe", "external-merge", "no-antigravity"} {
 		t.Run(mode, func(t *testing.T) { t.Parallel(); installedCodeGoal(t, mode) })
 	}
 }
@@ -96,6 +98,25 @@ func installedCodeGoal(t *testing.T, mode string) {
 		if err = os.WriteFile(filepath.Join(bin, name), services, 0700); err != nil {
 			t.Fatal(err)
 		}
+	}
+	workerPath := bin + string(os.PathListSeparator) + os.Getenv("PATH")
+	if mode == "no-antigravity" {
+		if err = os.Remove(filepath.Join(bin, "agy")); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"node", "git", "sh"} {
+			binary, err := exec.LookPath(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.Symlink(binary, filepath.Join(bin, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err = os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		workerPath = bin
 	}
 	var mu sync.Mutex
 	deployed := map[string]string{}
@@ -186,7 +207,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		h.ctx = t.Context()
 		p := h.command("core", "--state-root", h.root, "--socket", h.socket)
 		h.ctx = operation
-		p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE=success", "LINA_GOAL_FIXTURE_URL="+service.URL, "LINA_GOAL_MODE="+mode, "LINA_RESPONSES_BASE_URL="+model.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+		p.command.Env = append(p.command.Env, "PATH="+workerPath, "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE=success", "LINA_GOAL_FIXTURE_URL="+service.URL, "LINA_GOAL_MODE="+mode, "LINA_RESPONSES_BASE_URL="+model.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 		p.start(t)
 		h.connectWithin(p, time.Minute).Close()
 		waitCoreReady(t, h)
@@ -195,6 +216,67 @@ func installedCodeGoal(t *testing.T, mode string) {
 	core := start()
 	c, conversation := conversationClient(t, h)
 	events := admittedTurn(t, h, c, conversation, "goal", "Create the result and run it through deployment and verification.")
+	if mode == "no-antigravity" {
+		waitCodeGoalState(t, h, func(tx *canon.Tx) (bool, error) {
+			var raw []byte
+			if err := tx.QueryRowContext(h.ctx, "SELECT body FROM work_records WHERE kind='goal'").Scan(&raw); err != nil {
+				return false, err
+			}
+			var g goal.Goal
+			if err := json.Unmarshal(raw, &g); err != nil {
+				return false, err
+			}
+			if len(g.Waits) != 1 || g.Waits[0].Reason != "worker" {
+				return false, nil
+			}
+			if err := tx.QueryRowContext(h.ctx, "SELECT body FROM work_records WHERE kind='node'").Scan(&raw); err != nil {
+				return false, err
+			}
+			var host goal.Node
+			if err := json.Unmarshal(raw, &host); err != nil {
+				return false, err
+			}
+			if !host.Connected || host.Workers["antigravity"] {
+				t.Fatalf("unavailable Antigravity reported ready: %+v", host)
+			}
+			var count int
+			if err := tx.QueryRowContext(h.ctx, "SELECT count(*) FROM worker_dispatch").Scan(&count); err != nil {
+				return false, err
+			}
+			if count != 0 || g.Tasks[0].Stage != goal.TaskReady || g.Tasks[0].Attempt != 0 {
+				t.Fatalf("unavailable worker was dispatched: count=%d goal=%+v", count, g)
+			}
+			return true, nil
+		})
+		c.Close()
+		h.stopCore(core)
+		if _, err := os.Stat(filepath.Join(fixture, "allocation.json")); !os.IsNotExist(err) {
+			t.Fatal("unavailable worker allocated a workspace", err)
+		}
+		return
+	}
+	if mode == "external-merge" {
+		waitCodeGoalState(t, h, func(tx *canon.Tx) (bool, error) {
+			var state string
+			err := tx.QueryRowContext(h.ctx, "SELECT json_extract(body,'$.state') FROM work_records WHERE kind='action' AND json_extract(body,'$.kind')='merge'").Scan(&state)
+			if err != nil || state != "unknown" {
+				return false, err
+			}
+			var bindings int
+			if err = tx.QueryRowContext(h.ctx, "SELECT count(*) FROM authority_merges").Scan(&bindings); err != nil {
+				return false, err
+			}
+			if bindings != 0 {
+				t.Fatal("fixture merged after the authority binding was already created")
+			}
+			return true, nil
+		})
+		c.Close()
+		h.stopCore(core)
+		core = start()
+		c, conversation = conversationClient(t, h)
+		events = nil
+	}
 	if restarting {
 		select {
 		case <-deployedSignal:
@@ -313,6 +395,15 @@ func installedCodeGoal(t *testing.T, mode string) {
 			t.Fatalf("reconciled deployment kept authority reserved: state=%s active=%s err=%v", state, active, err)
 		}
 	}
+	if mode == "external-merge" {
+		var state, repository, head string
+		err = db.Read(t.Context(), func(tx *canon.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT state, repository, json_extract(record,'$.Result.Head') FROM authority_merges").Scan(&state, &repository, &head)
+		})
+		if err != nil || state != "merged" || repository != "fixture/project" || head != g.Tasks[0].Head {
+			t.Fatalf("external merge binding not reconciled: state=%s repository=%s head=%s err=%v", state, repository, head, err)
+		}
+	}
 	closeDB()
 	for _, check := range g.Checks {
 		if !check.Passed || check.Ref == "" {
@@ -339,7 +430,14 @@ func installedCodeGoal(t *testing.T, mode string) {
 	if mode == "restart-unhealthy-probe" && (failedProbes.Load() != 1 || strings.Count(string(before), "probe\n") < 2) {
 		t.Fatalf("failed probe was not followed by a successful observation: %s", before)
 	}
-	for _, name := range []string{"worker-pr", "merge", "qa", "deploy", "probe", "acceptance"} {
+	mergeEvent := "merge"
+	if mode == "external-merge" {
+		mergeEvent = "external-merge"
+		if strings.Contains("\n"+string(before), "\nmerge\n") {
+			t.Fatalf("observation repeated merge: %s", before)
+		}
+	}
+	for _, name := range []string{"worker-pr", mergeEvent, "qa", "deploy", "probe", "acceptance"} {
 		if !strings.Contains(string(before), name+"\n") {
 			t.Fatalf("stage %s never ran: %s", name, before)
 		}
@@ -399,6 +497,33 @@ func waitUnconfirmedCodeDeployment(t *testing.T, h *harness) {
 		case <-ticker.C:
 		case <-h.ctx.Done():
 			t.Fatal("negative deployment probe was not recorded: ", h.ctx.Err())
+		}
+	}
+}
+
+// Observe committed predicates, never a sleep as evidence of progress.
+func waitCodeGoalState(t *testing.T, h *harness, ready func(*canon.Tx) (bool, error)) {
+	t.Helper()
+	reader, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close(context.Background())
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var done bool
+		err := reader.Read(h.ctx, func(tx *canon.Tx) error { var err error; done, err = ready(tx); return err })
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			t.Fatal(err)
+		}
+		if done {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-h.ctx.Done():
+			t.Fatal("code goal predicate not reached: ", h.ctx.Err())
 		}
 	}
 }
