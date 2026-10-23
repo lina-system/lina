@@ -201,6 +201,11 @@ type workerProbe struct {
 	inputs, interrupts int
 }
 
+func (p *workerProbe) Name() string { return "codex" }
+func (p *workerProbe) DeliveryProfile() worker.DeliveryProfile {
+	return worker.DeliveryProfile{Tier: "push", Mechanism: "fixture", Available: true}
+}
+
 func (p *workerProbe) Snapshot(context.Context, worker.Thread) (worker.ThreadSnapshot, error) {
 	return p.snapshot, nil
 }

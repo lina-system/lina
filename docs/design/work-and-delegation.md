@@ -737,8 +737,9 @@ priority. Without rules, otherwise equal candidates retain the installed
 Antigravity-then-Codex order. These rules grant no worker permissions.
 
 Dispatch keeps worker eligibility in one factory registry. Explicit selections
-are Antigravity, headless Claude and the built-in ACP profiles; automatic
-selection uses Antigravity, Codex and installed ACP profiles in that order.
+are Antigravity, headless Claude and the built-in and valid added ACP profiles;
+automatic selection uses Antigravity, Codex, installed built-in ACP profiles and
+valid added profiles in that order.
 Headless Claude remains explicit-only, and the provisional rules file accepts
 only Antigravity and Codex. Admission, the tool's worker enum and rule validation
 derive from those registrations. Startup converts legacy binary settings into
@@ -905,6 +906,9 @@ Every worker adapter offers the work engine the same operations:
 - LINA lists the worker versions each adapter has verified in the release manifest's `verifiedWorkerVersions` field ([runtime.md](runtime.md)). Installation compares Codex's bare version with that list, accepting the `codex-cli ` prefix in probe output and legacy lists. When the installed version is not on the list, LINA tells the user that the version is unverified, with the version it found and the verified ones, and still delegates.
 - LINA refuses delegation to the worker only when the adapter can't connect to it or the protocol handshake fails (for Codex, `initialize`), and names the cause.
 - LINA never installs, updates or pins the worker.
+- Person-added ACP workers are always unverified, including when their reported
+  version matches a verified built-in version. Their settings cannot assert
+  verification; an unknown version remains usable after a successful handshake.
 
 ### Codex adapter
 
@@ -1113,6 +1117,15 @@ no other handshake metadata, including host details, authentication descriptions
 or metadata nested inside capabilities. Advertised capabilities are observations;
 they do not enable operations the adapter has not implemented.
 
+The person adds ACP workers in `system/core/worker-profiles.json` under the Core
+state root; [C-60](go-core.md#work-engine) defines its versioned JSON format.
+Core reads it at startup and registers valid entries with the shared adapter.
+An added name cannot replace any built-in name. Invalid entries are refused with
+their cause while other workers remain available; malformed file syntax refuses
+only the added file. Settings changes require a restart. Commands and arguments
+are passed as entered without shell interpretation or worker configuration edits.
+Added workers participate in normal dispatch authority, readiness and receipts.
+
 - **Start.** Core starts the profile's command as a stdio child with the person's environment, removing only LINA's own model credential. `initialize` declares no file system or terminal capability, so the worker uses its own tools, and declares form elicitation. An answer other than protocol version 1 fails the handshake. The answered capabilities become the adapter's capability set: approvals and progress always, steering only with the steering extension, recovery only with `loadSession` or `session/resume`, quota only where a source below exists.
 - **Session.** `session/new` carries the worktree as `cwd` and LINA's tool server as the only entry of `mcpServers`; the worker's own MCP servers stay in its own configuration. LINA calls `session/set_config_option` only to apply a model or effort that the worker profile names, and never changes the session mode. The task packet goes out as the first `session/prompt`.
 - **Events.** Message, thought, tool-call and plan updates are progress; `usage_update` is usage; plan entries become stage summaries labelled as the worker's report. An unknown update keeps its JSON and never ends a turn. Sub-agent updates are unstable in version 1 and are not consumed; a worker's own sub-agents stay inside its turn.
@@ -1132,7 +1145,21 @@ they do not enable operations the adapter has not implemented.
   incomplete protocol stream or an unfinished request keeps the outcome unknown. Loading or resuming a session
   does not reconcile an unknown turn after a Core crash. A second settled death
   creates the existing decision row and cannot start a third worker.
-- **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of a request (-32000 is login expiry); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
+- **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of `session/new` (-32000 means needs sign-in) or of `session/prompt` (a worker failure with code `prompt_failed`); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
+  Core opts into only AIR v1 `sessionFailure` and accepts it only when the
+  initialize response advertises it. Its error-severity category/actions map
+  to rate limited (`limit`/`retry`), quota exhausted (`limit`/no actions),
+  sign-in required (`access`/`login`) or connection lost
+  (`connection`/`new_session`). Warnings and unknown combinations do not end
+  a turn. The prompt reply remains the terminal boundary: request errors and
+  explicit non-success stop reasons take precedence over extension reports.
+  Claude's reported bucket, utilization, status and Unix-seconds reset become
+  quota rows; context-window usage is not subscription quota. Missing values
+  remain unknown. Core saves reported rows before closing the session, and an
+  exhausted worker permits only the existing single replacement after cleanup.
+  Replacement requires no tool activity, unknown update, unfinished request or
+  earlier prompt-error uncertainty. A native tool's `completed` or `failed`
+  status does not establish its external effects, as for connection recovery.
 - **Never sent.** `authenticate` and `logout`, because the person signs in to a worker in the worker itself; `session/delete`; and `session/set_mode`. `session/close` is sent only on an explicit close.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
 
@@ -1149,10 +1176,12 @@ the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
 A JSON-RPC error reply to the prompt is an observed worker failure, including
-when the process exits immediately after replying. Core records the failed turn
+when the process exits immediately after replying. It uses code `prompt_failed`
+regardless of the remote error code. Core records the failed turn
 and an adapter-derived receipt without retaining the remote error message or
 data. The reply alone does not settle external effects: unresolved effects keep
-the existing recovery fence until reconciliation.
+the existing recovery fence until reconciliation; a later successful prompt
+does not settle that earlier uncertainty.
 The adapter advertises progress, completion, work tools, approvals and questions. ACP
 requests use the existing worker authority and waiting-card bridge, preserving
 the originating conversation. Cards identify the ACP worker; Codex cards retain
@@ -1168,7 +1197,7 @@ without requesting secret input. Field names the waiting-card bridge refuses
 are declined the same way and are not shown as a card.
 A pending native decision leaves the prompt's work tools available; prompt
 completion expires both decision and work-tool requests.
-Steering, quota and recovery remain separate integrations;
+Steering and recovery remain separate integrations;
 requesting a capability that is not implemented fails before dispatch.
 
 #### Claude Code through ACP
@@ -1243,7 +1272,7 @@ Code-change work ends in a pull request that the worker opens, and goes through 
 
 ### Control
 
-- An idle thread receives `turn/start`. An active thread receives `turn/steer` with `expectedTurnId`. An idle ACP session receives `session/prompt`; an active one is steered only when the worker advertises steering, and otherwise its input waits for the turn to end.
+- An idle thread receives `turn/start`. An active thread receives `turn/steer` with `expectedTurnId`. An idle ACP session receives `session/prompt`; an active one is steered only when the worker advertises steering, and otherwise its input follows the recorded turn or pull delivery tier below.
 - Right before any input, LINA Core checks the thread, the turn, the process generation and the binding epoch again. A thread id alone never controls anything.
 - The protocol session and its process state establish whether a worker is active, waiting, dead or stalled; screen text never does. Recovery resumes the thread, or restarts a dead worker, once in the same work area before escalation, preserving the task, branch, receipts and the record of its review and CI fixes. Recovery does not grant another review-fix pass (see Stall and failure).
 - An open question or approval blocks ordinary input to that thread.
@@ -1252,6 +1281,40 @@ Code-change work ends in a pull request that the worker opens, and goes through 
 - A cancel is final only when `turn/completed` reports `interrupted`, or when the ACP `session/prompt` reply reports the stop reason `cancelled`.
 - Pause stops LINA's delivery to the work thread. It does not stop execution. Paused work never resumes automatically.
 - Close keeps files, branches, worktrees and receipts and never deletes the thread. `thread/archive` is sent only on an explicit close.
+
+### Steering delivery and receipts
+
+Every worker connection records its effective delivery tier and mechanism in
+its profile. A vendor name alone does not establish an input capability:
+
+- **push:** active-turn input and idle wake through the bound protocol.
+- **turn:** input at the next supported tool boundary. Core's ACP bridge uses
+  the next LINA tool result; it does not intercept the worker's native tools.
+- **pull:** an unread notice on each LINA tool result and `lina.check_inbox`.
+  A connection without a tool or input transport reports the inbox unavailable.
+
+An idle ACP session accepts `session/prompt`; starting it still requires its
+existing task owner's admission. Task-controlled steering never starts an extra
+execution. Core installs no hook or plugin in the person's settings. A stronger
+native mechanism is advertised only when that connection implements it.
+
+Each message has an id, sender, task and `<worker>:<session>` address. Core stores
+it before delivery and retains append-only work receipts: `stored`, `delivered`,
+`read`, `held` or `refused`. The sender can inspect these receipts in the worker
+snapshot and task ledger; changes also return to its conversation. Turn and pull
+senders are told “seen at the next step.” Delivery acknowledges the transport,
+not the worker's reading or completion of the task. `check_inbox` acknowledges
+read message IDs and may report acted IDs; Core records send-to-action time per
+message and tier, explicitly as a worker claim. Acknowledgements cannot name
+another session's messages or precede delivery.
+
+Known-unsent messages wait while the session is down or waiting for an answer
+and are delivered under the same session key after resume. A new session does
+not inherit another session's mail. Core claims a delivery before sending; an
+uncertain send stays held for reconciliation and is never automatically replayed.
+A task session that ends for good refuses its remaining unsent mail and tells
+the sender. Closing work preserves its receipts. These receipts neither accept
+a task result nor authorize new work.
 
 ### Completion signals
 

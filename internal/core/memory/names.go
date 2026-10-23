@@ -120,7 +120,7 @@ func putName(ctx context.Context, tx *canon.Tx, item Item) (Item, error) {
 			item.Sensitivity = append(item.Sensitivity, tag)
 		}
 	}
-	raw, err = json.Marshal(item)
+	raw, err = marshalRecord(item)
 	if err != nil {
 		return Item{}, err
 	}

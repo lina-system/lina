@@ -2067,6 +2067,10 @@
     "item_done": {
       "type": "object",
       "properties": {
+        "details": {
+          "type": "string",
+          "maxLength": 4096
+        },
         "stream": {
           "$ref": "#/$defs/stream_metadata"
         },
@@ -4612,6 +4616,12 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "evidence_details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/memory_evidence"
+          }
         }
       },
       "additionalProperties": false,
@@ -4942,6 +4952,14 @@
     "replay_request": {
       "type": "object",
       "properties": {
+        "provider": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "fixture": {
+          "type": "string",
+          "maxLength": 524288
+        },
         "turn_id": {
           "type": "string",
           "maxLength": 512
@@ -5986,6 +6004,48 @@
         "label"
       ],
       "additionalProperties": false
+    },
+    "memory_evidence": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tombstone": {
+          "$ref": "#/$defs/memory_tombstone"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "reference"
+      ]
+    },
+    "memory_tombstone": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "person": {
+          "type": "string"
+        },
+        "at": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "person",
+        "at"
+      ]
     },
     "a2a_profile": {
       "type": "object",

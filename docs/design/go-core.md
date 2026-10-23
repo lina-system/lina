@@ -1107,7 +1107,7 @@ Each complete result revision is one append-only `conv_event`; even a preview ab
 A rejected body or stale replacement appends nothing.
 `present_result` returns only the card fields and an initial text excerpt (2,048 Unicode scalar values by default); `read_result` is the explicit body-reading operation.
 A saved result keeps its revision and appends a status event pointing to `saved_as`.
-Request assembly skips every `result` scaffold (creation, replacement and saved-status events), so these storage bodies never become model messages.
+Request assembly skips every `result` scaffold (creation, replacement and saved-status events), so these storage bodies never become model messages. It also projects the presenting `present_result` call with a bounded reference in place of its arguments; the recorded call keeps its bytes.
 The separate `provider_item` tool acknowledgement remains byte-for-byte history; only an explicit `read_result` output includes the body.
 
 Save resolves and authorizes its destination without publishing, then commits its CP-05 claim and allocated record id, creates the record outside the canon transaction using that same resolved destination, and finally commits the receipt and saved status.
@@ -1213,7 +1213,7 @@ their existing durable run JSON before sending.
 Implementation notes: [C-43 provider increment](../../kit/provider/REFERENCE.md#c-43-provider-increment).
 
 **C-44 Responses and Gemini adapters (new).**
-Responses adapter: Go standard-library HTTP and a bounded SSE reader, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function).
+Responses adapter: Go standard-library HTTP and a bounded SSE reader, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested when Core selected the reasoning-state capability, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function).
 Done items come from `response.output_item.done` only, and tool calls dispatch from done items only.
 Current-turn items are never sent altered or dropped.
 [V1](runtime.md#runtime-acceptance) decides the open fields.
@@ -2404,6 +2404,31 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   Malformed frames, EOF and overflowing the bounded event queues fail the connection.
   Consumers drain updates and requests while calls run and apply Core's authorization and approval policy.
 - Implementation notes: [C-60 worker profiles](../../internal/core/worker/acp/REFERENCE.md#c-60-worker-profiles).
+- Added worker settings are read once at Core startup from
+  `system/core/worker-profiles.json` under the state root:
+
+  ```json
+  {"version":1,"profiles":[{"name":"my-agent","command":"my-acp-agent","args":["acp"]}]}
+  ```
+
+  Version 1 accepts only `version` and `profiles`; each profile accepts only
+  `name`, `command` and optional `args` (an array of strings, empty by default).
+  Names match `[a-z][a-z0-9-]{0,63}`. All built-in worker names are reserved even
+  when absent, and every entry sharing a duplicate added name is refused.
+  A command is an executable on PATH or an absolute executable path; Core
+  resolves it at startup and passes arguments directly, without a shell.
+  The file is a regular file of at most 64 KiB with at most 128 profiles;
+  commands and each argument have at most 4096 bytes, with at most 128 arguments
+  and no NUL bytes. Commands cannot be blank or have outer whitespace.
+  Missing settings add no workers. Invalid JSON, envelope fields or version
+  refuse the added file; an invalid profile or unavailable executable refuses
+  only that entry. Startup reports the file, entry number or valid worker name, and cause
+  without echoing commands or arguments. Other workers remain available.
+  Valid added profiles follow installed built-ins in the chooser and are also
+  explicit selections in that Core's `dispatch_work` declaration and admission.
+  Changes take effect on restart. Settings confer no execution authority and
+  cannot supply environment, model, login, version probes or verified versions.
+  Each attempt uses `agentInfo.version` or `unknown` and remains unverified.
 - `kit/acp.StartPrompt` returns after writing `session/prompt` and supplies one buffered result.
   The adapter starts each turn through that barrier, so an immediate `session/cancel` cannot precede the prompt.
   `Prompt` retains its blocking convenience API; cancelling its wait sends no protocol cancel.
@@ -2450,7 +2475,9 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
 | `session/update`: message, thought, tool call, tool-call update, plan | progress |
 | `usage_update`, usage in the `session/prompt` reply | usage |
 | `session/prompt` reply | finish: `end_turn` done; `cancelled` interrupted; `refusal`, `max_tokens`, `max_turn_requests` failed as a worker error naming the stop reason |
-| JSON-RPC error on a request; session-failure extension | finish failed: -32000 login expiry; extension kinds map to quota, rate limit, login or connection |
+| `session/new` JSON-RPC error -32000 | readiness refusal: needs sign-in |
+| `session/prompt` JSON-RPC error | finish failed: worker error with `prompt_failed`; effects remain unknown |
+| Advertised session-failure extension | finish failed: quota, rate limit, login or connection |
 | `session/request_permission` | approval |
 | `elicitation/create` (form) | question |
 | A tool call on LINA's session MCP server | work-tool call |
@@ -2463,6 +2490,16 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   It returns Core's record of the session: state, pending requests and the last message.
   After a Core restart the state is unknown until once-only recovery loads the session again.
 - `Quota` returns rows only from the session-failure extension and a profile's named rate-limit key; with neither, it returns none and the chooser treats the worker as unknown.
+  Worker initialization opts into AIR v1 session failures without changing the
+  shared client's provider defaults. Only advertised, error-severity machine
+  categories/actions are classified. Prompt RPC errors and stop reasons retain
+  precedence; warning updates and unknown metadata cannot finish a turn.
+  A terminal ACP snapshot carries its observed finish; transport loss leaves
+  effects unknown, as do prompt errors and native tool calls without a reported
+  terminal outcome. A later prompt does not reconcile an earlier error.
+  Dispatch persists streamed quota measurements before session
+  teardown and uses that snapshot to fence the one allowed replacement.
+  The synthetic installed-Core scenario is `e2e/m2/acp_quota_test.go`.
 - Every child is owned through `kit/proc` and reaped with its process tree; LINA's own model credential is removed from its environment.
 
 **C-57 Work definition, choice and splitting (new).**

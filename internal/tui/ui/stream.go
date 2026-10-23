@@ -319,6 +319,10 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 		if p.Speaker != nil {
 			block.Speaker = *p.Speaker
 		}
+		if p.Details != nil && block.Speaker == protocol.ConversationSpeakerSystem {
+			block.Body = *p.Details
+			block.Title = block.Text
+		}
 	case protocol.TurnState:
 		if p.Phase != nil {
 			block.TurnPhase = *p.Phase
