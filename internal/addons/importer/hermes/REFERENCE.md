@@ -60,7 +60,7 @@ placeholder and retains `body_masking_error` in the native event's origin.
 on both first import and retry. The original sidecar remains referenced by
 `import_event` even when the native event uses the inline fallback. No migration
 is needed. `TestM1ImportJSONMasking` exercises installed import, verified backup,
-repeat import and a restarted Core's `recall_person` tool with synthetic data.
+repeat import, safe promotion and a restarted Core's memory API with synthetic data.
 
 Design authority: [Go Core](../../../../docs/design/go-core.md) and the contracts it cites.
 These notes retain implementation and validation history from the cited increments;
