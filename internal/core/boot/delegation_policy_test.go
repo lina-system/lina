@@ -73,7 +73,7 @@ func TestDelegationPresetCeilingsPrecedeAdmissionAndSurviveRelay(t *testing.T) {
 				view := newConversationView(r, attempt.agent, "main:"+attempt.agent)
 				view.delegation = d
 				bindings := map[string]loop.Tool{}
-				view.prepareDelegationTools(attempt.turn, bindings)
+				view.prepareDelegationTools(attempt.turn, nil, bindings)
 				call := provider.ToolCall{ID: "graph", Name: "schedule_work", Arguments: policyGraph}
 				for range 2 {
 					result := bindings[call.Name].Execute(t.Context(), call)
@@ -134,7 +134,7 @@ func TestDelegationBindsOriginPolicyBeforeDispatch(t *testing.T) {
 		},
 	})
 	bindings := map[string]loop.Tool{}
-	view.prepareDelegationTools("turn:allowed-input", bindings)
+	view.prepareDelegationTools("turn:allowed-input", nil, bindings)
 	bindings["schedule_work"].Execute(t.Context(), provider.ToolCall{ID: "graph", Name: "schedule_work", Arguments: policyGraph})
 	if !started {
 		t.Fatal("unrestricted origin could not reach dispatch")

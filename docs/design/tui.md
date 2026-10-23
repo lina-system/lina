@@ -1069,14 +1069,18 @@ type Stream interface {
 
 Chat pastes are masked with the same credential-shape and structured-value
 scanner as Core before they reach the composer, local echo, undo or sent-input
-recall. The complete draft is scanned again to cover a value pasted after a
-credential field name. If that replacement changes surrounding draft text, the
+recall. The complete insertion is scanned before the composer length limit to cover
+a value pasted after a credential field name or a token split across pastes. If that replacement changes surrounding draft text, the
 cursor moves to the end of the masked draft. Ordinary pastes keep their insertion
 position. Masking precedes the composer length limit. Invalid structured input
 that cannot be masked safely becomes a placeholder. Dedicated sign-in and API
 key fields keep their separate hidden-input path. These detectors recognize
 known shapes; they do not identify every possible arbitrary secret. Core still
 masks every input before ledger storage and derivation.
+`TestM1TUIChatPasteInstalledCore` exercises the installed Core and a 120×34 PTY,
+checking the unsent draft, local echo, sent-input recall, provider input,
+persistent files and restored conversation. It scans terminal output as well
+as settled screens, so an intermediate leaked frame also fails.
 
 Keys are data in `internal/tui/ui/keys.go`: action catalog id, key spellings,
 footer priority and optional compact label. `/help` and `?` on a completely empty

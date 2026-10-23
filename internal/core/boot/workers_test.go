@@ -61,7 +61,7 @@ func TestWorkerStartCancelledDuringManagerAdmissionCanRetry(t *testing.T) {
 	defer func() { close(release); <-active }()
 	<-busy
 	bindings := map[string]loop.Tool{}
-	if err = r.prepareWorkerTools(turnID, ledger.Event{}, bindings); err != nil {
+	if _, err = r.prepareWorkerTools(turnID, &toolPreparation{event: ledger.Event{}}, bindings); err != nil {
 		t.Fatal(err)
 	}
 	cancelled, cancelBeforeAdmission := context.WithCancel(t.Context())
@@ -162,7 +162,7 @@ func TestWorkerSchemaRejectsInjectedSettingsAndIncompleteControls(t *testing.T) 
 func TestWorkerStartValidatesCallBeforeManagerAdmission(t *testing.T) {
 	r := controlRuntime(t)
 	bindings := map[string]loop.Tool{}
-	if err := r.prepareWorkerTools("turn", ledger.Event{}, bindings); err != nil {
+	if _, err := r.prepareWorkerTools("turn", &toolPreparation{event: ledger.Event{}}, bindings); err != nil {
 		t.Fatal(err)
 	}
 	for _, call := range []provider.ToolCall{
@@ -253,7 +253,7 @@ func TestWorkerControlsAreBoundToConversationAndCurrentHandle(t *testing.T) {
 func TestWorkerInterruptRequiresQuoteFromCurrentUserInput(t *testing.T) {
 	r := &conversationRuntime{workers: &workerRuntime{}}
 	bindings := map[string]loop.Tool{}
-	if err := r.prepareWorkerTools("turn", ledger.Event{}, bindings); err != nil {
+	if _, err := r.prepareWorkerTools("turn", &toolPreparation{event: ledger.Event{}}, bindings); err != nil {
 		t.Fatal(err)
 	}
 	call := provider.ToolCall{ID: "cancel", Name: "worker_interrupt", Arguments: `{"session":"thread","turn":"turn","generation":1,"binding":1,"quote":"stop this worker"}`}

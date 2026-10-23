@@ -4,6 +4,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
@@ -63,6 +64,22 @@ func (m *shellModel) editComposer(msg tea.Msg) tea.Cmd {
 	if paste, ok := msg.(tea.PasteMsg); ok {
 		paste.Content = maskChatPaste(paste.Content)
 		msg = paste
+		// Check the full insertion before the textarea limit can cut a token
+		// assembled across pastes below its recognizable length.
+		c := &m.conversation.composer
+		c.DeleteSelection()
+		text := c.Value()
+		lines := strings.Split(text, "\n")
+		offset := 0
+		for _, line := range lines[:c.Line()] {
+			offset += len(line) + 1
+		}
+		offset += len(string([]rune(lines[c.Line()])[:c.Column()]))
+		inserted := text[:offset] + paste.Content + text[offset:]
+		if masked := maskChatPaste(inserted); masked != inserted {
+			c.SetValue(masked)
+			msg = tea.PasteMsg{}
+		}
 	}
 	c, command := m.conversation.composer.Update(msg)
 	if pasted {
