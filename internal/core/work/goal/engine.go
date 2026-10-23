@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/worker"
 )
 
 var errNoChange = errors.New("work_no_change")
@@ -64,6 +65,10 @@ type Config struct {
 	Now           func() time.Time
 	Driver        Driver
 	Sweep         <-chan time.Time
+	// Sessions owns the worker processes of goal steps. After every committed
+	// event, a session whose step has landed or been closed is ended, so live
+	// sessions follow the frontier and not the history of the goal.
+	Sessions *worker.Live
 	// Changed publishes a committed projection. A delivery failure does not
 	// revoke the state; startup and subsequent events can publish it again.
 	Changed func(context.Context, State) error
@@ -320,6 +325,10 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					t.Stage = TaskBuilding
 					t.Attempt = a.Attempt
 					t.NodeID = a.NodeID
+					// The worker action of this reservation owns the step's
+					// session. Recording its key here, in the same transaction,
+					// keeps the live set derivable before any process exists.
+					t.Session = a.ID
 					t.PR = PRState{}
 					t.EffectsSettled = false
 					if counter := kindSpecs[a.Kind].counter; counter != nil {
@@ -751,6 +760,12 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		t.Head = o.Head
 		t.Stage = TaskDelivered
 		t.EffectsSettled = true
+		if o.Handle != "" {
+			// The handle names the worker session that stays live while this
+			// step is under pull-request operation. It is Core's record key,
+			// never a worker claim.
+			t.ThreadHandle = o.Handle
+		}
 	case InspectPR:
 		if t == nil || o.PR.Head == "" {
 			return ErrInvalid
@@ -943,6 +958,9 @@ func (e *Engine) step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// A step that has landed or been closed no longer justifies a process. A
+	// failed join stays live and is retried by the next event or sweep.
+	_ = e.reapSessions(ctx, s)
 	if e.cfg.Changed != nil {
 		if err := e.cfg.Changed(ctx, s); err != nil {
 			return err

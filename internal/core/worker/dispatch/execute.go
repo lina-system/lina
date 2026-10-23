@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
@@ -79,6 +80,57 @@ type execution struct {
 	deferred     []func()
 	workspace    executionWorkspace
 	attempt      executionAttempt
+	adapter      worker.Adapter
+	closer       *attemptCloser
+}
+
+// attemptCloser joins a worker process at most once. A goal step keeps its
+// session open between turns, so deferred cleanup must not end an adopted one.
+type attemptCloser struct {
+	mu      sync.Mutex
+	close   func(context.Context) error
+	ended   bool
+	adopted bool
+}
+
+// Close is the deferred cleanup path. An adopted session belongs to the live
+// registry and is ended there, when its step lands or is closed.
+func (c *attemptCloser) Close(ctx context.Context) error {
+	c.mu.Lock()
+	if c.adopted {
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
+	return c.End(ctx)
+}
+
+// End is the registry path. It is idempotent, so a repeated end after the
+// process exited on its own is harmless. A failed join stays retryable: the
+// adapter's process may still be alive, and only a completed join releases it.
+func (c *attemptCloser) End(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ended {
+		return nil
+	}
+	if err := c.close(ctx); err != nil {
+		return err
+	}
+	c.ended = true
+	return nil
+}
+
+// Adopt transfers the process to the live registry. It refuses a process that
+// was already joined, so a late delivery cannot adopt a closed adapter.
+func (c *attemptCloser) Adopt() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ended {
+		return false
+	}
+	c.adopted = true
+	return true
 }
 
 type executionWorkspace struct {
@@ -94,6 +146,10 @@ type executionAttempt struct {
 	run         work.Run
 	finish      worker.Finish
 	observation observation
+	// settled reports a complete, effect-free terminal read of the process.
+	// Delivery uses it to admit the shared recovery policy for a connection
+	// failure, so the value travels with the attempt instead of a local.
+	settled bool
 }
 
 func (e *execution) closeDeferred() {
@@ -396,6 +452,14 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 		}
 	} else {
 		for len(r.Tried) < 2 {
+			// One worker, one worktree. A session kept from an earlier attempt
+			// of this task ends before another process may use its files.
+			if s.cfg.Sessions != nil {
+				if err = s.cfg.Sessions.EndTask(ctx, r.ID); err != nil {
+					r.Code = "cleanup_failed"
+					return false
+				}
+			}
 			for _, directory := range directories {
 				if err = service.CheckWorker(ctx, directory.ID); err != nil {
 					r.Code = "control_held"
@@ -420,15 +484,17 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 				}
 				return closeErr
 			}
-			e.deferred = append(e.deferred, func() { closeAdapter(context.Background()) })
+			closer := &attemptCloser{close: closeAdapter}
+			e.closer, e.adapter = closer, adapter
+			e.deferred = append(e.deferred, func() { closer.Close(context.Background()) })
 			observation = observeAdapter(adapter)
 			r.Version, err = adapter.Version(ctx)
 			if err != nil {
-				closeAdapter(context.Background())
+				closer.End(context.Background())
 				return false
 			}
 			if err = s.reserveWorker(ctx, r, adapter.Name()); err != nil {
-				closeAdapter(context.Background())
+				closer.End(context.Background())
 				if errors.Is(err, errWorkerParked) {
 					continue
 				}
@@ -448,7 +514,7 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 				allowed, err := s.cfg.AuthorizeRecovery(ctx, *r)
 				if err != nil || !allowed {
 					r.Code = "recovery_scope_changed"
-					closeAdapter(context.Background())
+					closer.End(context.Background())
 					return false
 				}
 			}
@@ -464,7 +530,7 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 			thread, err = s.startAttempt(ctx, l, adapter, *r, run.ID, workdir)
 			if err != nil {
 				if errors.Is(err, worker.ErrNeedsSignIn) {
-					if closeAdapter(ctx) != nil {
+					if closer.End(ctx) != nil {
 						return false
 					}
 					e.outcome = outcomeFinished
@@ -473,7 +539,7 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 					}
 					continue
 				}
-				closeAdapter(context.Background())
+				closer.End(context.Background())
 				return false
 			}
 			// ACP agentInfo is available only after the session handshake.
@@ -482,7 +548,7 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 				err = s.save(ctx, *r)
 			}
 			if err != nil {
-				closeAdapter(context.Background())
+				closer.End(context.Background())
 				return false
 			}
 			var cancelled bool
@@ -496,12 +562,12 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 			run.ThreadID, run.TurnID = thread.ID, thread.TurnID
 			r.Thread = &thread
 			if err = s.save(ctx, *r); err != nil {
-				closeAdapter(context.Background())
+				closer.End(context.Background())
 				return false
 			}
 			e.outcome = outcomeUnknown
 			if err = service.Start(ctx, run); err != nil {
-				closeAdapter(context.Background())
+				closer.End(context.Background())
 				return false
 			}
 			handle, unbind := func(worker.Event) {}, func() {}
@@ -534,7 +600,7 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 					if !ok || event.Thread != thread || event.Validate() != nil {
 						r.Code = "worker_protocol_error"
 						unbind()
-						closeAdapter(context.Background())
+						closer.End(context.Background())
 						return false
 					}
 					if event.Progress != nil {
@@ -559,7 +625,7 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 					if err != nil {
 						r.Code = "progress_failed"
 						unbind()
-						closeAdapter(context.Background())
+						closer.End(context.Background())
 						return false
 					}
 					if event.Approval != nil || event.Question != nil || event.ToolCall != nil || event.Progress != nil && event.Progress.Phase == "server_request_resolved" {
@@ -578,7 +644,7 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 						}
 						if err = s.save(ctx, *r); err != nil {
 							unbind()
-							closeAdapter(context.Background())
+							closer.End(context.Background())
 							return false
 						}
 					}
@@ -591,12 +657,12 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 					if err = recordProgress(progress.Flush(now, false)); err != nil {
 						r.Code = "progress_failed"
 						unbind()
-						closeAdapter(context.Background())
+						closer.End(context.Background())
 						return false
 					}
 				case <-ctx.Done():
 					unbind()
-					closeAdapter(context.Background())
+					closer.End(context.Background())
 					return false
 				}
 			}
@@ -616,10 +682,15 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 			settledConnection = canRecoverAttempt && r.Snapshot.EffectsKnown
 			unbind()
 			// No second worker may touch this worktree until the first process
-			// and all of its descendants have been reaped.
-			closeErr := closeAdapter(ctx)
-			if err != nil || closeErr != nil {
-				return false
+			// and all of its descendants have been reaped. A goal step that is
+			// still in progress or under pull-request operation keeps its
+			// session; delivery adopts it, and the frontier ends it later.
+			keep := finish.Status == worker.Done && r.Goal && s.cfg.Sessions != nil
+			if !keep {
+				closeErr := closer.End(ctx)
+				if err != nil || closeErr != nil {
+					return false
+				}
 			}
 			if quotaStop && len(r.Tried) == 1 && r.Snapshot.EffectsKnown {
 				r.Snapshot = nil
@@ -637,7 +708,7 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 		// Refused sessions create no worker turn or receipt.
 		return false
 	}
-	e.attempt = executionAttempt{thread: thread, run: run, finish: finish, observation: observation}
+	e.attempt = executionAttempt{thread: thread, run: run, finish: finish, observation: observation, settled: settledConnection}
 	return true
 }
 
@@ -653,7 +724,7 @@ func (s *Service) deliver(ctx context.Context, e *execution) {
 	// its transport-loss finish is synthetic and must remain unknown too.
 	// ACP may instead supply a joined process with a complete, effect-free
 	// terminal snapshot. That evidence admits the shared recovery policy.
-	if finish.Failure == worker.ConnectionFailure && !settledConnection && !(r.WorkerName() == "codex" && finish.Code == "connection") {
+	if finish.Failure == worker.ConnectionFailure && !e.attempt.settled && !(r.WorkerName() == "codex" && finish.Code == "connection") {
 		r.Code = finish.Code
 		return
 	}
@@ -759,6 +830,29 @@ func (s *Service) deliver(ctx context.Context, e *execution) {
 		if readErr == nil && state != "unknown" {
 			e.outcome = outcomeDelivered
 		}
+	}
+	s.keepSession(e, r, thread)
+}
+
+// keepSession hands a delivered goal step's worker to the live registry while
+// its step is in progress or under pull-request operation. Every other outcome
+// ends the process here, so a session never outlives the step it serves.
+func (s *Service) keepSession(e *execution, r *Record, thread worker.Thread) {
+	if e.closer == nil || e.adapter == nil {
+		return
+	}
+	if s.cfg.Sessions == nil || !r.Goal || r.GoalAction == "" || r.Code != "ready_for_review" || r.PR == nil {
+		_ = e.closer.End(context.Background())
+		return
+	}
+	if !e.closer.Adopt() {
+		return
+	}
+	// The goal action that dispatched this worker names its session, which is
+	// the key the step records before any process exists.
+	session := worker.Session{ID: r.GoalAction, Worker: r.WorkerName(), Version: r.Version, Started: time.Now(), Thread: thread}
+	if err := s.cfg.Sessions.Adopt(session, e.adapter, e.closer.End); err != nil {
+		_ = e.closer.End(context.Background())
 	}
 }
 func taskPacket(r Record) (string, error) {

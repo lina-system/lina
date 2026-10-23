@@ -36,6 +36,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/timers"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/proc"
@@ -62,6 +63,7 @@ type conversationRuntime struct {
 	coding          *codingTurn
 	codingDelivery  *conversationRuntime
 	workerDispatch  *dispatch.Service
+	liveWorkers     *worker.Live
 	workerGitHub    *ghclient.Client
 	work            *work.Service
 	waitingStop     context.CancelFunc
@@ -141,7 +143,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r := &conversationRuntime{artifactMu: &sync.Mutex{}, workers: &workerRuntime{sessions: map[string]*workerSession{}}, dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main, main: main, epoch: epoch, personaGrants: map[string]grant.Grant{}, personaMu: &sync.Mutex{}}
+	r := &conversationRuntime{artifactMu: &sync.Mutex{}, workers: &workerRuntime{sessions: map[string]*workerSession{}}, liveWorkers: worker.NewLive(), dispatchMu: &sync.RWMutex{}, root: root, controls: controls, steering: map[string][]acceptedSteering{}, ctx: ctx, db: db, route: route, activities: activities, lanes: lane.New(), person: "person:" + main, main: main, epoch: epoch, personaGrants: map[string]grant.Grant{}, personaMu: &sync.Mutex{}}
 
 	if person != "" {
 		r.person = person
@@ -412,6 +414,12 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 			err = r.workEngine.err
 		default:
 			return waitErr
+		}
+	}
+	if r.liveWorkers != nil {
+		// End kept worker processes before their adapters' services close.
+		if closeErr := r.liveWorkers.Close(ctx); closeErr != nil {
+			err = errors.Join(err, closeErr)
 		}
 	}
 	if r.workerDispatch != nil {

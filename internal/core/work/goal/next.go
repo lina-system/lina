@@ -76,7 +76,11 @@ const (
 )
 
 type Task struct {
-	Name           string    `json:"name,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Session is the worker action that owns this step's worker session. Core
+	// records it with the dispatch reservation, so the live set is derivable
+	// before any process exists.
+	Session        string    `json:"session,omitempty"`
 	PRGeneration   uint64    `json:"pr_generation"`
 	Continuations  int       `json:"continuations"`
 	ThreadHandle   string    `json:"thread_handle,omitempty"`
