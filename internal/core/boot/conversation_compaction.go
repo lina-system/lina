@@ -86,16 +86,15 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	// The auxiliary caller preserves only the fixed prefix and the selected
 	// segment, never this turn's input or transient ContextPacket. Its layout and
 	// marks are trimmed to the segment so the summary reuses the cached prefix.
-	auxiliaryRequest := request
-	auxiliaryRequest.Credential = r.route.Request(nil).Credential
-	auxiliaryRequest.Items = request.Items[:fixed] // Profiles must not become summary source text.
-	// The summary request carries the conversation's cache identity and the marks
-	// that fall inside its segment, so the provider can serve it from the cache.
-	selected, err := r.selectProviderCapabilities(auxiliaryRequest)
+	// Select against the complete request: its boundaries validate only there,
+	// and the summary trims them to its own segment.
+	selected, err := r.selectProviderCapabilities(request)
 	if err != nil {
 		return provider.Request{}, report, err
 	}
-	auxiliaryRequest.Capabilities = selected.Capabilities
+	auxiliaryRequest := selected
+	auxiliaryRequest.Credential = r.route.Request(nil).Credential
+	auxiliaryRequest.Items = request.Items[:fixed] // Profiles must not become summary source text.
 	auxiliary := compaction.Auxiliary{Request: auxiliaryRequest, RetainPrefix: true, Stream: stream}
 	store := compaction.New(r.db)
 	frontier, err := store.Frontier(ctx, r.conversation)
