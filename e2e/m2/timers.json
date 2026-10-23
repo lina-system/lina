@@ -1,0 +1,9 @@
+{
+  "reminder": "Review the workshop notes.",
+  "source_title": "Workshop source",
+  "source_note": "First observation",
+  "updated_note": "Changed observation",
+  "job_result": "Scheduled job result",
+  "sensor_result": "Observed record change",
+  "tools": ["create_timer", "timer_status", "cancel_timer"]
+}

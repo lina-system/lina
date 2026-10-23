@@ -29,7 +29,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	// running record unknown and retains the task's active reservation.
 	admitted, settled := false, false
 	defer func() {
-		if ctx.Err() == nil {
+		if ctx.Err() == nil && !settled {
 			r.State = "finished"
 			if admitted && !settled {
 				r.State = "unknown"
@@ -265,7 +265,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		r.Code = "receipt_failed"
 		return
 	}
-	if err = service.Finish(ctx, r.ID, run.ID, status); err != nil {
+	if err = s.finish(ctx, r, run.ID, status); err != nil {
 		r.Code = "receipt_failed"
 	} else {
 		settled = true
