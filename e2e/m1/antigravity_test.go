@@ -198,7 +198,6 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			}
 			if checkLegacy != nil {
 				checkLegacy()
-
 			}
 			if git("rev-parse", "dev") != base {
 				t.Fatal("worker changed protected base")
