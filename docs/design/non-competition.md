@@ -2,13 +2,13 @@
 
 This contract defines how a LINA install proves that it doesn't compete with the person who uses the same machine. It covers input, focus, clipboard, files, CPU and memory, and the session events that change who is in control: lock, unlock, sleep, resume and disconnect. It is normative: an install claims non-competition only through the evidence described here, and any change to the rules is made in this file and joins dev under [integration.md](../policy/integration.md).
 
-The installation modes come from [product-families.md](product-families.md). Grants, scope enforcement, expiry and reconnect behavior come from [main-authority.md](main-authority.md). The processes LINA runs, and the budget each one declares, come from [runtime.md](runtime.md). This document adds the background load, the acceptance matrix and the pass criteria; it doesn't restate those contracts.
+Supported platforms come from [product-families.md](product-families.md). Grants, scope enforcement, expiry and reconnect behavior come from [main-authority.md](main-authority.md). The processes LINA runs, and the budget each one declares, come from [runtime.md](runtime.md). This document adds the background load, the acceptance matrix and the pass criteria; it doesn't restate those contracts.
 
 ## Scope
 
 Non-competition is the responsibility of every install that puts LINA on a machine a person also uses:
 
-- the device-OS install: LINA OS on a machine the person uses;
+- a Linux main install (`device-os` in the evidence schema): LINA Core on a Linux machine the person uses;
 - a desktop install: Node and LINA APP on the person's own Linux, macOS or Windows machine, connected to a main elsewhere.
 
 On such a machine the person has priority. LINA must never take the person's input, focus, clipboard, files or resources away from them. Non-competition and isolation rest on OS permissions and the seat lease, and anything not measured on a real machine is unverified.
@@ -48,7 +48,7 @@ Rows are install modes by host OS. Columns are the eight things that must be mea
 
 | Install mode and host OS | Focus | Keyboard and pointer input | Clipboard | File scope | CPU and memory yield | Lock and unlock | Sleep and resume | Disconnect |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| device-OS: LINA OS | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence |
+| Linux main (`device-os`) | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence |
 | desktop on Linux | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence |
 | desktop on macOS | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence |
 | desktop on Windows | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence | unverified until evidence |
@@ -59,7 +59,7 @@ Rows are install modes by host OS. Columns are the eight things that must be mea
 Rules for reading and changing the matrix:
 
 - No cell ever moves to a success value. A measured cell is reported by its evidence record, which must meet the criteria in the next sections; a policy statement never moves a cell.
-- Every shared-machine cell starts as `unverified until evidence`. The LINA OS row is measured first because the main runs LINA OS. The macOS and Windows rows stay unverified until real evidence exists on those systems.
+- Every shared-machine cell starts as `unverified until evidence`. The Linux main row is measured first because the main runs on Linux. The macOS and Windows rows stay unverified until real evidence exists on those systems.
 - A cell must never hold a word that describes a claim without a measurement. Vocabulary outside the three values is a defect in this file.
 
 ## Evidence ladder
@@ -132,7 +132,7 @@ Each measured cell has one record, and it holds:
 - the host OS and version, and the install mode
 - the session: OS user, GUI session, profile, the grant the work ran under, and any seat lease in force
 - the hardware: CPU, memory, and any relevant device
-- the versions and release manifest digests of every LINA artifact involved: LINA Core, Node, LINA APP and LINA OS, and the Claude adapter when a Claude account served the session
+- the versions and release manifest digests of every LINA artifact involved: LINA Core, Node and LINA APP, the Claude adapter when a Claude account served the session, and the optional LINA OS when present
 - the workload: what the person did, what LINA did, what LIFE world activity ran, how many agents the main holds, how many of them ran background work and how many background runs ran
 - the traces: input, focus, clipboard and file access traces for the whole session, tied to the task and grant ids
 - the declared bounds and the measured deltas against them, with resource use reported per process
@@ -156,7 +156,7 @@ the declared normal load. Those remain part of manual acceptance.
 
 ## Deferred
 
-- Numeric bounds for input latency, resource caps, yield time and recovery time: declared per test and set during implementation acceptance of LINA OS and of each desktop install.
+- Numeric bounds for input latency, resource caps, yield time and recovery time: declared per test and set during implementation acceptance of the Linux main install and of each desktop install.
 - The measurements themselves, for every row and tier: set during implementation acceptance.
 - The concrete tooling for input, focus and clipboard traces on each host OS: set during implementation acceptance.
 - VM sandbox boundaries such as shared folders, clipboard sharing and USB passthrough: set during implementation acceptance of the VM install.
