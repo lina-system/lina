@@ -49,10 +49,14 @@ struct lina_result lina_decide(const struct lina_host *host) {
   result.decision = LINA_DENY_INTERNAL;
   if (!host_complete(host)) return result;
 
+  // The deadline bounds the whole evaluation, so the clock starts before the
+  // install state is read and every later host call receives what is left.
+  const uint64_t start = host->monotonic_ms(host->context);
   struct lina_config config;
   memset(&config, 0, sizeof config);
   if (host->load_config(host->context, &config) != 0) return result;
   result.deadline_ms = effective_deadline(config.deadline_ms);
+  const uint64_t limit = start + result.deadline_ms;
 
   if (!config.enabled) {
     result.decision = LINA_DENY_NOT_ENABLED;
@@ -76,7 +80,6 @@ struct lina_result lina_decide(const struct lina_host *host) {
   memset(ticket, 0, sizeof ticket);
   memset(nonce, 0, sizeof nonce);
 
-  const uint64_t limit = host->monotonic_ms(host->context) + result.deadline_ms;
   do {
     uint32_t left = remaining_ms(host, limit);
     if (left == 0) {
@@ -100,6 +103,10 @@ struct lina_result lina_decide(const struct lina_host *host) {
     memset(&report, 0, sizeof report);
     if (host->inspect_peer(host->context, &before, config.person_uid, &report) != 0) {
       decision = LINA_DENY_INTERNAL;
+      break;
+    }
+    if (remaining_ms(host, limit) == 0) {
+      decision = LINA_DENY_DEADLINE;
       break;
     }
     if (!report.signature_ok) {
@@ -178,6 +185,10 @@ struct lina_result lina_decide(const struct lina_host *host) {
     memset(&after, 0, sizeof after);
     if (host->peer_token(host->context, fd, &after) != 0) {
       decision = LINA_DENY_PEER_TOKEN;
+      break;
+    }
+    if (remaining_ms(host, limit) == 0) {
+      decision = LINA_DENY_DEADLINE;
       break;
     }
     if (memcmp(before.bytes, after.bytes, LINA_TOKEN_BYTES) != 0) {

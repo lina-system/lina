@@ -53,8 +53,10 @@ The plug-in reads two root-owned files. Nothing else persists.
 The directory is root-only. The plug-in writes the marker before it connects and
 clears it before it answers. A marker left behind by a crashed evaluation makes
 every later evaluation deny without connecting until the guard has checked the
-install. The deadline defaults to 500 ms and is clamped to 1–500 ms; the eval
-sets the value in `deadline_ms`.
+install. The deadline defaults to 500 ms and is clamped to 1–500 ms; the eval sets the
+value in `deadline_ms`. It covers the whole evaluation: the clock starts when
+the mechanism is invoked, so a stalled install-state read, marker write or peer
+inspection denies as well.
 
 ## Decision
 

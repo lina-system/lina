@@ -14,9 +14,11 @@ struct fake_host {
   struct lina_host host;
   struct lina_config config;
   int load_config_status;
+  uint32_t load_config_delay_ms;
 
   int marker_present;
   int write_marker_status;
+  uint32_t write_marker_delay_ms;
   bool marker_written;
   bool marker_cleared;
 
@@ -32,6 +34,7 @@ struct fake_host {
   bool second_token_read;
 
   int inspect_status;
+  uint32_t inspect_delay_ms;
   struct lina_peer_report report;
 
   int random_status;

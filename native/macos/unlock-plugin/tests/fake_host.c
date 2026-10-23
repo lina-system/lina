@@ -7,6 +7,7 @@
 
 static int fake_load_config(void *context, struct lina_config *out) {
   struct fake_host *fake = context;
+  fake->now += fake->load_config_delay_ms;
   if (fake->load_config_status != 0) return fake->load_config_status;
   *out = fake->config;
   return 0;
@@ -19,6 +20,7 @@ static int fake_crash_marker_present(void *context) {
 
 static int fake_write_crash_marker(void *context) {
   struct fake_host *fake = context;
+  fake->now += fake->write_marker_delay_ms;
   if (fake->write_marker_status != 0) return fake->write_marker_status;
   fake->marker_written = true;
   return 0;
@@ -63,6 +65,7 @@ static int fake_inspect_peer(void *context, const struct lina_token *token, uint
   struct fake_host *fake = context;
   (void)token;
   (void)person_uid;
+  fake->now += fake->inspect_delay_ms;
   if (fake->inspect_status != 0) return fake->inspect_status;
   *out = fake->report;
   return 0;

@@ -47,6 +47,9 @@ static void zero_ticket(struct fake_host *fake) { memset(fake->ticket, 0, LINA_T
 static void changed_peer(struct fake_host *fake) { fake->second_token.bytes[0] ^= 0xffu; }
 static void second_token_failed(struct fake_host *fake) { fake->second_token_status = -1; }
 static void short_deadline(struct fake_host *fake) { fake->config.deadline_ms = 0; }
+static void config_read_stalls(struct fake_host *fake) { fake->load_config_delay_ms = 1000; }
+static void marker_write_stalls(struct fake_host *fake) { fake->write_marker_delay_ms = 1000; }
+static void inspect_stalls(struct fake_host *fake) { fake->inspect_delay_ms = 1000; }
 static void long_deadline(struct fake_host *fake) { fake->config.deadline_ms = 5000; }
 
 static void expect_deny(enum lina_decision expected, void (*setup)(struct fake_host *), const char *name) {
@@ -150,4 +153,7 @@ void test_decide(void) {
   expect_deny(LINA_DENY_NO_TICKET, zero_ticket, "zero ticket");
   expect_deny(LINA_DENY_PEER_CHANGED, changed_peer, "changed audit token");
   expect_deny(LINA_DENY_PEER_TOKEN, second_token_failed, "second token failed");
+  expect_deny(LINA_DENY_DEADLINE, config_read_stalls, "stalled install state read");
+  expect_deny(LINA_DENY_DEADLINE, marker_write_stalls, "stalled crash marker write");
+  expect_deny(LINA_DENY_DEADLINE, inspect_stalls, "stalled peer inspection");
 }

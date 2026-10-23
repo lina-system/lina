@@ -106,7 +106,9 @@ static int crash_marker_present(void *context) {
 
 static int write_crash_marker(void *context) {
   (void)context;
-  int fd = open(LINA_MARKER_PATH, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  // Exclusive creation keeps two concurrent evaluations from sharing a marker:
+  // the second one fails here and denies.
+  int fd = open(LINA_MARKER_PATH, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
   if (fd < 0) return -1;
   int synced = fsync(fd);
   int closed = close(fd);
@@ -145,6 +147,13 @@ static int connect_broker(void *context, const char *path, uint32_t timeout_ms, 
   int fd = socket(AF_UNIX, SOCK_STREAM, 0);
   if (fd < 0) return -1;
   if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+    close(fd);
+    return -1;
+  }
+  // A broker that closes after the checks must yield a deny, not SIGPIPE in
+  // the privileged host.
+  int no_sigpipe = 1;
+  if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof no_sigpipe) != 0) {
     close(fd);
     return -1;
   }
