@@ -18,6 +18,15 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM3WorkerLanesLiveSession additionally starts the installed stdio worker
+// fixture through Core's conversation tools, makes it write a real artifact,
+// and expands its runtime lane to show the worker output without calling the
+// model. While the worker holds an interrupt reply, the developer page must
+// return its session as unknown when the five-second snapshot context expires.
+// Only then does the fixture release the interrupt, produce its result and
+// allow the refreshed lane to report idle. Vendor transport is synthetic; no
+// personal account is used.
+//
 // The same m3 scenario also covers the live worker registry introduced by #133:
 // conversation tool -> installed stdio worker -> real artifact -> lane detail.
 func TestM3WorkerLanesLiveSession(t *testing.T) {

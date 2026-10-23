@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+// TestWorkerLoadParentThread retires the caller thread after Bubblewrap is
+// ready and requires a normal child exit, with parent-death cleanup enabled.
 func TestWorkerLoadParentThread(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), operationTimeout)
 	defer cancel()

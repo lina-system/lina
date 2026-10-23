@@ -7,6 +7,11 @@ import (
 	"testing"
 )
 
+// TestM2InstalledGoalWorkerRecovery runs m2/goal-worker-recovery.json through
+// installed Core. A settled failure recovers once without a conversation
+// dispatch receipt. The worker commits a real result; startup reconciliation
+// delivers it through synthetic GitHub and service wires. A second failure
+// becomes a decision and restart cannot launch a third attempt.
 func TestM2InstalledGoalWorkerRecovery(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile("../m2/goal-worker-recovery.json")

@@ -17,6 +17,11 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM2TUINoteNextRoundInstalledCore runs m2/tui-note.json through installed
+// Core and a real PTY TUI. It holds a background provider response after ten
+// foreground tool rounds, then checks one scoped follow-up in the next request.
+// External model wires are synthetic.
+//
 // Reproduce the real-use journey: ten reads hand off to a background run,
 // whose current provider response is held while the person submits /note.
 func TestM2TUINoteNextRoundInstalledCore(t *testing.T) {

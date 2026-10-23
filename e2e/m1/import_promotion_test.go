@@ -21,6 +21,8 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM1ImportRehearsalPromotion runs m1/import-promotion.json, covering
+// sidecars and backups alongside import rehearsal and promotion.
 func TestM1ImportRehearsalPromotion(t *testing.T) {
 	t.Parallel()
 

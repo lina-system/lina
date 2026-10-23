@@ -181,6 +181,18 @@ func codexSessionFixture() {
 	}
 }
 
+// TestM2InstalledCodexSession (m2/codex-session.json) runs installed Core, its
+// real conversation model loop, tool authority and stdio child ownership with a
+// synthetic installed Codex. It asserts version reporting for an unverified
+// version, active steering, confirmed interrupt, idle continuation, a file
+// produced by the worker and terminal output in the originating conversation
+// before and after Core restart. The worker checks that no sandbox, approval,
+// model-provider or config override is sent and that Core's dedicated provider
+// credential is absent. Run it with go test -count=1 ./e2e/m1 -run
+// '^TestM2InstalledCodexSession$'. The opt-in LINA_CODEX_LIVE=1 go test
+// -count=1 -v ./internal/core/worker/codex -run '^TestInstalledCodex$' uses the
+// user's installed Codex and own configuration. It verifies control and a
+// model-generated result without changing approval or sandbox settings.
 func TestM2InstalledCodexSession(t *testing.T) {
 	t.Parallel()
 	testInstalledCodexSession(t, false)
@@ -406,6 +418,11 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 	h.stopCore(core)
 }
 
+// TestM2InstalledCodexLive drives installed Core's normal tool path into the
+// actual installed Codex, then waits on the worker's conversation result before
+// reading its snapshot. Only Core's conversation provider is synthetic; the
+// worker uses its own model setup. Opt in with LINA_CODEX_LIVE=1 go test
+// -count=1 -v ./e2e/m1 -run '^TestM2InstalledCodexLive$'.
 func TestM2InstalledCodexLive(t *testing.T) {
 	if os.Getenv("LINA_CODEX_LIVE") != "1" {
 		t.Skip("explicit installed-worker acceptance only")
