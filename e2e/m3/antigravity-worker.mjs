@@ -33,10 +33,11 @@ else {
     setInterval(()=>{},1000);
     await new Promise(()=>{});
   }
-  if(mode==='overlap') {
+  if(mode==='overlap' || mode==='host-capacity') {
+    const release = mode==='overlap' ? 'release-first' : 'release-capacity';
     const deadline=Date.now()+60000;
-    while(!fs.existsSync(path.join(root,'release-first'))) {
-      if(Date.now()>deadline) throw Error('Core did not confirm the area wait');
+    while(!fs.existsSync(path.join(root,release))) {
+      if(Date.now()>deadline) throw Error(mode==='overlap' ? 'Core did not confirm the area wait' : 'Core did not confirm the capacity wakeup');
       await new Promise(resolve=>setTimeout(resolve,20));
     }
   }

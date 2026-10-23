@@ -1,4 +1,4 @@
-# Worker e2e CPU budget regression (#812)
+# Worker e2e scheduling regressions (#812)
 
 This investigation covers `TestM2WorkerQuotaWindows`, `TestM2WorkerChoice`,
 and every other e2e test that failed on at least two distinct branches in a
@@ -187,3 +187,29 @@ two e2e shards completed; this run is retained as a failure. The subsequent full
 gate uses a private temporary directory on a local data volume to avoid root-volume
 I/O contention, retaining the package, scenario and global deadlines. Its result
 is recorded for the final PR head.
+
+## Capacity wakeup boundary
+
+An additional repetition on integrated head `6cdcb8e2` passed 359/360 top-level
+runs: `TestM2DispatchedWorkArea` passed 29/30, while all other tests passed 30/30.
+Its host-capacity case failed 10.003 seconds after releasing load, even though
+the subsequent diagnostic found the same dispatch finished with one attempt,
+one worker launch and `ready_for_review`. The wakeup deadline incorrectly
+covered Git execution, manager checks and final result delivery as well.
+
+The worker fixture now holds completion behind a release marker. With only that
+barrier added, the old harness failed deterministically after its ten-second
+result wait while the worker was already running (17.220 seconds of Go package
+execution including setup). The harness now observes the same record's durable
+running claim and area lease within the existing operation deadline. It cancels
+that context before releasing the fixture, then checks completion and restart
+under the existing scenario context. The focused case passed in 13.284 seconds.
+Cancelling the wakeup context before work may complete makes the distinction
+explicit without a sleep or a larger duration constant.
+
+```sh
+dv heavy -- env GOMAXPROCS=2 go test ./e2e/m1 -run '^TestM2DispatchedWorkArea$/^host-capacity$' -count=1 -parallel=4 -timeout=6m -v
+```
+
+The final PR records the repeated verification of the combined CPU, socket-path
+and capacity-wakeup corrections, including every earlier failed measurement.

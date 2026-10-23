@@ -338,7 +338,11 @@ The shared installed-worker harness gives each Linux Core a private loadavg
 fixture through a Bubblewrap read-only bind mount. Its default is idle, so host
 load cannot park unrelated worker scenarios. The capacity case first observes
 `queued / host_capacity` with no attempt or launch, then lowers load and sends
-a new conversation input. The same work produces its result once and is not
+a new conversation input. It observes that same dispatch's durable running claim
+within the existing operation deadline while the worker fixture holds completion.
+The test cancels that wakeup context before releasing the worker, then waits for
+the result within the scenario deadline. The same work produces its result once
+and is not
 replayed after restart. Failures include dispatch state, wait, attempts and
 worker launch observations. Production sampling, limits and timeouts are unchanged.
 Run it with `go test -count=1 ./e2e/m1 -run '^TestM2DispatchedWorkArea$'`.
