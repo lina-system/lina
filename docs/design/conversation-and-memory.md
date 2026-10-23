@@ -374,7 +374,10 @@ Word lists and timing do not bind. In the owner's data, status, memory and new-w
 `bind_input` records request ordinals and exact input excerpts. Choices append
 system events to the admission binding; retries retain the same event and question.
 A work tool may name `input_binding` to select a request or consumed steering input.
-Its ordinary authority and state checks still run. Current choices enter the
+Its ordinary authority and state checks still run. A steering input retains its
+own tool scope and current channel binding; it cannot borrow the original turn's
+permissions. Reading a tied candidate does not resolve the original ambiguity.
+Current choices enter the
 ContextPacket and remain reconstructible from their ledger sources.
 
 **When to ask.** The agent asks which item only when both hold:

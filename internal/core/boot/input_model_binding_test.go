@@ -8,6 +8,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/intakereplay"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/turn"
@@ -287,5 +288,50 @@ func TestModelBindingFollowSharedWorkScope(t *testing.T) {
 	}
 	if result := questionCall(t, bindings, "follow_work", "other-person", map[string]string{"id": "other-conversation-run", "text": "Must not deliver"}); result.Code != loop.Denied {
 		t.Fatalf("foreign work accepted: %+v", result)
+	}
+}
+
+func TestModelBindingReadDoesNotResolveRiskyTie(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{{ID: "read-first", Title: "First analysis", Kind: "run", State: "running", LastActivity: now}, {ID: "read-second", Title: "Second analysis", Kind: "run", State: "running", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "read-then-steer", "Check its progress and change the format.")
+	tools := modelBindingTools(t, r, input)
+	a, b := binding.Target{Class: "existing", Kind: "run", ID: "read-first"}, binding.Target{Class: "existing", Kind: "run", ID: "read-second"}
+	if got := questionCall(t, tools, "bind_input", "read-tie", bindingRequest{Bindings: []binding.Choice{{Quote: input.Body.Text(), Target: a, Tied: []binding.Target{a, b}, Action: "read"}}}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	if got := questionCall(t, tools, "read_work_progress", "observe", map[string]string{"id": b.ID}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	if got := questionCall(t, tools, "follow_work", "must-hold", map[string]string{"id": b.ID, "text": "Change format"}); got.Code != loop.Denied {
+		t.Fatalf("reading a candidate silently authorized steering: %+v", got)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices[0].Tied) != 2 || choices[0].Question == "" {
+		t.Fatalf("tie not held: %+v %v", choices, err)
+	}
+	run, err := r.background.service.Get(t.Context(), b.ID)
+	if err != nil || len(run.FollowUps) != 0 {
+		t.Fatalf("pending steer reached run: notes=%d err=%v", len(run.FollowUps), err)
+	}
+}
+
+func TestModelBindingSteeringKeepsToolScope(t *testing.T) {
+	r, _ := turnRuntime(t)
+	input := questionPersonInput(t, r, "owner-turn", "Read available skills")
+	steering := questionPersonInput(t, r, "scoped-steering", "Read available skills")
+	restricted := newConversationView(r, r.agent, r.conversation)
+	restricted.channelBinding = &channels.Binding{Scope: channels.Scope{Tools: false}}
+	s := &turnState{runtime: r, input: input, turnID: "turn:" + input.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: restricted}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "skill_index", "scoped", map[string]any{"input_binding": toolBindingRef{Input: steering.ID, Request: 0}})
+	if got.Code != loop.Denied {
+		t.Fatalf("steering borrowed the original turn's tool scope: code=%s", got.Code)
 	}
 }

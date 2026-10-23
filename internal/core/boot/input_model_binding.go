@@ -187,7 +187,7 @@ func bindingFailure(id string, err error) loop.Result {
 var errBindingPending = errors.New("input_target_pending")
 
 func (r *conversationRuntime) saveModelBinding(ctx context.Context, input ledger.Event, id string, choices []binding.Choice, decider string) (out []binding.Choice, err error) {
-	if input.PersonID != r.person || input.AgentID != r.agent || input.ConversationID != r.conversation || input.SpeakerKind != guard.Person || r.channelBinding != nil && !r.channelBinding.Scope.Tools {
+	if input.PersonID != r.person || input.AgentID != r.agent || input.ConversationID != r.conversation || input.SpeakerKind != guard.Person || r.channelBinding != nil && (!r.channelBinding.Scope.Tools || r.validateChannel(ctx) != nil) {
 		return nil, binding.ErrChoice
 	}
 	normalized, err := json.Marshal(choices)

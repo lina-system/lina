@@ -112,6 +112,11 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 	return declarations
 }
 func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Event, index int, turnID string, c provider.ToolCall) *loop.Result {
+	// Explicit steering provenance cannot borrow the original turn's tools.
+	if input.PersonID != r.person || input.AgentID != r.agent || input.ConversationID != r.conversation || r.channelBinding != nil && (!r.channelBinding.Scope.Tools || r.validateChannel(ctx) != nil) {
+		result := loop.Result{ID: c.ID, Code: loop.Denied, Output: json.RawMessage(`{"code":"input_scope_denied"}`)}
+		return &result
+	}
 	choices, err := r.currentInputChoices(ctx, input)
 	if err != nil {
 		result := bindingFailure(c.ID, err)
@@ -261,11 +266,15 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 	if target.Class == "" {
 		return nil
 	} // Original tool supplies its authorization/not-found error.
-	choice.Target = target
+	// Observing a candidate is not a resolution of the original request.
+	// Keep the recommendation and tied targets until bind_input explicitly
+	// chooses, or a risky action persists the person's target question above.
+	if len(choice.Tied) == 0 {
+		choice.Target = target
+	}
 	choice.Decider = ""
 	choice.CreatedID = ""
 	choice.Probabilities = nil
-	choice.Tied = nil
 	if _, err = r.saveModelBinding(ctx, input, "binding-tool:"+turnID+":"+c.ID, []binding.Choice{choice}, "tool:"+c.Name); err != nil {
 		result := bindingFailure(c.ID, err)
 		return &result
