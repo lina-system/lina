@@ -633,6 +633,12 @@ type QuotaRow struct { // the fields of runtime.md#usage-and-cost; a nil value i
 
 For AgentRuntime providers, Core carries out the list of [runtime.md](runtime.md#providers), with LINA's tools offered through `Bridge` as MCP tools. The ledger names the class per request.
 
+[Provider capabilities](runtime.md#provider-capabilities) add three things to this boundary:
+- the adapter reports a capability set per model;
+- the request carries the conversation's cache identity and the layout boundaries that Core marks;
+- `Usage` splits cache writes by lifetime.
+An adapter only applies what Core chose. It never chooses a capability itself and never needs one to succeed.
+
 #53 implements this boundary in `kit/provider`. Credentials are per-call, omit their bearer from JSON, and print only a placeholder; `Authorize` applies the bearer to the HTTP request without returning it. Model-list network calls also require a lease. The future secret-store adapter supplies these credentials. Items and tool declarations retain provider JSON so opaque state can round-trip without reconstruction.
 
 **C-44 Responses and Gemini adapters (new).** Responses adapter: Go standard-library HTTP and a bounded SSE reader, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function). Done items come from `response.output_item.done` only, and tool calls dispatch from done items only. Current-turn items are never sent altered or dropped. [V1](runtime.md#runtime-acceptance) decides the open fields. Gemini adapter: the Go genai client, stateless requests, thought parts returned as received, and the same stream rules.
