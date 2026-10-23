@@ -38,6 +38,7 @@ func TestDecideSendsOverflowToolsImagesAndUnknownKindsToMain(t *testing.T) {
 		{name: "image", task: Task{Kind: Classify, Text: "photo", Images: 1}, ready: true, reason: ReasonImage},
 		{name: "kind", task: Task{Kind: "conversation", Text: "hello"}, ready: true, reason: ReasonKind},
 		{name: "down", task: Task{Kind: Title, Text: "notes"}, ready: false, reason: ReasonUnavailable},
+		{name: "down with schema", task: Task{Kind: Extract, Text: "notes", Schema: json.RawMessage(`{"type":"object"}`)}, ready: false, reason: ReasonUnavailable},
 		{name: "forced", task: Task{Kind: Rewrite, Text: "short", Preference: ForceMain}, ready: true, reason: ReasonForced},
 		{name: "forced local yields", task: Task{Kind: Summary, Text: "0123456789abcdef0123456789abcdef", Preference: ForceLocal}, ready: true, reason: ReasonOverContext},
 	}
@@ -48,6 +49,11 @@ func TestDecideSendsOverflowToolsImagesAndUnknownKindsToMain(t *testing.T) {
 				t.Fatalf("route=%s reason=%s", route, reason)
 			}
 		})
+	}
+	unguided := profile(32)
+	unguided.GuidedGeneration = false
+	if route, reason := Decide(Task{Kind: Extract, Text: "notes", Schema: json.RawMessage(`{"type":"object"}`)}, unguided, true); route != RouteMain || reason != ReasonGuided {
+		t.Fatalf("route=%s reason=%s", route, reason)
 	}
 }
 

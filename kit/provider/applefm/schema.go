@@ -94,15 +94,26 @@ func valueMatches(kind string, raw json.RawMessage) bool {
 		var value bool
 		return json.Unmarshal(raw, &value) == nil && (bytes.Equal(raw, []byte("true")) || bytes.Equal(raw, []byte("false")))
 	case "integer":
+		raw = bytes.TrimSpace(raw)
+		if len(raw) == 0 || raw[0] == '"' {
+			return false
+		}
 		var number json.Number
 		if json.Unmarshal(raw, &number) != nil {
 			return false
 		}
 		text := number.String()
-		if text == "" || text[0] == '-' {
+		if text == "" || text == "-" {
 			return false
 		}
-		for _, c := range text {
+		digits := text
+		if text[0] == '-' {
+			digits = text[1:]
+		}
+		if digits == "" {
+			return false
+		}
+		for _, c := range digits {
 			if c < '0' || c > '9' {
 				return false
 			}

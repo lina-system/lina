@@ -255,7 +255,7 @@ Providers differ in what cuts cost and waiting time: prompt caches, cache marks 
 
 ### On-device Apple model
 
-Apple Foundation Models run on the Mac for small tasks, with no account, cost, or network. The helper is on-device. Private Cloud Compute is used only when the person turns it on. The public framework has no third-party Private Cloud Compute session, so that switch fails closed until the helper can serve it.
+Apple Foundation Models run on the Mac for small tasks, with no account, cost, or network. The helper is on-device. Private Cloud Compute is used only when the person turns it on. The public framework has no third-party Private Cloud Compute session, so the helper reports that model unavailable. Core still starts. Short tasks then use the person's main model, and the ledger records that the on-device model was unavailable. A partial setting or a helper path that is not absolute still refuses startup.
 
 Core sees the helper as a provider with a capability row the helper reports: context size, tool calling, guided generation, and image input. The on-device model is `apple-foundation-on-device`. Its row is a context of 4096 tokens, tool calling, guided generation, and no image input. The private-cloud model id is `apple-foundation-private-cloud`. The route is `LINA_APPLEFM_HELPER` (an absolute path), an optional `LINA_APPLEFM_MODEL`, and `LINA_APPLEFM_PRIVATE_CLOUD=1`. A partial setting is refused. The helper's environment is only the home, temporary directory, and locale; it never receives an API key.
 

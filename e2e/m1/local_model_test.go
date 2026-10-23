@@ -105,6 +105,53 @@ func TestM3LocalModel(t *testing.T) {
 	}
 }
 
+func TestM3LocalModelStaysUpWhenTheHelperIsUnavailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		emitResponse(w, `{"title":"from-main"}`, true)
+	}))
+	defer server.Close()
+	helper := buildAppleFixture(t)
+	h, _ := installedConversationHarness(t, server.URL)
+	core := h.command("core", "--state-root", h.root, "--socket", h.socket)
+	core.command.Env = append(core.command.Env,
+		"LINA_RESPONSES_BASE_URL="+server.URL+"/v1",
+		"LINA_RESPONSES_MODEL=fixture-model",
+		"LINA_RESPONSES_API_KEY=synthetic-key",
+		"LINA_APPLEFM_HELPER="+helper,
+		"LINA_APPLEFM_PRIVATE_CLOUD=1",
+	)
+	core.start(t)
+	t.Cleanup(func() {
+		core.killAndWait()
+		if t.Failed() {
+			t.Logf("core stderr:\n%s", core.stderr.String())
+		}
+	})
+	h.connectWithin(core, 60*time.Second).Close()
+	waitCoreReady(t, h)
+	conn := h.connectWithin(core, 60*time.Second)
+	c := &client{conn: conn, reader: bufio.NewReaderSize(conn, 1<<20)}
+	hello := clientHello([]string{"1.0"})
+	hello.Capabilities = []protocol.Capability{{Name: "local_model", Version: "1.0"}, {Name: "conversation", Version: "1.0"}}
+	answer := c.call(t, protocol.KindHello, hello)
+	if answer.Error != nil {
+		t.Fatalf("hello: %+v", answer)
+	}
+	c.welcome, _ = answer.Payload.(protocol.Welcome)
+	schema := `{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string"}},"required":["title"]}`
+	got := callLocal(t, c, protocol.LocalTask{Task: "intent", Text: "사파리 열어", Schema: &schema})
+	if got.Route != "main" || got.Reason != "unavailable" || got.Model != "fixture-model" {
+		t.Fatalf("fallback: %+v", got)
+	}
+	if !strings.Contains(core.stderr.String(), "on-device model unavailable") {
+		t.Fatal("startup did not report the unavailable helper")
+	}
+}
+
 func callLocal(t *testing.T, c *client, task protocol.LocalTask) protocol.LocalTaskResult {
 	t.Helper()
 	answer := c.callWithin(t, protocol.KindLocalTask, task, 60*time.Second)

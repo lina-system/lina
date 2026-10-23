@@ -116,11 +116,11 @@ func Decide(task Task, profile applefm.Profile, ready bool) (string, string) {
 	if task.Images > 0 {
 		return RouteMain, ReasonImage
 	}
-	if len(task.Schema) > 0 && !profile.GuidedGeneration {
-		return RouteMain, ReasonGuided
-	}
 	if !ready || profile.ContextTokens <= 0 {
 		return RouteMain, ReasonUnavailable
+	}
+	if len(task.Schema) > 0 && !profile.GuidedGeneration {
+		return RouteMain, ReasonGuided
 	}
 	if Estimate(task) > profile.ContextTokens {
 		return RouteMain, ReasonOverContext

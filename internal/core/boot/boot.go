@@ -353,11 +353,14 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			}
 			profile, probeErr := helper.Probe(ctx, held)
 			held.Release()
-			if probeErr != nil || profile.Model != cfg.Local.Model || profile.PrivateCloud != cfg.Local.PrivateCloud {
-				return errors.New("on-device model unavailable")
+			// A helper that cannot serve stays unused. Core keeps running and
+			// the short-task route uses the person's main model.
+			if probeErr == nil && profile.Model == cfg.Local.Model && profile.PrivateCloud == cfg.Local.PrivateCloud && profile.ContextTokens > 0 {
+				runtime.onDevice = helper
+				runtime.onDeviceProfile = profile
+			} else {
+				fmt.Fprintln(os.Stderr, "lina core: on-device model unavailable")
 			}
-			runtime.onDevice = helper
-			runtime.onDeviceProfile = profile
 		}
 		runtime.replaySocket = cfg.Socket
 		runtime.webTransport = cfg.WebTransport
