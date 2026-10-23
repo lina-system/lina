@@ -1848,7 +1848,10 @@ their done condition, issues become to-dos, and milestones become to-dos with a
 deadline and done condition. Imported to-dos use `open` or `completed`; their
 verified snapshot provenance supplies `deadline_source`. Existing imports with
 `active`/`done` and that provenance project to the same planning fields on
-upgrade, preserving their files and saved revisions. Intent cards retain their intent text. CRW records
+upgrade, preserving their files and saved revisions. The projection uses the
+record's current state, not the snapshot's old done flag, so later planning edits
+remain authoritative. Goal drafts stay `draft` and CRW observations stay
+`observed`, regardless of their source done flag. Intent cards retain their intent text. CRW records
 are historical observations in reference documents; importing an assignment,
 receipt, verdict, branch or worktree starts no work and grants no authority.
 Complete source records are preserved as data, including unknown fields.
@@ -1864,6 +1867,11 @@ reserves random LINA ids durably before publication. A retry reconciles those id
 through the records API, recovering publication interrupted before acknowledgement.
 It reports existing imports as reused and writes no second record or commit; it
 preserves later LINA edits and fails if an imported record is unavailable. The
+journal also reconciles unacknowledged publications from the earlier importer:
+an imported to-do must match either the current output or the exact earlier
+`active`/`done` encoding without `deadline_source`, reconstructed from the same
+verified snapshot and reserved identity. Any other content is reported lost and
+left untouched; retry does not rewrite the earlier encoding. The
 journal at `system/crw-takeover-journal.json` is captured as an opaque, hashed
 file with the destination backup, outside product schemas and APIs. Restore
 publishes the matching journal before canon; a generation without it removes
