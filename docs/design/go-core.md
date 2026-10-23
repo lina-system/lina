@@ -103,9 +103,9 @@ Layers under `internal/core/`:
 | Layer | Packages |
 | --- | --- |
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
-| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction) |
+| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `recall` (shared derived index writer and queued fill) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
+| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
 | L5 | `boot`, `supervise` |
 
 The separate worker has its own downward import layers.
@@ -1156,6 +1156,7 @@ type Class uint8       // ModelAPI, AgentRuntime
 type Adapter interface {
 	Provider() ProviderID
 	Class() Class
+	Capabilities(model ModelRef) CapabilitySet // missing names are unsupported
 	Models(ctx context.Context, l lease.Lease, c Credential) (ModelList, error) // display data, not entitlement
 	Quota(ctx context.Context, c Credential) ([]QuotaRow, error)  // unknown is a value
 	Stream(ctx context.Context, l lease.Lease, r Request) (Stream, error)
@@ -1166,6 +1167,9 @@ type Credential struct { // handed in for one call
 	// The private bearer prints as a placeholder and only Authorize can apply it.
 }
 type Request struct {
+	CacheIdentity string // versioned digest, not a provider field by itself
+	Layout *RequestLayout // exclusive item/tool positions
+	Capabilities CapabilityUse // Core-selected values, checked before sending
 	Credential Credential // supplied for this call, never read from a store
 	Model   ModelRef
 	Effort  Effort
@@ -1183,7 +1187,7 @@ type Stream interface {
 	Meta() Meta                              // request id, fidelity class, usage, runtime session id
 	Close() error                            // cancel and join the request
 }
-type Usage struct{ Input, Cached, CacheWrite, Output, Reasoning *int64; CostEstimate *Money } // nil is unknown
+type Usage struct{ Input, Cached, CacheWrite, Output, Reasoning *int64; CostEstimate *Money; CacheByLifetime map[CacheLifetime]CacheUsage } // nil is unknown
 type QuotaRow struct { // the fields of runtime.md#usage-and-cost; a nil value is unknown, a reset time is never invented
 	Provider ProviderID; Account AccountID; Window Window
 	UsedPct *float64; ResetsAt *time.Time; State QuotaState; Source QuotaSource; Observed time.Time
@@ -1199,6 +1203,12 @@ The ledger names the class per request.
 - `Usage` splits cache writes by lifetime.
   An adapter only applies what Core chose.
   It never chooses a capability itself and never needs one to succeed.
+
+Request evidence carries optional `CacheIdentity`, `Layout` and `Capabilities`
+JSON fields. The digest covers them when present; records predating these fields
+keep their original digest interpretation. No evidence or usage table changes
+or backfills are required. Background runs retain request assembly evidence in
+their existing durable run JSON before sending.
 
 Implementation notes: [C-43 provider increment](../../kit/provider/REFERENCE.md#c-43-provider-increment).
 
@@ -2399,6 +2409,13 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   `Prompt` retains its blocking convenience API; cancelling its wait sends no protocol cancel.
 - Dispatch records the post-initialization version and sends progress through `work.Service.ReportProgress`.
   This operation adds a `worker_progress` event to the existing ledger, validates the active run before idempotent retries, and projects the worker stage with source `worker_report`.
+- ACP dispatch recovery uses the same durable once-only allowance as C-29.
+  A terminal snapshot retains the failed turn and unresolved-effect evidence;
+  only a settled attempt may start the replacement in its existing worktree.
+  Session restoration prefers advertised resume over load, preserves the recorded
+  session id and excludes replay from progress and output. The next process has a
+  fresh binding and work-tool server. Restore failure and Core-crash uncertainty
+  do not authorize another prompt or a fresh-session fallback.
   It changes no storage schema and never claims completion.
 - A definitive authentication refusal during `session/new` returns `worker.ErrNeedsSignIn` only after child cleanup, before any prompt.
   Dispatch retains the worker/version/code as readiness evidence and lets the existing chooser try another eligible worker.
@@ -2412,7 +2429,10 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   The Cursor installed-Core scenario in `e2e/m2/cursor_worker_test.go` exercises this path.
 - ACP approval and form events use the existing `boot` worker bridge. The
   adapter retains single-use request handles and validates offered once options
-  and form values before sending. Snapshots expose pending requests as waiting;
+  and form values before sending. Field names the waiting-card bridge refuses
+  are declined before a card is published. Optional schema properties may be
+  omitted, multi-select values and labels are shown on the question, and a
+  schema-invalid submission leaves the card open. Snapshots expose pending requests as waiting;
   cancel and prompt completion invalidate them. Core's existing authority claim
   consumes approval answers before delivery and stops unused answers on restart.
   No new storage format or migration is introduced. The headless scenario in
@@ -2430,7 +2450,9 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
 | `session/update`: message, thought, tool call, tool-call update, plan | progress |
 | `usage_update`, usage in the `session/prompt` reply | usage |
 | `session/prompt` reply | finish: `end_turn` done; `cancelled` interrupted; `refusal`, `max_tokens`, `max_turn_requests` failed as a worker error naming the stop reason |
-| JSON-RPC error on a request; session-failure extension | finish failed: -32000 login expiry; extension kinds map to quota, rate limit, login or connection |
+| `session/new` JSON-RPC error -32000 | readiness refusal: needs sign-in |
+| `session/prompt` JSON-RPC error | finish failed: worker error with `prompt_failed`; effects remain unknown |
+| Advertised session-failure extension | finish failed: quota, rate limit, login or connection |
 | `session/request_permission` | approval |
 | `elicitation/create` (form) | question |
 | A tool call on LINA's session MCP server | work-tool call |
@@ -2443,6 +2465,16 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   It returns Core's record of the session: state, pending requests and the last message.
   After a Core restart the state is unknown until once-only recovery loads the session again.
 - `Quota` returns rows only from the session-failure extension and a profile's named rate-limit key; with neither, it returns none and the chooser treats the worker as unknown.
+  Worker initialization opts into AIR v1 session failures without changing the
+  shared client's provider defaults. Only advertised, error-severity machine
+  categories/actions are classified. Prompt RPC errors and stop reasons retain
+  precedence; warning updates and unknown metadata cannot finish a turn.
+  A terminal ACP snapshot carries its observed finish; transport loss leaves
+  effects unknown, as do prompt errors and native tool calls without a reported
+  terminal outcome. A later prompt does not reconcile an earlier error.
+  Dispatch persists streamed quota measurements before session
+  teardown and uses that snapshot to fence the one allowed replacement.
+  The synthetic installed-Core scenario is `e2e/m2/acp_quota_test.go`.
 - Every child is owned through `kit/proc` and reaped with its process tree; LINA's own model credential is removed from its environment.
 
 **C-57 Work definition, choice and splitting (new).**

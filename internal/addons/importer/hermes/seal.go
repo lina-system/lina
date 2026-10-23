@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -121,7 +120,10 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 		if err := tx.QueryRowContext(ctx, "SELECT material_id,material_revision FROM import_event WHERE id=?", r.id).Scan(&material, &materialRevision); err != nil {
 			return err
 		}
-		display := r.body
+		display, err := publishedBody(r)
+		if err != nil {
+			return err
+		}
 		if material.Valid {
 			found := false
 			for _, attachment := range c.records {
@@ -137,6 +139,14 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 		}
 		// Originals and byte-addressed flags stay in import_event for lossless
 		// reverse mapping; live consumers use the native masked representation.
+		if !material.Valid && display != r.body {
+			display, err = maskScalarCallCredentials(display)
+			if err != nil {
+				// Projection masking failures use the same durable outcome
+				// as failures in the shared body scanner below.
+				err = secrets.ErrSpan
+			}
+		}
 		var spans []secrets.Span
 		// Raw assignment spans may include JSON's quotes or escape sequences.
 		// Let the shared JSON scanner inspect decoded strings instead. These
@@ -146,19 +156,17 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 				spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
 			}
 		}
-		masked, err := secrets.Mask(display, spans...)
+		var masked secrets.Masked
+		if err == nil {
+			masked, err = secrets.Mask(display, spans...)
+		}
 		if err == nil && json.Valid([]byte(display)) {
-			// The decoded-string scanner must not weaken the original scan.
-			// For example, a numeric token value has no string boundary it can
-			// mask. Retain only placeholder matches; otherwise use the fallback.
-			if !json.Valid([]byte(masked.Text())) {
+			// Check remaining scalar credentials at decoded JSON boundaries.
+			// A plaintext rescan of serialized JSON can flag an escape before
+			// an already-masked quoted value and discard an otherwise safe body.
+			checked, checkErr := maskScalarCallCredentials(masked.Text())
+			if !json.Valid([]byte(masked.Text())) || checkErr != nil || checked != masked.Text() {
 				err = secrets.ErrSpan
-			}
-			for _, s := range ScanSecrets([]byte(masked.Text())) {
-				if strings.Trim(masked.Text()[s.Start:s.End], "\"'") != secret.Placeholder {
-					err = secrets.ErrSpan
-					break
-				}
 			}
 		}
 		originFields := map[string]string{"kind": "import", "locator": r.id, "source_session": e.session}

@@ -310,7 +310,7 @@ func applyMaintenance(ctx context.Context, tx *canon.Tx, p MaintenanceProposal) 
 func saveJobRevision(ctx context.Context, tx *canon.Tx, item Item) error {
 	item.Revision++
 	slices.Sort(item.Sensitivity)
-	raw, err := json.Marshal(item)
+	raw, err := marshalRecord(item)
 	if err != nil {
 		return err
 	}

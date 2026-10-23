@@ -24,7 +24,7 @@ func declarationGroup(name string) string {
 		return "calendar"
 	case "observe_health", "repair_records_index":
 		return "device"
-	case "web_search", "web_extract":
+	case "web_search", "web_extract", "remote_agent":
 		return "web_research"
 	}
 	return "" // Core's always-declared set.

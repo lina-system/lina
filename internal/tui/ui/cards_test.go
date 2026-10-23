@@ -208,6 +208,34 @@ func TestCardReplyMustMatchTheSentCardAndAnswerKind(t *testing.T) {
 	}
 }
 
+func TestSchemaInvalidQuestionStaysEditable(t *testing.T) {
+	m := cardModel(t)
+	m.content.Cards[0].Kind = protocol.KindQuestion
+	m.content.Cards[0].Choices = nil
+	m.content.Cards[0].Form = &protocol.QuestionForm{PluginName: "Plugin", Fields: []protocol.FormField{{Name: "label", Type: protocol.FormFieldTypeText}}}
+	m.content, _ = state.Reduce(m.content, state.EditQuestionField{Name: "label", Value: "x"})
+	cmd, handled := m.cardKey(term.Key{Name: "enter", Events: true})
+	if cmd == nil || !handled {
+		t.Fatal("question was not submitted")
+	}
+	request := cmd().(shellCardAnswer).Request
+	id := "request"
+	m.cardRequests[id] = request
+	if !m.cardReply(protocol.Envelope{Kind: protocol.KindError, ReplyTo: &id, Error: &protocol.Error{Code: protocol.ErrorMalformed, Detail: "malformed"}, Payload: protocol.ErrorPayload{}}) {
+		t.Fatal("validation reply ignored")
+	}
+	if m.content.Cards[0].Outcome != "" || m.content.CardView.Pending || m.content.CardView.Fields["label"] != "x" || m.status.State == Failed {
+		t.Fatalf("invalid value settled the card: outcome=%s pending=%v fields=%v status=%v", m.content.Cards[0].Outcome, m.content.CardView.Pending, m.content.CardView.Fields, m.status.State)
+	}
+	if !strings.Contains(m.cardContent(m.content.Cards[0]), "That value was not accepted") {
+		t.Fatal("validation failure was not shown")
+	}
+	decline, handled := m.cardKey(term.Key{Name: "ctrl+d", Events: true})
+	if decline == nil || !handled {
+		t.Fatal("decline blocked after an invalid value")
+	}
+}
+
 func TestQuestionPasteEditsOnlyTheFocusedPrompt(t *testing.T) {
 	m := cardModel(t)
 	m.content.Cards[0].Kind = protocol.KindQuestion

@@ -1,0 +1,1 @@
+Condense the supplied summary to reduce request size. For specific_values target at most 12288 UTF-8 bytes, keeping exact identifiers, numbers, names and corrections most useful for future reference. Preserve chronological meaning and report any omitted values in omitted_detail. Do not truncate a field or return a partial JSON object.

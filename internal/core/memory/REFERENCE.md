@@ -61,6 +61,47 @@ Worker startup never migrates canon.
 These are package and job-socket capabilities; installation and conversation composition select their schedules and model bindings.
 No new client command or TUI memory screen is introduced.
 
+### Installed extraction
+
+Core now registers `memory-extraction:<agent>` on its existing job socket.
+Admission, startup and a one-minute poll prepare at most 32 ledger events per
+agent, grouping eligible person messages in a 30-second window. Preparation
+shrinks the event prefix to fit the 6 MiB encoded task limit. Admission sends a
+coalesced notification; all preparation runs on the background loop. Jobs run at
+most once a minute, with a one-minute timeout, an 8,192-token reservation and
+a 131,072-token job budget. These are initial bounded defaults, not a measured
+quality claim. Model calls use the auxiliary route without tools or persona.
+Imported events remain promotion-only even after an item is promoted.
+
+The source cursor lives in `memory_extraction_cursor`, independently of task
+sequences. Empty eligible scans advance it without a task. Successful Apply
+commits memory, cursor and receipt together. Stale evidence consumes the task
+without advancing that cursor; failed calls retain their charged reservation
+and can be replaced by a fresh task after the cadence. Only Core's cached Aux
+output may be applied. Material bodies are loaded before the writer and their
+canonical metadata is rechecked in the transaction.
+
+Reference checked for this wiring: Honcho's pinned `queue_manager.py:327-386,
+654-709` (pending batches, empty-batch stop, progress after processing). The
+local Hermes/plugin trees were unavailable; their installed revisions and live
+model extraction quality remain unknown. No upstream implementation is copied.
+
+`TestM2InstalledMemoryExtraction` exercises owner admission, scheduling, the
+actual worker binary and Core job socket, quoted stated memory and restart.
+
 ### C-21 memory job acceptance
 
 Synthetic package tests and `e2e/m1/memory-jobs.json` exercise these operations with the real worker binary and Core job socket; model quality and installed scheduling remain composition concerns.
+
+### Evidence quote switch
+
+New item and revision serialization removes rendered evidence quotes. Citation
+writers retain an unchanged source span when later records no longer hold its
+text. `WithQuotes` binds the composing flow's ledger reader; `Quotes` selects
+citation intervals by view revision. Ledger reads check source ownership and
+removal before and after material I/O and slice only valid UTF-8 byte ranges of
+the masked derived text. Existing legacy records are not rewritten in bulk.
+Installed-Core acceptance runs a real `remember_name` tool call against a
+scripted provider and resolves its material-backed evidence through management
+before and after restart. Package fixtures cover import, legacy revisions,
+secret spans, cross-agent reads and tombstones.

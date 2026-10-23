@@ -157,6 +157,12 @@ lane snapshot.
 
 The coding journey checks the delivered answer, result file, executable function
 and original worker session after either a form answer or a spoken continuation.
+Before answering a spoken question, it requires a committed LINA reply to the
+actual worker completion in the originating conversation, with that reply's turn
+completed. The capture must show the question from that reply. The original
+request, a handoff acknowledgement and an unfinished response cannot establish
+delivery. `TestAlphaSpokenQuestionInstalledCore` holds those boundaries in an
+account-free, headless journey through installed Core and a worker process.
 It does not require a card during that transition: the worker may still be idle
 or already finished. `TestM3WorkPanelLiveCodexWorker` checks the card while Core's
 worker is held at an unanswered approval or question, then verifies its artifact

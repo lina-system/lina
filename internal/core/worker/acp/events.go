@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -62,6 +63,11 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 		drained:
 			// Requests are enqueued before the prompt reply. They are already expired
 			// in the shared client and must not become requests of the next turn.
+			if len(permissions) > 0 || len(requests) > 0 {
+				a.mu.Lock()
+				a.effectSeen = true
+				a.mu.Unlock()
+			}
 			for len(permissions) > 0 {
 				<-permissions
 			}
@@ -72,9 +78,21 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 				failure := worker.ConnectionFailure
 				var remote *wire.RPCError
 				if errors.As(result.Err, &remote) {
-					// A complete error reply ends the turn even if EOF follows it.
-					// Its message and data are not part of the retained result.
+					// A complete error reply ends the turn even if EOF follows.
+					// Retain neither its numeric code nor remote message/data.
+					// Later prompts cannot reconcile effects of this failed turn.
+					a.mu.Lock()
+					a.uncertainEffects = true
+					a.mu.Unlock()
 					failure = worker.WorkerFailure
+				} else if transportErr := c.Err(); transportErr != nil {
+					// Join the owned process and descendants before admitting a
+					// terminal snapshot. A timeout waiting for a reply is not death.
+					c.Close()
+					a.mu.Lock()
+					// Malformed or overflowed streams may have lost effect evidence.
+					a.transportEnded = errors.Is(transportErr, io.EOF) || errors.Is(transportErr, io.ErrClosedPipe)
+					a.mu.Unlock()
 				}
 				a.finish(th, worker.Finish{Status: worker.Failed, Failure: failure, Code: "prompt_failed"})
 				return
@@ -87,6 +105,11 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 			switch result.Response.StopReason {
 			case wire.StopReasonEndTurn:
 				f = worker.Finish{Status: worker.Done}
+				a.mu.Lock()
+				if a.extensionFailure != nil {
+					f = *a.extensionFailure
+				}
+				a.mu.Unlock()
 			case wire.StopReasonCancelled:
 				f = worker.Finish{Status: worker.Interrupted, Code: "worker_cancelled"}
 				if cancelled {
@@ -107,6 +130,9 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 	}
 	v := u.Notification.Update
 	a.mu.Lock()
+	if v.ToolCall != nil || v.ToolCallUpdate != nil || len(v.Unrecognized) > 0 {
+		a.effectSeen = true
+	}
 	raw, _ := json.Marshal(v)
 	a.doing.Record("acp", raw, time.Now())
 	a.mu.Unlock()
@@ -139,6 +165,7 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 			p.Text = string(*v.ToolCallUpdate.Status)
 		}
 	case v.SessionInfoUpdate != nil:
+		a.sessionFailure(v.SessionInfoUpdate.Meta)
 		p.Phase = "doing"
 	case v.Plan != nil:
 		p.Phase = "plan"
@@ -147,6 +174,9 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 			entries = append(entries, fmt.Sprintf("%s: %s", e.Status, e.Content))
 		}
 		p.Text = strings.Join(entries, "; ")
+	case v.UsageUpdate != nil:
+		a.vendorQuota(v.UsageUpdate.Meta)
+		return true
 	case len(v.Unrecognized) > 0:
 		a.mu.Lock()
 		a.result.Unknown = append(a.result.Unknown, append(json.RawMessage(nil), v.Unrecognized...))
@@ -159,7 +189,10 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 }
 func (a *Adapter) finish(th worker.Thread, f worker.Finish) {
 	a.mu.Lock()
+	a.terminal = &f
+	a.effectSeen = a.effectSeen || len(a.requests) > 0 || len(a.pending) > 0
 	a.requests = nil
+	a.uncertainEffects = a.uncertainEffects || a.effectSeen
 	if a.state == worker.Active || a.state == worker.Waiting {
 		close(a.turnEnded)
 	}

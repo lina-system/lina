@@ -49,6 +49,19 @@ and C-29/C-60 in [Go Core](../../../../docs/design/go-core.md#work-engine).
   or verify a vendor release. This implements LINA's native ACP contract; no
   Hermes, Honcho, LCM-X or CRW behavior is copied.
 
+## Form projection (#1135)
+
+- **Seen:** The waiting-card bridge refuses secret-like field names and requires
+  a value for every projected field. ACP object schemas distinguish `required`
+  properties. Array items can name enum values or titled options. A schema miss
+  used to return a terminal refused outcome while the worker request stayed pending.
+- **Inferred:** Decline those field names before publishing a card. Mark properties
+  absent from `required` as optional and omit a blank answer. Show multi-select
+  values and titles in the question text. Return malformed for a schema miss so
+  the card stays open for a correction, decline, or cancel.
+- **Unknown:** No installed vendor form was exercised. This follows the ACP
+  adapter contract; no Hermes, Honcho, LCM-X or CRW behavior is copied.
+
 ## Session work tools (#749)
 
 - **Seen:** LINA's existing Core work-tool handlers validate `work.Receipt` and
@@ -89,6 +102,50 @@ they do not establish current acceptance or change the contracts.
 `internal/core/worker/acp` implements C-29 on that client.
 A profile holds the worker name, the command and arguments, the environment variables it sets (such as `CLAUDE_CODE_EXECUTABLE`), the version probe and the vendor rate-limit key it may read.
 Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added profiles come from an editable settings file defined by their own issue.
+
+## Typed failures and quota (#750)
+
+- **Seen:** `claude-agent-acp` v0.94.0's `src/air-extension.ts`,
+  `src/session-failure-extension.ts` and `src/acp-agent.ts` advertise AIR v1
+  `sessionFailure` in initialize's top-level metadata after client opt-in.
+  `session_info_update._meta.jetbrains.air.sessionFailure` carries severity,
+  category and actions, not the implementation's internal failure kind.
+  Error category `limit` with `retry` means rate limited; with no actions it
+  means quota exhausted. `access` with `login` means sign-in required.
+  `connection` with `new_session` means lost connection. Warnings describe
+  retries and are not terminal. Claude's `rate_limit_info` is forwarded at
+  `usage_update._meta["_claude/rateLimit"]`.
+- **Inferred:** Decode only advertised machine fields, never failure prose.
+  Keep request errors and stop reasons ahead of extension failures. A missing
+  quota report creates no measurement, and absent windows/resets remain unknown.
+- **Unknown:** Live vendor account behavior and future extension shapes are
+  unverified. This implements native ACP contracts, not an external worker
+  orchestration port; no Hermes, Honcho, LCM-X or CRW code is copied.
+
+## Once-only recovery (#751)
+
+- **Seen:** The native shared client provides `ResumeSession` and `LoadSession`,
+  marking replay at the read-loop boundary. Dispatch commits `Recoveries` and
+  `RecoveryThread` before scheduling another attempt; its recovery policy turns
+  a second settled failure into a persistent decision. Headless adapters retain
+  uncertainty after tool activity.
+- **Inferred:** A settled failed attempt needs a continuation entry point that
+  starts the same command and worktree, restores the recorded session, then
+  prompts it under a new process binding. This is different from reconciling an
+  unknown turn after Core itself crashes. Loading a session cannot prove such
+  an unknown turn or its effects settled.
+- **Unknown:** Synthetic agents do not verify vendor releases or external
+  effects. No Hermes, Honcho, LCM-X or CRW behavior is newly ported here.
+
+`RecoverAttempt` is used only by dispatch after a committed recovery allowance.
+It prefers advertised resume, otherwise load, otherwise a new session, with a
+fresh session tool server. A restore error never falls back to another session.
+Recovery uses `LoadSessionWithoutReplay` to exclude history before queue admission;
+the ordinary shared-client load API still publishes tagged replay. Suppression
+ends when the read loop consumes the load response, preserving live updates.
+Terminal snapshots retain a copy of the finish and conservatively keep effects
+unknown after tool activity, unknown update types or unfinished requests. Core
+MCP admission latches tool activity even when an answered call is no longer pending.
 
 ## Pinned Claude ACP program (#752)
 

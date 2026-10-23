@@ -30,7 +30,7 @@ func TestObsoleteCriterionReportDoesNotStopEngine(t *testing.T) {
 			if a.ID != stale.ID {
 				return Observation{}, ErrInvalid
 			}
-			return Observation{Status: OutcomeSucceeded, Criterion: &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: "old-read", Passed: true}}, nil
+			return Observation{Status: OutcomeSucceeded, Criterion: &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "old-read", Passed: true}}, nil
 		},
 		run: func(a Action) (Observation, error) {
 			if a.Kind != PlanGoal {
