@@ -123,8 +123,11 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
       }
       case 'turn/steer': {
         const thread=threads.get(p.threadId);
-        // Core labels push steering with its message id; the owner text is last.
-        if(!cfg.outcomes || thread.turn.id!==p.expectedTurnId || thread.turn.status!=='inProgress' || p.input[0].text.split('\n\n').pop()!=='Report the outcome.')throw new Error('invalid owner follow-up');
+        // Core frames every input with its provenance; the owner text stays
+        // verbatim inside an authenticated person frame bound to this task.
+        const framed=p.input[0].text;
+        const frame=/^<lina-message sender="([^"]+)" speaker_kind="person" work_id="([^"]+)" id="([^"]+)"><text>/.exec(framed);
+        if(!cfg.outcomes || thread.turn.id!==p.expectedTurnId || thread.turn.status!=='inProgress' || !frame || frame[1]==='' || frame[3]==='' || frame[2]!==thread.id || messageText(framed)!=='Report the outcome.')throw new Error('invalid owner follow-up');
         send({id,result:{turnId:thread.turn.id}});
         callTool(thread,'read_projection',{});
         return;
