@@ -333,6 +333,10 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 			block.RunID = *p.RunID
 		}
 		block.Title = p.Title
+		block.CompletionLabel = ""
+		if p.Completion != nil {
+			block.CompletionLabel = p.Completion.Label
+		}
 		if p.Text != nil {
 			block.Body = *p.Text
 			// Core's reply-shape previews reuse the source conversation key

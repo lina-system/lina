@@ -14,10 +14,10 @@ This contract covers:
 - what a message of the person does to the work it is bound to, and how a moved binding moves its effects
 - supervisor, parent and child roles, delivery and verdicts
 - the development method: the work definition, the choice of worker and the operation of the pull request
-- splitting work into tasks, area leases, parallel hand-off, completion events, stall handling and the running list
+- splitting work into tasks, the step graph of a goal and its stage list, area leases, parallel hand-off, completion events, stall handling and the running list
 - workers: the coding tools the user installed or signed in to (Codex, Claude Code, Cursor, Gemini CLI, Grok, Antigravity and any other ACP agent the person adds), the adapter boundary, the Codex and ACP adapters, compatibility, readiness, assignment, control and approvals
 - the task packet (the work definition handed to the worker), LINA's work tools and the completion receipt of a worker, the worker's review and CI fixes, and the manager session's check of a delivery against the work definition before Core merges or closes
-- run to done: the goal above its tasks, its done condition and lifecycle, the next-action table, waits on the outside world, capacity from host load, recovery, evidence before close, the cases that stop and ask, and what the person sees, for code and non-code work alike
+- run to done: the goal above its tasks, its done condition and lifecycle, the next-action table, waits on the outside world, capacity from host load, the order, pause and run limit the person sets, recovery, evidence before close, the cases that stop and ask, and what the person sees, for code and non-code work alike
 - effects and unknown outcomes inside work
 - GitHub work on delegated tasks: what the worker writes, and LINA Core's merge or close
 - the progress display data (work cards, progress lines and the running list), observation, handover and discovery of work, and what the person is told of work: outcomes and decisions
@@ -454,6 +454,10 @@ retains both the change and the means to undo it.
 The record tool cannot write execution observations or complete delegated work.
 It may replace planning fields while preserving an already `completed` state,
 including on a to-do with an agent or worker assignee or a pull-request link.
+A new completion also carries the work-kind evidence described in
+[preset-work-methods.md](preset-work-methods.md#done-evidence). Without it, the
+record is `claimed`, its view says "not verified", and its agent receives one
+completion breach. A claimed predecessor still blocks its dependents.
 The completion guard applies to transitions into `completed`; preserving that
 state does not permit changing an execution observation.
 
@@ -478,7 +482,7 @@ starts with `overdue` for their separate block. Completed and canceled tasks are
 excluded from personal active lenses. Upcoming selects any future start,
 deadline or current recurrence; anytime retains all undated active tasks,
 including backlog; later selects backlog. The week lens covers seven calendar
-days beginning at `day`. Board and list include all five planning states and
+days beginning at `day`. Board and list include the five planning states and unverified `claimed` completions, and
 return the fields needed to group by project, assignee, priority or tag. Pages
 remain ordered by id with an exclusive `after` cursor, matching record search.
 
@@ -731,7 +735,7 @@ At merge the manager session checks the result against the work definition's don
 
 ## Splitting and parallel hand-off
 
-LINA splits work into tasks, orders them, and hands every task that can start to a worker at once. The work definition of each task, the choice of worker and the operation of the pull request are LINA's development role. This section fixes what concerns many tasks at a time. Splitting is internal to LINA: the person confirms the 일 and its done condition and does not review the split. Its tasks appear as the 할 일 of the 일 and, in the running list, as outcomes (see Progress display).
+LINA splits work into tasks, orders them, and hands every task that can start to a worker at once. The work definition of each task, the choice of worker and the operation of the pull request are LINA's development role. This section fixes what concerns many tasks at a time. Splitting is internal to LINA: the person confirms the 일 and its done condition and does not review the split. Its tasks appear as the 할 일 of the 일, as the steps of its stage list (see Step graph) and, in the running list, as outcomes (see Progress display).
 
 ### Splitting into tasks
 
@@ -754,6 +758,25 @@ The manager session splits work into tasks that one worker can finish as one pul
 - LINA Core holds an area lease for each task from hand-off until the task has landed, is closed or is abandoned. The lease follows the liveness of the task's worker (see Liveness): a task judged abandoned frees its lease, and nothing else frees it earlier.
 - Hotspot files are shared resources: dependency manifests and lockfiles, generated code, registries and index files, changelogs, and any file that recent history shows many tasks changing. A task that needs a hotspot file takes the whole hotspot area, or the change moves into one dedicated task that the others depend on.
 - A worker cannot be trusted to stay inside its area. The design-conformance review reads the pull request's diff against the declared write area. A change outside it misses the work definition's scope and goes back to the worker as `needs_changes`. This is part of the check at merge, not a separate review.
+
+### Step graph
+
+The work of a goal is a graph of steps inside and a numbered list outside. The person never starts or reads a worker session: the goal's one manager session (see Manager session lifecycle) runs the steps, and Core opens and ends the worker sessions under them. The measurements behind this design are in [the work panel research](../research/work-panel.md).
+
+- **Step.** A step is one node of a goal's work: a task (a worker's task or an effect task), a background run, or a named wait on the outside (see Waits on the outside). Every task and background run that serves a goal is a step of that goal. A step records its kind, its name, the steps it is blocked by and the 할 일 it executes, if any. Its state is the work card state of its task or run (see Progress display), and a wait is waiting until it closes.
+- **Graph.** The steps of a goal and their blocked-by relations are the goal's step graph, kept by Core in the work ledger as numbered revisions. The manager submits each revision whole, and Core admits it atomically or refuses it with one reason: a cycle, an unknown step, an invalid write area (see Write areas), or a missing or refused name. A revision may add steps, rename steps, and change the work and blockers of steps that have not started. A step that has started is never removed; a manager that no longer needs it closes it as superseded, and it leaves the counts (see Progress display).
+- **Names.** The manager names each step in a few plain words of the person's language, at most 24 display cells (P): the thing the step does, such as "숙소 고르기" or "로그인 화면 수정", with no explanation ([surfaces.md](surfaces.md#default-view)). Core refuses a name that holds an issue or pull request number, a branch, a path, a check name or an id, the same rule as a line of the running list. Naming is judgment; the refusal is mechanical.
+- **Frontier.** After every event Core commits for a goal, the derivation of Next action computes the goal's ready frontier: the steps that have not started and whose blockers have all landed, or that have a recorded stacked start (see Parallel hand-off). Each frontier step whose write area, quota and capacity allow it is dispatched in that derivation, in the placement order of Capacity; one that cannot start shows its one reason. A step outside the frontier never starts. The frontier is computed from the ledger alone, without a model call, and two derivations over the same ledger give the same frontier in the same order.
+- **Stages are display.** The stage list (see Stages) is a projection of the graph. A stage never holds work back: a step starts when it is in the frontier, even while an earlier stage still has steps running.
+- **Live sessions.** A worker session is live only while its step is in progress or its pull request is being operated on. When the step has landed or been closed, Core ends the worker's process without closing its thread or session (see Control). Files, branches, receipts and the recorded thread or session id remain, and a later execution generation resumes it the way that worker's recovery does (see Codex adapter and ACP adapter). The number of live sessions therefore follows the frontier, never the history of the goal.
+
+| Part | Owner | Reason |
+| --- | --- | --- |
+| Which steps exist, the work and write area of each, its blockers and its name | Manager | Splitting and words for the person are judgment (see Splitting into tasks). |
+| Revision admission, cycle and name refusal, ids | Core | The same mechanical rule for every goal. |
+| Frontier, dispatch order, parallel groups, counts and states | Core | Deterministic from the ledger. |
+| Stage numbers and the stage list | Core | Deterministic from the graph (see Stages). |
+| The outcome line of a landed step | Manager | It says what changed for the person. |
 
 ### Parallel hand-off
 
@@ -998,7 +1021,7 @@ One adapter drives every worker that speaks the Agent Client Protocol, version 1
 - **Questions and approvals.** `elicitation/create` in form mode takes the authenticated waiting-card answer path, and secret input is unsupported, as for Codex. `session/request_permission` follows Approvals.
 - **Work tools.** LINA's tool server is a stdio MCP server provided by the `lina` command and named in `session/new` for that session only. It holds a token for that one session and relays calls to Core over its local socket. Its tools have the names and schemas of the Codex `lina` tools. It installs nothing in the person's setup and ends with the session.
 - **Completion and cancel.** As Completion signals and Control define. A turn that is still open when the process exits is a failure; a `cancelled` stop reason without a cancel from Core is reported as cancelled by the worker.
-- **Client boundary.** The shared client marks load replay before publishing updates and clears that mark when it reads the load response. Its pending permission handles expire when the prompt replies. Cancelling a local wait leaves the operation outstanding; only an explicit `session/cancel` requests interruption. A stalled consumer that fills a client event queue fails the connection rather than dropping progress or blocking completion.
+- **Client boundary.** Request ids may be strings, integers or null; replies preserve the original id, and an omitted id denotes a notification. Closing the client waits for transport and owned-process teardown even when another failure started cleanup. The shared client marks load replay before publishing updates and clears that mark when it reads the load response. Its pending permission handles expire when the prompt replies. Cancelling a local wait leaves the operation outstanding; only an explicit `session/cancel` requests interruption. A stalled consumer that fills a client event queue fails the connection rather than dropping progress or blocking completion.
 - **Recovery.** Core records the session id. Once-only recovery starts the same command again in the same worktree and sends `session/resume` where the worker advertises it, otherwise `session/load`. The history that `session/load` replays is not reported again as new progress. A worker that offers neither is restarted with a new session.
 - **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of a request (-32000 is login expiry); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
 - **Never sent.** `authenticate` and `logout`, because the person signs in to a worker in the worker itself; `session/delete`; and `session/set_mode`. `session/close` is sent only on an explicit close.
@@ -1191,6 +1214,16 @@ The completion receipt is how a worker reports back, and the only receipt a work
 | `BLOCKED`, `UNSAFE`, `NEEDS_HUMAN` | input needed | The original word is kept and shown. |
 | `BUDGET_EXHAUSTED` | stopped or failed | Decided by the budget policy. |
 
+Completion evidence is separate from this receipt and from a manager verdict.
+A task may retain an observed delivery or apply while its completion is
+`claimed` under [Done evidence](preset-work-methods.md#done-evidence). Task
+cards and running-work details expose that distinction. A file hash read-back
+proves the copied bytes; it does not by itself satisfy `source_reopened` for a
+document or `owner_path_run` for code. `prepare_work` accepts `work_kind`, and
+`land_work_result` accepts `completion` evidence for that kind. Git work always
+requires code evidence. These additions do not alter the worker receipt schema
+or allow an unobserved worker to complete.
+
 ### Remote devices
 
 - On a remote device, the registered Node starts and restarts the device's installed worker as its own stdio child. Events and server requests (approvals, questions, dynamic tool calls) reach LINA Core over the `node` connection ([host-protocol.md](host-protocol.md)), and answers return the same way. LINA Core never connects to a remote app-server.
@@ -1242,6 +1275,7 @@ Optional: when the repository has required checks and auto-merge, LINA Core may 
 A worker returning a completion receipt and the manager accepting the result are completions on different layers. The worker owns the pull request to green: it waits for GitHub's CI and review bots, fixes every CI failure and the P0 and P1 review findings once inside its turn, and reports done only when the resulting head is green and no P0 or P1 remains. It reports an unresolved failure honestly instead of reporting done. The manager session checks that delivery against the work definition at merge; Core records the judgment and enforces the merge preconditions. This check re-runs no test or command and starts no separate review by a worker. Core's QA run after each merge is separate from delivery acceptance.
 
 - A verdict is `verified` or `needs_changes`. The manager session makes it and LINA Core records it in the ledger with the records that decided it (the head SHA, the check conclusions, the review records and the check against the work definition). A `needs_changes` verdict names the unmet done condition, scope or design reference; review findings and CI failures are never a separate return from the manager.
+- Code acceptance also retains the structured completion references and their prepared policy assessment for that receipt and head. Confirmed Git application carries that assessment into the completion record, even after restart. Missing evidence remains a claim under [Done evidence](preset-work-methods.md#done-evidence); a merge record alone cannot satisfy `owner_path_run`.
 - Every task, with or without a pull request, runs on one task packet and ends in a completion receipt. Only code-change work, which has a pull request, goes through steps 5 to 7. Work without a pull request ends at step 4.
 
 Delivery of every task:
@@ -1254,7 +1288,7 @@ Delivery of every task:
 Code-change work continues:
 
 5. **Check the work definition.** At merge the manager session checks the delivered result and the pull request's diff against the done condition, scope (including the write area) and design reference. This is the design-conformance review. It does not triage GitHub findings, classify failed checks as P1 or direct their fixes. No delivery is checked by a panel of several verifiers.
-   Core durably claims each delivered repository/PR/head before the manager check, binding its task, generation and receipt. A second request for that head is refused, including after restart; a fix generation's new head has its own claim. Core evaluates GitHub merge preconditions and the complete observed path list first. A failing check blocks without a verified verdict or a finding. An out-of-area path records a scope miss (`needs_changes`) without calling the model. The manager receives the observed diff and base-commit design text through the existing source-labeled handoff. Only a valid structured `coding_decision` can record a verdict and optional schema-validated findings; prose records neither. The result and work verdict commit together against the still-current receipt/head. A merge can read that recorded judgment without requesting another check.
+   Core durably claims each delivered repository/PR/head before the manager check, binding its task, generation and receipt. A second request for that head is refused, including after restart; a fix generation's new head has its own claim. Core evaluates GitHub merge preconditions, change-evidence availability and then the complete observed path list. A failing check blocks without a verified verdict or a finding. Missing or oversized change evidence finishes the claimed review as `blocked` with cause `change_evidence_unavailable`, without a verdict, findings or a model call; this takes precedence over a scope miss. With available evidence, an out-of-area path records a scope miss (`needs_changes`) without calling the model. The manager receives the observed diff and base-commit design text through the existing source-labeled handoff. Only a valid structured `coding_decision` can record a verdict and optional schema-validated findings; prose records neither. The result and work verdict commit together against the still-current receipt/head. A merge can read that recorded judgment without requesting another check.
 6. **Return a missed work definition.** Only when the result misses the work definition does the manager send work back through Core to the same worker, once, as a new execution generation, naming what was not met. An idle thread receives it with `turn/start`. The worker owns that generation's CI and review fixes too. After its receipt the manager checks the entire resulting head against the work definition, including its diff and write area, so new changes cannot bypass the done condition, scope or design reference; it starts no separate review or CI fix loop. A remaining gap blocks the task and closes the pull request with that reason, without a `verified` verdict, and is reported to the person, who can ask for a corrected work definition (see Messages and questions).
 7. **Merge or close.** When the manager judges the work definition met, Core records the `verified` verdict and merges that head through the merge slot only when the required checks hold at the head it last read, no P0 or P1 finding is open and the pre-merge safety rule of [product-families.md](product-families.md) holds. P2 and P3 findings are recorded with the result and do not block the merge. A worker that reports a remaining CI failure or P0 or P1 after its fix pass has not delivered green: the manager asks Core to close the pull request with that reason and record the task as blocked without a `verified` verdict, rather than returning review or CI work. The merge ends as an apply record (see GitHub writes and merges), and the task has landed when one read of GitHub shows the pull request merged (see Event-driven flow). Core then starts QA for that merge and delivers its result to the manager for follow-up judgment. Core also closes a pull request on the manager's decision, with its reason written on it, in the case of step 6 and when the task is cancelled.
 
@@ -1498,6 +1532,17 @@ Every ready task starts at once, limited only by the person's quota and by what 
 - When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work. Before claiming a queued worker action, including after restart or an authorization wait, Core rechecks the current host report, worker availability, quota and capacity against the other reservations. An ineligible unstarted award is retired and its task returns to its runnable stage in the same transaction, without spending an attempt or recovery. Derivation places it again or records a host-capacity wait; claimed effects keep their reservations until observed.
 - A ready task that cannot start has one visible reason, as Parallel hand-off says.
 
+### Order, pause and run limit
+
+When there is more work than the person wants running, the person adjusts it from the work panel ([surfaces.md](surfaces.md#progress-at-a-glance)). Core decides and enforces order, limits and pausing without a model call; a client only shows the result and sends the person's choice. Each choice is a recorded command, and it takes effect on the next derivation after its commit, the next scheduling pass.
+
+- **Order.** Every goal has a rank. A new goal takes the last rank. Moving a goal up or down swaps its rank with its neighbour among the goals that are not final. Rank comes before the placement order of Capacity: ready steps of a higher-ranked goal are placed first, then the order of Capacity applies.
+- **Pause.** A paused goal gets no new step and no further input to its work threads, under the pause rule of Control; what is in progress ends its current turn and stops there. Its waits keep their deadlines. Resume returns it to its rank. A paused goal never resumes by itself.
+- **Stop.** Stopping a goal makes it `stopped` (see Lifecycle). It is final, keeps what it produced, and takes the person's confirmation.
+- **Run limit.** The run limit is how many goals may have a step in progress at once. By default it is automatic: on each pass Core sets it to what the free slots and the quota rows of Capacity can carry, and never below one. The person can set a number instead or return it to automatic. A goal past the limit starts no new step. Lowering the limit, by the person or automatically, stops nothing that runs: steps in progress finish, and the running count falls as they end.
+- **Queue.** Goals that have a ready step but no run slot wait in rank order. Each knows its place and its one reason: the run limit (`slot`), a worker's quota (`quota`) or host load (`load`). The reason is `quota` or `load` when the automatic limit fell because of that report.
+- **Shown on the line.** A paused goal's Now is 일시정지 (paused). A queued goal's Now is its reason and place, such as "자리 대기 · 3번째" (waiting for a slot, 3rd). These follow 확인 필요 in the order of Now (see Progress line), and such a goal is ordered with the lines that wait on something other than the person.
+
 ### Recovery
 
 - The goal definition is canon in the 일 or 목표 record in the records repository; the work ledger holds its execution state (criteria status and evidence, tasks, waits and state). A restart loses no goal: Core resolves the goal record by the id and revision referenced in the ledger and reads its execution state from the ledger, reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
@@ -1582,7 +1627,7 @@ LINA asks the person only in these cases. Each is one row in "Waiting for me", i
 4. Something only the person can do: sign, attend, pay in person, decide between people.
 5. A task whose one recovery failed, or a criterion that failed with no repair inside the scope.
 
-Everything else is decided by LINA and shown as in progress: whether to start, in what order, how many at once, which worker, whether to retry, how to split, and every reversible edit. A question that is not on this list is a defect of the work engine, as Default posture says.
+Everything else is decided by LINA and shown as in progress: whether to start, in what order, how many at once, which worker, whether to retry, how to split, and every reversible edit. A question that is not on this list is a defect of the work engine, as Default posture says. The person can still change the order, pause or the run limit at any time (see Order, pause and run limit); LINA never asks about them.
 
 Independent questions known for one goal are submitted as one row round,
 with one deadline and a default for every question. A second open round for
@@ -1776,16 +1821,32 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 | --- | --- |
 | Name | The title of the 일, or the sentence of the 목표 |
 | Progress | A stage and a simple bar |
+| Now | What it is doing right now, in a few words |
+| Started | When its work started, for its elapsed time |
 | Just finished | The latest outcome in a phrase, taken from the outcome line of its latest landed 할 일 or background run |
 | Next | The next 할 일 or stage, in a phrase |
 | Waiting on the person | Whether a row of "Waiting for me" belongs to it, and how many |
 
-- The stage of an 일 is the stage of its plan that holds its open 할 일. An 일 with no stages of its own has four: 설계 (design) while its plan is not confirmed, 만드는 중 (building) while any of its 할 일 is open, 확인 (checking) when every 할 일 has completed and the done condition is being checked, and 끝 (done) when the done condition is met. The bar is the share of its 할 일 that are completed, each counted equally.
+- The stage of an 일 whose work runs as a goal is the current entry of its stage list (see Stages). Otherwise it is the stage of its plan that holds its open 할 일, and an 일 with no stages of its own has four: 설계 (design) while its plan is not confirmed, 만드는 중 (building) while any of its 할 일 is open, 확인 (checking) when every 할 일 has completed and the done condition is being checked, and 끝 (done) when the done condition is met. The bar is the share of its 할 일 that are completed, each counted equally.
 - The progress of a 목표 is the share of its 일 that are done, and its stage is that of its least advanced running 일.
+- Now is, in this order: 확인 필요 (needs you) and the subject of its row while a row of "Waiting for me" belongs to it; else 일시정지 (paused) while the person has paused it; else the name of the earliest-started step in progress, followed by the number of the other steps in progress ("로그인 화면 수정 외 1"); else its queue reason and place, or 대기 (waiting) and its one reason or wait (see Order, pause and run limit); else the stage word 설계, 확인 or 끝. It changes only when a step starts or ends, a wait or row opens or closes, or the goal's pause, rank or place changes.
+- Started is when the goal was handed over, or when a run that serves no goal started. Elapsed time runs from it to now, or to the finish of a done line.
 - A value that cannot be observed is unknown and is shown as unknown, never as zero, as the rule of Plans says. A line says done only when the done condition is met.
-- A 목표 has a line when one of its 일 runs or something waits on the person. An 일 that belongs to a 목표 is a line below it, and an 일 that stands alone is a line of its own. A finished item leaves the lines once the person has seen it.
+- A 목표 has a line when one of its 일 runs or something waits on the person. An 일 that belongs to a 목표 is a line below it, and an 일 that stands alone is a line of its own. A goal that is a single 할 일, and a background run that serves no goal, is a line of its own whose stage list is its one step. A finished item leaves the lines once the person has seen it.
 - A line holds no issue number, pull request, check, log or id. The tasks and runs behind a line are the running list (in progress, waiting, landed) limited to that 일 or 목표, and the state words are the same in both. They open on request, from the Details of the line ([surfaces.md](surfaces.md#default-view)).
 - The digest that an external channel shows is made from the same lines ([integrations.md](integrations.md#channels)).
+
+### Stages
+
+The stage list is how the person sees the steps of a goal: a short numbered list, never a graph. LINA Core computes it from the step graph (see Step graph) and the work cards; a client only draws it ([surfaces.md](surfaces.md#progress-at-a-glance)).
+
+- **Numbering.** A step with no blockers is in stage 1, and any other step is in the stage after the highest stage of its blockers. A stage is every step with the same number. Steps that may run at the same time therefore share one stage, which is one entry of the list, never one entry per step.
+- **Done stages stay done.** A stage is done when each of its steps has landed or was closed as superseded. A done stage keeps its number and its steps and never reopens: a step admitted later is placed at least one stage past the leading run of done stages. A repair step, or a step that a correction by the person adds, therefore appears as the current or a later stage, never inside a finished one.
+- **Entries.** The list is the numbered stages in order, followed by 확인 (checking), the collection of evidence before close (see Evidence before close). While a goal is `defining` and has no admitted graph, its list is the single entry 설계 (design), and a `done` goal shows 끝 (done). A numbered entry carries its number, its state and its label. The label of a one-step stage is that step's name; the label of a larger stage is the name of its first step, ordered by start and then by id, followed by the number of the others ("로그인 화면 수정 외 1").
+- **State of an entry.** An entry has the state of its most urgent step, in the order input needed, failed, stopped, working, waiting, unknown and done. An entry none of whose steps is ready or started is next. A superseded step leaves the counts.
+- **Current stage.** The current stage is the lowest-numbered entry that is not done; it is the line's stage (see Progress line). Because stages never hold work back, a later entry can be working at the same time and shows its own state.
+- **Detail.** A stage that is not done and has a step that is ready or started opens to its steps, which normally means only the current stage. Under each step in progress are its live worker sessions, by worker name and state word only. Done stages and stages that have not started show no steps and no workers. Each step keeps its card and Details.
+- **Updates.** Core recomputes the stage list and Now in the transaction that commits an event of the goal, and publishes the changed line and list on the progress topic ([host-protocol.md](host-protocol.md)) within 250 ms (P) of that commit. A recomputation that changes nothing publishes nothing.
 
 ### Running list
 
@@ -1803,7 +1864,7 @@ unknown. These rows do not alter the task or background-run state mappings.
 - A row is one task, one background run or one conversation-started worker. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
 - The states map onto the work card states: working is in progress; waiting, paused and input needed are waiting; done is landed. A stalled or failed task shows its state word until it is dispatched again (see Stall and failure).
 - A row is one line in the person's words about the outcome, not about the pull request. Rows that need the person come first, then the rest in the order they started. Opening a row opens the task's card.
-- A running count, such as "2 running, 1 waiting for you", shows in the conversation header or composer.
+- A running count, such as "2 running, 1 waiting for you", shows in the conversation header or composer. It counts progress lines other than 목표 lines (see Progress line), by their state, so it grows with the 일 the person reads and not with the number of workers; the rows of this list are counted in the list itself.
 - A state change updates its row in place. It never opens a panel, moves focus, starts a message or interrupts a reply. A landing of one task of several is a row change and not a notice (see Notifications in [surfaces.md](surfaces.md)).
 - A landed row stays until the person has seen it, then it moves to history. Stopping works per row and for all rows ([surfaces.md](surfaces.md#running-list)).
 - An agent exchange is not a row: it appears only in the agent talk log ([surfaces.md](surfaces.md#agent-talk-log)), and as a row of "Waiting for me" when the person is the decision owner.

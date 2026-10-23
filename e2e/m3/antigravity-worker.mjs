@@ -54,6 +54,10 @@ else {
     fs.writeFileSync('result.txt', partial+'worker produced this result\n');
     git('add','result.txt');
     if (mode === 'scope') { fs.writeFileSync('outside.txt','outside declared area\n'); git('add','outside.txt'); }
+    if (mode === 'scope-oversized') {
+      fs.writeFileSync('outside.txt', 'outside declared area\n'.repeat(4096));
+      git('add', 'outside.txt');
+    }
     git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Produce result');
     execFileSync('gh',['pr','create']);
     const head=git('rev-parse','HEAD');
