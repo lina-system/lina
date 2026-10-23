@@ -153,3 +153,37 @@ func TestProgressBufferBoundsRetainedText(t *testing.T) {
 		t.Fatal("overflow lost its private context")
 	}
 }
+
+func TestProgressBufferWithholdsUnfinishedQuotedValueAtFinish(t *testing.T) {
+	for _, text := range []string{
+		`Working password="syntheticcredential`,
+		`{"api_key":"syntheticcredential`,
+	} {
+		var b progressBuffer
+		at := time.Unix(1, 0)
+		if _, err := b.Observe(worker.Progress{Phase: "message", Text: text}, at); err != nil {
+			t.Fatal(err)
+		}
+		final, err := b.Flush(at, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(final, "syntheticcredential") {
+			t.Fatal("unfinished credential reached terminal progress")
+		}
+	}
+}
+
+func TestProgressBufferWhitespaceBeforeStructuredValue(t *testing.T) {
+	var b progressBuffer
+	at := time.Unix(1, 0)
+	if text, err := b.Observe(worker.Progress{Phase: "message", Text: "\n"}, at); err != nil || text != "" {
+		t.Fatalf("whitespace observation: %q %v", text, err)
+	}
+	if text, err := b.Observe(worker.Progress{Phase: "message", Text: `{"stage":"working"}`}, at.Add(progressInterval)); err != nil || text != "" {
+		t.Fatalf("active structured observation: %q %v", text, err)
+	}
+	if text, err := b.Flush(at.Add(progressInterval), true); err != nil || !strings.Contains(text, "working") {
+		t.Fatalf("complete structured observation: %q %v", text, err)
+	}
+}

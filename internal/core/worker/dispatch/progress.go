@@ -2,6 +2,7 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -90,8 +91,12 @@ func (b *progressBuffer) Flush(at time.Time, final bool) (string, error) {
 	text := "Worker is responding."
 	if !b.latest.overflow {
 		raw := b.latest.raw.String()
-		if !final && !b.latest.complete {
-			raw = safeProgressPrefix(raw)
+		if !b.latest.complete {
+			if final {
+				raw = terminalProgressPrefix(raw)
+			} else {
+				raw = safeProgressPrefix(raw)
+			}
 		}
 		masked, err := secrets.Mask(raw)
 		if err != nil {
@@ -101,7 +106,9 @@ func (b *progressBuffer) Flush(at time.Time, final bool) (string, error) {
 		if !strings.HasPrefix(text, b.latest.published) {
 			return "", errors.New("progress masking changed a published prefix")
 		}
-		b.latest.published = text
+		if strings.TrimSpace(text) != "" {
+			b.latest.published = text
+		}
 	}
 	text = strings.TrimSpace(text)
 	// Mask before shortening; a truncated credential must never evade detection.
@@ -140,4 +147,30 @@ func safeProgressPrefix(text string) string {
 		}
 	}
 	return text[:end]
+}
+
+// A cancelled or failed turn can stop inside a quoted value. A terminal event
+// does not complete that value; retain the same private boundary in that case.
+func terminalProgressPrefix(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) && !json.Valid([]byte(text)) {
+		return ""
+	}
+	start := -1
+	var quote byte
+	for i := 0; i < len(text); i++ {
+		if quote == 0 {
+			if text[i] == '\'' || text[i] == '"' {
+				start, quote = i, text[i]
+			}
+		} else if text[i] == '\\' {
+			i++
+		} else if text[i] == quote {
+			start, quote = -1, 0
+		}
+	}
+	if start >= 0 {
+		return text[:start]
+	}
+	return text
 }
