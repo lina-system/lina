@@ -229,6 +229,7 @@ A channel is an external messaging platform through which the person talks with 
 
 - The platform rights LINA asks for are the smallest that the scope needs. It never asks for an administrator right on either platform, and it never asks for a group administrator right on Telegram. The connect step explains once what `all_messages` costs on the platform, because it needs the platform's wider message-reading right.
 - Slash commands and buttons are a convenience. The gate is always LINA Core's check of the paired owner's id and of the binding, never the platform's role system.
+- Work completion turns retain the channel binding and exact originating thread address recorded at task admission, including private chats sharing the app conversation. They revalidate that binding before model dispatch and tools, and keep its memory restriction. A legacy task without a provable origin cannot obtain authority from a current channel binding.
 - Accepted steering retains its originating channel scope. If it becomes a deferred follow-up, Core uses that scope and rechecks the current binding before each model dispatch and tool execution, including after an app-started turn.
 
 ### Identity and pairing

@@ -34,7 +34,7 @@ func (s *Service) execute(r Record) {
 	}
 	defer func() { s.mu.Lock(); delete(s.running, r.ID); s.mu.Unlock() }()
 	defer func() {
-		if ctx.Err() == nil {
+		if ctx.Err() == nil && !settled {
 			r.State = "finished"
 			if admitted && (!settled || r.Snapshot != nil && r.Snapshot.Finish != nil && r.Snapshot.Finish.Status != worker.Done) {
 				r.State = "unknown"
@@ -298,7 +298,7 @@ func (s *Service) execute(r Record) {
 		r.Code = "receipt_failed"
 		return
 	}
-	if err = service.Finish(ctx, r.ID, run.ID, status); err != nil {
+	if err = s.finish(ctx, r, run.ID, status); err != nil {
 		r.Code = "receipt_failed"
 	} else {
 		settled = true
