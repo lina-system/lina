@@ -2,15 +2,19 @@
 package boot
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/records"
+	"github.com/thisisjun786/lina/internal/core/runs"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 func TestGoalStepWaitReadsOwnedRecordAndExpiry(t *testing.T) {
@@ -87,5 +91,43 @@ func TestGoalStepBackgroundUsesRecordedOrigin(t *testing.T) {
 		if _, err = d.goalRunOrigin(t.Context(), other); err == nil {
 			t.Fatal("mismatched delegation accepted")
 		}
+	}
+}
+
+// A start rejected before admission never created a run, so it must settle the
+// action instead of holding its capacity forever. The same holds for recovery:
+// no receipt means no effect can have started.
+func TestGoalStepBackgroundRefusalSettles(t *testing.T) {
+	for _, observe := range []bool{false, true} {
+		name := "execute"
+		if observe {
+			name = "recovery"
+		}
+		t.Run(name, func(t *testing.T) {
+			r := controlRuntime(t)
+			s, err := runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"), Authorize: func(context.Context, runs.Origin, runs.Brief) error { return runs.ErrScope }, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
+				t.Error("refused background start executed")
+				return nil, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			r.background = &backgroundRuntime{service: s}
+			d := &codeGoalDriver{runtime: r}
+			g := goal.Goal{ID: "goal", Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: "turn"}
+			task := goal.Task{ID: "step", Kind: goal.BackgroundStep, Background: &goal.BackgroundBrief{Goal: "collect", Scope: "reads", NotTouch: "writes", Done: "report", Result: "summary", Checks: []goal.BackgroundCheck{{Name: "report", Kind: "claimed"}}}}
+			o, err := d.backgroundStep(t.Context(), g, task, goal.Action{ID: "start", Kind: goal.Assign, StepKind: goal.BackgroundStep}, observe)
+			if err != nil || o.Status != goal.OutcomeNeedsPerson || !o.EffectsSettled {
+				t.Fatalf("refusal left an unsettled effect: %+v %v", o, err)
+			}
+			origin, err := d.goalRunOrigin(t.Context(), g)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, found, err := s.Started(t.Context(), origin, "start"); err != nil || found {
+				t.Fatalf("refused start admitted a run: %v %v", found, err)
+			}
+		})
 	}
 }
