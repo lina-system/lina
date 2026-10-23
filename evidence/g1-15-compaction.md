@@ -10,7 +10,7 @@ parent issue.
 
 The contracts are [C-18](../docs/design/go-core.md#records-and-memory) and
 [compaction and resume](../docs/design/conversation-and-memory.md#compaction-and-resume).
-The existing [reference specification](../internal/core/compaction/reference.md)
+The existing [reference specification](../internal/core/compaction/reference-spec.md)
 records seen, inferred and unknown LCM-X behavior. This acceptance adds no port.
 
 | Done condition | Executable evidence | What the assertions establish |
