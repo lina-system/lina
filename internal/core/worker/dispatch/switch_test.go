@@ -103,6 +103,7 @@ printf '{"event":"result","result":{"conversation_id":"fixture","status":"ERROR"
 	if err := os.MkdirAll(s.cfg.Root, 0700); err != nil {
 		t.Fatal(err)
 	}
+	s.cfg.Workers = registerBinaries(s.cfg)
 	s.cfg.Work = work.New(s.cfg.DB)
 	s.cfg.Area, err = work.OpenArea(s.cfg.Root, git)
 	if err != nil {
@@ -285,7 +286,7 @@ func TestDispatchSwitchFencesQuotaReplacement(t *testing.T) {
 			starts := 0
 			rolledBack := false
 			s.cfg.Workers = []Factory{
-				{Name: "first", Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+				{Name: "first", Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
 					return &quotaStopAdapter{events: make(chan worker.Event, 1)}, func(context.Context) error {
 						if rollback && !rolledBack {
 							rolledBack = true
@@ -294,7 +295,7 @@ func TestDispatchSwitchFencesQuotaReplacement(t *testing.T) {
 						return nil
 					}, nil
 				}},
-				{Name: "second", Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+				{Name: "second", Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
 					return &uncertainSwitchAdapter{started: &starts}, func(context.Context) error { return nil }, nil
 				}},
 			}
@@ -361,7 +362,7 @@ func TestDispatchSwitchConnectionEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 			w := externalDispatchTask(t, s, []string{r.Definition.Repository}, true)
-			s.cfg.Workers = []Factory{{Name: tc.name, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+			s.cfg.Workers = []Factory{{Name: tc.name, Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
 				a := &connectionSwitchAdapter{quotaStopAdapter: quotaStopAdapter{events: make(chan worker.Event, 1)}, name: tc.name, code: tc.code}
 				return a, func(context.Context) error { return nil }, nil
 			}}}
