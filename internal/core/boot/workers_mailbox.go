@@ -146,7 +146,15 @@ func (e *workerSession) ownerSteering(ctx context.Context, key, text string) err
 		return worker.ErrInputRefused
 	}
 	if m.Tier != "push" {
-		return e.steeringNotice(ctx, m.ID, "stored", "seen at the next step")
+		current, err := e.origin.work.SteeringMessages(ctx, m.Session)
+		if err != nil {
+			return err
+		}
+		for _, message := range current {
+			if message.ID == m.ID && message.State == "stored" {
+				return e.steeringNotice(ctx, m.ID, "stored", "seen at the next step")
+			}
+		}
 	}
 	return nil
 }
@@ -178,6 +186,8 @@ func (e *workerSession) resumeSteering(ctx context.Context) error {
 	return nil
 }
 func (e *workerSession) inboxTool(ctx context.Context, event worker.Event) (any, error) {
+	e.control.Lock()
+	defer e.control.Unlock()
 	var args struct {
 		Read  []string `json:"read"`
 		Acted []string `json:"acted"`
