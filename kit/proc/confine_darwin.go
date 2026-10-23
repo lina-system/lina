@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 	"syscall"
 )
 
@@ -26,38 +25,35 @@ const EscapeDenial = "(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid)
 // calls. The last matching rule wins, so the denial follows the default allow.
 const escapePolicy = "(version 1)\n(allow default)\n" + EscapeDenial + "\n"
 
-var checkSandboxExec sync.Once
-
 // confine wraps a command in the escape-denial policy unless the caller already
-// runs it under a launcher that applies the same denial. A host without the
-// launcher fails closed instead of starting a command it cannot own.
-func confine(path string, args []string, confined bool) (string, []string, error) {
+// runs it under a launcher that applies the same denial.
+func confine(path string, args []string, confined bool) (string, []string, bool) {
 	if confined {
-		return path, args, nil
+		return path, args, false
 	}
-	var missing error
-	checkSandboxExec.Do(func() {
-		if info, err := os.Stat(sandboxExec); err != nil || info.IsDir() {
-			missing = fmt.Errorf("process escape denial needs %s", sandboxExec)
-		}
-	})
-	if missing != nil {
-		return "", nil, missing
+	wrapped := make([]string, 0, len(args)+3)
+	wrapped = append(wrapped, "-p", escapePolicy, path)
+	return sandboxExec, append(wrapped, args...), true
+}
+
+// checkEscapeDenial runs before the launcher starts. A host without the
+// launcher fails closed instead of starting a command it cannot own, and a
+// missing or non-executable command gets the kernel's own error instead of the
+// launcher's exit status.
+func checkEscapeDenial(target string) error {
+	if info, err := os.Stat(sandboxExec); err != nil || info.IsDir() {
+		return fmt.Errorf("process escape denial needs %s", sandboxExec)
 	}
-	// The launcher would report its own failure instead of the command's, so
-	// answer a missing or non-executable command here as the kernel would.
-	info, err := os.Stat(path)
+	info, err := os.Stat(target)
 	if err != nil {
 		var pathErr *os.PathError
 		if errors.As(err, &pathErr) {
 			err = pathErr.Err
 		}
-		return "", nil, &os.PathError{Op: "fork/exec", Path: path, Err: err}
+		return &os.PathError{Op: "fork/exec", Path: target, Err: err}
 	}
 	if info.IsDir() || info.Mode().Perm()&0o111 == 0 {
-		return "", nil, &os.PathError{Op: "fork/exec", Path: path, Err: syscall.EACCES}
+		return &os.PathError{Op: "fork/exec", Path: target, Err: syscall.EACCES}
 	}
-	wrapped := make([]string, 0, len(args)+3)
-	wrapped = append(wrapped, "-p", escapePolicy, path)
-	return sandboxExec, append(wrapped, args...), nil
+	return nil
 }

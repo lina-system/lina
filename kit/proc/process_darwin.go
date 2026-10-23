@@ -29,6 +29,8 @@ const ownerTokenName = "LINA_PROC_OWNER"
 type darwinProcess struct {
 	cmd      *exec.Cmd
 	token    string
+	target   string // the command the owner itself wrapped
+	confined bool
 	identity processIdentity
 	stop     sync.Once
 	stopErr  error
@@ -44,16 +46,18 @@ func newProcess(c Command) (process, error) {
 		}
 	}
 	c.Env = append(env, token)
-	path, args, err := confine(c.Path, c.Args, c.Confined)
-	if err != nil {
-		return nil, err
-	}
+	path, args, wrapped := confine(c.Path, c.Args, c.Confined)
 	cmd := command(Command{Path: path, Args: args, Dir: c.Dir, Env: c.Env, Stdin: c.Stdin, Stdout: c.Stdout, Stderr: c.Stderr, ExtraFiles: c.ExtraFiles})
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	return &darwinProcess{cmd: cmd, token: token, stopped: make(chan struct{})}, nil
+	return &darwinProcess{cmd: cmd, token: token, target: c.Path, confined: wrapped, stopped: make(chan struct{})}, nil
 }
 
 func (p *darwinProcess) start() error {
+	if p.confined {
+		if err := checkEscapeDenial(p.target); err != nil {
+			return err
+		}
+	}
 	if err := p.cmd.Start(); err != nil {
 		return err
 	}

@@ -82,6 +82,7 @@ func TestOwnerReapsOrphanedClearedEnvironmentDescendant(t *testing.T) {
 		t.Fatalf("descendant readiness = %q", line)
 	}
 	defer killEscaped(pid) // Also clean up the red run.
+	l.Release()
 	select {
 	case <-released:
 		t.Fatal("lease released while descendants are still running")
