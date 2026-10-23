@@ -342,6 +342,7 @@ test('acceptance batches run every enumerated test once within the shared budget
   assert.deepEqual(runs.flatMap(run => run.selected).sort(), [...names].sort());
   const batches = runs.filter(run => run.selected.length > 0);
   assert.ok(batches.length > 1);
+  assert.ok(batches.every(batch => batch.selected.length * 80_000 < 360_000));
   assert.ok(batches.slice(1).every((batch, i) => batch.budget < batches[i].budget));
   assert.ok(elapsed < componentsTimeoutMs);
 });
