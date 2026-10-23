@@ -106,7 +106,8 @@ func (r *conversationRuntime) recordedWorker(ctx context.Context, session string
 	return result, err
 }
 
-// Recover only admitted, unclaimed follow-ups. Turn recovery already sealed any
+// Recover admitted, unclaimed worker completions and question-card answers.
+// Turn recovery already sealed any
 // interrupted model calls; replaying those could repeat an effect.
 func (r *conversationRuntime) resumeWorkerCompletions(ctx context.Context) error {
 	if r.route == nil {
@@ -117,7 +118,7 @@ func (r *conversationRuntime) resumeWorkerCompletions(ctx context.Context) error
 		inbox int64
 	}
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT e.id,i.id FROM inbox i JOIN conv_event e ON e.id=i.native_id LEFT JOIN turn_runs t ON t.inbox_id=i.id WHERE i.source='worker-finish' AND e.scaffold_kind='worker_completion' AND t.id IS NULL ORDER BY i.id`)
+		rows, err := tx.QueryContext(ctx, `SELECT e.id,i.id FROM inbox i JOIN conv_event e ON e.id=i.native_id LEFT JOIN turn_runs t ON t.inbox_id=i.id WHERE ((i.source='worker-finish' AND e.scaffold_kind='worker_completion') OR (i.source='question-answer' AND e.scaffold_kind='question_answer' AND EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=e.id))) AND t.id IS NULL ORDER BY i.id`)
 		if err != nil {
 			return err
 		}
@@ -166,7 +167,30 @@ func (r *conversationRuntime) workerCompletionView(ctx context.Context, event le
 	// A persona's main conversation can be shared by several channels. Resolve
 	// the retained originating inbox input, never another binding with the
 	// same persona/conversation or just the parent chat of a restricted thread.
-	parent, ok := strings.CutPrefix(event.ParentID, "channel-input:")
+	parentID := event.ParentID
+	seen := map[string]bool{}
+	for !strings.HasPrefix(parentID, "channel-input:") {
+		if parentID == "" || seen[parentID] {
+			return nil, channels.ErrDenied
+		}
+		seen[parentID] = true
+		parent, err := r.journal().Get(ctx, parentID)
+		if errors.Is(err, ledger.ErrNotFound) {
+			return nil, channels.ErrDenied
+		}
+		if err != nil {
+			return nil, err
+		}
+		if parent.AgentID != event.AgentID || parent.ConversationID != event.ConversationID || parent.Surface.Kind != "channel" || parent.Origin.Kind != "native" || parent.ReplayOf != "" {
+			return nil, channels.ErrDenied
+		}
+		// Only Core's durable continuation events can carry the original receipt.
+		if parent.ScaffoldKind != "question_answer" && parent.ScaffoldKind != "worker_completion" {
+			return nil, channels.ErrDenied
+		}
+		parentID = parent.ParentID
+	}
+	parent, ok := strings.CutPrefix(parentID, "channel-input:")
 	id, err := strconv.ParseInt(parent, 10, 64)
 	if !ok || err != nil || id <= 0 {
 		return nil, channels.ErrDenied

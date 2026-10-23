@@ -17,6 +17,9 @@ type runQuestions struct{ runtime *conversationRuntime }
 
 func (q runQuestions) Question(ctx context.Context, person, id string) (protocol.Question, error) {
 	r := q.runtime
+	if strings.HasPrefix(id, conversationQuestionPrefix) {
+		return r.conversationQuestionCard(ctx, person, id)
+	}
 	if strings.HasPrefix(id, "work:") {
 		return q.workQuestion(ctx, person, strings.TrimPrefix(id, "work:"))
 	}

@@ -172,10 +172,11 @@ func (r *conversationRuntime) ownerAgentNames(ctx context.Context) (map[string]s
 func (r *conversationRuntime) ownerWaiting(ctx context.Context, names map[string]string, opts waiting.Options) (waiting.List, error) {
 	name := func(id string) string { return names[id] }
 	sources := map[string]waiting.Source{
-		"approval": &waiting.ApprovalSource{Service: r.personaAuthority, AgentName: name},
-		"question": waiting.RoundSource{AgentName: name},
-		"work":     waiting.BlockedWorkSource{AgentName: name},
-		"exchange": waiting.ExchangeSource{AgentName: name},
+		"approval":              &waiting.ApprovalSource{Service: r.personaAuthority, AgentName: name},
+		"question":              waiting.RoundSource{AgentName: name},
+		"conversation_question": waiting.ConversationQuestionSource{AgentName: name},
+		"work":                  waiting.BlockedWorkSource{AgentName: name},
+		"exchange":              waiting.ExchangeSource{AgentName: name},
 	}
 	if r.background != nil {
 		sources["run"] = &waiting.RunInputSource{DB: r.db, Owner: r.background.service, AgentName: name}

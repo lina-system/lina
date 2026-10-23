@@ -34,6 +34,9 @@ func (r *conversationRuntime) startDecisions(ctx context.Context) error {
 	// Deliberately replace earlier hooks; this preserves the existing boot order.
 	r.identity.RefreshTopic = func(ctx context.Context, topic string) error {
 		if topic == "waiting" {
+			if err := r.restoreConversationQuestions(ctx); err != nil {
+				return err
+			}
 			if err := d.PublishApprovals(ctx); err != nil {
 				return err
 			}
