@@ -154,7 +154,7 @@ func TestInstallWithoutAccount(t *testing.T) {
 	for _, tool := range tools {
 		names = append(names, tool.Name)
 	}
-	if want := []string{"codex", "claude", "antigravity", "cursor-agent", "gh", "grok", "node", "bwrap"}; !slices.Equal(names, want) {
+	if want := []string{"codex", "claude", "antigravity", "cursor-agent", "gemini", "gh", "grok", "node", "bwrap"}; !slices.Equal(names, want) {
 		t.Fatalf("installed tool names: got %v, want %v", names, want)
 	}
 	i = slices.IndexFunc(tools, func(tool Tool) bool { return tool.Name == "cursor-agent" })

@@ -178,6 +178,27 @@ the original conversation, input and recovered worker turn. Request-only and
 streaming frames do not qualify. The same reply ID and text must survive the
 second restart; a failed check retains delivery metadata and its terminal frame.
 
+A conversation body above the ledger's inline size is stored as a material and
+its event keeps a null body column. Attribution, the worker-output check and
+the failure diagnostic read those bodies through the ledger's own reader; a raw
+`conv_event.body` query silently returns an empty string and drops a delivered
+reply. `TestAlphaRecoveredReplyReadsSpilledBodies` holds that boundary for both
+a spilled worker completion and a spilled reply.
+
+The task's own corpus crosses that boundary when the worker answers it in full:
+40 situations in three Korean sentences each are 18,551 bytes, and the retained
+completion with its task packet is 19,065 bytes.
+`TestAlphaRecoveredReplySpilledCompletionEndToEnd` drives that size through the
+installed Core, a killed turn and the recovery continuation with the synthetic
+worker, and requires the completed delivery, the material-backed completion and
+the attributed reply. The same run reads the completion by raw column and shows
+the empty result the acceptance used to return.
+
+Every acceptance run logs each stored completion candidate with its session,
+turn, status, delivery state, material flag and body size, so a failure is
+measured rather than guessed. With `LINA_ALPHA_CAPTURES` set, the same record is
+written to `recovery-delivery.json` in that test's capture directory.
+
 To keep a measured product fixed while changing only the test harness, set
 `LINA_ALPHA_BUILD` to a private directory containing `binaries/lina`,
 `binaries/lina-node` and `pinned-binaries.json`. The manifest records

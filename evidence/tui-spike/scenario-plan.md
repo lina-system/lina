@@ -10,9 +10,12 @@ and width behavior. Keep these bounds unchanged when recording a failure.
 
 Use the recording harness and evidence format from
 [#86](https://github.com/thisisjun786/lina/issues/86). Record its exact source commit
-and the library revisions actually built. Confirm the terminal list with the
-owner: at least one macOS terminal, the default LINA OS terminal, and one terminal
-reached over SSH. Include Apple Terminal in S5's compatibility observations.
+and the library revisions actually built. Owner confirmation of the terminal
+list is still pending and is tracked as the first Done-when item of
+[#371](https://github.com/thisisjun786/lina/issues/371): confirm there that the
+matrix has at least one macOS terminal, the default LINA OS (Omarchy) terminal,
+and one terminal reached over SSH. Include Apple Terminal in
+S5's compatibility observations.
 Record the local terminal application and version for an SSH run, not just the
 remote shell. Do not include account names, hostnames, addresses or personal data.
 
