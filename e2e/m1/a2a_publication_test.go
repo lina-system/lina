@@ -235,7 +235,10 @@ func testM3A2APublication(t *testing.T, mode string) {
 	h, _ = installConversationBundle(t, h, bundle, provider.URL)
 	load := newWorkerLoad(t, fixture)
 	workerMode := mode
-	if mode == "verified" || mode == "unverified" {
+	if mode == "verified" {
+		workerMode = "overlap"
+	}
+	if mode == "unverified" {
 		workerMode = "success"
 	}
 	if mode == "revoked-running" {
@@ -378,6 +381,9 @@ func testM3A2APublication(t *testing.T, mode string) {
 		t.Fatalf("send: %d %s", status, body)
 	}
 	id := admitted.Result.Task.ID
+	if mode == "verified" && a2a.Terminal(admitted.Result.Task.Status.State) {
+		t.Fatal("stream closed after work was already terminal")
+	}
 	_, body = request("valid", "SendMessage", params)
 	var duplicate struct{ Result struct{ Task a2a.Task } }
 	json.Unmarshal(body, &duplicate)
@@ -395,8 +401,13 @@ func testM3A2APublication(t *testing.T, mode string) {
 		t.Fatalf("cross caller list: %s", body)
 	}
 
-	if mode == "denied" {
+	if mode == "verified" {
+		if err = os.WriteFile(filepath.Join(fixture, "release-first"), []byte("1"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 
+	if mode == "denied" {
 		receiveCtx, stopReceive := context.WithCancel(h.ctx)
 		type received struct {
 			frame protocol.Envelope

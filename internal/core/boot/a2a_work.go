@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
@@ -263,7 +265,16 @@ func (r *conversationRuntime) authorizePublishedWorker(ctx context.Context, d di
 	if err = r.publications.authorize(ctx, rec); err != nil {
 		return false, nil
 	}
-	expected, _ := json.Marshal(a2a.WorkDefinition(rec))
+	definition := a2a.WorkDefinition(rec)
+	definition.Repository, err = filepath.EvalSymlinks(definition.Repository)
+	if err != nil {
+		return false, err
+	}
+	definition.Skill, err = skills.MethodID(definition.Kind, definition.Skill)
+	if err != nil {
+		return false, err
+	}
+	expected, _ := json.Marshal(definition)
 	actual, _ := json.Marshal(d.Definition)
 	return a2a.ArgumentsEqual(expected, actual), nil
 }
