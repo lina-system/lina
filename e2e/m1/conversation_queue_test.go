@@ -144,6 +144,36 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 			if summaries.Load() != 1 || strings.Contains(body, "Archived source") || !strings.Contains(body, "receipt 42") {
 				t.Error("queued turn did not reuse its published summary")
 			}
+			// Request layout is history, current input, then ContextPacket:
+			// docs/design/conversation-and-memory.md#request-layout.
+			wantInput, wantReply := queuedInput, firstReply+strings.Repeat("b", 12000)
+			if n == 4 {
+				wantInput, wantReply = "Another queued input", queuedReply
+			} else if n == 5 {
+				wantInput, wantReply = "Recall the catalog after restart.", "Another reply."
+			}
+			inputPosition, replyPosition, clockPosition := -1, -1, -1
+			inputCount, clockCount := 0, 0
+			for i, raw := range request.Input {
+				var item struct{ Role, Content string }
+				if json.Unmarshal(raw, &item) != nil {
+					continue
+				}
+				if item.Role == "user" && item.Content == wantInput {
+					inputPosition = i
+					inputCount++
+				}
+				if item.Role == "assistant" && item.Content == wantReply {
+					replyPosition = i
+				}
+				if item.Role == "developer" && strings.Contains(item.Content, `"id":"clock:`) {
+					clockPosition = i
+					clockCount++
+				}
+			}
+			if inputCount != 1 || replyPosition <= position || inputPosition != replyPosition+1 || clockCount != 1 || clockPosition != inputPosition+1 {
+				t.Errorf("request %d: want history, current input, ContextPacket; last_tool=%d reply=%d input=%d (count=%d) clock=%d (count=%d)", n, position, replyPosition, inputPosition, inputCount, clockPosition, clockCount)
+			}
 			if n == 5 {
 				emitResponse(w, "The catalog survived restart.", true)
 				return
@@ -162,16 +192,6 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 				if strings.Count(body, text) != 1 {
 					t.Errorf("queued request needs exactly one %q: %s", text, body)
 				}
-			}
-			currentIndex := -1
-			for i, raw := range request.Input {
-				var current struct{ Role, Content string }
-				if json.Unmarshal(raw, &current) == nil && current.Role == "user" && current.Content == queuedInput {
-					currentIndex = i
-				}
-			}
-			if currentIndex <= position || currentIndex == len(request.Input)-1 {
-				t.Error("queued input must follow retained history and precede the context packet")
 			}
 			emitResponse(w, queuedReply, true)
 		default:

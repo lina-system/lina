@@ -13,6 +13,11 @@ import (
 // TestM3SharedAncestorGraphInstalledCore (m3/dependency-reachability.json)
 // extends the real worker scenario with an overlapping tail whose shared
 // ancestors previously made negative reachability searches exponential.
+// Both initial workers' persona replies finish before the merge refresh, so
+// completion turns cannot consume that scripted request. The refresh is queued
+// and matched to its durable input rather than another turn's idle frame.
+// Forge refresh reads the three executable tasks; all 48 queued descendants
+// are still checked directly in canon before and after Core restarts.
 func TestM3SharedAncestorGraphInstalledCore(t *testing.T) {
 	raw, err := os.ReadFile("../m3/dependency-reachability.json")
 	if err != nil {

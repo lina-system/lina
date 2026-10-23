@@ -182,6 +182,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	}
 	var calls atomic.Int32
 	var managerCalls atomic.Int32
+	workerReplies := make(chan struct{}, 3)
 	var taskIDs []string
 	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -227,9 +228,18 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		if outcome != nil && respondScheduledOutcome(t, w, request.Input, outcome) {
 			return
 		}
-		if respondWorkerCompletion(w, request.Input, "") || scriptedWorkCompletion(w, request.Input) {
-			// Background reports must not consume the later person's refresh
-			// of the forge merge or release a dependent early.
+		if respondWorkerCompletion(w, request.Input, "") {
+			if option.sharedAncestors != 0 {
+				select {
+				case workerReplies <- struct{}{}:
+				default:
+					t.Error("unexpected extra worker completion reply")
+				}
+			}
+			return
+		}
+		if scriptedWorkCompletion(w, request.Input) {
+			// Manager reports must not consume the person's forge refresh.
 			return
 		}
 		if preset != "" {
@@ -309,7 +319,14 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 					t.Error("recovered task failure disabled delegation tools")
 				}
 			}
-			emitPersonaCall(w, "refresh", "refresh_work", map[string]any{"tasks": taskIDs})
+			refreshIDs := taskIDs
+			if option.sharedAncestors != 0 {
+				// Only these tasks can have a forge result. The full tail is
+				// checked in canon before and after restart; returning every
+				// queued packet here would exhaust the model input budget.
+				refreshIDs = taskIDs[:3]
+			}
+			emitPersonaCall(w, "refresh", "refresh_work", map[string]any{"tasks": refreshIDs})
 		default:
 			emitResponse(w, "Work refreshed.", true)
 		}
@@ -775,6 +792,19 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		admittedTurn(t, h, client, conversation, "conflict-input", "Observe the remaining conflict again.")
 	}
 	await(taskIDs[2], func(c work.Card) bool { return c.Run != nil && !c.Active })
+	if option.sharedAncestors != 0 {
+		// Both initial workers report back before the person asks to refresh.
+		// Their persona turns must not consume the scripted refresh request.
+		deadline := time.NewTimer(operationTimeout)
+		defer deadline.Stop()
+		for range 2 {
+			select {
+			case <-workerReplies:
+			case <-deadline.C:
+				t.Fatalf("initial worker replies missing before merge refresh: ordinary model calls=%d", calls.Load())
+			}
+		}
+	}
 	assertProtectedRefs := func() {
 		t.Helper()
 		dir := filepath.Join(h.root, "work", "tasks", taskIDs[0])
@@ -816,7 +846,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 	if err = os.WriteFile(filepath.Join(h.root, a.Task.ID+".merged"), []byte("observed"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	admittedTurn(t, h, client, conversation, "refresh-input", "Observe the landed foundation.")
+	queuedWorkTurn(t, h, client, conversation, "refresh-input", "Observe the landed foundation.")
 	b = await(taskIDs[1], func(c work.Card) bool { return c.Run != nil && !c.Active && c.TurnStatus == "completed" })
 	for _, id := range taskIDs[:3] {
 		dir := filepath.Join(h.root, "work", "tasks", id)
