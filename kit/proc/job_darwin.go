@@ -92,6 +92,7 @@ type jobStream struct {
 	accepted chan *net.UnixConn
 	conn     *net.UnixConn
 	pump     chan error
+	stdin    bool
 }
 
 type jobProcess struct {
@@ -138,7 +139,7 @@ func newProcess(c Command) (process, error) {
 		if err != nil {
 			return fail(err)
 		}
-		p.streams[stream.name] = &jobStream{listener: listener, accepted: make(chan *net.UnixConn, 1), pump: make(chan error, 1)}
+		p.streams[stream.name] = &jobStream{listener: listener, accepted: make(chan *net.UnixConn, 1), pump: make(chan error, 1), stdin: stream.name == "in"}
 	}
 	request.Ctl = filepath.Join(dir, "ctl.sock")
 	ctl, err := net.ListenUnix("unix", &net.UnixAddr{Name: request.Ctl, Net: "unix"})
@@ -267,7 +268,7 @@ func (p *jobProcess) start() error {
 			go func() { _, _ = io.Copy(conn, p.stdin); stream.pump <- conn.CloseWrite() }()
 		case "out":
 			go func() { _, err := io.Copy(p.stdout, conn); stream.pump <- err }()
-		case "err":
+		default:
 			go func() { _, err := io.Copy(p.stderr, conn); stream.pump <- err }()
 		}
 	}
@@ -495,6 +496,11 @@ func (p *jobProcess) drain() error {
 	deadline := time.Now().Add(5 * time.Second)
 	for _, stream := range p.streams {
 		if stream.conn == nil {
+			continue
+		}
+		if stream.stdin {
+			// The caller owns the reader; a reader that never ends keeps this
+			// copy blocked, which is not an error in the command's own result.
 			continue
 		}
 		remaining := time.Until(deadline)

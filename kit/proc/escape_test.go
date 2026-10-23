@@ -52,7 +52,7 @@ func TestOwnerReapsEscapedDescendants(t *testing.T) {
 				defer stop()
 				done := make(chan error, 1)
 				go func() {
-					done <- owner.Run(runCtx, l, proc.Command{Path: exe, Args: []string{"-test.run=^TestEscapingProcess$", "--", "root", escape}, Env: []string{"LINA_PROC_ESCAPE_TEST=1"}, Stdin: input, Stdout: writer, Stderr: os.Stderr})
+					done <- owner.Run(runCtx, l, proc.Command{Path: exe, Args: []string{"-test.run=^TestEscapingProcess$", "--", "root", escape}, Env: []string{}, Stdin: input, Stdout: writer, Stderr: os.Stderr})
 					writer.Close()
 				}()
 				ready := make(chan []string, 1)
