@@ -136,7 +136,7 @@ func (r *conversationRuntime) Memory(ctx context.Context, s clientsrv.Session, p
 		defer r.dispatchMu.Unlock()
 	}
 	scope := memory.RecallScope{Person: s.PersonID, Agent: *p.AgentID}
-	store := memory.New(r.db)
+	store := r.memoryStore()
 	query := memory.Query{At: time.Now().Unix(), Limit: 1000}
 	if *p.Operation == "list" {
 		if p.ItemID != nil || p.Holder != nil || p.Scope != nil {
@@ -167,6 +167,21 @@ func (r *conversationRuntime) Memory(ctx context.Context, s clientsrv.Session, p
 				evidence = append(evidence, string(e.Kind)+":"+e.ID)
 			}
 			item := protocol.MemorySummary{ItemID: h.ID, Content: h.Content, Holder: string(h.Holder), Scope: string(h.Scope), Revision: json.Number(strconv.FormatInt(h.Revision, 10)), Evidence: evidence}
+			details := make([]protocol.MemoryEvidence, 0, len(h.Evidence))
+			for _, ref := range h.Evidence {
+				detail := protocol.MemoryEvidence{Reference: string(ref.Kind) + ":" + ref.ID}
+				if ref.Quote != "" {
+					detail.Quote = &ref.Quote
+				}
+				if ref.Status != "" {
+					detail.Status = &ref.Status
+				}
+				if ref.Tombstone != nil {
+					detail.Tombstone = &protocol.MemoryTombstone{Agent: ref.Tombstone.Agent, Person: ref.Tombstone.Person, At: json.Number(strconv.FormatInt(ref.Tombstone.At, 10))}
+				}
+				details = append(details, detail)
+			}
+			item.EvidenceDetails = &details
 			raw, e := json.Marshal(item)
 			if e != nil {
 				return result, e

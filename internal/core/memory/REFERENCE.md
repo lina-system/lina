@@ -64,3 +64,16 @@ No new client command or TUI memory screen is introduced.
 ### C-21 memory job acceptance
 
 Synthetic package tests and `e2e/m1/memory-jobs.json` exercise these operations with the real worker binary and Core job socket; model quality and installed scheduling remain composition concerns.
+
+### Evidence quote switch
+
+New item and revision serialization removes rendered evidence quotes. Citation
+writers retain an unchanged source span when later records no longer hold its
+text. `WithQuotes` binds the composing flow's ledger reader; `Quotes` selects
+citation intervals by view revision. Ledger reads check source ownership and
+removal before and after material I/O and slice only valid UTF-8 byte ranges of
+the masked derived text. Existing legacy records are not rewritten in bulk.
+Installed-Core acceptance runs a real `remember_name` tool call against a
+scripted provider and resolves its material-backed evidence through management
+before and after restart. Package fixtures cover import, legacy revisions,
+secret spans, cross-agent reads and tombstones.
