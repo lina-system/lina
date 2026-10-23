@@ -161,12 +161,26 @@ func alterUpdateManifest(t *testing.T, bundle string, change func(map[string]any
 		t.Fatal(err)
 	}
 }
+
+// TestM2UpdateActivation runs m2/update-activation.json, driving lina update
+// --activate against installed Core. A test-owned service manager launches real
+// service processes; Core drains through its client protocol, snapshots and
+// swaps, runs a real conversation and bundled-worker readiness check, and
+// resumes with a verified tool result. Start refusal rolls back, while provider
+// failure and updater death after READY hold the new state. Package SIGKILL
+// tests acknowledge each rename boundary without fixed startup delays.
 func TestM2UpdateActivation(t *testing.T) {
 	t.Parallel()
 
 	testUpdateActivation(t, "../m2/update-activation.json")
 }
 
+// TestM2UpdateDataOperations runs m2/update-data-operations.json. It injects a
+// 31-second delay into the installed backup or restore command before executing
+// the real CLI, crossing the installer's 30-second probe budget. The backup
+// case completes activation, worker readiness and a resumed tool result; the
+// restore case recovers from a candidate start failure and verifies a
+// conversation on the restored Core.
 func TestM2UpdateDataOperations(t *testing.T) {
 	t.Parallel()
 

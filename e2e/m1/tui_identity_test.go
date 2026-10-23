@@ -19,6 +19,12 @@ import (
 	"github.com/thisisjun786/lina/persona"
 )
 
+// TestM1TUIIdentityFromAgentStore installs a synthetic named agent with four
+// distinct persona layers, types "who are you" through the real TUI, and checks
+// the provider stub's request for that stored identity, owner and persona, plus
+// the exact enabled tool list. It checks request assembly, not model compliance
+// with the persona. The enabled list must match the tools declared in the
+// provider request.
 func TestM1TUIIdentityFromAgentStore(t *testing.T) {
 	t.Parallel()
 

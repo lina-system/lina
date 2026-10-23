@@ -15,6 +15,12 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM1TUIStreamingCodeInstalledCore holds a fixture provider at an open
+// 200-line code fence, its closing delta, and final completion through
+// installed Core and a real PTY. Result Details shows one muted notice plus six
+// trailing rows while open and all 200 rows on close, before completion. The
+// test checks the retained result text and restores the terminal without timed
+// sleeps.
 func TestM1TUIStreamingCodeInstalledCore(t *testing.T) {
 	var code strings.Builder
 	for i := 1; i <= 200; i++ {

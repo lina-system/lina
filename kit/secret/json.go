@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-package secrets
+package secret
 
 import (
 	"encoding/json"
 	"sort"
 	"strings"
-
-	"github.com/thisisjun786/lina/kit/secret"
 )
 
 // Mask structured payloads at decoded string boundaries. Applying plaintext
@@ -22,7 +20,7 @@ func maskJSON(text string, flagged []Span) (Masked, error) {
 				return Masked{}, ErrSpan
 			}
 			out.WriteString(text[end:span.Start])
-			out.WriteString(secret.Placeholder)
+			out.WriteString(Placeholder)
 			end = span.End
 		}
 		out.WriteString(text[end:])
@@ -55,8 +53,8 @@ func maskJSON(text string, flagged []Span) (Masked, error) {
 			if err != nil {
 				return nil, false, err
 			}
-			if key != "" && checked.Text() == key+"="+secret.Placeholder {
-				return secret.Placeholder, v != secret.Placeholder, nil
+			if key != "" && checked.Text() == key+"="+Placeholder {
+				return Placeholder, v != Placeholder, nil
 			}
 			trimmed := strings.TrimSpace(v)
 			if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
@@ -118,12 +116,12 @@ func maskJSON(text string, flagged []Span) (Masked, error) {
 	// These placeholders lie inside JSON strings. Removing their contents for
 	// derived history retains the structural quotes and valid provider JSON.
 	for offset := 0; ; {
-		at := strings.Index(text[offset:], secret.Placeholder)
+		at := strings.Index(text[offset:], Placeholder)
 		if at < 0 {
 			break
 		}
 		start := offset + at
-		offset = start + len(secret.Placeholder)
+		offset = start + len(Placeholder)
 		result.spans = append(result.spans, Span{Start: start, End: offset, Sensitivity: "secret"})
 	}
 	return result, nil

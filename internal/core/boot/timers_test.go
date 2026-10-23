@@ -17,7 +17,7 @@ import (
 func TestTimerToolsBindConversation(t *testing.T) {
 	r := controlRuntime(t)
 	bindings := map[string]loop.Tool{}
-	if len(r.prepareTimerTools("turn", bindings)) != 3 {
+	if declarations, err := r.prepareTimerTools("turn", nil, bindings); err != nil || len(declarations) != 3 {
 		t.Fatal("missing timer tools")
 	}
 	call := provider.ToolCall{ID: "call", Name: "create_timer", Arguments: `{"schedule":{"at":"2099-01-01T00:00:00Z"},"action":{"kind":"reminder","text":"Review notes"}}`}
@@ -43,7 +43,7 @@ func TestTimerToolsBindConversation(t *testing.T) {
 	}
 	foreign := newConversationView(r, "other-agent", "main:other-agent")
 	other := map[string]loop.Tool{}
-	foreign.prepareTimerTools("other-turn", other)
+	foreign.prepareTimerTools("other-turn", nil, other)
 	raw, _ := json.Marshal(timerRef{ID: timer.ID})
 	for _, name := range []string{"timer_status", "cancel_timer"} {
 		got := other[name].Execute(t.Context(), provider.ToolCall{ID: name, Name: name, Arguments: string(raw)})
@@ -52,7 +52,7 @@ func TestTimerToolsBindConversation(t *testing.T) {
 		}
 	}
 	foreign.channelBinding = &channels.Binding{}
-	if declarations := foreign.prepareTimerTools("channel", map[string]loop.Tool{}); len(declarations) != 0 {
+	if declarations, err := foreign.prepareTimerTools("channel", nil, map[string]loop.Tool{}); err != nil || len(declarations) != 0 {
 		t.Fatal("delayed channel authority was not bound")
 	}
 }

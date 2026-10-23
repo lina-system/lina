@@ -30,6 +30,12 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM2DiscordCore runs m2/discord.json. It installs the test host with a
+// matching build manifest, runs production Core boot in a separate process, and
+// controls it through the generated socket protocol. Synthetic outbound
+// Gateway/REST and Responses endpoints demonstrate channel input, read tools,
+// background results, deduplication, shaping, blocked state and restart without
+// live credentials.
 func TestM2DiscordCore(t *testing.T) {
 	t.Parallel()
 

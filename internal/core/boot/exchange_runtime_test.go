@@ -64,7 +64,7 @@ func exchangeRuntimeFixture(t *testing.T) (*conversationRuntime, exchange.Receip
 	r.exchangeStop()
 	<-r.exchangeDone
 	bindings := map[string]loop.Tool{}
-	if err := r.prepareRecordTools("seed", "", bindings); err != nil {
+	if _, err := r.prepareRecordTools("seed", &toolPreparation{}, bindings); err != nil {
 		t.Fatal(err)
 	}
 	created := bindings["write_record"].Execute(t.Context(), provider.ToolCall{ID: "seed", Name: "write_record", Arguments: `{"id":"","revision":"","kind":"memo","title":"Draft","note":"Read this record"}`})

@@ -17,6 +17,13 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM1TUIInterruptedReplySurvivesCoreRestart (m1/tui-interrupted-reply.json)
+// holds a loopback Responses stream after one delta, stops it with Esc in the
+// installed TUI, reopens the TUI, and restarts installed Core both gracefully
+// and forcibly while that TUI reconnects. Stored snapshots and terminal cells
+// must retain the partial and its stopped outcome exactly once. Provider call
+// counts rule out restart replay; an explicit follow-up checks that aborted
+// partial text stays outside model context.
 func TestM1TUIInterruptedReplySurvivesCoreRestart(t *testing.T) {
 	t.Parallel()
 

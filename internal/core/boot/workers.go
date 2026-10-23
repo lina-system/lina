@@ -174,9 +174,10 @@ func workerDeclarations() []provider.ToolDecl {
 	}
 }
 
-func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Event, bindings map[string]loop.Tool) error {
+func (r *conversationRuntime) prepareWorkerTools(turnID string, preparation *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
+	input := preparation.event
 	if r.workers == nil {
-		return nil
+		return workerDeclarations(), nil
 	}
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	for _, name := range []string{"worker_start", "worker_input", "worker_interrupt", "worker_snapshot", "worker_quota", "worker_read_file"} {
@@ -190,7 +191,7 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 			return r.workerOperation(ctx, name, turnID, input, in)
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		validated := turn.Tool(registry, spec, tools.Call{}, turnID)
 		bindings[name] = loop.Tool{Validate: validated.Validate, Execute: func(ctx context.Context, call provider.ToolCall) loop.Result {
@@ -269,7 +270,7 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 			return turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID).Execute(ctx, call)
 		}}
 	}
-	return nil
+	return workerDeclarations(), nil
 }
 
 func (r *conversationRuntime) workerStartAssignment(ctx context.Context, turnID string, in tools.Input) (workerArgs, codingAssignment, string, error) {
