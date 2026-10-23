@@ -430,11 +430,15 @@ without undo. Replay and view aliases of an already adopted source/action
 remain pending without another record, undo handle or notice, across restart.
 A new independent commitment may add the same action once no open equivalent
 remains. Three rejected additions in a recognized class retains later items of
-that class as candidates.
+that class as candidates. Automatic additions allocate an unused record path;
+an existing file never blocks a valid candidate or gets overwritten by it.
 
 Recurring completion and advancement append one `record_occurrence` work-ledger
 event in the same checkpoint as the saved version. The event names the old and
 new occurrences and the reason; it creates neither a new task nor a worker card.
+Completion after the recurrence is exhausted still records one completion
+event without scheduling another occurrence. Repeating the saved write or
+editing a completed record does not record completion again.
 Editing only the current next occurrence preserves the original recurrence
 anchor. Changing the recurrence rule starts the future series at its new next
 occurrence. Core's counters remain inaccessible to tool arguments.

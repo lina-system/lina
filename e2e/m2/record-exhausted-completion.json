@@ -1,0 +1,6 @@
+{
+ "title": "Inspect the retired weather station",
+ "note": "Inspection completed.",
+ "rule": "FREQ=DAILY;COUNT=1",
+ "first": "2020-01-01"
+}
