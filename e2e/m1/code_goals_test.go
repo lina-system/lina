@@ -57,6 +57,10 @@ func TestM2InstalledCodeGoalDriver(t *testing.T) {
 }
 
 func installedCodeGoal(t *testing.T, mode string) {
+	var graph *stepGraphScenario
+	if mode == "step-graph" {
+		graph = newStepGraphScenario(t)
+	}
 	fixture := t.TempDir()
 	repo := filepath.Join(fixture, "repo")
 	bin := filepath.Join(fixture, "bin")
@@ -182,6 +186,10 @@ func installedCodeGoal(t *testing.T, mode string) {
 		if scriptedCodingManager(t, w, request, completion) {
 			return
 		}
+		if graph != nil {
+			graph.respond(t, w, request)
+			return
+		}
 		if calls.Add(1) == 1 {
 			offered := toolReachable(request.Tools, "dispatch_code_goal")
 			if !offered {
@@ -231,6 +239,17 @@ func installedCodeGoal(t *testing.T, mode string) {
 	})
 	c, conversation := conversationClient(t, h)
 	events := admittedTurn(t, h, c, conversation, "goal", "Create the result and run it through deployment and verification.")
+	if graph != nil {
+		events = nil
+		// One operation per turn respects the installed persona's tool budget.
+		for i := 0; i < len(graph.refusals)+3; i++ {
+			next := admittedTurn(t, h, c, conversation, fmt.Sprintf("graph-turn-%d", i), "Check the goal steps.")
+			if i >= len(graph.refusals)+1 {
+				events = append(events, next...)
+			}
+		}
+	}
+
 	if mode == "no-antigravity" {
 		waitCodeGoalState(t, h, func(tx *canon.Tx) (bool, error) {
 			var raw []byte
@@ -510,12 +529,18 @@ func installedCodeGoal(t *testing.T, mode string) {
 		}
 	}
 	core = start()
+	if graph != nil {
+		client, conversation := conversationClient(t, h)
+		admittedTurn(t, h, client, conversation, "read-step-graph", "Read the saved steps.")
+		client.Close()
+		graph.verify(t, g)
+	}
 	h.stopCore(core)
 	after, err := os.ReadFile(filepath.Join(fixture, "events"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(before) != string(after) || calls.Load() != 2 {
+	if string(before) != string(after) || graph == nil && calls.Load() != 2 {
 		t.Fatalf("restart replayed work: %s -> %s; calls=%d", before, after, calls.Load())
 	}
 	if strings.HasPrefix(mode, "completion-") {
