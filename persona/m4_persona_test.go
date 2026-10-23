@@ -288,7 +288,7 @@ func TestM4StarterPersonaRevision(t *testing.T) {
 // sentence. The rewritten and split fixtures are synthetic.
 func TestM4RequirementMatcher(t *testing.T) {
 	readSources := personaRequirement{"read sources before asking", [][]string{
-		{"미완료", "남은 일", "열일", "할 일"},
+		{"미완료", "남은 일", "할 일"},
 		{"나열", "물어", "묻"},
 		{"묻기 전에", "묻기 앞서", "물어보기 전에", "물어보기 앞서", "질문하기 전에"},
 		{"원출처", "원문", "출처", "원래 자료"},
