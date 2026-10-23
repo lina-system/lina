@@ -14,6 +14,7 @@ import (
 // from its source, never from model-supplied evaluation data.
 type Check struct {
 	ReplyType     string   `json:"reply_type,omitempty"`
+	Assessed      []string `json:"assessed,omitempty"`
 	ShapeBreaches []string `json:"shape_breaches,omitempty"`
 	Shapes        *Shapes  `json:"shapes,omitempty"`
 	Budget        Budget   `json:"budget"`

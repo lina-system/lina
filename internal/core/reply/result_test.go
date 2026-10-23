@@ -23,6 +23,8 @@ func TestTypedReplyShapesAndBudgets(t *testing.T) {
 		breaches                       []string
 		budgetBreach                   bool
 	}{
+		{name: "comparison-table", comparison: "verdict-then-table", kind: result.ComparisonType, summary: "A fits.", body: json.RawMessage(`{"targets":[{"label":"A","old":"one","new":"two","hunks":[]}],"apply":null}`), inline: true},
+		{name: "candidate-targets", comparison: "verdict-then-card", kind: result.ComparisonType, typ: "candidates", summary: "Choose A.", body: json.RawMessage(`{"targets":[{"label":"A","old":"","new":"one","hunks":[]},{"label":"B","old":"","new":"two","hunks":[]}],"apply":null}`), breaches: []string{"candidates"}},
 		{name: "card", comparison: "verdict-then-card", kind: result.TableType, summary: "A fits.", body: table},
 		{name: "table", comparison: "verdict-then-table", kind: result.TableType, summary: "A fits.", body: table, inline: true},
 		{name: "person-budget", comparison: "verdict-then-table", kind: result.TableType, summary: "A fits.", body: table, budget: reply.Budget{Lines: 1, Chars: 30}},
@@ -54,6 +56,9 @@ func TestTypedReplyShapesAndBudgets(t *testing.T) {
 			}
 			if string(r.Body) != string(tc.body) || r.Summary != tc.summary {
 				t.Fatal("source mutated")
+			}
+			if tc.name == "unknown-draft" && len(view.Check.Assessed) != 0 {
+				t.Fatal("legacy draft was treated as a classified reply")
 			}
 		})
 	}

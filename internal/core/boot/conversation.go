@@ -1056,7 +1056,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}
 				return turn.PreparedRequest{}, turn.ErrInvalid
 			}
-			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
+			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
 			assembly.Context, err = r.recordContextSources(ctx, packet, report)
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -1149,7 +1149,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        bindings,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
-				return r.resultNotice(ctx, input, call, r.recordNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))))
+				return r.resultNotice(ctx, call, r.recordNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))))
 			},
 			Inputs: inputQueue,
 			Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {

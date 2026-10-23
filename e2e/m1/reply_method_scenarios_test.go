@@ -4,7 +4,6 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -303,6 +302,6 @@ func TestReplyMethodsAgentIsolationAndRestart(t *testing.T) {
 	c.Close()
 	h.stopCore(core)
 	if calls.Load() != int32(len(cases)*2+1) {
-		t.Fatal(fmt.Sprintf("unexpected provider calls: %d", calls.Load()))
+		t.Fatalf("unexpected provider calls: %d", calls.Load())
 	}
 }

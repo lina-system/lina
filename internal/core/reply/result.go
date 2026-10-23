@@ -2,8 +2,10 @@
 package reply
 
 import (
-	"github.com/thisisjun786/lina/kit/result"
+	"encoding/json"
 	"strings"
+
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 // ResultView selects presentation from typed data. Shape violations are audit
@@ -51,13 +53,16 @@ func ProjectResult(c Config, r result.Result) (ResultView, error) {
 		return out, nil
 	}
 	breach := false
+	assessed := false
 	switch kind {
 	case "status":
+		assessed = true
 		breach = c.Shapes.Status == "verdict-first" && (summary.Count.Lines != 1 || summary.Count.Chars == 0)
 	case "comparison":
+		assessed = true
 		breach = summary.Count.Lines != 1 || summary.Count.Chars == 0
 		if c.Shapes.Comparison == "verdict-then-table" {
-			if table, ok := body.(*result.Table); ok {
+			if table := comparisonTable(body); table != nil {
 				inline, err := NewFilter(c)
 				if err != nil {
 					return ResultView{}, err
@@ -74,20 +79,54 @@ func ProjectResult(c Config, r result.Result) (ResultView, error) {
 	case "candidates":
 		switch options := body.(type) {
 		case *result.Table:
+			assessed = true
 			breach = len(options.Rows) > c.Shapes.Candidates
 		case *result.Comparison:
+			assessed = true
 			breach = len(options.Targets) > c.Shapes.Candidates
 		}
 	case "third_party":
 		if doc, ok := body.(*result.Draft); ok && c.Shapes.ThirdParty == "recipient-only" {
+			assessed = true
 			breach = strings.TrimSpace(doc.Recipient) == ""
 			for _, block := range doc.Blocks {
 				breach = breach || block.Audience == "person"
 			}
 		}
 	}
+	if assessed {
+		out.Check.Assessed = []string{kind}
+	}
 	if breach {
 		out.Check.ShapeBreaches = []string{kind}
 	}
 	return out, nil
+}
+
+// A comparison without hunks or an apply action has an exact table view.
+// Structured changes with extra detail keep their card; no fields are dropped
+// to make an inline presentation fit.
+func comparisonTable(body result.Body) *result.Table {
+	switch value := body.(type) {
+	case *result.Table:
+		return value
+	case *result.Comparison:
+		if value.Apply != nil {
+			return nil
+		}
+		table := &result.Table{Columns: []result.Column{{Name: "Item", Type: "text"}, {Name: "Before", Type: "text"}, {Name: "After", Type: "text"}}}
+		for _, target := range value.Targets {
+			if len(target.Hunks) != 0 {
+				return nil
+			}
+			var row []json.RawMessage
+			for _, text := range []string{target.Label, target.Old, target.New} {
+				raw, _ := json.Marshal(text)
+				row = append(row, raw)
+			}
+			table.Rows = append(table.Rows, row)
+		}
+		return table
+	}
+	return nil
 }

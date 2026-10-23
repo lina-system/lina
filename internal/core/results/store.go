@@ -50,7 +50,7 @@ type Writer interface {
 type PreparedSave func(context.Context, result.SavedRef) error
 type Config struct {
 	Journal   Journal
-	Writer    Writer
+	Writer    Writer // Optional: nil permits previews and reads, but no saves.
 	Limits    result.Limits
 	TextRunes int
 }

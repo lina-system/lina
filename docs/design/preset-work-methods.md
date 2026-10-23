@@ -84,7 +84,7 @@ Core applies each field as data. Persona text never restates them.
 - **Done evidence.** A completion that Core records (a 할 일 marked done, a task delivered, a repair or an apply reported in a result card) carries an evidence reference of a kind the record requires for that work kind. Without one, Core records the completion as "claimed" and the card shows "not verified". Core never rewrites the reply. The breach counter counts every claimed completion.
 - **Hand-offs.** See Hand-offs.
 
-The record's values enter the request as one developer-role block after the persona layers. They change only with a record revision, so they stay inside the cached prefix of that agent. Filled values enter the ContextPacket with the blank-setting values, outside the cached prefix.
+The record's values enter the request as one developer-role block after the persona layers. They change only with a record revision, so they stay inside the cached prefix of that agent. Filled values enter the ContextPacket with the blank-setting values, outside the cached prefix. Conversation request evidence uses `persona-tui-work-method-v1` when it includes this record. Replay carries the pinned record in its optional `work_method` field and reconstructs the same prefix; older instruction formats keep their earlier prefix.
 
 ## Done evidence
 

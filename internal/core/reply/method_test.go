@@ -49,3 +49,19 @@ func TestReplyMethodUsesPreparedRecordAndActiveAgentFills(t *testing.T) {
 		})
 	}
 }
+
+func TestUnstructuredReplyIsNotClassifiedByWording(t *testing.T) {
+	shapes := reply.Shapes{Status: "verdict-first", Comparison: "verdict-then-card", Candidates: 1, ThirdParty: "recipient-only"}
+	c := config()
+	c.Shapes = &shapes
+	f := filter(t, c)
+	// Mutating the caller's projection cannot change this prepared reply.
+	shapes.Candidates = 9
+	if _, err := f.Push("Status: choose between two drafts for a client."); err != nil {
+		t.Fatal(err)
+	}
+	check := f.Check()
+	if len(check.ShapeBreaches) != 0 || len(check.Assessed) != 0 || check.ReplyType != "" || check.Shapes.Candidates != 1 {
+		t.Fatalf("inferred or unpinned shape: %+v", check)
+	}
+}

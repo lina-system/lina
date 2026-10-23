@@ -58,12 +58,18 @@ func (j measuredResultJournal) Append(ctx context.Context, tx *canon.Tx, scope r
 
 func (r *conversationRuntime) resultEnvironment(ctx context.Context, g grant.Grant) (grant.Environment, error) {
 	env := grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: "0"}
+	var conversation string
+	if err := r.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT conversation FROM turn_runs WHERE id=?", g.Identity.TaskID).Scan(&conversation)
+	}); err != nil {
+		return env, err
+	}
 	target := g.Scope[0].Target
-	if target == "result:new:"+r.conversation {
+	if target == "result:new:"+conversation {
 		return env, nil
 	}
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, `SELECT revision FROM result_heads WHERE id=? AND person=? AND agent=? AND conversation=?`, strings.TrimPrefix(target, "result:"), r.person, r.agent, r.conversation).Scan(&env.Revision)
+		return tx.QueryRowContext(ctx, `SELECT revision FROM result_heads WHERE id=? AND person=? AND agent=? AND conversation=?`, strings.TrimPrefix(target, "result:"), g.Identity.Person, g.Identity.Agent, conversation).Scan(&env.Revision)
 	})
 	return env, err
 }
@@ -98,7 +104,7 @@ func (r *conversationRuntime) prepareResultTools(turnID string, input ledger.Eve
 	return nil
 }
 
-func (r *conversationRuntime) resultNotice(ctx context.Context, input ledger.Event, call provider.ToolCall, out loop.Result) loop.Result {
+func (r *conversationRuntime) resultNotice(ctx context.Context, call provider.ToolCall, out loop.Result) loop.Result {
 	if call.Name != "present_result" || out.Code != loop.OK {
 		return out
 	}
