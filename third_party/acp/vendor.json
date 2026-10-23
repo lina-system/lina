@@ -1,0 +1,58 @@
+{
+  "name": "acp",
+  "source": "https://github.com/agentclientprotocol/agent-client-protocol",
+  "license": "Apache-2.0",
+  "release": "schema-v1.26.0",
+  "commit": "e2d83349bc9e28a4059ea3acefa1c91c966f74e2",
+  "scope": [
+    "LICENSE",
+    "schema/v1/meta.json",
+    "schema/v1/schema.json",
+    "types.go"
+  ],
+  "generation": {
+    "tools": [
+      {
+        "name": "lina-acp-schema-go",
+        "version": "1",
+        "path": "generate.mjs",
+        "sha256": "766d170ee05d1883cbf535ea5e6f49d82021d8ab7900bc9b390488ab6430e441"
+      },
+      {
+        "name": "node",
+        "version": "v24.20.0",
+        "sha256": "89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7"
+      },
+      {
+        "name": "gofmt",
+        "version": "go1.27.3",
+        "sha256": "fd464d1c9098a6714d06bd3fcd2a1fedcdd291e710241160ebb663bf99adf2f8"
+      }
+    ],
+    "commands": [
+      "gh api 'repos/agentclientprotocol/agent-client-protocol/contents/LICENSE?ref=e2d83349bc9e28a4059ea3acefa1c91c966f74e2' -H 'Accept: application/vnd.github.raw+json' > third_party/acp/upstream/LICENSE",
+      "gh api 'repos/agentclientprotocol/agent-client-protocol/contents/schema/v1/schema.json?ref=e2d83349bc9e28a4059ea3acefa1c91c966f74e2' -H 'Accept: application/vnd.github.raw+json' > third_party/acp/upstream/schema/v1/schema.json",
+      "gh api 'repos/agentclientprotocol/agent-client-protocol/contents/schema/v1/meta.json?ref=e2d83349bc9e28a4059ea3acefa1c91c966f74e2' -H 'Accept: application/vnd.github.raw+json' > third_party/acp/upstream/schema/v1/meta.json",
+      "node third_party/acp/generate.mjs"
+    ]
+  },
+  "files": {
+    "LICENSE": {
+      "upstream": "f250d08cee4549b22b3b4aaaf3a743473336fd280316df5d0340717e5127a221",
+      "vendored": "f250d08cee4549b22b3b4aaaf3a743473336fd280316df5d0340717e5127a221"
+    },
+    "schema/v1/meta.json": {
+      "upstream": "061edb6efa8fb2aa2792459a86ec7268de5fe665bba48b2ffe7939df01481f88",
+      "vendored": "061edb6efa8fb2aa2792459a86ec7268de5fe665bba48b2ffe7939df01481f88"
+    },
+    "schema/v1/schema.json": {
+      "upstream": "4bcd1d2051ff7ed379bd9b234fb9b09c5ab9245478698e9fab805bd9b52a33a6",
+      "vendored": "4bcd1d2051ff7ed379bd9b234fb9b09c5ab9245478698e9fab805bd9b52a33a6"
+    },
+    "types.go": {
+      "upstream": "dadc763e98faae031bb6db9d2a45bf2a2f894700b9d5850191d4593227439999",
+      "vendored": "dadc763e98faae031bb6db9d2a45bf2a2f894700b9d5850191d4593227439999"
+    }
+  },
+  "patches": []
+}

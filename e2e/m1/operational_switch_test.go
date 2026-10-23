@@ -130,6 +130,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 		}
 		if respondWorkerCompletion(w, req.Input, "LINA_WORKER_RESULT") {
 			return
+
 		}
 		n := providerCalls.Add(1)
 		if n == 2 || n >= 4 {
@@ -145,6 +146,7 @@ func TestM3OperationalSwitch(t *testing.T) {
 			_ = json.Unmarshal(req.Input[len(req.Input)-1], &item)
 			if err := json.Unmarshal([]byte(item.Output), &result); err != nil {
 				t.Errorf("worker step %d: %v; last input: %s", n, err, req.Input[len(req.Input)-1])
+
 				return
 			}
 			expected := "ok"
