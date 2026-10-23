@@ -43,7 +43,11 @@ func TestPromptSendBarrierOrdersImmediateCancel(t *testing.T) {
 	}
 	// Release the fixture through a separate channel send so its cleanup remains
 	// safe even when an assertion above aborts the test.
-	release <- struct{}{}
+	select {
+	case release <- struct{}{}:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 	select {
 	case r := <-result:
 		if r.Err != nil || r.Response.StopReason != acp.StopReasonCancelled {
