@@ -1291,7 +1291,9 @@ current head, checks and review, with a head recheck after inline comments.
 
 `internal/core/worker/dispatch` wires the adapter into installed Core's `dispatch_work`
 tool and existing work ledger. Migration 31 adds the dispatch journal; a committed
-conversation tool receipt gates execution. The journal reserves each repository
+conversation tool receipt gates execution. Identical retries load the durable
+admission before any manager handoff, preserving older manager definitions and
+ownership without resetting execution state. The journal reserves each repository
 through queued/running/unknown states. Core allocates through its shared
 `work.Area`, records the pinned workspace on the task and starts the worker in
 `work/tasks/<task-id>` from the detached base. The independent parent clone
