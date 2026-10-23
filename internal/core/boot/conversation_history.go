@@ -25,7 +25,7 @@ const conversationHistorySources = `
         e.id AS event_id,'' AS partial,'' AS turn_id,
         e.rowid AS fallback,1 AS phase,0 AS partial_position
  FROM conv_event e
- WHERE (e.speaker_kind IN ('person','agent','forwarded') OR e.scaffold_kind IN ('interruption','failure','skill_change','persona_change','worker_session','run_handoff','background_notice','worker_result','coding_handoff','timer','plan_rejection'))
+ WHERE (e.speaker_kind IN ('person','agent','forwarded') OR e.scaffold_kind IN ('interruption','failure','skill_change','persona_change','worker_session','run_handoff','background_notice','worker_result','coding_handoff','timer','plan_rejection','question_default','question_answer'))
    AND (coalesce(e.scaffold_kind,'')<>'result' OR (e.speaker_kind='agent' AND
         CASE WHEN json_valid(e.body) THEN json_type(e.body,'$.body')='object' ELSE 0 END
         AND EXISTS(SELECT 1 FROM result_heads h WHERE h.event_id=e.id)

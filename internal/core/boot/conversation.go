@@ -4,6 +4,7 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -329,6 +330,15 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		if r.delegation != nil {
 			_ = r.delegation.close(ctx)
 			r.delegation = nil
+		}
+		// Retain the failed readiness stage for clients arriving after boot.
+		// Worker error text can contain private paths or provider messages.
+		var failure *delegationReadinessError
+		if errors.As(delegationErr, &failure) {
+			data, _ := json.Marshal(protocol.ReadinessFailure{Step: failure.step})
+			if publishErr := r.topics.Publish("core", clientsrv.TopicEvent{Kind: protocol.KindReadinessFailure, Key: "delegation", Data: data}); publishErr != nil {
+				fmt.Fprintln(os.Stderr, "Delegation readiness could not be published.")
+			}
 		}
 		fmt.Fprintln(os.Stderr, "Delegation is unavailable; other Core capabilities remain available.")
 	}

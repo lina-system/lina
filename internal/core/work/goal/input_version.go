@@ -90,13 +90,3 @@ func effectSettled(a Action, o Observation) bool {
 	}
 	return false
 }
-
-func hasExternalEffect(a Action) bool {
-	switch a.Kind {
-	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker, Merge, RunQA, Deploy:
-		return true
-	case InspectPR, Verify, Observe, Decide, PlanGoal, CheckCriterion:
-		return false
-	}
-	return false
-}
