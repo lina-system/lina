@@ -51,6 +51,7 @@ var errAdmittedInput = errors.New("input already admitted")
 // handles after Write returns. This adapter adds inbox admission to that same
 // transaction without moving filesystem preparation or cleanup under its lock.
 type conversationAdmission struct {
+	check         func(context.Context, *canon.Tx) error
 	db            *canon.Store
 	input         inbox.Input
 	receipt       inbox.Receipt
@@ -69,6 +70,11 @@ func (a *conversationAdmission) Write(ctx context.Context, fn func(*canon.Tx) er
 		}
 		if !a.receipt.Inserted {
 			return errAdmittedInput
+		}
+		if a.check != nil {
+			if err := a.check(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if err := fn(tx); err != nil {
 			return err

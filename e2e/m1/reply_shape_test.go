@@ -93,7 +93,7 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)
-	c, conversation := conversationClient(t, h)
+	c, _ := conversationClient(t, h)
 	environment := []string{"TERM=xterm-256color", "LC_ALL=" + string(language)}
 	screenTUI, _ := h.startConversationTUI(100, 34, environment...)
 	waitScreen(t, h, screenTUI, design.Text(language, "live"))
@@ -282,7 +282,7 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 		}
 	}()
 	core = start(true)
-	c, conversation = conversationClient(t, h)
+	c, conversation := conversationClient(t, h)
 	again := h.startTerminalSize(environment, false, true, 100, 34)
 	checkScreen(again)
 	admittedTurn(t, h, c, conversation, "followup", scenario.Followup)

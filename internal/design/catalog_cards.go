@@ -4,6 +4,9 @@ package design
 
 func init() {
 	register(map[string]translation{
+		"surface.sending":    {"Sending…", "보내는 중…"},
+		"surface.edit_keys":  {"Enter: next  Esc: cancel", "Enter: 다음  Esc: 취소"},
+		"surface.keys":       {"Ctrl+E: edit fields  Esc: close", "Ctrl+E: 항목 편집  Esc: 닫기"},
 		"card.stopped":       {"Stopped by Core restart", "Core 재시작으로 중지됨"},
 		"card.confirm":       {"Select a number, then Enter to confirm", "번호로 선택한 뒤 Enter로 확인"},
 		"card.targets_cut":   {"Read all targets: PgUp/PgDn", "PgUp/PgDn으로 대상을 모두 읽어 주세요"},

@@ -60,8 +60,10 @@ type delegationRuntime struct {
 	reset         time.Time
 	resetChanged  chan struct{}
 	quotaChanged  chan struct{}
+	quotaStop     *inferredQuotaStop
 	adapters      map[string]*codex.Session
 	processLeases []lease.Lease
+	processByTask map[string]lease.Lease
 	workerEvents  chan worker.Event
 	wg            sync.WaitGroup
 	ctx           context.Context
@@ -109,7 +111,7 @@ func (r *conversationRuntime) startDelegation(ctx context.Context) (result error
 	}
 	step = "delegation.worker"
 	runctx, cancel := context.WithCancel(ctx)
-	d := &delegationRuntime{root: r, config: cfg, processes: proc.NewOwner(), cancel: cancel, done: make(chan struct{}), threads: map[string]worker.Thread{}, leases: map[string]lease.Lease{}, resetChanged: make(chan struct{}, 1), quotaChanged: make(chan struct{}, 1), adapters: map[string]*codex.Session{}, workerEvents: make(chan worker.Event, 256), ctx: runctx}
+	d := &delegationRuntime{root: r, config: cfg, processes: proc.NewOwner(), cancel: cancel, done: make(chan struct{}), threads: map[string]worker.Thread{}, leases: map[string]lease.Lease{}, resetChanged: make(chan struct{}, 1), quotaChanged: make(chan struct{}, 1), adapters: map[string]*codex.Session{}, processByTask: map[string]lease.Lease{}, workerEvents: make(chan worker.Event, 256), ctx: runctx}
 	d.connection, err = r.activities.Acquire(runctx, lease.Activity{Class: lease.Reported, Reason: "delegated worker connection"})
 	if err != nil {
 		cancel()
@@ -190,40 +192,23 @@ func (d *delegationRuntime) availability(ctx context.Context) (work.Availability
 		sessions = append(sessions, s)
 	}
 	d.mu.Unlock()
-	freshest := func(rows []provider.QuotaRow) time.Time {
-		var latest time.Time
-		for _, row := range rows {
-			if row.Observed.After(latest) {
-				latest = row.Observed
-			}
-		}
-		return latest
+	var snapshots [][]provider.QuotaRow
+	if err == nil {
+		snapshots = append(snapshots, rows)
 	}
-	latest := freshest(rows)
 	for _, session := range sessions {
 		observed, e := session.Quota(ctx)
 		if e != nil {
 			continue
 		}
-		if at := freshest(observed); at.After(latest) {
-			rows = observed
-			latest = at
-			err = nil
-		}
+		snapshots = append(snapshots, observed)
+		err = nil
 	}
-	if err != nil {
+	if len(snapshots) == 0 && err != nil {
 		return work.Availability{}, err
 	}
-	blocked := false
-	var reset time.Time
-	for _, row := range rows {
-		if row.UsedPct != nil && *row.UsedPct >= 100 && (row.ResetsAt == nil || row.ResetsAt.After(time.Now())) {
-			blocked = true
-			if row.ResetsAt != nil && (reset.IsZero() || row.ResetsAt.Before(reset)) {
-				reset = *row.ResetsAt
-			}
-		}
-	}
+	now := time.Now()
+	blocked, reset := d.reconcileQuotaStop(mergeQuotaWindows(snapshots...), now)
 	d.mu.Lock()
 	changed := !d.reset.Equal(reset)
 	d.reset = reset
@@ -413,13 +398,17 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 	if err != nil {
 		return work.Run{}, err
 	}
-	adapter, err := codex.Open(d.ctx, process, codex.Config{Executable: d.config.Codex})
+	adapter, err := codex.Open(d.ctx, process, codex.Config{Executable: d.config.Codex, ApprovalKey: d.root.personaAuthority.WorkerApprovalKey()})
 	if err != nil {
 		process.Release()
 		return work.Run{}, err
 	}
 	d.mu.Lock()
 	d.adapters[c.Task.ID] = adapter
+	if d.processByTask == nil {
+		d.processByTask = map[string]lease.Lease{}
+	}
+	d.processByTask[c.Task.ID] = process
 	d.processLeases = append(d.processLeases, process)
 	d.mu.Unlock()
 
@@ -428,7 +417,7 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 	// A named-remote push also writes local tracking refs. Publish to the same
 	// origin URL directly so workers need no bypass of the shared ref guard.
 	packet := "The shared Git directory guards base, other-task and remote-tracking refs. Keep that guard enabled. Publish your assigned branch using origin's URL as the git push destination, rather than the origin alias, so only the remote branch is updated.\n" + p.Packet
-	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: packet, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
+	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: worker.FrameMessage(c.Task.AgentID, "agent", c.Task.ID, c.Task.ID+":start", packet), ApprovalKey: d.root.personaAuthority.WorkerApprovalKey(), Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
 	if err != nil {
 		return work.Run{}, err
 	}
@@ -501,7 +490,7 @@ func (d *delegationRuntime) returnConflict(ctx context.Context, c work.Card) (wo
 	d.mu.Lock()
 	d.leases["pending:"+c.Task.ID] = l
 	d.mu.Unlock()
-	if err = adapter.Input(ctx, thread, worker.Input{Text: "Your pull request is unmergeable after another landing. Resolve the conflict on your existing branch, run the relevant checks, and update the same pull request. This is the single automatic conflict return; do not merge it."}); err != nil {
+	if err = adapter.Input(ctx, thread, worker.Input{Text: worker.FrameMessage("core", "system", thread.TaskID, "", "Your pull request is unmergeable after another landing. Resolve the conflict on your existing branch, run the relevant checks, and update the same pull request. This is the single automatic conflict return; do not merge it.")}); err != nil {
 		return work.Run{}, err
 	}
 	snapshot, err := adapter.Snapshot(ctx, thread)
@@ -597,6 +586,9 @@ func (d *delegationRuntime) events(ctx context.Context) {
 					_ = d.reactor.Unknown(ctx, event.Thread.TaskID, event.Thread.ID, event.Thread.TurnID)
 					continue
 				}
+				if event.Finish.Failure == worker.QuotaFailure || event.Finish.Failure == worker.RateLimitFailure {
+					d.noteQuotaFailure(time.Now())
+				}
 				status := "failed"
 				switch event.Finish.Status {
 				case worker.Done:
@@ -621,6 +613,7 @@ func (d *delegationRuntime) events(ctx context.Context) {
 						entry.stopRequests(event.Thread.TurnID)
 					}
 				}
+				d.retireSettled(ctx, event.Thread.TaskID)
 			case worker.QuestionEvent, worker.ApprovalEvent:
 				if err := d.reactor.InputNeeded(ctx, event.Thread.TaskID, event.Thread.ID, event.Thread.TurnID); err != nil {
 					continue
@@ -678,6 +671,7 @@ func (d *delegationRuntime) events(ctx context.Context) {
 				for _, c := range cards {
 					if c.Task.Schedule != nil && !c.Active {
 						_ = d.reactor.Observe(ctx, c.Task.ID)
+						d.retireSettled(ctx, c.Task.ID)
 					}
 				}
 			}
@@ -698,6 +692,60 @@ func (d *delegationRuntime) resultSession(thread worker.Thread) *workerSession {
 	entry := d.root.workers.sessions[thread.ID]
 	d.root.workers.mu.Unlock()
 	return entry
+}
+
+// retireSettled ends a worker process after a durable merge or closure.
+// An open pull request keeps the session so the one conflict return can use it.
+// The recorded thread, branch and receipts stay.
+func (d *delegationRuntime) retireSettled(ctx context.Context, id string) {
+	if d == nil || d.root == nil || d.root.work == nil || id == "" {
+		return
+	}
+	read, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	card, err := d.root.work.Get(read, id)
+	if err != nil || card.Task.Schedule == nil || (!card.Scheduling.Landed && !card.Scheduling.Closed) {
+		return
+	}
+	d.mu.Lock()
+	adapter := d.adapters[id]
+	delete(d.adapters, id)
+	thread, ok := d.threads[id]
+	delete(d.threads, id)
+	var process lease.Lease
+	if d.processByTask != nil {
+		process = d.processByTask[id]
+		delete(d.processByTask, id)
+	}
+	if process != (lease.Lease{}) {
+		kept := d.processLeases[:0]
+		for _, l := range d.processLeases {
+			if l != process {
+				kept = append(kept, l)
+			}
+		}
+		d.processLeases = kept
+	}
+	d.mu.Unlock()
+	var entry *workerSession
+	if ok && thread.ID != "" && d.root.workers != nil {
+		d.root.workers.mu.Lock()
+		entry = d.root.workers.sessions[thread.ID]
+		delete(d.root.workers.sessions, thread.ID)
+		d.root.workers.mu.Unlock()
+	}
+	if entry != nil {
+		if entry.origin != nil && entry.origin.router != nil {
+			entry.stopRequests("")
+		}
+		if entry.close != nil {
+			_ = entry.close()
+		}
+		entry.process.Release()
+	} else if adapter != nil {
+		_ = adapter.Close()
+	}
+	process.Release()
 }
 
 func delegatedID(turn, call, key string) string {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 )
@@ -23,6 +24,11 @@ func TestACPOnlyInstallationStartsDispatch(t *testing.T) {
 	r.ctx = t.Context()
 	r.route = &modelpath.Config{}
 	r.activities = lifecycle.NewRegistry(nil)
+	var err error
+	r.personaAuthority, err = authority.Open(t.Context(), r.db, authority.Config{Epoch: r.epoch, Resolve: r.resolvePersonaGrant})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := r.startWorkerDispatch(t.Context()); err != nil {
 		t.Fatal(err)
 	}

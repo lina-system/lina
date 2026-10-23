@@ -1107,7 +1107,7 @@ Each complete result revision is one append-only `conv_event`; even a preview ab
 A rejected body or stale replacement appends nothing.
 `present_result` returns only the card fields and an initial text excerpt (2,048 Unicode scalar values by default); `read_result` is the explicit body-reading operation.
 A saved result keeps its revision and appends a status event pointing to `saved_as`.
-Request assembly skips every `result` scaffold (creation, replacement and saved-status events), so these storage bodies never become model messages.
+Request assembly skips every `result` scaffold (creation, replacement and saved-status events), so these storage bodies never become model messages. It also projects a completed `present_result` call with a bounded reference in place of its arguments, while a refused or unfinished call keeps them; the recorded call keeps its bytes.
 The separate `provider_item` tool acknowledgement remains byte-for-byte history; only an explicit `read_result` output includes the body.
 
 Save resolves and authorizes its destination without publishing, then commits its CP-05 claim and allocated record id, creates the record outside the canon transaction using that same resolved destination, and finally commits the receipt and saved status.
@@ -1213,7 +1213,7 @@ their existing durable run JSON before sending.
 Implementation notes: [C-43 provider increment](../../kit/provider/REFERENCE.md#c-43-provider-increment).
 
 **C-44 Responses and Gemini adapters (new).**
-Responses adapter: Go standard-library HTTP and a bounded SSE reader, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function).
+Responses adapter: Go standard-library HTTP and a bounded SSE reader, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested when Core selected the reasoning-state capability, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function).
 Done items come from `response.output_item.done` only, and tool calls dispatch from done items only.
 Current-turn items are never sent altered or dropped.
 [V1](runtime.md#runtime-acceptance) decides the open fields.
@@ -2805,6 +2805,7 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
   The timer stops with Core; idle installs without observers do not perform these periodic source reads, and unchanged snapshots still publish no frame.
   The headless `e2e/m2/progress-waiting.json` scenario covers installed Core, an actual stdio child, approval and question disappearance, a worker-created artifact and restart without provider replay.
 - Implementation notes: [C-55 progress digest increment](../../internal/core/progress/REFERENCE.md#c-55-progress-digest-increment).
+- The stage list is projected from the admitted step graph revisions and the step states observed with them, with no separate stage record; a done stage keeps its number and its steps. Implementation notes: [C-55 stage list increment](../../internal/core/progress/REFERENCE.md#c-55-stage-list-increment).
 - Explicit TUI and paired-channel commands use the same Core operations: `/progress`, `/waiting priority|lightest`, `/stop <run>`, `/stop all` and `/note <run> <text>`.
   Bare `/stop` interrupts the current conversation.
   Targeted controls recheck the person and optional conversation; stop-all captures the person's live background runs and worker sessions in private surfaces, and only the bound conversation in a shared channel.

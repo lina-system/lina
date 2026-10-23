@@ -16,6 +16,8 @@ import (
 // SteeringMessage is the session mailbox projection. Receipts are append-only
 // work-ledger facts; neither delivery nor a worker's acknowledgement accepts work.
 type SteeringMessage struct {
+	Sender          string     `json:"sender,omitempty"`
+	SpeakerKind     string     `json:"speaker_kind,omitempty"`
 	ID              string     `json:"id"`
 	Session         string     `json:"session"`
 	TaskID          string     `json:"task_id"`
@@ -83,12 +85,21 @@ func (s *Service) StoreSteering(ctx context.Context, m SteeringMessage) (Steerin
 	if m.ID == "" || m.Session == "" || m.Person == "" || m.Agent == "" || m.Conversation == "" || strings.TrimSpace(m.Text) == "" || len(m.Text) > 1<<20 || m.SentAt.IsZero() || (m.Tier != "push" && m.Tier != "turn" && m.Tier != "pull") {
 		return m, ErrInvalid
 	}
+	switch m.SpeakerKind {
+	case "": // Legacy records retain unknown/system provenance.
+	case "person", "agent", "external_participant", "automation", "forwarded", "system", "tool":
+		if m.Sender == "" {
+			return m, ErrInvalid
+		}
+	default:
+		return m, ErrInvalid
+	}
 	m.State, m.Reason = "stored", ""
 	m.DeliveredAt, m.ReadAt, m.ActedAt, m.ActionLatencyMS = nil, nil, nil, nil
 	err := s.db.Write(ctx, func(tx *canon.Tx) error {
 		prior, err := readSteering(ctx, tx, m.ID)
 		if err == nil {
-			if prior.Session != m.Session || prior.TaskID != m.TaskID || prior.Person != m.Person || prior.Agent != m.Agent || prior.Conversation != m.Conversation || prior.Text != m.Text {
+			if prior.Session != m.Session || prior.TaskID != m.TaskID || prior.Person != m.Person || prior.Agent != m.Agent || prior.Conversation != m.Conversation || prior.Text != m.Text || prior.Sender != m.Sender || prior.SpeakerKind != m.SpeakerKind {
 				return ErrState
 			}
 			m = prior

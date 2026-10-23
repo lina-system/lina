@@ -325,8 +325,8 @@ func assertTurnRequests(t *testing.T, p *turnProvider, count int) {
 			"record_emotion", "set_emotion_expression", "record_relationship", "ask_question", "resolve_question", "remember_name",
 			"skill_notices", "skill_maintenance", "skill_index", "read_skill", "write_skill", "undo_skill",
 			"query_records", "read_record", "write_record", "promote_memo", "undo_record", "propose_candidate", "list_candidates",
-			"present_result", "read_result", "calculate",
-			"plan_index", "read_plan", "draft_plan", "start_run",
+			"present_result", "read_result", "present_surface", "calculate",
+			"plan_index", "read_plan", "draft_plan", "start_run", "build_mock",
 			"send_handoff", "handoff_status", "begin_artifact_change", "finish_artifact_change",
 			"load_tools", "call_tool", "create_timer", "timer_status", "cancel_timer",
 		}

@@ -6,9 +6,11 @@ package worker
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/worker/doing"
 
 	"github.com/thisisjun786/lina/kit/lease"
@@ -74,6 +76,7 @@ func (s CapabilitySet) Require(required ...Capability) error {
 // StartSpec contains only per-task inputs. Empty model/effort use the worker's
 // configuration. There is deliberately no provider credential or sandbox field.
 type StartSpec struct {
+	ApprovalKey                            ed25519.PublicKey
 	TaskID, AttemptID, Workdir, TaskPacket string
 	Model                                  provider.ModelRef
 	Effort                                 provider.Effort
@@ -154,6 +157,7 @@ type Request struct {
 }
 
 type Answer struct {
+	Approval  *authority.WorkerApprovalProof
 	RequestID string
 	Result    json.RawMessage
 }

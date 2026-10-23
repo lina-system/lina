@@ -93,6 +93,21 @@ func (s *Store) head(ctx context.Context, tx *canon.Tx, scope result.Scope, id s
 	return r, save.String, err
 }
 func (s *Store) Present(ctx context.Context, scope result.Scope, p result.PresentRequest) (result.Card, error) {
+	if p.Type == result.MockType {
+		return result.Card{}, ErrOutOfScope
+	}
+	return s.present(ctx, scope, p, "")
+}
+
+// PresentMock is reserved for Core's checked background renderer. Native run
+// identity makes publication atomic and idempotent across landing recovery.
+func (s *Store) PresentMock(ctx context.Context, scope result.Scope, p result.PresentRequest, run string) (result.Card, error) {
+	if run == "" || scope.TaskID == nil || *scope.TaskID != run || p.Type != result.MockType {
+		return result.Card{}, ErrOutOfScope
+	}
+	return s.present(ctx, scope, p, run)
+}
+func (s *Store) present(ctx context.Context, scope result.Scope, p result.PresentRequest, mockRun string) (result.Card, error) {
 	if !result.ValidReplyType(p.ReplyType) || !validScope(scope) || strings.TrimSpace(p.Title) == "" || utf8.RuneCountInString(p.Title) > 200 || strings.TrimSpace(p.Summary) == "" || utf8.RuneCountInString(p.Summary) > 600 || p.ID == "" && p.BaseRevision != 0 || p.ID != "" && p.BaseRevision <= 0 {
 		return result.Card{}, result.ErrMalformed
 	}
@@ -118,6 +133,17 @@ func (s *Store) Present(ctx context.Context, scope result.Scope, p result.Presen
 		r.ID = newID()
 	}
 	err = s.db.Write(ctx, func(tx *canon.Tx) error {
+		if mockRun != "" {
+			var event string
+			err := tx.QueryRowContext(ctx, `SELECT e.id FROM conv_event e JOIN result_heads h ON h.id=json_extract(e.body,'$.result_id') WHERE h.person=? AND h.agent=? AND h.conversation=? AND e.scaffold_kind='result' AND json_extract(e.body,'$.type')='mock' AND json_extract(e.body,'$.provenance.task_id')=? LIMIT 1`, scope.PersonID, scope.AgentID, scope.ConversationID, mockRun).Scan(&event)
+			if err == nil {
+				r, err = s.cfg.Journal.Read(ctx, tx, scope, event)
+				return err
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
 		if p.ID != "" {
 			var managed int
 			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM plan_drafts WHERE result_id=?", p.ID).Scan(&managed); err != nil {
@@ -129,6 +155,9 @@ func (s *Store) Present(ctx context.Context, scope result.Scope, p result.Presen
 			old, key, err := s.head(ctx, tx, scope, p.ID)
 			if err != nil {
 				return err
+			}
+			if old.Type == result.MockType && mockRun == "" || mockRun != "" && old.Type != result.MockType {
+				return ErrOutOfScope
 			}
 			if old.Revision != p.BaseRevision {
 				return ErrStaleRevision
@@ -204,7 +233,8 @@ func destination(kind result.Type, d result.Destination) (result.Destination, er
 		default:
 			return d, ErrOutOfScope
 		}
-	case result.ComparisonType, result.PlanType:
+	case result.ComparisonType, result.PlanType, result.SurfaceType, result.MockType:
+
 		return d, ErrOutOfScope
 	default:
 		return d, result.ErrMalformed

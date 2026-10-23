@@ -65,6 +65,9 @@ func (s *Service) run(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if r.Brief.Result == "mock" {
+		return s.drawMock(ctx, r)
+	}
 	var scopeFailed atomic.Bool
 	cfg := loop.Config{Request: provider.Request{CacheIdentity: provider.RunCacheIdentity(id), Model: s.cfg.Model, Purpose: provider.Background, Instructions: instructions}, Tools: map[string]loop.Tool{}}
 	if r.Origin.Job != "" {
