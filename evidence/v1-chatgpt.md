@@ -1,9 +1,41 @@
 # Owner-run ChatGPT V1 acceptance
 
-[V1 is pending the owner's sign-in](v1-chatgpt.json). Recorded-wire tests verify
-the implementation and the probe; they do not establish live eligibility,
-redirect acceptance, or request-field acceptance. PR #306 is part of #81 and
-must not close it until the required live observations exist.
+[The request surface is observed](v1-chatgpt.json) on a live Responses route:
+four completed turns, the encrypted reasoning round trip, parallel function
+calls including `apply_patch`, and each undocumented field's acceptance or
+rejection. That observation used the person's own ChatGPT plan account through a
+Responses-compatible gateway, not LINA's sign-in route, so the record keeps the
+sign-in flow, LINA's own route and the remote client unobserved.
+
+Recorded-wire tests verify the implementation. They do not establish live
+eligibility, redirect acceptance or a remote client. `#81` stays open until the
+remaining live observations exist.
+
+## Request surface
+
+This mode needs only an explicit Responses-compatible endpoint and its key. It
+observes the surface without touching LINA's accounts, and it writes
+`lina_sign_in_route: false` into the observation so the run is never read as
+sign-in evidence.
+
+```sh
+v1_dir=$(mktemp -d)
+go test -c -o "$v1_dir/chatgpt-v1" ./internal/core/accounts
+"$v1_dir/chatgpt-v1" -test.v -test.timeout=25m \
+  -test.run='^TestV1OwnerSignIn$' -v1-owner-signin \
+  -v1-state-root="$v1_dir/state" \
+  -v1-report="$v1_dir/request-surface.json" -v1-mode=request-surface \
+  -v1-base-url="$LINA_RESPONSES_BASE_URL"
+```
+
+The key is read from `LINA_RESPONSES_API_KEY` and never recorded. The command
+selects the first model from the endpoint's catalog; pass `-v1-model=<id>` to
+select one explicitly. It probes `parallel_tool_calls`, `service_tier` and
+`prompt_cache_key` as separate requests before the conversation turns, so a
+route that cannot complete the reasoning round trip still records what it
+accepted. Each probe carries one extra field and nothing else.
+
+## Sign-in and round trip
 
 Run from the repository root on the checkout being accepted. The command below
 builds an opt-in acceptance executable, then hosts the production account store
@@ -67,14 +99,15 @@ by itself prove a separate remote client connection. The V1 requirement for a
 remote client must be observed through an authenticated remote client transport
 using the same relay. Keep `remote_client` unobserved until that run is recorded.
 
-After the required local and remote runs, populate the pending record only from
-the sanitized observations: registration, redirects, scopes, ID-token checks,
-refresh rotation, at least three completed turns, reasoning resend, function
-and `apply_patch` calls, parallel calls, accepted request fields and tool
-placement, and each undocumented field's acceptance or rejection. Include the
-checkout revision and observation time. Do not treat this command's
-`partial_live_observation` status as full V1 acceptance. Keep the pending status
-while any required observation is absent.
+After the required local and remote runs, record the remaining observations in
+`evidence/v1-chatgpt.json` from the sanitized files: registration, redirects,
+scopes, ID-token checks, refresh rotation, and the remote client. Keep the
+request-surface fields the live observation already recorded; a later run that
+observes them again replaces them only with its own values. Include the checkout
+revision and observation time. Do not treat this command's
+`partial_live_observation` status as full V1 acceptance. `sign_in_flow_verified`
+and `remote_client_verified` stay `false` while any required observation is
+absent.
 
 The private state directory contains real OAuth credentials. Keep it outside
 Git, protect it like a provider login, and disconnect LINA in ChatGPT settings
