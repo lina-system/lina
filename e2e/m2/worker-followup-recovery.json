@@ -1,0 +1,7 @@
+{
+  "cases": ["followup_reply", "followup_pending"],
+  "input": "Delegate a file task, then continue it after completion.",
+  "followup": "Continue the work in the same directory.",
+  "artifact": "followup-result.txt",
+  "result": "Follow-up work survived."
+}
