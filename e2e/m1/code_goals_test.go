@@ -218,6 +218,11 @@ func installedCodeGoal(t *testing.T, mode string) {
 		return p
 	}
 	core := start()
+	t.Cleanup(func() {
+		if t.Failed() {
+			logWorkerDispatchState(t, h, fixture)
+		}
+	})
 	c, conversation := conversationClient(t, h)
 	events := admittedTurn(t, h, c, conversation, "goal", "Create the result and run it through deployment and verification.")
 	if mode == "no-antigravity" {
