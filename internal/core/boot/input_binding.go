@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/lane"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/records"
@@ -72,8 +73,9 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 		address = r.channelAddress.Key()
 	}
 	// Read the latest binding and exchange before this input, using ledger order.
+	// A withdrawn input must not restore its focus or refresh its age.
 	var raw, at string
-	err := tx.QueryRowContext(ctx, `SELECT b.body,p.recorded_at FROM conv_event b JOIN conv_event p ON p.id=b.parent_id WHERE b.conversation_id=? AND b.agent_id=? AND p.person_id=? AND b.scaffold_kind=? AND p.rowid<(SELECT rowid FROM conv_event WHERE id=?) AND (?='' OR EXISTS(SELECT 1 FROM channel_receipts receipt WHERE receipt.address=? AND p.id='channel-input:'||receipt.inbox_id)) ORDER BY p.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.PersonID, inputBindingKind, input.ID, address, address).Scan(&raw, &at)
+	err := tx.QueryRowContext(ctx, `SELECT b.body,p.recorded_at FROM conv_event b JOIN retract_visible_event vb ON vb.id=b.id JOIN conv_event p ON p.id=b.parent_id JOIN retract_visible_event vp ON vp.id=p.id WHERE b.conversation_id=? AND b.agent_id=? AND p.person_id=? AND b.scaffold_kind=? AND p.rowid<(SELECT rowid FROM conv_event WHERE id=?) AND (?='' OR EXISTS(SELECT 1 FROM channel_receipts receipt WHERE receipt.address=? AND p.id='channel-input:'||receipt.inbox_id)) ORDER BY p.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.PersonID, inputBindingKind, input.ID, address, address).Scan(&raw, &at)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return s, err
 	}
@@ -85,7 +87,7 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 		s.Focus = previous.Target
 		// Agent replies also keep an exchange fresh; tool/system traffic does not.
 		var latest string
-		err = tx.QueryRowContext(ctx, `SELECT e.recorded_at FROM conv_event e WHERE e.conversation_id=? AND e.agent_id=? AND e.speaker_kind IN ('person','agent') AND e.rowid<(SELECT rowid FROM conv_event WHERE id=?) AND coalesce(e.scaffold_kind,'')<>'provider_item' AND (?='' OR EXISTS(SELECT 1 FROM channel_receipts receipt WHERE receipt.address=? AND ('channel-input:'||receipt.inbox_id=e.id OR 'channel-input:'||receipt.inbox_id=e.parent_id))) ORDER BY e.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.ID, address, address).Scan(&latest)
+		err = tx.QueryRowContext(ctx, `SELECT e.recorded_at FROM conv_event e JOIN retract_visible_event ve ON ve.id=e.id WHERE e.conversation_id=? AND e.agent_id=? AND e.speaker_kind IN ('person','agent') AND e.rowid<(SELECT rowid FROM conv_event WHERE id=?) AND coalesce(e.scaffold_kind,'')<>'provider_item' AND (?='' OR EXISTS(SELECT 1 FROM channel_receipts receipt WHERE receipt.address=? AND ('channel-input:'||receipt.inbox_id=e.id OR 'channel-input:'||receipt.inbox_id=e.parent_id))) ORDER BY e.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.ID, address, address).Scan(&latest)
 		if err != nil {
 			return s, err
 		}
@@ -319,33 +321,18 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 
 // Resolve an event or its reply's parent only inside the current conversation.
 func bindingTarget(ctx context.Context, tx *canon.Tx, input ledger.Event, ref string) (binding.Target, error) {
-	var raw string
 	// A notice's own run identity takes precedence over the input that started
-	// it. Several bundled runs remain unresolved, even when they share a parent.
-	err := tx.QueryRowContext(ctx, `SELECT body FROM conv_event WHERE id=? AND conversation_id=? AND agent_id=? AND scaffold_kind='background_notice'`, ref, input.ConversationID, input.AgentID).Scan(&raw)
+	// it. The durable delivery record supplies it, so a notice body stored as a
+	// material is never read during admission.
+	var locator string
+	err := tx.QueryRowContext(ctx, `SELECT coalesce(json_extract(origin,'$.locator'),'') FROM conv_event WHERE id=? AND conversation_id=? AND agent_id=? AND scaffold_kind='background_notice'`, ref, input.ConversationID, input.AgentID).Scan(&locator)
 	if err == nil {
-		var notices []struct{ Run, Person, Agent, Conversation string }
-		if err = json.Unmarshal([]byte(raw), &notices); err != nil {
-			return binding.Target{}, err
-		}
-		id := ""
-		for _, n := range notices {
-			if n.Run == "" || n.Person != input.PersonID || n.Agent != input.AgentID || n.Conversation != input.ConversationID {
-				return binding.Target{}, nil
-			}
-			if id != "" && id != n.Run {
-				return binding.Target{}, nil
-			}
-			id = n.Run
-		}
-		if id == "" {
-			return binding.Target{}, nil
-		}
-		return binding.Target{Class: "existing", ID: id, Kind: "run"}, nil
+		return noticeTarget(ctx, tx, input, locator)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return binding.Target{}, err
 	}
+	var raw string
 	err = tx.QueryRowContext(ctx, `SELECT b.body FROM conv_event e JOIN conv_event b ON b.parent_id=CASE WHEN e.speaker_kind='person' THEN e.id ELSE e.parent_id END AND b.scaffold_kind=? WHERE e.id=? AND e.conversation_id=? AND e.agent_id=?`, inputBindingKind, ref, input.ConversationID, input.AgentID).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return binding.Target{}, nil
@@ -356,6 +343,31 @@ func bindingTarget(ctx context.Context, tx *canon.Tx, input ledger.Event, ref st
 	var d binding.Decision
 	err = json.Unmarshal([]byte(raw), &d)
 	return d.Target, err
+}
+
+// Several bundled runs remain unresolved, even when they share a delivery.
+func noticeTarget(ctx context.Context, tx *canon.Tx, input ledger.Event, locator string) (binding.Target, error) {
+	notices, err := lane.DeliveredNotices(ctx, tx, input.ConversationID, locator)
+	if errors.Is(err, sql.ErrNoRows) {
+		return binding.Target{}, nil
+	}
+	if err != nil {
+		return binding.Target{}, err
+	}
+	id := ""
+	for _, n := range notices {
+		if n.Run == "" || n.Person != input.PersonID || n.Agent != input.AgentID || n.Conversation != input.ConversationID {
+			return binding.Target{}, nil
+		}
+		if id != "" && id != n.Run {
+			return binding.Target{}, nil
+		}
+		id = n.Run
+	}
+	if id == "" {
+		return binding.Target{}, nil
+	}
+	return binding.Target{Class: "existing", ID: id, Kind: "run"}, nil
 }
 
 func (r *conversationRuntime) inputBindingPacket(ctx context.Context, input ledger.Event) (assemble.ContextPacket, error) {

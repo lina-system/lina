@@ -47,6 +47,9 @@ func (c *Client) History(ctx context.Context, history protocol.HistoryGet) (stri
 }
 
 func (c *Client) request(ctx context.Context, kind protocol.Kind, payload protocol.Payload) (string, error) {
+	return c.requestKey(ctx, kind, payload, nil)
+}
+func (c *Client) requestKey(ctx context.Context, kind protocol.Kind, payload protocol.Payload, key *string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -56,7 +59,7 @@ func (c *Client) request(ctx context.Context, kind protocol.Kind, payload protoc
 		Kind:     kind, MessageID: id, AttemptID: rand.Text(),
 		Sender: protocol.Sender{Party: protocol.PartyClient, ID: c.clientID}, Epoch: c.Welcome.Epoch,
 		SentAt: time.Now().UTC().Format(time.RFC3339Nano), EffectState: protocol.EffectNone,
-		SourceRefs: []protocol.SourceRef{}, Payload: payload,
+		SourceRefs: []protocol.SourceRef{}, Payload: payload, IdempotencyKey: key,
 	}
 	if _, err := json.Marshal(envelope); err != nil {
 		return "", err

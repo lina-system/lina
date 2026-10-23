@@ -100,6 +100,8 @@ const (
 	KindRecordResult         Kind = "record_result"
 	KindA2aRequest           Kind = "a2a_request"
 	KindA2aResult            Kind = "a2a_result"
+	KindMockRequest          Kind = "mock_request"
+	KindMockResponse         Kind = "mock_response"
 )
 
 type A2aCallStatus struct {
@@ -554,6 +556,7 @@ type Interrupt struct {
 }
 type ItemDone struct {
 	AgentID  *string              `json:"agent_id,omitempty"`
+	Details  *string              `json:"details,omitempty"`
 	EchoKey  *string              `json:"echo_key,omitempty"`
 	PersonID *string              `json:"person_id,omitempty"`
 	Speaker  *ConversationSpeaker `json:"speaker,omitempty"`
@@ -602,6 +605,28 @@ type MemoryTombstone struct {
 	Agent  string      `json:"agent"`
 	At     json.Number `json:"at"`
 	Person string      `json:"person"`
+}
+type MockAssetRef struct {
+	AssetID  string      `json:"asset_id"`
+	Revision json.Number `json:"revision"`
+}
+type MockRequest struct {
+	Action         string       `json:"action"`
+	Asset          *string      `json:"asset,omitempty"`
+	ConversationID string       `json:"conversation_id"`
+	Offset         *json.Number `json:"offset,omitempty"`
+	Repositories   *[]string    `json:"repositories,omitempty"`
+	ResultID       string       `json:"result_id"`
+	Revision       json.Number  `json:"revision"`
+	Target         *string      `json:"target,omitempty"`
+}
+type MockResponse struct {
+	Asset     *MockAssetRef `json:"asset,omitempty"`
+	Data      *string       `json:"data,omitempty"`
+	GoalID    *string       `json:"goal_id,omitempty"`
+	MediaType *string       `json:"media_type,omitempty"`
+	Next      *json.Number  `json:"next,omitempty"`
+	Result    *Result       `json:"result,omitempty"`
 }
 type MultiTaskControl struct {
 	Action         string       `json:"action"`
@@ -863,6 +888,7 @@ const (
 	ResultTypeComparison    ResultType = "comparison"
 	ResultTypePlanView      ResultType = "plan_view"
 	ResultTypeFile          ResultType = "file"
+	ResultTypeMock          ResultType = "mock"
 )
 
 type Resync struct {
@@ -1264,6 +1290,8 @@ func (RecordRequest) isPayload()        {}
 func (RecordResult) isPayload()         {}
 func (A2aRequest) isPayload()           {}
 func (A2aResult) isPayload()            {}
+func (MockRequest) isPayload()          {}
+func (MockResponse) isPayload()         {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -1639,6 +1667,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p A2aResult
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindMockRequest:
+		var p MockRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindMockResponse:
+		var p MockResponse
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -1673,8 +1709,8 @@ func decodeMessage(data []byte) (Envelope, error) {
 const clientSchemaJSON = `{
   "$comment": "SPDX-License-Identifier: Apache-2.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Client 1.0 envelope",
-  "description": "Client 1.0 kinds and specified payload fields. Reserved objects have no wire fields until the implementation issue named in their $comment defines them.",
+  "title": "Client 1.0 and 1.1 envelope",
+  "description": "Client envelopes. Version 1.1 adds drawn mock results and their read, asset and work handoff requests. Version 1.0 retains text fallback.",
   "type": "object",
   "properties": {
     "protocol": {
@@ -1770,7 +1806,9 @@ const clientSchemaJSON = `{
         "record_request",
         "record_result",
         "a2a_request",
-        "a2a_result"
+        "a2a_result",
+        "mock_request",
+        "mock_response"
       ]
     },
     "message_id": {
@@ -3312,6 +3350,84 @@ const clientSchemaJSON = `{
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mock_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/mock_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mock_response"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/mock_response"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "protocol": {
+            "properties": {
+              "version": {
+                "const": "1.0"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "mock_request",
+                    "mock_response"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "result"
+                },
+                "payload": {
+                  "properties": {
+                    "type": {
+                      "const": "mock"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
     }
   ],
   "$defs": {
@@ -3379,7 +3495,8 @@ const clientSchemaJSON = `{
           "const": "client"
         },
         "version": {
-          "const": "1.0"
+          "type": "string",
+          "pattern": "^1\\.[01]$"
         }
       },
       "required": [
@@ -3572,7 +3689,8 @@ const clientSchemaJSON = `{
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "1.0"
+          "type": "string",
+          "pattern": "^1\\.[01]$"
         },
         "capabilities": {
           "type": "array",
@@ -3739,6 +3857,10 @@ const clientSchemaJSON = `{
     "item_done": {
       "type": "object",
       "properties": {
+        "details": {
+          "type": "string",
+          "maxLength": 4096
+        },
         "stream": {
           "$ref": "#/$defs/stream_metadata"
         },
@@ -4015,6 +4137,22 @@ const clientSchemaJSON = `{
             "required": [
               "text"
             ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mock"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/mock_body"
+              }
+            }
           }
         }
       ]
@@ -5576,7 +5714,8 @@ const clientSchemaJSON = `{
         "document_draft",
         "comparison",
         "plan_view",
-        "file"
+        "file",
+        "mock"
       ]
     },
     "result_status": {
@@ -5592,54 +5731,62 @@ const clientSchemaJSON = `{
     },
     "result_body": {
       "x-go-type": "json.RawMessage",
-      "allOf": [
+      "anyOf": [
         {
-          "type": "object",
-          "properties": {
-            "entries": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/plan_entry"
-              },
-              "minItems": 1,
-              "maxItems": 1000
-            },
-            "confirm": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "required": [],
-          "additionalProperties": false,
+          "$ref": "#/$defs/mock_body"
+        },
+        {
+          "x-go-type": "json.RawMessage",
           "allOf": [
             {
-              "if": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "entries"
+              "type": "object",
+              "properties": {
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/plan_entry"
+                  },
+                  "minItems": 1,
+                  "maxItems": 1000
+                },
+                "confirm": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "entries"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "confirm"
+                        ]
+                      }
                     ]
                   },
-                  {
+                  "then": {
                     "required": [
+                      "entries",
                       "confirm"
                     ]
                   }
-                ]
-              },
-              "then": {
-                "required": [
-                  "entries",
-                  "confirm"
-                ]
-              }
+                }
+              ]
             }
           ]
         }
@@ -7959,6 +8106,271 @@ const clientSchemaJSON = `{
       },
       "required": [
         "operation"
+      ],
+      "additionalProperties": false
+    },
+    "mock_body": {
+      "x-go-type": "json.RawMessage",
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "request": {
+              "type": "string",
+              "minLength": 1
+            },
+            "checklist": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "toggle",
+                      "select",
+                      "input"
+                    ]
+                  },
+                  "target": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "description",
+                  "action",
+                  "target"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "page": {
+              "type": "object",
+              "properties": {
+                "asset_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "asset_id",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            "png": {
+              "type": "object",
+              "properties": {
+                "asset_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "asset_id",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            "previous": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "result_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "result_id",
+                    "revision"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stop_reason": {
+              "const": "all_passed"
+            },
+            "checks": {
+              "type": "array",
+              "minItems": 7,
+              "maxItems": 7,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "enum": [
+                      "elements",
+                      "controls",
+                      "tokens",
+                      "network",
+                      "errors",
+                      "layout_390",
+                      "layout_1280"
+                    ]
+                  },
+                  "passed": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "id",
+                  "passed"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "request",
+            "checklist",
+            "page",
+            "png",
+            "previous",
+            "stop_reason",
+            "checks"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "mock_request": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "read",
+            "asset",
+            "build"
+          ]
+        },
+        "result_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "asset": {
+          "type": "string",
+          "enum": [
+            "page",
+            "png"
+          ]
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "target": {
+          "type": "string",
+          "enum": [
+            "screen",
+            "mini_app"
+          ]
+        },
+        "repositories": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "action",
+        "result_id",
+        "revision",
+        "conversation_id"
+      ],
+      "additionalProperties": false
+    },
+    "mock_response": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "$ref": "#/$defs/result"
+        },
+        "asset": {
+          "$ref": "#/$defs/mock_asset_ref"
+        },
+        "data": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string",
+          "enum": [
+            "application/zip",
+            "image/png"
+          ]
+        },
+        "next": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "goal_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "mock_asset_ref": {
+      "type": "object",
+      "properties": {
+        "asset_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "asset_id",
+        "revision"
       ],
       "additionalProperties": false
     }

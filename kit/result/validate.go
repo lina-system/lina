@@ -57,6 +57,8 @@ func Validate(kind Type, raw json.RawMessage, lim Limits) (Body, error) {
 		b = &Plan{}
 	case FileType:
 		b = &File{}
+	case MockType:
+		b = &Mock{}
 	default:
 		return nil, fmt.Errorf("%w: result type", ErrMalformed)
 	}
@@ -345,6 +347,8 @@ func check(b Body, l Limits) error {
 		if !asset(&v.Asset) || !nonempty(v.Name) || !fileMediaType(v.MediaType) || v.Size < 0 {
 			return bad()
 		}
+	case *Mock:
+		return v.validate()
 	default:
 		return bad()
 	}

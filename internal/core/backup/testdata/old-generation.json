@@ -1,0 +1,368 @@
+{
+  "main_id": "main-875",
+  "conversation": "conversation-875",
+  "person": "owner-875",
+  "agent": "agent-875",
+  "events": [
+    {
+      "id": "ev-native",
+      "speaker": "person",
+      "body": "synthetic violet preference",
+      "origin": {
+        "kind": "native",
+        "entry": 1
+      },
+      "occurred_at": "2026-09-01T09:00:00Z"
+    },
+    {
+      "id": "ev-reply",
+      "speaker": "agent",
+      "body": "synthetic reply",
+      "parent": "ev-native",
+      "origin": {
+        "kind": "native",
+        "entry": 2
+      },
+      "occurred_at": "2026-09-01T09:01:00Z"
+    },
+    {
+      "id": "ev-imported",
+      "speaker": "person",
+      "body": "synthetic imported sentence",
+      "origin": {
+        "kind": "import",
+        "system": "hermes",
+        "instance": "fixture"
+      },
+      "occurred_at": "2026-08-01T09:00:00Z"
+    },
+    {
+      "id": "ev-replay",
+      "speaker": "person",
+      "body": "synthetic violet preference",
+      "replay_of": "ev-native",
+      "origin": {
+        "kind": "native",
+        "entry": 1
+      },
+      "occurred_at": "2026-09-01T09:02:00Z"
+    },
+    {
+      "id": "ev-skip",
+      "speaker": "person",
+      "body": "synthetic scaffolded sentence",
+      "origin": {
+        "kind": "native",
+        "entry": 1
+      },
+      "occurred_at": "2026-09-01T09:03:00Z"
+    },
+    {
+      "id": "ev-quoted",
+      "speaker": "person",
+      "body": "synthetic erased sentence",
+      "origin": {
+        "kind": "native",
+        "entry": 1
+      },
+      "occurred_at": "2026-09-01T09:04:00Z"
+    },
+    {
+      "id": "ev-after",
+      "speaker": "person",
+      "body": "synthetic later event",
+      "origin": {
+        "kind": "native",
+        "entry": 1
+      },
+      "occurred_at": "2026-09-01T09:05:00Z"
+    },
+    {
+      "id": "ev-extra",
+      "speaker": "person",
+      "body": "synthetic extra evidence",
+      "origin": {
+        "kind": "native",
+        "entry": 1
+      },
+      "occurred_at": "2026-09-01T09:06:00Z"
+    }
+  ],
+  "summaries": [
+    {
+      "id": "sum-leaf",
+      "level": 0,
+      "revision": 3,
+      "status": "ready",
+      "text": "synthetic leaf summary",
+      "covers": [
+        {
+          "event": "ev-native",
+          "reason": ""
+        },
+        {
+          "event": "ev-replay",
+          "reason": "replay"
+        },
+        {
+          "event": "ev-skip",
+          "reason": "scaffold"
+        }
+      ]
+    },
+    {
+      "id": "sum-root",
+      "level": 1,
+      "revision": 4,
+      "status": "ready",
+      "text": "synthetic root summary",
+      "edges": [
+        "sum-leaf"
+      ]
+    }
+  ],
+  "memories": [
+    {
+      "id": "mem-ancestor",
+      "state": "active",
+      "holder": "all",
+      "kind": "fact",
+      "basis": "stated",
+      "content": "synthetic ancestor fact",
+      "revisions": [
+        {
+          "revision": 1,
+          "evidence": [
+            {
+              "kind": "event",
+              "id": "ev-imported",
+              "precision": "event",
+              "quote": "synthetic imported sentence"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mem-live",
+      "state": "active",
+      "holder": "all",
+      "kind": "preference",
+      "basis": "stated",
+      "content": "synthetic violet preference",
+      "revisions": [
+        {
+          "revision": 1,
+          "evidence": [
+            {
+              "kind": "event",
+              "id": "ev-native",
+              "precision": "event",
+              "quote": "synthetic violet preference"
+            }
+          ]
+        },
+        {
+          "revision": 2,
+          "evidence": [
+            {
+              "kind": "event",
+              "id": "ev-native",
+              "precision": "event",
+              "quote": "synthetic violet preference"
+            },
+            {
+              "kind": "event",
+              "id": "ev-quoted",
+              "precision": "event",
+              "quote": "synthetic erased sentence"
+            }
+          ]
+        },
+        {
+          "revision": 3,
+          "evidence": [
+            {
+              "kind": "event",
+              "id": "ev-native",
+              "precision": "event",
+              "quote": "synthetic violet preference"
+            },
+            {
+              "kind": "event",
+              "id": "ev-quoted",
+              "precision": "event",
+              "quote": "synthetic erased sentence"
+            },
+            {
+              "kind": "item",
+              "id": "mem-ancestor",
+              "revision": 1,
+              "precision": "none"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mem-forgotten",
+      "state": "active",
+      "holder": "all",
+      "kind": "preference",
+      "basis": "stated",
+      "content": "synthetic forgotten preference",
+      "revisions": [
+        {
+          "revision": 1,
+          "evidence": [
+            {
+              "kind": "event",
+              "id": "ev-reply",
+              "precision": "event",
+              "quote": "synthetic reply"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mem-after",
+      "state": "active",
+      "holder": "all",
+      "kind": "fact",
+      "basis": "stated",
+      "content": "synthetic later removal",
+      "revisions": [
+        {
+          "revision": 1,
+          "evidence": [
+            {
+              "kind": "event",
+              "id": "ev-after",
+              "precision": "event",
+              "quote": "synthetic later event"
+            },
+            {
+              "kind": "event",
+              "id": "ev-extra",
+              "precision": "event",
+              "quote": "synthetic extra evidence"
+            }
+          ]
+        },
+        {
+          "revision": 2,
+          "evidence": [
+            {
+              "kind": "event",
+              "id": "ev-after",
+              "precision": "event",
+              "quote": "synthetic later event"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mem-erased",
+      "state": "active",
+      "holder": "all",
+      "kind": "fact",
+      "basis": "stated",
+      "content": "synthetic erased memory",
+      "revisions": [
+        {
+          "revision": 1,
+          "evidence": [
+            {
+              "kind": "event",
+              "id": "ev-quoted",
+              "precision": "event",
+              "quote": "synthetic erased sentence"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "forgotten_before_generation": "mem-forgotten",
+  "removed_after_generation": "mem-after",
+  "erased_after_generation": "mem-erased",
+  "brief": {
+    "generation": 3,
+    "sentences": [
+      {
+        "text": "prefers violet",
+        "citations": [
+          {
+            "kind": "item",
+            "id": "mem-live",
+            "revision": 2,
+            "precision": "none"
+          },
+          {
+            "kind": "event",
+            "id": "ev-native",
+            "precision": "event",
+            "quote": "synthetic violet preference"
+          }
+        ]
+      }
+    ]
+  },
+  "records": [
+    {
+      "id": "rec-note",
+      "path": "inbox/note.md",
+      "kind": "memo",
+      "state": "active",
+      "title": "Note title",
+      "note": "synthetic note body",
+      "source": "ev-native"
+    },
+    {
+      "id": "rec-plan",
+      "path": "projects/plan.md",
+      "kind": "memo",
+      "state": "active",
+      "title": "Plan title",
+      "note": "synthetic plan body"
+    }
+  ],
+  "expected_citations": [
+    "memory|mem-after|1|-|0|event|ev-after|0|event|cites",
+    "memory|mem-after|1|2|1|event|ev-extra|0|event|cites",
+    "memory|mem-ancestor|1|-|0|event|ev-imported|0|event|cites",
+    "memory|mem-forgotten|1|-|0|event|ev-reply|0|event|cites",
+    "memory|mem-live|1|-|0|event|ev-native|0|event|cites",
+    "memory|mem-live|2|-|1|event|ev-quoted|0|event|cites",
+    "memory|mem-live|3|-|2|memory|mem-ancestor|1|none|cites",
+    "person_brief|[\"owner-875\",\"agent-875\"]|3|-|0|memory|mem-live|2|none|cites",
+    "person_brief|[\"owner-875\",\"agent-875\"]|3|-|1|event|ev-native|0|event|cites",
+    "summary|sum-leaf|3|-|0|event|ev-native|0|event|covers",
+    "summary|sum-leaf|3|-|1|event|ev-replay|0|event|replay",
+    "summary|sum-leaf|3|-|2|event|ev-skip|0|event|scaffold",
+    "summary|sum-root|4|-|0|summary|sum-leaf|3|none|cites"
+  ],
+  "expected_recall": [
+    "event:ev-native",
+    "event:ev-replay",
+    "event:ev-imported",
+    "event:ev-skip",
+    "summary:sum-leaf",
+    "summary:sum-root",
+    "memory:mem-ancestor",
+    "memory:mem-live",
+    "record:rec-note",
+    "record:rec-plan"
+  ],
+  "hidden_recall_text": [
+    "synthetic forgotten preference",
+    "synthetic later removal",
+    "synthetic later event",
+    "synthetic extra evidence",
+    "synthetic erased memory",
+    "synthetic erased sentence",
+    "synthetic reply"
+  ]
+}

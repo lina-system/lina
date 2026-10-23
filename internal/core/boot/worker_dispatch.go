@@ -65,7 +65,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 		factories = append(factories, dispatch.AntigravityFactory(dispatch.Config{Binary: binary, Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities}))
 	}
 	if codexBinary != "" {
-		factories = append(factories, dispatch.CodexFactory(codexBinary))
+		factories = append(factories, dispatch.CodexFactory(codexBinary, r.personaAuthority.WorkerApprovalKey()))
 	}
 	// Keep the established order when quota and choice rules are tied.
 	factories = append(factories, acpFactories...)
@@ -73,7 +73,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{AuthorizeRecovery: r.authorizeWorkerRecovery, Rules: rules, Workers: factories, Bind: r.bindDispatchedWorker, Capacity: func(ctx context.Context) int {
+	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{ApprovalKey: r.personaAuthority.WorkerApprovalKey(), AuthorizeRecovery: r.authorizeWorkerRecovery, Rules: rules, Workers: factories, Bind: r.bindDispatchedWorker, Capacity: func(ctx context.Context) int {
 		host, err := goal.MainHost(ctx, r.main, r.root, goal.Resources{CPU: float64(runtime.NumCPU()), MemoryMB: math.MaxInt32, DiskMB: math.MaxInt32}, nil)
 		if err != nil {
 			return 0
@@ -169,6 +169,11 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 	r.workers.mu.Unlock()
 	handle := func(event worker.Event) {
 		e.observeActivity(event)
+		if event.Kind == worker.ProgressEvent && event.Progress.Phase == "started" {
+			if err := e.resumeSteering(e.origin.ctx); err != nil {
+				e.bridgeFailure(err)
+			}
+		}
 		defer e.origin.notifyOwnerViews()
 		switch event.Kind {
 		case worker.ApprovalEvent:
@@ -182,6 +187,9 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 				e.stopRequest(event.Progress.ItemID)
 			}
 		case worker.FinishEvent:
+			if err := e.finishSteering(e.origin.ctx, event); err != nil {
+				e.bridgeFailure(err)
+			}
 			e.stopRequests(event.Thread.TurnID)
 		case worker.UsageEvent:
 		}

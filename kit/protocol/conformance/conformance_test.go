@@ -29,6 +29,16 @@ func TestCorpusRoundTrips(t *testing.T) {
 	if err := suite.RoundTrip(codec); err != nil {
 		t.Fatal(err)
 	}
+	newer, err := conformance.Load(os.DirFS("../../../protocol/fixtures/client/1.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = newer.RoundTrip(codec); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range newer.Envelopes {
+		suite.Envelopes["1.1/"+name] = data
+	}
 	// Follow the canonical inventory, so adding a kind without a fixture fails.
 	data, err := os.ReadFile("../../../protocol/schema/client/1.0/envelope.json")
 	if err != nil {
@@ -78,7 +88,12 @@ func TestCorpusRoundTrips(t *testing.T) {
 }
 
 func TestClientCases(t *testing.T) {
-	suite, err := conformance.Load(os.DirFS("../../../protocol/fixtures/client/1.0"))
+	for _, version := range []string{"1.0", "1.1"} {
+		t.Run(version, func(t *testing.T) { testClientCases(t, version) })
+	}
+}
+func testClientCases(t *testing.T, version string) {
+	suite, err := conformance.Load(os.DirFS("../../../protocol/fixtures/client/" + version))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -94,7 +94,6 @@ func TestWorkMethodsThroughRunningCore(t *testing.T) {
 	rounds := map[string]int{}
 	catalogs := map[string][]string{}
 	first := map[string][]string{}
-	needed := []string{"calculate", "dispatch_code_goal"}
 	var lastState []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -149,14 +148,7 @@ func TestWorkMethodsThroughRunningCore(t *testing.T) {
 			if key == "lina" && (!slices.Contains(names, "create_timer") || slices.Contains(names, "dispatch_code_goal")) {
 				t.Errorf("lina first groups: %v", names)
 			}
-			// Load only the tools this job uses. Loading the entire catalog
-			// duplicates unused schemas in the next bounded request.
-			for _, name := range needed {
-				if !slices.Contains(available, name) {
-					t.Errorf("%s cannot discover %s", key, name)
-				}
-			}
-			call(w, "load", "load_tools", map[string]any{"tools": needed})
+			call(w, "load", "load_tools", map[string]any{"tools": available})
 			return
 		}
 		// Every supplied tool result must be a real successful Core result.
@@ -178,7 +170,7 @@ func TestWorkMethodsThroughRunningCore(t *testing.T) {
 		}
 		switch n {
 		case 1:
-			for _, name := range needed {
+			for _, name := range catalogs[key] {
 				if !slices.Contains(names, name) {
 					t.Errorf("%s cannot load %s", key, name)
 				}

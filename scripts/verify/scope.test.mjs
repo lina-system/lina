@@ -735,3 +735,10 @@ test('one-time takeover operator is verified separately from release commands', 
   assert.deepEqual(operator.packages, ['./tools/crw-takeover/...']);
   assert.equal(operator.binary, undefined);
 });
+
+test('shared generated UI template and embedded font belong to the Core build', () => {
+  for (const path of ['design/template.go', 'design/template/base.css', 'design/template/mock.js', 'design/fonts/PretendardVariable.woff2']) {
+    assert.equal(kind(path), 'components');
+  }
+  assert.equal(kind('design/tokens/tokens.css'), 'automation');
+});

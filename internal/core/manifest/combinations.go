@@ -92,7 +92,7 @@ func ClientCombinations() []Combination {
 
 // ClientCombinationsFor describes the target selected by the build writer.
 func ClientCombinationsFor(target string) []Combination {
-	return []Combination{{
+	rows := []Combination{{
 		Connection:      "client",
 		Peer:            TUIPeer,
 		Platform:        target,
@@ -145,4 +145,9 @@ func ClientCombinationsFor(target string) []Combination {
 			"go test ./e2e/m1 -run TestM1TurnBudgetHandoffInstalledCore",
 		},
 	}}
+	newer := rows[0]
+	newer.ProtocolVersion = "1.1"
+	newer.Capabilities = append(append([]protocol.Capability(nil), newer.Capabilities...), protocol.Capability{Name: "mocks", Version: "1.0"})
+	newer.Evidence = append(append([]string(nil), newer.Evidence...), "go test ./e2e/m1 -run TestM3DrawnMocks")
+	return append(rows, newer)
 }
