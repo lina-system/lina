@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -67,6 +68,11 @@ type Todo struct {
 	Priority       string          `json:"priority,omitempty"`
 }
 
+// Go's RFC3339 parser also accepts single-digit hours, comma fractions and
+// overflowing zone components. SQLite's date functions cannot read those forms
+// or offsets beyond 14:59. Preserve valid text, including fractional zeros.
+var todoTimestamp = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-](0[0-9]|1[0-4]):[0-5][0-9])$`)
+
 func validDate(value string) bool {
 	if value == "" {
 		return true
@@ -74,8 +80,11 @@ func validDate(value string) bool {
 	if d, err := time.Parse(time.DateOnly, value); err == nil && d.Format(time.DateOnly) == value {
 		return true
 	}
+	if !todoTimestamp.MatchString(value) {
+		return false
+	}
 	d, err := time.Parse(time.RFC3339, value)
-	return err == nil && d.Year() > 0 && d.Year() <= 9999 && strings.ContainsAny(value, "Z+-") && len(value) > 19
+	return err == nil && d.Year() > 0 && d.UTC().Year() <= 9999
 }
 func (v Todo) Validate() error {
 	switch v.State {

@@ -896,8 +896,11 @@ there is no separate client endpoint.
   the published files.
 - `write_record(kind: todo)` accepts sentence-only capture and complete optional
   planning fields. It preserves them on text-only edits. Exact dates are checked
-  before publication; unresolved input returns `ambiguous_date`. Dependency
-  targets are owner-scoped and a recursive index query rejects cycles under the
+  before publication; unresolved input returns `ambiguous_date`. All to-do date
+  fields reject noncanonical timestamp syntax and offsets or instants outside
+  SQLite's date range before changing files, history or the index. Valid fractional
+  seconds and offset spellings are preserved for board/list and dated queries.
+  Dependency targets are owner-scoped and a recursive index query rejects cycles under the
   repository writer lock. The existing revision CAS and durable tool receipts
   apply unchanged. The tool cannot set work execution state or complete a
   delegated task. Planning-field edits may preserve an already `completed`
@@ -909,12 +912,15 @@ there is no separate client endpoint.
   today/upcoming/anytime queries, rescheduling and restart after index loss.
   `e2e/m2/todo-completed-planning.json` covers editing a completed delegated
   to-do through Core and retaining its fields and completion after restart.
+  `e2e/m2/todo-timestamps.json` covers timestamp refusals in all date fields,
+  an invalid edit, and valid timed tasks in board/list and dated views.
   `e2e/m2/record-recurrence-promotion.json` exercises same-record recurrence
   completion, model-free advancement at Core restart, memo promotion and undo.
 - Recurrence uses the native timer parser's daily, weekly, monthly and yearly
   subset with interval, by-day, by-month-day, count and until. The public package
   helper is `timers.Next(rule, from, zone)`, backed by the pure shared
-  `kit/calendar` calculator so the two store families do not import each other. Existing series retain their start
+  `kit/calendar` calculator so the two store families do not import each other.
+  Existing series retain their start
   anchor; a completion-relative series anchors at completion. `repeat.zone`
   is an optional IANA name, defaulting to UTC for existing records. Core owns
   the stored start, completed count and exhausted flag; tool arguments cannot
@@ -928,6 +934,7 @@ there is no separate client endpoint.
   Date-only occurrences remain due throughout their civil day. Timed
   recurrences have minute precision; the shared calendar resolves DST gaps
   and folds as C-26 specifies. Tests cover month ends, leap years and zone gaps.
+
 - Reminders and pre-warnings are timer rows (C-26).
 - Candidates are durable rows with a ledger source, exact quotation, confidence
   and numbered handle. Installed `propose_candidate` and `list_candidates`
