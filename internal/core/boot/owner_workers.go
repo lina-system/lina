@@ -60,6 +60,9 @@ func (r *conversationRuntime) ownerWorkerControl(ctx context.Context, s clientsr
 			break
 		}
 	}
+	if entry == nil && note != "" {
+		return r.offlineSteering(ctx, s.PersonID, session, card, conversation, key, note)
+	}
 	if entry == nil || entry.origin.person != s.PersonID || !workerControlConversation(entry.origin, conversation) {
 		return outsideManagement()
 	}
@@ -87,6 +90,9 @@ func (r *conversationRuntime) ownerWorkerControl(ctx context.Context, s clientsr
 			return malformedManagement()
 		}
 		return nil
+	}
+	if note != "" {
+		return entry.ownerSteering(ctx, key, note)
 	}
 	snapshot, err := entry.adapter.Snapshot(ctx, entry.thread)
 	if err != nil {

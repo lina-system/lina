@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/e2e/fixture"
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -510,25 +511,10 @@ func TestM2InstalledCodexLive(t *testing.T) {
 }
 
 func workerCompletionInput(inputs []json.RawMessage) string {
-	// History has no developer messages. The first developer item after the
-	// current input begins Core's ContextPacket, which can also contain user
-	// evidence. Classify the last user input before that packet, not retrieved
-	// context or the discovery call/results appended after it.
+	// Tool follow-ups retain the same current input; packet evidence after it
+	// is not another worker outcome or a new request.
 	var item struct{ Role, Content string }
-	found := false
-	for _, raw := range inputs {
-		var next struct{ Role, Content string }
-		if json.Unmarshal(raw, &next) != nil {
-			continue
-		}
-		if next.Role == "developer" && found {
-			break
-		}
-		if next.Role == "user" {
-			item, found = next, true
-		}
-	}
-	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+	if json.Unmarshal(fixture.CurrentInput(inputs), &item) != nil || item.Role != "user" || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
 		return ""
 	}
 	return item.Content

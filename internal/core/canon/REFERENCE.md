@@ -58,3 +58,12 @@ table plus its four indexes occupied 364,544 bytes by `dbstat`. The source
 benchmark commit was `469337d78c8dbc1b1dce9355a9fec34e4647a704`; its three forgets
 had already run, retaining the old pointers. These are observed measurements,
 not performance thresholds or recall-quality evidence.
+
+### Recall conversation scope
+
+Migration 60 stores one inferred person per conversation: the only person who
+has spoken there, or empty when none or more than one have. A person event
+updates indexed documents only when that value changes. `recall_conversation`
+indexes `(conversation, person)` for the lookup. Repeat messages from the same
+person do not rewrite documents or their scope index entries. The person value
+on a document stays the one `recall_source` already derived.

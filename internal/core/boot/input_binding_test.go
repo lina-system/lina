@@ -3,10 +3,12 @@ package boot
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/lane"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"strings"
@@ -184,7 +186,15 @@ func TestInputBindingNoticeAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal([]map[string]string{{"Run": "background", "Person": r.person, "Agent": r.agent, "Conversation": r.conversation}})
+	notice := lane.Notice{ID: "notice", Run: "background", Person: r.person, Agent: r.agent, Conversation: r.conversation, Outcome: "complete", Summary: "Garden finished", Landed: now, Surface: ledger.Surface{Kind: "tui"}}
+	raw, _ := json.Marshal([]lane.Notice{notice})
+	record, _ := json.Marshal(notice)
+	if err = r.db.Write(ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(ctx, "INSERT INTO lane_notices(id,conversation,record,delivered) VALUES(?,?,?,1)", notice.ID, r.conversation, record)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := r.journal().Admit(ctx, guard.EntryBackgroundNotice, ledger.Input{ID: "notice", ParentID: parent.ID, ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "background_notice", Locator: "notice", OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", Body: string(raw)}); err != nil {
 		t.Fatal(err)
 	}
@@ -372,5 +382,99 @@ func TestInputBindingWithdrawnQuestionCard(t *testing.T) {
 	}
 	if d.Decider != "no-rule" || !d.Unresolved {
 		t.Fatal("withdrawn question still decided binding", d)
+	}
+}
+
+func TestInputBindingMaterialNotice(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "background", Title: "Inspect the garden", Kind: "run", State: "running", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "long-notice-parent", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Start the run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notice := lane.Notice{ID: "long-notice", Run: "background", Person: r.person, Agent: r.agent, Conversation: r.conversation, Outcome: "complete", Summary: strings.Repeat("x", ledger.InlineBytes+1), Landed: now, Surface: ledger.Surface{Kind: "tui"}}
+	body, err := json.Marshal([]lane.Notice{notice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery, err := json.Marshal(lane.Delivery{ID: notice.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, At: now, Notices: []lane.Notice{notice}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Write(ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(ctx, "INSERT INTO lane_notice_events(id,conversation,record) VALUES(?,?,?)", notice.ID, r.conversation, delivery)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.journal().Admit(ctx, guard.EntryBackgroundNotice, ledger.Input{ID: "long-notice-event", ParentID: parent.ID, ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "tui"}, ScaffoldKind: "background_notice", Locator: "background-notice:" + notice.ID, OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", Body: string(body)}); err != nil {
+		t.Fatal(err)
+	}
+	var material sql.NullString
+	if err = r.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT material_id FROM conv_event WHERE id='long-notice-event'").Scan(&material)
+	}); err != nil || !material.Valid {
+		t.Fatalf("notice body stayed inline: %+v %v", material, err)
+	}
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "long-notice-reply", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui", ReplyTo: "long-notice-event"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Continue"})
+	if err != nil {
+		t.Fatal("material-backed notice blocked input admission", err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(input.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.ID != "background" || d.Decider != "reply-or-card" {
+		t.Fatal(d)
+	}
+}
+
+func TestInputBindingRetractedFocus(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "garden", Title: "Garden", Kind: "project", State: "active", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "retracted-focus", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Garden"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(source.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.ID != "garden" {
+		t.Fatalf("source input did not bind: %+v", d)
+	}
+	forgetQuestionInput(t, r, source)
+	next, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "retracted-focus-next", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "continue"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err = r.journal().Get(ctx, inputBindingID(next.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var after binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &after); err != nil {
+		t.Fatal(err)
+	}
+	if after.Target.ID == "garden" || after.FocusFresh {
+		t.Fatal("withdrawn source still supplied the focus", after)
 	}
 }

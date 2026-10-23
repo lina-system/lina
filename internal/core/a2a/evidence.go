@@ -103,20 +103,23 @@ func (s *Service) verify(ctx context.Context, c Connection, call *Call, artifact
 			if total > call.Profile.MaxOutput || (strings.HasPrefix(media, "text/") && !utf8.Valid(body)) || s.hasSecret(c, body) {
 				return ErrEvidence
 			}
-			if media == "application/json" {
-				var decoded any
-				if json.Unmarshal(body, &decoded) != nil {
-					return ErrEvidence
-				}
-				canonical, _ := json.Marshal(decoded)
-				if s.hasSecret(c, canonical) {
-					return ErrEvidence
-				}
-			}
 			combined = append(combined, body...)
 		}
 		if s.hasSecret(c, combined) {
 			return ErrEvidence
+		}
+		// An artifact may be split across parts, so its JSON is only known once
+		// every part is read. Validate the assembled body and scan its canonical
+		// form, which is what a downstream consumer parses.
+		if mediaType == "application/json" {
+			var decoded any
+			if json.Unmarshal(combined, &decoded) != nil {
+				return ErrEvidence
+			}
+			canonical, _ := json.Marshal(decoded)
+			if s.hasSecret(c, canonical) {
+				return ErrEvidence
+			}
 		}
 		call.Evidence = append(call.Evidence, Evidence{Artifact: artifact.ID, MediaType: mediaType, Body: bytes.Clone(combined), SHA256: hash(combined), Source: c.Origin, Observed: time.Now().UTC()})
 	}

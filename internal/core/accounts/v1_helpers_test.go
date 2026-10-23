@@ -43,6 +43,9 @@ func probeV1Responses(ctx context.Context, credential provider.Credential, model
 	report := v1ResponsesReport{Fields: make(map[string]bool)}
 	input := []provider.Item{json.RawMessage(v1Tools), json.RawMessage(`{"role":"user","content":"For a transport check, call probe_echo with input echo and apply_patch with input patch in parallel in the same response. Both tools are synthetic and change nothing. After both tool outputs arrive, answer OK without further tool calls."}`)}
 	request := provider.Request{Credential: credential, Model: model, Effort: "medium", Purpose: provider.Turn, Items: input}
+	// The probe measures the surface's acceptance of the selected reasoning-state
+	// capability, so it asks for the encrypted round trip the route selects.
+	request.Capabilities.ReasoningState = true
 	for round := 0; round < 3; round++ {
 		items, calls, err := v1Turn(ctx, request, transport)
 		if err != nil {
@@ -121,7 +124,7 @@ func probeV1Responses(ctx context.Context, credential provider.Credential, model
 }
 
 func v1Turn(ctx context.Context, request provider.Request, transport http.RoundTripper) ([]provider.Item, []provider.ToolCall, error) {
-	adapter, err := responses.New(responses.Config{Adapter: "responses", RequestFields: v1RequestFields}, &http.Client{Transport: transport})
+	adapter, err := responses.New(responses.Config{Adapter: "responses", RequestFields: v1RequestFields, Capabilities: provider.CapabilitySet{provider.ReasoningStateCapability}}, &http.Client{Transport: transport})
 	if err != nil {
 		return nil, nil, errV1Incomplete
 	}
