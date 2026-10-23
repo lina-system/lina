@@ -199,6 +199,18 @@ go test -count=1 ./<dir>/...
 
 ## Boundaries
 
+PR #628's local full run on `2b9ad8a7` exhausted the default 30-second
+scenario context in file-landing and first-run acceptance: the affected cases
+ended at 30.7, 30.1 and 31.5 seconds while reconnecting after earlier successful
+steps. File landing performs five Core boots plus worker observation, result
+inspection, interrupted delivery and restart verification. It now has a
+100-second scenario allowance after installation. First-run acceptance covers
+two Core boots, two TUI connections, the first conversation turn and restored
+history in 60 seconds. Core connection and process waits retain their existing
+10-second bounds; package and enclosing foundation deadlines are unchanged.
+Neither scenario retries failed observations or substitutes a sleep for a
+protocol or process-completion barrier.
+
 Verification runs in a clean worktree without credentials: no Git or GitHub credentials, tokens, account secrets, personal data, or production services, and no write access to any remote. Actual model and provider calls and subjective quality evaluations run separately in explicitly authorized environments.
 
 [Integration](integration.md) decides how a passing candidate joins `dev`. A passing `foundation` does not authorize a [release](releases.md) or a deployment.

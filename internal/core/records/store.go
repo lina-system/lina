@@ -250,9 +250,11 @@ func (s *Store) CommitBatch(ctx context.Context, changes []Change, a Actor) (rev
 		return "", err
 	}
 	seenIDs, seenPaths := map[string]bool{}, map[string]bool{}
+	candidates := map[string]document{}
 	edits := []fileChange{}
 	for _, c := range changes {
-		if _, err := parseDocument(c.Data); err != nil {
+		candidate, err := parseDocument(c.Data)
+		if err != nil {
 			return "", err
 		}
 		id, e := recordID(c.Data)
@@ -260,6 +262,7 @@ func (s *Store) CommitBatch(ctx context.Context, changes []Change, a Actor) (rev
 			return "", ErrInvalid
 		}
 		seenIDs[c.ID], seenPaths[c.Path] = true, true
+		candidates[c.ID] = candidate
 		old, e := s.find(files, c.ID)
 		if e != nil && !errors.Is(e, ErrNotFound) {
 			return "", e
@@ -291,6 +294,9 @@ func (s *Store) CommitBatch(ctx context.Context, changes []Change, a Actor) (rev
 	}
 	if len(edits) == 0 {
 		return rev, nil
+	}
+	if err = s.validateTodoBatch(ctx, candidates); err != nil {
+		return "", err
 	}
 	token, err := s.acquire(ctx)
 	if err != nil {

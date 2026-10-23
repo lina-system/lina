@@ -49,7 +49,8 @@ func Migrations() []Migration {
 		{Version: 35, SQL: presetEffectsSchema},
 		{Version: 36, SQL: skillMaintenanceSchema},
 		{Version: 37, SQL: workEngineSchema},
-		{Version: 38, SQL: ResultsSchema + PlanningSchema},
+		{Version: 38, SQL: recordsTodoSchema},
+		{Version: 39, SQL: ResultsSchema + PlanningSchema},
 	}
 }
 
@@ -85,8 +86,9 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
 		{31, "worker_dispatch"},
 		{34, "waiting_decisions"},
-		{38, "result_heads"}, {38, "plan_drafts"}, {38, "plan_confirmations"}, {38, "plan_rejections"},
+		{39, "result_heads"}, {39, "plan_drafts"}, {39, "plan_confirmations"}, {39, "plan_rejections"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
+		{38, "records_todo"},
 		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
 		{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
 		{30, "authority_merges"},

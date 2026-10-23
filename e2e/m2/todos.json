@@ -1,0 +1,10 @@
+{
+ "day":"2026-10-22",
+ "zone":"Asia/Seoul",
+ "overdue":"2026-10-21",
+ "future":"2026-10-25",
+ "ambiguous":"다음 금요일",
+ "title":"Prepare the workshop",
+ "dependent":"Send the measurements",
+ "undated":"Check the spare parts"
+}

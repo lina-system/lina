@@ -1,0 +1,19 @@
+{
+ "day":"2026-10-22", "zone":"Asia/Seoul",
+ "cases":[
+  {"id":"a-overdue","when":"2026-10-21","today":true,"overdue":true},
+  {"id":"b-start","when":"2026-10-22","today":true},
+  {"id":"c-cutoff","when":"2026-10-25","deadline":"2026-10-22","today":true},
+  {"id":"d-repeat","repeat":{"rule":"FREQ=DAILY","next":"2026-10-22"},"today":true},
+  {"id":"e-anytime"},
+  {"id":"f-future","when":"2026-10-23"},
+  {"id":"g-completed","state":"completed","when":"2026-10-22"},
+  {"id":"h-canceled","state":"canceled","when":"2026-10-21"},
+  {"id":"i-local-midnight","when":"2026-10-21T15:00:00Z","today":true},
+  {"id":"j-before-midnight","when":"2026-10-21T14:59:59Z","today":true,"overdue":true},
+  {"id":"k-next-midnight","when":"2026-10-22T15:00:00Z"},
+  {"id":"l-old-deadline","deadline":"2026-10-21"},
+  {"id":"m-backlog","state":"backlog"},
+  {"id":"n-backlog-dated","state":"backlog","when":"2026-10-22","today":true}
+ ]
+}

@@ -37,6 +37,7 @@ var runningCapability = protocol.Capability{Name: "running", Version: "1.0"}
 type backgroundRuntime struct {
 	service   *runs.Service
 	list      *runs.RunningList
+	sessions  *workerListSource
 	notices   *lane.Notices
 	wake      chan struct{}
 	stop      context.CancelFunc
@@ -63,7 +64,7 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 		return err
 	}
 	b.service, err = runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"),
-		Model: r.route.Model, Tools: adapters, Authorize: r.authorizeRun, PublishPromotion: turn.PublishPromotion,
+		Model: r.route.Model, Tools: adapters, Authorize: r.authorizeRun, AuthorizeFollowUp: r.authorizeRunFollowSource, PublishPromotion: turn.PublishPromotion,
 		Stream: func(ctx context.Context, req provider.Request) (provider.Stream, error) {
 			activity, err := r.activities.Acquire(ctx, lease.Activity{Class: lease.Live, Reason: "background run"})
 			if err != nil {
@@ -81,7 +82,11 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{"run": runs.RunListSource{}, "work": runs.WorkListSource{Person: r.person}})
+	b.sessions = &workerListSource{workers: r.workers, person: r.person}
+	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{
+		"run": runs.RunListSource{}, "work": runs.WorkListSource{Person: r.person},
+		"session": b.sessions,
+	})
 	b.notices = lane.NewNotices(r.db, nil)
 	b.notices.OnDelivered = func(d lane.Delivery) {
 		if d.Conversation != "main:"+d.Agent {
@@ -113,6 +118,8 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 			ref := runs.ListRef{Source: "run", ID: *request.RunID}
 			if id, ok := strings.CutPrefix(ref.ID, "task:"); ok {
 				ref.Source, ref.ID = "work", id
+			} else if id, ok := strings.CutPrefix(ref.ID, "session:"); ok {
+				ref.Source, ref.ID = "session", id
 			}
 			switch string(*request.Action) {
 			case "open":
@@ -128,6 +135,8 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 				var next int64
 				if ref.Source == "work" {
 					text, next, err = r.work.SummaryPage(ctx, ref.ID, offset)
+				} else if ref.Source == "session" {
+					text, err = r.workerRunningSummary(ctx, s.PersonID, ref.ID, offset)
 				} else {
 					text, next, err = b.service.ResultPage(ctx, s.PersonID, ref.ID, offset)
 				}
@@ -143,6 +152,11 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 					return clientsrv.Result{}, err
 				}
 			case "dismiss":
+				if ref.Source == "session" {
+					if err := b.sessions.refresh(ctx); err != nil {
+						return clientsrv.Result{}, err
+					}
+				}
 				if err := b.list.Dismiss(ctx, s.PersonID, ref); err != nil {
 					return clientsrv.Result{}, err
 				}
@@ -444,6 +458,11 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 	b := r.background
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.sessions != nil {
+		if err := b.sessions.refresh(ctx); err != nil {
+			return err
+		}
+	}
 	snapshot, err := b.list.Build(ctx, r.person)
 	if err != nil {
 		return err
@@ -452,6 +471,8 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 	for _, entry := range snapshot.Entries {
 		if entry.Ref.Source == "work" {
 			entry.Ref.ID = "task:" + entry.Ref.ID
+		} else if entry.Ref.Source == "session" {
+			entry.Ref.ID = "session:" + entry.Ref.ID
 		}
 		current[entry.Ref.ID] = true
 		text := entry.View.State + ": " + entry.View.Summary

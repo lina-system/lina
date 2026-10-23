@@ -324,3 +324,42 @@ func TestPlanningUpgradePreservesPublishedWorkEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedTodoProjection(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:37]...), Migration{Version: 38, SQL: recordsTodoSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		if _, err := tx.ExecContext(t.Context(), `INSERT INTO records_index(id,path,blob,revision) VALUES('existing','inbox/task.md','blob','revision')`); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO records_todo(id,fields,when_value,deadline,repeat_next) VALUES('existing','{"state":"open"}','2026-10-22','','')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var fields string
+		if err := tx.QueryRowContext(t.Context(), "SELECT fields FROM records_todo WHERE id='existing'").Scan(&fields); err != nil {
+			return err
+		}
+		if fields != `{"state":"open"}` {
+			t.Fatalf("upgrade changed published todo: %q", fields)
+		}
+		var plans int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&plans); err != nil {
+			return err
+		}
+		if plans != 0 {
+			t.Fatalf("migration created plan drafts: %d", plans)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

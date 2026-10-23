@@ -159,6 +159,12 @@ func convert(r sourceRecord, kind, id string, index int, links map[string]string
 	if r.Done {
 		state = "done"
 	}
+	if kind == "todo" {
+		state = "open"
+		if r.Done {
+			state = "completed"
+		}
+	}
 	if kind == "goal" {
 		state = "draft"
 	}
@@ -183,6 +189,9 @@ func convert(r sourceRecord, kind, id string, index int, links map[string]string
 		if f.value != "" {
 			front += f.key + ": " + quote(f.value) + "\n"
 		}
+	}
+	if kind == "todo" && r.Deadline != "" {
+		front += "deadline_source: " + quote("snapshot:"+hash+":"+r.Source+":"+r.Kind+":"+r.ID) + "\n"
 	}
 	provenance, _ := json.Marshal(struct {
 		Ref
