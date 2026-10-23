@@ -1410,6 +1410,87 @@ cannot prevent other goals from expiring or Core from restarting.
 - **While it runs, nothing new.** The goal is a progress line and its tasks are rows of the running list. A landing of one task is a row change, not a notice. Only a row of "Waiting for me" can notify, under the notification rules of [surfaces.md](surfaces.md).
 - **At the end, one summary.** It begins with the outcome word (done, or stopped, or blocked with the reason), says in a line what changed for the person, and gives one clause of evidence per criterion in the person's words ("일정표는 자료에 있고, 캘린더 세 건 확인했고, 호텔 확인 메일 받았어요"). It lists what was handed to the person as their own 할 일. It names no issue, pull request, branch, check, path or id; those are in the Details of the goal's card.
 
+### Installed code-goal execution
+
+The installed `lina core` supplies the code-goal Driver. Conversation admission
+binds the goal to the authenticated person, agent, conversation and turn; a model
+cannot supply execution state, receipts, authority or a Driver. The installed
+Antigravity worker runs through the existing dispatch service, with its own
+credentials, a separate worktree and the dev manager's assignment and delivery
+judgments. An adapter without resume support preserves interrupted work and asks
+for attention; it never starts a duplicate execution to imitate a resume.
+
+The owner registers repository connections in `system/code-work.json` under the
+installed state root. This is a private regular file with mode `0600`, outside
+the repository; a symlink, unknown field or invalid command is refused. Core
+loads it at startup. A missing file grants no repository or deployment target.
+The model selects registered repository and check names, never command arguments
+or an executable. The file contains:
+
+- `limits`: positive `cpu`, `memory_mb` and `disk_mb` capacity ceilings, combined
+  with the main host's measured load and installed worker availability.
+- Optional `host_report`: a registered read-only monitor command for environments
+  where Core cannot read the host's counters directly. Without it, Core reads
+  the OS counters. The monitor emits `cpu_cores`, `load_cpu`,
+  `available_memory_mb` and `available_disk_mb`; Core supplies the identity,
+  observation time, installed worker readiness and capacity ceilings. Reported
+  cores are capped by Core's available CPUs. Invalid or failed reports supply no
+  capacity. The installed acceptance uses a fixture monitor so an unrelated CI
+  workload cannot determine whether its fixture worker starts.
+- `repositories`: a map from GitHub `owner/repository` names to `clone` (an
+  absolute local clone), `base`, `design_refs`, `qa` and `checks`. Each command
+  has an absolute `path` and optional literal `args`. `checks` maps criterion
+  methods to commands. Task write areas are comma-separated path globs.
+- An optional repository `service`: `target`, `public`, `deploy` and `probe`.
+  The target is an installed connection name. The probe is a read-only command.
+  A goal cannot omit deployment for a registered service. Public deployment
+  uses the existing argument-bound approval path; registration grants no public
+  deployment approval. A private deployment remains subject to preset limits
+  and the current goal's scope.
+
+QA and outcome checks run in a disposable checkout of the observed merge commit.
+Deploy uses that same pinned revision. Core passes `LINA_GOAL_REVISION`,
+`LINA_GOAL_TARGET` and `LINA_GOAL_ACTION` to the registered command. Its JSON output
+contains `revision`, `target`, `passed` (boolean) and a nonempty `evidence` string
+describing the observation. Core requires matching revision and target, retains
+the output and command identity, and treats a nonzero exit as failure. An exit
+code without this evidence cannot complete a stage. An explicit deployment failure remains failed even if that revision is serving;
+it is not retried automatically. A deployment also requires
+an independent probe of the running service; the deploy command's output alone
+does not prove it is running.
+
+Core captures protected refs before starting the worker, re-reads the PR's current
+head, checks and review, requires the dev manager's verified verdict, and merges
+through the existing durable merge authority and shared-base slot. Only a
+confirming GitHub read releases QA. Criterion checks read their retained QA
+output and current external evidence again before closing the goal. An earlier
+merge remains valid when its recorded commit is still an ancestor of the current
+base; a base that removed the commit fails the check. A custom criterion targeting
+a repository uses that repository's observed merged revision, independently of
+the service repository. Completion
+returns to the originating conversation and survives restart without repeating
+effects. An uncertain worker, merge, QA or deployment is observed; it is never
+re-executed by the observation path. A deployment retains its original connection
+before dispatch so a changed setting cannot settle it against another service.
+An unsuccessful read-only probe of an uncertain deployment keeps the action
+unknown and its authority reservation held. Core retains valid negative evidence
+and probes again on restart or the safety sweep; an unhealthy service alone
+cannot settle the deployment or turn it into a terminal failure.
+When a probe confirms an uncertain deployment, Core records the applied authority
+receipt and releases that effect's target reservation in one transaction. It
+checks the original actor, target and action binding, refuses a live invocation,
+and cannot release a subsequent writer's reservation. The deployment is not
+issued again.
+
+The installed-binary acceptance uses fixture worker and GitHub executables, real
+Git commits, registered check commands and a local HTTP service. It proves one
+code goal through worker execution, manager judgment, merge, QA, deploy, probe,
+criterion readback and closure, then restarts Core and requires no repeated
+effects. A public service without approval must remain undeployed.
+An interrupted deployment whose first recovery probe fails must remain eligible
+for reconciliation, release its reservation after a successful probe, and close
+without issuing the deployment again.
+
 ### Acceptance
 
 Headless end-to-end scenarios with stub workers, stub plugins and Core's own timers prove this section; no scenario relies on timing luck:

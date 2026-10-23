@@ -50,6 +50,8 @@ type Definition struct {
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
 	Result         json.RawMessage            `json:"result,omitempty"`
+	Goal           bool                       `json:"goal,omitempty"`
+	Protected      map[string]string          `json:"protected_refs,omitempty"`
 	Method         *skills.Body               `json:"method,omitempty"`
 	BaseCommit     string                     `json:"base_commit,omitempty"`
 	ChangeEvidence string                     `json:"change_evidence,omitempty"`
@@ -386,8 +388,8 @@ func (s *Service) sync() {
 				continue
 			}
 			s.wg.Add(1)
-			go func() { defer s.wg.Done(); s.execute(r) }()
-		} else if (r.State == "finished" || r.State == "unknown") && !r.Announced {
+			go func() { defer s.wg.Done(); s.execute(s.ctx, r) }()
+		} else if !r.Goal && (r.State == "finished" || r.State == "unknown") && !r.Announced {
 			// Completed ledger deliveries belong exclusively to the durable reactor.
 			if s.cfg.Work != nil {
 				if card, e := s.cfg.Work.Get(s.ctx, r.ID); e == nil && card.Receipt != nil && !card.Active && card.TurnStatus != "" {
