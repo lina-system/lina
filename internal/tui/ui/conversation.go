@@ -880,6 +880,9 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		// shortened slice must not overwrite the cache's trimmed boundary rows.
 		body = slices.Clone(body)
 		if b.Kind == protocol.KindResult && !b.InlineReply {
+			if b.CompletionLabel != "" {
+				body = append([]render.StyledRow{plainRow(sanitize.Display(b.CompletionLabel))}, body...)
+			}
 			body = append([]render.StyledRow{plainRow(design.Text(m.styles.options.Language, "result") + "  " + sanitize.Display(b.Title) + "  Ctrl+O")}, body...)
 		}
 		toolRowsAt := len(body)

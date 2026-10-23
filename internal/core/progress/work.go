@@ -58,7 +58,7 @@ func UnplannedWork(cards map[string]work.Card) []Unit {
 			u.Waiting = 1
 		}
 		if c.Verdict != "" {
-			done := c.State == "done"
+			done := c.State == "done" && (c.Completion == nil || c.Completion.State == "done")
 			u.Done = &done
 		}
 		units = append(units, u)

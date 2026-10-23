@@ -160,7 +160,7 @@ func (s *Store) AdvanceRecurring(ctx context.Context, a Actor, now time.Time) er
 			return err
 		}
 		for _, row := range rows {
-			if row.Todo == nil || row.State == "completed" || row.State == "canceled" {
+			if row.Todo == nil || row.State == "completed" || row.State == "claimed" || row.State == "canceled" {
 				continue
 			}
 			changed, err := advanceTodo(row.Todo, now, false)

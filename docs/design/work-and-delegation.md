@@ -454,6 +454,10 @@ retains both the change and the means to undo it.
 The record tool cannot write execution observations or complete delegated work.
 It may replace planning fields while preserving an already `completed` state,
 including on a to-do with an agent or worker assignee or a pull-request link.
+A new completion also carries the work-kind evidence described in
+[preset-work-methods.md](preset-work-methods.md#done-evidence). Without it, the
+record is `claimed`, its view says "not verified", and its agent receives one
+completion breach. A claimed predecessor still blocks its dependents.
 The completion guard applies to transitions into `completed`; preserving that
 state does not permit changing an execution observation.
 
@@ -478,7 +482,7 @@ starts with `overdue` for their separate block. Completed and canceled tasks are
 excluded from personal active lenses. Upcoming selects any future start,
 deadline or current recurrence; anytime retains all undated active tasks,
 including backlog; later selects backlog. The week lens covers seven calendar
-days beginning at `day`. Board and list include all five planning states and
+days beginning at `day`. Board and list include the five planning states and unverified `claimed` completions, and
 return the fields needed to group by project, assignee, priority or tag. Pages
 remain ordered by id with an exclusive `after` cursor, matching record search.
 
@@ -1210,6 +1214,16 @@ The completion receipt is how a worker reports back, and the only receipt a work
 | `BLOCKED`, `UNSAFE`, `NEEDS_HUMAN` | input needed | The original word is kept and shown. |
 | `BUDGET_EXHAUSTED` | stopped or failed | Decided by the budget policy. |
 
+Completion evidence is separate from this receipt and from a manager verdict.
+A task may retain an observed delivery or apply while its completion is
+`claimed` under [Done evidence](preset-work-methods.md#done-evidence). Task
+cards and running-work details expose that distinction. A file hash read-back
+proves the copied bytes; it does not by itself satisfy `source_reopened` for a
+document or `owner_path_run` for code. `prepare_work` accepts `work_kind`, and
+`land_work_result` accepts `completion` evidence for that kind. Git work always
+requires code evidence. These additions do not alter the worker receipt schema
+or allow an unobserved worker to complete.
+
 ### Remote devices
 
 - On a remote device, the registered Node starts and restarts the device's installed worker as its own stdio child. Events and server requests (approvals, questions, dynamic tool calls) reach LINA Core over the `node` connection ([host-protocol.md](host-protocol.md)), and answers return the same way. LINA Core never connects to a remote app-server.
@@ -1261,6 +1275,7 @@ Optional: when the repository has required checks and auto-merge, LINA Core may 
 A worker returning a completion receipt and the manager accepting the result are completions on different layers. The worker owns the pull request to green: it waits for GitHub's CI and review bots, fixes every CI failure and the P0 and P1 review findings once inside its turn, and reports done only when the resulting head is green and no P0 or P1 remains. It reports an unresolved failure honestly instead of reporting done. The manager session checks that delivery against the work definition at merge; Core records the judgment and enforces the merge preconditions. This check re-runs no test or command and starts no separate review by a worker. Core's QA run after each merge is separate from delivery acceptance.
 
 - A verdict is `verified` or `needs_changes`. The manager session makes it and LINA Core records it in the ledger with the records that decided it (the head SHA, the check conclusions, the review records and the check against the work definition). A `needs_changes` verdict names the unmet done condition, scope or design reference; review findings and CI failures are never a separate return from the manager.
+- Code acceptance also retains the structured completion references and their prepared policy assessment for that receipt and head. Confirmed Git application carries that assessment into the completion record, even after restart. Missing evidence remains a claim under [Done evidence](preset-work-methods.md#done-evidence); a merge record alone cannot satisfy `owner_path_run`.
 - Every task, with or without a pull request, runs on one task packet and ends in a completion receipt. Only code-change work, which has a pull request, goes through steps 5 to 7. Work without a pull request ends at step 4.
 
 Delivery of every task:

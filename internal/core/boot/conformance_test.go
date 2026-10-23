@@ -14,7 +14,37 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
+	"github.com/thisisjun786/lina/kit/result"
 )
+
+func TestConformanceForwardsCompletionThroughApplication(t *testing.T) {
+	r, a, d := conformanceFixture(t)
+	rr, err := r.beginConformance(t.Context(), a, &d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr.State, rr.Verdict, rr.Evidence = "complete", "verified", "Owner path checked"
+	proof := result.CompletionRequest{WorkKind: "code", Evidence: []result.EvidenceReference{{Kind: "owner_path_run", TurnID: "manager-turn", CallID: "check"}}}
+	ctx := result.WithCompletionPolicy(t.Context(), func(req result.CompletionRequest) result.Completion {
+		c := result.AssessCompletion(req, nil, func(ref result.EvidenceReference) bool { return ref == proof.Evidence[0] })
+		c.PolicyRevision = "prepared-manager-policy"
+		return c
+	})
+	if err = r.finishConformance(ctx, a, rr, proof); err != nil {
+		t.Fatal(err)
+	}
+	r.work = work.New(r.db)
+	if err = r.work.Rebuild(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.work.Apply(t.Context(), a.ID, rr.Receipt, "confirmed merge"); err != nil {
+		t.Fatal(err)
+	}
+	card, err := r.work.Get(t.Context(), a.ID)
+	if err != nil || card.Completion == nil || card.Completion.State != "done" || card.Completion.PolicyRevision != "prepared-manager-policy" || len(card.Completion.Evidence) != 1 || card.Completion.Evidence[0] != proof.Evidence[0] {
+		t.Fatalf("conformance lost completion evidence: %+v %v", card.Completion, err)
+	}
+}
 
 func conformanceFixture(t *testing.T) (*conversationRuntime, codingAssignment, dispatch.Record) {
 	t.Helper()
