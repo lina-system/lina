@@ -15,11 +15,79 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 )
 
 func TestM2DispatchedWorkArea(t *testing.T) {
 	t.Parallel()
 	testHeadlessWorkerThroughInstalledCore(t, "../m2/work-dispatch.json", false)
+}
+
+// Seed the durable boundary from before shared task-branch assignment: the dev
+// manager approved the original definition, but the conversation tool receipt
+// has not committed. The installed Core must admit the identical call and then
+// execute it, retaining the old manager arguments throughout delivery.
+func seedLegacyDispatch(t *testing.T, h *harness, owner, repo, what, done string) func() {
+	t.Helper()
+	db, close := installedAcceptanceStore(t, h)
+	defer close()
+	var person, agent string
+	if err := db.Read(h.ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, "SELECT r.person_id,f.agent_id FROM agent_first_run f JOIN agent_revisions r ON r.agent_id=f.agent_id AND r.revision=1").Scan(&person, &agent)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	conversation := "main:" + agent
+	turn := fmt.Sprintf("turn:input:%x", sha256.Sum256([]byte(person+"\x00"+conversation+"\x00delegate")))
+	id := fmt.Sprintf("%x", sha256.Sum256([]byte(turn+"\x00worker-start")))
+	manager := "legacy-manager"
+	origin := dispatch.Origin{Person: person, Agent: agent, Conversation: conversation, Turn: turn}
+	definition := dispatch.Definition{Repository: repo, Base: "dev", Branch: "task-branch", What: what, Why: "Prove real worker execution", Scope: []string{"result.txt"}, NotTouch: []string{"design.md"}, Done: done, DesignRefs: []string{"design.md#result"}, WriteArea: []string{"result.txt"}}
+	// This is the persisted codingAssignment wire format, including its original
+	// unsuffixed arguments. Never seed a current TaskDefinition as the old record.
+	assignment := mustJSON(t, map[string]any{"ID": id, "Manager": manager, "Owner": owner, "Conversation": "manager:" + manager, "Origin": origin, "Tool": "dispatch_work", "Target": repo, "Arguments": definition, "Delegated": true, "Verdict": ""})
+	record := dispatch.Record{ID: id, Origin: origin, Definition: definition, Owner: owner, Manager: "manager:" + manager, State: "queued"}
+	if err := db.Write(h.ctx, func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(h.ctx, "INSERT INTO coding_managers(id,person,owner,unit,conversation) VALUES(?,?,?,?,?)", manager, person, owner, repo, record.Manager); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(h.ctx, "INSERT INTO coding_assignments(id,manager,record) VALUES(?,?,?)", id, manager, assignment); err != nil {
+			return err
+		}
+		for _, task := range []string{id, "coding:" + id} {
+			if _, err := tx.ExecContext(h.ctx, "INSERT INTO authority_delegations(task_id,person,source,source_task,receiver,limits) VALUES(?,?,?,?,?,?)", task, person, agent, turn, owner, []byte(`{}`)); err != nil {
+				return err
+			}
+		}
+		_, err := tx.ExecContext(h.ctx, "INSERT INTO worker_dispatch(id,turn_id,repository,state,record) VALUES(?,?,?,?,?)", id, turn, repo, record.State, mustJSON(t, record))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return func() {
+		db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close(context.Background())
+		var raw []byte
+		var committed int
+		if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+			if err := tx.QueryRowContext(h.ctx, "SELECT record FROM coding_assignments WHERE id=?", id).Scan(&raw); err != nil {
+				return err
+			}
+			return tx.QueryRowContext(h.ctx, "SELECT count(*) FROM turn_calls WHERE turn_id=? AND json_extract(result,'$.code')='ok' AND json_extract(result,'$.output.id')=?", turn, id).Scan(&committed)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			Arguments                    dispatch.Definition
+			Owner, Conversation, Verdict string
+		}
+		if err = json.Unmarshal(raw, &got); err != nil || !reflect.DeepEqual(got.Arguments, definition) || got.Owner != owner || got.Conversation != record.Manager || got.Verdict != "verified" || committed != 1 {
+			t.Fatalf("legacy manager definition/receipt changed: %+v committed=%d err=%v", got, committed, err)
+		}
+	}
 }
 
 func assertDispatchedWorkArea(t *testing.T, h *harness, fixture, source, workdir, base string) {

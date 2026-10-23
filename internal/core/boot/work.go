@@ -88,6 +88,11 @@ func (r *conversationRuntime) prepareWorkTools(turnID string, bindings map[strin
 			if err != nil {
 				return loop.Result{ID: call.ID, Code: loop.Denied, Output: workerError(err)}
 			}
+			if spec.Name == "prepare_work" {
+				if err = r.captureCompletionOrigin(ctx, strings.TrimPrefix(in.Target, "work:"), owner, conversation); err != nil {
+					return loop.Result{ID: call.ID, Code: loop.Denied, Output: workerError(err)}
+				}
+			}
 			selected := registry
 			if owner != r.agent || conversation != r.conversation {
 				selected = tools.NewRegistry(r.personaAuthority, r.activities)

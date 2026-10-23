@@ -29,10 +29,14 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		t.Fatal(err)
 	}
 	var scenario struct {
-		Cases                  []struct{ Name, Expected, Preset string }
+		Cases []struct {
+			Name, Expected, Preset string
+			LegacyAdmission        bool `json:"legacy_admission"`
+		}
 		What, Done             string
 		Worker, Binary, Script string
 		WorkArea               bool `json:"work_area"`
+		CompletionEvents       bool `json:"completion_events"`
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
@@ -57,7 +61,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		t.Run(test.Name, func(t *testing.T) {
 			t.Parallel()
 			workerCase := test.Name
-			if test.Preset != "" {
+			if test.Preset != "" || test.LegacyAdmission {
 				workerCase = "success"
 			}
 			var err error
@@ -94,9 +98,11 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					t.Fatal(err)
 				}
 			}
-			var calls atomic.Int32
+			var calls, providerCalls atomic.Int32
+			var completionHarness *harness
 			var offered atomic.Bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				providerCalls.Add(1)
 				var req struct {
 					Tools []struct{ Name string }
 					Input []json.RawMessage
@@ -104,6 +110,12 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					t.Error(err)
 					return
+				}
+				if scenario.CompletionEvents && completionHarness != nil {
+					raw, _ := json.Marshal(req.Input)
+					if strings.Contains(string(raw), "coding_delivery") {
+						assertClaimBeforeManager(t, completionHarness)
+					}
 				}
 				if scriptedCodingManager(t, w, req) {
 					return
@@ -119,7 +131,11 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 						emitResponse(w, "Unavailable.", true)
 						return
 					}
-					emitPersonaCall(w, "worker-start", "dispatch_work", map[string]any{"worker": scenario.Worker, "repository": repo, "base": "dev", "branch": "task-branch", "what": scenario.What, "why": "Prove real worker execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": scenario.Done, "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}})
+					args := map[string]any{"repository": repo, "base": "dev", "branch": "task-branch", "what": scenario.What, "why": "Prove real worker execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": scenario.Done, "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}}
+					if scenario.Worker == "claude" {
+						args["worker"] = scenario.Worker
+					}
+					emitPersonaCall(w, "worker-start", "dispatch_work", args)
 				} else {
 					methodologyOutput(t, methodologyRequest{Input: req.Input}, "ok", nil)
 					emitResponse(w, "Task accepted.", true)
@@ -128,9 +144,17 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			defer server.Close()
 			h, bootstrap := installedConversationHarness(t, server.URL)
 			ids := seedCodingFixture(t, h, bootstrap, test.Preset)
+			completionHarness = h
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			t.Cleanup(cancel)
 			h.ctx = ctx
+			managerTurns := 2
+			var checkLegacy func()
+			if test.LegacyAdmission {
+				checkLegacy = seedLegacyDispatch(t, h, ids["dev"], repo, scenario.What, scenario.Done)
+				// The old manager decision is seeded; only delivery runs here.
+				managerTurns = 1
+			}
 			start := func() *process {
 				p := h.command("core", "--state-root", h.root, "--socket", h.socket)
 				p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+workerCase, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
@@ -140,6 +164,11 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				return p
 			}
 			core := start()
+			if test.LegacyAdmission {
+				if _, err = os.Stat(filepath.Join(fixture, "workdir")); !os.IsNotExist(err) {
+					t.Fatal("legacy admission ran before its conversation receipt", err)
+				}
+			}
 			c, conversation := conversationClient(t, h)
 			events := admittedTurn(t, h, c, conversation, "delegate", "Create result.txt through the installed worker and submit its PR.")
 			if !offered.Load() || t.Failed() {
@@ -166,11 +195,20 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 				inspect(e)
 			}
+			if scenario.CompletionEvents {
+				waitCompletionHandled(t, h)
+			}
 			c.Close()
 			h.stopCore(core)
-			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success")
+			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success", managerTurns)
 			if scenario.Worker == "claude" {
 				assertClaudeReceipt(t, h, workerCase)
+			}
+			if scenario.CompletionEvents {
+				assertWorkCompletion(t, h)
+			}
+			if checkLegacy != nil {
+				checkLegacy()
 			}
 			if git("rev-parse", "dev") != base {
 				t.Fatal("worker changed protected base")
@@ -191,6 +229,10 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					t.Fatal("worker did not open PR")
 				}
 			}
+			beforeRestart := providerCalls.Load()
+			if scenario.CompletionEvents {
+				loseCompletion(t, h)
+			}
 			core = start()
 			c, _ = conversationClient(t, h)
 			topic := "conversation:" + conversation
@@ -207,8 +249,20 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			}
 			c.Close()
 			h.stopCore(core)
+			if scenario.CompletionEvents {
+				assertWorkCompletion(t, h)
+			}
+			if scenario.CompletionEvents && providerCalls.Load() != beforeRestart {
+				t.Fatal("restart replayed a manager or conversation model call")
+			}
 			if calls.Load() != 2 {
 				t.Fatalf("restart replayed provider: %d", calls.Load())
+			}
+			if test.LegacyAdmission {
+				launches, err := os.ReadFile(filepath.Join(fixture, "launches"))
+				if err != nil || string(launches) != "worker\n" {
+					t.Fatalf("legacy admission did not execute exactly once: %q %v", launches, err)
+				}
 			}
 		})
 	}
