@@ -6,7 +6,7 @@ import "testing"
 func TestWorkEventSequenceReplacementAfterUpgrade(t *testing.T) {
 	cfg := storeConfig(t)
 	all := Migrations()
-	cfg.Migrations = all[:38]
+	cfg.Migrations = migrationsBefore(t, workEventSequenceSchema)
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_events(seq,id,kind,at,body)
@@ -69,10 +69,9 @@ func TestWorkEventSequenceReplacementAfterUpgrade(t *testing.T) {
 
 func TestWorkLedgerUpgradePreservesPublishedSchemas(t *testing.T) {
 	cfg := storeConfig(t)
-	all := Migrations()
 	// Versions 35 and 36 are already published by dev. Exercise their actual
 	// tables and retained records before appending the work journal at 37.
-	cfg.Migrations = all[:36]
+	cfg.Migrations = migrationsBefore(t, workEngineSchema)
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `
@@ -100,7 +99,7 @@ INSERT INTO skill_maintenance_notices(sequence,receipt) VALUES(7,X'7B7D');`)
 	if err := db.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Migrations, cfg.Epoch = all[:37], cfg.Epoch+1
+	cfg.Migrations, cfg.Epoch = migrationsBefore(t, recordsTodoSchema), cfg.Epoch+1
 	db = openStore(t, cfg)
 	// Reopen the upgraded database to validate its published table catalog too.
 	if err := db.Close(t.Context()); err != nil {

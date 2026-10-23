@@ -242,7 +242,7 @@ func (r *conversationRuntime) runCodingManager(ctx context.Context, a codingAssi
 	return nil
 }
 
-func (r *conversationRuntime) prepareCodingDecision(turnID string, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
+func (r *conversationRuntime) prepareCodingDecision(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	c := r.coding
 	spec := tools.Spec{Name: "coding_decision", Classify: tools.Class(tools.LocalWrite), Conc: 1, Deadline: time.Minute, Placement: tools.Core, Schema: func(raw json.RawMessage) (tools.Input, error) {
 		var a codingDecision

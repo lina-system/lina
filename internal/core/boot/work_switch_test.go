@@ -112,7 +112,7 @@ func TestSwitchBlocksWorkerBeforeManagerAdmission(t *testing.T) {
 	}
 	call := provider.ToolCall{ID: "start", Name: "worker_start", Arguments: string(raw)}
 	bindings := map[string]loop.Tool{}
-	if err := r.prepareWorkerTools("turn", ledger.Event{}, bindings); err != nil {
+	if _, err := r.prepareWorkerTools("turn", &toolPreparation{event: ledger.Event{}}, bindings); err != nil {
 		t.Fatal(err)
 	}
 	result := bindings[call.Name].Execute(t.Context(), call)
