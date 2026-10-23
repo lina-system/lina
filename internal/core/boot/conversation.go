@@ -872,6 +872,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	}()
 	var items []provider.Item
 	var events []ledger.Event
+	questions := &questionTurn{}
 	var memoryEpoch uint64
 	var memoryRefs []turn.Reference
 
@@ -909,7 +910,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			items = items[:len(items)-1]
 			at := time.Now().UTC()
 			minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
-			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, at, bindings)
+			catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, at, bindings, questions)
 
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -942,6 +943,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
+			declarations = append(declarations, askQuestionDeclaration(), resolveQuestionDeclaration())
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
 			declarations = append(declarations, workDeclarations...)
@@ -1037,6 +1039,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Digest: assemble.Digest,
 	}
 	round := 0
+	questionRoundCalls := 0
 	filters := map[string]*conversationReplyStream{}
 	var completed []ledger.Admission
 	var saved []ledger.Event
@@ -1098,6 +1101,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		ResultCommitted: r.background.notify, ToolActivity: r.toolActivity, Loop: loop.Config{
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        bindings,
+			Before:       questions.before,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
 				return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
 			},
@@ -1107,6 +1111,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					return nil, inputQueue.failure
 				}
 				round++
+				questionRoundCalls = 0
 				if err := r.setPhase(ctx, protocol.TurnPhaseWaitingModel); err != nil {
 					return nil, err
 				}
@@ -1182,7 +1187,13 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					now := time.Now()
 					completed = append(completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
 					return nil
-				case provider.ToolCallReady, provider.Terminal:
+				case provider.ToolCallReady:
+					questionRoundCalls++
+					return nil
+				case provider.Terminal:
+					if questionRoundCalls == 0 || r.route.Adapter.Class() == provider.AgentRuntime {
+						return questions.check(ctx)
+					}
 					return nil
 				}
 				return nil

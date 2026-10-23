@@ -93,7 +93,7 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: strconv.FormatInt(a.Revision, 10)}, nil
 }
 
-func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID string, input ledger.Event, persona agents.Preparation, at time.Time, bindings map[string]loop.Tool) ([]assemble.Skill, assemble.ContextPacket, error) {
+func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID string, input ledger.Event, persona agents.Preparation, at time.Time, bindings map[string]loop.Tool, questions *questionTurn) ([]assemble.Skill, assemble.ContextPacket, error) {
 	versions, err := r.skills.Catalog(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -136,6 +136,11 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 		return nil, nil, err
 	}
 	scope.StateRevision = agents.StateRevision(settings)
+	questionPreference, err := r.prepareQuestionTool(ctx, turnID, input, agents.ProjectWorkMethod(persona, settings), bindings, questions)
+	if err != nil {
+		return nil, nil, err
+	}
+	packet = append(packet, questionPreference)
 	scope.ExpressionRevision = agents.ExpressionRevision(settings)
 	stateAuth := auth
 	stateAuth.GrantID = turnID + ":state"
