@@ -238,6 +238,10 @@ func (r *conversationRuntime) Memory(ctx context.Context, s clientsrv.Session, p
 		if previous.ID != "" {
 			item.Holder, item.Scope, item.Subject, item.Kind, item.Supersedes = previous.Holder, previous.Scope, previous.Subject, previous.Kind, previous.ID
 			item.Standing = previous.Standing
+			if previous.Kind == memory.Name {
+				item.Name = &memory.NameValue{Current: *p.Text}
+				item.Supersedes = ""
+			}
 		}
 		if item.Holder != "" && item.Holder != memory.All && item.Holder != memory.Holder(scope.Agent) {
 			return result, malformedManagement()
