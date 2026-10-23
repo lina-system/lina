@@ -496,10 +496,8 @@ func (s *Service) sync() {
 					continue
 				}
 			}
+			// Goal recovery is admitted without a conversation tool-call receipt.
 			committed, err := s.admissionCommitted(s.ctx, r)
-			// Goal actions start directly, without a conversation tool-call row.
-			// Their committed correction or recovery admits a queued attempt;
-			// recovery still passes the authority check above and before launch.
 			if err != nil || !committed && !(r.Goal && (r.ReturnReceipt != "" || r.Recoveries > 0)) {
 				continue
 			}

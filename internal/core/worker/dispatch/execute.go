@@ -341,8 +341,8 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			if err != nil {
 				return
 			}
-			// Readiness refusals consume chooser attempts without starting a run.
-			// Persist the actual generation so restart observes the same run.
+			// Readiness refusals consume chooser slots, but create no work run.
+			// Recovery and completion must retain the actual run's generation.
 			r.Attempt = run.Generation
 			if err = s.save(ctx, r); err != nil {
 				return
@@ -527,7 +527,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		}
 	}
 	if thread.ID == "" {
-		// All attempted sessions refused readiness; no turn or receipt exists.
+		// Refused sessions create no worker turn or receipt.
 		return
 	}
 	// Claude and Antigravity synthesize connection failures without a result.

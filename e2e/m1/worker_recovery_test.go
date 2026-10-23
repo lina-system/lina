@@ -130,6 +130,13 @@ func recoveryWorkerFixture() {
 	}
 }
 
+// TestM2WorkerRecovery runs m2/worker-recovery.json, killing installed Core
+// during a synthetic Codex task and gating the retained thread snapshot. It
+// proves unknown state before reconciliation, settlement without a new turn,
+// one continuation, a second-failure decision, retained files and no third turn
+// across restart. Its disconnect case confirms successful output after a
+// transport-loss notice without another worker turn or duplicate response.
+// No authenticated worker account is used.
 func TestM2WorkerRecovery(t *testing.T) {
 	var scenario struct {
 		Cases                   []string

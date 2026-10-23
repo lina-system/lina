@@ -181,15 +181,19 @@ func TestCursorReadinessThroughRunningCore(t *testing.T) {
 						return
 					}
 				}
-				// Load the deferred declaration before checking worker readiness.
+				// Work tools are deferred behind load_tools (tool groups, #758).
+				// Load dispatch_work first, as the ACP worker scenario does.
 				if requestCount.Load() == 0 {
-					available, loader := false, false
-					for _, tool := range req.Tools {
-						available = available || tool.Name == "dispatch_work"
-						loader = loader || tool.Name == "load_tools"
+					declared := func(name string) bool {
+						for _, tool := range req.Tools {
+							if tool.Name == name {
+								return true
+							}
+						}
+						return false
 					}
-					if !available && loader {
-						emitPersonaCall(w, "load-dispatch", "load_tools", map[string]any{"tools": []string{"dispatch_work"}})
+					if !declared("dispatch_work") && declared("load_tools") {
+						emitPersonaCall(w, "load-dispatch_work", "load_tools", map[string]any{"tools": []string{"dispatch_work"}})
 						return
 					}
 				}
