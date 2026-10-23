@@ -78,7 +78,7 @@ func TestAlphaOwnerWorkerCrash(t *testing.T) {
 		t.Fatalf("real worker did not recover successfully: state=%s retries=%d", after.State, after.Retries)
 	}
 	alphaWaitOwnerRecovery(t, h, func(_ []recovery.Record) bool { return workerRecoveryReactions(t, h) == 1 })
-	alphaScreen(t, h, terminal, "recovered-result", func(s string) bool { return strings.Contains(s, "연결됨") && strings.Contains(s, "텃밭") }, "")
+	alphaScreen(t, h, terminal, "recovered-result", func(s string) bool { return alphaRecoveredReplyVisible(input, "", s) }, "")
 	output, sessions := alphaLastWorkerOutput(t, h)
 	if strings.TrimSpace(output) == "" || sessions != 1 {
 		t.Fatal("recovery omitted the real result or started a second worker session")
@@ -96,9 +96,35 @@ func TestAlphaOwnerWorkerCrash(t *testing.T) {
 		t.Fatal("second restart duplicated result delivery")
 	}
 	terminal = h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=ko"}, false, true, 120, 34)
-	alphaScreen(t, h, terminal, "recovery-restored", func(s string) bool { return strings.Contains(s, "텃밭") }, "")
+	alphaScreen(t, h, terminal, "recovery-restored", func(s string) bool { return alphaRecoveredReplyVisible(input, "", s) }, "")
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
+}
+
+func alphaRecoveredReplyVisible(request, reply, screen string) bool {
+	return strings.Contains(screen, "연결됨") && strings.Contains(screen, "텃밭")
+}
+
+func TestAlphaRecoveredReplyRequiresResultText(t *testing.T) {
+	request := "텃밭의 물 관리 검토를 맡겨 줘."
+	reply := "검토가 끝났습니다. 흙이 마른 정도와 작물 상태에 따라 물을 주는 기준을 정리했습니다."
+	live := design.Text(design.Korean, "live")
+	for _, tc := range []struct {
+		name, screen string
+		want         bool
+	}{
+		{"request-only", request + "\n" + live, false},
+		{"unrelated-reply", request + "\n아직 결과가 없습니다.\n" + live, false},
+		{"streaming", request + "\n" + reply + "\n" + design.Text(design.Korean, "activity.stop") + "\n" + live, false},
+		{"delivered", request + "\n" + reply + "\n" + live, true},
+		{"restored", reply + "\n" + live, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := alphaRecoveredReplyVisible(request, reply, tc.screen); got != tc.want {
+				t.Fatalf("result visible=%t, want %t", got, tc.want)
+			}
+		})
+	}
 }
 
 func alphaOwnerRecoveryRecords(t *testing.T, h *harness) []recovery.Record {
