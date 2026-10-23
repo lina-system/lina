@@ -104,8 +104,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: input.Surface, Now: time.Now}
 	prep := &turn.Preparation{
-		VerifyBuild: r.verifyBuild,
-		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
+		VerifyBuild:        r.verifyBuild,
+		SelectCapabilities: r.selectProviderCapabilities,
+		Account:            func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
 			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: r.route.Adapter.Class()}, nil
 		},
@@ -508,6 +509,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		return turn.PreparedRequest{}, err
 	}
 	request, report, err := r.compactConversation(ctx, assemble.Input{
+		MainID: r.main, ConversationID: r.conversation,
 		Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
 		AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
 		AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,

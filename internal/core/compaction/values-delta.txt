@@ -1,0 +1,1 @@
+The application carries the child summary's specific_values unchanged. In specific_values return only values learned from the new events, including corrections with their context. Do not copy or rewrite the child's values. Update the other sections using both the child and the new events. Write "none" for specific_values when the new events add no values.

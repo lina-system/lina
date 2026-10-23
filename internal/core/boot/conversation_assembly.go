@@ -115,3 +115,12 @@ func (r *conversationRuntime) recordContextSources(ctx context.Context, packet a
 	}
 	return out, nil
 }
+
+// Selection lives in Core composition; route configuration and run flows do not
+// import assembly policy from another flow family.
+func (r *conversationRuntime) selectProviderCapabilities(request provider.Request) (provider.Request, error) {
+	supported, admitted := r.route.Capabilities(request.Model)
+	var err error
+	request.Capabilities, err = assemble.SelectCapabilities(request, supported, admitted)
+	return request, err
+}

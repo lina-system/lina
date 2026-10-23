@@ -1120,6 +1120,17 @@ they do not enable operations the adapter has not implemented.
 - **Completion and cancel.** As Completion signals and Control define. A turn that is still open when the process exits is a failure; a `cancelled` stop reason without a cancel from Core is reported as cancelled by the worker.
 - **Client boundary.** Request ids may be strings, integers or null; replies preserve the original id, and an omitted id denotes a notification. Closing the client waits for transport and owned-process teardown even when another failure started cleanup. The shared client marks load replay before publishing updates and clears that mark when it reads the load response. Its pending permission handles expire when the prompt replies. Cancelling a local wait leaves the operation outstanding; only an explicit `session/cancel` requests interruption. A stalled consumer that fills a client event queue fails the connection rather than dropping progress or blocking completion.
 - **Recovery.** Core records the session id. Once-only recovery starts the same command again in the same worktree and sends `session/resume` where the worker advertises it, otherwise `session/load`. The history that `session/load` replays is not reported again as new progress. A worker that offers neither is restarted with a new session.
+  Dispatch commits the recovery allowance before starting the replacement. The
+  replacement receives a fresh process binding and session tool server; restoring
+  a session does not itself send a prompt. A rejected restore never falls back to
+  a new session. Recovery excludes load history before queue admission, without
+  adding it to progress or the new result; live updates after the load response
+  keep the usual queue limit. Core retains MCP tool admission for the entire turn,
+  even after an acknowledgement clears its pending request. A confirmed lost process with no
+  unresolved effect can recover once; tool activity, an unknown update, an
+  incomplete protocol stream or an unfinished request keeps the outcome unknown. Loading or resuming a session
+  does not reconcile an unknown turn after a Core crash. A second settled death
+  creates the existing decision row and cannot start a third worker.
 - **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of a request (-32000 is login expiry); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
 - **Never sent.** `authenticate` and `logout`, because the person signs in to a worker in the worker itself; `session/delete`; and `session/set_mode`. `session/close` is sent only on an explicit close.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
