@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -115,11 +116,35 @@ func (m *Manager) ResumeNotices(ctx context.Context) error {
 	}
 	return nil
 }
+
+// DeliveredNotices reads the notices a delivered background event was built
+// from. The ledger origin locator identifies the durable delivery; the
+// conversation body may be stored as a material and is never read here.
+func DeliveredNotices(ctx context.Context, tx *canon.Tx, conversation, locator string) ([]Notice, error) {
+	if id, ok := strings.CutPrefix(locator, "background-notice:"); ok {
+		var raw []byte
+		if err := tx.QueryRowContext(ctx, "SELECT record FROM lane_notice_events WHERE id=? AND conversation=?", id, conversation).Scan(&raw); err != nil {
+			return nil, err
+		}
+		var d Delivery
+		if err := json.Unmarshal(raw, &d); err != nil {
+			return nil, err
+		}
+		return d.Notices, nil
+	}
+	var raw []byte
+	if err := tx.QueryRowContext(ctx, "SELECT record FROM lane_notices WHERE id=? AND conversation=?", locator, conversation).Scan(&raw); err != nil {
+		return nil, err
+	}
+	var n Notice
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return nil, err
+	}
+	return []Notice{n}, nil
+}
+
 func (s *Notices) put(ctx context.Context, n Notice) error {
 	masked, err := secrets.Mask(n.Summary)
-	if err != nil {
-		return err
-	}
 	n.Summary = masked.DerivedText()
 	n.Landed = n.Landed.UTC()
 	data, err := json.Marshal(n)
