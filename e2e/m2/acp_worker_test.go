@@ -548,6 +548,7 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 type harness struct {
 	ctx          context.Context
 	root, socket string
+	logs         *bytes.Buffer
 }
 
 const acpAgentScript = `#!/usr/bin/env node
