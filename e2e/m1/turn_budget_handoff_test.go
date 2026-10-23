@@ -158,13 +158,15 @@ func TestM1TurnBudgetHandoffInstalledCore(t *testing.T) {
 	terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 120, 60)
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, "\x12")
-	// The live work panel narrows the pager; match the run across wrapped cells.
-	wanted := design.Text(design.English, "running.state.in_progress") + ": " + scenario.Input
-	if _, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
-		text := strings.Join(strings.Fields(screenText(s)), " ")
-		return strings.Contains(text, wanted) && strings.Contains(text, design.Text(design.English, "running.keys"))
-	}); err != nil {
-		t.Fatal("running row missing", err)
+	wantRunning := design.Text(design.English, "running.state.in_progress") + ": " + scenario.Input
+	screen, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+		// At 120 columns the running pager occupies the rightmost 40 columns.
+		// Join its visual wraps without mixing in the conversation's input echo.
+		panel := strings.Join(panelCellRows(s, 80, 40), " ")
+		return strings.Contains(strings.Join(strings.Fields(panel), " "), wantRunning)
+	})
+	if err != nil {
+		t.Fatalf("running panel missing %q: %v; cells=%s", wantRunning, err, screenText(screen))
 	}
 	h.keys(terminal, "\x1b")
 	key := "boundary-407"

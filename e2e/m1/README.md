@@ -28,6 +28,11 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 
 Failure coverage also includes:
 
+- `TestM1TurnBudgetHandoffInstalledCore` keeps the complete long task name
+  visible across wrapped rows in the 120-column terminal's running panel.
+  Its assertion reads that panel from one frame, excluding the conversation's
+  input echo, before checking result delivery and restart recovery.
+
 - `TestM2FileLanding`: repeated file reports and stale-snapshot refusals run
   through installed Core's tools until history compacts. The synthetic model
   answers the auxiliary summary request separately from work calls. Both partial
