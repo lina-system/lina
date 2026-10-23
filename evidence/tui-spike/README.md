@@ -13,11 +13,11 @@ Glamour 2.0.1 (sealed blocks only), and Ultraviolet at
 in [go.mod](../../go.mod) and [go.sum](../../go.sum).
 
 [terminals.json](terminals.json) records the real-terminal matrix in format 2.
-On 2026-10-21 the owner declined to confirm the proposed products here and
-deferred that confirmation to [follow-up #371](https://github.com/thisisjun786/lina/issues/371);
-the record therefore has `"status": "proposed"`, a `deferred_to` issue and a
-null `confirmed_list`. Confirmation, the actual product of the installed LINA OS
-default, and each terminal's product version and `TERM` are recorded there
+The list is proposed: owner confirmation is still pending and is tracked as the
+first Done-when item of [follow-up #371](https://github.com/thisisjun786/lina/issues/371).
+The record therefore has `"status": "proposed"`, that issue in `deferred_to` and
+a null `confirmed_list`. Confirmation, the actual product of the installed LINA
+OS default, and each terminal's product version and `TERM` are recorded there
 before #87's real-terminal runs. A confirmed matrix sets `"status": "confirmed"`
 and fills `confirmed_list` with those observed products.
 

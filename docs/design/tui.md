@@ -1361,11 +1361,12 @@ greater width in that range. SIGINT and SIGTERM cancel the scenario runner throu
 its terminal-restoration paths.
 
 LN-85 delivers the harness and scenario validation. [#86](https://github.com/thisisjun786/lina/issues/86)
-records the proposed terminal matrix in `evidence/tui-spike/terminals.json` with
-the owner's deferral to [follow-up #371](https://github.com/thisisjun786/lina/issues/371).
-The confirmed matrix, owner-run S1–S7 and S9–S11 evidence, and final library
-decision remain in #371, including #87's outstanding acceptance. Harness
-completion does not establish the spike gate.
+records the proposed terminal matrix in `evidence/tui-spike/terminals.json`.
+Owner confirmation of that list is still pending and is the first Done-when item
+of [follow-up #371](https://github.com/thisisjun786/lina/issues/371), which also
+owns the confirmed matrix, owner-run S1–S7 and S9–S11 evidence and the final
+library decision, including #87's outstanding acceptance. Harness completion
+does not establish the spike gate.
 
 Fallbacks, in order. F1: Bubble Tea with its own probe, a quiet spinner, a lower frame rate while streaming and a frame memo. F2: a row-string renderer on Ultraviolet with changed rows only, in synchronized output. F3: tcell v3. The reducer, render, layout and `clientapi` do not change in any fallback.
 

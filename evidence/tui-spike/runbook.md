@@ -3,7 +3,7 @@
 The [bounds are already declared](https://github.com/thisisjun786/lina/issues/87#issuecomment-6307893344).
 The [terminal list](terminals.json) is **proposed, pending owner confirmation**:
 macOS Apple Terminal, the installed LINA OS (Omarchy) default terminal, and Apple
-Terminal over SSH. The owner deferred confirmation to
+Terminal over SSH. Owner confirmation is tracked as the first Done-when item of
 [follow-up #371](https://github.com/thisisjun786/lina/issues/371); resolve the
 actual LINA OS terminal product and versions there when confirming the list. No person has performed these runs yet, and no final library step is
 selected. [Follow-up #371](https://github.com/thisisjun786/lina/issues/371) owns these
