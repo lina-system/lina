@@ -73,11 +73,12 @@ func (r *conversationRuntime) resultEnvironment(ctx context.Context, g grant.Gra
 	})
 	return env, err
 }
-func (r *conversationRuntime) prepareResultTools(turnID string, input ledger.Event, shapes reply.Shapes, bindings map[string]loop.Tool) error {
+func (r *conversationRuntime) prepareResultTools(turnID string, preparation *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
+	input, shapes := preparation.event, preparation.replyShapes
 	journal := measuredResultJournal{LedgerJournal: results.LedgerJournal{Surface: input.Surface, ParentID: input.ID}, config: conversationReplyConfig(&shapes)}
 	store, err := results.New(r.db, results.Config{Journal: journal})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	scope := result.Scope{PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, TurnID: turnID}
 	bound, err := coreexec.ResultTools(tools.NewRegistry(r.personaAuthority, r.activities), store, scope, func(ctx context.Context, name string, in tools.Input) (tools.Call, error) {
@@ -98,10 +99,10 @@ func (r *conversationRuntime) prepareResultTools(turnID string, input ledger.Eve
 		return tools.Call{Auth: auth}, nil
 	}, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	bindings["present_result"], bindings["read_result"] = bound["present_result"], bound["read_result"]
-	return nil
+	return coreexec.ResultDeclarations(), nil
 }
 
 func (r *conversationRuntime) resultNotice(ctx context.Context, call provider.ToolCall, out loop.Result) loop.Result {

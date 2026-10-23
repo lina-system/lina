@@ -169,7 +169,7 @@ func TestWorkerCompletionCannotSupplyUserCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	bindings := map[string]loop.Tool{}
-	if err := r.prepareWorkerTools("followup", input, bindings); err != nil {
+	if _, err := r.prepareWorkerTools("followup", &toolPreparation{event: input}, bindings); err != nil {
 		t.Fatal(err)
 	}
 	got := bindings["worker_interrupt"].Execute(t.Context(), provider.ToolCall{ID: "injected", Name: "worker_interrupt", Arguments: `{"session":"session","turn":"turn","generation":1,"binding":1,"quote":"stop this worker"}`})

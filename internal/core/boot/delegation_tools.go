@@ -40,9 +40,9 @@ func decodeDelegation(raw string, out any) error {
 	dec.DisallowUnknownFields()
 	return dec.Decode(out)
 }
-func (r *conversationRuntime) prepareDelegationTools(turnID string, bindings map[string]loop.Tool) []provider.ToolDecl {
+func (r *conversationRuntime) prepareDelegationTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	if r.delegation == nil {
-		return nil
+		return nil, nil
 	}
 	bindings["schedule_work"] = loop.Tool{Validate: func(c provider.ToolCall) (string, error) {
 		var in dispatchWork
@@ -134,7 +134,7 @@ func (r *conversationRuntime) prepareDelegationTools(turnID string, bindings map
 	return []provider.ToolDecl{
 		json.RawMessage(`{"type":"function","name":"schedule_work","description":"Delegate a dependency graph to the installed coding worker. Use a configured repository, one checkable done condition and repository-relative write globs per task. Dependencies name keys in this graph. Design references are file#section at the repository base. Core creates each branch/worktree and starts all eligible tasks. Returns durable task ids; finishing a worker is not verified completion.","parameters":{"type":"object","properties":{"repository":{"type":"string"},"tasks":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"what":{"type":"string"},"why":{"type":"string"},"done":{"type":"string"},"areas":{"type":"array","items":{"type":"string"}},"depends_on":{"type":"array","items":{"type":"string"}},"design":{"type":"array","items":{"type":"string"}}},"required":["key","what","why","done","areas","depends_on","design"],"additionalProperties":false}}},"required":["repository","tasks"],"additionalProperties":false}}`),
 		json.RawMessage(`{"type":"function","name":"refresh_work","description":"Read current task cards and observe their pull requests through Core. A confirmed merge releases dependent tasks. This never merges or declares a worker result verified.","parameters":{"type":"object","properties":{"tasks":{"type":"array","items":{"type":"string"}}},"required":["tasks"],"additionalProperties":false}}`),
-	}
+	}, nil
 }
 func delegationResult(id string, value any, err error) loop.Result {
 	code := loop.OK
