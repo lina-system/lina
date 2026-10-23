@@ -319,6 +319,8 @@ func TestM2CodexWorkTools(t *testing.T) {
 	runCodexWorkTools(t, "../m2/codex-work-tools.json", "", nil)
 }
 
+// The installed worker receives the immutable method body in its task packet,
+// then returns its artifact through the real Core and restored conversation.
 func TestM2CodexDevelopmentMethod(t *testing.T) {
 	t.Parallel()
 	runCodexWorkTools(t, "../m2/codex-work-tools.json", "bug_unknown_cause", nil)

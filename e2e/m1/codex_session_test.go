@@ -507,17 +507,24 @@ func TestM2InstalledCodexLive(t *testing.T) {
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	// Discovery adds call/results after the current input. Classify the latest
-	// user input, rather than mistaking a load_tools receipt for a new request.
-	var item struct{ Role, Content string }
-	found := false
-	for i := len(inputs) - 1; i >= 0; i-- {
-		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
-			found = true
+	// Core places the current input immediately before the mandatory clock
+	// packet. Later context can also have the user role, even for another worker.
+	// Discovery call/results appended to the request do not move this boundary.
+	current := -1
+	for i, raw := range inputs {
+		var item struct{ Role, Content string }
+		if json.Unmarshal(raw, &item) != nil || item.Role != "developer" {
+			continue
+		}
+		_, rawRefs, ok := strings.Cut(item.Content, "\nReferences: ")
+		var refs []struct{ ID string }
+		if ok && json.Unmarshal([]byte(rawRefs), &refs) == nil && len(refs) > 0 && strings.HasPrefix(refs[0].ID, "clock:") {
+			current = i - 1
 			break
 		}
 	}
-	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+	var item struct{ Role, Content string }
+	if current < 0 || json.Unmarshal(inputs[current], &item) != nil || item.Role != "user" || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
 		return false
 	}
 	if result == "" {
