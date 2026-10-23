@@ -88,6 +88,9 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 						return err
 					}
 					managerVerdict = a.Verdict
+					if managerVerdict == "" {
+						managerVerdict = "blocked"
+					}
 				}
 			}
 		}
@@ -103,7 +106,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 			text += "; denied: " + denial.DisplayName
 		}
 		if record.PR != nil {
-			text += fmt.Sprintf("; %s @ %s; adapter-derived receipt; dev manager: %s; not merged", record.PR.URL, record.PR.Head, managerVerdict)
+			text += fmt.Sprintf("; %s @ %s; adapter-derived receipt; Core check: %s; not merged", record.PR.URL, record.PR.Head, managerVerdict)
 		}
 		parent, err := view.journal().Get(ctx, strings.TrimPrefix(record.Origin.Turn, "turn:"))
 		if err != nil {
