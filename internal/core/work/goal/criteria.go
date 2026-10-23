@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
-import "strings"
+import (
+	"encoding/json"
+	"reflect"
+	"strings"
+)
 
 type EvidenceKind string
 
 const (
 	ReadEvidence     EvidenceKind = "read"
 	RunEvidence      EvidenceKind = "check"
+	CitationEvidence EvidenceKind = "citation"
 	JudgmentEvidence EvidenceKind = "judgment"
 )
 
@@ -21,11 +26,12 @@ type GoalDecision struct {
 	MessageID string `json:"message_id"`
 }
 type CriterionCheck struct {
-	Kind   EvidenceKind `json:"kind"`
-	Method string       `json:"method"`
-	Target string       `json:"target"`
-	TaskID string       `json:"task_id,omitempty"`
-	Rubric string       `json:"rubric,omitempty"`
+	Kind     EvidenceKind    `json:"kind"`
+	Method   string          `json:"method"`
+	Target   string          `json:"target"`
+	TaskID   string          `json:"task_id,omitempty"`
+	Rubric   string          `json:"rubric,omitempty"`
+	Expected json.RawMessage `json:"expected,omitempty"`
 }
 type Criterion struct {
 	ID        string         `json:"id"`
@@ -33,14 +39,15 @@ type Criterion struct {
 	Check     CriterionCheck `json:"check"`
 }
 type CriterionEvidence struct {
-	Criterion    string       `json:"criterion"`
-	GoalRevision int64        `json:"goal_revision"`
-	Round        int64        `json:"round"`
-	Target       string       `json:"target"`
-	Revision     string       `json:"revision"`
-	Kind         EvidenceKind `json:"kind"`
-	Ref          string       `json:"ref"`
-	Passed       bool         `json:"passed"`
+	Criterion    string             `json:"criterion"`
+	GoalRevision int64              `json:"goal_revision"`
+	Round        int64              `json:"round"`
+	Target       string             `json:"target"`
+	Revision     string             `json:"revision"`
+	Kind         EvidenceKind       `json:"kind"`
+	Ref          string             `json:"ref"`
+	Passed       bool               `json:"passed"`
+	Collected    *CollectedEvidence `json:"collected,omitempty"`
 }
 
 // The code lifecycle adds mandatory checks to the person's outcome criteria.
@@ -117,7 +124,7 @@ func validCriteria(g Goal, pendingCorrection bool) bool {
 		}
 		seen[c.ID] = true
 		switch c.Check.Kind {
-		case ReadEvidence, RunEvidence:
+		case ReadEvidence, RunEvidence, CitationEvidence:
 			if c.Check.Rubric != "" {
 				return false
 			}
@@ -126,6 +133,9 @@ func validCriteria(g Goal, pendingCorrection bool) bool {
 				return false
 			}
 		default:
+			return false
+		}
+		if len(c.Check.Expected) > 0 && (c.Check.Kind != ReadEvidence || !recordObject(c.Check.Expected)) {
 			return false
 		}
 		if c.Check.TaskID != "" {
@@ -138,7 +148,7 @@ func validCriteria(g Goal, pendingCorrection bool) bool {
 			}
 		}
 		if strings.HasPrefix(c.ID, "code:") {
-			if canonical[c.ID] != c {
+			if !reflect.DeepEqual(canonical[c.ID], c) {
 				return false
 			}
 		} else {
@@ -153,12 +163,12 @@ func validCriteria(g Goal, pendingCorrection bool) bool {
 	return custom > 0
 }
 func currentEvidence(g Goal, c Criterion, e CriterionEvidence) bool {
-	return e.Criterion == c.ID && e.GoalRevision == g.Revision && e.Round == g.CheckRound && e.Round > 0 && e.Target == c.Check.Target && e.Revision == criterionRevision(g, c) && e.Revision != "" && e.Kind == c.Check.Kind && strings.TrimSpace(e.Ref) != ""
+	return e.Criterion == c.ID && e.GoalRevision == g.Revision && e.Round == g.CheckRound && e.Round > 0 && e.Target == c.Check.Target && e.Revision == criterionRevision(g, c) && e.Revision != "" && e.Kind == c.Check.Kind && strings.TrimSpace(e.Ref) != "" && e.Collected.Valid(c.Check)
 }
 func criterionMet(g Goal, c Criterion) bool {
 	for _, e := range g.Checks {
 		if currentEvidence(g, c, e) {
-			return e.Passed
+			return e.Passed && e.Collected.Matches(c.Check)
 		}
 	}
 	return false

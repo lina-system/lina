@@ -34,6 +34,9 @@ func inputVersion(g Goal, a Action) *InputVersion {
 			v.TargetRevision = t.Head
 		}
 	case RunQA, PlanGoal:
+		if a.Kind == PlanGoal && a.FailureKey != "" {
+			v.CheckRound = g.CheckRound
+		}
 		if t := goalTask(&g, a.TaskID); t != nil {
 			v.TargetRevision = t.Merge.Revision
 		} else if a.Kind == PlanGoal && a.FailureKey != "" && a.Revision != "" {
