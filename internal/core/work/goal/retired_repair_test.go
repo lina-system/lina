@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	e := revisionEngine(t, readyTask("a"), readyTask("b"))
@@ -29,15 +32,24 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	// failed task inputs and QA evidence unchanged.
 	revisionEdit(t, e)
 	repair.ID, repair.Repairs, repair.DependsOn = "obsolete-repair-b", "b", []string{"b"}
+	late := Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}
 	for range 2 {
-		if err := e.Report(t.Context(), managers[1].ID, managers[1].Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
+		if err := e.Report(t.Context(), managers[1].ID, managers[1].Epoch, late); err != nil {
 			t.Fatal(err)
 		}
 	}
+	found := false
 	for _, a := range revisionSnapshot(t, e).Actions {
-		if a.ID == managers[1].ID && (a.State != "finished" || !a.Superseded || len(a.Receipt) == 0) {
-			t.Fatalf("old report did not retain its retired receipt: %+v", a)
+		if a.ID != managers[1].ID {
+			continue
 		}
+		found = true
+		if a.State != "finished" || !a.Superseded || !a.RetirementReconciled || !bytes.Equal(a.Receipt, encode(late)) {
+			t.Fatalf("retired assessment lost its settlement or late receipt: %+v", a)
+		}
+	}
+	if !found {
+		t.Fatal("retired assessment disappeared")
 	}
 	cfg := e.cfg
 	cfg.Epoch++
@@ -46,8 +58,8 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Definition refresh may already clear the retirement marker. Restart and
-	// reconcile again to prove the receipt and repair eligibility are durable.
+	// Definition refresh already cleared this obsolete judgment's repair marker.
+	// Restart must retain the late receipt without reviving that marker.
 	if err = e.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}

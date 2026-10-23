@@ -51,7 +51,9 @@ func Migrations() []Migration {
 		{Version: 37, SQL: workEngineSchema},
 		{Version: 38, SQL: recordsTodoSchema},
 		{Version: 39, SQL: workEventSequenceSchema},
-		{Version: 40, SQL: startersSchema},
+		{Version: 40, SQL: WorkCompletionsSchema},
+		{Version: 41, SQL: TimersSchema},
+		{Version: 42, SQL: startersSchema},
 	}
 }
 
@@ -86,6 +88,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
 		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
 		{31, "worker_dispatch"},
+		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {40, "work_completions"}, {40, "work_completion_claims"},
 		{34, "waiting_decisions"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{38, "records_todo"},
@@ -95,7 +98,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
 		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
 		{37, "work_events"}, {37, "work_records"},
-		{40, "agent_starters"}, {40, "agent_selection"},
+		{42, "agent_starters"}, {42, "agent_selection"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {

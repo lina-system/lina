@@ -1337,6 +1337,9 @@ type Definition struct {
 **C-58 Completion events, GitHub layer, review, merge (new).** Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery), [integrations.md](integrations.md#merges).
 
 - A completion event is a row keyed by task, attempt and head SHA, and its claim is idempotent. Chat input and events share one reaction path.
+- #128 adds canon migration 40 for `work_completions`, separate claim tombstones and Core-captured completion origins. A trusted terminal observation and its completion row commit with the work ledger/card in one fenced transaction, after a receipt exists. A late receipt creates the same signal when termination was already observed. The attempt key is Core's run ID; Git heads come from Core observations, and a result without a Git head uses the empty head. A corrected file receipt or directory fingerprint replaces the current row for that task/attempt/head with a new reaction identity; prior claims remain tombstones, and unchanged output retains its identity. Worker receipt formats stay unchanged. On upgrade, persisted dispatch PR evidence fills a previously absent terminal head; it cannot replace a known head.
+- The boot-owned reactor starts after background services and the final lanes are initialized, wakes from canon commits, claims only the current attempt/head, and hands the receipt to the existing inbox and conversation lane. Non-dispatch receipts enter the bound conversation engine as a hidden, source-labeled work-completion input; a display notice alone cannot acknowledge them. A durable turn identity prevents replay after restart. Work admission records its original channel binding and exact thread address, or an explicit personal origin. Completion runners restore that authority and revalidate it before model dispatch and tools; a changed binding cannot widen memory or tool access. Legacy tasks with an ambiguous channel origin remain pending rather than acquiring current channel authority. Dispatch persists its final evidence in the same transaction as the terminal work event. The reactor reads the PR again before manager delivery; a moved head updates the observed head and discards the stale signal. Successfully read failing checks or blocking reviews reach the manager as unverified evidence; only failed observations wait for retry. Event data cannot authorize a verdict or merge.
+- Startup and a five-minute sweep recreate missing rows from the ledger-derived cards in batches of 128 without model or worker calls. Separate handled/ignored claim tombstones prevent a restored signal from repeating its reaction. Unacknowledged claims resume in a new epoch with the same inbox/turn identity; failed reactions become eligible at the next sweep. Shutdown cancels and joins the reactor. `e2e/m2/work-completions.json` verifies the installed Core, worker artifact, durable claim before manager judgment, and loss/restart recovery without another model call.
 - `Reactor.On` does, in order: one read of the pull request through `ghclient` (a `gh` child with fixed arguments); one design-conformance review; return of P0 and P1 findings once; merge or close; then `Scheduler.Release`. The CI watcher follows [completion signals](integrations.md#completion-signals).
 - `ghclient` is owned by boot for one Core epoch. Each fixed-argument `gh` child runs through `kit/proc` with a live activity lease, the user's GitHub login and no model-provider credentials. The client serializes observation in one watcher per normalized repository/PR, bounds response bytes and pagination, retains conditional REST validators, and exposes pending causes and retry times through the `github` client capability. The read/watch operations use no shell, events feed, webhook or external write. Boot cancels and joins it before releasing its resources. The installed-Core scenario in `e2e/m2/github-ci.json` covers the socket-to-child-to-result path.
 - The `ghclient` child environment removes `GH_FORCE_TTY`, `CLICOLOR_FORCE` and `FORCE_COLOR`, and sets `NO_COLOR=1` and `CLICOLOR=0`. Prompts, paging and debug output are disabled. This keeps `gh api --include` headers and JSON machine-readable under an inherited color-capable terminal without changing the user's login, tool configuration or parent environment. The installed-Core scenario exercises this inherited environment through the real child boundary.
@@ -1352,6 +1355,47 @@ type Definition struct {
 ## Timers, progress and waiting
 
 **C-26 Scheduler (kept).** The canon `timer` table keeps authored fields apart from scheduler-owned ones. One sleeper goroutine runs Core's own five-field and RRULE next-instant function in the timer's zone. A nonexistent local time fires at the first valid instant, and a repeated hour fires once. One transaction selects due timers, inserts a fire row unique on (timer, instant), advances next and commits; then it dispatches. Uses: reminders and pre-warnings, the briefing, expiry of exchanges and approvals, deterministic sensors (a model runs only when the signature changes) and jobs. At restart a claimed fire of an older epoch is replaced once, and only if its action is read-only.
+
+#129 implements `timers` through the running Core. `create_timer` admits an
+immutable schedule and action from an authenticated private main conversation;
+Core supplies the person, agent and conversation. `timer_status` and
+`cancel_timer` recheck that binding. Repeated admission under the same tool-call
+identity returns the saved receipt, including after expiry; a changed request
+conflicts. Cancellation stops future fires; already claimed work may finish.
+Channel scheduling is not admitted without a durable channel authority binding.
+
+Schedules accept one RFC3339 instant, a five-field cron expression (numeric
+lists, ranges and steps), or a minute-resolution RRULE with an explicit IANA
+zone and start instant. RRULE supports MINUTELY, HOURLY, DAILY, WEEKLY, MONTHLY
+and YEARLY frequencies; INTERVAL; COUNT or UTC UNTIL; BYMINUTE, BYHOUR, BYDAY
+(weekday names), BYMONTHDAY (including negative days) and BYMONTH. Unsupported
+fields and impossible schedules are refused. Cron day-of-month and weekday
+restrictions use their ordinary OR rule. Civil-time resolution includes
+non-hour transitions: a gap maps to its first valid instant and a fold uses its
+first occurrence. Colliding gap candidates share the same fire identity.
+
+Canon migration 41 adds authored timer rows and scheduler-owned next instants,
+signatures and fire claims after completion events. One transaction commits a
+unique `(timer, instant)` fire and its next instant before any dispatch. One
+sleeper and four bounded delivery workers serve the scheduler. A timer's next
+fire cannot overtake an unfinished claim. On restart an older-epoch reminder
+or sensor claim is replaced at most once; an interrupted effect-capable job or
+second interrupted claim becomes `unknown` and remains inspectable. This is
+one durable fire per instant, not an exactly-once external-effect promise.
+
+Reminders append one system message without a model. Jobs enter the shared
+inbox and conversation lane to perform the saved request under ordinary tool
+authority. The initial deterministic sensor reads a saved record's revision;
+its first observation and later changed revisions enter that same reaction
+path. An identical revision uses no model call. The signature and change
+decision commit together and survive interrupted delivery. Read failures do
+not invent a change. Stable inbox and turn identities prevent a recovered fire
+from starting the same turn again. Internal scheduling input stays out of the
+display history; reminders and resulting replies remain in the conversation.
+The installed-Core scenario `e2e/m2/timers.json` covers real record tool results,
+reminder delivery, unchanged and changed observations, cancellation and restart.
+Package tests cover civil-time transitions, concurrent claims and SIGKILL at
+both sides of the claim commit.
 
 **C-55 Waiting list and progress lines (new).**
 
