@@ -1,0 +1,27 @@
+name: Bug
+description: Something does not work as designed.
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what should have happened.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Steps, input and environment (commit, OS, worker). Captures for screen problems.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: The checks that prove it is fixed.
+      value: |
+        - [ ]
+    validations:
+      required: true
