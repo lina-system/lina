@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -29,6 +30,10 @@ var commandBuilds struct {
 }
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == "harness-cpu-budget" {
+		fmt.Fprintln(os.Stdout, runtime.GOMAXPROCS(0))
+		return
+	}
 	if updateManagerHelper() {
 		return
 	}
@@ -168,6 +173,9 @@ func (h *harness) command(args ...string) *process {
 	p.command.Env = []string{
 		"HOME=" + h.root, "XDG_STATE_HOME=" + h.root, "XDG_CONFIG_HOME=" + h.root,
 		"XDG_RUNTIME_DIR=" + h.root, "PATH=", "TERM=dumb", "LANG=C", "LC_ALL=C",
+		// Keep foundation's Go CPU share when constructing the isolated child
+		// environment; otherwise every parallel Core uses the whole host.
+		fmt.Sprintf("GOMAXPROCS=%d", runtime.GOMAXPROCS(0)),
 		sqliteCacheEnv + "=" + os.Getenv(sqliteCacheEnv),
 	}
 	p.command.WaitDelay = time.Second

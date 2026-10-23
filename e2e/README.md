@@ -36,6 +36,12 @@ Only compiled code is shared; databases and results remain private to each scena
 The parent removes the cache after all helpers join. Installed command binaries
 and release builds retain their ordinary SQLite initialization.
 
+The shared harness passes its current Go CPU budget (`GOMAXPROCS`) to child
+commands as a numeric value, while retaining their isolated environment.
+Parallel Core processes therefore keep the CPU share assigned to their test
+process instead of independently using the entire host. A subprocess regression
+checks two different parent budgets against the child's actual Go runtime.
+
 Foundation enumerates the acceptance tests and runs
 three disjoint batches under its shared components budget. This keeps a growing
 corpus from exhausting one package watchdog while preserving every scenario,
