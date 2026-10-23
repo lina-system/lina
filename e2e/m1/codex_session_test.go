@@ -85,7 +85,8 @@ func codexSessionFixture() {
 			if count == 1 {
 				var inputs []struct{ Text string }
 				_ = json.Unmarshal(r.Params["input"], &inputs)
-				switchFailures = len(inputs) == 1 && inputs[0].Text == "switch refusal and terminal connection failure"
+				// Core frames the task packet, so match its text, not the frame.
+				switchFailures = len(inputs) == 1 && strings.Contains(inputs[0].Text, "switch refusal and terminal connection failure")
 			}
 			turn = fmt.Sprintf("turn-%d", count)
 			state = "active"
