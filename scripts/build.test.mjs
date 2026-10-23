@@ -265,8 +265,12 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.match(manifest.sqlite.sqliteVersion, /^3\.\d+\.\d+$/);
     assert.equal(manifest.sqlite.execution, 'wazero');
     assert.deepEqual(manifest.sqlite.sqliteVec, { version: 'v0.1.6', sha256: manifest.sqlite.wasmSHA256 });
-    const providerConfig = JSON.parse(readFileSync(join(f.cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
+    const providerConfig = {
+      ...JSON.parse(readFileSync(join(f.cwd, 'kit/provider/responses/manifest.json'), 'utf8')),
+      ...JSON.parse(readFileSync(join(f.cwd, 'kit/provider/messages/manifest.json'), 'utf8')),
+    };
     assert.deepEqual(manifest.providers, providerConfig);
+    assert.equal(manifest.providers.claude_api_key.adapter, 'messages');
     assert.deepEqual(manifest.providerCapabilities, JSON.parse(readFileSync(join(f.cwd, 'kit/provider/capabilities.json'), 'utf8')));
     assert.equal(manifest.providers.chatgpt.adapter, 'responses');
     assert.equal(manifest.providers.chatgpt.retryCount, 0);

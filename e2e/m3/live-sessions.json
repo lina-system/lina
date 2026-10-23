@@ -1,0 +1,31 @@
+{
+  "summary": "ten changes land",
+  "done": "every change is merged and checked",
+  "repository": "fixture",
+  "base": "dev",
+  "worker": "stub",
+  "resources": {
+    "cpu": 1,
+    "memory_mb": 128,
+    "disk_mb": 128
+  },
+  "criterion": {
+    "id": "artifact",
+    "statement": "every merged change is checked",
+    "kind": "read",
+    "method": "artifact.read",
+    "target": "fixture"
+  },
+  "steps": [
+    {"id": "s1", "done": "change is merged and QA passes"},
+    {"id": "s2", "done": "change is merged and QA passes", "blocked_by": ["s1"]},
+    {"id": "s3", "done": "change is merged and QA passes", "blocked_by": ["s1"]},
+    {"id": "s4", "done": "change is merged and QA passes", "blocked_by": ["s2"]},
+    {"id": "s5", "done": "change is merged and QA passes", "blocked_by": ["s2"]},
+    {"id": "s6", "done": "change is merged and QA passes", "blocked_by": ["s3"]},
+    {"id": "s7", "done": "change is merged and QA passes", "blocked_by": ["s3"]},
+    {"id": "s8", "done": "change is merged and QA passes", "blocked_by": ["s4", "s5"]},
+    {"id": "s9", "done": "change is merged and QA passes", "blocked_by": ["s6", "s7"]},
+    {"id": "s10", "done": "change is merged and QA passes", "blocked_by": ["s8", "s9"]}
+  ]
+}

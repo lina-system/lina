@@ -30,23 +30,27 @@ receive boundary. These checks do not establish the complete M1 journeys.
 ### TUI screens and input acceptance (#106)
 
 The parent issue combines the shell (#107), conversation and composer (#108),
-and approval and question cards (#109). Run the child issues' package checks
-and the existing fake-Core and installed-Core journeys together:
+and approval and question cards (#109), all closed. Run the child issues'
+package checks and the fake-Core, approval-race and installed-Core journeys
+together:
 
 ```sh
 go test -count=1 ./internal/tui/term/... ./internal/tui/ui/... ./internal/design/... ./cmd/lina/... ./internal/tui/state/...
-go test -count=1 ./e2e/... -run '^TestM1TUI(Shell|Recovery|ConversationInstalledCore|ConversationStream)$'
+go test -count=1 ./e2e/... -run '^TestM1TUI(Shell|Recovery|Cards|ConversationInstalledCore|ConversationStream)$'
 node scripts/foundation.mjs
 ```
 
-| Parent acceptance | Evidence and remaining work |
+Core-backed work in these commands needs a Linux host; on macOS the Core
+admission check refuses the state root before any TUI code runs.
+
+| Parent acceptance | Evidence |
 | --- | --- |
 | Start, connect, refuse, recover and quit through a PTY | `TestM1TUIShell` and `TestM1TUIRecovery`, driven by `e2e/m1/tui-shell.json` and `e2e/m1/tui-recovery.json`. |
-| Two fake clients race one approval; exactly one resolves | Depends on #109. Add its approval scenario to this acceptance command when available; conversation input tests do not establish approval resolution. |
+| Two fake clients race one approval; exactly one resolves | `TestM1TUICards` answers one card from two socket clients of the production listener; `e2e/m1/tui-cards.json` expects exactly one `resolved` and one `already_resolved`. The same scenario checks a group changed after display and the replayed-approval bell through the recording writer. |
 | Unchanged state writes zero bytes | `TestUnchangedConnectionWritesNothing` and `TestWorkListsFollowWelcomeCapabilities` check output lengths after rendering the same state twice. |
 | Absent Core shows its screen and starts no Core | `TestM1TUIShell` checks the absent state, exit status and absence of newly created state; `TestShellAbsentScreenKeepsHistoryOffScreen` checks the view. |
 | Every closed code has a catalog entry by id | `TestCatalogCoversClosedWireCodes` walks schema enums; `TestConnectionCatalogAndReadOnlyStates` checks connection ids in both languages. |
-| All child issues are closed | Check #107, #108 and #109 before closing #106. Passing these commands alone does not satisfy this condition. |
+| All child issues are closed | #107, #108 and #109 are closed. |
 
 The design contracts are [T-04](design/tui.md#approvals-questions-and-sign-in-t-04),
 [T-05](design/tui.md#connection-states-t-05),
@@ -56,7 +60,7 @@ The design contracts are [T-04](design/tui.md#approvals-questions-and-sign-in-t-
 [T-13](design/tui.md#results-cards-and-the-pager-t-13), and
 [T-15](design/tui.md#notifications-t-15).
 This acceptance map changes no product behavior. Approval races, stale groups
-and replayed approval bells remain #109's acceptance work.
+and replayed approval bells belong to `e2e/m1/tui-cards.json`, closed with #109.
 
 ### Synthetic Responses conversation
 
@@ -96,6 +100,39 @@ session, and close it during cleanup. No real account, sign-in or
 `LINA_QA_REAL_MODEL` opt-in is needed. See [the harness guide](../e2e/README.md)
 and [the installed scenario](../e2e/m1/tui-conversation.json) for the acceptance
 boundary.
+
+### Real-model mode
+
+Acceptance and QA runs use the intended production model rather than a cheaper
+substitute, because a weaker model hides the failures that matter. The same
+Core and client journeys run against a Responses-compatible endpoint configured
+outside the repository:
+
+| Variable | Meaning |
+| --- | --- |
+| `LINA_QA_REAL_MODEL` | Set to `1` to opt into external model calls. |
+| `LINA_RESPONSES_BASE_URL` | The endpoint's API prefix; the adapter appends `/responses`. |
+| `LINA_RESPONSES_MODEL` | The exact model to test. There is no default or fallback model. |
+| `LINA_RESPONSES_API_KEY` | The endpoint's API key, from the environment. |
+
+```sh
+export LINA_QA_REAL_MODEL=1
+export LINA_RESPONSES_BASE_URL LINA_RESPONSES_MODEL LINA_RESPONSES_API_KEY
+go test -count=1 -v ./e2e/m1 -run 'TestResponsesRoundTrip|TestRealModelHeadlessConversation'
+```
+
+`TestResponsesRoundTrip` streams one Core-side request through the configured
+adapter. `TestRealModelHeadlessConversation` installs Core, sends a message
+through the headless client, requires durable input acknowledgement, streamed
+deltas and completed assistant items, and requires the persisted turn to
+survive a Core restart under the same conversation id. Without the opt-in or
+key both real tests skip instead of failing, so credential-free CI and
+foundation stay green. An opted-in run with invalid configuration, an
+unreachable endpoint or a broken stream fails. Installation is Linux-only, so
+other hosts skip the headless journey.
+
+Keep endpoint values and the key out of shell tracing, logs, reports and
+commits. See [the harness guide](../e2e/README.md) for the endpoint rules.
 
 ### Connection-only exploration
 
@@ -163,13 +200,14 @@ entry point as a gap with an existing issue reference, rather than claiming a
 package test established a user journey.
 
 Current coverage has limits: the installed conversation fixture does not prove
-real sign-in, real-model acceptance, or every journey below. Fake-Core scenarios
-and scripted provider wires establish only their exercised boundaries. The
-real-model probe and the still-skipped `TestRealModelHeadlessConversation` in
-the harness guide are separate from the installed synthetic conversation test;
-a probe or skip does not establish a client journey. Earlier connection-only
-increment notes describe those increments, not the capabilities of configured
-Core today. Do not invent flags or use a real account to fill a coverage gap.
+real sign-in or every journey below. Fake-Core scenarios and scripted provider
+wires establish only their exercised boundaries. The real-model journeys in
+the harness guide run the same Core provider route and the same headless client
+path against the configured endpoint; when they skip for a missing opt-in, key
+or Linux host, the skip does not establish a client journey. Earlier
+connection-only increment notes describe those increments, not the capabilities
+of configured Core today. Do not invent flags or use a real account to fill a
+coverage gap.
 
 | Journey | Observe and retain |
 | --- | --- |

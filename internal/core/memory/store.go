@@ -502,26 +502,23 @@ func restrictedEvents(ctx context.Context, tx *canon.Tx, scope RecallScope) (map
 	}
 	// A protected source stays protected when another holder has a common copy.
 	// Only event ids leave this query; candidate records still use RecallScope.
-	rows, err := tx.QueryContext(ctx, `SELECT record FROM memory_item WHERE person=?
-  AND ((?=1 AND scope IN ('private','never-leaves')) OR (?=1 AND scope='never-leaves'))`, scope.Person, scope.Projection, scope.ExternalModel)
+	// The citation index supplies the item's current evidence without decoding
+	// or copying the record JSON.
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT c.target_id
+  FROM cite c JOIN memory_item m ON m.id=c.view_id
+  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL
+  AND m.person=? AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))`,
+		scope.Person, scope.Projection, scope.ExternalModel)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var raw []byte
-		var item Item
-		if err := rows.Scan(&raw); err != nil {
+		var id string
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal(raw, &item); err != nil {
-			return nil, err
-		}
-		for _, e := range item.Evidence {
-			if e.Kind == Event {
-				ids[e.ID] = true
-			}
-		}
+		ids[id] = true
 	}
 	return ids, rows.Err()
 }

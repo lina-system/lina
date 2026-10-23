@@ -79,7 +79,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 			return 0
 		}
 		return goal.Slots(host, nil, goal.Resources{CPU: 1, MemoryMB: 512, DiskMB: 1024}, time.Now())
-	}, DB: r.db, Work: r.work, Area: r.workArea, Skills: r.skills, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, ClaudeBinary: claude, Git: git, PR: r.workerGitHub, Environment: proc.WorkerEnvironment(), Activities: r.activities, Manage: func(ctx context.Context, record dispatch.Record) (dispatch.Record, error) {
+	}, DB: r.db, Work: r.work, Area: r.workArea, Skills: r.skills, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, ClaudeBinary: claude, Git: git, PR: r.workerGitHub, Environment: proc.WorkerEnvironment(), Activities: r.activities, Sessions: r.liveWorkers, Manage: func(ctx context.Context, record dispatch.Record) (dispatch.Record, error) {
 		raw, _ := json.Marshal(record.TaskDefinition())
 		a, err := r.assignCoding(ctx, record.Origin, record.ID, "dispatch_work", record.Definition.Repository, raw)
 		if err != nil {
