@@ -589,7 +589,8 @@ decision. These use synthetic workers and no authenticated accounts.
 `m2/goal-worker-recovery.json`, executed by `TestM2InstalledGoalWorkerRecovery`,
 starts a code goal through installed Core. A settled worker failure recovers
 once without a conversation dispatch receipt. The recovered worker commits a
-real result and the goal completes through synthetic GitHub and service wires;
+real result; startup reconciliation reads it and the goal completes through
+synthetic GitHub and service wires;
 a second failure stops for a decision and does not restart a third attempt.
 
 `m2/tui-board.json`, `m2/tui-note.json` and `m2/tui-usage.json` exercise the

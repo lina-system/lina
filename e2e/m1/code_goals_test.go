@@ -210,13 +210,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 	if err = os.WriteFile(filepath.Join(h.root, "system", "code-work.json"), raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	deadline := 2 * time.Minute
-	if strings.HasPrefix(mode, "worker-recovery") {
-		// RunGoal returns while its recovery runs asynchronously. The goal
-		// engine observes that result on its existing safety sweep.
-		deadline += goal.SafetySweep
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), deadline)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	h.ctx = ctx
 	start := func() *process {
@@ -313,6 +307,21 @@ func installedCodeGoal(t *testing.T, mode string) {
 			core = start()
 			c, conversation = conversationClient(t, h)
 		}
+	}
+	if strings.HasPrefix(mode, "worker-recovery") {
+		// Observe an actual recovered result before restarting. Startup reads
+		// the durable goal action without waiting for the periodic sweep.
+		waitCodeGoalState(t, h, func(tx *canon.Tx) (bool, error) {
+			var state string
+			var attempt int
+			err := tx.QueryRowContext(h.ctx, "SELECT state, json_extract(record,'$.attempt') FROM worker_dispatch").Scan(&state, &attempt)
+			return attempt == 2 && (state == "finished" || state == "decision"), err
+		})
+		c.Close()
+		h.stopCore(core)
+		core = start()
+		c, conversation = conversationClient(t, h)
+		events = nil
 	}
 	done := false
 	inspect := func(e protocol.Envelope) {
