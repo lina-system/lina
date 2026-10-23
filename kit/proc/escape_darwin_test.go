@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build darwin
+
 package proc_test
 
 import (
@@ -9,7 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -18,10 +20,34 @@ import (
 	"github.com/thisisjun786/lina/kit/proc"
 )
 
-// Darwin records the parent identity at fork, so a child that starts its own
-// session and clears its environment is still owned. The inherited environment
-// token alone cannot see it.
-func TestOwnerReapsClearedEnvironmentEscape(t *testing.T) {
+// A command cannot start its own session or process group, so tearing down its
+// process group reaches every descendant.
+func TestOwnerDeniesSessionEscape(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	owner := proc.NewOwner()
+	defer owner.Close(ctx)
+	l := lease.New(func() {})
+	defer l.Release()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	err = owner.Run(ctx, l, proc.Command{Path: exe, Args: []string{"-test.run=^TestDarwinEscapeProcess$"}, Env: []string{"LINA_PROC_DARWIN_TEST=deny"}, Stdout: &output, Stderr: os.Stderr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The child reports both errno values on one line before it exits.
+	if got := strings.TrimSpace(output.String()); got != "setsid=operation not permitted setpgid=operation not permitted" {
+		t.Fatalf("child escape results = %q", got)
+	}
+}
+
+// The deepest descendant clears its environment and survives its intermediate
+// parent, which the kernel reaps and replaces with launchd. It cannot leave the
+// process group, so teardown still reaps it.
+func TestOwnerReapsOrphanedClearedEnvironmentDescendant(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	owner := proc.NewOwner()
@@ -29,12 +55,6 @@ func TestOwnerReapsClearedEnvironmentEscape(t *testing.T) {
 	released := make(chan struct{})
 	l := lease.New(func() { close(released) })
 	defer l.Release()
-	input, control, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer input.Close()
-	defer control.Close()
 	output, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -47,38 +67,43 @@ func TestOwnerReapsClearedEnvironmentEscape(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- owner.Run(ctx, l, proc.Command{Path: exe, Args: []string{"-test.run=^TestClearedEnvironmentProcess$"}, Env: []string{"LINA_PROC_CLEARED_TEST=1"}, Stdin: input, Stdout: writer, Stderr: os.Stderr})
+		done <- owner.Run(ctx, l, proc.Command{Path: exe, Args: []string{"-test.run=^TestDarwinEscapeProcess$"}, Env: []string{"LINA_PROC_DARWIN_TEST=orphan"}, Stdout: writer, Stderr: os.Stderr})
 		writer.Close()
 	}()
 	reader := bufio.NewReader(output)
-	pid := 0
-	for pid == 0 {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			t.Fatal("escape readiness: ", err)
-		}
-		_, _ = fmt.Sscanf(line, "pid=%d", &pid)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatal("descendant readiness: ", err)
 	}
-	defer killEscaped(pid)
-	l.Release()
+	pid := 0
+	denied := false
+	for _, field := range strings.Fields(line) {
+		_, _ = fmt.Sscanf(field, "pid=%d", &pid)
+		if strings.HasPrefix(field, "setsid=") {
+			denied = field == "setsid=operation not permitted"
+		}
+	}
+	if pid == 0 || !denied {
+		t.Fatalf("descendant readiness = %q", line)
+	}
+	defer killEscaped(pid) // Also clean up the red run.
 	select {
 	case <-released:
 		t.Fatal("lease released while descendants are still running")
 	default:
 	}
-	if err := owner.Close(ctx); err != nil {
-		t.Fatal(err)
-	}
+	// The intermediate parent has exited, so the kernel has already handed the
+	// descendant to launchd; the command itself completes here.
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("terminated command succeeded")
+		if err != nil {
+			t.Fatal(err)
 		}
 	case <-ctx.Done():
 		t.Fatal("command did not join: ", ctx.Err())
 	}
 	if err := escapedGone(pid); err != nil {
-		t.Fatalf("escaped descendant %d remains after teardown: %v", pid, err)
+		t.Fatalf("orphaned descendant %d remains after teardown: %v", pid, err)
 	}
 	select {
 	case <-released:
@@ -93,23 +118,29 @@ func TestOwnerReapsClearedEnvironmentEscape(t *testing.T) {
 			t.Fatal(err)
 		}
 	case <-ctx.Done():
-		t.Fatal("escaped descendant retained stdout")
+		t.Fatal("descendant retained stdout")
 	}
 }
 
-func TestClearedEnvironmentProcess(t *testing.T) {
-	if os.Getenv("LINA_PROC_CLEARED_TEST") != "1" {
-		return
+func TestDarwinEscapeProcess(t *testing.T) {
+	switch os.Getenv("LINA_PROC_DARWIN_TEST") {
+	case "deny":
+		_, sidErr := syscall.Setsid()
+		pgErr := syscall.Setpgid(0, 0)
+		fmt.Printf("setsid=%v setpgid=%v\n", sidErr, pgErr)
+	case "orphan":
+		// Start a child with a cleared environment, then exit so the kernel
+		// reparents it to launchd before teardown.
+		cmd := exec.Command(os.Args[0], "-test.run=^TestDarwinEscapeProcess$")
+		cmd.Env = []string{"LINA_PROC_DARWIN_TEST=leaf"}
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if err := cmd.Start(); err != nil {
+			panic(err)
+		}
+		_ = cmd.Process.Release()
+	case "leaf":
+		_, err := syscall.Setsid()
+		fmt.Printf("setsid=%v pid=%d\n", err, os.Getpid())
+		time.Sleep(time.Hour)
 	}
-	// The child leaves the process group and session and inherits nothing.
-	cmd := exec.Command(os.Args[0], "-test.run=^TestEscapingProcess$", "--", "leaf", "setsid")
-	cmd.Env = []string{}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Start(); err != nil {
-		panic(err)
-	}
-	fmt.Printf("pid=%s\n", strconv.Itoa(cmd.Process.Pid))
-	_, _ = io.Copy(io.Discard, os.Stdin)
-	os.Exit(0)
 }

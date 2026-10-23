@@ -1455,10 +1455,10 @@ Implementation notes: [C-14 sandbox acceptance](../../kit/sandbox/REFERENCE.md#c
 Linux process ownership uses the explicit per-command `proc-supervise` helper with `PR_SET_CHILD_SUBREAPER`.
 It kills and waits for the whole descendant tree, including `setsid`/`setpgid` escapes and orphans, before returning.
 The tests cover owner shutdown, cancellation, normal leader exit and owner process death.
-macOS first kills the process group, then sweeps processes whose kernel-recorded parent identity reaches the leader, then same-user processes carrying the inherited owner token.
+macOS denies `setsid` and `setpgid` in the command's Seatbelt policy, applied by the owner or by the sandbox launcher, so no descendant can leave its process group; a host without the launcher fails closed.
+The owner then kills the group while the leader is unreaped, and sweeps kernel-recorded parent identities and the inherited owner token as defence in depth.
 The sweep keeps the identities it discovered in earlier scans, and it reads the full short BSD info record so an unreaped zombie is never signalled again.
-A child cannot rewrite the recorded parent identity, so a new session, a new process group and a cleared environment do not detach it.
-XNU has no subreaper, so a descendant that both clears its environment and loses every recorded ancestor before cleanup is not attributable; a launchd job per command would close that case and it is tracked in #1374.
+The native macOS tests cover a refused escape and a cleared-environment descendant that outlives its intermediate parent.
 
 Windows process ownership uses a Job Object assigned before the suspended leader runs.
 Descendants cannot break away by changing their console/process group, and cleanup waits for an empty job as well as the leader's exit.

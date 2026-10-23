@@ -44,7 +44,11 @@ func newProcess(c Command) (process, error) {
 		}
 	}
 	c.Env = append(env, token)
-	cmd := command(c)
+	path, args, err := confine(c.Path, c.Args, c.Confined)
+	if err != nil {
+		return nil, err
+	}
+	cmd := command(Command{Path: path, Args: args, Dir: c.Dir, Env: c.Env, Stdin: c.Stdin, Stdout: c.Stdout, Stderr: c.Stderr, ExtraFiles: c.ExtraFiles})
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return &darwinProcess{cmd: cmd, token: token, stopped: make(chan struct{})}, nil
 }
