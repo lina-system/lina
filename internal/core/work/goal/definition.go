@@ -136,13 +136,6 @@ func definitionBytes(g Goal) []byte {
 	d := definition(g)
 	return []byte(fmt.Sprintf("---\nid: %s\nkind: goal\nstate: active\nperson_id: %s\nagent_id: %s\ngoal: %s\n---\n\n# %s\n\n%s\n", encode(g.RecordID), encode(g.Person), encode(g.Agent), encode(d), g.Summary, g.Done))
 }
-
-// ParseDefinition reads a canonical goal record for its owning person and
-// agent. Readers that project display data without an engine use it to reach the
-// goal's own sentence; execution state never comes from this record.
-func ParseDefinition(r DefinitionRecord, person, agent string) (Definition, error) {
-	return parseDefinition(r, person, agent)
-}
 func parseDefinition(r DefinitionRecord, person, agent string) (Definition, error) {
 	var d Definition
 	front, _, ok := bytes.Cut(r.Data, []byte("\n---\n"))

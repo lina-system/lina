@@ -700,23 +700,59 @@ type ProgressGet struct {
 	View  *string `json:"view,omitempty"`
 }
 type ProgressLine struct {
-	Depth        json.Number   `json:"depth"`
-	FinishedAt   *string       `json:"finished_at,omitempty"`
-	JustFinished string        `json:"just_finished"`
-	Kind         string        `json:"kind"`
-	Name         string        `json:"name"`
-	Next         string        `json:"next"`
-	Now          *string       `json:"now,omitempty"`
-	Percent      *json.Number  `json:"percent,omitempty"`
-	Stage        string        `json:"stage"`
-	StartedAt    *string       `json:"started_at,omitempty"`
-	State        *RunningState `json:"state,omitempty"`
-	Waiting      json.Number   `json:"waiting"`
+	Depth        json.Number      `json:"depth"`
+	FinishedAt   *string          `json:"finished_at,omitempty"`
+	JustFinished string           `json:"just_finished"`
+	Kind         string           `json:"kind"`
+	Name         string           `json:"name"`
+	Next         string           `json:"next"`
+	Now          *string          `json:"now,omitempty"`
+	Percent      *json.Number     `json:"percent,omitempty"`
+	Stage        string           `json:"stage"`
+	Stages       *[]ProgressStage `json:"stages,omitempty"`
+	StartedAt    *string          `json:"started_at,omitempty"`
+	State        *RunningState    `json:"state,omitempty"`
+	Waiting      json.Number      `json:"waiting"`
 }
 type ProgressRow struct {
 	Line ProgressLine `json:"line"`
 	Ref  string       `json:"ref"`
 }
+type ProgressStage struct {
+	Kind   ProgressStageKind    `json:"kind"`
+	Label  string               `json:"label"`
+	Number *json.Number         `json:"number,omitempty"`
+	State  ProgressStepState    `json:"state"`
+	Steps  *[]ProgressStageStep `json:"steps,omitempty"`
+}
+type ProgressStageKind string
+
+const (
+	ProgressStageKindStage    ProgressStageKind = "stage"
+	ProgressStageKindDesign   ProgressStageKind = "design"
+	ProgressStageKindChecking ProgressStageKind = "checking"
+	ProgressStageKindDone     ProgressStageKind = "done"
+)
+
+type ProgressStageStep struct {
+	Name      string            `json:"name"`
+	StartedAt *string           `json:"started_at,omitempty"`
+	State     ProgressStepState `json:"state"`
+}
+type ProgressStepState string
+
+const (
+	ProgressStepStateNext       ProgressStepState = "next"
+	ProgressStepStateWaiting    ProgressStepState = "waiting"
+	ProgressStepStateWorking    ProgressStepState = "working"
+	ProgressStepStateNeedsInput ProgressStepState = "needs_input"
+	ProgressStepStateFailed     ProgressStepState = "failed"
+	ProgressStepStateStopped    ProgressStepState = "stopped"
+	ProgressStepStateUnknown    ProgressStepState = "unknown"
+	ProgressStepStateDone       ProgressStepState = "done"
+	ProgressStepStateSuperseded ProgressStepState = "superseded"
+)
+
 type ProgressUpdate struct {
 	CardOrder   *[]string       `json:"card_order,omitempty"`
 	Rows        *[]ProgressRow  `json:"rows,omitempty"`
@@ -8029,6 +8065,12 @@ const clientSchemaJSON = `{
         "depth": {
           "type": "integer",
           "minimum": 0
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_stage"
+          }
         }
       },
       "required": [
@@ -8041,6 +8083,79 @@ const clientSchemaJSON = `{
         "depth"
       ],
       "additionalProperties": false
+    },
+    "progress_stage": {
+      "type": "object",
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "$ref": "#/$defs/progress_stage_kind"
+        },
+        "label": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/progress_step_state"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_stage_step"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage_step": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/progress_step_state"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "name",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage_kind": {
+      "type": "string",
+      "enum": [
+        "stage",
+        "design",
+        "checking",
+        "done"
+      ]
+    },
+    "progress_step_state": {
+      "type": "string",
+      "enum": [
+        "next",
+        "waiting",
+        "working",
+        "needs_input",
+        "failed",
+        "stopped",
+        "unknown",
+        "done",
+        "superseded"
+      ]
     },
     "progress_row": {
       "type": "object",

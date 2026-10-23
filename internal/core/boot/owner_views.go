@@ -21,7 +21,13 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-const ownerViewRefreshInterval = 5 * time.Second
+const (
+	ownerViewRefreshInterval = 5 * time.Second
+	// ownerViewSettle coalesces a burst of commits into one projection. The
+	// publish must land within 250 ms of the commit (work-and-delegation.md#stages),
+	// so the settle window leaves room for the projection itself.
+	ownerViewSettle = 100 * time.Millisecond
+)
 
 var progressCapability = protocol.Capability{Name: "progress", Version: "1.0"}
 
@@ -149,7 +155,7 @@ func (r *conversationRuntime) runOwnerViews(watch context.Context, refresh <-cha
 				pending = r.topics.HasSubscribers("progress")
 			}
 		}
-		timer := time.NewTimer(250 * time.Millisecond)
+		timer := time.NewTimer(ownerViewSettle)
 		select {
 		case <-watch.Done():
 			timer.Stop()
@@ -309,6 +315,30 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		if v.Percent != nil {
 			percent := number(*v.Percent)
 			line.Percent = &percent
+		}
+		if len(v.Stages) > 0 {
+			stages := make([]protocol.ProgressStage, 0, len(v.Stages))
+			for _, entry := range v.Stages {
+				stage := protocol.ProgressStage{Kind: protocol.ProgressStageKind(entry.Kind), Label: entry.Label, State: protocol.ProgressStepState(entry.State)}
+				if entry.Number > 0 {
+					value := number(entry.Number)
+					stage.Number = &value
+				}
+				if len(entry.Steps) > 0 {
+					steps := make([]protocol.ProgressStageStep, 0, len(entry.Steps))
+					for _, step := range entry.Steps {
+						wire := protocol.ProgressStageStep{Name: step.Name, State: protocol.ProgressStepState(step.State)}
+						if !step.StartedAt.IsZero() {
+							value := step.StartedAt.UTC().Format(time.RFC3339Nano)
+							wire.StartedAt = &value
+						}
+						steps = append(steps, wire)
+					}
+					stage.Steps = &steps
+				}
+				stages = append(stages, stage)
+			}
+			line.Stages = &stages
 		}
 		rows = append(rows, protocol.ProgressRow{Ref: entry.Ref, Line: line})
 	}
