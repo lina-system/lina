@@ -289,6 +289,8 @@ Preparation never waits on background work. A background run that is running or 
 
 Mandatory retraction checks and permission checks finish during preparation, before the request is assembled. Model and effort selection, model switching and the rule that an accepted turn is never replayed are defined in [runtime.md](runtime.md).
 
+Preparation identifies a queued input by its exact ledger event id in the retraction-filtered history. If that event is missing, preparation fails before dispatch; another event with identical text cannot replace it.
+
 ### What a message is about
 
 Every input of the person is bound to one target: the focus, another 목표, 일 or 할 일, a task or background run, a new item, or none. The binding decides where an answer, a change or a steer lands. Core decides what a surface fact settles, the model decides the rest, and the person sees every pick that leaves the focus and can move it with one tap. In the owner's messages to his agents, about one in five referred to running or earlier work, and the agents picked the wrong target for about one in fifty ([research](../research/message-intake.md)).
@@ -380,6 +382,7 @@ A request is laid out from what changes least to what changes most, so the prefi
    7. external evidence (user role, marked untrusted): worker results and what plugins read
 7. **The person's current input.**
 
+- A queued input can precede the prior turn's completed reply or system notice in the ledger. Preparation moves only that input event to item 7, exactly once, and retains the other visible history in ledger order, including those later replies and notices. Later queued person inputs stay out of this request. Distinct history events with the same text remain distinct.
 - This layout is the first request of a turn. When no compaction runs during the turn (see Compaction and resume), a follow-up request in the same turn, after tool results, keeps that request unchanged, apart from the plugin tools loaded on demand, and appends at its end, in ledger order, only the new reasoning items, tool calls and tool outputs and any steering input the person sent during the turn, in the user role ([runtime.md](runtime.md)). The ContextPacket is not rebuilt within a turn.
 - This layout is the request of a model-API provider. For an agent-runtime provider, the adapter receives the same layers in the same order as one non-persisted session. The runtime's own reasoning items do not return in later requests, the exact request input cannot be recorded, and the ledger records what the runtime reports instead ([runtime.md](runtime.md#providers)). How a runtime caches a prefix is the vendor's.
 - Nothing that changes from turn to turn enters items 1 to 3 or the always-declared part of item 4. The time, the emotional state and the selected skill bodies sit in the ContextPacket. When the plugin tools loaded on demand change, the cached prefix ends at that point.
@@ -771,6 +774,8 @@ Each agent's persona has four fixed layers, applied in this order: core, default
 - Only a revision carried by a prepare acknowledgment counts as a growth effect. Growth itself, which is per agent, is defined in [cognition-and-life.md](cognition-and-life.md).
 
 The store publishes a preset update atomically across agents of that preset, including recoverable agents in the trash. Shipped-layer publication preserves the preset's other metadata and blank definitions. Conversation lanes share one publisher so refreshes and per-preset warnings are serialized; custom presets are not refreshed from shipped material. Existing blank-setting values and definitions stay with each agent; new agents receive the current preset's blank definitions. Publishing identical core and default voice does not mint another persona revision. Direct edits to a preset agent may change only its user voice and growth snapshot.
+
+Turn preparation projects a filled setting only while its source event is visible to that person and agent. This includes work-method fills, even retired ones. Hidden or missing source references contribute neither values nor evidence references to the ContextPacket; visible values retain their provenance and unfilled preset blanks remain available. Filtering does not rewrite stored persona state or change its write revision.
 
 A persona preparation acknowledgement durably binds a turn id, agent id, revision number and Git commit. Repeating preparation for that turn retains its revision even after restart; reusing the turn id for another agent is refused. The saved bytes are verified before acknowledgement. Concurrent persona edits use an expected revision and reject stale writers. The complete preparation flow still owns the context, policy and account steps; the persona acknowledgement alone never permits a model call.
 
@@ -1260,7 +1265,7 @@ Retraction is the first step of every removal. A retracted item or revision is e
 - **No re-extraction.** Lachesis never extracts a forgotten item again from the ledger events it rested on, while the item is in the trash and after it leaves a tombstone. A forgotten item never comes back from the same conversation.
 - **Erasure scope.** Permanent deletion reaches every copy LINA manages: current canon, registered Nodes and remote copies. Backup generations are never rewritten: a restore applies every retraction and tombstone again, including those made after the latest generation, and the erased content leaves the backups as their generations age out ([filesystem.md](filesystem.md)). Exported files, messages already sent through an external channel, and copies held by other people are outside it, and LINA says so when it deletes.
 
-Corrections and deletions apply from the next turn. A request already sent is not recalled; the next preparation's retraction check excludes the item.
+Corrections and deletions apply from the next turn. A request already sent is not recalled; the next preparation's retraction check excludes the item, including persona setting values derived from its hidden source events.
 
 Derived data (search and vector indexes, prepared recall material and summaries) records the revocation epoch it was built at. Derived data built before a retraction is rebuilt before it is used again. Derived data is never the only copy of anything and never outlives a deletion.
 
