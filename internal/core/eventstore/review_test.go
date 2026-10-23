@@ -127,6 +127,9 @@ func TestPrepareReserveStillRejectsUnsafeFiles(t *testing.T) {
 				err = os.Mkdir(path, 0700)
 			case "permissions":
 				err = os.WriteFile(path, nil, 0644)
+				if err == nil {
+					err = os.Chmod(path, 0644)
+				}
 			}
 			if err != nil {
 				t.Fatal(err)

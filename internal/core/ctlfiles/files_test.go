@@ -195,6 +195,10 @@ func TestUnsafePathsAreRefused(t *testing.T) {
 				err = os.Link(target, path)
 			case "public epoch":
 				err = os.WriteFile(path, []byte("77"), 0644)
+				if err == nil {
+					// The unsafe mode is the test input, independent of umask.
+					err = os.Chmod(path, 0644)
+				}
 			}
 			if err != nil {
 				t.Fatal(err)

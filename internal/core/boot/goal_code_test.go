@@ -26,6 +26,9 @@ func TestCodeGoalConnectionsRequirePrivateOwnerFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"repositories":{}}`), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := readCodeConnections(root); err == nil {
 		t.Fatal("publicly readable configuration accepted")
 	}
