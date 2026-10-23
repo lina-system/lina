@@ -52,7 +52,7 @@ type Session struct {
 	stdin                   *os.File
 	processDone, readerDone chan struct{}
 	events                  chan worker.Event
-	control                 sync.Mutex
+	control                 controlGate
 	writeMu                 sync.Mutex
 	mu                      sync.Mutex
 	pending                 map[string]chan frame

@@ -123,6 +123,8 @@ The intake replay scores any router on real messages before a change enters use.
 
 A question is warranted only when two targets still tie after everything Core and a careful reader know, and a wrong pick would steer running work, start work at once, or send, pay or delete. Filing that one tap can move does not warrant a question.
 
+**Pending-question scenarios.** The implementation evaluation must also cover a tied target question followed by an unrelated message, repeated unrelated turns or a deadline. The original instruction must remain pending with no steer, immediate start or outward effect, while unrelated work continues. An explicit target selection may resume only that instruction under the usual state and authorization checks; cancellation must discard it without execution. These synthetic scenarios cover a risk absent from the private fixtures and do not change the baseline scores below.
+
 **Scores**, per router and set:
 
 - **Pass rate** (primary): asked exactly when a question was warranted, and otherwise picked the gold target.

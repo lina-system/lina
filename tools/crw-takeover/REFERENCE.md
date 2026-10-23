@@ -1,5 +1,33 @@
 # CRW takeover references
 
+## To-do state compatibility
+
+Read-only inspection of CRW commit
+`821d6453aacfc9053b17c3b24a134c0ce4077f80`; no CRW workflow was run.
+
+### Seen
+
+- `contract/schema/completion-receipt.json` distinguishes execution completion
+  from a deliverable ready for review. Neither is a LINA planning state.
+- LINA's verified operator export has a separate boolean `done`. The to-do
+  contract maps it to `open` or `completed`; goals stay `draft` and CRW records
+  stay `observed`.
+- Current Core projects earlier imported `active`/`done` to-dos with verified
+  tracker provenance without rewriting their bytes or revisions. The importer
+  compares unacknowledged publications against the current output bytes only.
+
+### Inferred
+
+- A retry after upgrading the importer must also recognize the exact earlier
+  to-do encoding: `active`/`done` and no `deadline_source`. Recognition must use
+  the same reserved identity, snapshot and complete content; it grants no
+  permission to replace a later edit. Acknowledged imports remain untouched.
+
+### Unknown
+
+- No live imports or tracker exports were inspected. The number of affected
+  records is unknown; compatibility is verified with synthetic records only.
+
 ## Import identity recovery
 
 Read-only inspection of `internal/relay/store/managed_records.go` at CRW commit

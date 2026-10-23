@@ -166,6 +166,13 @@ func advance(c *Card, e Event) error {
 			return ErrState
 		}
 		c.State = "unknown"
+	case "blocked":
+		if c.Active || c.Receipt == nil || c.Receipt.EventID != e.ReceiptID || c.Applied || e.Evidence == "" {
+			return ErrState
+		}
+		c.Verdict = ""
+		c.State = "input_needed"
+		c.Stages[1] = Stage{Name: "review", Source: "github", Summary: e.Evidence}
 	case "judged":
 		if c.Active || c.Receipt == nil || c.Receipt.EventID != e.ReceiptID || c.Receipt.Outcome != "ready_for_review" || c.TurnStatus != "completed" || e.Evidence == "" {
 			return ErrState
