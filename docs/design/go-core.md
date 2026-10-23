@@ -1467,7 +1467,7 @@ See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-a
 for the evidence boundary and account-free acceptance limits.
 
 The #135 recovery path persists worker bindings and the one continuation allowance
-in canon migration 51. Installed Core marks unfinished sessions unknown before
+in canon migration 52. Installed Core marks unfinished sessions unknown before
 admission, resumes their existing Codex thread and reads the exact turn, paging
 its history without starting another turn. Missing or incomplete items, lost
 requests, failed reads and effects without independent evidence remain unknown.

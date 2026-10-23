@@ -6,7 +6,7 @@ import "testing"
 func TestConversationQuestionsMigration(t *testing.T) {
 	cfg := storeConfig(t)
 	all := Migrations()
-	cfg.Migrations = all[:len(all)-1]
+	cfg.Migrations = all[:50]
 	old, err := Open(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
