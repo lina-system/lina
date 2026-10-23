@@ -37,7 +37,7 @@ func TestWorkToolsBindAuthorityAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	bindings := map[string]loop.Tool{}
-	if err = r.prepareWorkTools("turn", bindings); err != nil {
+	if _, err = r.prepareWorkTools("turn", nil, bindings); err != nil {
 		t.Fatal(err)
 	}
 	call := func(id string, args any) loop.Result {

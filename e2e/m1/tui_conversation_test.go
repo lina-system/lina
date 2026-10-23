@@ -20,6 +20,11 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM1TUIConversationInstalledCore runs m1/tui-conversation.json: it installs
+// the binaries, starts installed Core with a local fixture provider, types
+// through the real TUI and checks parsed screen cells, input deduplication,
+// Core restart and history restoration. No personal credentials are required;
+// physical-terminal and real-model acceptance remain separate.
 func TestM1TUIConversationInstalledCore(t *testing.T) {
 	t.Parallel()
 

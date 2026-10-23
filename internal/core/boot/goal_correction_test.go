@@ -27,7 +27,7 @@ func TestConversationCorrectsExistingGoalWithRevision(t *testing.T) {
 	}
 	defer r.workEngine.close(t.Context())
 	bindings := map[string]loop.Tool{}
-	if _, err := r.prepareGoalWorkTools("first-turn", bindings); err != nil {
+	if _, err := r.prepareGoalWorkTools("first-turn", nil, bindings); err != nil {
 		t.Fatal(err)
 	}
 	input := `{"outcome":"fix the code","done":"checks pass","scope":{"repositories":["repo"],"includes":"library","excludes":"service"},"criteria":[{"id":"checked","statement":"library works","check":{"kind":"check","method":"acceptance","target":"repo"}}],"no_service_reason":"library","tasks":[]}`
@@ -42,7 +42,7 @@ func TestConversationCorrectsExistingGoalWithRevision(t *testing.T) {
 	g := before.Goals[0]
 	// A later conversation turn must expose a correction of this same goal.
 	later := map[string]loop.Tool{}
-	decls, err := r.prepareGoalWorkTools("later-turn", later)
+	decls, err := r.prepareGoalWorkTools("later-turn", nil, later)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestConversationCorrectsExistingGoalWithRevision(t *testing.T) {
 	// person/agent. A different person cannot revise this known goal id.
 	foreign := &conversationRuntime{db: r.db, person: "other-person", agent: r.agent, workEngine: r.workEngine}
 	foreignBindings := map[string]loop.Tool{}
-	if _, err := foreign.prepareGoalWorkTools("foreign-turn", foreignBindings); err != nil {
+	if _, err := foreign.prepareGoalWorkTools("foreign-turn", nil, foreignBindings); err != nil {
 		t.Fatal(err)
 	}
 	request["revision"] = got.RecordRevision

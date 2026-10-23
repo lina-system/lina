@@ -55,11 +55,11 @@ func (r *conversationRuntime) skillEnvironment(ctx context.Context, g grant.Gran
 	return env, err
 }
 
-func (r *conversationRuntime) prepareSkillTools(turnID string, bindings map[string]loop.Tool) error {
+func (r *conversationRuntime) prepareSkillTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	specs, err := coreexec.RegisterSkills(registry, r.skills)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if r.router != nil && r.router.root.skillMaintenance != nil {
 		root := r.router.root
@@ -75,7 +75,7 @@ func (r *conversationRuntime) prepareSkillTools(turnID string, bindings map[stri
 			return j, strconv.FormatBool(j.Enabled), err
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		specs = append(specs, spec)
 	}
@@ -124,7 +124,7 @@ func (r *conversationRuntime) prepareSkillTools(turnID string, bindings map[stri
 			},
 		}
 	}
-	return nil
+	return coreexec.SkillDeclarations(), nil
 }
 
 // Only the normal registry's committed success receipt can produce a notice.

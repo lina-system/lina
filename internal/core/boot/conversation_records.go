@@ -26,15 +26,16 @@ func (r *conversationRuntime) recordEnvironment(ctx context.Context, g grant.Gra
 	env.Revision = revision
 	return env, err
 }
-func (r *conversationRuntime) prepareRecordTools(turnID, currentEvent string, bindings map[string]loop.Tool) error {
+func (r *conversationRuntime) prepareRecordTools(turnID string, input *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
+	currentEvent := input.event.ID
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	specs, err := coreexec.RegisterRecords(registry, r.records, records.Actor{Person: r.person, Agent: r.agent})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	extra, err := coreexec.RegisterRecordCandidates(registry, r.records, records.Actor{Person: r.person, Agent: r.agent}, currentEvent)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	specs = append(specs, extra...)
 	for _, spec := range specs {
@@ -88,5 +89,5 @@ func (r *conversationRuntime) prepareRecordTools(turnID, currentEvent string, bi
 			return result
 		}}
 	}
-	return nil
+	return coreexec.RecordDeclarations(), nil
 }

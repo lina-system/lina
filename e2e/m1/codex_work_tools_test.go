@@ -307,6 +307,13 @@ func codexWorkToolsFixture() {
 	}
 }
 
+// TestM2CodexWorkTools runs m2/codex-work-tools.json through the built Core,
+// its Unix client protocol and a separate synthetic installed worker on stdio.
+// It checks all four declared LINA work tools, authenticated owner approval and
+// question answers, worker-written artifact contents, reported quota windows,
+// and restored completion history. Worker settings remain omitted. This
+// scenario uses no real account or provider credentials and does not measure
+// live Codex quota.
 func TestM2CodexWorkTools(t *testing.T) {
 	t.Parallel()
 	runCodexWorkTools(t, "../m2/codex-work-tools.json", "", nil)

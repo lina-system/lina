@@ -18,6 +18,13 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM3AntigravityThroughInstalledCore (m3/antigravity.json) dispatches
+// through installed Core's conversation tool, starts its supervised headless
+// worker in a new worktree, produces a real file and commit, and verifies a
+// recorded PR at that head. Separate cases cover soft denial despite SUCCESS,
+// exit zero without result, pending checks, and durable conversation results
+// without execution replay on restart. No personal worker account or GitHub
+// write is used.
 func TestM3AntigravityThroughInstalledCore(t *testing.T) {
 	t.Parallel()
 	testHeadlessWorkerThroughInstalledCore(t, "../m3/antigravity.json", true)

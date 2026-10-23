@@ -106,7 +106,7 @@ func TestDispatchWorkToolUsesBoundOwnerAndRejectsExecutionClaims(t *testing.T) {
 	tools := map[string]loop.Tool{"dispatch_work": {Execute: func(context.Context, provider.ToolCall) loop.Result {
 		return loop.Result{Code: loop.OK, Output: []byte(`{"existing":true}`)}
 	}}}
-	declarations, err := r.prepareGoalWorkTools("turn", tools)
+	declarations, err := r.prepareGoalWorkTools("turn", nil, tools)
 	if err != nil || len(declarations) != 2 {
 		t.Fatalf("work tool not composed: %v %v", declarations, err)
 	}

@@ -13,6 +13,11 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM2TUIHomeWaitingInstalledCore (m2/tui-home-waiting.json) adds a 120x36
+// TUI to that worker journey. An outside record change appears on Home
+// alongside the worker's authenticated decisions. Resolving the sources clears
+// the summary and preserves the typed draft. The scenario checks parsed
+// terminal cells, the worker-written artifact and cleanup.
 func TestM2TUIHomeWaitingInstalledCore(t *testing.T) {
 	t.Parallel()
 	var terminal *terminal

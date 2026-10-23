@@ -88,7 +88,8 @@ func TestCompletionPreservesChannelScope(t *testing.T) {
 			runner.channelBinding = &binding
 			runner.channelAddress = address
 			bindings := map[string]loop.Tool{}
-			must(runner.prepareWorkTools("turn:fixture", bindings))
+			_, err = runner.prepareWorkTools("turn:fixture", nil, bindings)
+			must(err)
 			result := bindings["prepare_work"].Execute(ctx, provider.ToolCall{ID: "create", Name: "prepare_work", Arguments: `{"task_id":"channel-task","title":"Create a report","done":"Report exists","workspace":{}}`})
 			if result.Code != loop.OK {
 				t.Fatal(result)

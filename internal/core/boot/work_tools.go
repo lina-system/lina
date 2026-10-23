@@ -72,7 +72,7 @@ func decodeWork(raw string) (workInput, error) {
 	}
 	return in, nil
 }
-func (r *conversationRuntime) prepareGoalWorkTools(turnID string, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
+func (r *conversationRuntime) prepareGoalWorkTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	runtime := r.workEngine
 	if runtime == nil && r.router != nil {
 		runtime = r.router.root.workEngine

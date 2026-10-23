@@ -56,7 +56,7 @@ func TestReportWorkRequiresObservedTermination(t *testing.T) {
 				t.Fatal(err)
 			}
 			bindings := map[string]loop.Tool{}
-			if err = r.prepareWorkTools("manager-turn", bindings); err != nil {
+			if _, err = r.prepareWorkTools("manager-turn", nil, bindings); err != nil {
 				t.Fatal(err)
 			}
 			call := func(name, id string, args any) loop.Result {
@@ -97,7 +97,7 @@ func TestReportWorkRequiresObservedTermination(t *testing.T) {
 				if err = r.work.Recover(t.Context(), "restart"); err != nil {
 					t.Fatal(err)
 				}
-				if err = r.prepareWorkTools("restarted-manager-turn", bindings); err != nil {
+				if _, err = r.prepareWorkTools("restarted-manager-turn", nil, bindings); err != nil {
 					t.Fatal(err)
 				}
 			}

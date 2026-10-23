@@ -22,6 +22,16 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work"
 )
 
+// TestM2WorkArea (m2/work-area.json) drives
+// prepare_work and retain_work_result through the installed Core's conversation
+// tools. Two real linked worktrees share a parent clone at separately pinned
+// source commits. Worker Git subprocesses create and commit each assigned
+// branch; cross-task updates and deletion are rejected without moving the
+// original result head. Core retains the fixture file and exact branch bundle,
+// and the test restores them from backup after Core restart and loss of the
+// work area. Worker lifecycle and receipt observations are seeded while Core is
+// stopped; vendor dispatch is covered by the worker adapter scenarios. Run with
+// go test -count=1 ./e2e/m1 -run '^TestM2WorkArea$'.
 func TestM2WorkArea(t *testing.T) {
 	t.Parallel()
 

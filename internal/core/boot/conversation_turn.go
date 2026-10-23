@@ -22,16 +22,13 @@ import (
 	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
-	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/reply"
-	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/turn"
-	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -82,12 +79,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		filters:   map[string]*conversationReplyStream{},
 		questions: &questionTurn{},
 	}
-	if r.channelBinding == nil || r.channelBinding.Scope.Tools {
-		if r.router.root.workerDispatch != nil {
-			s.bindings["dispatch_work"] = r.router.root.workerDispatch.Tool(dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID})
-		}
-		s.bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
-	}
+
 	defer func() {
 		r.personaMu.Lock()
 		delete(r.personaGrants, turnID)
@@ -167,7 +159,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		s.saved, err = ledger.New(namingCanon{Canon: db, person: r.person, agent: r.agent, names: s.preparedNames, replies: batch}, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
-	inputQueue := &conversationInputs{runtime: r, inputs: inputs}
+	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete,
 		StartFromTurn: func(ctx context.Context, h budget.Handoff) (budget.Handle, error) {
 			var err error
@@ -394,12 +386,35 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	if err != nil {
 		return turn.PreparedRequest{}, err
 	}
-	catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, s.bindings, s.questions)
-
-	if err != nil {
-		return turn.PreparedRequest{}, err
+	toolInput := &toolPreparation{ctx: ctx, event: input, persona: persona, settings: settings, at: at, replyShapes: s.replyShapes, questions: s.questions}
+	// Declaration order is part of the provider request and its recorded digest.
+	// A family binds its tools and returns their declarations in this one pass.
+	var declarations []provider.ToolDecl
+	for _, prepare := range []toolPreparer{
+		r.preparePersonaTools,
+		r.prepareSkillTools,
+		r.prepareRecordTools,
+		r.prepareResultTools,
+		r.prepareGoalWorkTools,
+		r.prepareMethodologyTools,
+		r.preparePlanningTools,
+		r.prepareRunTools,
+		r.prepareWebTools,
+		r.prepareDispatchTools,
+		r.prepareWorkTools,
+		r.prepareWorkerTools,
+		r.prepareDelegationTools,
+		r.prepareTimerTools,
+		r.prepareExchangeTools,
+	} {
+		family, err := prepare(turnID, toolInput, s.bindings)
+		if err != nil {
+			return turn.PreparedRequest{}, err
+		}
+		declarations = append(declarations, family...)
 	}
-	minimum = append(minimum, personaPacket...)
+	catalog := toolInput.catalog
+	minimum = append(minimum, toolInput.packet...)
 	methodology, err := r.methodologyContext(ctx)
 	if err != nil {
 		return turn.PreparedRequest{}, err
@@ -411,66 +426,11 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	}
 	s.preparedNames = names
 	minimum = append(minimum, namePacket...)
-	if err := r.prepareSkillTools(turnID, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.preparePlanningTools(turnID, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.prepareWorkTools(turnID, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.prepareWorkerTools(turnID, input, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.prepareRecordTools(turnID, input.ID, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	workDeclarations, err := r.prepareGoalWorkTools(turnID, s.bindings)
-	if err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.prepareMethodologyTools(turnID, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	if err := r.prepareResultTools(turnID, input, s.replyShapes, s.bindings); err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
-	declarations = append(declarations, coreexec.EmotionDeclarations()...)
-	declarations = append(declarations, coreexec.RelationshipDeclaration())
-	declarations = append(declarations, askQuestionDeclaration(), resolveQuestionDeclaration())
-	if r.channelBinding == nil || r.channelBinding.Scope.Memory {
-		declarations = append(declarations, coreexec.NameDeclaration())
-	}
-	declarations = append(declarations, coreexec.SkillDeclarations()...)
-	declarations = append(declarations, coreexec.RecordDeclarations()...)
-	declarations = append(declarations, coreexec.ResultDeclarations()...)
-	declarations = append(declarations, workDeclarations...)
-	declarations = append(declarations, methodologyDeclarations()...)
-	declarations = append(declarations, coreexec.PlanningDeclarations()...)
-	declarations = append(declarations, startRunDeclaration())
-	webProvider, err := r.selectedWebProvider()
-	if err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	webDeclarations, err := r.prepareWebTools(turnID, webProvider, s.bindings)
-	if err != nil {
-		return turn.PreparedRequest{}, err
-	}
-	declarations = append(declarations, webDeclarations...)
-	if r.router.root.workerDispatch != nil {
-		declarations = append(declarations, dispatch.Declaration())
-	}
-	declarations = append(declarations, coreexec.WorkDeclarations()...)
-	declarations = append(declarations, workerDeclarations()...)
-	declarations = append(declarations, r.prepareDelegationTools(turnID, s.bindings)...)
-	declarations = append(declarations, r.prepareTimerTools(turnID, s.bindings)...)
-	declarations = append(declarations, r.prepareExchangeTools(turnID, s.bindings)...)
+
 	if r.coding != nil {
 		clear(s.bindings)
 		catalog = nil
-		declarations, err = r.prepareCodingDecision(turnID, s.bindings)
+		declarations, err = r.prepareCodingDecision(turnID, toolInput, s.bindings)
 		if err != nil {
 			return turn.PreparedRequest{}, err
 		}
