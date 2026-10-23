@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
@@ -70,7 +71,11 @@ func (r *conversationRuntime) prepareQuestionTool(ctx context.Context, turnID st
 	visible := pending[:0]
 	var evidence []assemble.Ref
 	for _, q := range pending {
-		if visibility.Visible(retract.Ref{Kind: retract.Event, ID: q.Input}) {
+		allowed, err := r.questionContextAllowed(ctx, q)
+		if err != nil {
+			return assemble.ContextItem{}, err
+		}
+		if allowed && visibility.Visible(retract.Ref{Kind: retract.Event, ID: q.Input}) {
 			visible = append(visible, q)
 			evidence = append(evidence, assemble.Ref{ID: q.Input})
 		}
@@ -115,6 +120,39 @@ func (r *conversationRuntime) prepareQuestionTool(ctx context.Context, turnID st
 		},
 	}
 	return assemble.ContextItem{ID: "working-preference:" + r.agent, AgentID: r.agent, Kind: assemble.Commitments, Origin: "conversation-questions:" + r.agent, Text: string(body), Evidence: evidence}, nil
+}
+
+// A shared conversation ID does not grant a channel the app's or another
+// thread's pending questions. Resolve the retained receipt to its exact address.
+func (r *conversationRuntime) questionContextAllowed(ctx context.Context, q waiting.ConversationQuestion) (bool, error) {
+	if r.channelBinding == nil {
+		return true, nil
+	}
+	if !r.channelBinding.Scope.Tools {
+		return false, nil
+	}
+	if r.channelBinding.Scope.Memory {
+		return true, nil
+	}
+	input, err := r.journal().Get(ctx, q.Input)
+	if err != nil {
+		return false, err
+	}
+	if input.Surface.Kind != "channel" {
+		return false, nil
+	}
+	root := r
+	if r.router != nil {
+		root = r.router.root
+	}
+	origin, err := root.workerCompletionView(ctx, ledger.Event{ParentID: input.ID, AgentID: q.Agent, ConversationID: q.Conversation, Surface: input.Surface})
+	if errors.Is(err, channels.ErrDenied) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return origin.channelAddress == r.channelAddress, nil
 }
 func askQuestionDeclaration() provider.ToolDecl {
 	return provider.ToolDecl(`{"type":"function","name":"ask_question","description":"Ask one question that changes the result, with a recommendation and the default you will use if the person moves on. Follow the working_preference ask form and per-turn limit. Optional choices are short situational alternatives. This records a conversation question, never an approval or permission for external effects. Return to the conversation while it is pending.","parameters":{"type":"object","properties":{"question":{"type":"string"},"recommendation":{"type":"string"},"choices":{"type":"array","items":{"type":"string"},"minItems":2,"maxItems":5},"default":{"type":"string"}},"required":["question","recommendation","default"],"additionalProperties":false}}`)
