@@ -77,9 +77,11 @@ func (l *Live) Adopt(s Session, a Adapter, close func(context.Context) error) er
 	go func() {
 		for range e.events {
 		}
-		// A process that exits on its own ends its session. Joining it here
-		// releases the adapter's process owner; the thread record stays.
-		_ = l.End(context.Background(), s.ID)
+		// A process that exits on its own ends this entry. The handle can be
+		// reused by a later session, so joining by handle would end that
+		// replacement when this process's events finish. Joining releases the
+		// adapter's process owner; the thread record stays.
+		_ = l.finish(context.Background(), e)
 	}()
 	return nil
 }
@@ -96,6 +98,13 @@ func (l *Live) End(ctx context.Context, id string) error {
 	if e == nil {
 		return nil
 	}
+	return l.finish(ctx, e)
+}
+
+// finish joins one adopted entry. A replacement under the same handle is a
+// different entry and is left alone, including when this entry's event drain
+// finishes after that replacement was installed.
+func (l *Live) finish(ctx context.Context, e *liveEntry) error {
 	e.mu.Lock()
 	if e.ended {
 		e.mu.Unlock()
@@ -109,7 +118,7 @@ func (l *Live) End(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	l.retire(id, e)
+	l.retire(e.ID, e)
 	return nil
 }
 
@@ -119,7 +128,7 @@ func (l *Live) EndUnlisted(ctx context.Context, keep map[string]bool) error {
 	if l == nil {
 		return nil
 	}
-	return l.endWhere(func(e *liveEntry) bool { return !keep[e.ID] })
+	return l.endWhere(ctx, func(e *liveEntry) bool { return !keep[e.ID] })
 }
 
 // EndTask ends every live session of one task before a new attempt starts, so
@@ -129,10 +138,10 @@ func (l *Live) EndTask(ctx context.Context, task string) error {
 	if l == nil || task == "" {
 		return nil
 	}
-	return l.endWhere(func(e *liveEntry) bool { return e.Thread.TaskID == task })
+	return l.endWhere(ctx, func(e *liveEntry) bool { return e.Thread.TaskID == task })
 }
 
-func (l *Live) endWhere(match func(*liveEntry) bool) error {
+func (l *Live) endWhere(ctx context.Context, match func(*liveEntry) bool) error {
 	l.mu.Lock()
 	ids := make([]string, 0, len(l.sessions))
 	for id, e := range l.sessions {
@@ -144,7 +153,7 @@ func (l *Live) endWhere(match func(*liveEntry) bool) error {
 	sort.Strings(ids)
 	var failures []error
 	for _, id := range ids {
-		if err := l.End(context.Background(), id); err != nil {
+		if err := l.End(ctx, id); err != nil {
 			failures = append(failures, err)
 		}
 	}

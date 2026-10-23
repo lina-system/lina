@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/thisisjun786/lina/kit/lease"
@@ -46,10 +47,13 @@ type closer struct {
 	err    error
 }
 
-func (c *closer) close(_ context.Context) error {
+func (c *closer) close(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = append(c.closed, "end")
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return c.err
 }
 func (c *closer) count() int {
@@ -157,6 +161,67 @@ func TestExitEndsItsOwnSessionAndKeepsTheRecord(t *testing.T) {
 	}
 	if _, ok := l.Ended("action-a"); !ok {
 		t.Fatal("exited session lost its thread record")
+	}
+}
+
+func TestExitedSessionDoesNotEndItsReplacement(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		l := NewLive()
+		previous := newIdleAdapter()
+		previousClose := &closer{}
+		if err := l.Adopt(session("action-a", "task-a"), previous, previousClose.close); err != nil {
+			t.Fatal(err)
+		}
+		replacement := newIdleAdapter()
+		replacementClose := &closer{}
+		next := session("action-a", "task-a")
+		next.Thread.ID = "thread-action-a-next"
+		next.Thread.AttemptID = "attempt-next"
+		if err := l.Adopt(next, replacement, replacementClose.close); err != nil {
+			t.Fatal(err)
+		}
+		// The previous process exits only after the replacement is installed.
+		close(previous.events)
+		synctest.Wait()
+		if replacementClose.count() != 0 || l.Count() != 1 {
+			t.Errorf("previous exit ended the replacement: closes=%d live=%d", replacementClose.count(), l.Count())
+		}
+		kept := l.List()
+		if len(kept) != 1 || kept[0].Thread.ID != "thread-action-a-next" {
+			t.Errorf("replacement not kept: %+v", kept)
+		}
+		if previousClose.count() != 1 {
+			t.Errorf("previous session closes=%d", previousClose.count())
+		}
+		close(replacement.events)
+		synctest.Wait()
+	})
+}
+
+func TestBulkEndForwardsTheCallerContext(t *testing.T) {
+	cases := []struct {
+		name string
+		end  func(*Live, context.Context) error
+	}{
+		{name: "close", end: func(l *Live, ctx context.Context) error { return l.Close(ctx) }},
+		{name: "end task", end: func(l *Live, ctx context.Context) error { return l.EndTask(ctx, "task-a") }},
+		{name: "end unlisted", end: func(l *Live, ctx context.Context) error { return l.EndUnlisted(ctx, nil) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l := NewLive()
+			c := &closer{}
+			adopt(t, l, session("action-a", "task-a"), c)
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			err := tc.end(l, ctx)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("bulk end ignored cancellation: %v", err)
+			}
+			if l.Count() != 1 || c.count() != 1 {
+				t.Fatalf("canceled join dropped the session: live=%d closes=%d", l.Count(), c.count())
+			}
+		})
 	}
 }
 
