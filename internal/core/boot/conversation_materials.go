@@ -82,4 +82,6 @@ ON CONFLICT(person_id) DO UPDATE SET agent_id=excluded.agent_id`, a.person, a.ag
 		return err
 	})
 }
-func (r *conversationRuntime) journal() *ledger.Store { return ledger.New(r.db, r.materials) }
+func (r *conversationRuntime) journal() *ledger.Store {
+	return ledger.New(r.db, r.materials).AfterAdmission(r.bindInput)
+}
