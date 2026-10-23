@@ -4,6 +4,7 @@ package boot
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
@@ -57,5 +58,41 @@ func TestReplayRequestLayoutBaselines(t *testing.T) {
 	}
 	if _, err := replay.Request(ep, nil, "", "", replayInstructions); err != replay.Exclusion("missing_assembly") {
 		t.Fatalf("unknown layout replayed: %v", err)
+	}
+}
+
+func TestReplayKeepsInstructionToolFormat(t *testing.T) {
+	tools := []provider.ToolDecl{[]byte(`{"name":"remote_agent","parameters":{"type":"object"}}`)}
+	method := `{"schema":1,"preset":"lina"}`
+	for _, version := range []string{"persona-tui-work-method-v1", "persona-tui-work-method-v2"} {
+		t.Run(version, func(t *testing.T) {
+			ep := replay.Episode{WorkMethod: method, Persona: agents.Layers{Core: "fixture"}, Evidence: ledger.RequestEvidence{Tools: tools, Assembly: ledger.Assembly{AgentID: "agent", AgentName: "Agent", OwnerPersonID: "owner", InstructionFormat: version}}}
+			request, err := replay.Request(ep, nil, "", "", replayInstructions)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, block, ok := strings.Cut(request.Instructions, "<enabled_tools>\n")
+			if !ok {
+				t.Fatal("missing enabled tools")
+			}
+			block, _, _ = strings.Cut(block, "\n</enabled_tools>")
+			if version == "persona-tui-work-method-v1" {
+				var declarations []provider.ToolDecl
+				if err := json.Unmarshal([]byte(block), &declarations); err != nil || !reflect.DeepEqual(declarations, tools) {
+					t.Fatalf("legacy schema evidence changed: %s %v", block, err)
+				}
+			} else {
+				var names []string
+				if err := json.Unmarshal([]byte(block), &names); err != nil || !reflect.DeepEqual(names, []string{"remote_agent"}) {
+					t.Fatalf("new names evidence changed: %s %v", block, err)
+				}
+			}
+			_, recorded, ok := strings.Cut(request.Instructions, "<work_method>\n")
+			recorded, _, _ = strings.Cut(recorded, "\n</work_method>")
+			var gotMethod, wantMethod map[string]any
+			if !ok || json.Unmarshal([]byte(recorded), &gotMethod) != nil || json.Unmarshal([]byte(method), &wantMethod) != nil || !reflect.DeepEqual(gotMethod, wantMethod) {
+				t.Fatal("pinned work method lost")
+			}
+		})
 	}
 }

@@ -61,7 +61,7 @@ not performance thresholds or recall-quality evidence.
 
 ### Recall conversation scope
 
-Migration 59 stores one inferred person per conversation: the only person who
+Migration 60 stores one inferred person per conversation: the only person who
 has spoken there, or empty when none or more than one have. A person event
 updates indexed documents only when that value changes. `recall_conversation`
 indexes `(conversation, person)` for the lookup. Repeat messages from the same

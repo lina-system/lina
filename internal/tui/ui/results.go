@@ -52,7 +52,7 @@ func (m *shellModel) topicText(topic string) string {
 func (m *shellModel) resultCards() []state.Block {
 	var cards []state.Block
 	for _, b := range m.content.Blocks {
-		if b.Kind == protocol.KindResult {
+		if b.Kind == protocol.KindResult || b.Kind == protocol.KindItemDone && b.Speaker == protocol.ConversationSpeakerSystem && b.Body != "" {
 			cards = append(cards, b)
 		}
 	}
@@ -61,14 +61,23 @@ func (m *shellModel) resultCards() []state.Block {
 func (m *shellModel) selectedCard() (state.Block, bool) {
 	cards := m.resultCards()
 	if len(cards) > 0 {
-		index := m.conversation.selected
-		if index < 0 {
-			index = len(cards) - 1
-		}
-		index = min(index, len(cards)-1)
-		return cards[index], true
+		return cards[m.selectedCardIndex(cards)], true
 	}
 	return state.Block{}, false
+}
+
+func (m *shellModel) selectedCardIndex(cards []state.Block) int {
+	if m.conversation.selected >= 0 {
+		return min(m.conversation.selected, len(cards)-1)
+	}
+	// Diagnostic notices offer Details, but never replace an authored result
+	// as the default work-panel selection.
+	for i := len(cards) - 1; i >= 0; i-- {
+		if cards[i].Kind == protocol.KindResult {
+			return i
+		}
+	}
+	return len(cards) - 1
 }
 func resultText(b state.Block) string {
 	if b.Body != "" {

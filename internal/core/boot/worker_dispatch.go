@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/lease"
 	"math"
+	"os"
 	"path/filepath"
 	"runtime"
 
@@ -35,9 +36,15 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	binary, _ := proc.LookPath("agy")
 	codexBinary, _ := proc.LookPath("codex")
 	claude, _ := proc.LookPath("claude")
-	acpFactories := dispatch.InstalledACPFactories(dispatch.Config{Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities, PrepareClaudeACP: func(ctx context.Context, l lease.Lease) (string, error) {
+	acpConfig := dispatch.Config{Root: r.root, Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities, PrepareClaudeACP: func(ctx context.Context, l lease.Lease) (string, error) {
 		return install.ClaudeACP(ctx, l, filepath.Join(r.root, "system/adapters/claude-acp"))
-	}})
+	}}
+	acpFactories := dispatch.InstalledACPFactories(acpConfig)
+	addedFactories, problems := dispatch.AddedACPFactories(acpConfig)
+	for _, problem := range problems {
+		fmt.Fprintln(os.Stderr, problem)
+	}
+	acpFactories = append(acpFactories, addedFactories...)
 	if binary == "" && codexBinary == "" && claude == "" && len(acpFactories) == 0 {
 		return nil
 	}
@@ -162,6 +169,11 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 	r.workers.mu.Unlock()
 	handle := func(event worker.Event) {
 		e.observeActivity(event)
+		if event.Kind == worker.ProgressEvent && event.Progress.Phase == "started" {
+			if err := e.resumeSteering(e.origin.ctx); err != nil {
+				e.bridgeFailure(err)
+			}
+		}
 		defer e.origin.notifyOwnerViews()
 		switch event.Kind {
 		case worker.ApprovalEvent:
@@ -175,6 +187,9 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 				e.stopRequest(event.Progress.ItemID)
 			}
 		case worker.FinishEvent:
+			if err := e.finishSteering(e.origin.ctx, event); err != nil {
+				e.bridgeFailure(err)
+			}
 			e.stopRequests(event.Thread.TurnID)
 		case worker.UsageEvent:
 		}
