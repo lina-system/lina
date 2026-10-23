@@ -57,6 +57,7 @@ struct fake_host {
   // Bundle and code.
   bool bundle_present;
   char bundle_text[128];
+  char bundle_path[LINA_PATH_MAX];
   int verify_result;       // 1 valid, 0 invalid, -1 unreadable
   int copy_status;
   int guard_install_status;

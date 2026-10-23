@@ -84,19 +84,27 @@ static int copy_bundle(void *context, const char *source, const char *destinatio
   (void)source;
   if (fake->copy_status != 0) return fake->copy_status;
   snprintf(fake->bundle_text, sizeof(fake->bundle_text), "%s", destination);
+  snprintf(fake->bundle_path, sizeof(fake->bundle_path), "%s", destination);
   fake->bundle_present = true;
+  return 0;
+}
+
+static int rename_path(void *context, const char *from, const char *to) {
+  struct fake_host *fake = self(context);
+  if (!fake->bundle_present || strcmp(from, fake->bundle_path) != 0) return -1;
+  snprintf(fake->bundle_path, sizeof(fake->bundle_path), "%s", to);
   return 0;
 }
 
 static int verify_code(void *context, const char *path) {
   struct fake_host *fake = self(context);
-  (void)path;
-  return fake->bundle_present ? fake->verify_result : 0;
+  if (!fake->bundle_present || strcmp(path, fake->bundle_path) != 0) return 0;
+  return fake->verify_result;
 }
 
 static int remove_bundle(void *context, const char *path) {
   struct fake_host *fake = self(context);
-  (void)path;
+  if (!fake->bundle_present || strcmp(path, fake->bundle_path) != 0) return 1;
   fake->bundle_present = false;
   return 0;
 }
@@ -159,7 +167,9 @@ static int remove_file(void *context, const char *path) {
 
 static int exists(void *context, const char *path) {
   struct fake_host *fake = self(context);
-  if (strstr(path, "LinaUnlock.bundle") != NULL) return fake->bundle_present ? 1 : 0;
+  if (strstr(path, "LinaUnlock.bundle") != NULL) {
+    return fake->bundle_present && strcmp(path, fake->bundle_path) == 0 ? 1 : 0;
+  }
   return find_file(fake, path) != NULL ? 1 : 0;
 }
 
@@ -218,6 +228,7 @@ void fake_host_init(struct fake_host *fake) {
   fake->host.copy_bundle = copy_bundle;
   fake->host.verify_code = verify_code;
   fake->host.remove_bundle = remove_bundle;
+  fake->host.rename_path = rename_path;
   fake->host.install_guard = install_guard;
   fake->host.remove_guard = remove_guard;
   fake->host.read_file = read_file;

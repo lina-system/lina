@@ -121,6 +121,19 @@ static void install_accepts_an_earlier_lina_rule(void) {
   struct lina_backup backup;
   CHECK(lina_backup_read(&fake.host, &paths, &backup) == 1);
   CHECK(lina_right_equal_ignoring_timestamps(&backup.rule, &earlier));
+
+  // A re-install over an earlier LINA install swaps the verified bundle in
+  // place of the installed one and writes the rule again.
+  struct fake_host again;
+  setup(&again);
+  fake_right_set(&again, LINA_RIGHT_SCREENSAVER, &earlier);
+  again.bundle_present = true;
+  snprintf(again.bundle_path, sizeof(again.bundle_path), "%s", paths.bundle);
+  again.write_count = 0;
+  CHECK(lina_install(&again.host, &paths, &input).code == LINA_INSTALL_OK);
+  CHECK(again.write_count == 3);
+  CHECK(again.bundle_present);
+  CHECK_STR(again.bundle_path, paths.bundle);
 }
 
 static void install_refuses_unmeasured_build(void) {
@@ -196,6 +209,45 @@ static void install_stops_on_bad_signature(void) {
   CHECK(fake.write_count == 0);
 }
 
+static void install_keeps_an_earlier_install_working(void) {
+  // A re-install that fails still leaves the earlier rule, its right and its
+  // plug-in in place, so the person's unlock keeps working.
+  struct fake_host fake;
+  setup(&fake);
+  struct lina_right earlier;
+  lina_rule_lina(&earlier);
+  fake_right_set(&fake, LINA_RIGHT_SCREENSAVER, &earlier);
+  fake.bundle_present = true;
+  snprintf(fake.bundle_path, sizeof(fake.bundle_path), "%s", paths.bundle);
+  struct lina_right unlock;
+  lina_right_unlock(&unlock);
+  fake_right_set(&fake, LINA_RIGHT_UNLOCK, &unlock);
+  fake_right_set(&fake, LINA_RIGHT_SELFTEST, &unlock);
+  fake.evaluate_result = 1;  // the self-test allows, so the install stops
+
+  struct lina_outcome outcome = lina_install(&fake.host, &paths, &input);
+  CHECK(outcome.code == LINA_INSTALL_SELFTEST);
+  CHECK(definitions_match(&fake, LINA_RIGHT_SCREENSAVER, &earlier));
+  CHECK(definitions_match(&fake, LINA_RIGHT_UNLOCK, &unlock));
+  CHECK(fake.bundle_present);
+  CHECK_STR(fake.bundle_path, paths.bundle);
+  CHECK(!lina_enabled_present(&fake.host, &paths));
+
+  // A bundle that never copies leaves the earlier one alone too.
+  struct fake_host copy_failed;
+  setup(&copy_failed);
+  fake_right_set(&copy_failed, LINA_RIGHT_SCREENSAVER, &earlier);
+  copy_failed.bundle_present = true;
+  snprintf(copy_failed.bundle_path, sizeof(copy_failed.bundle_path), "%s", paths.bundle);
+  copy_failed.copy_status = -1;
+  outcome = lina_install(&copy_failed.host, &paths, &input);
+  CHECK(outcome.code == LINA_INSTALL_BUNDLE);
+  CHECK_STR(outcome.reason, "bundle-copy");
+  CHECK(definitions_match(&copy_failed, LINA_RIGHT_SCREENSAVER, &earlier));
+  CHECK(copy_failed.bundle_present);
+  CHECK_STR(copy_failed.bundle_path, paths.bundle);
+}
+
 void test_install(void) {
   install_writes_designed_definitions();
   install_refuses_platform_sso();
@@ -204,5 +256,6 @@ void test_install(void) {
   install_refuses_unmeasured_build();
   install_cleans_up_after_failed_self_test();
   install_stops_on_bad_signature();
+  install_keeps_an_earlier_install_working();
   install_restores_when_read_back_differs();
 }

@@ -33,6 +33,8 @@ struct lina_host {
   // 1 signed and notarized, 0 invalid, -1 could not check.
   int (*verify_code)(void *context, const char *path);
   int (*remove_bundle)(void *context, const char *path);
+  // Renames within a directory; used to swap a verified bundle into place.
+  int (*rename_path)(void *context, const char *from, const char *to);
   // Installs or removes the root launchd job that carries the guard.
   int (*install_guard)(void *context, const char *binary, const char *plist);
   int (*remove_guard)(void *context, const char *binary, const char *plist);

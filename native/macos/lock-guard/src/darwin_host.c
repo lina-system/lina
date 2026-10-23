@@ -358,6 +358,11 @@ static int remove_bundle(void *context, const char *path) {
   return system(command) == 0 ? 0 : -1;
 }
 
+static int rename_path(void *context, const char *from, const char *to) {
+  (void)context;
+  return rename(from, to) == 0 ? 0 : -1;
+}
+
 static int run_tool(const char *const *arguments) {
   pid_t child = 0;
   int status = posix_spawn(&child, arguments[0], NULL, NULL, (char *const *)arguments, environ);
@@ -609,6 +614,7 @@ bool lina_darwin_host_init(struct lina_darwin *darwin, const struct lina_paths *
   darwin->host.copy_bundle = copy_bundle;
   darwin->host.verify_code = verify_code;
   darwin->host.remove_bundle = remove_bundle;
+  darwin->host.rename_path = rename_path;
   darwin->host.install_guard = install_guard;
   darwin->host.remove_guard = remove_guard;
   darwin->host.read_file = read_file;

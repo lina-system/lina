@@ -15,28 +15,52 @@ struct attempt {
   bool rule;
 };
 
+// The staged bundle lives beside the installed one; swapping it in is a rename,
+// so the name the rule uses never points at a partly copied bundle.
+static bool staged_bundle(const struct lina_paths *paths, char *out, size_t capacity) {
+  size_t length = strlen(paths->bundle);
+  if (length + 5 > capacity) return false;
+  memcpy(out, paths->bundle, length);
+  memcpy(out + length, ".new", 5);
+  return true;
+}
+
 static void log_linef(const struct lina_host *host, const char *format, const char *detail) {
   char line[256];
   snprintf(line, sizeof(line), format, detail == NULL ? "" : detail);
   host->log_line(host->context, line);
 }
 
+// What a failed attempt leaves behind, in an order that keeps the unlock path
+// working: the rule first, then whatever the rule no longer names.
 static void cleanup(const struct lina_host *host, const struct lina_paths *paths, struct attempt *attempt) {
+  char staged[LINA_PATH_MAX];
+  if (staged_bundle(paths, staged, sizeof(staged))) host->remove_bundle(host->context, staged);
+  struct lina_right current;
+  bool names_lina = false;
   if (attempt->rule) {
     // Restore while the bundle still exists, so no moment leaves the rule
     // naming a plug-in that is already gone.
     lina_restore_backup(host, paths, "install-aborted", NULL);
   }
-  if (attempt->rights) {
+  if (host->read_right(host->context, LINA_RIGHT_SCREENSAVER, &current) == 0) {
+    names_lina = lina_rule_names_lina(&current);
+  }
+  // A rule an earlier install wrote, or one this attempt restored, still needs
+  // the right and the bundle; removing them would break the person's unlock.
+  if (attempt->rights && !names_lina) {
     host->remove_right(host->context, LINA_RIGHT_UNLOCK);
     host->remove_right(host->context, LINA_RIGHT_SELFTEST);
   }
-  if (attempt->bundle) host->remove_bundle(host->context, paths->bundle);
+  if (attempt->bundle && !names_lina) host->remove_bundle(host->context, paths->bundle);
   if (attempt->guard) host->remove_guard(host->context, paths->guard, paths->guard_plist);
   host->remove_file(host->context, paths->enabled);
   host->remove_file(host->context, paths->pending);
   host->remove_file(host->context, paths->measured);
   if (attempt->backup) host->remove_file(host->context, paths->backup);
+  host->log_line(host->context, names_lina
+      ? "an earlier LINA rule is in place; its right and plug-in stay"
+      : "nothing of this attempt is left");
 }
 
 static struct lina_outcome fail(const struct lina_host *host, const struct lina_paths *paths,
@@ -98,14 +122,29 @@ struct lina_outcome lina_install(const struct lina_host *host, const struct lina
   if (input->measured_source != NULL && copy_measured(host, paths, input->measured_source) != 0) {
     return fail(host, paths, &attempt, LINA_INSTALL_STATE, "measured-list");
   }
-  if (host->copy_bundle(host->context, input->bundle_source, paths->bundle) != 0) {
+  // The new bundle is staged beside the installed one and only swapped in once
+  // its signature checks, so a failed install never leaves a half-copied
+  // bundle under the name the rule uses.
+  char staged[LINA_PATH_MAX];
+  if (!staged_bundle(paths, staged, sizeof(staged))) {
+    return fail(host, paths, &attempt, LINA_INSTALL_STATE, "path");
+  }
+  host->remove_bundle(host->context, staged);
+  if (host->copy_bundle(host->context, input->bundle_source, staged) != 0) {
     return fail(host, paths, &attempt, LINA_INSTALL_BUNDLE, "bundle-copy");
   }
   attempt.bundle = true;
-  int verified = host->verify_code(host->context, paths->bundle);
+  int verified = host->verify_code(host->context, staged);
   if (verified != 1) {
     return fail(host, paths, &attempt, LINA_INSTALL_SIGNATURE,
                 verified == 0 ? "signature-invalid" : "signature-unreadable");
+  }
+  if (host->exists(host->context, paths->bundle) == 1
+      && host->remove_bundle(host->context, paths->bundle) != 0) {
+    return fail(host, paths, &attempt, LINA_INSTALL_BUNDLE, "bundle-replace");
+  }
+  if (host->rename_path(host->context, staged, paths->bundle) != 0) {
+    return fail(host, paths, &attempt, LINA_INSTALL_BUNDLE, "bundle-copy");
   }
   if (input->guard_binary != NULL && input->guard_plist != NULL) {
     if (host->install_guard(host->context, input->guard_binary, input->guard_plist) != 0) {
