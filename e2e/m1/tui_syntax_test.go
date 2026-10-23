@@ -17,13 +17,12 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-// TestM1TUISyntaxInstalledCore (m1/tui-syntax.json) runs
-// TestM1TUISyntaxInstalledCore: an installed Core and fixture provider stream
-// an open Go fence, then its closing fence and final reply into a 100×34 PTY.
-// Parsed cells prove that open code remains unstyled and closed code gains
-// theme colours in dark/light; high-contrast and NO_COLOR remain plain. The
-// provider is released by a channel after the open screen is observed, without
-// timing-based assertions.
+// TestM1TUISyntaxInstalledCore runs m1/tui-syntax.json: an installed Core and
+// fixture provider stream an open Go fence, then its closing fence and final
+// reply into a 100×34 PTY. Parsed cells prove that open code remains unstyled
+// and closed code gains theme colours in dark/light; high-contrast and NO_COLOR
+// remain plain. The provider is released by a channel after the open screen is
+// observed, without timing-based assertions.
 func TestM1TUISyntaxInstalledCore(t *testing.T) {
 	data, err := os.ReadFile("tui-syntax.json")
 	if err != nil {

@@ -45,11 +45,11 @@ func TestM2OldCorePreservesNewerStore(t *testing.T) {
 	}
 }
 
-// TestM2UpdatePreflight (m2/update-preflight.json) checks separate core
-// --preflight processes against compatible, older, newer, corrupt and
-// WAL-backed stores while another owner holds the Core lock. It compares every
-// installed file's bytes and metadata, including the WAL index, and checks
-// normal old-Core refusal before control-file writes.
+// TestM2UpdatePreflight runs m2/update-preflight.json against compatible,
+// older, newer, corrupt and WAL-backed stores while another owner holds the
+// Core lock. It compares every installed file's bytes and metadata, including
+// the WAL index. TestM2OldCorePreservesNewerStore covers normal old-Core
+// refusal before control-file writes.
 func TestM2UpdatePreflight(t *testing.T) {
 	t.Parallel()
 
