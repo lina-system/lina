@@ -113,9 +113,12 @@ func TestM1StagedImportWorker(t *testing.T) {
 	socket := filepath.Join(h.root, "run", "jobs.sock")
 	stop := startJobService(t, h.ctx, service, socket, controls)
 	defer stop()
-	worker := h.command("--canon", path, "--socket", socket, "--once")
-	worker.start(t)
-	worker.wait(t, 0)
+	// --once adopts one task. Each conversation must survive a separate worker.
+	for range tasks {
+		worker := h.command("--canon", path, "--socket", socket, "--once")
+		worker.start(t)
+		worker.wait(t, 0)
+	}
 	if got := jobWatermark(t, store, scenario.JobID); got != 2 {
 		t.Fatalf("watermark=%d", got)
 	}
@@ -159,7 +162,7 @@ func TestM1StagedImportWorker(t *testing.T) {
 	if report.AddedRecords != 0 || report.AddedReferences != 0 {
 		t.Fatalf("reimport added rows: %+v", report)
 	}
-	worker = h.command("--canon", path, "--socket", socket, "--once")
+	worker := h.command("--canon", path, "--socket", socket, "--once")
 	worker.start(t)
 	worker.wait(t, 0)
 }
