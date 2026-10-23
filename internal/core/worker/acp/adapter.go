@@ -36,6 +36,7 @@ type Config struct {
 type Result struct {
 	SessionID    string            `json:"session_id"`
 	AgentVersion string            `json:"agent_version"`
+	Handshake    *Handshake        `json:"handshake,omitempty"`
 	StopReason   string            `json:"stop_reason"`
 	Output       string            `json:"output"`
 	Unknown      []json.RawMessage `json:"unknown_updates,omitempty"`
@@ -190,6 +191,10 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	if initialized.AgentInfo != nil {
 		a.result.AgentVersion = initialized.AgentInfo.Version
 	}
+	if a.Name() == "grok" {
+		a.result.Handshake = grokHandshake(initialized)
+		a.result.AgentVersion = a.result.Handshake.Version
+	}
 	if a.version == "" {
 		a.version = a.result.AgentVersion
 	}
@@ -299,6 +304,11 @@ func (a *Adapter) Result() Result {
 	defer a.mu.Unlock()
 	r := a.result
 	r.Unknown = append([]json.RawMessage(nil), r.Unknown...)
+	if r.Handshake != nil {
+		handshake := *r.Handshake
+		handshake.Capabilities = slices.Clone(handshake.Capabilities)
+		r.Handshake = &handshake
+	}
 	return r
 }
 func (a *Adapter) Close(context.Context) error {
