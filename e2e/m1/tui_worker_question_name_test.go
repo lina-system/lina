@@ -159,7 +159,7 @@ func tuiWorkerQuestion(t *testing.T, name, command string) {
 	h.keys(terminal, "\r")
 	waitScreen(t, h, terminal, design.Text(design.English, "resolved"))
 	h.keys(terminal, "\x1b[27u")
-	waitComposerReady(t, h, terminal)
+	alphaConversationScreen(t, h, terminal, design.English)
 	waitScreen(t, h, terminal, fixture.Result)
 	select {
 	case <-finished:

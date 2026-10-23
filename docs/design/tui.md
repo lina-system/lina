@@ -861,6 +861,14 @@ accepts its approval, answers its question and checks the resulting artifact.
 It distinguishes the worker's owning coding agent from the conversation agent
 and covers renaming that owner after Core starts.
 
+After answering a question and sending Esc, alpha acceptance waits for a complete
+connected conversation frame with the composer cursor and footer before inspecting
+the work panel. The installed-Core question journey uses the same barrier. A
+controlled recorder test holds the resolved overlay and a split redraw to prove
+that neither can satisfy it, in Korean and English.
+The panel check accepts every documented elapsed-time format and requires the
+card's name and current activity.
+
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 
 The TUI negotiates `accounts` and `sign_in_relay` independently of conversation.
