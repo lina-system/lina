@@ -90,10 +90,11 @@ type executionWorkspace struct {
 }
 
 type executionAttempt struct {
-	thread      worker.Thread
-	run         work.Run
-	finish      worker.Finish
-	observation observation
+	settledConnection bool
+	thread            worker.Thread
+	run               work.Run
+	finish            worker.Finish
+	observation       observation
 }
 
 func (e *execution) closeDeferred() {
@@ -637,7 +638,7 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 		// Refused sessions create no worker turn or receipt.
 		return false
 	}
-	e.attempt = executionAttempt{thread: thread, run: run, finish: finish, observation: observation}
+	e.attempt = executionAttempt{thread: thread, run: run, finish: finish, observation: observation, settledConnection: settledConnection}
 	return true
 }
 
@@ -653,7 +654,7 @@ func (s *Service) deliver(ctx context.Context, e *execution) {
 	// its transport-loss finish is synthetic and must remain unknown too.
 	// ACP may instead supply a joined process with a complete, effect-free
 	// terminal snapshot. That evidence admits the shared recovery policy.
-	if finish.Failure == worker.ConnectionFailure && !settledConnection && !(r.WorkerName() == "codex" && finish.Code == "connection") {
+	if finish.Failure == worker.ConnectionFailure && !e.attempt.settledConnection && !(r.WorkerName() == "codex" && finish.Code == "connection") {
 		r.Code = finish.Code
 		return
 	}
