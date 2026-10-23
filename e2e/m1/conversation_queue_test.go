@@ -3,8 +3,10 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -31,6 +33,8 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
 	var calls atomic.Int32
+	var previousTools []json.RawMessage
+	var transcriptMu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Input        []json.RawMessage
@@ -41,6 +45,8 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 			return
 		}
 		n := calls.Add(1)
+		transcriptMu.Lock()
+		defer transcriptMu.Unlock()
 		if len(instructionBlock(request.Instructions, "persona")) == 0 {
 			t.Error("request lost its prepared persona")
 		}
@@ -56,14 +62,20 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 			case <-r.Context().Done():
 				return
 			}
-			emitPersonaCall(w, "queued-catalog", "skill_index", map[string]any{})
-		case 2, 3:
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"reasoning-catalog\",\"encrypted_content\":\"opaque-catalog\"}}\n\n")
+			fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"queued-catalog\",\"name\":\"skill_index\",\"arguments\":\"{}\"}}\n\n")
+			fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
+		case 2, 3, 4:
 			if n == 2 {
 				toolResult := false
 				for _, raw := range request.Input {
 					var item struct {
 						Type, Output string
 						CallID       string `json:"call_id"`
+					}
+					if json.Unmarshal(raw, &item) == nil && (item.Type == "reasoning" || item.Type == "function_call" || item.Type == "function_call_output") {
+						previousTools = append(previousTools, append(json.RawMessage(nil), raw...))
 					}
 					if json.Unmarshal(raw, &item) == nil && item.Type == "function_call_output" && item.CallID == "queued-catalog" {
 						toolResult = strings.Contains(item.Output, "persona-change")
@@ -73,6 +85,34 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 					t.Error("first turn did not receive the executed skill tool result")
 				}
 				emitResponse(w, firstReply, true)
+				return
+			}
+			if len(previousTools) != 3 {
+				t.Errorf("first follow-up has %d tool/reasoning items, want 3", len(previousTools))
+			}
+			position := -1
+			for _, want := range previousTools {
+				matches := 0
+				for index, raw := range request.Input {
+					if bytes.Equal(raw, want) {
+						matches++
+						if index <= position {
+							t.Error("prior tool transcript changed order")
+						}
+						position = index
+					}
+				}
+				if matches != 1 {
+					var item struct {
+						Type   string
+						CallID string `json:"call_id"`
+					}
+					_ = json.Unmarshal(want, &item)
+					t.Errorf("request %d: prior %s %s occurs %d times, want 1", n, item.Type, item.CallID, matches)
+				}
+			}
+			if n == 4 {
+				emitResponse(w, "The catalog survived restart.", true)
 				return
 			}
 			for _, text := range []string{firstInput, firstReply, queuedInput} {
@@ -141,13 +181,22 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 	if !reflect.DeepEqual(replies, []string{firstReply, queuedReply}) || calls.Load() != 3 {
 		t.Fatalf("queued input did not receive its own reply: replies=%q calls=%d", replies, calls.Load())
 	}
-	t.Logf("provider requests=%d; separate replies=%q; queued context retained the first input and late reply", calls.Load(), replies)
+	t.Logf("provider requests=%d; separate replies=%q; queued context retained prior reasoning, tool call and raw result", calls.Load(), replies)
 	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close(context.Background())
 	if err := db.Read(h.ctx, func(tx *canon.Tx) error {
+		var items, pairs int
+		if err := tx.QueryRowContext(h.ctx, `SELECT
+            (SELECT count(*) FROM conv_event WHERE conversation_id=? AND scaffold_kind='provider_item'),
+            (SELECT count(*) FROM ev_rel r JOIN conv_event e ON e.id=r.event_id WHERE e.conversation_id=? AND r.kind='pairs_with')`, conversation, conversation).Scan(&items, &pairs); err != nil {
+			return err
+		}
+		if items != 3 || pairs != 1 {
+			t.Errorf("ledger transcript: items=%d pairs=%d, want 3 and 1", items, pairs)
+		}
 		for _, key := range []string{"first", "queued"} {
 			var count int
 			if err := tx.QueryRowContext(h.ctx, `SELECT count(*) FROM inbox i JOIN turn_runs t ON t.inbox_id=i.id WHERE i.conversation=? AND i.source='client' AND i.native_id=? AND t.state='completed'`, conversation, key).Scan(&count); err != nil {
@@ -160,6 +209,24 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+	c.Close()
+	h.stopCore(core)
+	core = start(true)
+	c, conversation = conversationClient(t, h)
+	admit("after-restart", "Recall the catalog after restart.")
+	for {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if turn, ok := frame.Payload.(protocol.TurnState); ok && turn.Active != nil && !*turn.Active {
+			break
+		}
+	}
+	t.Logf("restart provider requests=%d; prior tool transcript retained exactly once", calls.Load())
+	if calls.Load() != 4 {
+		t.Fatalf("restart provider requests=%d, want 4", calls.Load())
 	}
 	c.Close()
 	h.stopCore(core)

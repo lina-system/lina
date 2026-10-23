@@ -777,13 +777,13 @@ func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID stri
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work','handoff_check','worker_session','worker_completion'))`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('provider_item','interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work','handoff_check','worker_session','worker_completion'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind NOT IN ('person','forwarded') OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
 			args = append(args, through)
 		}
-		query += ` ORDER BY rowid DESC LIMIT 200`
+		query += ` ORDER BY rowid DESC`
 		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
 			return err
@@ -1169,6 +1169,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				Body: design.Text(eventLanguage(input), "notice.handoff"),
 			}})
 		}
+		var err error
+		completed, err = conversationTranscript(ctx, db, turnID, input, completed)
+		if err != nil {
+			return err
+		}
 		if len(completed) == 0 {
 			return db.Write(ctx, func(*canon.Tx) error { return nil })
 		}
@@ -1177,6 +1182,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		var batch []ledger.Admission
 		for _, item := range completed {
 			batch = append(batch, item)
+			if item.Input.ScaffoldKind == "provider_item" {
+				continue
+			}
 			masked, err := secrets.Mask(item.Input.Body)
 			if err != nil {
 				return err
@@ -1207,7 +1215,6 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}})
 			}
 		}
-		var err error
 		saved, err = ledger.New(namingCanon{Canon: db, person: r.person, agent: r.agent, names: preparedNames, replies: batch}, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
@@ -1328,7 +1335,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	// commit together. Publication can be recovered from history after a crash.
 	if err == nil {
 		for _, item := range saved {
-			if item.ScaffoldKind == "result" || item.ScaffoldKind == "reply_check" {
+			if item.ScaffoldKind == "provider_item" || item.ScaffoldKind == "result" || item.ScaffoldKind == "reply_check" {
 				continue
 			}
 			if item.SpeakerKind == guard.System {
