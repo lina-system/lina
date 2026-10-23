@@ -169,7 +169,11 @@ func codexSessionFixture() {
 					if err := os.WriteFile(filepath.Join(workdir, "result.txt"), []byte("LINA_WORKER_RESULT"), 0600); err != nil {
 						os.Exit(97)
 					}
-					notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turnID, "item": map[string]any{"type": "agentMessage", "id": "result", "text": "Created result.txt: LINA_WORKER_RESULT"}})
+					output := "Created result.txt: LINA_WORKER_RESULT"
+					if question := os.Getenv("LINA_WORKER_FINISH_QUESTION"); question != "" {
+						output = question
+					}
+					notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turnID, "item": map[string]any{"type": "agentMessage", "id": "result", "text": output}})
 					state = "idle"
 					notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turnID, "status": "completed"}})
 				}(cwd, turn)
