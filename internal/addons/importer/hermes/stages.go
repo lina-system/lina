@@ -77,11 +77,14 @@ type Plan struct {
 	profiles      []string
 	conversations []*conversation
 	inventory     []TableCount
+	uidLineages   []UIDLineageMapping
 }
 type Report struct {
 	AddedEvents, AddedRecords, AddedReferences int
 	Tables                                     []TableCount
 	Speakers                                   []SpeakerReport
+	AmbiguousUIDRows                           int
+	UIDLineageMappings                         []UIDLineageMapping
 }
 type Reconciliation struct {
 	System, Instance, Table                               string
@@ -194,7 +197,7 @@ func (p *Plan) Import(ctx context.Context, db Canon) (Report, error) {
 		return Report{}, invalidSnapshot("rehearsal plan cannot import")
 	}
 	defer p.Close() // durable markers preserve cleanup failures for restart recovery
-	report := Report{Tables: append([]TableCount(nil), p.inventory...)}
+	report := Report{Tables: append([]TableCount(nil), p.inventory...), AmbiguousUIDRows: len(p.uidLineages), UIDLineageMappings: p.uidLineages}
 	byProfile := map[string]int{}
 	for _, profile := range p.profiles {
 		byProfile[profile] = len(report.Speakers)
