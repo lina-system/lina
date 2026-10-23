@@ -205,7 +205,7 @@ func TestEngineRunsCodeGoalThroughRuntimeEvidence(t *testing.T) {
 		case Verify:
 			out.Proof = Proof{Revision: "merged", Ref: "runtime-probe", Passed: true}
 		case CheckCriterion:
-			out.Criterion = &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: "read:" + a.CriterionID, Passed: true}
+			out.Criterion = &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "read:" + a.CriterionID, Passed: true}
 		case ContinueWorker, Resume, RepairConflict, RepairQA, Observe, Decide, PlanGoal:
 			return Observation{}, fmt.Errorf("unexpected action %s", a.Kind)
 		default:

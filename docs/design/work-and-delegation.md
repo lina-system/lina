@@ -1600,7 +1600,7 @@ A goal is in one of these states. The person sees them only through the progress
 | `stopped` | The person stopped the goal. What it produced is kept. |
 | `blocked` | Work cannot go on without the person, and a row says why: recovery is exhausted, or evidence failed with no repair inside the scope. |
 
-`done` and `stopped` are final. A `blocked` goal resumes when the person answers its row. Revision of the goal moves it back to `running` from any state but `stopped`.
+`stopped` is final. A `done` goal remains complete while its evidence stays current; a later observed target change reopens it as described under Evidence before close. A `blocked` goal resumes when the person answers its row. Revision of the goal moves it back to `running` from any state but `stopped`.
 
 **The liveness rule.** A goal that is not final always has at least one of these: a task or background run in progress, a named wait with a wake condition and a deadline, a recovery in progress, or a row in "Waiting for me". Core checks the rule after every transition it commits for the goal. A goal that has none is orphaned. Core then runs the derivation of the next action at once. When the derivation finds nothing to do, Core gives the manager session one turn that names the gap: the open criteria and the fact that nothing will move them. When that turn records no task, wait or decision either, the goal becomes `blocked` with a row that says in plain words that LINA could not find a way to finish it and what is missing. A goal never ends silently and never sits idle with open criteria.
 
@@ -1806,6 +1806,32 @@ A goal closes as `done` only when every criterion has evidence that Core collect
 
 A worker's receipt, a model's sentence, a completed turn, a command's exit code alone, a pending check and an effect with an unknown outcome are never evidence. At `checking`, Core reads every piece of evidence again rather than trusting what it stored, so a document edited or an event moved after it was checked reopens its criterion. One check per criterion is enough; no panel of verifiers is used.
 
+The execution ledger retains the collected record or check output, not only its
+reference. Citation checks retain their result and the passages read, with each
+source's target, revision and content. A rubric judgment retains the exact
+criterion rubric, the judgment and the same source information. Unsupported
+evidence kinds and references without these contents cannot meet a criterion.
+An external-effect criterion records the expected fields of its target. Core
+compares them with the read-back record; extra record fields are allowed, while
+requested nested fields, arrays and scalar types must match. A connector's
+success flag cannot override a mismatch.
+
+Before closure, the installed Core reads every collected item again, including
+the actual external record and retained command output. It checks the goal
+revision and checking round again when committing closure. Re-reads run independently
+for each goal under the work runner, so slow connectors cannot block Core startup
+or unrelated work. An invalidated round retires its undispatched and authorization-
+waiting checks; a late grant cannot revive them. A changed, missing or
+unreadable item reopens the goal to `running` and starts a fresh checking round;
+prior observations and worker results remain in history. An integration's target
+change hint also invalidates criteria that read that target as a source. Repeated
+hints are idempotent and a delayed old check cannot satisfy the new round.
+Startup and the existing five-minute safety sweep re-read met evidence, including
+completed goals, so a missed hint cannot leave changed evidence accepted forever.
+These reads never repeat the underlying worker, merge, deployment or plugin
+effect. Failed fresh criteria return to the existing manager repair/attention path.
+Older records that contain only evidence references require fresh checks.
+
 For a non-code file task, its work definition records an absolute destination
 folder. The worker writes deliverables under `out/` and its report at
 `report.md`. At done, Core reads every file and directory name and the report,
@@ -1945,6 +1971,12 @@ or an executable. The file contains:
   uses the existing argument-bound approval path; registration grants no public
   deployment approval. A private deployment remains subject to preset limits
   and the current goal's scope.
+- Optional `evidence_checks`: method names bound to a `repository`, fixed
+  `target`, evidence `kind` and read-only `command`. These connect external
+  records, citation checks and rubric judgments to a goal in that repository's
+  scope. The method cannot replace a built-in lifecycle check. An external read
+  requires the criterion's `expected` record fields. Registration supplies the
+  reader, never authority to perform the effect being verified.
 
 QA and outcome checks run in a disposable checkout of the observed merge commit.
 Deploy uses that same pinned revision. Core passes `LINA_GOAL_REVISION`,
@@ -1956,6 +1988,14 @@ code without this evidence cannot complete a stage. An explicit deployment failu
 it is not retried automatically. A deployment also requires
 an independent probe of the running service; the deploy command's output alone
 does not prove it is running.
+
+For criterion checks Core also supplies `LINA_GOAL_CHECK`, containing the
+criterion's check definition. An evidence connector returns the same envelope
+with `collected`: an external `record`; check `output`; citation `output` and
+`reads`; or `rubric`, `judgment` and `reads`. Each read has `target`, `revision`
+and `content`. Core retains this data and enforces the kind and expected-field
+requirements above. The ordinary repository check format remains supported;
+its retained structured output supplies its check evidence.
 
 Core captures protected refs before starting the worker, re-reads the PR's current
 head, checks and review, requires the dev manager's verified verdict, and merges

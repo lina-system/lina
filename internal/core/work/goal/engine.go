@@ -69,13 +69,15 @@ type Config struct {
 	Changed func(context.Context, State) error
 }
 type Engine struct {
-	definitions sync.Map
-	journal     *Journal
-	cfg         Config
-	mu          sync.Mutex
-	running     map[string]bool
-	wg          sync.WaitGroup
-	failures    chan error
+	definitions   sync.Map
+	journal       *Journal
+	cfg           Config
+	mu            sync.Mutex
+	running       map[string]bool
+	wg            sync.WaitGroup
+	failures      chan error
+	evidenceCtx   context.Context
+	evidenceReads map[string]*evidenceRead
 }
 
 func NewEngine(cfg Config) (*Engine, error) {
@@ -85,7 +87,7 @@ func NewEngine(cfg Config) (*Engine, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	e := &Engine{journal: NewJournal(cfg.DB), cfg: cfg, running: map[string]bool{}, failures: make(chan error, 1)}
+	e := &Engine{journal: NewJournal(cfg.DB), cfg: cfg, running: map[string]bool{}, failures: make(chan error, 1), evidenceReads: map[string]*evidenceRead{}}
 	if cfg.DriverFactory != nil {
 		if cfg.Driver != nil {
 			return nil, ErrInvalid
@@ -275,8 +277,12 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 	if err := e.RefreshDefinitions(ctx); err != nil {
 		return err
 	}
+	verified, err := e.closingEvidence(ctx)
+	if err != nil {
+		return err
+	}
 	now := e.cfg.Now()
-	err := e.journal.Update(ctx, Transition{ID: "derive:" + rand.Text(), Kind: "work.derived", At: now.Unix()}, func(v *View) error {
+	err = e.journal.Update(ctx, Transition{ID: "derive:" + rand.Text(), Kind: "work.derived", At: now.Unix()}, func(v *View) error {
 		if err := e.reconcileRetired(v); err != nil {
 			return err
 		}
@@ -370,13 +376,15 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 				switch {
 				case g.DefinitionPending && g.AssessedFailure == "definition:"+g.RecordRevision:
 					g.State = GoalBlocked
-				case has(p.Close, g.ID):
+				case has(p.Close, g.ID) && (verified == nil || verified[g.ID] == evidenceToken(*g)):
 					g.State = GoalDone
 				case has(p.Block, g.ID) || person:
 					g.State = GoalBlocked
 					g.AttentionID = fmt.Sprintf("goal:%s:%d:attention", g.ID, g.Revision)
 					g.BlockedReason = "LINA could not find a way to finish the remaining done condition; a decision is needed."
 				case g.DefinitionPending:
+					g.State = GoalRunning
+				case failedEvidence(*g):
 					g.State = GoalRunning
 				case allLanded:
 					g.State = GoalChecking
@@ -706,6 +714,8 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		if !currentEvidence(*g, criterion, *o.Criterion) || o.Criterion.Revision != a.Revision {
 			return ErrConflict
 		}
+		// A connector's success flag cannot override a mismatched readback.
+		o.Criterion.Passed = o.Criterion.Passed && o.Criterion.Collected.Matches(criterion.Check)
 		for i, old := range g.Checks {
 			if old.Criterion == a.CriterionID {
 				g.Checks[i] = *o.Criterion
@@ -850,11 +860,16 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	e.mu.Lock()
+	e.evidenceCtx = ctx
+	e.mu.Unlock()
 	r := startReconciler(ctx, e.journal, func(ctx context.Context) error { return e.step(ctx) }, e.cfg.Sweep, func(ctx context.Context) error {
 		if e.cfg.Refresh != nil {
-			return e.cfg.Refresh(ctx, e)
+			if err := e.cfg.Refresh(ctx, e); err != nil {
+				return err
+			}
 		}
-		return nil
+		return e.RefreshEvidence(ctx)
 	})
 	var last error
 	for {
@@ -909,6 +924,9 @@ func (e *Engine) awaitAuthorization(ctx context.Context, claimed Action) error {
 			return err
 		}
 		// A definition/repair revision can commit while Authorize runs.
+		if err = retireEvidenceWaits(v, g); err != nil {
+			return err
+		}
 		if err = retireUndispatchedActions(v, &g); err != nil {
 			return err
 		}
