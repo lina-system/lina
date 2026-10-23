@@ -14,6 +14,7 @@ import (
 // Config is an explicit model route, independent of stored account
 // credentials. The caller constructs it once per route; it is never written to canon.
 type Config struct {
+	Route      string
 	Adapter    provider.Adapter
 	Model      provider.ModelRef
 	credential provider.Credential
@@ -47,9 +48,30 @@ func ResponsesFromEnv(getenv func(string) string) (*ResponsesConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ResponsesConfig{Adapter: adapter, Model: provider.ModelRef(model), credential: provider.NewCredential("configured-responses", provider.APIKey, key)}, nil
+	return &ResponsesConfig{Route: "responses_api_key", Adapter: adapter, Model: provider.ModelRef(model), credential: provider.NewCredential("configured-responses", provider.APIKey, key)}, nil
 }
 
 func (c *Config) Request(items []provider.Item) provider.Request {
 	return provider.Request{Credential: c.credential, Model: c.Model, Purpose: provider.Turn, Items: items}
+}
+
+// Capabilities returns the model declaration and the build's route admission.
+// Core's composition root applies its selection policy before recording a call.
+func (c *Config) Capabilities(model provider.ModelRef) (provider.CapabilitySet, provider.CapabilitySet) {
+	route := c.Route
+	if route == "" {
+		route = string(c.Adapter.Provider())
+	}
+	admitted := provider.Admitted(route)
+	if configured, ok := c.Adapter.(provider.CapabilityAdmission); ok {
+		narrowing := configured.AdmittedCapabilities(model)
+		var intersection provider.CapabilitySet
+		for _, capability := range admitted {
+			if narrowing.Has(capability) {
+				intersection = append(intersection, capability)
+			}
+		}
+		admitted = intersection
+	}
+	return c.Adapter.Capabilities(model), admitted
 }
