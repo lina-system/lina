@@ -151,7 +151,9 @@ func TestM2TimersInstalledCore(t *testing.T) {
 		}
 		_, body, _ := strings.Cut(last.Content, "\n")
 		var envelope struct{ Text string }
-		_ = json.Unmarshal([]byte(body), &envelope)
+		if json.Unmarshal([]byte(body), &envelope) != nil {
+			envelope.Text = last.Content
+		}
 		switch envelope.Text {
 		case "Set up the timers.":
 			emitPersonaCall(w, "source", "write_record", coreexec.RecordWrite{Kind: "memo", Title: scenario.SourceTitle, Note: scenario.SourceNote})
