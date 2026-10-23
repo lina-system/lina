@@ -8,6 +8,55 @@ import (
 	"github.com/thisisjun786/lina/kit/result"
 )
 
+func TestCompletionUpgradePreservesPublishedWorkReviews(t *testing.T) {
+	cfg := storeConfig(t)
+	all := Migrations()
+	// Version 48 is the published dev catalog, before completion evidence.
+	cfg.Migrations = all[:48]
+	db := openStore(t, cfg)
+	review := `{"status":"pending","receipt":"retained"}`
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO work_reviews(repository,pr_number,head,record) VALUES(?,?,?,?)", "fixture/repo", 1, "reviewed-head", []byte(review))
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Epoch++
+	cfg.Migrations = all
+	db = openStore(t, cfg)
+	claim := result.Completion{ID: "upgraded-completion", AgentID: "agent", State: "claimed", Label: "not verified"}
+	if err := db.Write(t.Context(), func(tx *Tx) error { return RecordDoneCompletion(t.Context(), tx, &claim) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Epoch++
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var got []byte
+		if err := tx.QueryRowContext(t.Context(), "SELECT record FROM work_reviews WHERE repository=? AND pr_number=? AND head=?", "fixture/repo", 1, "reviewed-head").Scan(&got); err != nil {
+			return err
+		}
+		if string(got) != review {
+			t.Fatalf("upgrade changed review: %s", got)
+		}
+		var breaches int
+		if err := tx.QueryRowContext(t.Context(), "SELECT breaches FROM agent_done_breaches WHERE agent_id=?", claim.AgentID).Scan(&breaches); err != nil {
+			return err
+		}
+		if breaches != 1 {
+			t.Fatalf("completion lost after reopen: breaches=%d", breaches)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCompletionCounterIsAtomicAndPerAgent(t *testing.T) {
 	cfg := storeConfig(t)
 	cfg.Migrations = Migrations()

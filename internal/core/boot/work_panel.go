@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/progress"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/doing"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -17,6 +18,9 @@ func (e *workerSession) observeActivity(event worker.Event) {
 	activity := worker.Activity(event)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if event.Doing != nil && event.Thread.ID == e.thread.ID && event.Thread.TurnID == e.thread.TurnID {
+		e.doing = doing.Clean(event.Doing.Line)
+	}
 	if activity != "" {
 		e.activity = "work." + activity
 	} else if event.Kind == worker.FinishEvent {

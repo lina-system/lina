@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/lina/internal/core/worker/doing"
 
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -127,6 +128,7 @@ const (
 )
 
 type ThreadSnapshot struct {
+	Doing *doing.Snapshot
 	// Finish belongs to the exact requested turn. EffectsKnown is true only when
 	// a complete read establishes that no effect is awaiting reconciliation.
 	Finish       *Finish

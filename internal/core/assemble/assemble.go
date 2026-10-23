@@ -54,6 +54,7 @@ type Input struct {
 	AlwaysTools, LoadedTools       []provider.ToolDecl // Already in stable declaration order.
 	Summary                        provider.Item
 	History                        []provider.Item // Native ledger projection, in ledger order; never imported history.
+	Profile                        []provider.Item // Authorized standing-profile projections, placed in packet group 5.
 	Packet                         ContextPacket
 	Current                        provider.Item
 	Model                          provider.ModelRef
@@ -183,7 +184,7 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 	if len(in.Summary) > 0 && !json.Valid(in.Summary) {
 		return fail(Invalid)
 	}
-	for _, list := range [][]provider.Item{in.History, in.AlwaysTools, in.LoadedTools} {
+	for _, list := range [][]provider.Item{in.History, in.Profile, in.AlwaysTools, in.LoadedTools} {
 		for _, raw := range list {
 			if !json.Valid(raw) {
 				return fail(Invalid)
@@ -229,6 +230,8 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 		r.Items = append(r.Items, append(provider.Item(nil), in.Summary...))
 	}
 	r.Items = append(r.Items, clone(in.History)...)
+	r.Items = append(r.Items, append(provider.Item(nil), in.Current...))
+	r.Layout.CurrentInput = provider.Position{Items: len(r.Items), Tools: len(r.Tools)}
 	prefix := len(r.Items)
 	var packet ContextPacket
 	seen := map[string]Kind{}
@@ -281,15 +284,21 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 	sort.SliceStable(selected, func(i, j int) bool { return group(selected[i].Kind) < group(selected[j].Kind) })
 	build := func() bool {
 		r.Items = r.Items[:prefix]
+		profileAdded := false
 		for _, item := range selected {
+			if !profileAdded && group(item.Kind) >= 5 {
+				r.Items = append(r.Items, clone(in.Profile)...)
+				profileAdded = true
+			}
 			raw, ok := contextMessage(item)
 			if !ok {
 				return false
 			}
 			r.Items = append(r.Items, raw)
 		}
-		r.Items = append(r.Items, append(provider.Item(nil), in.Current...))
-		r.Layout.CurrentInput = provider.Position{Items: len(r.Items), Tools: len(r.Tools)}
+		if !profileAdded {
+			r.Items = append(r.Items, clone(in.Profile)...)
+		}
 		report.Tokens = counter(r)
 		return report.Tokens >= 0
 	}

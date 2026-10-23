@@ -41,3 +41,13 @@ when reconciliation already delivered that result. The installed-Core scenario
 `TestM2WorkerDelayedCompletionOutput` recovers one turn, continues the worker,
 and delivers the old completion between the new output and completion. It
 checks both stored results, file readback and result retention after restart.
+
+#999 checkpoints conversation-worker input before dispatch and after the adapter
+returns its binding. A pending input uses the existing unknown record with no
+exact turn, retaining its reservation and retry allowance. This also covers an
+active snapshot that becomes idle before the adapter receives input. A refused
+input restores the earlier record; uncertain input is never replayed. An intent
+without an exact turn remains held after restart. The separate
+`e2e/m2/worker-followup-recovery.json` scenario kills installed Core after a
+follow-up produces a file without notifications: an acknowledged turn is read
+back and its result delivered once, while a missing reply retains uncertainty.

@@ -161,6 +161,9 @@ func Open(ctx context.Context, cfg Config) (*Service, error) {
 	s := &Service{cfg: cfg, running: map[string]bool{}, done: make(chan struct{}), wake: make(chan struct{}, 1)}
 	s.ctx, s.cancel = context.WithCancel(ctx)
 	records, err := s.records(ctx)
+	if err == nil {
+		err = s.recoverReadinessQuota(ctx, records)
+	}
 	if err != nil {
 		s.cancel()
 		return nil, err

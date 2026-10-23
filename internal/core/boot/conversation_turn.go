@@ -460,12 +460,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		declarations = nil
 		catalog = nil
 	}
-	if failedWorkerReaction(s.input) {
-		clear(s.bindings)
-		declarations = nil
-		catalog = nil
-	}
-	if !failedWorkerReaction(s.input) && r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
+	if r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
 		state, err := r.agents.State(ctx, r.agent)
 		if err != nil {
 			return turn.PreparedRequest{}, err
@@ -487,6 +482,11 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	}
 	if err := r.bindDoneEvidence(ctx, persona, s.bindings); err != nil {
 		return turn.PreparedRequest{}, err
+	}
+	if failedWorkerReaction(s.input) {
+		// Keep the cacheable declarations stable. A failure notice still grants
+		// no tool execution, including through the deferred-tool bridge.
+		clear(s.bindings)
 	}
 	packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 	if err != nil {
@@ -527,7 +527,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	if s.toolCatalog != nil {
 		s.toolCatalog.offset = len(request.Items)
 	}
-	assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), s.memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), s.memoryRefs...)}
+	assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", RequestLayout: ledger.InputBeforeContextV1, PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), s.memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), s.memoryRefs...)}
 	assembly.Context, err = r.recordContextSources(ctx, packet, report)
 	if err != nil {
 		return turn.PreparedRequest{}, err
