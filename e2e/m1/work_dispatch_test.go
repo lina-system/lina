@@ -19,7 +19,7 @@ import (
 
 func TestM2DispatchedWorkArea(t *testing.T) {
 	t.Parallel()
-	testAntigravityThroughInstalledCore(t, "../m2/work-dispatch.json", false)
+	testHeadlessWorkerThroughInstalledCore(t, "../m2/work-dispatch.json", false)
 }
 
 func assertDispatchedWorkArea(t *testing.T, h *harness, fixture, source, workdir, base string) {
