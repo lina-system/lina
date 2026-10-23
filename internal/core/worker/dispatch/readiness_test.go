@@ -3,6 +3,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"reflect"
@@ -181,7 +182,13 @@ func TestReadinessFallback(t *testing.T) {
 						if !firstClosed {
 							t.Error("replacement started before failed worker cleanup")
 						}
-						if spec.TaskPacket != r.Packet && r.Packet != "" {
+						var frame struct {
+							Text string `xml:"text"`
+						}
+						if err := xml.Unmarshal([]byte(spec.TaskPacket), &frame); err != nil {
+							t.Fatal(err)
+						}
+						if frame.Text != r.Packet && r.Packet != "" {
 							t.Error("task changed during readiness fallback")
 						}
 						return nil

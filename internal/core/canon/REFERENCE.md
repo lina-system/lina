@@ -59,9 +59,18 @@ benchmark commit was `469337d78c8dbc1b1dce9355a9fec34e4647a704`; its three forge
 had already run, retaining the old pointers. These are observed measurements,
 not performance thresholds or recall-quality evidence.
 
+### Recall conversation scope
+
+Migration 60 stores one inferred person per conversation: the only person who
+has spoken there, or empty when none or more than one have. A person event
+updates indexed documents only when that value changes. `recall_conversation`
+indexes `(conversation, person)` for the lookup. Repeat messages from the same
+person do not rewrite documents or their scope index entries. The person value
+on a document stays the one `recall_source` already derived.
+
 ### Citation retraction
 
-Migration 59 gives the shared index one retraction path. A removal walks `cite`
+Migration 63 gives the shared index one retraction path. A removal walks `cite`
 from the target to the views that cite it through `cite_target`, so its cost is
 the number of documents it hides rather than the size of the store. The walk
 replaces the shadow-index bridges that reacted to the old memory and ledger

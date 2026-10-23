@@ -1,0 +1,29 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.1"
+  },
+  "kind": "mock_request",
+  "message_id": "result-example",
+  "attempt_id": "result-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "client",
+    "id": "client-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "action": "asset",
+    "result_id": "result-example",
+    "revision": 1,
+    "conversation_id": "main:agent-example",
+    "asset": "png",
+    "offset": 0
+  }
+}

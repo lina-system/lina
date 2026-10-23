@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -108,6 +109,31 @@ func (p *Plan) Seal(ctx context.Context, db Canon, backup func(context.Context) 
 	return report, err
 }
 
+// displayMask masks an event display under the publication rule. A body that
+// cannot be masked becomes an unavailable notice instead of a display.
+func displayMask(display string) (secrets.Masked, error) {
+	var spans []secrets.Span
+	// Raw assignment spans may include JSON's quotes or escape sequences.
+	// Let the shared JSON scanner inspect decoded strings instead. These
+	// spans are detector output, not independent sensitivity annotations.
+	if !json.Valid([]byte(display)) {
+		for _, s := range ScanSecrets([]byte(display)) {
+			spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
+		}
+	}
+	masked, err := secrets.Mask(display, spans...)
+	if err == nil && json.Valid([]byte(display)) {
+		// Check remaining scalar credentials at decoded JSON boundaries.
+		// A plaintext rescan of serialized JSON can flag an escape before
+		// an already-masked quoted value and discard an otherwise safe body.
+		checked, checkErr := maskScalarCallCredentials(masked.Text())
+		if !json.Valid([]byte(masked.Text())) || checkErr != nil || checked != masked.Text() {
+			err = secrets.ErrSpan
+		}
+	}
+	return masked, err
+}
+
 func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *conversation) error {
 	parent := ""
 	for _, r := range c.records {
@@ -120,15 +146,12 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 		if err := tx.QueryRowContext(ctx, "SELECT material_id,material_revision FROM import_event WHERE id=?", r.id).Scan(&material, &materialRevision); err != nil {
 			return err
 		}
-		display, err := publishedBody(r)
-		if err != nil {
-			return err
-		}
+		content := r.body
 		if material.Valid {
 			found := false
 			for _, attachment := range c.records {
 				if attachment.kind == "material" && len(attachment.links) == 1 && attachment.links[0].target == r.id {
-					display = attachment.sources[0].row.text("bytes")
+					content = attachment.sources[0].row.text("bytes")
 					found = true
 					break
 				}
@@ -137,37 +160,29 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 				return ErrConflict
 			}
 		}
+		display, err := publishedBody(r, content)
+		if err != nil {
+			return err
+		}
 		// Originals and byte-addressed flags stay in import_event for lossless
 		// reverse mapping; live consumers use the native masked representation.
-		if !material.Valid && display != r.body {
+		projected := display != content
+		if projected {
 			display, err = maskScalarCallCredentials(display)
 			if err != nil {
 				// Projection masking failures use the same durable outcome
 				// as failures in the shared body scanner below.
 				err = secrets.ErrSpan
 			}
-		}
-		var spans []secrets.Span
-		// Raw assignment spans may include JSON's quotes or escape sequences.
-		// Let the shared JSON scanner inspect decoded strings instead. These
-		// spans are detector output, not independent sensitivity annotations.
-		if !json.Valid([]byte(display)) {
-			for _, s := range ScanSecrets([]byte(display)) {
-				spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
+			if !utf8.ValidString(content) {
+				// json.Marshal would replace invalid bytes; refuse the
+				// projection instead of publishing altered content.
+				err = secrets.ErrSpan
 			}
 		}
 		var masked secrets.Masked
 		if err == nil {
-			masked, err = secrets.Mask(display, spans...)
-		}
-		if err == nil && json.Valid([]byte(display)) {
-			// Check remaining scalar credentials at decoded JSON boundaries.
-			// A plaintext rescan of serialized JSON can flag an escape before
-			// an already-masked quoted value and discard an otherwise safe body.
-			checked, checkErr := maskScalarCallCredentials(masked.Text())
-			if !json.Valid([]byte(masked.Text())) || checkErr != nil || checked != masked.Text() {
-				err = secrets.ErrSpan
-			}
+			masked, err = displayMask(display)
 		}
 		originFields := map[string]string{"kind": "import", "locator": r.id, "source_session": e.session}
 		if errors.Is(err, secrets.ErrSpan) {
@@ -184,7 +199,15 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 		}
 		var body any = masked.Text()
 		if material.Valid {
-			body = nil
+			if projected {
+				// A live JSON projection replaces the material body for this
+				// event; import_event keeps the original sidecar for reverse
+				// mapping.
+				material = sql.NullString{}
+				materialRevision = sql.NullInt64{}
+			} else {
+				body = nil
+			}
 		}
 		origin, _ := json.Marshal(originFields)
 		_, err = tx.ExecContext(ctx, `INSERT INTO conv_event(id,conversation_id,parent_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,body,material_id,material_revision)

@@ -1,0 +1,91 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.1"
+  },
+  "kind": "mock_response",
+  "message_id": "result-example",
+  "attempt_id": "result-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "result": {
+      "result_id": "result-example",
+      "revision": 1,
+      "type": "mock",
+      "title": "Example",
+      "summary": "Example summary",
+      "status": "preview",
+      "saved_as": null,
+      "revised_by": "agent-example",
+      "provenance": {
+        "agent_id": "agent-example",
+        "conversation_id": "conversation-example",
+        "turn_id": "turn-example",
+        "task_id": null
+      },
+      "text": "Open tasks\nExport page: mock-page revision 1\nExport PNG: mock-png revision 1",
+      "body": {
+        "request": "Show open tasks",
+        "checklist": [
+          {
+            "id": "tasks",
+            "description": "Open tasks",
+            "action": "none",
+            "target": ""
+          }
+        ],
+        "page": {
+          "asset_id": "mock-page",
+          "revision": 1
+        },
+        "png": {
+          "asset_id": "mock-png",
+          "revision": 1
+        },
+        "previous": null,
+        "stop_reason": "all_passed",
+        "checks": [
+          {
+            "id": "elements",
+            "passed": true
+          },
+          {
+            "id": "controls",
+            "passed": true
+          },
+          {
+            "id": "tokens",
+            "passed": true
+          },
+          {
+            "id": "network",
+            "passed": true
+          },
+          {
+            "id": "errors",
+            "passed": true
+          },
+          {
+            "id": "layout_390",
+            "passed": true
+          },
+          {
+            "id": "layout_1280",
+            "passed": true
+          }
+        ]
+      }
+    }
+  }
+}

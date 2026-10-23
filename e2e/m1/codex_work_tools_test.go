@@ -4,6 +4,7 @@ package e2e_test
 import (
 	"bufio"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -48,7 +49,13 @@ func codexWorkToolResult(raw json.RawMessage, out any) error {
 	if result.Success {
 		for _, item := range result.ContentItems {
 			if item.InputText != nil {
-				return json.Unmarshal([]byte(item.InputText.Text), out)
+				var message struct {
+					Text string `xml:"text"`
+				}
+				if err := xml.Unmarshal([]byte(item.InputText.Text), &message); err != nil {
+					return err
+				}
+				return json.Unmarshal([]byte(message.Text), out)
 			}
 		}
 	}
@@ -149,7 +156,13 @@ func codexWorkToolsFixture() {
 			if json.Unmarshal(raw, &params) != nil || len(r.Params) != 2 || params.ThreadId != thread || len(params.Input) != 1 || params.Input[0].Text == nil {
 				fail("turn/start must contain only bound thread and task packet")
 			}
-			receivedPacket = params.Input[0].Text.Text
+			var message struct {
+				Text string `xml:"text"`
+			}
+			if err := xml.Unmarshal([]byte(params.Input[0].Text.Text), &message); err != nil {
+				fail("invalid task frame")
+			}
+			receivedPacket = message.Text
 			if fixture.Kind == "" {
 				if receivedPacket != fixture.TaskPacket {
 					fail("task packet changed")

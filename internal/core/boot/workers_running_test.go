@@ -25,6 +25,8 @@ type runningWorkerProbe struct {
 	beforeSnapshot func()
 }
 
+func (p *runningWorkerProbe) Name() string { return "codex" }
+
 func (p *runningWorkerProbe) Snapshot(context.Context, worker.Thread) (worker.ThreadSnapshot, error) {
 	if p.beforeSnapshot != nil {
 		p.beforeSnapshot()

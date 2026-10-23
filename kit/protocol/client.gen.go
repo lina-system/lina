@@ -100,6 +100,9 @@ const (
 	KindRecordResult         Kind = "record_result"
 	KindA2aRequest           Kind = "a2a_request"
 	KindA2aResult            Kind = "a2a_result"
+	KindSurfaceAction        Kind = "surface_action"
+	KindMockRequest          Kind = "mock_request"
+	KindMockResponse         Kind = "mock_response"
 )
 
 type A2aCallStatus struct {
@@ -261,8 +264,10 @@ type BackgroundNotice struct {
 	Text   *string         `json:"text,omitempty"`
 }
 type Capability struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	Catalogs *[]string     `json:"catalogs,omitempty"`
+	Name     string        `json:"name"`
+	Types    *[]ResultType `json:"types,omitempty"`
+	Version  string        `json:"version"`
 }
 type ChannelBinding struct {
 	AgentID     string       `json:"agent_id"`
@@ -554,6 +559,7 @@ type Interrupt struct {
 }
 type ItemDone struct {
 	AgentID  *string              `json:"agent_id,omitempty"`
+	Details  *string              `json:"details,omitempty"`
 	EchoKey  *string              `json:"echo_key,omitempty"`
 	PersonID *string              `json:"person_id,omitempty"`
 	Speaker  *ConversationSpeaker `json:"speaker,omitempty"`
@@ -602,6 +608,28 @@ type MemoryTombstone struct {
 	Agent  string      `json:"agent"`
 	At     json.Number `json:"at"`
 	Person string      `json:"person"`
+}
+type MockAssetRef struct {
+	AssetID  string      `json:"asset_id"`
+	Revision json.Number `json:"revision"`
+}
+type MockRequest struct {
+	Action         string       `json:"action"`
+	Asset          *string      `json:"asset,omitempty"`
+	ConversationID string       `json:"conversation_id"`
+	Offset         *json.Number `json:"offset,omitempty"`
+	Repositories   *[]string    `json:"repositories,omitempty"`
+	ResultID       string       `json:"result_id"`
+	Revision       json.Number  `json:"revision"`
+	Target         *string      `json:"target,omitempty"`
+}
+type MockResponse struct {
+	Asset     *MockAssetRef `json:"asset,omitempty"`
+	Data      *string       `json:"data,omitempty"`
+	GoalID    *string       `json:"goal_id,omitempty"`
+	MediaType *string       `json:"media_type,omitempty"`
+	Next      *json.Number  `json:"next,omitempty"`
+	Result    *Result       `json:"result,omitempty"`
 }
 type MultiTaskControl struct {
 	Action         string       `json:"action"`
@@ -777,7 +805,9 @@ type ReplayRequest struct {
 	Candidates *[]ReplayCandidate `json:"candidates,omitempty"`
 	Effort     *string            `json:"effort,omitempty"`
 	Episode    *string            `json:"episode,omitempty"`
+	Fixture    *string            `json:"fixture,omitempty"`
 	Model      *string            `json:"model,omitempty"`
+	Provider   *string            `json:"provider,omitempty"`
 	TurnID     *string            `json:"turn_id,omitempty"`
 }
 type ReplayResult struct {
@@ -805,21 +835,22 @@ type RestartStatus struct {
 	RequestedEpoch  *string      `json:"requested_epoch,omitempty"`
 }
 type Result struct {
-	Body       *json.RawMessage  `json:"body,omitempty"`
-	Completion *CompletionStatus `json:"completion,omitempty"`
-	Next       *json.Number      `json:"next,omitempty"`
-	Provenance ResultProvenance  `json:"provenance"`
-	ResultID   string            `json:"result_id"`
-	RevisedBy  string            `json:"revised_by"`
-	Revision   json.Number       `json:"revision"`
-	RunID      *string           `json:"run_id,omitempty"`
-	SavedAs    *SavedReference   `json:"saved_as"`
-	Status     ResultStatus      `json:"status"`
-	Stream     *StreamMetadata   `json:"stream,omitempty"`
-	Summary    string            `json:"summary"`
-	Text       *string           `json:"text,omitempty"`
-	Title      string            `json:"title"`
-	Type       ResultType        `json:"type"`
+	Body            *json.RawMessage  `json:"body,omitempty"`
+	Completion      *CompletionStatus `json:"completion,omitempty"`
+	Next            *json.Number      `json:"next,omitempty"`
+	Provenance      ResultProvenance  `json:"provenance"`
+	ResultID        string            `json:"result_id"`
+	RevisedBy       string            `json:"revised_by"`
+	Revision        json.Number       `json:"revision"`
+	RunID           *string           `json:"run_id,omitempty"`
+	SavedAs         *SavedReference   `json:"saved_as"`
+	Status          ResultStatus      `json:"status"`
+	Stream          *StreamMetadata   `json:"stream,omitempty"`
+	Summary         string            `json:"summary"`
+	SurfaceControls *SurfaceControls  `json:"surface_controls,omitempty"`
+	Text            *string           `json:"text,omitempty"`
+	Title           string            `json:"title"`
+	Type            ResultType        `json:"type"`
 }
 type ResultEdit struct {
 	BaseRevision json.Number     `json:"base_revision"`
@@ -861,6 +892,8 @@ const (
 	ResultTypeComparison    ResultType = "comparison"
 	ResultTypePlanView      ResultType = "plan_view"
 	ResultTypeFile          ResultType = "file"
+	ResultTypeSurface       ResultType = "surface"
+	ResultTypeMock          ResultType = "mock"
 )
 
 type Resync struct {
@@ -1005,6 +1038,313 @@ type Subscribe struct {
 	Active *bool         `json:"active,omitempty"`
 	After  *StreamCursor `json:"after,omitempty"`
 	Topic  *string       `json:"topic,omitempty"`
+}
+type SurfaceAction struct {
+	Action   string                     `json:"action"`
+	InputID  string                     `json:"input_id"`
+	ResultID string                     `json:"result_id"`
+	Revision json.Number                `json:"revision"`
+	Values   map[string]json.RawMessage `json:"values"`
+}
+type SurfaceBinding struct {
+	Path string `json:"path"`
+}
+type SurfaceBody struct {
+	CatalogId      string             `json:"catalogId"`
+	CatalogVersion string             `json:"catalogVersion"`
+	Components     []SurfaceComponent `json:"components"`
+	DataModel      json.RawMessage    `json:"dataModel"`
+	Deleted        bool               `json:"deleted"`
+	SurfaceId      string             `json:"surfaceId"`
+	Version        string             `json:"version"`
+}
+type SurfaceComponent struct {
+	SurfaceWidgetText          *SurfaceWidgetText
+	SurfaceWidgetColumn        *SurfaceWidgetColumn
+	SurfaceWidgetRow           *SurfaceWidgetRow
+	SurfaceWidgetList          *SurfaceWidgetList
+	SurfaceWidgetCard          *SurfaceWidgetCard
+	SurfaceWidgetDivider       *SurfaceWidgetDivider
+	SurfaceWidgetButton        *SurfaceWidgetButton
+	SurfaceWidgetCheckbox      *SurfaceWidgetCheckbox
+	SurfaceWidgetChoicepicker  *SurfaceWidgetChoicepicker
+	SurfaceWidgetTextfield     *SurfaceWidgetTextfield
+	SurfaceWidgetDatetimeinput *SurfaceWidgetDatetimeinput
+	SurfaceWidgetWorkrow       *SurfaceWidgetWorkrow
+}
+
+func (v SurfaceComponent) MarshalJSON() ([]byte, error) {
+	var value any
+	count := 0
+	if v.SurfaceWidgetText != nil {
+		value = v.SurfaceWidgetText
+		count++
+	}
+	if v.SurfaceWidgetColumn != nil {
+		value = v.SurfaceWidgetColumn
+		count++
+	}
+	if v.SurfaceWidgetRow != nil {
+		value = v.SurfaceWidgetRow
+		count++
+	}
+	if v.SurfaceWidgetList != nil {
+		value = v.SurfaceWidgetList
+		count++
+	}
+	if v.SurfaceWidgetCard != nil {
+		value = v.SurfaceWidgetCard
+		count++
+	}
+	if v.SurfaceWidgetDivider != nil {
+		value = v.SurfaceWidgetDivider
+		count++
+	}
+	if v.SurfaceWidgetButton != nil {
+		value = v.SurfaceWidgetButton
+		count++
+	}
+	if v.SurfaceWidgetCheckbox != nil {
+		value = v.SurfaceWidgetCheckbox
+		count++
+	}
+	if v.SurfaceWidgetChoicepicker != nil {
+		value = v.SurfaceWidgetChoicepicker
+		count++
+	}
+	if v.SurfaceWidgetTextfield != nil {
+		value = v.SurfaceWidgetTextfield
+		count++
+	}
+	if v.SurfaceWidgetDatetimeinput != nil {
+		value = v.SurfaceWidgetDatetimeinput
+		count++
+	}
+	if v.SurfaceWidgetWorkrow != nil {
+		value = v.SurfaceWidgetWorkrow
+		count++
+	}
+	if count != 1 {
+		return nil, fmt.Errorf("union requires exactly one value")
+	}
+	return json.Marshal(value)
+}
+func (v *SurfaceComponent) UnmarshalJSON(data []byte) error {
+	if clientSchema.Defs["surface_component"].OneOf[0].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetText
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetText: &value}
+		return nil
+	}
+	if clientSchema.Defs["surface_component"].OneOf[1].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetColumn
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetColumn: &value}
+		return nil
+	}
+	if clientSchema.Defs["surface_component"].OneOf[2].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetRow
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetRow: &value}
+		return nil
+	}
+	if clientSchema.Defs["surface_component"].OneOf[3].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetList
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetList: &value}
+		return nil
+	}
+	if clientSchema.Defs["surface_component"].OneOf[4].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetCard
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetCard: &value}
+		return nil
+	}
+	if clientSchema.Defs["surface_component"].OneOf[5].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetDivider
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetDivider: &value}
+		return nil
+	}
+	if clientSchema.Defs["surface_component"].OneOf[6].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetButton
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetButton: &value}
+		return nil
+	}
+	if clientSchema.Defs["surface_component"].OneOf[7].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetCheckbox
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetCheckbox: &value}
+		return nil
+	}
+	if clientSchema.Defs["surface_component"].OneOf[8].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetChoicepicker
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetChoicepicker: &value}
+		return nil
+	}
+	if clientSchema.Defs["surface_component"].OneOf[9].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetTextfield
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetTextfield: &value}
+		return nil
+	}
+	if clientSchema.Defs["surface_component"].OneOf[10].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetDatetimeinput
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetDatetimeinput: &value}
+		return nil
+	}
+	if clientSchema.Defs["surface_component"].OneOf[11].Validate(data, clientSchema) == nil {
+		var value SurfaceWidgetWorkrow
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*v = SurfaceComponent{SurfaceWidgetWorkrow: &value}
+		return nil
+	}
+	return fmt.Errorf("invalid union value")
+}
+
+type SurfaceControlAction struct {
+	Bindings map[string]string          `json:"bindings"`
+	Key      string                     `json:"key"`
+	Name     string                     `json:"name"`
+	Values   map[string]json.RawMessage `json:"values"`
+}
+type SurfaceControlChoice struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+type SurfaceControlField struct {
+	Choices  []SurfaceControlChoice `json:"choices"`
+	ID       string                 `json:"id"`
+	Kind     string                 `json:"kind"`
+	Label    string                 `json:"label"`
+	Multiple bool                   `json:"multiple"`
+	Value    json.RawMessage        `json:"value"`
+}
+type SurfaceControls struct {
+	Actions []SurfaceControlAction `json:"actions"`
+	Fields  []SurfaceControlField  `json:"fields"`
+}
+type SurfaceEvent struct {
+	Context map[string]json.RawMessage `json:"context"`
+	Name    string                     `json:"name"`
+}
+type SurfaceEventAction struct {
+	Event SurfaceEvent `json:"event"`
+}
+type SurfaceOption struct {
+	Label json.RawMessage `json:"label"`
+	Value string          `json:"value"`
+}
+type SurfaceWidgetButton struct {
+	Action    SurfaceEventAction `json:"action"`
+	Child     string             `json:"child"`
+	Component string             `json:"component"`
+	ID        string             `json:"id"`
+	Variant   *string            `json:"variant,omitempty"`
+}
+type SurfaceWidgetCard struct {
+	Child     string `json:"child"`
+	Component string `json:"component"`
+	ID        string `json:"id"`
+}
+type SurfaceWidgetCheckbox struct {
+	Component string          `json:"component"`
+	ID        string          `json:"id"`
+	Label     json.RawMessage `json:"label"`
+	Value     json.RawMessage `json:"value"`
+}
+type SurfaceWidgetChoicepicker struct {
+	Component    string           `json:"component"`
+	DisplayStyle *string          `json:"displayStyle,omitempty"`
+	Filterable   *bool            `json:"filterable,omitempty"`
+	ID           string           `json:"id"`
+	Label        *json.RawMessage `json:"label,omitempty"`
+	Options      []SurfaceOption  `json:"options"`
+	Value        json.RawMessage  `json:"value"`
+	Variant      *string          `json:"variant,omitempty"`
+}
+type SurfaceWidgetColumn struct {
+	Align     *string  `json:"align,omitempty"`
+	Children  []string `json:"children"`
+	Component string   `json:"component"`
+	ID        string   `json:"id"`
+	Justify   *string  `json:"justify,omitempty"`
+}
+type SurfaceWidgetDatetimeinput struct {
+	Component  string           `json:"component"`
+	EnableDate *bool            `json:"enableDate,omitempty"`
+	EnableTime *bool            `json:"enableTime,omitempty"`
+	ID         string           `json:"id"`
+	Label      *json.RawMessage `json:"label,omitempty"`
+	Value      json.RawMessage  `json:"value"`
+}
+type SurfaceWidgetDivider struct {
+	Axis      *string `json:"axis,omitempty"`
+	Component string  `json:"component"`
+	ID        string  `json:"id"`
+}
+type SurfaceWidgetList struct {
+	Align     *string  `json:"align,omitempty"`
+	Children  []string `json:"children"`
+	Component string   `json:"component"`
+	Direction *string  `json:"direction,omitempty"`
+	ID        string   `json:"id"`
+}
+type SurfaceWidgetRow struct {
+	Align     *string  `json:"align,omitempty"`
+	Children  []string `json:"children"`
+	Component string   `json:"component"`
+	ID        string   `json:"id"`
+	Justify   *string  `json:"justify,omitempty"`
+}
+type SurfaceWidgetText struct {
+	Component string          `json:"component"`
+	ID        string          `json:"id"`
+	Text      json.RawMessage `json:"text"`
+	Variant   *string         `json:"variant,omitempty"`
+}
+type SurfaceWidgetTextfield struct {
+	Component string          `json:"component"`
+	ID        string          `json:"id"`
+	Label     json.RawMessage `json:"label"`
+	Value     json.RawMessage `json:"value"`
+	Variant   *string         `json:"variant,omitempty"`
+}
+type SurfaceWidgetWorkrow struct {
+	Action    SurfaceEventAction `json:"action"`
+	Component string             `json:"component"`
+	Elapsed   json.RawMessage    `json:"elapsed"`
+	ID        string             `json:"id"`
+	State     string             `json:"state"`
+	Title     json.RawMessage    `json:"title"`
 }
 
 // TaskCancel: Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.
@@ -1171,7 +1511,7 @@ type WorkerLane struct {
 	Worker     string   `json:"worker"`
 }
 
-// Payload is the closed set of client 1.0 payload types.
+// Payload is the closed set of client 1.0/1.1 payload types.
 type Payload interface{ isPayload() }
 
 func (Hello) isPayload()                {}
@@ -1262,6 +1602,9 @@ func (RecordRequest) isPayload()        {}
 func (RecordResult) isPayload()         {}
 func (A2aRequest) isPayload()           {}
 func (A2aResult) isPayload()            {}
+func (SurfaceAction) isPayload()        {}
+func (MockRequest) isPayload()          {}
+func (MockResponse) isPayload()         {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -1637,6 +1980,18 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p A2aResult
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindSurfaceAction:
+		var p SurfaceAction
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindMockRequest:
+		var p MockRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindMockResponse:
+		var p MockResponse
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -1671,8 +2026,8 @@ func decodeMessage(data []byte) (Envelope, error) {
 const clientSchemaJSON = `{
   "$comment": "SPDX-License-Identifier: Apache-2.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Client 1.0 envelope",
-  "description": "Client 1.0 kinds and specified payload fields. Reserved objects have no wire fields until the implementation issue named in their $comment defines them.",
+  "title": "Client 1.0 and 1.1 envelope",
+  "description": "Client 1.0 and 1.1 envelope and payloads. Client 1.1 adds generated cards and drawn mocks behind separate capabilities.",
   "type": "object",
   "properties": {
     "protocol": {
@@ -1768,7 +2123,10 @@ const clientSchemaJSON = `{
         "record_request",
         "record_result",
         "a2a_request",
-        "a2a_result"
+        "a2a_result",
+        "surface_action",
+        "mock_request",
+        "mock_response"
       ]
     },
     "message_id": {
@@ -3310,6 +3668,255 @@ const clientSchemaJSON = `{
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "surface_action"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/surface_action"
+          },
+          "protocol": {
+            "properties": {
+              "version": {
+                "const": "1.1"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "protocol": {
+            "properties": {
+              "version": {
+                "const": "1.0"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "result"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "payload": {
+                  "properties": {
+                    "type": {
+                      "not": {
+                        "const": "surface"
+                      }
+                    }
+                  },
+                  "not": {
+                    "required": [
+                      "surface_controls"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "snapshot"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "payload": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "allOf": [
+                          {
+                            "if": {
+                              "properties": {
+                                "kind": {
+                                  "const": "result"
+                                }
+                              }
+                            },
+                            "then": {
+                              "properties": {
+                                "payload": {
+                                  "properties": {
+                                    "type": {
+                                      "not": {
+                                        "const": "surface"
+                                      }
+                                    }
+                                  },
+                                  "not": {
+                                    "required": [
+                                      "surface_controls"
+                                    ]
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "history"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "payload": {
+                  "properties": {
+                    "snapshot": {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "allOf": [
+                              {
+                                "if": {
+                                  "properties": {
+                                    "kind": {
+                                      "const": "result"
+                                    }
+                                  }
+                                },
+                                "then": {
+                                  "properties": {
+                                    "payload": {
+                                      "properties": {
+                                        "type": {
+                                          "not": {
+                                            "const": "surface"
+                                          }
+                                        }
+                                      },
+                                      "not": {
+                                        "required": [
+                                          "surface_controls"
+                                        ]
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mock_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/mock_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mock_response"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/mock_response"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "protocol": {
+            "properties": {
+              "version": {
+                "const": "1.0"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "mock_request",
+                    "mock_response"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "result"
+                },
+                "payload": {
+                  "properties": {
+                    "type": {
+                      "const": "mock"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
     }
   ],
   "$defs": {
@@ -3377,7 +3984,11 @@ const clientSchemaJSON = `{
           "const": "client"
         },
         "version": {
-          "const": "1.0"
+          "type": "string",
+          "enum": [
+            "1.0",
+            "1.1"
+          ]
         }
       },
       "required": [
@@ -3489,13 +4100,64 @@ const clientSchemaJSON = `{
         },
         "version": {
           "$ref": "#/$defs/version"
+        },
+        "types": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/result_type"
+          },
+          "minItems": 0,
+          "maxItems": 32
+        },
+        "catalogs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 0,
+          "maxItems": 32
         }
       },
       "required": [
         "name",
         "version"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "name": {
+                "const": "results"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "types",
+              "catalogs"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "types"
+                  ]
+                },
+                {
+                  "required": [
+                    "catalogs"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
     },
     "agent": {
       "type": "object",
@@ -3570,7 +4232,11 @@ const clientSchemaJSON = `{
       "type": "object",
       "properties": {
         "protocol_version": {
-          "const": "1.0"
+          "type": "string",
+          "enum": [
+            "1.0",
+            "1.1"
+          ]
         },
         "capabilities": {
           "type": "array",
@@ -3737,6 +4403,10 @@ const clientSchemaJSON = `{
     "item_done": {
       "type": "object",
       "properties": {
+        "details": {
+          "type": "string",
+          "maxLength": 4096
+        },
         "stream": {
           "$ref": "#/$defs/stream_metadata"
         },
@@ -3965,6 +4635,9 @@ const clientSchemaJSON = `{
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991
+        },
+        "surface_controls": {
+          "$ref": "#/$defs/surface_controls"
         }
       },
       "required": [
@@ -4013,6 +4686,105 @@ const clientSchemaJSON = `{
             "required": [
               "text"
             ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "surface"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/surface_body"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "body": {
+                "x-go-type": "json.RawMessage",
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/mock_body"
+                  },
+                  {
+                    "x-go-type": "json.RawMessage",
+                    "allOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "entries": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/plan_entry"
+                            },
+                            "minItems": 1,
+                            "maxItems": 1000
+                          },
+                          "confirm": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [],
+                        "additionalProperties": false,
+                        "allOf": [
+                          {
+                            "if": {
+                              "anyOf": [
+                                {
+                                  "required": [
+                                    "entries"
+                                  ]
+                                },
+                                {
+                                  "required": [
+                                    "confirm"
+                                  ]
+                                }
+                              ]
+                            },
+                            "then": {
+                              "required": [
+                                "entries",
+                                "confirm"
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mock"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "body": {
+                "$ref": "#/$defs/mock_body"
+              }
+            }
           }
         }
       ]
@@ -4416,21 +5188,21 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "waiting_answer": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -4908,14 +5680,14 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "memory_import_progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "memory_promotion_batch": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -5096,7 +5868,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "agent_talk_subscribe": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -5158,7 +5930,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "task_cancel": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -5574,7 +6346,9 @@ const clientSchemaJSON = `{
         "document_draft",
         "comparison",
         "plan_view",
-        "file"
+        "file",
+        "surface",
+        "mock"
       ]
     },
     "result_status": {
@@ -5590,68 +6364,79 @@ const clientSchemaJSON = `{
     },
     "result_body": {
       "x-go-type": "json.RawMessage",
-      "allOf": [
+      "anyOf": [
         {
-          "type": "object",
-          "properties": {
-            "entries": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/plan_entry"
-              },
-              "minItems": 1,
-              "maxItems": 1000
-            },
-            "confirm": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "required": [],
-          "additionalProperties": false,
+          "$ref": "#/$defs/mock_body"
+        },
+        {
+          "$ref": "#/$defs/surface_body"
+        },
+        {
+          "x-go-type": "json.RawMessage",
           "allOf": [
             {
-              "if": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "entries"
+              "type": "object",
+              "properties": {
+                "entries": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/plan_entry"
+                  },
+                  "minItems": 1,
+                  "maxItems": 1000
+                },
+                "confirm": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "entries"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "confirm"
+                        ]
+                      }
                     ]
                   },
-                  {
+                  "then": {
                     "required": [
+                      "entries",
                       "confirm"
                     ]
                   }
-                ]
-              },
-              "then": {
-                "required": [
-                  "entries",
-                  "confirm"
-                ]
-              }
+                }
+              ]
             }
           ]
         }
       ]
     },
     "saved_reference": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "save_destination": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6618,6 +7403,14 @@ const clientSchemaJSON = `{
     "replay_request": {
       "type": "object",
       "properties": {
+        "provider": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "fixture": {
+          "type": "string",
+          "maxLength": 524288
+        },
         "turn_id": {
           "type": "string",
           "maxLength": 512
@@ -7949,6 +8742,1101 @@ const clientSchemaJSON = `{
       },
       "required": [
         "operation"
+      ],
+      "additionalProperties": false
+    },
+    "surface_binding": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "surface_string": {
+      "x-go-type": "json.RawMessage",
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "$ref": "#/$defs/surface_binding"
+        }
+      ]
+    },
+    "surface_value": {
+      "x-go-type": "json.RawMessage",
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 8192
+          },
+          "minItems": 0,
+          "maxItems": 256
+        },
+        {
+          "$ref": "#/$defs/surface_binding"
+        }
+      ]
+    },
+    "surface_event": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "context": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/surface_value"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "context"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_event_action": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/surface_event"
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_option": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "$ref": "#/$defs/surface_string"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_text": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "Text"
+        },
+        "text": {
+          "$ref": "#/$defs/surface_string"
+        },
+        "variant": {
+          "type": "string",
+          "enum": [
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "caption",
+            "body"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "text"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_column": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "Column"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 0,
+          "maxItems": 256
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "start",
+            "center",
+            "end",
+            "stretch"
+          ]
+        },
+        "justify": {
+          "type": "string",
+          "enum": [
+            "start",
+            "center",
+            "end",
+            "spaceBetween",
+            "spaceAround",
+            "spaceEvenly",
+            "stretch"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "children"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_row": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "Row"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 0,
+          "maxItems": 256
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "start",
+            "center",
+            "end",
+            "stretch"
+          ]
+        },
+        "justify": {
+          "type": "string",
+          "enum": [
+            "start",
+            "center",
+            "end",
+            "spaceBetween",
+            "spaceAround",
+            "spaceEvenly",
+            "stretch"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "children"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_list": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "List"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 0,
+          "maxItems": 256
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "start",
+            "center",
+            "end",
+            "stretch"
+          ]
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "vertical",
+            "horizontal"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "children"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_card": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "Card"
+        },
+        "child": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "child"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_divider": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "Divider"
+        },
+        "axis": {
+          "type": "string",
+          "enum": [
+            "horizontal",
+            "vertical"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "component"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_button": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "Button"
+        },
+        "child": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "action": {
+          "$ref": "#/$defs/surface_event_action"
+        },
+        "variant": {
+          "type": "string",
+          "enum": [
+            "default",
+            "primary",
+            "borderless"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "child",
+        "action"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_checkbox": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "CheckBox"
+        },
+        "label": {
+          "$ref": "#/$defs/surface_string"
+        },
+        "value": {
+          "x-go-type": "json.RawMessage",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/surface_binding"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "label",
+        "value"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_choicepicker": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "ChoicePicker"
+        },
+        "label": {
+          "$ref": "#/$defs/surface_string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface_option"
+          },
+          "minItems": 1,
+          "maxItems": 100
+        },
+        "value": {
+          "x-go-type": "json.RawMessage",
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 8192
+              },
+              "minItems": 0,
+              "maxItems": 100
+            },
+            {
+              "$ref": "#/$defs/surface_binding"
+            }
+          ]
+        },
+        "variant": {
+          "type": "string",
+          "enum": [
+            "mutuallyExclusive",
+            "multipleSelection"
+          ]
+        },
+        "displayStyle": {
+          "type": "string",
+          "enum": [
+            "checkbox",
+            "chips"
+          ]
+        },
+        "filterable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "options",
+        "value"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_textfield": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "TextField"
+        },
+        "label": {
+          "$ref": "#/$defs/surface_string"
+        },
+        "value": {
+          "$ref": "#/$defs/surface_string"
+        },
+        "variant": {
+          "type": "string",
+          "enum": [
+            "shortText",
+            "longText",
+            "number"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "label",
+        "value"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_datetimeinput": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "DateTimeInput"
+        },
+        "label": {
+          "$ref": "#/$defs/surface_string"
+        },
+        "value": {
+          "$ref": "#/$defs/surface_string"
+        },
+        "enableDate": {
+          "type": "boolean"
+        },
+        "enableTime": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "value"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_widget_workrow": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "component": {
+          "const": "WorkRow"
+        },
+        "action": {
+          "$ref": "#/$defs/surface_event_action"
+        },
+        "title": {
+          "$ref": "#/$defs/surface_string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "planned",
+            "running",
+            "waiting",
+            "done",
+            "failed",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "elapsed": {
+          "$ref": "#/$defs/surface_string"
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "action",
+        "title",
+        "state",
+        "elapsed"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_component": {
+      "x-go-type": "json.RawMessage",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/surface_widget_text"
+        },
+        {
+          "$ref": "#/$defs/surface_widget_column"
+        },
+        {
+          "$ref": "#/$defs/surface_widget_row"
+        },
+        {
+          "$ref": "#/$defs/surface_widget_list"
+        },
+        {
+          "$ref": "#/$defs/surface_widget_card"
+        },
+        {
+          "$ref": "#/$defs/surface_widget_divider"
+        },
+        {
+          "$ref": "#/$defs/surface_widget_button"
+        },
+        {
+          "$ref": "#/$defs/surface_widget_checkbox"
+        },
+        {
+          "$ref": "#/$defs/surface_widget_choicepicker"
+        },
+        {
+          "$ref": "#/$defs/surface_widget_textfield"
+        },
+        {
+          "$ref": "#/$defs/surface_widget_datetimeinput"
+        },
+        {
+          "$ref": "#/$defs/surface_widget_workrow"
+        }
+      ]
+    },
+    "surface_body": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": "v0.9"
+        },
+        "catalogId": {
+          "const": "lina.cards"
+        },
+        "catalogVersion": {
+          "const": "1.0"
+        },
+        "surfaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface_component"
+          },
+          "minItems": 0,
+          "maxItems": 256
+        },
+        "dataModel": {
+          "type": "object",
+          "additionalProperties": true,
+          "x-go-type": "json.RawMessage"
+        },
+        "deleted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "version",
+        "catalogId",
+        "catalogVersion",
+        "surfaceId",
+        "components",
+        "dataModel",
+        "deleted"
+      ],
+      "additionalProperties": false,
+      "x-go-type": "json.RawMessage"
+    },
+    "surface_action": {
+      "type": "object",
+      "properties": {
+        "result_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "revision": {
+          "$ref": "#/$defs/result_revision"
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/surface_value"
+          }
+        },
+        "input_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "result_id",
+        "revision",
+        "action",
+        "values",
+        "input_id"
+      ],
+      "additionalProperties": false
+    },
+    "surface_control_choice": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "surface_control_field": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "text",
+            "boolean",
+            "choice",
+            "date"
+          ]
+        },
+        "value": {
+          "$ref": "#/$defs/surface_value"
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface_control_choice"
+          },
+          "maxItems": 256
+        },
+        "multiple": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "kind",
+        "value",
+        "choices",
+        "multiple"
+      ],
+      "additionalProperties": false
+    },
+    "surface_control_action": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "values": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/surface_value"
+          }
+        },
+        "bindings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "values",
+        "bindings"
+      ],
+      "additionalProperties": false
+    },
+    "surface_controls": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface_control_action"
+          },
+          "maxItems": 256
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface_control_field"
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "actions",
+        "fields"
+      ],
+      "additionalProperties": false
+    },
+    "mock_body": {
+      "x-go-type": "json.RawMessage",
+      "allOf": [
+        {
+          "type": "object",
+          "properties": {
+            "request": {
+              "type": "string",
+              "minLength": 1
+            },
+            "checklist": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "toggle",
+                      "select",
+                      "input"
+                    ]
+                  },
+                  "target": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "description",
+                  "action",
+                  "target"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "page": {
+              "type": "object",
+              "properties": {
+                "asset_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "asset_id",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            "png": {
+              "type": "object",
+              "properties": {
+                "asset_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "asset_id",
+                "revision"
+              ],
+              "additionalProperties": false
+            },
+            "previous": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "result_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "result_id",
+                    "revision"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stop_reason": {
+              "const": "all_passed"
+            },
+            "checks": {
+              "type": "array",
+              "minItems": 7,
+              "maxItems": 7,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "enum": [
+                      "elements",
+                      "controls",
+                      "tokens",
+                      "network",
+                      "errors",
+                      "layout_390",
+                      "layout_1280"
+                    ]
+                  },
+                  "passed": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "id",
+                  "passed"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "request",
+            "checklist",
+            "page",
+            "png",
+            "previous",
+            "stop_reason",
+            "checks"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "mock_request": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "read",
+            "asset",
+            "build"
+          ]
+        },
+        "result_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "asset": {
+          "type": "string",
+          "enum": [
+            "page",
+            "png"
+          ]
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "target": {
+          "type": "string",
+          "enum": [
+            "screen",
+            "mini_app"
+          ]
+        },
+        "repositories": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "action",
+        "result_id",
+        "revision",
+        "conversation_id"
+      ],
+      "additionalProperties": false
+    },
+    "mock_response": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "$ref": "#/$defs/result"
+        },
+        "asset": {
+          "$ref": "#/$defs/mock_asset_ref"
+        },
+        "data": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string",
+          "enum": [
+            "application/zip",
+            "image/png"
+          ]
+        },
+        "next": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "goal_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "mock_asset_ref": {
+      "type": "object",
+      "properties": {
+        "asset_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "asset_id",
+        "revision"
       ],
       "additionalProperties": false
     }

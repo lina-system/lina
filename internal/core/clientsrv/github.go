@@ -53,7 +53,7 @@ func validGitHubRequest(p protocol.WorkRequest) bool {
 		return false
 	}
 	allowed := []string{"operation"}
-	required := []string{}
+	var required []string
 	switch *p.Operation {
 	case "github_read", "github_watch":
 		required = []string{"repository", "pr_number"}

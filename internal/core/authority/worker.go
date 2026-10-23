@@ -30,7 +30,7 @@ func workerRequest(in Approval) (Approval, string, error) {
 	}
 	// Copy only request facts. Lifecycle, scope and answer audit belong to Core.
 	a := Approval{
-		TaskID:    in.TaskID,
+		TaskID: in.TaskID, WorkerBinding: in.WorkerBinding,
 		EffectKey: in.EffectKey, Person: in.Person, Agent: in.Agent, Conversation: in.Conversation,
 		Tool: in.Tool, Plugin: workerRelayPlugin, Arguments: args,
 		What: in.What, Where: in.Where, Target: in.Target,

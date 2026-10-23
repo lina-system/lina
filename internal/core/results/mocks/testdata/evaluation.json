@@ -1,0 +1,116 @@
+[
+  {
+    "id": "appointment",
+    "request": "다음 주 치과, 되는 시간 셋 중에 골라 줘",
+    "checklist": [
+      {
+        "id": "times",
+        "description": "치과 예약 시간",
+        "action": "select",
+        "target": ""
+      }
+    ],
+    "fragment": "<main class=\"stack\"><h1>다음 주 치과</h1><label for=\"slots\">치과 예약 시간</label><select id=\"slots\" data-check=\"times\" data-action=\"select\" aria-label=\"치과 예약 시간\"><option>화 10:30</option><option>수 15:00</option><option>금 09:00</option></select></main>",
+    "owner_labelled": false,
+    "expected_dimensions": {
+      "elements": true,
+      "controls": true,
+      "tokens": true,
+      "network": true,
+      "errors": true,
+      "layout_390": true,
+      "layout_1280": true,
+      "text": true
+    }
+  },
+  {
+    "id": "running",
+    "request": "지금 돌아가는 일 보여 줘",
+    "checklist": [
+      {
+        "id": "running",
+        "description": "진행 중인 일",
+        "action": "none",
+        "target": ""
+      },
+      {
+        "id": "task",
+        "description": "자료 정리 · 실행 중 · 2분",
+        "action": "none",
+        "target": ""
+      }
+    ],
+    "fragment": "<main class=\"stack\"><h1 data-check=\"running\">진행 중인 일</h1><article class=\"card\" data-check=\"task\">자료 정리 · 실행 중 · 2분</article></main>",
+    "owner_labelled": false,
+    "expected_dimensions": {
+      "elements": true,
+      "controls": true,
+      "tokens": true,
+      "network": true,
+      "errors": true,
+      "layout_390": true,
+      "layout_1280": true,
+      "text": true
+    }
+  },
+  {
+    "id": "todos",
+    "request": "열린 할 일을 보여 주고 하나를 끝냄으로 표시하게 해 줘",
+    "checklist": [
+      {
+        "id": "title",
+        "description": "열린 할 일",
+        "action": "none",
+        "target": ""
+      },
+      {
+        "id": "done",
+        "description": "자료 정리 완료",
+        "action": "select",
+        "target": ""
+      }
+    ],
+    "fragment": "<main class=\"stack\"><h1 data-check=\"title\">열린 할 일</h1><label class=\"card row\"><input type=\"checkbox\" data-check=\"done\" data-action=\"select\" aria-label=\"자료 정리 완료\"/>자료 정리</label></main>",
+    "owner_labelled": false,
+    "expected_dimensions": {
+      "elements": true,
+      "controls": true,
+      "tokens": true,
+      "network": true,
+      "errors": true,
+      "layout_390": true,
+      "layout_1280": true,
+      "text": true
+    }
+  },
+  {
+    "id": "today-filter",
+    "request": "위에 '오늘만' 필터 넣어 줘",
+    "checklist": [
+      {
+        "id": "today",
+        "description": "오늘만",
+        "action": "toggle",
+        "target": "older"
+      },
+      {
+        "id": "task",
+        "description": "오늘 할 일",
+        "action": "none",
+        "target": ""
+      }
+    ],
+    "fragment": "<main class=\"stack\"><button data-check=\"today\" data-action=\"toggle\" data-target=\"older\">오늘만</button><article class=\"card\" data-check=\"task\">오늘 할 일</article><section id=\"older\" class=\"card\">이전 할 일</section></main>",
+    "owner_labelled": false,
+    "expected_dimensions": {
+      "elements": true,
+      "controls": true,
+      "tokens": true,
+      "network": true,
+      "errors": true,
+      "layout_390": true,
+      "layout_1280": true,
+      "text": true
+    }
+  }
+]
