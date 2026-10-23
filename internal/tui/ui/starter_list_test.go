@@ -40,3 +40,50 @@ func TestAgentListPresentsRoleSourceAndMainConversation(t *testing.T) {
 		})
 	}
 }
+
+// The list must show the value /agents choose takes, labelled apart from the
+// conversation id that Core refuses as an agent id.
+func TestAgentListShowsTheIdentifierChooseAccepts(t *testing.T) {
+	for _, language := range []design.Language{design.English, design.Korean} {
+		t.Run(string(language), func(t *testing.T) {
+			m := conversationShell()
+			m.styles.options.Language = language
+			m.content.Capabilities = append(m.content.Capabilities, protocol.Capability{Name: "agents", Version: "1.0"})
+			preset := "life"
+			list := []protocol.Agent{{AgentID: "agent-arin", Name: "Arin", Preset: &preset}}
+			op, reply := "list", "reply"
+			s := managementSession{model: m, pending: map[string]protocol.Payload{reply: protocol.AgentRequest{Operation: &op}}}
+			if _, err := s.response(context.Background(), nil, protocol.Envelope{ReplyTo: &reply, Payload: protocol.AgentResult{Operation: &op, Agents: &list}}); err != nil {
+				t.Fatal(err)
+			}
+			shown := listedValue(t, m.conversation.pager.text, design.Text(language, "agents.id")+": ")
+			if shown != "agent-arin" {
+				t.Fatalf("listed id = %q, want the agent id", shown)
+			}
+			if !strings.Contains(m.conversation.pager.text, "  main:agent-arin") {
+				t.Fatalf("conversation id missing: %s", m.conversation.pager.text)
+			}
+			for _, arg := range []string{shown, "main:agent-arin"} {
+				handled, cmd := m.managementCommand("/agents choose " + arg)
+				if !handled || cmd == nil {
+					t.Fatalf("choose refused %q", arg)
+				}
+				request := cmd().(shellManagement).Request.(protocol.AgentRequest)
+				if request.AgentID == nil || *request.AgentID != "agent-arin" {
+					t.Fatalf("choose %q sent %v, want the agent id", arg, request.AgentID)
+				}
+			}
+		})
+	}
+}
+
+func listedValue(t *testing.T, text, label string) string {
+	t.Helper()
+	for _, line := range strings.Split(text, "\n") {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), label); ok {
+			return value
+		}
+	}
+	t.Fatalf("no %q line in %s", label, text)
+	return ""
+}

@@ -4,7 +4,7 @@ This contract fixes the filesystem under the main LINA Core: the state root and 
 
 ## Scope
 
-The main LINA Core keeps its state on a Linux filesystem, whether LINA OS is the device operating system, LINA OS runs in a VM, or LINA Core runs on a general Linux system. Every install uses the same relative layout. The installation mode changes where the layout is mounted, never its shape. Installation modes are defined in [product-families.md](product-families.md).
+The main LINA Core keeps its state on a Linux filesystem. Every install uses the same relative layout; where the layout is mounted never changes its shape.
 
 A Node keeps only its own execution state: the grants it holds and the receipts it has not yet delivered. It never holds canon, materials or a version space. Grants, receipts and provenance are defined in [main-authority.md](main-authority.md).
 
@@ -28,7 +28,7 @@ There is one state root per main, written here as `<state-root>`. Every path bel
 
 | Area | Relative path | Holds | Writer | Backup unit |
 | --- | --- | --- | --- | --- |
-| Canon | `canon/` | LINA Core's SQLite canon: agents, the people it serves, ledgers (conversation events, with the bodies of results), the summary trees, memory items with their holder (an agent id or `all`), the citations that tie summary nodes, memory items and records to what they rest on, the legacy references and import batches of imports, materials metadata, the connected-source registry, the plugin registry, the channel connections, bindings, scopes and gateway cursors, standing grants, machine state (queues, cursors, leases, claims, idempotency keys), and derived indexes: the one search index and its vectors over events, summary nodes, memory items and records ([conversation-and-memory.md](conversation-and-memory.md#store-and-recall)), and the index of the records repository | LINA Core | Backup generation |
+| Canon | `canon/` | LINA Core's SQLite canon: agents, the people it serves, ledgers (conversation events, with the bodies of results), the summary trees, memory items with their holder (an agent id or `all`), the citations that tie summary nodes, memory items and records to what they rest on, the legacy references and import batches of imports, materials metadata, the connected-source registry, the plugin registry, the channel connections, bindings, scopes and gateway cursors, the messenger sources with their chats, cursors and coverage, standing grants, machine state (queues, cursors, leases, claims, idempotency keys), and derived indexes: the one search index and its vectors over events, summary nodes, memory items and records ([conversation-and-memory.md](conversation-and-memory.md#store-and-recall)), and the index of the records repository | LINA Core | Backup generation |
 | Version space | `versions/` | Local Git repositories for versionable text and metadata, including each agent's persona and personal text under `versions/agents/<agent-id>/` | LINA Core | Backup generation |
 | Records repository | `versions/records/` | The person's human-readable work and knowledge records (goals, 일 (project), 할 일 (to-do), 계속 챙기는 것 (area), memos, knowledge documents) as files under a PARA layout | LINA Core | Backup generation |
 | Imported materials | `materials/user/<asset-id>/<revision>/` | Bytes of material a person handed to LINA, when they are not kept in the version space | LINA Core | Backup generation |
@@ -38,7 +38,7 @@ There is one state root per main, written here as `<state-root>`. Every path bel
 | Parent clones | `work/clones/<repository-id>/` | Clones of the repositories that work runs against, one per repository | LINA Core | Not in a backup generation |
 | Task workspaces | `work/tasks/<task-id>/` | The worktree or the non-Git work directory of each task | The worker of that task, inside its grant | Not in a backup generation |
 | Run workspaces | `work/runs/<run-id>/` | The scratch directory and transcript of each background run | LINA Core creates it; the run writes inside it under its run scope | Not in a backup generation |
-| Plugin data | `plugins/<plugin-id>/` | The data directory of a local plugin server that runs in the sandbox | That server, inside its grant | Not in a backup generation |
+| Plugin data | `plugins/<plugin-id>/` | The data directory of a local plugin server that runs in the sandbox, and `plugins/messenger-addon/`, where the messenger add-on keeps its own sign-in sessions ([integrations.md](integrations.md#the-messenger-add-on)) | That server or the add-on, inside its grant | Not in a backup generation |
 | Import staging | `staging/import/` | Material on its way in, and the snapshots of a memory system being imported | LINA Core | Not backed up |
 | Export staging | `staging/export/` | Material on its way out | LINA Core | Not backed up |
 | Installation state | `system/` | Install configuration and component events; LINA Core's control files under `system/core/` (lock, epoch record, run sentinel, halt marker, restart request, main id, local config including the persona source path), written by LINA Core, never in a backup generation and preserved by a restore except for clearing a verified recovery's halt latch | The install and each component's event writer; LINA Core for `system/core/` | OS root snapshot, where the install has one |
@@ -133,7 +133,7 @@ The library scope is the set of connected sources. It is the scope that conversa
 
 - Nothing becomes a connected source unless a person connects it. LINA never connects a folder on its own. A folder being visible to the machine or to a Node doesn't make it a connected source.
 - The act of connecting is the approval. Connecting adds the source to the default read grant of every agent. There is no separate import step and no per-file approval. The connected-source registry records the person who connected each source.
-- On LINA OS, the person's data area on that device is offered as one connected source when the person sets up the device. On a general Linux main and on every device with a Node, the person connects the folders they choose.
+- On the Linux main and on every device with a Node, the person connects the folders they choose.
 - Connected sources do not overlap. Connecting a folder that lies inside an existing connected source makes it its own source, and the outer source excludes it. A file belongs to at most one connected source.
 - Nothing under `<state-root>` is ever a connected source.
 
@@ -141,9 +141,8 @@ The library scope is the set of connected sources. It is the scope that conversa
 
 | Where the source lives | Who reads and writes it |
 | --- | --- |
-| The LINA OS main device | LINA Core, locally |
-| The machine of a general Linux main | LINA Core, locally |
-| A device with a Node: a desktop install on Linux, macOS or Windows, or the host of a VM install | The Node of that device, under a grant from the main |
+| The Linux main machine | LINA Core, locally |
+| A device with a Node: Linux, macOS or Windows, including the host of a VM main | The Node of that device, under a grant from the main |
 
 Whatever device holds the files, the materials metadata, observed revisions and derived data of every connected source live on the main.
 
@@ -313,7 +312,7 @@ Every retraction, every recovery from the trash, every permanent deletion and ev
 
 Removal records are versioned JSON Lines with an operation id, sequence, previous digest and SHA-256 digest. One line covers an atomic operation and contains only the action, time, person, target identities and provenance needed to preserve extraction exclusions. The file is private; creation syncs its parent directories as well as the file. The coordinator syncs the line before canon acknowledges it. If that acknowledgement fails, replay finishes the durable intent before any read is served. A malformed or torn line, broken digest chain, or missing or changed line already acknowledged in canon prevents reads; recovery never silently discards an uncertain removal. Replaying the list against an older generation advances its watermark without duplicating operations already present there. A recovery line reverses recoverable trash; permanent deletion cannot be reversed by a later recovery request.
 
-On LINA OS, the OS root snapshot, the boot configuration, the person's home data and LINA's backup generations are distinct recovery units. An OS root snapshot doesn't include the person's home data and is never a LINA Core restore. Installation state under `system/` follows the OS root snapshot; the operator import journal and other areas a backup generation captures follow the backup generation. Neither stands in for the other. The update and rollback procedure that uses these units is defined in [runtime.md](runtime.md).
+An OS root snapshot, the boot configuration, the person's home data and LINA's backup generations are distinct recovery units. LINA Core never treats an OS snapshot as a restore: an OS root snapshot doesn't include the person's home data. Installation state under `system/` follows the OS root snapshot where the install has one; the operator import journal and other areas a backup generation captures follow the backup generation. Neither stands in for the other. The update and rollback procedure is defined in [runtime.md](runtime.md).
 
 ## Deferred
 

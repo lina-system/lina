@@ -47,6 +47,45 @@ func checkScheduledOutcomes(t *testing.T, h *harness, conversation string, ids [
 		t.Fatal(err)
 	}
 	defer controls.Close()
+	observer, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "outcome-observer", []protocol.Capability{{Name: "running", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observer.Close()
+	topic := "running"
+	if _, err := observer.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]protocol.RunningState{}
+	observe := func(update protocol.RunningUpdate) {
+		if update.RunID != nil && update.State != nil {
+			states[*update.RunID] = *update.State
+		}
+	}
+	waitStates := func(a, c protocol.RunningState) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+		defer cancel()
+		for states["task:"+ids[0]+":1"] != a || states["task:"+ids[2]+":1"] != c {
+			frame, err := observer.Receive(ctx)
+			if err != nil || frame.Error != nil {
+				t.Fatalf("running-list transition missing: states=%v error=%v frame=%+v", states, err, frame)
+			}
+			switch payload := frame.Payload.(type) {
+			case protocol.Snapshot:
+				for _, item := range payload.Items {
+					var update protocol.RunningUpdate
+					if err := json.Unmarshal(item.Payload, &update); err != nil {
+						t.Fatal(err)
+					}
+					observe(update)
+				}
+			case protocol.RunningUpdate:
+				observe(payload)
+			}
+		}
+	}
+	waitStates(protocol.RunningStateInProgress, protocol.RunningStateInProgress)
 	for _, i := range []int{0, 2} {
 		id, err := controls.Control(h.ctx, protocol.FollowUp{RunID: "task:" + ids[i] + ":1", ConversationID: &conversation, Text: "Report the outcome."})
 		if err != nil {
@@ -72,7 +111,8 @@ func checkScheduledOutcomes(t *testing.T, h *harness, conversation string, ids [
 	}
 	// The persona's actual completed turns prove delivery; a committed worker
 	// claim alone does not satisfy the conversation-result assertion.
-	waitWorkerCanon(t, h, `SELECT count(*) FROM conv_event e JOIN conv_event p ON p.id=e.parent_id JOIN turn_runs t ON t.id='turn:'||p.id WHERE p.scaffold_kind='worker_completion' AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'')<>'result' AND t.state='completed'`, 2)
+	waitWorkerCanon(t, h, `SELECT count(*) FROM conv_event e JOIN conv_event p ON p.id=e.parent_id JOIN turn_runs t ON t.id='turn:'||p.id WHERE p.scaffold_kind='worker_completion' AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'') NOT IN ('result','provider_item') AND t.state='completed'`, 2)
+	waitStates(protocol.RunningStateUnknown, protocol.RunningStateFailed)
 }
 
 func respondScheduledOutcome(t *testing.T, w http.ResponseWriter, inputs []json.RawMessage, scenario scheduledOutcomeScenario) bool {

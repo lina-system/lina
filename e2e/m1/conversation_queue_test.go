@@ -20,9 +20,9 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-// Admit the second input while the first provider request is held. Core must
-// finish the first turn's real skill tool call and reply, then prepare a separate
-// turn with the queued input once, retaining the first input and its late reply.
+// Queue two inputs while a tool-using turn is held. Its completed reply pushes
+// earlier history past the compaction threshold. Both queued turns must finish
+// separately, retaining the tool transcript and excluding later queued input.
 func TestM1QueuedConversationPreparation(t *testing.T) {
 	t.Parallel()
 	const firstInput = "List the available skills."
@@ -32,16 +32,47 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
-	var calls atomic.Int32
+	var calls, summaries atomic.Int32
+	var seeded atomic.Bool
 	var previousTools []json.RawMessage
 	var transcriptMu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Input        []json.RawMessage
 			Instructions string
+			Tools        []json.RawMessage
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
+			return
+		}
+		body := string(mustJSON(t, request.Input))
+		var last struct{ Role, Content string }
+		if len(request.Input) > 0 {
+			_ = json.Unmarshal(request.Input[len(request.Input)-1], &last)
+		}
+		if last.Role == "developer" && strings.Contains(last.Content, "unanswered_requests") && strings.Contains(last.Content, "omitted_detail") {
+			summaries.Add(1)
+			if !strings.Contains(body, "Archived source") || strings.Contains(body, firstInput) || strings.Contains(body, queuedInput) || strings.Contains(body, "Another queued input") {
+				t.Error("summary crossed the retained or queued input boundary")
+			}
+			emitResponse(w, `{"unanswered_requests":"none","topics_and_conclusions":"Archive","completed_actions":"Archive recorded","specific_values":"receipt 42","omitted_detail":"Archive padding"}`, true)
+			return
+		}
+		if !seeded.Swap(true) {
+			// Leave room for the next turn, then let its reply cross the
+			// compaction threshold. Count the same complete request as Core.
+			size := len(request.Instructions)
+			for _, items := range [][]json.RawMessage{request.Input, request.Tools} {
+				for _, item := range items {
+					size += len(item)
+				}
+			}
+			if size >= 108000 {
+				t.Error("archive fixture exceeds its initial budget")
+				return
+			}
+			emitResponse(w, "Archived reply "+strings.Repeat("a", 108000-size), true)
 			return
 		}
 		n := calls.Add(1)
@@ -50,8 +81,7 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 		if len(instructionBlock(request.Instructions, "persona")) == 0 {
 			t.Error("request lost its prepared persona")
 		}
-		body := string(mustJSON(t, request.Input))
-		if n <= 2 && strings.Contains(body, queuedInput) {
+		if n <= 2 && (strings.Contains(body, queuedInput) || strings.Contains(body, "Another queued input")) {
 			t.Error("queued input entered the preceding turn")
 		}
 		switch n {
@@ -66,7 +96,7 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 			fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"reasoning-catalog\",\"encrypted_content\":\"opaque-catalog\"}}\n\n")
 			fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"queued-catalog\",\"name\":\"skill_index\",\"arguments\":\"{}\"}}\n\n")
 			fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
-		case 2, 3, 4:
+		case 2, 3, 4, 5:
 			if n == 2 {
 				toolResult := false
 				for _, raw := range request.Input {
@@ -84,7 +114,7 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 				if !toolResult {
 					t.Error("first turn did not receive the executed skill tool result")
 				}
-				emitResponse(w, firstReply, true)
+				emitResponse(w, firstReply+strings.Repeat("b", 12000), true)
 				return
 			}
 			if len(previousTools) != 3 {
@@ -111,9 +141,22 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 					t.Errorf("request %d: prior %s %s occurs %d times, want 1", n, item.Type, item.CallID, matches)
 				}
 			}
-			if n == 4 {
+			if summaries.Load() != 1 || strings.Contains(body, "Archived source") || !strings.Contains(body, "receipt 42") {
+				t.Error("queued turn did not reuse its published summary")
+			}
+			if n == 5 {
 				emitResponse(w, "The catalog survived restart.", true)
 				return
+			}
+			if n == 4 {
+				if strings.Count(body, "Another queued input") != 1 {
+					t.Error("later queued input lost its own turn")
+				}
+				emitResponse(w, "Another reply.", true)
+				return
+			}
+			if strings.Contains(body, "Another queued input") {
+				t.Error("later queued input entered the current turn")
 			}
 			for _, text := range []string{firstInput, firstReply, queuedInput} {
 				if strings.Count(body, text) != 1 {
@@ -157,6 +200,7 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 			return
 		}
 	}
+	admittedTurn(t, h, c, conversation, "archive", "Archived source "+strings.Repeat("a", 10000))
 	admit("first", firstInput)
 	select {
 	case <-started:
@@ -164,9 +208,10 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 		t.Fatal(h.ctx.Err())
 	}
 	admit("queued", queuedInput)
+	admit("another", "Another queued input")
 	unblock()
 	var replies []string
-	for completed := 0; completed < 2; {
+	for completed := 0; completed < 3; {
 		frame, err := c.Receive(h.ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -174,14 +219,17 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 		if item, ok := frame.Payload.(protocol.ItemDone); ok && item.Speaker != nil && *item.Speaker == protocol.ConversationSpeakerAgent && item.Text != nil {
 			replies = append(replies, *item.Text)
 		}
+		if result, ok := frame.Payload.(protocol.Result); ok && result.Text != nil {
+			replies = append(replies, *result.Text)
+		}
 		if turn, ok := frame.Payload.(protocol.TurnState); ok && turn.Active != nil && !*turn.Active {
 			completed++
 		}
 	}
-	if !reflect.DeepEqual(replies, []string{firstReply, queuedReply}) || calls.Load() != 3 {
-		t.Fatalf("queued input did not receive its own reply: replies=%q calls=%d", replies, calls.Load())
+	if !reflect.DeepEqual(replies, []string{firstReply + strings.Repeat("b", 12000), queuedReply, "Another reply."}) || calls.Load() != 4 {
+		t.Fatalf("queued input did not receive its own reply: reply count=%d calls=%d summaries=%d", len(replies), calls.Load(), summaries.Load())
 	}
-	t.Logf("provider requests=%d; separate replies=%q; queued context retained prior reasoning, tool call and raw result", calls.Load(), replies)
+	t.Logf("provider requests=%d summaries=%d; three separate replies retained prior reasoning, tool call and raw result", calls.Load(), summaries.Load())
 	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +245,16 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 		if items != 3 || pairs != 1 {
 			t.Errorf("ledger transcript: items=%d pairs=%d, want 3 and 1", items, pairs)
 		}
-		for _, key := range []string{"first", "queued"} {
+		var nodes, queuedCoverage int
+		if err := tx.QueryRowContext(h.ctx, `SELECT
+            (SELECT count(*) FROM sum_node WHERE conversation_id=? AND status='ready'),
+            (SELECT count(*) FROM sum_cover c JOIN conv_event e ON e.id=c.event_id WHERE e.conversation_id=? AND e.speaker_kind='person' AND e.body IN (?,?))`, conversation, conversation, queuedInput, "Another queued input").Scan(&nodes, &queuedCoverage); err != nil {
+			return err
+		}
+		if nodes != 1 || queuedCoverage != 0 {
+			t.Errorf("summary proof: nodes=%d queued coverage=%d, want 1 and 0", nodes, queuedCoverage)
+		}
+		for _, key := range []string{"archive", "first", "queued", "another"} {
 			var count int
 			if err := tx.QueryRowContext(h.ctx, `SELECT count(*) FROM inbox i JOIN turn_runs t ON t.inbox_id=i.id WHERE i.conversation=? AND i.source='client' AND i.native_id=? AND t.state='completed'`, conversation, key).Scan(&count); err != nil {
 				return err
@@ -225,8 +282,8 @@ func TestM1QueuedConversationPreparation(t *testing.T) {
 		}
 	}
 	t.Logf("restart provider requests=%d; prior tool transcript retained exactly once", calls.Load())
-	if calls.Load() != 4 {
-		t.Fatalf("restart provider requests=%d, want 4", calls.Load())
+	if calls.Load() != 5 || summaries.Load() != 1 {
+		t.Fatalf("restart provider requests=%d summaries=%d, want 5 and 1", calls.Load(), summaries.Load())
 	}
 	c.Close()
 	h.stopCore(core)

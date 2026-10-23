@@ -49,3 +49,29 @@ read-only contents API before this correction.
 - **Unknown:** the reference does not define gh read races or retry counts.
   LINA refreshes once, remains blocked even if the original head returns, and
   leaves further observation and explicit head acceptance to the caller.
+
+## Implementation notes
+
+Design authority: [Go Core](../../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-58 merge integration
+
+#141 adds the running Core's `github_merge` capability and the shared `ghclient.Merge` service.
+A person connects a PR to its parent clone and named protected local branches; Core verifies the clone's origin and captures those refs before work.
+Head acceptance reads GitHub and compares those refs again.
+The merge takes a repository/base slot, reads checks and unresolved priority findings, rechecks PR identity, compares protected refs and commits an unknown intent before the fixed head-pinned child runs.
+A moved head is returned as fresh evidence and requires explicit acceptance; there is no automatic merge or review retry.
+A command's success alone is not landing: Core checks the merge commit, exact target ref and checks on that commit.
+Queue/unknown states retain a durable base reservation and permit only observation.
+Restart never repeats a write.
+
+### C-58 merge authority migration
+
+`authority.Merges` stores the connection, captured refs, accepted head, requesting person/agent and final evidence in canon migration 30.
+It is merge authority bookkeeping, not a replacement for the pinned work-ledger receipt/verdict schemas.
+The work reactor can consume the same service and evidence.
+A confirmed external merge is `observed`, a confirmed successful Core call is a `receipt`; neither issues a delivery verdict.
+Restore invalidates unused merge permission while retaining uncertain reservations and terminal evidence.
+`e2e/m2/github-merge.json` drives the installed Core, a synthetic gh child and a real temporary Git clone, including restart and failed checks on a person's merge.

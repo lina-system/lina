@@ -18,3 +18,18 @@ and `README.md`, inspected before implementing the adapter.
   availability are not established by a stub. Automatic account installation,
   pooling and idle shutdown belong to #168. The SDK and its platform runtime are
   installed by the person from this lockfile, never redistributed by LINA.
+
+## Implementation notes
+
+Design authority: [Go Core](../../docs/design/go-core.md) and the contracts it cites.
+These notes retain implementation and validation history from the cited increments;
+they do not establish current acceptance or change the contracts.
+
+### C-45 runtime increment
+
+#167 implements the external TypeScript program and the [version 1 JSON-line wire](README.md#c-45-wire-version-1), including correlated MCP tool results, cancellation, ping/pong, init refusal and reported usage.
+The SDK is installed from the adapter lockfile with lifecycle scripts disabled; foundation verifies sources, integrity, exact pins, registry signatures and the stub suite in a disposable installation.
+An explicitly configured Core route starts the program through `kit/proc`, routes runtime tool calls through the existing admission and durable call/result journal, and joins it on stream close.
+The ledger records `AgentRuntime`; the ordered context travels as a JSON transcript in the SDK prompt, so native vendor request fidelity is not claimed.
+`e2e/m2/claude-adapter.json` exercises the installed Core, a real Core tool, streamed reply and restart persistence with a stub vendor runtime.
+Automatic account setup, first-use installation, quota projection and idle pooling remain #168; this increment's explicit route launches one process per request.

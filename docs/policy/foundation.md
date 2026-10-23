@@ -64,9 +64,13 @@ reads the exact plan and newest shard result artifacts, including failures.
 `scripts/verify/post-merge-qa.mjs` opens or updates a `qa` issue for each failing
 Go top-level test, with nested failure lines, the tested head, first failing
 commit range and workflow run. A package timeout or panic also fails each
-unfinished test with an active leaf or an explicit nested failure, with bounded
-package diagnostics. Parallel tests paused for an execution slot, including
-parents waiting only on paused subtests, remain unknown and create no QA issue.
+unfinished test with an active leaf, an explicit nested failure, or a test named
+in Go's timeout running-test diagnostics, with bounded package diagnostics.
+The running-test list distinguishes a parent still executing after starting a
+parallel child from a parent waiting on its children. Its identities are retained
+per package even when a stack dump exceeds the diagnostic tail. Parallel tests
+paused for an execution slot, including parents waiting only on paused subtests,
+remain unknown and create no QA issue.
 Unknown results cannot close an existing issue or make the foundation gate pass.
 Completed tests retain their results; tests that never started are not reported
 as failures. Configure the
@@ -112,7 +116,7 @@ selection ----+---- docs / automation / dependencies ----+---- foundation
               +---- e2e (post-merge / PR opt-in) ---------+
 ```
 
-`node scripts/foundation.mjs` remains the single local entry point. It selects the same plan and starts bounded child processes, giving each Go process a share of the available CPUs through `GOMAXPROCS`. Locally, one e2e process at a time uses `-parallel=4`; in CI, each e2e shard has its own runner. All local checks share a 1200-second execution deadline. Each Go shard also keeps the existing component command budget, and `go test -timeout=6m` bounds package execution and emits stuck-test diagnostics. Individual operation and scenario deadlines are unchanged. A failed shard does not cancel independent shards.
+`node scripts/foundation.mjs` remains the single local entry point. It selects the same plan and starts bounded child processes, giving each Go process a share of the available CPUs through `GOMAXPROCS`. The shared e2e harness passes its current Go CPU budget to child commands when constructing their isolated environment, so parallel Core processes retain that share. Locally, one e2e process at a time uses `-parallel=4`; in CI, each e2e shard has its own runner. All local checks share a 1200-second execution deadline. Each Go shard also keeps the existing component command budget, and `go test -timeout=6m` bounds package execution and emits stuck-test diagnostics. Individual operation and scenario deadlines are unchanged. A failed shard does not cancel independent shards.
 
 Selection records the exact base and candidate commits, changed paths, selected components, checks and shards, and the selection reason. It checks Git whitespace with `git diff --check` over the range, or `git show --check` on `HEAD` with `--full`. CI uses the same entry point with `--select <plan.json>`, `--plan <plan.json> --shard <id> --out <result.json>`, and `--plan <plan.json> --results <directory> --upstream <status> --no-note`. Worker results must match the selected head, tree and plan digest. Go JSON results must account for every selected package and e2e test; a zero exit code cannot hide an omitted test.
 
@@ -132,7 +136,7 @@ The executable path map is `scripts/verify/scope.mjs`. All paths under `internal
 
 | Change | Selection |
 | --- | --- |
-| Only explicitly listed root documents, Markdown directly under `docs/policy/`, `docs/design/` or `docs/research/`, or JSON and Markdown records under `evidence/` | `docs`; no automation installation or test run. |
+| Only explicitly listed root documents, Markdown directly under `docs/policy/`, `docs/design/` or `docs/research/`, JSON and Markdown records under `evidence/`, or PNG captures directly under `evidence/brand/` or `evidence/generated-ui/` | `docs`; no automation installation or test run. |
 | A verification script, `.github/workflows/*.yml` or `*.yaml`, `.node-version`, or shared repository configuration | `docs`, `automation`, and every registered Go component. |
 | Empty or unavailable diff | `docs`, `automation`, and every registered Go component; never assume documentation-only. |
 | An unmapped path in the changed paths or candidate tree | `docs`, `automation`, and every registered Go component, but the gate refuses to pass until its verification is registered. |
@@ -141,7 +145,7 @@ Deleted paths and both sides of a rename participate. A `.md` suffix alone does 
 
 ## Current checks
 
-- **docs:** validate local file targets in all tracked Markdown and `LICENSE`, including links from unchanged documents to deleted targets (`scripts/verify/check-docs.mjs`). Local `*.md#fragment` links must match a GitHub-style heading anchor in the target document, including numbered suffixes for duplicate headings. ATX and setext headings count; code examples and comments do not. Custom HTML IDs are not supported. External URLs, bare `#fragment` links, non-Markdown fragments and the meaning of prose are outside this check.
+- **docs:** validate local file targets in all tracked Markdown and `LICENSE`, including links from unchanged documents to deleted targets (`scripts/verify/check-docs.mjs`). Local `*.md#fragment` links must match a GitHub-style heading anchor in the target document, including numbered suffixes for duplicate headings. ATX and setext headings count; a multiline setext heading uses the entire paragraph above its underline, not just the final line. Code examples and comments do not count. Custom HTML IDs are not supported. External URLs, bare `#fragment` links, non-Markdown fragments and the meaning of prose are outside this check.
 - **automation:** run `actionlint` on workflow files when present, check JavaScript syntax and run the Node behavioral suite of the scripts under `scripts/`. A missing actionlint executable or invalid workflow fails the check. Tests that use Git run in disposable repositories with every `GIT_*` variable cleared. Integration and release tests run against a disposable bare remote; they never push to the real remote or publish a real release.
 - **components:** build, vet and run the pinned `exhaustive` analyzer in one shard, then run uncached unit and acceptance shards for selected Go components (`scripts/verify/check-components.mjs`). Command builds go to a temporary directory; the check executes each produced command without arguments and verifies its usage error. Temporary outputs and the isolated home directory are removed when the check ends.
 
@@ -225,7 +229,7 @@ Diagnostics name the source file, line and violated rule. Behavioral fixtures ex
 
 [V7](../../evidence/v7-dev-loop.json) records budgets declared before measurement, an edit followed by `go build`, `go vet` and uncached `go test` for the affected Go package, and `node scripts/foundation.mjs --full`. The initial budgets are 20 seconds for the affected-package loop and 60 seconds for full verification including vulnerability and license scans. Records identify the source, tool versions, cache conditions, commands, durations and outcomes. An over-budget measurement remains a failure; it is not hidden by raising the budget after the run.
 
-JSON and Markdown under `evidence/` are documents paths. Updating an evidence record alone selects `docs`; the record is historical evidence, not a replacement for running checks on a changed candidate. Executable files in that directory remain unmapped.
+JSON and Markdown under `evidence/`, and PNG captures directly under `evidence/brand/` and `evidence/generated-ui/`, are documents paths. Updating an evidence record alone selects `docs`; the record is historical evidence, not a replacement for running checks on a changed candidate. Executable files in that directory remain unmapped.
 
 ### Path mapping
 
@@ -299,6 +303,14 @@ history in 60 seconds. Core connection and process waits retain their existing
 10-second bounds; package and enclosing foundation deadlines are unchanged.
 Neither scenario retries failed observations or substitutes a sleep for a
 protocol or process-completion barrier.
+
+Manual work-turn acceptance waits follow the exact client input's durable turn.
+A failed or aborted turn fails the scenario immediately with its input id, turn
+id and state; it cannot later complete. An input with no turn yet, or an active
+turn, retains the scenario deadline. `TestM2QueuedWorkTurnTerminal` exercises
+these states in canon, including completed turns belonging to other inputs,
+sources and conversations. This prevents a known terminal failure from consuming
+the package budget while unrelated worker scenarios wait for execution slots.
 
 Verification runs in a clean worktree without credentials: no Git or GitHub credentials, tokens, account secrets, personal data, or production services, and no write access to any remote. Actual model and provider calls and subjective quality evaluations run separately in explicitly authorized environments.
 

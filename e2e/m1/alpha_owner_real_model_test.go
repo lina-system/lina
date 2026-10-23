@@ -245,17 +245,11 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 		alphaScreen(t, h, terminal, "question-in-conversation", alphaNameRequest, "")
 		h.keys(terminal, "\x1b[200~이름은 민준이야. 그 답을 같은 Codex 작업자에게 전하고 작업을 계속해 줘.\x1b[201~\r")
 	}
-	pane := terminal.screen.Snapshot()
-	var right strings.Builder
-	for _, row := range pane.Cells {
-		for _, cell := range row[min(80, len(row)):] {
-			right.WriteString(cell.Content)
-		}
-		right.WriteByte('\n')
-	}
-	if !strings.Contains(right.String(), "0m") {
-		t.Error("missing right-side work card with elapsed time at 120x34")
-	}
+	// A spoken question leaves the worker idle until its continuation starts;
+	// a structured answer may let it finish before the overlay closes. Neither
+	// requires a transient card here. The held-worker journey checks the card;
+	// this journey requires the delivered result and verifies its artifact below.
+	alphaConversationScreen(t, h, terminal, design.Korean)
 
 	// A result is accepted only after a persona turn follows an actual worker
 	// completion. An initial delegation acknowledgement cannot satisfy this loop.
