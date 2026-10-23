@@ -78,7 +78,7 @@ func openHoncho(ctx context.Context, address, apiPath string, accepted []byte, c
 	}
 	base, err := url.Parse(address)
 	if err != nil || base.Host == "" || (base.Scheme != "https" && base.Scheme != "http") || base.User != nil || base.RawQuery != "" || base.Fragment != "" || base.Path != "" && base.Path != "/" {
-		return nil, ErrSnapshot
+		return nil, invalidSnapshot("Honcho base URL")
 	}
 	// A run credential may cross a network only under TLS. Literal loopback
 	// addresses retain support for a local Honcho service without relying on DNS.
@@ -102,7 +102,7 @@ func openHoncho(ctx context.Context, address, apiPath string, accepted []byte, c
 	closeErr := response.Body.Close()
 	if err = errors.Join(readErr, closeErr); err != nil {
 		h.Close()
-		return nil, ErrSnapshot
+		return nil, invalidSnapshot("Honcho description response read")
 	}
 	if len(document) > 8<<20 {
 		h.Close()
@@ -199,7 +199,7 @@ func (h *Honcho) get(ctx context.Context, relative string) (*http.Response, erro
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, ErrSnapshot
+		return nil, invalidSnapshot("Honcho request construction")
 	}
 	if err = secret.InjectHeader(req.Header, "Authorization", "Bearer ", h.credential); err != nil {
 		return nil, err
@@ -210,7 +210,7 @@ func (h *Honcho) get(ctx context.Context, relative string) (*http.Response, erro
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, ErrSnapshot
+		return nil, invalidSnapshot("Honcho request transport")
 	}
 	if response.StatusCode != http.StatusOK {
 		response.Body.Close()

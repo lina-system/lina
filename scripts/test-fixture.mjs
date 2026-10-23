@@ -104,7 +104,13 @@ const binaries = ['lina', 'lina-node'].map(name => {
   writeFileSync(join(out, name), bytes);
   return { name, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
 });
-writeFileSync(join(out, 'manifest.json'), JSON.stringify({ version, commit, target, binaries }));
+mkdirSync(join(out,'adapters/claude-acp'),{recursive:true});
+const installFiles=['adapters/claude-acp/package.json','adapters/claude-acp/package-lock.json'].map(name=>{
+  const bytes=Buffer.from('synthetic '+name);
+  writeFileSync(join(out,name),bytes);
+  return {name,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};
+});
+writeFileSync(join(out, 'manifest.json'), JSON.stringify({ version, commit, target, binaries, installFiles }));
 `);
   sb.write(work, 'LICENSE', 'Fixture license\n');
   sb.write(work, 'THIRD-PARTY-NOTICES.md', 'Fixture notices\n');

@@ -76,7 +76,7 @@ func readBundle(dir string) (bundle, error) {
 		return b, errors.New("bundle has no Linux lina binary")
 	}
 	for _, file := range extra.InstallFiles {
-		if path.Clean(file.Name) != file.Name || !strings.HasPrefix(file.Name, "adapters/claude/") || strings.Contains(file.Name, "\\") {
+		if path.Clean(file.Name) != file.Name || !(strings.HasPrefix(file.Name, "adapters/claude/") || file.Name == "adapters/claude-acp/package.json" || file.Name == "adapters/claude-acp/package-lock.json") || strings.Contains(file.Name, "\\") {
 			return b, errors.New("invalid adapter artifact path")
 		}
 		if _, exists := b.files[file.Name]; exists {
@@ -88,8 +88,15 @@ func readBundle(dir string) (bundle, error) {
 		}
 		b.files[file.Name] = data
 	}
-	if len(extra.InstallFiles) > 0 && (b.files["adapters/claude/package.json"] == nil || b.files["adapters/claude/package-lock.json"] == nil) {
-		return b, errors.New("Claude adapter requires its package file and lockfile")
+	for _, adapter := range []string{"claude", "claude-acp"} {
+		prefix := "adapters/" + adapter + "/"
+		present := false
+		for name := range b.files {
+			present = present || strings.HasPrefix(name, prefix)
+		}
+		if present && (b.files[prefix+"package.json"] == nil || b.files[prefix+"package-lock.json"] == nil) {
+			return b, fmt.Errorf("%s adapter requires its package file and lockfile", adapter)
+		}
 	}
 	return b, nil
 }

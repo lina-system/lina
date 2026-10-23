@@ -56,3 +56,13 @@ tests check row-level mapping reports, separate events for unresolved rows,
 profile isolation, lossless reverse mapping and repeat-import zero growth.
 `TestM1ImportUIDLineages` also exercises the installed CLI, seal and backup, and
 reads the promoted result through Core after restart.
+
+`delivery.sql` extends the host fixture with the registered gateway delivery
+ledger. Tests also cover its pre-`adapter_profile` layout and reject unrelated
+tables or column drift. Its synthetic retry row is counted and explicitly
+omitted from memory import. `current-kinds.sql` adds an observational alias
+candidate and a composite group with ordered members, including its head.
+Rehearsal inventories the kinds; import preserves their source rows and links
+without treating the alias as a confirmed host identity. The installed CLI
+reconciliation scenario imports these fixtures, seals and backs up canon,
+and reads promoted results from Core after restart.

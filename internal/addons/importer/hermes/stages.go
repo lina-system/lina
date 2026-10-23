@@ -63,6 +63,7 @@ type conversation struct {
 	hidden  bool
 }
 type TableCount struct {
+	Kinds                   map[string]int `json:",omitempty"`
 	System, Instance, Table string
 	Columns                 []string
 	Rows                    int
@@ -119,7 +120,7 @@ func (p *Plan) Conversations() int { return len(p.conversations) }
 func Prepare(ctx context.Context, req Request) (*Plan, error) { return prepare(ctx, req, nil) }
 func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (_ *Plan, err error) {
 	if !req.Confirmed || req.BatchID == "" || len(req.Profiles) == 0 {
-		return nil, ErrSnapshot
+		return nil, invalidSnapshot("confirmed maps, batch and profiles required")
 	}
 	p := &Plan{batch: req.BatchID, rehearsal: req.Rehearsal, people: map[string]string{}}
 	defer func() {
@@ -136,7 +137,7 @@ func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (_ *Pla
 	builders := map[string]*profileBuilder{}
 	for _, profile := range req.Profiles {
 		if profile.ID == "" || profile.AgentID == "" || profile.PersonID == "" || seen[profile.ID] {
-			return nil, ErrSnapshot
+			return nil, invalidSnapshot("unique complete profile mapping")
 		}
 		seen[profile.ID] = true
 		b, err := newProfile(ctx, p, profile)
@@ -148,7 +149,7 @@ func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (_ *Pla
 	for _, w := range honcho {
 		b := builders[w.profile]
 		if b == nil {
-			return nil, ErrSnapshot
+			return nil, invalidSnapshot("Honcho profile mapping required")
 		}
 		if err := b.addHoncho(w); err != nil {
 			return nil, err
@@ -157,7 +158,7 @@ func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (_ *Pla
 	for _, s := range req.Sidecars {
 		b := builders[s.Event.Instance]
 		if b == nil {
-			return nil, ErrSnapshot
+			return nil, invalidSnapshot("sidecar profile mapping required")
 		}
 		if err := b.addSidecar(ctx, s, req.Materials); err != nil {
 			return nil, err
@@ -189,7 +190,7 @@ func timestamp(r Row, field string) string {
 }
 func (p *Plan) Import(ctx context.Context, db Canon) (Report, error) {
 	if p.rehearsal {
-		return Report{}, ErrSnapshot
+		return Report{}, invalidSnapshot("rehearsal plan cannot import")
 	}
 	defer p.Close() // durable markers preserve cleanup failures for restart recovery
 	report := Report{Tables: append([]TableCount(nil), p.inventory...), AmbiguousUIDRows: len(p.uidLineages), UIDLineageMappings: p.uidLineages}

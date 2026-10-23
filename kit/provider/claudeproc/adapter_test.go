@@ -14,7 +14,7 @@ import (
 )
 
 func scripted(lines ...string) *stream {
-	return &stream{scanner: bufio.NewScanner(strings.NewReader(strings.Join(lines, "\n") + "\n")), tools: map[string]bool{}, meta: provider.Meta{Class: provider.AgentRuntime}}
+	return &stream{ctx: context.Background(), scanner: bufio.NewScanner(strings.NewReader(strings.Join(lines, "\n") + "\n")), tools: map[string]bool{}, meta: provider.Meta{Class: provider.AgentRuntime}}
 }
 
 const emptyInit = `{"type":"init","id":"turn","tools":[],"mcp_servers":[],"plugins":[]}`

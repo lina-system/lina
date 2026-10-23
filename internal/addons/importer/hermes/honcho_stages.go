@@ -18,7 +18,7 @@ type honchoWorkspace struct {
 
 func (b *profileBuilder) addHoncho(w honchoWorkspace) error {
 	if w.workspace == "" {
-		return ErrSnapshot
+		return invalidSnapshot("Honcho workspace required")
 	}
 	for _, row := range w.messages {
 		if err := checkRow(row); err != nil {
@@ -26,7 +26,7 @@ func (b *profileBuilder) addHoncho(w honchoWorkspace) error {
 		}
 		id, session, role := row.text("id"), row.text("session_id"), row.text("role")
 		if id == "" || session == "" {
-			return ErrSnapshot
+			return invalidSnapshot("Honcho message id and session required")
 		}
 		var timed, exact []*record
 		text := row.text("content")
@@ -89,7 +89,7 @@ func (b *profileBuilder) addHoncho(w honchoWorkspace) error {
 		}
 		id := row.text("id")
 		if id == "" {
-			return ErrSnapshot
+			return invalidSnapshot("Honcho history id required")
 		}
 		c := b.sessionConversations[row.text("session_id")]
 		if c == nil {
@@ -120,7 +120,7 @@ func (b *profileBuilder) addHoncho(w honchoWorkspace) error {
 			}
 			var ids []string
 			if json.Unmarshal([]byte(row.text(field)), &ids) != nil {
-				return ErrSnapshot
+				return invalidSnapshot("Honcho history link IDs JSON")
 			}
 			kind, relation := "messages", "source"
 			if field == "supersedes" {

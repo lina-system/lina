@@ -89,3 +89,35 @@ they do not establish current acceptance or change the contracts.
 `internal/core/worker/acp` implements C-29 on that client.
 A profile holds the worker name, the command and arguments, the environment variables it sets (such as `CLAUDE_CODE_EXECUTABLE`), the version probe and the vendor rate-limit key it may read.
 Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added profiles come from an editable settings file defined by their own issue.
+
+## Pinned Claude ACP program (#752)
+
+- **Seen:** `@agentclientprotocol/claude-agent-acp` 0.94.0's published
+  `dist/acp-agent.js` selects `CLAUDE_CODE_EXECUTABLE` before its bundled CLI,
+  uses `settingSources: ["user", "project", "local"]`, and starts the SDK query
+  during session creation. Its own version is returned by ACP initialize.
+  Installing its lockfile with scripts disabled and optional packages omitted
+  installs 107 packages, with no optional Claude binary. The release's SDK is
+  0.3.303 and the ACP SDK is 2.0.0 (which negotiates ACP v1).
+- **Inferred:** Discovery should require the person's Claude and Node, not a
+  globally installed ACP wrapper. Installation belongs at session start, after
+  selection, and the existing worker version probe must keep using Claude.
+- **Unknown:** A synthetic Claude stream establishes integration, not a verified
+  live vendor version. The live test is separately opted in. This is a native
+  ACP integration, not a Hermes, Honcho, LCM-X or CRW port.
+
+## Grok handshake (#759)
+
+- **Seen:** The protocol measurements and issue #759 record Grok Build 1.0.68
+  answering ACP v1 with `loadSession`, `session/list`, `session/resume` and
+  `session/close`. Its version is `_meta.agentVersion`, alongside host details.
+  Without sign-in, `session/new` returns -32000. The existing Grok profile probes
+  `grok --version` and starts `grok --no-auto-update agent stdio`.
+- **Inferred:** Keep the CLI version as readiness and installation evidence.
+  Store only the handshake version and known capability names, never raw
+  metadata, nested capability metadata or authentication descriptions. Observed
+  capabilities do not enable unimplemented adapter operations.
+- **Unknown:** A signed-in vendor account round trip remains unverified. The
+  synthetic installed-Core scenario proves dispatch and receipt wiring, not a
+  vendor release. This implements the native LINA contract; no external harness
+  or memory-system behavior is ported.
