@@ -528,12 +528,12 @@ The current installed adapter uses Korean counting and the shared TUI renderer a
 - Summary-first writing is a background run given the latest outline revision.
 - Managed planning previews use the same result ledger and revision checks.
   Core installs the results and planning receipt schemas in the numbered canon
-  catalog at migration 44, after the published Korean records search migration
+  catalog at migration 45, after the published Korean records search migration
   33, waiting decisions migration 34, preset effects migration 35 and skill
   maintenance migration 36, work engine migration 37 and to-do records migration
   38, work event sequence guard migration 39, work completions migration 40
   timers migration 41, starter/selection migration 42 and worker choice migration
-  43. Generic presentation and saving cannot replace or confirm a managed
+  43 and naming-breach migration 44. Generic presentation and saving cannot replace or confirm a managed
   plan. The `planning` capability binds confirmation to the authenticated person,
   agent, preview revision and accepted root revision. Complete plan bodies carry
   done conditions, ordered stage labels and dependency ids in addition to card
@@ -1322,8 +1322,9 @@ headless process (`--print --output-format stream-json --verbose`). The matching
 `result` ends the turn before process exit; missing results, invalid messages,
 reported errors and permission denials fail. Core owns and reaps the child tree.
 `dispatch_work` accepts `worker: "claude"` through the same durable admission,
-work allocation, PR checks and manager boundary as Antigravity. Omitted worker
-selection retains Antigravity for existing requests and stored records. The
+work allocation, PR checks and manager boundary as Antigravity. An explicit
+selection keeps that adapter; omitted selection uses the quota and situation
+chooser in C-57, with Antigravity first among otherwise equal candidates. The
 artifact retains the final result alongside the independently read PR; receipt
 provenance is `adapter-derived`. No worker settings or integrations are installed.
 The headless `e2e/m2/claude-worker.json` scenario exercises installed Core, actual

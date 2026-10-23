@@ -55,7 +55,8 @@ func Migrations() []Migration {
 		{Version: 41, SQL: TimersSchema},
 		{Version: 42, SQL: startersSchema},
 		{Version: 43, SQL: WorkerChoiceSchema},
-		{Version: 44, SQL: ResultsSchema + PlanningSchema},
+		{Version: 44, SQL: namingSchema},
+		{Version: 45, SQL: ResultsSchema + PlanningSchema},
 	}
 }
 
@@ -92,7 +93,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{31, "worker_dispatch"},
 		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 		{34, "waiting_decisions"},
-		{44, "result_heads"}, {44, "plan_drafts"}, {44, "plan_confirmations"}, {44, "plan_rejections"},
+		{45, "result_heads"}, {45, "plan_drafts"}, {45, "plan_confirmations"}, {45, "plan_rejections"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{38, "records_todo"},
 		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
@@ -101,6 +102,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
 		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
 		{37, "work_events"}, {37, "work_records"},
+		{44, "naming_breaches"},
 		{42, "agent_starters"}, {42, "agent_selection"},
 	} {
 		var count int

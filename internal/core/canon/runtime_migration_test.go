@@ -522,3 +522,38 @@ func TestPlanningUpgradePreservesPublishedWorkerChoice(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedNaming(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:43]...), Migration{Version: 44, SQL: namingSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO conv_event(id,conversation_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,body) VALUES('naming-reply','conversation','agent','agent','{}','2026-10-23T00:00:00Z','2026-10-23T00:00:00Z','observed','{}','fixture'); INSERT INTO naming_breaches(event_id,person,agent) VALUES('naming-reply','person','agent');`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var n int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM naming_breaches WHERE event_id='naming-reply' AND person='person' AND agent='agent'").Scan(&n); err != nil {
+			return err
+		}
+		if n != 1 {
+			t.Fatal("published naming breach changed")
+		}
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&n); err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatal("upgrade created a plan")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
