@@ -59,19 +59,29 @@ func (r *conversationRuntime) observeGoalWorker(ctx context.Context, g goal.Goal
 	return goalWorkerObservation(record), nil
 }
 
-// The task's current attempt selects its worker receipt. Neither worker prose
-// nor the model supplies a PR number, protected baseline or manager verdict.
+// Only a receipt accepted through the input fence can supply the task's current
+// attempt. Unchanged tasks may retain that acceptance across record revisions;
+// corrected tasks retire it through Superseded. Neither worker prose nor the
+// model supplies a PR number, protected baseline or manager verdict.
 func (r *conversationRuntime) goalTaskReceipt(ctx context.Context, s goal.State, g goal.Goal, t goal.Task) (dispatch.Record, error) {
 	if r.workerDispatch == nil {
 		return dispatch.Record{}, goal.ErrNeedsPerson
 	}
 	for _, a := range s.Actions {
-		if a.GoalID != g.ID || a.TaskID != t.ID || a.Attempt != t.Attempt || a.ObserveActionID != "" {
+		if a.GoalID != g.ID || a.TaskID != t.ID || a.Attempt != t.Attempt || a.Superseded || a.State != "finished" || a.InputVersion == nil {
 			continue
 		}
 		switch a.Kind {
 		case goal.Assign, goal.Resume, goal.RepairConflict, goal.RepairQA, goal.ContinueWorker:
-			record, err := r.workerDispatch.GoalRecord(ctx, goalOrigin(g), a.ID)
+			var receipt goal.Observation
+			if json.Unmarshal(a.Receipt, &receipt) != nil || receipt.Status != goal.OutcomeSucceeded || !receipt.EffectsSettled || receipt.Head != t.Head {
+				continue
+			}
+			source := a.ID
+			if a.ObserveActionID != "" {
+				source = a.ObserveActionID
+			}
+			record, err := r.workerDispatch.GoalRecord(ctx, goalOrigin(g), source)
 			if err != nil {
 				return record, err
 			}

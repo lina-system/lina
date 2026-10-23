@@ -27,3 +27,11 @@ func TestDigestBoundsCountsAndKeepsWaitingFirst(t *testing.T) {
 		}
 	}
 }
+
+func TestDigestPreservesExecutionStateWithoutPlanOutcome(t *testing.T) {
+	rows := Compute([]Unit{{ID: "private-session", Kind: "project", Name: "Fixture job", State: "failed", Landed: true}})
+	digest := Digest(nil, rows)
+	if len(digest.Lines) != 1 || !strings.Contains(digest.Lines[0], "failed: Fixture job") || rows[0].Line.Stage != "unknown" || rows[0].Line.Percent != nil {
+		t.Fatalf("execution state lost or became a plan verdict: %+v %+v", digest, rows)
+	}
+}

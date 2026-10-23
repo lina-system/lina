@@ -80,7 +80,7 @@ func TestInvalidDefinitionIsolatedAcrossRestart(t *testing.T) {
 			if _, err := e.cfg.Records.Commit(t.Context(), DefinitionChange{ID: r.ID, Base: rev, Path: r.Path, Data: definitionBytes(valid)}, valid.Person, valid.Agent); err != nil {
 				t.Fatal(err)
 			}
-			revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("extra")}})
+			revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("queued"), readyTask("live"), readyTask("extra")}})
 			replacement := revisionAction(t, e, "queued", Assign)
 			if replacement.Attempt != queued.Attempt || replacement.ID == queued.ID {
 				t.Fatalf("valid correction did not restore original attempt: %+v", replacement)

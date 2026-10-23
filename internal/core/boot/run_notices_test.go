@@ -24,6 +24,9 @@ import (
 func runRuntime(t *testing.T) *conversationRuntime {
 	t.Helper()
 	r := controlRuntime(t)
+	// Finish the observer before replacing the fixture's background services.
+	r.ownerViews.stop()
+	<-r.ownerViews.done
 	s, err := runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, AuthorizeFollowUp: r.authorizeRunFollowSource, WorkDir: filepath.Join(r.root, "work"), Authorize: func(context.Context, runs.Origin, runs.Brief) error { return nil }, PublishPromotion: func(context.Context, *canon.Tx, string, budget.Handle, budget.Handoff) error { return nil }, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("unexpected model request")
 		return nil, nil
@@ -37,6 +40,14 @@ func runRuntime(t *testing.T) *conversationRuntime {
 		t.Fatal(err)
 	}
 	r.lanes = lane.NewWithNotices(r.background.notices)
+	watch, cancel := context.WithCancel(t.Context())
+	r.ownerViews.stop, r.ownerViews.done = cancel, make(chan struct{})
+	go func() {
+		defer close(r.ownerViews.done)
+		timer := time.NewTicker(ownerViewRefreshInterval)
+		defer timer.Stop()
+		r.runOwnerViews(watch, timer.C)
+	}()
 	return r
 }
 
