@@ -1,0 +1,8 @@
+{
+  "capability": "work",
+  "version": "1.0",
+  "task_id": "switch-task",
+  "switch_id": "switch-fixture",
+  "title": "Finish the transferred report",
+  "done": "A verified report is retained"
+}
