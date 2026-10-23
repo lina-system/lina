@@ -559,6 +559,33 @@ first-use installation, quota projection and idle process management.
 - Done when: a new request goes to another connected account when a subscription is near its limit and a one-line event is written; a started request is never resent; unknown quota is not treated as zero; pay-per-use is not started beyond the set budget.
 - Depends on: G2-25, G2-26. Design refs: C-48; [runtime.md](runtime.md#connected-accounts-and-automatic-setup).
 
+**G2-42 Provider capabilities.** Capability set per model, cache identity, layout marks and the evidence of what each request used ([#877](https://github.com/thisisjun786/lina/issues/877)).
+- Depends on: G1-08, G1-10. Design refs: C-43; [runtime.md](runtime.md#provider-capabilities).
+
+**G2-43 ContextPacket after the input.** The request layout puts the person's input before the ContextPacket ([#878](https://github.com/thisisjun786/lina/issues/878)).
+- Depends on: G1-10, G1-39. Design refs: C-11; [conversation-and-memory.md](conversation-and-memory.md#request-layout).
+
+**G2-44 Provider replay.** A fixed replay per provider that reports cache reads, writes, plain input and first-token time ([#879](https://github.com/thisisjun786/lina/issues/879)).
+- Depends on: G2-42, G1-39. Design refs: [runtime.md](runtime.md#provider-capabilities).
+
+**G2-45 ChatGPT cache identity.** `prompt_cache_key` per conversation once V1 accepts it ([#880](https://github.com/thisisjun786/lina/issues/880)).
+- Depends on: G2-42, G2-43, G2-44, G1-31. Design refs: C-44; [runtime.md](runtime.md#requests).
+
+**G2-46 Claude history blocks and cache marks.** One block per earlier turn with LINA's mark, 1-hour lifetime ([#881](https://github.com/thisisjun786/lina/issues/881)).
+- Depends on: G2-26, G2-42, G2-43, G2-44. Design refs: C-45; [runtime.md](runtime.md#provider-capabilities).
+
+**G2-47 Claude API-key route.** A model-API adapter over the Messages API beside the subscription route, with LINA's marks and batches ([#882](https://github.com/thisisjun786/lina/issues/882)).
+- Depends on: G1-08, G2-42, G2-43, G2-44. Design refs: [runtime.md](runtime.md#providers).
+
+**G2-48 Gemini batch and flex.** Background jobs on Gemini's Batch and Flex tiers, with fallback to a normal request ([#883](https://github.com/thisisjun786/lina/issues/883)).
+- Depends on: G2-27, G2-42, G2-44. Design refs: [runtime.md](runtime.md#provider-capabilities).
+
+**G2-49 Grok prompt order.** Cache-friendly prompts on the `grok` command route ([#884](https://github.com/thisisjun786/lina/issues/884)).
+- Depends on: G2-28, G2-42, G2-43, G2-44. Design refs: C-46; [runtime.md](runtime.md#provider-capabilities).
+
+**G2-50 Cache-aware compaction.** Early compaction when the cache has expired, and a summary request that reuses the cached prefix ([#885](https://github.com/thisisjun786/lina/issues/885)).
+- Depends on: G1-15, G1-38, G2-42, G2-43, G2-44. Design refs: [conversation-and-memory.md](conversation-and-memory.md#compaction-and-resume).
+
 ## LINA 3
 
 **Acceptance (LINA 3).**
@@ -693,6 +720,8 @@ A number marked (P) is a starting value of this design. The others come from the
 | Stall cap; reconcile sweep | 3 hours; 5 minutes, from [work-and-delegation.md](work-and-delegation.md#stall-and-failure) | G2-02 |
 | TUI bounds | S1 to S11 (P) | G1-20 |
 | Claude adapter idle stop; concurrent turns per account | 10 minutes; 2 (P) | G2-26 |
+| Early compaction start when the cache has expired | 70% of the context window (P) | G2-50 |
+| Claude cache-mark lifetime | 1 hour, from [provider-optimization.md](../research/provider-optimization.md#retention) | G2-46, G2-47 |
 | Records repository with thousands of files | [3,000-file index and outside-change measurement](../../internal/core/records/MEASUREMENTS.md) | G2-22 |
 | Non-competition bounds | none yet; declared per test | G3-12 |
 

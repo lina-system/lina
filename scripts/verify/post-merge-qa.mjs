@@ -1,14 +1,86 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { git, gitOut, toplevel } from '../git.mjs';
-import { readPlan, readResults } from './pipeline.mjs';
+import { readPlan, readResults, sealPlan } from './pipeline.mjs';
 
 const marker = /<!-- foundation-qa:(\{[^\n]+\}) -->/;
 const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
 const key = state => JSON.stringify([state.branch, state.package, state.test]);
+
+// Read one known member without extracting paths from the downloaded archive.
+export async function readArtifactJSON(artifact, name, { api, repository }) {
+  const directory = mkdtempSync(join(tmpdir(), 'lina-qa-artifact-'));
+  try {
+    const archive = join(directory, 'artifact.zip');
+    writeFileSync(archive, await api('GET', `/repos/${repository}/actions/artifacts/${artifact.id}/zip`));
+    return JSON.parse(execFileSync('unzip', ['-p', archive, name], {
+      encoding: 'utf8', timeout: 30000, maxBuffer: 64 * 1024 * 1024,
+    }));
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+async function laterPassingTests({ plan, observations, repository, branch, runId, api, readArtifact, isAncestor }) {
+  const route = `/repos/${repository}/actions`;
+  const current = await api('GET', `${route}/runs/${runId}`);
+  if (!Number.isFinite(Date.parse(current.created_at))) throw new Error('Missing QA run creation time');
+  const wanted = new Set(observations.filter(item => item.result === 'fail').map(item => key({ branch, ...item })));
+  const latest = new Map();
+  // Reruns retain their original creation time. Include completed descendants
+  // even when their reporters finished before this older run's reporter.
+  for (let page = 1;; page++) {
+    const query = new URLSearchParams({ branch, status: 'completed', created: '>=' + current.created_at,
+      per_page: '100', page: String(page) });
+    const { workflow_runs: runs } = await api('GET', `${route}/workflows/ci.yml/runs?${query}`);
+    for (const run of runs) {
+      if (run.id === runId || run.head_branch !== branch || run.status !== 'completed'
+          || !['push', 'schedule', 'workflow_dispatch'].includes(run.event)
+          || !sha(run.head_sha) || run.head_sha === plan.head || !await isAncestor(plan.head, run.head_sha)) continue;
+      const artifacts = [];
+      for (let artifactPage = 1;; artifactPage++) {
+        const batch = await api('GET', `${route}/runs/${run.id}/artifacts?per_page=100&page=${artifactPage}`);
+        artifacts.push(...batch.artifacts);
+        if (batch.artifacts.length < 100) break;
+      }
+      const plans = artifacts.filter(item => item.name === 'foundation-plan');
+      if (plans.length > 1) throw new Error('Duplicate historical QA plans');
+      if (!plans.length || plans[0].expired) continue;
+      const historical = await readArtifact(plans[0], 'foundation-plan.json', { api, repository });
+      if (historical.schema !== 2 || historical.head !== run.head_sha || historical.scope?.head !== historical.head
+          || historical.scope?.event !== run.event || !sha(historical.tree) || historical.digest !== sealPlan(historical).digest) {
+        throw new Error('Invalid historical QA plan');
+      }
+      const records = [];
+      for (const task of historical.tasks.filter(task => task.kind === 'e2e')) {
+        if (!task.components.some(component => component.packages.some(pkg => task.tests.some(test => wanted.has(key({ branch, package: pkg, test })))))) continue;
+        const candidates = artifacts.flatMap(artifact => {
+          const match = /^foundation-result-([a-z][a-z0-9-]*)-attempt-([1-9][0-9]*)$/.exec(artifact.name);
+          return match && match[1] === task.id ? [{ artifact, attempt: Number(match[2]) }] : [];
+        }).sort((a, b) => b.attempt - a.attempt);
+        if (!candidates.length || candidates[0].artifact.expired) continue;
+        if (candidates[0].attempt === candidates[1]?.attempt) throw new Error('Duplicate historical QA shard');
+        records.push(await readArtifact(candidates[0].artifact, task.id + '.json', { api, repository }));
+      }
+      for (const observation of collectObservations(historical, records)) {
+        const id = key({ branch, ...observation });
+        if (!wanted.has(id) || !['pass', 'fail'].includes(observation.result)) continue;
+        const previous = latest.get(id);
+        if (previous && (previous.head === historical.head
+          ? previous.result === 'fail' : !await isAncestor(previous.head, historical.head))) continue;
+        latest.set(id, { head: historical.head, result: observation.result });
+      }
+    }
+    if (runs.length < 100) break;
+  }
+  return new Set([...latest].filter(([, value]) => value.result === 'pass').map(([id]) => id));
+}
 
 export function collectObservations(plan, records) {
   if (plan.selection?.result !== 'success' || plan.scope?.reason !== 'manual-full'
@@ -71,10 +143,11 @@ function bodyOf(state, observation, repository, runUrl) {
 }
 
 export async function reconcileQA({ plan, records, repository, milestone, branch = 'dev', before,
-  runUrl, api, isAncestor }) {
+  runUrl, runId, api, isAncestor, readArtifact = readArtifactJSON }) {
   const observations = collectObservations(plan, records);
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository) || !sha(plan.head) || !sha(before)
       || !Number.isInteger(milestone) || milestone < 1
+      || !Number.isSafeInteger(runId) || runId < 1
       || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/[0-9]+(?:\/attempts\/[0-9]+)?$/.test(runUrl)) {
     throw new Error('QA needs a repository, milestone, commit range and workflow run');
   }
@@ -94,6 +167,7 @@ export async function reconcileQA({ plan, records, repository, milestone, branch
     existing.set(id, { issue, state });
   }
   const changes = [];
+  let laterPasses;
   for (const observation of observations) {
     if (!['fail', 'pass'].includes(observation.result)) continue;
     const identity = { branch, package: observation.package, test: observation.test };
@@ -104,6 +178,10 @@ export async function reconcileQA({ plan, records, repository, milestone, branch
       if (previous.state.lastHead !== plan.head && !await isAncestor(previous.state.lastHead, plan.head)) continue;
     }
     if (observation.result === 'pass' && !previous) continue;
+    if (observation.result === 'fail' && !previous) {
+      laterPasses ??= await laterPassingTests({ plan, observations, repository, branch, runId, api, readArtifact, isAncestor });
+      if (laterPasses.has(key(identity))) continue;
+    }
     const state = { schema: 1, ...identity,
       firstBase: previous?.state.firstBase ?? before, firstHead: previous?.state.firstHead ?? plan.head,
       lastHead: plan.head, result: observation.result };
@@ -131,7 +209,7 @@ async function githubAPI(method, path, body) {
       'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
   if (!response.ok) throw new Error(`GitHub ${method} ${path}: HTTP ${response.status}`);
-  return response.json();
+  return path.endsWith('/zip') ? Buffer.from(await response.arrayBuffer()) : response.json();
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -146,6 +224,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const before = sha(event.before) && event.before !== '0'.repeat(40) ? event.before : gitOut(root, ['rev-parse', 'HEAD^1']);
     const changes = await reconcileQA({ plan, records: readResults(values.results), repository: process.env.GITHUB_REPOSITORY,
       milestone: Number(process.env.QA_MILESTONE), branch, before,
+      runId: Number(process.env.GITHUB_RUN_ID),
       runUrl: `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}/attempts/${process.env.GITHUB_RUN_ATTEMPT}`,
       api: githubAPI, isAncestor: async (a, b) => {
         const result = git(root, ['merge-base', '--is-ancestor', a, b]);

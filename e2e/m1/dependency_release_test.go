@@ -40,7 +40,9 @@ func TestM3DelegationManagerAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range scenario.Cases {
-		t.Run(c.Name, func(t *testing.T) { testM3DependencyRelease(t, nil, nil, "", "", c.MissingDev) })
+		t.Run(c.Name, func(t *testing.T) {
+			testM3DependencyRelease(t, nil, nil, "", "", dependencyReleaseOptions{missingManager: c.MissingDev})
+		})
 	}
 }
 
@@ -102,8 +104,18 @@ func testM3DelegationStartFailure(t *testing.T, scenario string) {
 	testM3DependencyRelease(t, &fault, nil, "", "")
 }
 
-func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict, preset, stopMode string, missingManager ...bool) {
-	noDev := len(missingManager) != 0 && missingManager[0]
+type dependencyReleaseOptions struct {
+	missingManager bool
+	outcomes       scheduledOutcomeScenario
+}
+
+func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, conflict *delegationConflict, preset, stopMode string, options ...dependencyReleaseOptions) {
+	var option dependencyReleaseOptions
+	if len(options) != 0 {
+		option = options[0]
+	}
+	outcome, noDev := option.outcomes, option.missingManager
+	var recalling atomic.Bool
 	raw, err := os.ReadFile("../m3/dependency-release.json")
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +137,11 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			Tools []struct{ Name string }
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
+			// Restart can cancel a completion follow-up while its request body
+			// is still being sent. Keep reporting malformed live requests.
+			if r.Context().Err() == nil {
+				t.Error(err)
+			}
 			return
 		}
 		for _, tool := range request.Tools {
@@ -150,6 +166,16 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 				}
 				emitResponse(w, "The dev manager is unavailable; no worker started.", true)
 			}
+			return
+		}
+		if outcome != nil && recalling.Load() {
+			recallScheduledOutcomes(t, w, request.Input, outcome, taskIDs)
+			return
+		}
+		if outcome != nil && respondScheduledOutcome(t, w, request.Input, outcome) {
+			return
+		}
+		if respondWorkerCompletion(w, request.Input, "") {
 			return
 		}
 		if preset != "" {
@@ -291,7 +317,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			t.Fatal(err)
 		}
 	}
-	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": fault == nil && conflict == nil && stopMode == "", "conflict": conflict, "stop": stopMode != ""})
+	writeJSON(filepath.Join(h.root, "fixture.json"), map[string]any{"git": git, "clone": clone, "forge": forge, "requests": outcome == nil && fault == nil && conflict == nil && stopMode == "", "conflict": conflict, "stop": stopMode != "", "outcomes": outcome})
 	gh := filepath.Join(h.root, "fixture-gh")
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 	if err = os.WriteFile(gh, []byte(fmt.Sprintf("#!/bin/sh\nexec %s %s %s forge \"$@\"\n", quote(node), quote(program), quote(h.root))), 0700); err != nil {
@@ -423,9 +449,12 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		}
 	}
 	answeredQuestions := map[string]bool{}
+	var withdrawnQuestion *protocol.Question
+	var withdrawnApproval *protocol.ApprovalRequest
+	withdrawalChecked := false
 	approvalAnswered := false
 	wantQuestions := 2
-	if fault != nil || conflict != nil || stopMode != "" {
+	if outcome != nil || fault != nil || conflict != nil || stopMode != "" {
 		wantQuestions, approvalAnswered = 0, true
 	}
 	answerCtx, stopAnswers := context.WithTimeout(h.ctx, operationTimeout)
@@ -440,11 +469,27 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		}
 		switch card := frame.Payload.(type) {
 		case protocol.Question:
+			if card.Form != nil && len(card.Form.Fields) == 1 && card.Form.Fields[0].Name == "withdrawn" {
+				withdrawnQuestion = &card
+				continue
+			}
 			if card.Card != nil && answeredQuestions[card.Card.ID] {
 				continue
 			}
 			if card.Card == nil || card.ConversationID != conversation {
 				t.Fatal("question origin lost")
+			}
+			if !withdrawalChecked {
+				// The next request is an event-order barrier: both withdrawals
+				// precede it in the worker stream. No sleep can make this pass.
+				if withdrawnQuestion == nil || withdrawnQuestion.Card.Outcome == nil || *withdrawnQuestion.Card.Outcome != protocol.DecisionOutcomeStopped {
+					t.Fatal("scheduled worker withdrawal left its question pending")
+				}
+				if withdrawnApproval == nil {
+					t.Fatal("scheduled worker approval was never presented")
+				}
+				assertScheduledWithdrawal(t, h, *withdrawnQuestion, *withdrawnApproval)
+				withdrawalChecked = true
 			}
 			answer := "confirmed"
 			values := protocol.FormValues{"answer": protocol.FormValue{String: &answer}}
@@ -453,6 +498,21 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			}
 			answeredQuestions[card.Card.ID] = true
 		case protocol.ApprovalRequest:
+			if card.Card != nil {
+				withdrawn := false
+				for _, target := range card.Card.Targets {
+					var args struct {
+						ItemID string `json:"itemId"`
+					}
+					if strings.HasSuffix(target.Name, "arguments") && json.Unmarshal([]byte(target.Value), &args) == nil && args.ItemID == "withdrawn" {
+						withdrawn = true
+					}
+				}
+				if withdrawn {
+					withdrawnApproval = &card
+					continue
+				}
+			}
 			if approvalAnswered {
 				continue
 			}
@@ -514,6 +574,25 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			case <-retry.C:
 			}
 		}
+	}
+	if outcome != nil {
+		checkScheduledOutcomes(t, h, conversation, taskIDs)
+		// Persona delivery and scheduler settlement use separate lanes. Wait
+		// for both observations before asserting the terminal task projection.
+		for _, i := range []int{0, 2} {
+			await(taskIDs[i], func(c work.Card) bool { return c.Run != nil && !c.Active })
+		}
+		checkScheduledOutcomeRecords(t, h, store, conversation, taskIDs, outcome)
+		client.Close()
+		h.stopCore(core)
+		recalling.Store(true)
+		core = start()
+		client, conversation = conversationClient(t, h)
+		admittedTurn(t, h, client, conversation, "recall-scheduled", "Recall both scheduled worker reports.")
+		checkScheduledOutcomeRecords(t, h, store, conversation, taskIDs, outcome)
+		client.Close()
+		h.stopCore(core)
+		return
 	}
 	if stopMode != "" {
 		controls, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "stop-fixture", []protocol.Capability{{Name: "running", Version: "1.0"}})

@@ -136,6 +136,11 @@ func advance(c *Card, e Event) error {
 		c.Applied = false
 		c.TurnStatus = ""
 		c.Stages = []Stage{{Name: "worker", Source: "unknown"}, {Name: "review", Source: "unknown"}, {Name: "apply", Source: "unknown"}}
+	case "worker_progress":
+		if c.Run == nil || c.Run.ID != e.RunID || !c.Active || c.TurnStatus != "" || strings.TrimSpace(e.Value) == "" {
+			return ErrState
+		}
+		c.Stages[0] = Stage{Name: "worker", Source: "worker_report", Summary: e.Value}
 	case "file_receipt", "copy_started", "copy_failed", "files_landed", "files_invalidated":
 		return advanceFiles(c, e)
 	case "receipt":

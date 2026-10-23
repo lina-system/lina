@@ -362,6 +362,15 @@ func (s *Service) execute(ctx context.Context, r Record) {
 				closeAdapter(context.Background())
 				return
 			}
+			// ACP agentInfo is available only after the session handshake.
+			r.Version, err = adapter.Version(ctx)
+			if err == nil {
+				err = s.save(ctx, r)
+			}
+			if err != nil {
+				closeAdapter(context.Background())
+				return
+			}
 			var cancelled bool
 			_ = s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
 				return tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(record,'$.canceled'),0) FROM worker_dispatch WHERE id=?`, r.ID).Scan(&cancelled)
@@ -386,11 +395,33 @@ func (s *Service) execute(ctx context.Context, r Record) {
 				handle, unbind = s.cfg.Bind(r, adapter, thread, r.Packet, workdir)
 			}
 			observed := false
+			var progressSequence uint64
+			var progress progressBuffer
+			progressTick := time.NewTicker(progressInterval)
+			defer progressTick.Stop()
+			recordProgress := func(summary string, progressErr error) error {
+				if progressErr != nil || summary == "" {
+					return progressErr
+				}
+				progressSequence++
+				return service.ReportProgress(ctx, r.ID, run.ID, progressSequence, summary)
+			}
 			for !observed {
 				select {
 				case event, ok := <-adapter.Events():
 					if !ok || event.Thread != thread || event.Validate() != nil {
 						r.Code = "worker_protocol_error"
+						unbind()
+						closeAdapter(context.Background())
+						return
+					}
+					if event.Progress != nil {
+						err = recordProgress(progress.Observe(*event.Progress, time.Now()))
+					} else if event.Finish != nil {
+						err = recordProgress(progress.Flush(time.Now(), true))
+					}
+					if err != nil {
+						r.Code = "progress_failed"
 						unbind()
 						closeAdapter(context.Background())
 						return
@@ -420,12 +451,20 @@ func (s *Service) execute(ctx context.Context, r Record) {
 						finish = *event.Finish
 						observed = true
 					}
+				case now := <-progressTick.C:
+					if err = recordProgress(progress.Flush(now, false)); err != nil {
+						r.Code = "progress_failed"
+						unbind()
+						closeAdapter(context.Background())
+						return
+					}
 				case <-ctx.Done():
 					unbind()
 					closeAdapter(context.Background())
 					return
 				}
 			}
+			progressTick.Stop()
 			quotaStop := finish.Status == worker.Failed && (finish.Failure == worker.QuotaFailure || finish.Failure == worker.RateLimitFailure || finish.Failure == worker.LoginFailure)
 			if quotaStop {
 				err = s.park(ctx, adapter)
@@ -483,7 +522,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if finish.Status != worker.Done {
 		status, outcome = "failed", "failed"
 		if finish.Status == worker.Interrupted {
-			status = "interrupted"
+			status, outcome = "interrupted", "interrupted"
 		}
 		r.Code = finish.Code
 	} else {

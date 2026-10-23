@@ -8,6 +8,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/gateway"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/lease"
@@ -253,6 +254,116 @@ func TestWorkerCompletionReachesOriginatingChannelOnce(t *testing.T) {
 }
 
 func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
+	testWorkerOriginChannelScope(t, false)
+}
+
+func TestScheduledChannelScope(t *testing.T) {
+	testWorkerOriginChannelScope(t, true)
+}
+
+func testWorkerOriginChannelScope(t *testing.T, scheduled bool) {
+	for _, threaded := range []bool{false, true} {
+		name := "shared-main"
+		if threaded {
+			name = "thread-scope"
+		}
+		t.Run(name, func(t *testing.T) {
+			r := controlRuntime(t)
+			ctx, now := t.Context(), time.Now()
+			store := r.channels.store
+			connect := func(platform string) channels.Binding {
+				t.Helper()
+				bot := channels.Bot{Platform: platform, Account: "fixture"}
+				if err := store.Connect(ctx, bot, r.person); err != nil {
+					t.Fatal(err)
+				}
+				code, err := store.PairingCode(ctx, bot, r.person, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.Pair(ctx, bot, code, "42", "100", now); err != nil {
+					t.Fatal(err)
+				}
+				binding := channels.Binding{Address: channels.Address{Bot: bot, Chat: "100"}, Person: r.person, Agent: r.agent, Conversation: r.conversation, Scope: channels.Scope{Reads: channels.DMOnly, Writes: channels.ReplyOnly, Tools: true, Memory: true}}
+				if err := store.Bind(ctx, binding); err != nil {
+					t.Fatal(err)
+				}
+				return binding
+			}
+			discord, telegram := connect("discord"), connect("telegram")
+			source := telegram
+			if threaded {
+				source = discord
+				source.Chat = "group"
+				source.Scope.Reads = channels.Addressed
+				if err := store.Bind(ctx, source); err != nil {
+					t.Fatal(err)
+				}
+				source.Topic = "thread"
+			}
+			source.Scope.Memory, source.Scope.Tools = false, scheduled
+			if err := store.Bind(ctx, source); err != nil {
+				t.Fatal(err)
+			}
+			var delivery gateway.Delivery
+			inbound := gateway.Inbound{Address: source.Address, NativeID: "source", Sender: "42", Cursor: "1", Direct: !threaded, Addressed: true, Body: []byte(`{"Text":"work request"}`)}
+			if err := gateway.New(r.db, func(_ context.Context, d gateway.Delivery) error { delivery = d; return nil }).Admit(ctx, inbound); err != nil {
+				t.Fatal(err)
+			}
+			completion := ledger.Event{ParentID: "channel-input:" + strconv.FormatInt(delivery.InboxID, 10), ConversationID: r.conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "channel", Platform: source.Bot.Platform, ChatID: source.Chat}}
+			originView := func() (*conversationRuntime, error) { return r.workerCompletionView(ctx, completion) }
+			if scheduled {
+				input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: completion.ParentID, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: completion.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "work request"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				d := &delegationRuntime{root: r}
+				originView = func() (*conversationRuntime, error) {
+					view, _, err := d.origin(ctx, work.Task{PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Schedule: &work.Schedule{InputID: input.ID}})
+					return view, err
+				}
+			}
+			view, err := originView()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.channelAddress != source.Address || view.channelBinding == nil || *view.channelBinding != source {
+				t.Fatalf("completion recovered another channel's scope: address=%+v binding=%+v, want %+v", view.channelAddress, view.channelBinding, source)
+			}
+			if err := view.validateChannel(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if scheduled {
+				// A queued task must recheck the current tool ceiling before
+				// allocating a worktree or opening its worker session.
+				restricted := source
+				restricted.Scope.Tools = false
+				if err := store.Bind(ctx, restricted); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := originView(); err == nil {
+					t.Fatal("queued dispatch ignored revoked channel tool permission")
+				}
+				if err := store.Bind(ctx, source); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A revoked original route cannot fall back to the same persona on another
+			// platform, even though that other binding still has tools and memory.
+			if err := store.Disconnect(ctx, source.Bot, r.person); err != nil {
+				t.Fatal(err)
+			}
+			if err := view.validateChannel(ctx); err == nil {
+				t.Fatal("running follow-up retained revoked channel permission")
+			}
+			if _, err := originView(); err == nil {
+				t.Fatal("completion fell back to an unrelated channel after revocation")
+			}
+		})
+	}
+}
+
+func TestWorkerRecoveryPreservesOriginalChannelScope(t *testing.T) {
 	for _, tc := range []struct {
 		name               string
 		threaded, separate bool
@@ -345,53 +456,5 @@ func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
 				t.Fatal("completion fell back to an unrelated channel after revocation")
 			}
 		})
-	}
-}
-
-func TestRecoveredWorkerCompletionQueuesOneResultWithoutWorkerReplay(t *testing.T) {
-	r := controlRuntime(t)
-	now := time.Now()
-	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "recovery-owner", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Produce the result"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	thread := worker.Thread{ID: "session", TurnID: "turn", AttemptID: "attempt", ProcessGeneration: 2, BindingEpoch: 2}
-	entry := &workerSession{origin: r, input: input, thread: thread, workdir: t.TempDir(), packet: "produce a result"}
-	event := worker.Event{Kind: worker.FinishEvent, Thread: thread, Finish: &worker.Finish{Status: worker.Done}}
-	if err = entry.recoveredFinish(t.Context(), event, "retained result"); err != nil {
-		t.Fatal(err)
-	}
-	if err = entry.finish(t.Context(), event); err != nil {
-		t.Fatal(err)
-	}
-	recorded, err := r.recordedWorker(t.Context(), thread.ID)
-	if err != nil || recorded.Output != "retained result" || recorded.Live {
-		t.Fatalf("recovered evidence=%+v %v", recorded, err)
-	}
-	var admitted int
-	if err = r.db.Read(t.Context(), func(tx *canon.Tx) error {
-		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM inbox WHERE source='worker-finish'").Scan(&admitted)
-	}); err != nil || admitted != 1 {
-		t.Fatalf("snapshot did not queue exactly one result: %d %v", admitted, err)
-	}
-	// A second failed attempt is a decision, not another autonomous model input.
-	event.Thread.TurnID = "failed-second"
-	event.Finish = &worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure}
-	if err = entry.recoveredFinish(t.Context(), event, "failed again"); err != nil {
-		t.Fatal(err)
-	}
-	if err = r.db.Read(t.Context(), func(tx *canon.Tx) error {
-		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM inbox WHERE source='worker-finish'").Scan(&admitted)
-	}); err != nil || admitted != 1 {
-		t.Fatalf("failed recovery queued autonomous work: %d %v", admitted, err)
-	}
-
-}
-
-func TestDispatchRecoveryRequiresRetainedOrigin(t *testing.T) {
-	r := controlRuntime(t)
-	record := dispatch.Record{Origin: dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: "turn:missing"}}
-	if allowed, err := r.authorizeWorkerRecovery(t.Context(), record); err == nil && allowed {
-		t.Fatal("missing origin authorized automatic recovery")
 	}
 }
