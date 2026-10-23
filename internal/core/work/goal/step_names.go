@@ -13,7 +13,7 @@ import (
 var technicalStepName = regexp.MustCompile(`(?i)([#＃]\s*\p{N}+|\b(?:issue|pr|pull request)\s*[-:#]?\s*\d+|\b[a-z]+-\d+\b|\b[0-9a-f]{7,}\b|\b[\w-]+\.[a-z][\w]*\b|\b(?:branch|id)\s*[:=]|[_/\\` + "`" + `])`)
 
 func validStepName(name string, forbidden []string) bool {
-	if !utf8.ValidString(name) || strings.TrimSpace(name) == "" || uniseg.StringWidth(name) > 24 || technicalStepName.MatchString(name) {
+	if !utf8.ValidString(name) || strings.TrimSpace(name) == "" || uniseg.StringWidth(name) > 24 {
 		return false
 	}
 	for _, r := range name {
@@ -23,12 +23,23 @@ func validStepName(name string, forbidden []string) bool {
 			return false
 		}
 	}
+	// Emoji joiners/selectors affect display width, but must not conceal a
+	// technical token. Keep the saved spelling and inspect a visible-token copy.
+	visible := strings.Map(func(r rune) rune {
+		if r == '\u200d' || r == '\u034f' || r >= '\ufe00' && r <= '\ufe0f' || r >= '\U000e0100' && r <= '\U000e01ef' {
+			return -1
+		}
+		return r
+	}, name)
+	if technicalStepName.MatchString(visible) {
+		return false
+	}
 	for _, token := range forbidden {
 		if token == "" {
 			continue
 		}
 		pattern := `(?i)(^|[^\p{L}\p{N}])` + regexp.QuoteMeta(token) + `($|[^\p{L}\p{N}])`
-		if regexp.MustCompile(pattern).MatchString(name) {
+		if regexp.MustCompile(pattern).MatchString(visible) {
 			return false
 		}
 	}

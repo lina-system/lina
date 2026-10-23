@@ -252,14 +252,31 @@ func (e *Engine) SubmitStepGraph(ctx context.Context, id, person, agent, convers
 		next := make([]Task, 0, len(steps))
 		for _, s := range steps {
 			task := s.task()
-			if old := goalTask(&g, s.ID); old != nil && sameStepWork(*old, s) {
-				task = *old
-				task.Name = s.Name
-				task.DependsOn = s.DependsOn
+			if old := goalTask(&g, s.ID); old != nil {
+				task.Repairs = old.Repairs
+				if sameStepWork(*old, s) {
+					task = *old
+					task.Name = s.Name
+					task.DependsOn = s.DependsOn
+				}
 			}
 			next = append(next, task)
 		}
 		g.Tasks = next
+		for _, task := range next {
+			if task.RepairedBy != "" && goalTask(&g, task.RepairedBy) == nil {
+				return GraphUnknownStep
+			}
+			if task.Repairs != "" {
+				parent := goalTask(&g, task.Repairs)
+				if parent == nil {
+					return GraphUnknownStep
+				}
+				if parent.Repository != task.Repository || parent.Base != task.Base {
+					return GraphInvalid
+				}
+			}
+		}
 		g.Criteria = goalCriteria(g)
 		if changed {
 			g.Checks = nil

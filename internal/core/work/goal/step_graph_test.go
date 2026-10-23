@@ -269,3 +269,38 @@ func TestStepGraphConcurrentRevisionsHaveOneWinner(t *testing.T) {
 		t.Fatalf("lost update: success=%d stale=%d", successes, stale)
 	}
 }
+
+func TestStepGraphKeepsRepairProvenance(t *testing.T) {
+	e, _ := graphFixture(t)
+	steps := []Step{graphStep("first", "Create parser"), graphStep("second", "Repair parser")}
+	if _, err := submitGraph(t, e, 0, steps); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.journal.Update(t.Context(), Transition{ID: "fixture-repair", Kind: "fixture", At: 100}, func(v *View) error {
+		g, err := loadGoal(v, "g")
+		if err != nil {
+			return err
+		}
+		g.Tasks[0].RepairedBy = "second"
+		g.Tasks[1].Repairs = "first"
+		return put(v, "goal", g.ID, g)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	steps[1].Done = "Check corrected behavior"
+	if _, err := submitGraph(t, e, 1, steps); err != nil {
+		t.Fatal(err)
+	}
+	state, err := e.Snapshot(t.Context())
+	if err != nil || state.Goals[0].Tasks[1].Repairs != "first" || state.Goals[0].Tasks[0].RepairedBy != "second" {
+		t.Fatalf("lost repair provenance: %+v %v", state, err)
+	}
+}
+
+func TestStepNamesCannotHideKnownTokensWithJoiners(t *testing.T) {
+	for _, name := range []string{"Run foun\u200ddation", "Run FOUNDATION"} {
+		if validStepName(name, []string{"foundation"}) {
+			t.Errorf("accepted hidden check name: %q", name)
+		}
+	}
+}
