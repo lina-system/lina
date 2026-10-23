@@ -826,14 +826,27 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := pinPersonaState(packet, r.agent, r.conversation); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			request, report := assemble.Assemble(assemble.Input{
+			request, report, err := r.compactConversation(ctx, assemble.Input{
 				Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
 				AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
 				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,
 				Catalog: catalog, AlwaysTools: declarations,
 				History: items, Current: current[0], Packet: packet,
 				Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
-			}, conversationRequestSize)
+			}, events, func(ctx context.Context, request provider.Request) (provider.Stream, error) {
+				r.dispatchMu.RLock()
+				defer r.dispatchMu.RUnlock()
+				if err := r.validateModelContext(ctx, memoryEpoch, memoryRefs); err != nil {
+					return nil, err
+				}
+				if err := r.validateChannel(ctx); err != nil {
+					return nil, err
+				}
+				return r.route.Adapter.Stream(ctx, activity, request)
+			})
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if report.Failure != "" {
 				if report.Failure == assemble.TooLarge {
 					return turn.PreparedRequest{}, turn.ErrRequestTooLarge

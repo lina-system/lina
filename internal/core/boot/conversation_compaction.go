@@ -1,0 +1,162 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package boot
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/compaction"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/kit/provider"
+)
+
+// Fit the complete prepared request before applying its hard size limit. Canon
+// remains lossless: only a published summary or a recoverable tool note changes
+// the request projection. A failed generation/publication never drops sources.
+func (r *conversationRuntime) compactConversation(ctx context.Context, in assemble.Input, events []ledger.Event, stream func(context.Context, provider.Request) (provider.Stream, error)) (provider.Request, assemble.Report, error) {
+	limit := in.MaxTokens
+	in.MaxTokens = int(^uint(0) >> 1)
+	request, report := assemble.Assemble(in, conversationRequestSize)
+	if report.Failure != "" {
+		return provider.Request{}, report, assemble.ErrHistory
+	}
+	fixed := len(request.Items) - len(in.History) - len(report.Items) - 1
+	if fixed < 0 || len(events) == 0 {
+		return provider.Request{}, report, assemble.ErrHistory
+	}
+	current := events[len(events)-1]
+	view := compaction.View{Request: request, Fixed: request.Items[:fixed], Packet: request.Items[fixed+len(in.History) : len(request.Items)-1], Input: compaction.Record{ID: current.ID, Item: in.Current, User: current.SpeakerKind == guard.Person}}
+	project := func(ctx context.Context, id string) (compaction.Record, error) {
+		event, err := r.journal().Get(ctx, id)
+		if err != nil {
+			return compaction.Record{}, err
+		}
+		items, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
+		if err != nil || len(items) != 1 {
+			return compaction.Record{}, assemble.ErrHistory
+		}
+		record := compaction.Record{ID: id, Item: items[0], User: event.SpeakerKind == guard.Person}
+		if event.SpeakerKind == guard.Tool && event.ScaffoldKind == "provider_item" {
+			var item struct {
+				CallID string `json:"call_id"`
+				Output string
+			}
+			var receipt struct{ Code string }
+			if json.Unmarshal(items[0], &item) == nil && json.Unmarshal([]byte(item.Output), &receipt) == nil && receipt.Code != "" {
+				record.Note = fmt.Sprintf("Tool call %s returned %s", item.CallID, receipt.Code)
+			}
+		}
+		return record, nil
+	}
+	// The auxiliary caller preserves only the fixed prefix and the selected
+	// segment, never this turn's input or transient ContextPacket.
+	auxiliaryRequest := request
+	auxiliaryRequest.Credential = r.route.Request(nil).Credential
+	auxiliaryRequest.Items = view.Fixed
+	auxiliary := compaction.Auxiliary{Request: auxiliaryRequest, RetainPrefix: true, Stream: stream}
+	store := compaction.New(r.db)
+	frontier, err := store.Frontier(ctx, r.conversation)
+	if err != nil {
+		return provider.Request{}, report, err
+	}
+	covered := map[string]bool{}
+	if frontier.Root != "" {
+		node, err := store.Node(ctx, frontier.Root)
+		if errors.Is(err, compaction.ErrUnavailable) {
+			node, err = store.Rebuild(ctx, r.conversation, func(ctx context.Context, segment compaction.Segment) (compaction.Output, error) {
+				var sources []compaction.Record
+				for _, child := range segment.Children {
+					var text compaction.Text
+					if err := json.Unmarshal([]byte(child.Output.Text), &text); err != nil {
+						return compaction.Output{}, err
+					}
+					sources = append(sources, compaction.Record{ID: "node:" + child.ID, Item: compaction.SummaryItem(text, false)})
+				}
+				for _, id := range segment.Events {
+					item, err := project(ctx, id)
+					if err != nil {
+						return compaction.Output{}, err
+					}
+					sources = append(sources, item)
+				}
+				text, err := auxiliary.Summarize(ctx, compaction.PassSegment{Records: sources})
+				if err != nil {
+					return compaction.Output{}, err
+				}
+				raw, err := json.Marshal(text)
+				return compaction.Output{Model: string(in.Model), PromptVersion: compaction.PromptVersion, BuiltAt: time.Now(), Text: string(raw), Dropped: text.Omitted}, err
+			})
+		}
+		if err != nil {
+			return provider.Request{}, report, err
+		}
+		var text compaction.Text
+		if err := json.Unmarshal([]byte(node.Output.Text), &text); err != nil {
+			return provider.Request{}, report, err
+		}
+		view.RootID, view.Root = node.ID, compaction.SummaryItem(text, false)
+		for offset := 0; ; {
+			ids, next, err := store.ExpandEvents(ctx, r.agent, node.ID, offset, 1000)
+			if err != nil {
+				return provider.Request{}, report, err
+			}
+			for _, id := range ids {
+				covered[id] = true
+			}
+			if next == 0 {
+				break
+			}
+			offset = next
+		}
+	}
+	for _, event := range events[:len(events)-1] {
+		if covered[event.ID] {
+			continue
+		}
+		items, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
+		if err != nil {
+			return provider.Request{}, report, err
+		}
+		if len(items) == 0 {
+			continue
+		}
+		item, err := project(ctx, event.ID)
+		if err != nil {
+			return provider.Request{}, report, err
+		}
+		view.History = append(view.History, item)
+	}
+	builder := &compaction.Builder{Store: store, Events: r.journal(), Agent: r.agent, Conversation: r.conversation, Model: in.Model, GenerationRevision: string(in.Effort), Now: time.Now, NextID: func() string { return "summary:" + rand.Text() }}
+	builder.Generate = func(ctx context.Context, segment compaction.PassSegment) (compaction.Text, error) {
+		// Builder checked the exact coverage/frontier and supplied canonical
+		// source ids. Project those ids in their original provider format.
+		for i, source := range segment.Records {
+			item, err := project(ctx, source.ID)
+			if err != nil {
+				return compaction.Text{}, err
+			}
+			segment.Records[i] = item
+		}
+		return auxiliary.Summarize(ctx, segment)
+	}
+	pass := compaction.Pass{Policy: compaction.Policy{ContextWindow: limit}, Count: conversationRequestSize, Summarize: builder.Summarize, Publish: builder.Publish}
+	fitted, err := pass.Fit(ctx, view, false)
+	if err != nil {
+		return provider.Request{}, report, err
+	}
+	in.MaxTokens = limit
+	in.Summary = fitted.View.Root
+	in.History = nil
+	for _, item := range fitted.View.History {
+		in.History = append(in.History, item.Item)
+	}
+	request, report = assemble.Assemble(in, conversationRequestSize)
+	return request, report, nil
+}

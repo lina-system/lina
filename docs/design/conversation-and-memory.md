@@ -491,7 +491,7 @@ Compaction runs at a turn boundary, before LINA builds the turn's first request,
 
 1. Compaction starts when the request input would reach 90% of the model's context window, as the model's adapter reports it. This is a default and is configurable.
 2. Older tool outputs of earlier turns are condensed first. Each keeps its place after its call, and its content becomes a one-line note of the call and its result, such as the command and its exit code, the files a patch changed, or the id, revision and title of a result that was presented. The notes are built without a model. Tool outputs within the most recent 40,000 tokens of the history stay.
-3. If the input still does not fit, a summary replaces the history apart from the most recent user messages, up to 20,000 tokens of them. Those messages stay verbatim after the summary; the agent's items between and after them are part of what the summary replaces.
+3. If the input still does not fit, a summary replaces a contiguous prefix of the history. The most recent complete turns, up to 20,000 tokens including their user messages, reasoning, tool calls, outputs and replies, stay verbatim after it. A turn that exceeds this tail budget enters the summary in full; a call/output pair is never split across the boundary.
 
 Compaction rewrites the history, so the next request reads nothing from the provider's cache after the first changed item. Core times it so that a rewrite costs as little cache as it can:
 
@@ -506,6 +506,8 @@ When a follow-up request within a turn would reach the threshold, LINA compacts 
 - First, steps 2 and 3 run on earlier turns with the same prepared summary as at a turn boundary, so nothing waits for a summary request.
 - Next, if the request is still at or above the threshold, the summary also covers the verbatim tail of earlier user messages, and LINA builds that summary at this point.
 - Last, if the request is still at or above the threshold, the items of the current turn themselves do not fit. LINA ends the turn there and continues the work in a continuation turn that answers the same input.
+
+Core preparation runs this pass before its hard request-size check, using the configured route's existing conservative byte counter and 128,000-unit budget until an adapter supplies a token counter. It reloads a valid published root after restart, excludes its covered raw events from the request, and rebuilds stale roots under the current revocation epoch. Raw ledger events remain available for expansion.
 
 The implementation measures the entire adapter request, including tool declarations and fixed instructions, after each pass. Equality with the threshold still requires fitting. Deterministic notes replace only the output field of an older tool-output item and name its ledger event; calls, opaque reasoning state and the current turn stay unchanged. A failed or incomplete auxiliary response never becomes a partial summary. Prepared summaries are read without waiting and must match the publication frontier and revocation epoch.
 
