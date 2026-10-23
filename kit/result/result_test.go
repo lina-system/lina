@@ -117,3 +117,18 @@ func TestClosedBlockVariantsAndCollectionBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRemoteArtifactFileMediaTypes(t *testing.T) {
+	for _, media := range []string{"application/octet-stream", "image/png", "application/pdf", "application/json"} {
+		raw := strings.Replace(examples[result.FileType], "application/pdf", media, 1)
+		if _, err := result.Validate(result.FileType, []byte(raw), result.Limits{}); err != nil {
+			t.Errorf("%s: %v", media, err)
+		}
+	}
+	for _, media := range []string{"invalid", "image/png;execute=yes", "text/html\r\nX: value"} {
+		raw, _ := json.Marshal(result.File{Asset: result.AssetRef{ID: "asset", Revision: 1}, Name: "Artifact", MediaType: media, Size: 1})
+		if _, err := result.Validate(result.FileType, raw, result.Limits{}); err == nil {
+			t.Errorf("invalid MIME accepted: %q", media)
+		}
+	}
+}

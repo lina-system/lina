@@ -172,7 +172,7 @@ speedup guarantee.
 
 ### Shared index switch window (#869)
 
-One generated 100-turn corpus, seed 851, schema 56, Go 1.27.3 on Linux
+One generated 100-turn corpus, seed 851, schema 58, Go 1.27.3 on Linux
 amd64 (AMD Ryzen 7 5800X; concurrent jobs). Command:
 `go test -run '^$' -bench BenchmarkStore -benchtime=1x ./internal/core/storebench`.
 These are observations, not latency budgets or a comparison across machines.
@@ -191,9 +191,9 @@ queries returned the same event ids in the same recency order as ledger search.
 
 | Write operation | Samples | p50 | p95 | max |
 | --- | ---: | ---: | ---: | ---: |
-| Admit one turn with both indexes | 100 | 92.61 ms | 225.05 ms | 282.01 ms |
-| Remember its person statement | 100 | 10.95 ms | 37.19 ms | 59.13 ms |
-| Publish a summary | 2 | 21.34 ms | 31.43 ms | 31.43 ms |
+| Admit one turn with both indexes | 100 | 88.55 ms | 278.85 ms | 387.52 ms |
+| Remember its person statement | 100 | 11.60 ms | 34.00 ms | 53.68 ms |
+| Publish a summary | 2 | 26.06 ms | 27.73 ms | 27.73 ms |
 
 Both FTS tables are contentless; their size includes tokens and FTS metadata,
 not a copied body column. Source bytes count each eligible view's text, including

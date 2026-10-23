@@ -562,6 +562,13 @@ existing authenticated `node` connection:
   existing `client` projections. A remote question or a Node message is not an
   approval answer. Only a permitted owner surface can answer one.
 
+The outbound Core implementation adds the owner-only `a2a` 1.0 **client**
+capability (`a2a_request`, `a2a_result`). Connection setup and status use closed
+schema payloads and generated types. OAuth shares `sign_in_listen`,
+`sign_in_listening`, `sign_in_open` and `sign_in_redirect` on the same authenticated
+client session; it does not create a model-provider account. Input and sign-in
+waits project through the existing waiting and conversation surfaces.
+
 The Node implementation issue must add closed schema payloads, generated
 types, version/capability negotiation and conformance fixtures together with
 the running handlers. This design registers no kind or supported combination;

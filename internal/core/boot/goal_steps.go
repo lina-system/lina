@@ -37,6 +37,13 @@ func (d *codeGoalDriver) goalRunOrigin(ctx context.Context, g goal.Goal) (runs.O
 	return o, err
 }
 
+// A start that never admitted a run has no effect to wait for. Settle the
+// refusal so the action's reservation is released and the brief can be
+// corrected instead of observing an absent receipt forever.
+func settledBackgroundRefusal() goal.Observation {
+	return goal.Observation{Status: goal.OutcomeNeedsPerson, EffectsSettled: true, Code: "background_not_started"}
+}
+
 func (d *codeGoalDriver) backgroundStep(ctx context.Context, g goal.Goal, t goal.Task, a goal.Action, observe bool) (goal.Observation, error) {
 	if d.runtime.background == nil || t.Background == nil {
 		return goal.Observation{}, goal.ErrNeedsPerson
@@ -53,7 +60,7 @@ func (d *codeGoalDriver) backgroundStep(ctx context.Context, g goal.Goal, t goal
 			return goal.Observation{}, err
 		}
 		if !found {
-			return goal.Observation{Status: goal.OutcomeUnknown}, nil
+			return settledBackgroundRefusal(), nil
 		}
 		id = r.ID
 	} else {
@@ -63,13 +70,23 @@ func (d *codeGoalDriver) backgroundStep(ctx context.Context, g goal.Goal, t goal
 		}
 		result := s.StartTool(origin).Execute(ctx, provider.ToolCall{ID: a.ID, Name: runs.StartToolName, Arguments: string(raw)})
 		if result.Code != loop.OK {
-			return goal.Observation{}, goal.ErrNeedsPerson
+			// A rejected admission creates no run. The durable receipt decides:
+			// without one, no effect can have started.
+			r, found, err := s.Started(ctx, origin, a.ID)
+			if err != nil {
+				return goal.Observation{}, err
+			}
+			if !found {
+				return settledBackgroundRefusal(), nil
+			}
+			id = r.ID
+		} else {
+			var receipt runs.Receipt
+			if err = json.Unmarshal(result.Output, &receipt); err != nil {
+				return goal.Observation{}, err
+			}
+			id = receipt.ID
 		}
-		var receipt runs.Receipt
-		if err = json.Unmarshal(result.Output, &receipt); err != nil {
-			return goal.Observation{}, err
-		}
-		id = receipt.ID
 	}
 	// Release is idempotent; the durable native-call receipt prevents a second run.
 	if err := s.Release(ctx, id); err != nil {
