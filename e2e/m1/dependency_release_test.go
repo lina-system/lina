@@ -227,7 +227,9 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 		if outcome != nil && respondScheduledOutcome(t, w, request.Input, outcome) {
 			return
 		}
-		if respondWorkerCompletion(w, request.Input, "") {
+		if respondWorkerCompletion(w, request.Input, "") || scriptedWorkCompletion(w, request.Input) {
+			// Background reports must not consume the later person's refresh
+			// of the forge merge or release a dependent early.
 			return
 		}
 		if preset != "" {
@@ -622,7 +624,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			}
 			select {
 			case <-deadline.C:
-				t.Fatalf("task state not reached: %+v %v", c, err)
+				t.Fatalf("task state not reached: card=%+v wait=%+v provider_rounds=%d error=%v", c, c.WaitReason, calls.Load(), err)
 			case <-retry.C:
 			}
 		}
