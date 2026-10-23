@@ -150,6 +150,7 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 		}
 		latest := wait(func(s tuiterm.Snapshot) bool {
 			return longReplyReady(s, plan, scenario.End, affordance) &&
+				replyRowsPainted(conversationRows(s), lines, scenario.Input) &&
 				!strings.Contains(screenRows(s)[activePlan.Activity.Y], design.Text(language, "activity.stop"))
 		})
 		t.Logf("LONG-QA latest (100x34):\n%s", strings.Join(screenRows(latest), "\n"))
@@ -171,7 +172,7 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 			if pages >= scenario.Lines {
 				t.Fatal("PgUp never reached the first turn")
 			}
-			previous := strings.Join(conversationRows(page), "\n")
+			previous := conversationRows(page)
 			h.keys(terminal, "\x1b[5~")
 			page = wait(func(s tuiterm.Snapshot) bool {
 				rows := conversationRows(s)
@@ -179,7 +180,7 @@ func testReplyShapeLONGQA(t *testing.T, language design.Language) {
 				// Require the composer's restored cursor and the overlapping
 				// page before inspecting it; skipped pages still time out.
 				return s.AltScreen && !s.CursorHidden && s.CursorY == plan.Composer.Y &&
-					strings.Join(rows, "\n") != previous && overlapWithTranscript(rows) > 0
+					replyPageReady(rows, previous, lines, scenario.Input) && overlapWithTranscript(rows) > 0
 			})
 			rows := conversationRows(page)
 			overlap := overlapWithTranscript(rows)
