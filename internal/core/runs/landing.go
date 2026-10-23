@@ -45,6 +45,10 @@ func (s *Service) land(ctx context.Context, r *Record, outcome Outcome) error {
 			checked.Verified = true
 		case Claimed:
 			checked.Passed = r.Artifact.Done
+			if r.Brief.Result == "mock" {
+				checked.Verified = true
+				checked.Passed = r.Artifact.Done && r.Reason == "all_passed"
+			}
 		}
 		r.Checks = append(r.Checks, checked)
 		if !checked.Passed && outcome == Complete {

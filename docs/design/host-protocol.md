@@ -488,13 +488,14 @@ The closed list of types for version 1.0:
 
 One more type, `app`, is reserved for a later view that a plugin supplies ([integrations.md](integrations.md)). It is not part of version 1.0, no party sends or accepts it, and its fallback is the tool's text result.
 
-Client **1.1** adds `surface`, an A2UI v0.9 card, and `surface_action`. The
+Client **1.1** adds `surface`, an A2UI v0.9 card, `surface_action` and the
+separately negotiated `mock` type described below. The
 canonical [client schema](../../protocol/schema/client/1.0/envelope.json) retains
 its original path and defines both 1.0 and 1.1. A 1.0 envelope cannot contain a
 surface or surface action. An updated client first offers 1.1; if an installed
 older Core explicitly refuses that version, it may reconnect once within the
 same handshake deadline using a 1.0 envelope and capabilities without new fields.
-This retries negotiation only, never a person input or operation. `mock` remains reserved for a later minor version.
+This retries negotiation only, never a person input or operation.
 
 A `surface` body has `version: "v0.9"`, `catalogId: "lina.cards"`,
 `catalogVersion: "1.0"`, `surfaceId`, `components`, `dataModel` and `deleted`.
@@ -528,6 +529,33 @@ inbox in the same transaction as a revision recheck. `input_id` deduplicates
 retries. A press is queued for the next turn; it does not steer the active turn
 or answer an approval. Subsequent tools use their normal authority checks.
 The detailed rendering contract is [Generated cards](surfaces.md#generated-cards).
+
+Client 1.1 adds `mock`. Its closed body contains `request`, `checklist` (id,
+description, local action and target), `page` and `png` asset references,
+`previous` (null or a result id/revision), `stop_reason: "all_passed"` and seven
+passing executable `checks`. No HTML is in the body. Earlier candidates and
+stop reasons belong to the private run state. Only Core's checked renderer may
+publish a mock; ordinary `present_result` cannot create or replace one.
+
+The `mocks` capability, version 1.0 on client 1.1, adds `mock_request` and
+`mock_response`. Requests bind `conversation_id`, `result_id` and `revision`.
+`read` returns that retained revision. `asset` names `page` or `png`, with an
+optional byte `offset`; the response carries a pinned asset reference, MIME type,
+base64 `data` (at most 48 KiB decoded) and optional `next` byte offset. It never
+accepts a path or arbitrary asset id. `build` also needs `target` (`screen` or
+`mini_app`), `repositories` and the envelope's stable `idempotency_key`; it returns
+`goal_id`. Builds require the current revision and use normal work authority.
+Reads authorize the connected person and the named agent/conversation before
+looking up immutable history. Invalid or foreign references are refused without
+revealing their contents.
+
+Client 1.0 never receives the new kinds or result type: mock cards become ordinary
+text output items, including in history snapshots. Client 1.1 without `mocks`
+receives the mock's text without its body. The canonical client schema family
+currently retains its `client/1.0/envelope.json` path and explicitly validates
+both envelope versions; 1.1 fixtures live separately.
+
+
 
 Rules:
 

@@ -19,6 +19,9 @@ import (
 
 func authoredResultWire(value result.Result, summary string) protocol.Result {
 	text := value.Summary + "\n" + value.Text
+	if value.Type == result.MockType {
+		text += "\n" + mockExportActions(value)
+	}
 	p := protocol.Result{
 		ResultID: value.ID, Revision: json.Number(strconv.Itoa(value.Revision)), Type: protocol.ResultType(value.Type), Status: protocol.ResultStatus(value.Status),
 		Title: value.Title, Summary: summary, Text: &text, RevisedBy: value.RevisedBy,
@@ -32,6 +35,12 @@ func authoredResultWire(value result.Result, summary string) protocol.Result {
 			controls := surface.Controls()
 			p.SurfaceControls = &controls
 		}
+
+	}
+	if value.Type == result.MockType {
+		raw := json.RawMessage(value.Body)
+		p.Body = &raw
+
 	}
 	if value.Completion != nil {
 		p.Completion = &protocol.CompletionStatus{State: protocol.CompletionState(value.Completion.State), Label: value.Completion.Label}
@@ -59,6 +68,7 @@ func (r *conversationRuntime) resultOperations() map[protocol.Kind]clientsrv.Ope
 	return map[protocol.Kind]clientsrv.Operation{
 		protocol.KindResultGet:     {Capability: clientsrv.ConversationCapability, Alternatives: []protocol.Capability{clientsrv.ResultsCapability}, Handle: r.readResultPage},
 		protocol.KindSurfaceAction: {Capability: clientsrv.ResultsCapability, Handle: r.surfaceAction},
+		protocol.KindMockRequest:   {Capability: clientsrv.MocksCapability, Handle: r.mockOperation},
 	}
 }
 
@@ -115,4 +125,11 @@ func (r *conversationRuntime) readResultPage(ctx context.Context, session client
 	}
 	wire.Text, wire.Next = &text, next
 	return clientsrv.Result{Kind: protocol.KindResult, Payload: wire}, nil
+}
+
+// IDs are opaque data even in an explicit shell export action.
+func mockExportActions(value result.Result) string {
+	quote := func(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'" }
+	base := "lina mock-export --socket <socket> --conversation " + quote(value.Provenance.ConversationID) + " --result " + quote(value.ID) + " --revision " + strconv.Itoa(value.Revision)
+	return base + " --asset png --output mock.png\n" + base + " --asset page --output mock.zip"
 }

@@ -204,9 +204,9 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 	if identity.Supported == nil {
 		identity.Supported = LocalCombinations()
 	}
-	// The generated codec speaks client 1.0 and 1.1. A manifest row
-	// cannot make the binary implement another version.
-	identity.Supported = slices.DeleteFunc(slices.Clone(identity.Supported), func(row Combination) bool { return row.ProtocolVersion != "1.0" && row.ProtocolVersion != "1.1" })
+	// A manifest row cannot enable versions absent from the generated codec.
+	identity.Supported = slices.DeleteFunc(slices.Clone(identity.Supported), func(row Combination) bool { return !implementedClientVersion(row.ProtocolVersion) })
+
 	if identity.PersonID == "" {
 		identity.PersonID = personID
 	}
@@ -259,8 +259,9 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 	legacy := legacyActivity{}
 	topics := newTopicSession(ctx, identity, identity.Topics,
 		func(id json.RawMessage, envelope protocol.Envelope) error {
-			envelope = projectResults(envelope, c.session)
+			envelope = projectMocks(projectResults(envelope, c.session), c.session)
 			if !protocol.HasCapability(c.session.Capabilities, TurnActivityCapability) {
+
 				envelope = legacy.project(envelope)
 			}
 			if id != nil {
@@ -342,7 +343,8 @@ func serveMessages(ctx context.Context, conn rpc.Transport, identity Identity, p
 				identity.DecisionPresence(c.facts(), true)
 			}
 		}
-		answer = projectResults(answer, c.session)
+		answer = projectMocks(projectResults(answer, c.session), c.session)
+
 		err = conn.Write(ctx, response{JSONRPC: "2.0", ID: req.ID, Result: answer})
 		finishReply()
 		if err != nil || closeAfter {
@@ -406,6 +408,8 @@ func (c *clientConnection) negotiateHello(envelope protocol.Envelope, answer *pr
 		MainID: c.identity.MainID, Epoch: c.identity.Epoch, PersonID: c.identity.PersonID, Agents: c.identity.Agents,
 	}
 	c.session.ProtocolVersion = selected
+	answer.Protocol.Version = selected
+
 	c.session.ClientID = hello.ID
 	c.session.Capabilities = granted
 	return true
@@ -414,10 +418,10 @@ func (c *clientConnection) negotiateHello(envelope protocol.Envelope, answer *pr
 // admit preserves the order of guards for every request after welcome.
 func (c *clientConnection) admit(envelope protocol.Envelope, answer *protocol.Envelope) bool {
 	switch {
+	case envelope.Protocol.Version != c.session.ProtocolVersion:
+		refuse(answer, protocol.ErrorMalformed, "client version changed")
 	case envelope.Sender.Party != protocol.PartyClient || envelope.Sender.ID != c.session.ClientID:
 		refuse(answer, protocol.ErrorNotAuthorized, "client identity changed")
-	case c.session.ProtocolVersion != "" && envelope.Protocol.Version != c.session.ProtocolVersion:
-		refuse(answer, protocol.ErrorUnsupportedCombination, "protocol version changed")
 	case envelope.Epoch != c.identity.Epoch:
 		refuse(answer, protocol.ErrorStaleEpoch, "request epoch differs from Core")
 	case c.identity.Recovering != nil && c.identity.Recovering() && !readOnlyEnvelope(envelope):
@@ -486,7 +490,8 @@ func unsupportedHello(method string, data json.RawMessage) (string, bool) {
 		return "", false
 	}
 	if method != "hello" || offer.Kind != protocol.KindHello || offer.Protocol.Name != "client" ||
-		(offer.Protocol.Version == "1.0" || offer.Protocol.Version == "1.1") || !versionPattern.MatchString(offer.Protocol.Version) ||
+		implementedClientVersion(offer.Protocol.Version) || !versionPattern.MatchString(offer.Protocol.Version) ||
+
 		offer.MessageID == "" || offer.Sender.Party != protocol.PartyClient ||
 		offer.Payload.Party != protocol.PartyClient || offer.Payload.ID == "" || offer.Sender.ID != offer.Payload.ID ||
 		len(offer.Payload.ProtocolVersions) == 0 {
@@ -502,7 +507,7 @@ func unsupportedHello(method string, data json.RawMessage) (string, bool) {
 
 func reply(request protocol.Envelope, identity Identity) protocol.Envelope {
 	return protocol.Envelope{
-		Protocol:  protocol.Protocol{Name: "client", Version: "1.0"},
+		Protocol:  protocol.Protocol{Name: "client", Version: clientVersion(request.Protocol.Version)},
 		MessageID: rand.Text(), AttemptID: rand.Text(), ReplyTo: &request.MessageID,
 		Sender: protocol.Sender{Party: protocol.PartyCore, ID: identity.MainID}, Epoch: identity.Epoch,
 		SentAt: time.Now().UTC().Format(time.RFC3339Nano), EffectState: protocol.EffectNone,

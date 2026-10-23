@@ -183,6 +183,11 @@ func (r *conversationRuntime) typedChannelText(ctx context.Context, source ledge
 	}
 	if value.Type == result.SurfaceType {
 		return value.Text + "\n" + "lina://conversation/" + r.conversation, nil
+
+	}
+	if value.Type == result.MockType {
+		return value.Title + "\n" + value.Text + "\n" + mockExportActions(value), nil
+
 	}
 	if view.Inline {
 		return view.Text, nil

@@ -73,7 +73,7 @@ func DialWithCapabilities(ctx context.Context, socket, productVersion string, ca
 		}
 		conn.Close()
 		var refusal *Refusal
-		if attempt != 0 || !protocol.HasCapability(capabilities, protocol.SurfaceResultsCapability()) || !errors.As(err, &refusal) || refusal.Cause.Code != protocol.ErrorUnsupportedCombination {
+		if attempt != 0 || !offersClient11(capabilities) || !errors.As(err, &refusal) || refusal.Cause.Code != protocol.ErrorUnsupportedCombination {
 			return nil, err
 		}
 		// An installed 1.0 Core refuses the 1.1 envelope before negotiation.
@@ -81,7 +81,7 @@ func DialWithCapabilities(ctx context.Context, socket, productVersion string, ca
 		// its strict decoder knows. No operation has been sent or retried.
 		legacy := make([]protocol.Capability, 0, len(capabilities))
 		for _, capability := range capabilities {
-			if capability.Name != "results" {
+			if capability.Name != "results" && capability.Name != "mocks" {
 				legacy = append(legacy, protocol.Capability{Name: capability.Name, Version: capability.Version})
 			}
 		}
@@ -108,12 +108,13 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string, capabi
 	clientID := rand.Text()
 	peer, platform := "lina-tui", runtime.GOOS+"/"+runtime.GOARCH
 	versions := []string{"1.0"}
-	if protocol.HasCapability(capabilities, protocol.SurfaceResultsCapability()) {
+	if offersClient11(capabilities) {
 		versions = []string{"1.1", "1.0"}
 	}
 	hello := protocol.Envelope{
 		Protocol: protocol.Protocol{Name: "client", Version: versions[0]},
-		Kind:     protocol.KindHello, MessageID: rand.Text(), AttemptID: rand.Text(),
+
+		Kind: protocol.KindHello, MessageID: rand.Text(), AttemptID: rand.Text(),
 		Sender: protocol.Sender{Party: protocol.PartyClient, ID: clientID}, Epoch: "0",
 		SentAt: time.Now().UTC().Format(time.RFC3339Nano), EffectState: protocol.EffectNone,
 		SourceRefs: []protocol.SourceRef{},
@@ -157,6 +158,7 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string, capabi
 	welcome, ok := envelope.Payload.(protocol.Welcome)
 	if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone ||
 		!slices.Contains(versions, welcome.ProtocolVersion) || welcome.MainID != envelope.Sender.ID || welcome.Epoch != envelope.Epoch {
+
 		return nil, errors.New("invalid welcome")
 	}
 	seen := make(map[[2]string]bool)
@@ -181,4 +183,8 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string, capabi
 		return nil, err
 	}
 	return &Client{conn: conn, Welcome: welcome, reader: reader, writer: rpc.NewWriter(conn), clientID: clientID, pending: make(map[string]struct{})}, nil
+}
+
+func offersClient11(capabilities []protocol.Capability) bool {
+	return protocol.HasCapability(capabilities, protocol.SurfaceResultsCapability()) || protocol.HasCapability(capabilities, protocol.Capability{Name: "mocks", Version: "1.0"})
 }

@@ -68,6 +68,9 @@ var deciderKinds = map[protocol.Kind]bool{
 // Work requests retain mutation admission for future work-record operations.
 // Only the implemented GitHub observation operations are reads during recovery.
 func readOnlyEnvelope(e protocol.Envelope) bool {
+	if p, ok := e.Payload.(protocol.MockRequest); ok {
+		return p.Action == "read" || p.Action == "asset"
+	}
 	if readOnlyKinds[e.Kind] {
 		return true
 	}
