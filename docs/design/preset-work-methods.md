@@ -214,10 +214,10 @@ Each subsection gives the record values that differ from the defaults, the perso
 
 - Record: `tools.declare_first` `["life_records", "web_research"]`; `reply.comparison` `verdict-then-table`; `done.purchase` `["receipt"]`; `fill` `["reply.comparison"]`.
 - Core layer:
-  - Remove the rule that switches register on serious or health topics. The voice stays the same on every topic, and safety content stays explicit.
+  - The voice stays the same on every topic, and safety content stays explicit.
   - Stated dislikes and fixed choices are records, checked before recommending.
   - The person's own device facts are checked before they are quoted.
-- Default voice: unchanged.
+- Default voice: keep the address terms and historical honorific register. Remove the serious-topic register switch from whichever layer carries it (the shipped conversion placed it in default voice), and keep correction examples in that same register.
 - Evidence: 16 corrections, none for length; the only explicit tone correction was the register switch.
 - Should change: `life-001, 011, 013, 015, 022, 025, 031, 034, 041, 044, 046, 049, 050, 052, 054, 060`.
 - Must not change: `life-003` to `006`, `008, 010, 016, 020, 024`, `026` to `028`, `035, 037, 038, 040, 043, 045, 047, 048, 056` to `059`, `061` to `063`, `065`.
