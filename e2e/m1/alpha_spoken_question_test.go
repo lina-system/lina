@@ -30,12 +30,18 @@ func TestAlphaSpokenQuestionInstalledCore(t *testing.T) {
 	}
 	workdir := t.TempDir()
 	ack, finish := make(chan struct{}), make(chan struct{})
+	workerRelease := make(chan struct{})
 	partial := make(chan struct{})
-	var ackOnce, finishOnce, partialOnce sync.Once
+	var ackOnce, finishOnce, partialOnce, workerOnce sync.Once
 	releaseAck := func() { ackOnce.Do(func() { close(ack) }) }
 	releaseFinish := func() { finishOnce.Do(func() { close(finish) }) }
+	releaseWorker := func() { workerOnce.Do(func() { close(workerRelease) }) }
 	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/worker-finish" {
+			select {
+			case <-workerRelease:
+			case <-r.Context().Done():
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -52,7 +58,14 @@ func TestAlphaSpokenQuestionInstalledCore(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		if strings.Contains(last.Content, `<external_evidence origin="worker-session:`) {
+		var current struct{ Role, Content string }
+		for i := len(req.Input) - 1; i >= 0; i-- {
+			if json.Unmarshal(req.Input[i], &current) == nil && current.Role == "user" {
+				break
+			}
+		}
+		if strings.Contains(current.Content, workerQuestion) {
+			t.Log("provider received the worker question")
 			emitResponse(w, reply, false)
 			w.(http.Flusher).Flush()
 			partialOnce.Do(func() { close(partial) })
@@ -76,6 +89,7 @@ func TestAlphaSpokenQuestionInstalledCore(t *testing.T) {
 	defer server.Close()
 	defer releaseAck()
 	defer releaseFinish()
+	defer releaseWorker()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)
 	bin := t.TempDir()
@@ -92,12 +106,25 @@ func TestAlphaSpokenQuestionInstalledCore(t *testing.T) {
 	defer core.killAndWait()
 	h.connect(core).Close()
 	waitCoreReady(t, h)
-	c, conversation := conversationClient(t, h)
+	c, conversation := conversationClient(t, h, protocol.Capability{Name: "turn_activity", Version: "1.0"})
 	defer c.Close()
 	key, text := "delegate", request
 	if _, err := c.Input(h.ctx, protocol.Input{ConversationID: &conversation, InputID: &key, Text: &text}); err != nil {
 		t.Fatal(err)
 	}
+	for {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal("worker start did not arrive:", err)
+		}
+		if activity, ok := frame.Payload.(protocol.ToolActivity); ok && activity.CallID == "start-worker" && activity.Status == protocol.ToolActivityStatusFinished {
+			if activity.Outcome == nil || *activity.Outcome != protocol.ToolActivityOutcomeOk {
+				t.Fatalf("worker start failed: %+v", activity)
+			}
+			break
+		}
+	}
+	releaseWorker()
 	waitWorkerCanon(t, h, `SELECT count(*) FROM conv_event WHERE scaffold_kind='worker_completion'`, 1)
 	assertPending := func(stage string) {
 		t.Helper()

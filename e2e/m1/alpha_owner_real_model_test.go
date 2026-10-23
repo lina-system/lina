@@ -367,16 +367,60 @@ func alphaNameRequest(text string) bool {
 }
 
 func alphaQuestionVisible(reply, screen string) bool {
-	return alphaNameRequest(screen)
+	// The request and handoff can both mention a name. Match a question from
+	// the committed reply, allowing Markdown removal and terminal wrapping.
+	plain := func(text string) string {
+		text = strings.NewReplacer("**", "", "__", "", "`", "", "*", "", "#", "").Replace(text)
+		return strings.Join(strings.Fields(text), "")
+	}
+	for _, line := range strings.Split(reply, "\n") {
+		if alphaNameRequest(line) && strings.Contains(plain(screen), plain(line)) {
+			return true
+		}
+	}
+	return false
 }
 
 func alphaSpokenQuestion(t *testing.T, h *harness, conversation string) string {
 	t.Helper()
-	workerText, _ := alphaLastWorkerOutput(t, h)
-	if alphaNameRequest(workerText) {
-		return workerText
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	return ""
+	defer db.Close(context.Background())
+	var reply string
+	err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		// An ItemDone or inactive TurnState is only a wake-up. The reply must
+		// belong to this worker completion and its own completed turn.
+		rows, err := tx.QueryContext(h.ctx, `
+SELECT coalesce(json_extract(w.body,'$.output'),''), coalesce(e.body,'')
+FROM conv_event w
+JOIN inbox i ON i.native_id=w.id AND i.source='worker-finish' AND i.conversation=w.conversation_id
+JOIN turn_runs t ON t.inbox_id=i.id AND t.conversation=w.conversation_id AND t.state='completed'
+JOIN conv_event e ON e.parent_id=w.id AND e.conversation_id=w.conversation_id AND e.agent_id=w.agent_id
+WHERE w.conversation_id=? AND w.scaffold_kind='worker_completion'
+ AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'')=''
+ORDER BY e.rowid DESC`, conversation)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var workerText, text string
+			if err := rows.Scan(&workerText, &text); err != nil {
+				return err
+			}
+			if alphaNameRequest(workerText) && alphaNameRequest(text) {
+				reply = text
+				break
+			}
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reply
 }
 
 func alphaLastWorkerOutput(t *testing.T, h *harness) (string, int) {
