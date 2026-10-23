@@ -603,4 +603,3 @@ func TestManifestRejectsUnboundedDeclarations(t *testing.T) {
 		t.Fatal("a valid manifest was refused")
 	}
 }
-
