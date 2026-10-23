@@ -24,8 +24,9 @@ type Adapter struct {
 	Token         secret.Secret
 }
 
-func (*Adapter) Provider() provider.ProviderID { return provider.Claude }
-func (*Adapter) Class() provider.Class         { return provider.AgentRuntime }
+func (*Adapter) Provider() provider.ProviderID                         { return provider.Claude }
+func (*Adapter) Class() provider.Class                                 { return provider.AgentRuntime }
+func (*Adapter) Capabilities(provider.ModelRef) provider.CapabilitySet { return nil }
 func (*Adapter) Models(context.Context, lease.Lease, provider.Credential) (provider.ModelList, error) {
 	return provider.ModelList{}, &provider.Failure{Kind: provider.Unavailable}
 }
@@ -33,6 +34,9 @@ func (*Adapter) Quota(context.Context, provider.Credential) ([]provider.QuotaRow
 	return nil, nil
 }
 func (a *Adapter) Stream(ctx context.Context, l lease.Lease, req provider.Request) (provider.Stream, error) {
+	if err := provider.ValidateUse(req, a.Capabilities(req.Model), provider.Admitted("claude")); err != nil {
+		return nil, err
+	}
 	if !filepath.IsAbs(a.Node) || !filepath.IsAbs(a.Program) || req.Model == "" {
 		return nil, &provider.Failure{Kind: provider.NotAccepted}
 	}

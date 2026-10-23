@@ -18,6 +18,9 @@ type pendingDecision struct {
 }
 
 func (a *Adapter) permission(th worker.Thread, p *wire.Permission) bool {
+	a.mu.Lock()
+	a.effectSeen = true
+	a.mu.Unlock()
 	if string(p.Request.SessionID) != th.ID {
 		a.finish(th, worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure, Code: "foreign_request"})
 		return false

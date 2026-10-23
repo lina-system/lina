@@ -14,9 +14,10 @@ import (
 const Adapter = "responses"
 
 type Config struct {
-	Adapter       string             `json:"adapter"`
-	RetryCount    int                `json:"retryCount"`
-	RequestFields provider.FieldList `json:"requestFields"`
+	Capabilities  provider.CapabilitySet `json:"capabilities,omitempty"`
+	Adapter       string                 `json:"adapter"`
+	RetryCount    int                    `json:"retryCount"`
+	RequestFields provider.FieldList     `json:"requestFields"`
 }
 
 // ReadConfig reads the ChatGPT portion of the build manifest. Missing settings
@@ -55,6 +56,14 @@ func (c *Config) UnmarshalJSON(b []byte) error {
 	return c.Validate()
 }
 func (c Config) Validate() error {
+	if !c.Capabilities.Valid() {
+		return errors.New("invalid Responses capabilities")
+	}
+	for _, capability := range c.Capabilities {
+		if !provider.Admitted("chatgpt").Has(capability) {
+			return errors.New("unadmitted Responses capability")
+		}
+	}
 	if c.Adapter != Adapter || c.RetryCount != 0 {
 		return errors.New("unsupported Responses adapter configuration")
 	}

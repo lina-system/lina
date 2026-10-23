@@ -32,6 +32,22 @@ The Go tests cover canonical/version/engine binding distinctions, repeated IDs
 in different profiles, unchanged per-copy source fields, owner/automation
 attribution, missing links, rollback, round-trip hashes and idempotent replay.
 
+## UIDs shared across lineages
+
+- **seen** — At the same pinned LCM-X revision, `host_uid.py:78-130` builds
+  `<home_tag>:<root>`, where the tag hashes the resolved original `state.db`
+  path. Compression follows parents; fork, delegation and reset stop the walk.
+  `store.py:1052-1081,1111-1125` scopes canonical uniqueness and reads/writes
+  to a lineage. One UID in several lineages is permitted, not a global conflict.
+- **inferred** — Within one imported profile, a host row can select a binding
+  when exactly one lineage matches its session root. Otherwise it remains its
+  own event with its legacy reference. Every host row whose UID has message
+  bindings in multiple lineages needs an explicit mapping decision in the report.
+- **unknown** — A moved snapshot does not establish the original home path.
+  Multiple home tags with the same root cannot be ranked safely, even when
+  their bindings point to the same stored message. The importer preserves the
+  host rows separately instead of choosing a tag by iteration order.
+
 Identical payload versions retain a separate replay event while host copies keep
 the canonical binding. Unsealed events use private staging tables until the
 separate seal, and sidecar bytes use the native material writer’s recovery and
@@ -92,3 +108,39 @@ Empty import tables do not load an adapter or start a run.
   event, or asserting that one constituent is a view of another.
 - **unknown** — Other delivery table layouts and binding/relation kinds are
   not registered. The actual installation revision was not available here.
+
+## Owner channels and display provenance
+
+Read-only reference: Hermes Agent (MIT), revision
+`cb757fac59c92b49e9b8f2910e5cd7ab75efffdd`. The named local installation was
+unavailable; the public source snapshot was inspected before implementation.
+
+- **seen** — `gateway/run_turn_prepare.py:726-738` creates a persistence owner
+  UUID from the delivery namespace/message id, or a random UUID for keyless
+  input. `gateway/run_turn_persistence.py:416-432` writes it as
+  `display_metadata.gateway_input_owner`; `gateway/session_transcript.py:608-628`
+  uses it to find an already persisted input. It proves delivery ownership,
+  not the human sender.
+- **seen** — `gateway/response_filters.py:111-129` marks injected internal and
+  heartbeat turns `internal_notification`. `agent/prompt_builder.py:586-595`
+  stores mid-turn user steering as a user row with `display_kind=steer`.
+- **seen** — `tui_gateway/session_registry.py:339-357` retains the desktop
+  transport login; `tui_gateway/session_workdir.py:594-603` stores it in
+  `sessions.user_id`. `tests/tui_gateway/test_desktop_session_login_identity.py`
+  demonstrates authenticated and anonymous desktop sessions. Anonymous and
+  legacy sessions have no recorded login. `tui_gateway/session_lifecycle.py:392`
+  also recognizes `webui`; `agent/prompt_builder.py:724-732` explains that current
+  dashboard chat uses desktop/tui rather than constructing a webui platform.
+- **inferred** — A sole nonempty string `gateway_input_owner` is neutral for
+  attribution. It never substitutes for the confirmed channel; unknown keys or
+  malformed values remain unproven. `steer` still requires channel proof and
+  `internal_notification` is non-person regardless of the confirmed map.
+- **inferred** — CLI, desktop and legacy webui sessions may be confirmed
+  individually by their owner. The confirmation attests ownership of the
+  displayed session and recorded identities, including identity-less local
+  sessions. Gateway confirmation instead requires an exact source/user/chat
+  tuple and a private/dm host session. Neither permits shared-chat attribution.
+- **unknown** — Historical webui deployments and anonymous desktop sessions do
+  not provide independently verifiable human identity in the registered schema.
+  They require explicit per-session attestation; a source name, token, title or
+  message body is never enough. No new Honcho schema is registered.

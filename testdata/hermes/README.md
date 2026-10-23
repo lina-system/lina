@@ -49,6 +49,14 @@ check per-profile report counts, immutable source bytes, candidate eligibility,
 and rejection by the person-memory writer. Source matching and promotion
 approval remain separate stages; these fixtures do not claim to implement them.
 
+`uid-lineages-lcm.sql` and `uid-lineages-state.sql` add a UID shared by home tags
+and a UID shared across a fork, compression continuation and reset. Apply them
+after the base fixtures have canonical bindings for messages 1 and 2. Import
+tests check row-level mapping reports, separate events for unresolved rows,
+profile isolation, lossless reverse mapping and repeat-import zero growth.
+`TestM1ImportUIDLineages` also exercises the installed CLI, seal and backup, and
+reads the promoted result through Core after restart.
+
 `delivery.sql` extends the host fixture with the registered gateway delivery
 ledger. Tests also cover its pre-`adapter_profile` layout and reject unrelated
 tables or column drift. Its synthetic retry row is counted and explicitly
