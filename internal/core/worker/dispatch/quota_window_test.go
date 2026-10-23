@@ -89,3 +89,64 @@ func TestParkWithoutExhaustedWindowPreservesMeasurements(t *testing.T) {
 		t.Fatal("healthy reset cleared a stop with no known reset")
 	}
 }
+
+func TestObserveQuotaFreshnessPerWindow(t *testing.T) {
+	base := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	row := func(window provider.Window, state provider.QuotaState, minute int) provider.QuotaRow {
+		return provider.QuotaRow{Provider: provider.ChatGPT, Account: "account", Window: window, State: state, Source: provider.ProviderEvent, Observed: base.Add(time.Duration(minute) * time.Minute)}
+	}
+	weekly := row(provider.Weekly, provider.QuotaOK, 0)
+	blocked := row(provider.FiveHour, provider.QuotaBlocked, 1)
+	recovered := row(provider.FiveHour, provider.QuotaOK, 2)
+	weeklyStop := row(provider.Weekly, provider.QuotaBlocked, 3)
+	unknownStop := row(provider.UnknownWindow, provider.QuotaBlocked, 1)
+	unknownStop.Source = provider.ErrorCode
+	otherAccount := recovered
+	otherAccount.Account = "other"
+	otherProvider := recovered
+	otherProvider.Provider = provider.Claude
+	for _, test := range []struct {
+		name                string
+		prior, update, want []provider.QuotaRow
+		eligible            bool
+	}{
+		{"healthy older window", []provider.QuotaRow{blocked, weekly}, []provider.QuotaRow{recovered, weekly}, []provider.QuotaRow{recovered, weekly}, true},
+		{"independent stops", []provider.QuotaRow{blocked, weeklyStop}, []provider.QuotaRow{recovered, weeklyStop}, []provider.QuotaRow{recovered, weeklyStop}, false},
+		{"stale sibling", []provider.QuotaRow{blocked, weeklyStop}, []provider.QuotaRow{recovered, weekly}, []provider.QuotaRow{recovered, weeklyStop}, false},
+		{"missing blocked window", []provider.QuotaRow{blocked, weekly}, []provider.QuotaRow{row(provider.Weekly, provider.QuotaOK, 2)}, []provider.QuotaRow{row(provider.Weekly, provider.QuotaOK, 2), blocked}, false},
+		{"empty snapshot", []provider.QuotaRow{blocked, weekly}, nil, []provider.QuotaRow{blocked, weekly}, false},
+		{"equal observation", []provider.QuotaRow{blocked}, []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1)}, []provider.QuotaRow{blocked}, false},
+		{"delayed stop", []provider.QuotaRow{recovered, weekly}, []provider.QuotaRow{blocked, weekly}, []provider.QuotaRow{recovered, weekly}, true},
+		{"unknown stop recovery", []provider.QuotaRow{unknownStop, weekly}, []provider.QuotaRow{recovered, weekly}, []provider.QuotaRow{recovered, weekly}, true},
+		{"other account", []provider.QuotaRow{blocked}, []provider.QuotaRow{otherAccount}, []provider.QuotaRow{otherAccount, blocked}, false},
+		{"other provider", []provider.QuotaRow{blocked}, []provider.QuotaRow{otherProvider}, []provider.QuotaRow{otherProvider, blocked}, false},
+		{"unknown stop other account", []provider.QuotaRow{unknownStop}, []provider.QuotaRow{otherAccount}, []provider.QuotaRow{otherAccount, unknownStop}, false},
+		{"repeated window rows", []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), blocked}, []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), recovered}, []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), recovered}, true},
+		{"initial unknown replaced", []provider.QuotaRow{row(provider.UnknownWindow, provider.QuotaUnknown, 0)}, []provider.QuotaRow{recovered, weekly}, []provider.QuotaRow{recovered, weekly}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := &Service{cfg: Config{DB: store(t)}}
+			for _, rows := range [][]provider.QuotaRow{test.prior, test.update} {
+				original := append([]provider.QuotaRow(nil), rows...)
+				if err := s.ObserveQuota(t.Context(), "codex", rows); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(rows, original) {
+					t.Fatal("mutated caller's quota rows")
+				}
+			}
+			restarted := &Service{cfg: s.cfg}
+			got, err := restarted.quota(t.Context(), "codex")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Errorf("persisted quota = %+v; want %+v", got, test.want)
+			}
+			chosen := work.ChooseWorker([]work.WorkerCandidate{{Name: "codex", Slots: 1, Quota: got}}, nil, nil, nil, base.Add(time.Hour))
+			if (chosen != "") != test.eligible {
+				t.Errorf("chosen = %q; eligible = %t", chosen, test.eligible)
+			}
+		})
+	}
+}

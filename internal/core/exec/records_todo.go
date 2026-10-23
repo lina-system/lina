@@ -40,7 +40,7 @@ func extendTodoDeclarations(declarations []provider.ToolDecl) {
 		"state": map[string]any{"type": "string", "enum": []string{"backlog", "open", "started", "completed", "canceled"}},
 		"when":  scalar, "deadline": scalar, "deadline_source": scalar,
 		"checklist": map[string]any{"type": "array", "items": object(map[string]any{"text": scalar, "checked": boolean}, []string{"text", "checked"})},
-		"repeat":    object(map[string]any{"rule": scalar, "text": scalar, "from_completion": boolean, "next": scalar}, []string{"rule", "next"}),
+		"repeat":    object(map[string]any{"rule": scalar, "text": scalar, "from_completion": boolean, "next": scalar, "zone": scalar}, []string{"rule", "next"}),
 		"important": boolean, "tags": strings, "belongs_to": strings, "source": scalar, "blocked_by": strings,
 		"waiting_on":   object(map[string]any{"who": scalar, "since": scalar, "next_check": scalar}, []string{"who", "since", "next_check"}),
 		"assignee":     object(map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"person", "agent", "worker"}}, "id": scalar}, []string{"kind", "id"}),
