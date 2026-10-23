@@ -95,11 +95,16 @@ func Load(source fs.FS, key string) (core, voice string, err error) {
 	return core, voice, nil
 }
 
-// Validate checks each pair independently, without logging source data.
+// Validate gates releases on usable pairs and the designed starter work-method
+// values. Runtime loading accepts any schema-valid record instead.
 func Validate(source fs.FS) error {
 	for _, s := range Starters() {
-		if _, missing, err := LoadWorkMethod(source, s.Key); err != nil || missing {
+		record, missing, err := LoadWorkMethod(source, s.Key)
+		if err != nil || missing {
 			return fmt.Errorf("%s: %w", s.Key, ErrWorkMethod)
+		}
+		if err := validateStarterMethod(s.Key, record); err != nil {
+			return fmt.Errorf("%s: %w", s.Key, err)
 		}
 		if _, _, err := Load(source, s.Key); err != nil {
 			return fmt.Errorf("%s: %w", s.Key, err)
