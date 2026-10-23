@@ -32,6 +32,11 @@ Failure coverage also includes:
   `worker_start` remains visible in Ctrl+R after the conversation turn ends,
   with its owner agent before Codex. Explicitly finishing the worker removes
   its row from the open pager without relying on a short execution duration.
+- `TestM2ConversationWorkerProgressInstalledCore`: the same installed worker
+  stays visible in the Ctrl+P [work panel](../../docs/design/tui.md#work-panel-and-stage-list-t-16)
+  after its starting conversation ends. The open panel removes its card when
+  the worker becomes idle, retains a failed card, and clears it after dismissal
+  in Ctrl+R, following the shared [progress acknowledgement](../../docs/design/surfaces.md#progress-at-a-glance).
 
 - `TestM1TurnCrashBoundaries`: acknowledged SIGKILL after claim, preparation,
   model item, tool intent, applied effect, tool receipt and completed turn;
