@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -207,10 +208,21 @@ func responsesRoundTrip(t *testing.T, getenv func(string) string) {
 // same conversation id and a new Core epoch. Output reports only counts and
 // outcomes, never configuration or reply text. The model call and restart have
 // a two-minute deadline; cleanup removes the installation, canon and child
-// processes, including on failure.
+// processes, including on failure. Installation is Linux-only, so other hosts
+// skip before any configuration or model work.
 func TestRealModelHeadlessConversation(t *testing.T) {
+	requireLinuxCoreInstall(t)
 	requireRealModel(t)
 	headlessConversationRoundTrip(t, os.Getenv, nil)
+}
+
+// requireLinuxCoreInstall reports the hosts that cannot install Core as a
+// skip. This scenario installs real binaries and is not portable.
+func requireLinuxCoreInstall(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux Core installation")
+	}
 }
 
 const headlessQAInput = "Reply with a short greeting."
@@ -225,6 +237,7 @@ const headlessQAInput = "Reply with a short greeting."
 // This proves streaming without a timing assumption or a real credential.
 func TestHeadlessConversationFixture(t *testing.T) {
 	t.Parallel()
+	requireLinuxCoreInstall(t)
 
 	var calls atomic.Int32
 	deltaSeen := make(chan struct{})

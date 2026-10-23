@@ -454,8 +454,11 @@ as steering, so a line that arrives while the agent already runs a turn keeps it
 own turn and its replies always carry its request id. The request id is the input
 id, so a repeated request returns the original admission and starts no second
 turn; Core keeps the agent that first admitted the line, even after the person
-selects another agent. The result names the request, the conversation and the
-agent with an `applied` effect.
+selects another agent, and accepts the inbox source either release used, so a
+line admitted before this capability shipped stays retryable. The request id is
+reserved for the launcher, so an `input` with an id in that namespace is refused
+as malformed. The result names the request, the conversation and the agent with
+an `applied` effect.
 
 The short form streams on the `launcher` topic keyed by `request_id`. Each
 `launcher_reply` carries the request, conversation and agent, the visible short

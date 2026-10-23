@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -41,19 +42,25 @@ func (r *conversationRuntime) History(ctx context.Context, s clientsrv.Session, 
 	return protocol.History{ConversationID: &r.conversation, AgentID: &r.agent}, nil
 }
 
+// Input admits one client line. Input ids in the launcher namespace belong to
+// the launcher capability, so a client cannot shadow a durable launcher request.
 func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p protocol.Input) (protocol.ItemDone, error) {
+	if p.InputID != nil && strings.HasPrefix(*p.InputID, launcherThreadPrefix) {
+		return protocol.ItemDone{}, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
+	}
 	return r.admitInput(ctx, s, p, "tui", clientInputSource, nil)
 }
 
-// clientInputSource and launcherInputSource keep launcher retries separable
-// from ordinary client input in the durable inbox.
+// clientInputSource and launcherInputSource name the durable inbox row a line
+// is admitted under. Launcher retries accept either, so a store written before
+// the capability still dedupes.
 const (
 	clientInputSource   = "client"
 	launcherInputSource = "launcher"
 )
 
 // admitInput is the one durable admission path. The launcher adds no second
-// conversation or inbox: it only names the surface, the source and the thread.
+// conversation or inbox: it only names the surface and the launcher thread.
 func (r *conversationRuntime) admitInput(ctx context.Context, s clientsrv.Session, p protocol.Input, surface, source string, check func(context.Context, *canon.Tx) error) (protocol.ItemDone, error) {
 	if err := r.authorize(s, p.ConversationID); err != nil {
 		return protocol.ItemDone{}, err
