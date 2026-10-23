@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/doing"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
 	wire "github.com/thisisjun786/lina/third_party/codex-app-server/upstream"
@@ -50,6 +51,7 @@ type frame struct {
 }
 
 type Session struct {
+	doing                   doing.Reader
 	bind                    func(context.Context, worker.Thread) error
 	quotaWake               chan struct{}
 	owner                   *proc.Owner

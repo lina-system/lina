@@ -70,6 +70,9 @@ func UnplannedWork(cards map[string]work.Card) []Unit {
 		if c.Active && c.State == "working" && c.Activity != "" {
 			u.Now = design.Text(language, "work."+c.Activity)
 		}
+		if c.Active && c.State == "working" && c.Doing != nil && c.Doing.Line != "" {
+			u.Now = c.Doing.Line
+		}
 		u.Landed = c.State == "ready_for_review" || c.State == "done" || c.State == "failed" || c.State == "stopped"
 		if goals[id] {
 			u.Kind = "goal"
