@@ -246,9 +246,13 @@ func (h *harness) connectWithin(core *process, timeout time.Duration) net.Conn {
 	}
 }
 
-func (h *harness) stopCore(core *process) {
+func (h *harness) stopCore(core *process, target ...*os.Process) {
 	h.t.Helper()
-	if err := core.command.Process.Signal(syscall.SIGTERM); err != nil {
+	signalTarget := core.command.Process
+	if len(target) > 0 {
+		signalTarget = target[0]
+	}
+	if err := signalTarget.Signal(syscall.SIGTERM); err != nil {
 		h.t.Fatal(err)
 	}
 	core.wait(h.t, 0)

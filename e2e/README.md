@@ -488,3 +488,10 @@ replacement worker commits a real result. Persisted quota keeps the windows
 independent before and after restart, and selection at the reported short-window
 reset does not wait for the healthy weekly window. Reset-boundary assertions use
 explicit times rather than waiting for a provider window.
+
+The installed-worker scenarios bind a private synthetic `/proc/loadavg` into the
+Core's test mount namespace. Concurrent build load cannot decide their outcome.
+Core still uses its production host sampler and capacity rules. The capacity
+case observes a durable wait with no worker launch under high load, then changes
+the sample and commits a conversation event to release the same task. This does
+not change the host's `/proc` or production settings.

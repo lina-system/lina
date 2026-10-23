@@ -27,6 +27,11 @@
       "name": "success",
       "choice": "rule",
       "expected": "ready_for_review"
+    },
+    {
+      "name": "success",
+      "choice": "capacity",
+      "expected": "ready_for_review"
     }
   ]
 }

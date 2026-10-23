@@ -4,7 +4,9 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -40,7 +42,7 @@ func assertWorkerChoice(t *testing.T, h *harness, fixture, mode string) {
 		}
 		return
 	}
-	if mode == "blocked" || mode == "overlap" {
+	if mode == "blocked" || mode == "overlap" || mode == "capacity" {
 		if got := read("launches"); got != "worker\n" {
 			t.Fatalf("extra worker launch: %q", got)
 		}
@@ -124,6 +126,112 @@ func waitForAreaClaim(t *testing.T, h *harness, fixture string) {
 		select {
 		case <-deadline.C:
 			t.Fatalf("area reservation not observed: waiting=%d active=%d err=%v", waiting, active, err)
+		case <-tick.C:
+		}
+	}
+}
+
+// Capture state before cleanup even when the scenario's own deadline elapsed.
+func dispatchedWorkerDiagnostic(h *harness, fixture string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	db, err := canon.OpenReader(ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		return err.Error()
+	}
+	defer db.Close(context.Background())
+	var records []string
+	err = db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT record FROM worker_dispatch")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw []byte
+			var r dispatch.Record
+			if err = rows.Scan(&raw); err != nil {
+				return err
+			}
+			if err = json.Unmarshal(raw, &r); err != nil {
+				return err
+			}
+			records = append(records, fmt.Sprintf("state=%s wait=%s worker=%s attempts=%d code=%s", r.State, r.Wait, r.Worker, len(r.Tried), r.Code))
+		}
+		return rows.Err()
+	})
+	_, launched := os.Stat(filepath.Join(fixture, "launches"))
+	return fmt.Sprintf("dispatch=%v launched=%t read_error=%v", records, launched == nil, err)
+}
+
+// Installed Core still reads the OS sample through MainHost. Give each fixture
+// its own load observation so concurrent build jobs cannot decide its outcome.
+func bindDispatchLoad(t *testing.T, p *process, loadFile string) func() *os.Process {
+	t.Helper()
+	binary, err := exec.LookPath("bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { reader.Close(); writer.Close() })
+	fd := 3 + len(p.command.ExtraFiles)
+	p.command.ExtraFiles = append(p.command.ExtraFiles, writer)
+	p.command.Path = binary
+	p.command.Args = append([]string{binary, "--die-with-parent", "--info-fd", strconv.Itoa(fd), "--bind", "/", "/", "--dev-bind", "/dev", "/dev", "--ro-bind", loadFile, "/proc/loadavg", "--"}, p.command.Args...)
+	return func() *os.Process {
+		t.Helper()
+		writer.Close()
+		if err := reader.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		var info struct {
+			PID int `json:"child-pid"`
+		}
+		if err := json.NewDecoder(reader).Decode(&info); err != nil || info.PID <= 0 {
+			t.Fatal("Core namespace did not report its process", err)
+		}
+		reader.Close()
+		target, err := os.FindProcess(info.PID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { target.Release() })
+		return target
+	}
+}
+
+func waitForHostCapacity(t *testing.T, h *harness, fixture string) {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	deadline := time.NewTimer(20 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var raw []byte
+		err = db.Read(h.ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(h.ctx, "SELECT record FROM worker_dispatch").Scan(&raw)
+		})
+		var r dispatch.Record
+		if err == nil && json.Unmarshal(raw, &r) == nil && r.State == "queued" && r.Wait == "host_capacity" {
+			if len(r.Tried) != 0 {
+				t.Fatal("capacity wait spent a worker attempt")
+			}
+			if _, err = os.Stat(filepath.Join(fixture, "launches")); !os.IsNotExist(err) {
+				t.Fatal("worker launched without capacity", err)
+			}
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("capacity wait missing", dispatchedWorkerDiagnostic(h, fixture))
 		case <-tick.C:
 		}
 	}
