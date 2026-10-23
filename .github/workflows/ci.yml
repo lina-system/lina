@@ -4,6 +4,7 @@ name: CI
 on:
   pull_request:
     branches: [dev, 'codex/ln-369-*']
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [dev]
   schedule:
@@ -15,7 +16,7 @@ permissions:
 
 concurrency:
   group: foundation-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   selection:
@@ -47,12 +48,15 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          E2E_OPT_IN: ${{ contains(github.event.pull_request.labels.*.name, 'e2e') }}
           HEAD_SHA: ${{ github.sha }}
         run: |
           if [[ "$EVENT_NAME" == pull_request && -n "$BASE_SHA" ]]; then
-            node scripts/foundation.mjs --range "$BASE_SHA..$HEAD_SHA" --no-note --select "$RUNNER_TEMP/foundation-plan.json"
+            options=(--event pull_request)
+            if [[ "$E2E_OPT_IN" == true ]]; then options+=(--e2e); fi
+            node scripts/foundation.mjs --range "$BASE_SHA..$HEAD_SHA" "${options[@]}" --no-note --select "$RUNNER_TEMP/foundation-plan.json"
           else
-            node scripts/foundation.mjs --full --no-note --select "$RUNNER_TEMP/foundation-plan.json"
+            node scripts/foundation.mjs --full --event "$EVENT_NAME" --no-note --select "$RUNNER_TEMP/foundation-plan.json"
           fi
           node --input-type=module - "$RUNNER_TEMP/foundation-plan.json" <<'JS'
           import { appendFileSync, readFileSync } from 'node:fs';
@@ -200,3 +204,60 @@ jobs:
         env:
           SHARDS_RESULT: ${{ needs.checks.result }}
         run: node scripts/foundation.mjs --plan "$RUNNER_TEMP/foundation-plan.json" --results "$RUNNER_TEMP/foundation-results" --upstream "$SHARDS_RESULT" --no-note
+
+  post-merge-qa:
+    name: post-merge QA
+    if: always()
+    needs: [selection, checks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    concurrency:
+      group: post-merge-qa-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Identify post-merge scope
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          SELECTION_RESULT: ${{ needs.selection.result }}
+        run: |
+          enabled=false
+          if [[ "$EVENT_NAME" != pull_request && "$SELECTION_RESULT" == success && ( "$REF_NAME" == dev || "$REF_NAME" == qa/e2e-* ) ]]; then
+            enabled=true
+          fi
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+      - name: Check out the tested head
+        if: steps.scope.outputs.enabled == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node
+        if: steps.scope.outputs.enabled == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+      - name: Read the selection
+        if: steps.scope.outputs.enabled == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: foundation-plan
+          path: ${{ runner.temp }}
+      - name: Read shard results
+        if: steps.scope.outputs.enabled == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: foundation-result-*
+          merge-multiple: false
+          path: ${{ runner.temp }}/foundation-results
+      - name: Reconcile e2e QA issues
+        if: steps.scope.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QA_MILESTONE: ${{ vars.QA_MILESTONE }}
+        run: node scripts/verify/post-merge-qa.mjs --plan "$RUNNER_TEMP/foundation-plan.json" --results "$RUNNER_TEMP/foundation-results"
