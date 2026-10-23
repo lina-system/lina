@@ -21,6 +21,51 @@ func authorizationStep(t *testing.T, e *Engine) State {
 	return revisionSnapshot(t, e)
 }
 
+func TestPublishedAuthorizationWaitResumesWithoutObservingAnEffect(t *testing.T) {
+	e := revisionEngine(t, readyTask("a"))
+	granted := false
+	effects, observations := 0, 0
+	e.cfg.Driver = &fixtureDriver{authorize: func(Action) error {
+		if !granted {
+			return ErrNeedsPerson
+		}
+		return nil
+	}, run: func(Action) (Observation, error) {
+		effects++
+		return Observation{Status: OutcomeRunning, Handle: "worker"}, nil
+	}, observe: func(Action) (Observation, error) {
+		observations++
+		return Observation{Status: OutcomeUnknown}, nil
+	}}
+	a := authorizationStep(t, e).Actions[0]
+	if a.State != "awaiting_authorization" {
+		t.Fatal("fixture did not park before execution")
+	}
+	// Dev's published journal predates input tokens and refusal receipts.
+	a.InputVersion, a.Receipt = nil, nil
+	if err := e.journal.Update(t.Context(), Transition{ID: "published-wait", Kind: "fixture", At: 100}, func(v *View) error {
+		return put(v, "action", a.ID, a)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := e.cfg
+	cfg.Epoch++
+	var err error
+	e, err = NewEngine(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = authorizationStep(t, e)
+	granted = true
+	if err := e.Signal(t.Context(), Signal{ID: "approval-after-upgrade", ActionID: a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	s := authorizationStep(t, e)
+	if effects != 1 || observations != 0 || len(s.Actions) != 1 || s.Actions[0].ID != a.ID || s.Actions[0].State != "running" {
+		t.Fatalf("published approval wait was treated as an executed effect: effects=%d observations=%d actions=%+v", effects, observations, s.Actions)
+	}
+}
+
 func TestObservationDoesNotUseClaimSnapshotAfterAuthorizationRequeue(t *testing.T) {
 	e := revisionEngine(t, readyTask("a"))
 	queued := revisionAction(t, e, "a", Assign)
