@@ -12,13 +12,15 @@ import (
 	"time"
 )
 
-var escapeModes = []string{"setsid", "setpgid"}
+var escapeModes = []string{"setsid", "setpgid", "cleared"}
 
+// "cleared" leaves the new session and adds a fully cleared environment, so the
+// descendant carries neither the owner token nor any inherited entry.
 func configureEscape(cmd *exec.Cmd, escape string) {
-	if escape == "setsid" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	} else {
+	if escape == "setpgid" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	} else {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	}
 }
 

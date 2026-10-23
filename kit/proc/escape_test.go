@@ -142,6 +142,11 @@ func TestEscapingProcess(t *testing.T) {
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestEscapingProcess$", "--", next, escape)
 	cmd.Env = os.Environ() // Preserve the Darwin owner token through both forks.
+	if escape == "cleared" {
+		// The test marker is the whole environment: no owner token, no inherited
+		// entry, and the intermediate parent is reaped below.
+		cmd.Env = []string{"LINA_PROC_ESCAPE_TEST=1"}
+	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	configureEscape(cmd, escape)
 	if err := cmd.Start(); err != nil {
