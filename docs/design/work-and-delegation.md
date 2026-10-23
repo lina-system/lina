@@ -1405,6 +1405,11 @@ uses the existing events and a five-minute safety sweep; it does not call a mode
 A first live worker failure keeps its normal result response, with no execution tools in that response. The known failure stays visible while unknown effects retain their directory fence. The response cannot grant another worker attempt.
 Confirmed successful completion evidence uses the normal result-delivery inbox. Its separate
 conversation response neither replays worker input nor grants another attempt.
+An earlier connection-loss notice cannot suppress a later confirmed terminal
+result for the same attempt and turn. Core retains both observations and admits
+the confirmed result once, including after rebinding or restarting. Repeated
+terminal observations share one result identity; a successful live completion
+and its later reconciliation do not create separate responses.
 
 ## Judgment and delivery
 

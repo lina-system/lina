@@ -129,6 +129,9 @@ Core during an active synthetic Codex task, gates the replacement thread's
 snapshot, and proves unknown state before reconciliation. It verifies settlement
 without a new turn, one continuation, a second-failure decision through the
 waiting protocol, retention of a real file, and no third turn across restart.
+Its disconnect case exits the worker after writing its result but before sending
+completion. Running Core reports the connection loss, reads the confirmed
+success and output, delivers one result response, and retains it across restart.
 `m2/headless-worker-recovery.json`, executed by `TestM2HeadlessWorkerRecovery`,
 checks Claude dispatch's two attempts, retained receipt artifacts and durable
 decision. These use synthetic workers and no authenticated accounts.
