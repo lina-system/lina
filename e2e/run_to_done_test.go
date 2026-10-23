@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/boot"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/proc"
 )
@@ -272,6 +273,10 @@ func TestM2RunToDoneCodeGoal(t *testing.T) {
 			return work.Node{ID: "main-work-fixture", Connected: true, ObservedAt: time.Now().Unix(), CPUCores: 4, CPULimit: 4, AvailableMemoryMB: 8000, MemoryLimitMB: 8000, AvailableDiskMB: 8000, DiskLimitMB: 8000, Workers: map[string]bool{"stub": true}}, nil
 		},
 		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+			agent, err := fixtureWorkOwner(ctx, root)
+			if err != nil {
+				return err
+			}
 			saved, err := e.Snapshot(ctx)
 			if err != nil {
 				return err
@@ -375,4 +380,16 @@ func TestM2RunToDoneCodeGoal(t *testing.T) {
 	if len(world.calls) != calls || admissions != 1 {
 		t.Fatalf("restart repeated work/person admission: calls %d -> %d, admissions %d", calls, len(world.calls), admissions)
 	}
+}
+
+// Select the installed dispatch-enabled starter for trusted goal ingress.
+func fixtureWorkOwner(ctx context.Context, root string) (string, error) {
+	db, err := canon.OpenSQLiteReader(ctx, filepath.Join(root, "canon/canon.sqlite"))
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var id string
+	err = db.QueryRowContext(ctx, "SELECT agent_id FROM agent_starters WHERE preset='dev'").Scan(&id)
+	return id, err
 }

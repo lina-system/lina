@@ -174,6 +174,10 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 		Driver:   func(e *work.Engine) (work.Driver, error) { engine = e; return w, nil },
 		MainHost: host,
 		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+			agent, err := fixtureWorkOwner(ctx, root)
+			if err != nil {
+				return err
+			}
 			node, _ := host(ctx)
 			if err := e.NodeChanged(ctx, node); err != nil {
 				return err
@@ -238,7 +242,7 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 			}
 			// Both repair managers and an unrelated worker are queued. The first
 			// manager revises the goal; Core must dispatch the others afterwards.
-			err := w.finish(ctx, e, "left", work.PlanGoal)
+			err = w.finish(ctx, e, "left", work.PlanGoal)
 			prepared.Store(err == nil)
 			return err
 		},

@@ -35,9 +35,13 @@ func TestCoreRejectsAmbiguousServiceRepository(t *testing.T) {
 	cfg := boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/client.sock"), Work: &boot.WorkConfig{
 		Driver: func(*work.Engine) (work.Driver, error) { return &repairWorld{}, nil },
 		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+			agent, err := fixtureWorkOwner(ctx, root)
+			if err != nil {
+				return err
+			}
 			service, docs := repairTask("service"), repairTask("docs")
 			docs.Repository = "docs"
-			err := e.Admit(ctx, work.Goal{ID: "ambiguous-service", Person: person, Agent: agent, Summary: "update service and docs", Done: "service answers", Scope: work.GoalScope{Repositories: []string{"fixture", "docs"}, Includes: "service and docs"}, ServiceTarget: "private-service", Tasks: []work.Task{service, docs}, Criteria: []work.Criterion{{ID: "answers", Statement: "service answers", Check: work.CriterionCheck{Kind: work.RunEvidence, Method: "service.answers", Target: "private-service"}}}})
+			err = e.Admit(ctx, work.Goal{ID: "ambiguous-service", Person: person, Agent: agent, Summary: "update service and docs", Done: "service answers", Scope: work.GoalScope{Repositories: []string{"fixture", "docs"}, Includes: "service and docs"}, ServiceTarget: "private-service", Tasks: []work.Task{service, docs}, Criteria: []work.Criterion{{ID: "answers", Statement: "service answers", Check: work.CriterionCheck{Kind: work.RunEvidence, Method: "service.answers", Target: "private-service"}}}})
 			attempted <- err
 			return nil
 		},
@@ -131,6 +135,10 @@ func TestCoreDeploysServiceRepositoryAfterAnotherRepositoryMerges(t *testing.T) 
 			return work.Node{ID: "repository-main", Connected: true, ObservedAt: time.Now().Unix(), CPUCores: 2, CPULimit: 2, AvailableMemoryMB: 1024, MemoryLimitMB: 1024, AvailableDiskMB: 1024, DiskLimitMB: 1024, Workers: map[string]bool{"stub": true}}, nil
 		},
 		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+			agent, err := fixtureWorkOwner(ctx, root)
+			if err != nil {
+				return err
+			}
 			service, docs := repairTask("service"), repairTask("docs")
 			docs.Repository, docs.DependsOn = "docs", []string{"service"}
 			g := work.Goal{ID: "repository-service", Person: person, Agent: agent, Summary: "update service and documentation", Done: "service returns healthy", Scope: work.GoalScope{Repositories: []string{"fixture", "docs"}, Includes: "service and documentation"}, ServiceTarget: w.url, Tasks: []work.Task{service, docs}, Criteria: []work.Criterion{{ID: "answers", Statement: "service returns healthy", Check: work.CriterionCheck{Kind: work.RunEvidence, Method: "service.answers", Target: w.url}}}}
