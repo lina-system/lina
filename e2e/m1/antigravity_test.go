@@ -32,6 +32,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		Cases []struct {
 			Name, Expected, Preset, Choice string
 			LegacyAdmission                bool `json:"legacy_admission"`
+			HostCapacity                   bool `json:"host_capacity"`
 			Omit                           string
 			DesignRef                      string `json:"design_ref"`
 			MoveBase                       bool   `json:"move_base"`
@@ -66,11 +67,12 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		t.Run(test.Name, func(t *testing.T) {
 			t.Parallel()
 			workerCase := test.Name
-			if test.Preset != "" || test.LegacyAdmission || test.MoveBase {
+			if test.Preset != "" || test.LegacyAdmission || test.MoveBase || test.HostCapacity {
 				workerCase = "success"
 			}
 			var err error
 			fixture := t.TempDir()
+			load := newWorkerLoad(t, fixture)
 			repo := filepath.Join(fixture, "repo")
 			bin := filepath.Join(fixture, "bin")
 			for _, dir := range []string{repo, bin} {
@@ -176,7 +178,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					if code == "" {
 						code = "ok"
 					}
-					methodologyOutput(t, methodologyRequest{Input: req.Input}, code, nil)
+					if !test.HostCapacity || callNumber == 2 {
+						methodologyOutput(t, methodologyRequest{Input: req.Input}, code, nil)
+					}
 					emitResponse(w, "Task accepted.", true)
 				}
 			})))
@@ -201,12 +205,16 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				managerTurns = 1
 			}
 			fixtureCase := workerCase
+			if test.HostCapacity {
+				load.set(t, "1000000.00")
+			}
 			if test.Choice != "" {
 				fixtureCase = test.Choice
 			}
 			start := func() *process {
 				p := h.command("core", "--state-root", h.root, "--socket", h.socket)
 				p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+fixtureCase, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+				load.wrap(t, p)
 				p.start(t)
 				h.connectWithin(p, time.Minute).Close()
 				waitCoreReady(t, h)
@@ -214,6 +222,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			}
 			core := start()
 			t.Cleanup(func() {
+				if t.Failed() {
+					logWorkerDispatchState(t, h, fixture)
+				}
 				if t.Failed() && test.Choice == "quota-windows" {
 					logWorkerQuotaState(t, h)
 				}
@@ -244,6 +255,20 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 				managerTurns++
 			}
+			var capacityID string
+			resultContext := h.ctx
+			if test.HostCapacity {
+				capacityID = waitForHostCapacity(t, h, fixture)
+				load.set(t, "0.00")
+				// Finish before the dispatcher's minute-long safety sweep: the
+				// new input's committed event must wake this queued dispatch.
+				var cancel context.CancelFunc
+				resultContext, cancel = context.WithTimeout(h.ctx, operationTimeout)
+				defer cancel()
+				recovery := *h
+				recovery.ctx = resultContext
+				events = append(events, admittedTurn(t, &recovery, c, conversation, "capacity-released", "The host has capacity again.")...)
+			}
 			found := false
 			inspect := func(e protocol.Envelope) {
 				if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil && (strings.Contains(*item.Text, scenario.Worker+":") || test.Choice != "" && strings.Contains(*item.Text, "codex:")) {
@@ -257,7 +282,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				inspect(e)
 			}
 			for !found {
-				e, err := c.Receive(h.ctx)
+				e, err := c.Receive(resultContext)
 				if err != nil {
 					t.Fatal("worker result missing", err)
 				}
@@ -304,6 +329,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 			}
 			beforeRestart := providerCalls.Load()
+			if test.HostCapacity {
+				assertCapacityWorkOnce(t, h, fixture, capacityID)
+			}
 			if scenario.CompletionEvents {
 				loseCompletion(t, h)
 			}
@@ -326,10 +354,14 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			if scenario.CompletionEvents {
 				assertWorkCompletion(t, h)
 			}
-			if scenario.CompletionEvents && providerCalls.Load() != beforeRestart {
+			if (scenario.CompletionEvents || test.HostCapacity) && providerCalls.Load() != beforeRestart {
 				t.Fatal("restart replayed a manager or conversation model call")
 			}
 			expectedCalls := int32(2)
+			if test.HostCapacity {
+				expectedCalls++
+				assertCapacityWorkOnce(t, h, fixture, capacityID)
+			}
 			if test.Choice == "overlap" {
 				expectedCalls = 4
 			}
