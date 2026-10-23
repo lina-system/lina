@@ -71,12 +71,19 @@ func (p *Plan) PromotionBatches(policy PromotionPolicy) ([]PromotionBatch, error
 			if superseded[r.id] || hasFlag(r, "retracted") || strings.TrimSpace(r.body) == "" {
 				continue
 			}
-			// Promotion judges the body publication displays. An event whose
-			// output sidecar cannot be masked publishes an unavailable notice,
-			// so it cannot back a memory item; secrets stay excluded either way.
-			masked, err := displayMask(promotionBody(c, r))
+			// Promotion judges the body publication displays, and the inline
+			// sentence it quotes. An event whose output sidecar cannot be
+			// masked publishes an unavailable notice, so it cannot back a
+			// memory item; secrets in either body stay excluded.
+			display := promotionBody(c, r)
+			masked, err := displayMask(display)
 			if err != nil || len(masked.Spans()) != 0 {
 				continue
+			}
+			if display != r.body {
+				if masked, err = displayMask(r.body); err != nil || len(masked.Spans()) != 0 {
+					continue
+				}
 			}
 			person := p.people[c.report.Profile]
 			precision := memory.Session
