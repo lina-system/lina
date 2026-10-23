@@ -202,7 +202,7 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 			}
 			// Both repair managers and an unrelated worker are queued. The first
 			// manager revises the goal; Core must dispatch the others afterwards.
-			err := w.finish(ctx, e, "left", work.PlanGoal)
+			err = w.finish(ctx, e, "left", work.PlanGoal)
 			prepared.Store(err == nil)
 			return err
 		},
