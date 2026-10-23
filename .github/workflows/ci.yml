@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: foundation-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  group: foundation-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && 'latest' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -215,7 +215,7 @@ jobs:
       contents: read
       issues: write
     concurrency:
-      group: post-merge-qa-${{ github.repository }}
+      group: post-merge-qa-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false
     steps:
       - name: Identify post-merge scope

@@ -125,3 +125,15 @@ test('later passing observations advance a resolved issue watermark', async () =
   await reconcileQA({ ...opts, ...fixture('fail', 3) });
   assert.equal(mock.issues[0].state, 'closed');
 });
+
+
+test('a failure on a rerun reopens a finding closed by a pass at the same head', async () => {
+  const mock = github();
+  const opts = options(mock);
+  await reconcileQA({ ...opts, ...fixture() });
+  await reconcileQA({ ...opts, ...fixture('pass', 2) });
+  assert.equal(mock.issues[0].state, 'closed');
+  await reconcileQA({ ...opts, ...fixture('fail', 2) });
+  assert.equal(mock.issues[0].state, 'open');
+  assert.equal(mock.issues.length, 1);
+});

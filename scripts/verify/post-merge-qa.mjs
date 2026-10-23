@@ -99,8 +99,9 @@ export async function reconcileQA({ plan, records, repository, milestone, branch
     const identity = { branch, package: observation.package, test: observation.test };
     const previous = existing.get(key(identity));
     if (previous) {
-      if (previous.state.lastHead === plan.head) continue; // A later head must prove recovery.
-      if (!await isAncestor(previous.state.lastHead, plan.head)) continue; // Ignore out-of-order runs.
+      // A rerun can reveal a new failure, but only a later head proves recovery.
+      if (previous.state.lastHead === plan.head && observation.result === 'pass') continue;
+      if (previous.state.lastHead !== plan.head && !await isAncestor(previous.state.lastHead, plan.head)) continue;
     }
     if (observation.result === 'pass' && !previous) continue;
     const state = { schema: 1, ...identity,
