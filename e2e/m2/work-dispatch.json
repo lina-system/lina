@@ -1,5 +1,8 @@
 {
-  "cases": [{"name": "success", "expected": "ready_for_review"}],
+  "cases": [
+    {"name": "success", "expected": "ready_for_review"},
+    {"name": "legacy-admission", "expected": "ready_for_review", "legacy_admission": true}
+  ],
   "what": "Produce a file in the task worktree and submit its pull request",
   "done": "The committed result has a current PR and a replayable task receipt",
   "work_area": true

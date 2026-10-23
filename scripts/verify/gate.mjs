@@ -22,6 +22,28 @@ export function evaluateGate(scope, results) {
       const actual = results[name]?.result;
       if (actual !== expected) failures.push(`${name}: expected ${expected}, received ${actual ?? 'missing'}`);
     }
+    // Older evidence has only the component aggregate. A sharded selection
+    // must account for each exact shard; an aggregate cannot conceal omissions.
+    if (scope.componentShards !== undefined) {
+      const selected = scope.componentShards;
+      const shards = results.components?.shards;
+      if (!Array.isArray(selected) || scope.components !== (selected.length > 0)
+          || selected.some(id => typeof id !== 'string' || !/^(build|unit|e2e)(?:-[a-z0-9]+)*$/.test(id))
+          || new Set(selected).size !== selected.length) {
+        failures.push('component shard selection is malformed');
+      } else if (!shards || typeof shards !== 'object' || Array.isArray(shards)) {
+        failures.push('component shard results are missing or malformed');
+      } else {
+        for (const id of selected) {
+          if (!Object.hasOwn(shards, id) || shards[id]?.result !== 'success') {
+            failures.push(`${id}: expected success, received ${shards[id]?.result ?? 'missing'}`);
+          }
+        }
+        for (const id of Object.keys(shards)) {
+          if (!selected.includes(id)) failures.push(`unexpected component shard: ${id}`);
+        }
+      }
+    }
   }
   return { result: failures.length ? 'failure' : 'success', mode: scope.mode, head: scope.head, failures };
 }
