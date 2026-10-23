@@ -2399,6 +2399,13 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   `Prompt` retains its blocking convenience API; cancelling its wait sends no protocol cancel.
 - Dispatch records the post-initialization version and sends progress through `work.Service.ReportProgress`.
   This operation adds a `worker_progress` event to the existing ledger, validates the active run before idempotent retries, and projects the worker stage with source `worker_report`.
+- ACP dispatch recovery uses the same durable once-only allowance as C-29.
+  A terminal snapshot retains the failed turn and unresolved-effect evidence;
+  only a settled attempt may start the replacement in its existing worktree.
+  Session restoration prefers advertised resume over load, preserves the recorded
+  session id and excludes replay from progress and output. The next process has a
+  fresh binding and work-tool server. Restore failure and Core-crash uncertainty
+  do not authorize another prompt or a fresh-session fallback.
   It changes no storage schema and never claims completion.
 - A definitive authentication refusal during `session/new` returns `worker.ErrNeedsSignIn` only after child cleanup, before any prompt.
   Dispatch retains the worker/version/code as readiness evidence and lets the existing chooser try another eligible worker.
