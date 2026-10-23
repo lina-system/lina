@@ -2475,6 +2475,11 @@ type Definition struct {
 - Core does not split work itself.
   The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)).
   Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
+  Shared dependency paths must not multiply graph traversal: reachability is
+  bounded by the graph's vertices and edges, including negative queries.
+  Missing dependencies, cycles and unordered overlaps still reject the whole
+  admission before any task is created.
+  Implementation notes: [C-57 graph validation](../../internal/core/work/REFERENCE.md#c-57-graph-validation).
 - `Chooser` ranks installed workers by quota, situation rules and measured host capacity.
   OK quota precedes warning and unknown; absent quota is unknown and usable.
   Any blocked window excludes the worker until its explicit reset.
