@@ -160,7 +160,8 @@ func tuiWorkerQuestion(t *testing.T, name, command string) {
 	waitScreen(t, h, terminal, design.Text(design.English, "resolved"))
 	h.keys(terminal, "\x1b[27u")
 	alphaConversationScreen(t, h, terminal, design.English)
-	waitScreen(t, h, terminal, fixture.Result)
+	// Check execution separately from the model's reply. A missing reply must
+	// not hide whether the approved worker actually finished and wrote its file.
 	select {
 	case <-finished:
 	case <-h.ctx.Done():
@@ -170,6 +171,8 @@ func tuiWorkerQuestion(t *testing.T, name, command string) {
 	if err != nil || string(artifact) != fixture.Result {
 		t.Fatalf("worker artifact=%q: %v", artifact, err)
 	}
+	t.Log("worker completed and artifact matched after approval and question answer")
+	waitScreen(t, h, terminal, fixture.Result)
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)
 	h.expectTerminalRestored(terminal)
