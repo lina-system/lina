@@ -93,12 +93,17 @@ and do not fail the run. Inspect all outcomes before any switch decision.
 
 `system/crw-takeover-journal.json` in the destination is private operator state.
 It binds the single snapshot and actor and durably reserves random ids before
-publishing any record. Keep it with the state backup; never delete or replace it
-to force another import. There is no product API or schema for this journal.
+publishing any record. Core backup captures its opaque bytes and verifies its
+hash with the matching records. Restore replaces it with that generation's
+journal, or removes later reservations when restoring a generation without one.
+Interrupted restore blocks the tool until publication is resumed. Never delete
+or replace the journal to force another import. Older backups that omitted it
+cannot recover its reservations. There is no product API or schema for it.
 On retry, reserved ids reconcile against the records repository, including a
 crash after publication but before its journal acknowledgement. Already imported
 records report `reused: true`; the retry creates no records or commits and does
-not overwrite subsequent user edits. Deleted imported records fail visibly.
+not overwrite subsequent user edits. This also holds after backup/restore and
+after a record moves. Deleted imported records fail visibly.
 
 Earlier imports may store to-dos as `active` or `done` without
 `deadline_source`. Core recognizes their tracker issue/milestone provenance and

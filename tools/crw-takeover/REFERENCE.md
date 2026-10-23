@@ -28,6 +28,24 @@ Read-only inspection of CRW commit
 - No live imports or tracker exports were inspected. The number of affected
   records is unknown; compatibility is verified with synthetic records only.
 
+## Import identity recovery
+
+Read-only inspection of `internal/relay/store/managed_records.go` at CRW commit
+`7e65fcb82d426d228e18958d728fe63a0991ddd0` through GitHub; the designated local
+checkout was unavailable. No CRW executable or workflow was run.
+
+- **Seen:** source reservations, receipts and attachment are separate durable
+  facts; attachment requires an accepted receipt and the expected state. LINA's
+  importer similarly reserves its own ids before publishing records, but its
+  journal currently sits outside the backup inventory.
+- **Inferred:** LINA must capture that opaque journal with its destination
+  records and restore both together. Absence in a generation must remove later
+  reservations. Retrying uses reserved LINA ids even after a record moves;
+  source ids remain provenance only.
+- **Unknown:** no live source data or CRW backup semantics were inspected.
+  This recovery rule follows LINA's whole-generation contract, not an assumed
+  upstream backup format.
+
 ## One-time import
 
 Read-only reference: CRW commit `7e65fcb82d426d228e18958d728fe63a0991ddd0`,

@@ -110,6 +110,10 @@ func codexSessionFixture() {
 				state = "idle"
 				notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turn, "status": "completed"}})
 			}
+			if strings.Contains(string(r.Params["input"]), "fail running-list fixture") {
+				state = "systemError"
+				notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turn, "status": "failed", "error": map[string]any{"message": "Synthetic worker failure"}}})
+			}
 		case "turn/interrupt":
 			var expected string
 			json.Unmarshal(r.Params["turnId"], &expected)
@@ -127,6 +131,9 @@ func codexSessionFixture() {
 				if switchFailures && count == 1 {
 					threadStatus["activeFlags"] = []string{"waitingOnUserInput"}
 				}
+			} else if state == "systemError" {
+				status = "failed"
+
 			}
 			reply(map[string]any{"thread": map[string]any{"id": "fixture-thread", "cwd": cwd, "status": threadStatus, "turns": []any{map[string]any{"id": turn, "status": status}}}})
 			if gate := os.Getenv("LINA_WORKER_FINISH_GATE"); gate != "" && count == 1 && state == "active" {

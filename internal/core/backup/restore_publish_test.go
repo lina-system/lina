@@ -49,12 +49,12 @@ func TestRestorePublicationResumesAtEveryBoundary(t *testing.T) {
 			}
 			return nil
 		}
-		err = commitRestore(root, "staging/prepared", after)
+		err = commitRestore(root, "staging/prepared", Manifest{}, after)
 		if errors.Is(err, injected) {
 			if err := CheckRestore(rootPath); !errors.Is(err, ErrRestorePending) {
 				t.Fatalf("boundary %d admitted Core: %v", stop, err)
 			}
-			if err := resumeRestore(root, nil); err != nil {
+			if err := resumeRestore(root, Manifest{}, nil); err != nil {
 				t.Fatalf("boundary %d: %v", stop, err)
 			}
 		} else if err != nil {
