@@ -62,6 +62,9 @@ func TestWorkerCompletionIsDurableScopedAndDeduplicated(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := entry.recoveredFinish(t.Context(), event, entry.output); err != nil {
+		t.Fatal(err)
+	}
 	// No runtime session is present. Only the immutable canon record can answer.
 	in, err := workerSchema("worker_snapshot", json.RawMessage(`{"session":"session"}`))
 	if err != nil {
