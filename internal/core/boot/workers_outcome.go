@@ -50,6 +50,9 @@ func failedWorkerReaction(input ledger.Event) bool {
 }
 
 func (e *workerSession) finish(ctx context.Context, event worker.Event) error {
+	if err := e.finishSteering(ctx, event); err != nil {
+		return err
+	}
 	return e.finishOutcome(ctx, event, e.output, true)
 }
 
