@@ -15,6 +15,7 @@ import (
 )
 
 func TestBuilderCompactsPersistedNonPrefixRoot(t *testing.T) {
+	t.Parallel()
 	for _, nested := range []bool{false, true} {
 		name := "leaf"
 		if nested {
@@ -127,6 +128,7 @@ func TestBuilderCompactsPersistedNonPrefixRoot(t *testing.T) {
 }
 
 func TestPublicationRejectsInvalidPersistedCoverage(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"input gap", "invented exclusion", "provider content exclusion"} {
 		t.Run(kind, func(t *testing.T) {
 			db, s, _, _ := fixture(t)
