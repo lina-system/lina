@@ -99,7 +99,9 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 				if revisionSnapshot(t, e).Goals[0].Tasks[1].RepairAsked {
 					t.Fatal("repair assessment bypassed the corrected definition")
 				}
-				revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("clarification")}})
+				currentRepair := readyTask("repair-a")
+				currentRepair.Repairs, currentRepair.DependsOn = "a", []string{"a"}
+				revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("a"), readyTask("b"), currentRepair, readyTask("clarification")}})
 			}
 			fresh := revisionAction(t, e, "b", PlanGoal)
 			g := revisionSnapshot(t, e).Goals[0]

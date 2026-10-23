@@ -14,7 +14,7 @@ This contract covers:
 - supervisor, parent and child roles, delivery and verdicts
 - the development method: the work definition, the choice of worker and the operation of the pull request
 - splitting work into tasks, area leases, parallel hand-off, completion events, stall handling and the running list
-- workers: the coding tools the user installed or signed in to (Codex, Claude Code, Antigravity and Cursor), the adapter boundary, the Codex adapter, compatibility, readiness, assignment, control and approvals
+- workers: the coding tools the user installed or signed in to (Codex, Claude Code, Cursor, Gemini CLI, Grok, Antigravity and any other ACP agent the person adds), the adapter boundary, the Codex and ACP adapters, compatibility, readiness, assignment, control and approvals
 - the task packet (the work definition handed to the worker), LINA's work tools and the completion receipt of a worker, the worker's review and CI fixes, and the manager session's check of a delivery against the work definition before Core merges or closes
 - run to done: the goal above its tasks, its done condition and lifecycle, the next-action table, waits on the outside world, capacity from host load, recovery, evidence before close, the cases that stop and ask, and what the person sees, for code and non-code work alike
 - effects and unknown outcomes inside work
@@ -566,7 +566,7 @@ Git work allocated with `prepare_work` has the same dev owner and manager bindin
 
 Manager inputs have the native `manager` ledger surface and retain system-generated provenance. They are never person turns. Results use the existing system/work-notice path to the asking conversation, with the worker as a source, and never make a worker or an absent persona a new speaker there.
 
-LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Cursor are used as the user installed them. LINA's development role is a method, which the dev preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). Its work settings, such as worker dispatch, the evidence required before a delivery is reported done and the shape of status reports, are data in the dev preset's work-method record ([preset-work-methods.md](preset-work-methods.md)), not a harness around a worker. The dev preset agent owns coding work and its manager sessions, including requests handed over by Lina or another starter. How to implement, split, join or interpret work is the judgment of the worker and that owning persona. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
+LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Cursor, Gemini CLI, Grok and Antigravity are used as the user installed them. LINA's development role is a method, which the dev preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). Its work settings, such as worker dispatch, the evidence required before a delivery is reported done and the shape of status reports, are data in the dev preset's work-method record ([preset-work-methods.md](preset-work-methods.md)), not a harness around a worker. The dev preset agent owns coding work and its manager sessions, including requests handed over by Lina or another starter. How to implement, split, join or interpret work is the judgment of the worker and that owning persona. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
 
 The development methods are ordinary built-in catalog skills, adapted from
 MIT-licensed oh-my-hermes methods ([credits](../../skills/NOTICE.md)). The manager
@@ -758,7 +758,13 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
 
 ## Workers
 
-Workers are coding tools the user installed or signed in to: Codex, Claude Code, Antigravity and Cursor. LINA drives each worker through one worker adapter. Codex is the first, driven through its app-server protocol over stdio; Claude Code, Antigravity CLI and Cursor (`cursor-agent`) are further adapters on the same boundary. The Cursor adapter is deferred to [#210](https://github.com/thisisjun786/lina/issues/210). Each worker thread is a per-task coding-agent session: it implements the task packet, opens the task's pull request, waits for CI and review bots, fixes every CI failure and the P0 and P1 findings once, and reports done with a completion receipt only when the resulting head is green and no P0 or P1 remains. Review and CI stay with that session and never return to the manager for triage.
+Workers are coding tools the user installed or signed in to: Codex, Claude Code, Cursor, Gemini CLI, Grok and Antigravity, and any other agent that speaks the Agent Client Protocol (ACP) and that the person adds. LINA drives each worker through one worker adapter, all on the same boundary:
+
+- Codex runs on its own app-server protocol over stdio (see Codex adapter).
+- Every ACP worker runs through one ACP adapter: Claude Code through the `claude-agent-acp` adapter program, Cursor (`cursor-agent acp`), Gemini CLI (`gemini --acp`) and Grok natively (see ACP adapter). Codex is never driven through ACP: both Codex ACP adapters measured worse than the app-server ([worker-protocols.md](../research/worker-protocols.md)).
+- Antigravity runs as a headless child with streaming output (see Antigravity headless adapter). The Claude Code headless adapter remains beside the ACP one until the worker evaluation chooses between them.
+
+Each worker thread is a per-task coding-agent session: it implements the task packet, opens the task's pull request, waits for CI and review bots, fixes every CI failure and the P0 and P1 findings once, and reports done with a completion receipt only when the resulting head is green and no P0 or P1 remains. Review and CI stay with that session and never return to the manager for triage.
 
 A worker runs with the user's own installation and configuration: its version, login and model provider, MCP servers, plugins and integrations such as `gh`, trust settings, repository instructions such as `AGENTS.md` and skills, sandbox and approval mode. LINA Core and the worker run as the user's own OS user ([runtime.md](runtime.md)). LINA does not ship, pin or configure the worker, does not override its model provider, does not install a plugin, hook or skill into it, and does not isolate it from the user's setup. What LINA adds is given per thread: the task packet and LINA's own work tools. LINA plugins never reach a worker; a worker uses the integrations connected in the worker itself ([integrations.md](integrations.md)). Workers serve every agent. A worker's model calls go through the worker's own login; LINA's provider credentials never reach a worker. LINA gives a worker no review procedure, stage workflow or completion hook.
 
@@ -955,33 +961,60 @@ recorded separately: a passing synthetic worker does not verify an installed
 Codex version, and a live text response does not prove live approval or file
 execution. Session completion remains distinct from verified task delivery.
 
+### ACP adapter
+
+One adapter drives every worker that speaks the Agent Client Protocol, version 1, over stdio. A worker profile names the command Core starts and how its version is read; everything else is the same for every ACP worker. The measurements behind this section are in [worker-protocols.md](../research/worker-protocols.md).
+
+| Profile | Command Core starts in the worktree | Version recorded |
+| --- | --- | --- |
+| Claude Code | The `claude-agent-acp` program (see Claude Code through ACP), with `CLAUDE_CODE_EXECUTABLE` set to the person's installed `claude` | `claude --version`, beside the program's `agentInfo.version` |
+| Cursor | `cursor-agent acp` | `cursor-agent --version`; its `initialize` reports none |
+| Gemini CLI | `gemini --acp` | `agentInfo.version` |
+| Grok | `grok --no-auto-update agent stdio`, never with `--always-approve` | `grok --version`; its `initialize` puts the version only in `_meta` |
+| Added agent | The command and arguments the person entered | `agentInfo.version`, or unknown |
+
+- **Start.** Core starts the profile's command as a stdio child with the person's environment, removing only LINA's own model credential. `initialize` declares no file system or terminal capability, so the worker uses its own tools, and declares form elicitation. An answer other than protocol version 1 fails the handshake. The answered capabilities become the adapter's capability set: approvals and progress always, steering only with the steering extension, recovery only with `loadSession` or `session/resume`, quota only where a source below exists.
+- **Session.** `session/new` carries the worktree as `cwd` and LINA's tool server as the only entry of `mcpServers`; the worker's own MCP servers stay in its own configuration. LINA calls `session/set_config_option` only to apply a model or effort that the worker profile names, and never changes the session mode. The task packet goes out as the first `session/prompt`.
+- **Events.** Message, thought, tool-call and plan updates are progress; `usage_update` is usage; plan entries become stage summaries labelled as the worker's report. An unknown update keeps its JSON and never ends a turn. Sub-agent updates are unstable in version 1 and are not consumed; a worker's own sub-agents stay inside its turn.
+- **Questions and approvals.** `elicitation/create` in form mode takes the authenticated waiting-card answer path, and secret input is unsupported, as for Codex. `session/request_permission` follows Approvals.
+- **Work tools.** LINA's tool server is a stdio MCP server provided by the `lina` command and named in `session/new` for that session only. It holds a token for that one session and relays calls to Core over its local socket. Its tools have the names and schemas of the Codex `lina` tools. It installs nothing in the person's setup and ends with the session.
+- **Completion and cancel.** As Completion signals and Control define. A turn that is still open when the process exits is a failure; a `cancelled` stop reason without a cancel from Core is reported as cancelled by the worker.
+- **Recovery.** Core records the session id. Once-only recovery starts the same command again in the same worktree and sends `session/resume` where the worker advertises it, otherwise `session/load`. The history that `session/load` replays is not reported again as new progress. A worker that offers neither is restarted with a new session.
+- **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of a request (-32000 is login expiry); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
+- **Never sent.** `authenticate` and `logout`, because the person signs in to a worker in the worker itself; `session/delete`; and `session/set_mode`. `session/close` is sent only on an explicit close.
+- **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
+
+#### Claude Code through ACP
+
+Claude Code has no ACP mode of its own. The `claude-agent-acp` program (Apache-2.0, from the ACP project) wraps it. The LINA release pins it with its own lockfile, like the Claude adapter, and Core installs it on first use of the Claude Code worker with lifecycle scripts disabled and optional packages omitted, so the Claude Code binary that its package can carry is never installed ([runtime.md](runtime.md#installed-tools)). It runs on the person's Node.js. It always runs the person's installed `claude`, never the copy of Claude Code that its package can carry, so the person's version, login, settings, plugins and permission mode stay in use. It starts Claude Code with its permission prompts routed over ACP and with the person's user, project and local settings, and writes nothing into the person's setup. Because it always loads those settings, it can serve only as a worker, never as the Claude conversation provider ([runtime.md](runtime.md#providers)).
+
 ### Readiness
 
 Delegation to a worker is ready when:
 
 1. the installed worker is found; an unverified version is reported and passes (see Compatibility)
-2. the adapter's session opens (for Codex, `initialize`; for another worker, the first step of its own protocol)
+2. the adapter's session opens (for Codex, `initialize`; for an ACP worker, `initialize` answering protocol version 1, then `session/new`; for another worker, the first step of its own protocol)
 
-When a check fails, delegation is reported as unsupported with its cause. Conversation readiness is separate and can pass while worker readiness fails.
+When a check fails, delegation is reported as unsupported with its cause. An ACP worker that answers `session/new` with the authentication error (-32000) is reported as needs sign-in, not as broken. Conversation readiness is separate and can pass while worker readiness fails.
 
 ### Assignment
 
 1. For file-producing work, LINA Core creates the worktree and records the parent clone's protected refs in the ledger.
-2. The adapter starts a thread with the worktree or work directory as its working directory, LINA's work tools and the task packet. For Codex this is `thread/start` with `cwd` and `dynamicTools`, and the task packet goes out in the first turn. Model and effort come from the worker profile when it names them, and otherwise from the worker's own configuration.
-3. LINA Core compares the returned working directory, model and effort with the request. A mismatch stops the assignment.
+2. The adapter starts a thread with the worktree or work directory as its working directory, LINA's work tools and the task packet. For Codex this is `thread/start` with `cwd` and `dynamicTools`, and the task packet goes out in the first turn. For an ACP worker it is `session/new` with `cwd` and LINA's tool server among `mcpServers`, and the task packet goes out as the first `session/prompt`. Model and effort come from the worker profile when it names them, and otherwise from the worker's own configuration.
+3. LINA Core compares the returned working directory, model and effort with the request. A mismatch stops the assignment. An ACP session does not return its working directory; there the directory is the one Core started the process in and sent in `session/new`, and model and effort are compared with the session's reported configuration options where the worker reports them.
 4. LINA Core records the worker and its version, the thread, and the instruction sources and skills the worker reports (for Codex, `instructionSources` and `skills/list`).
 
 Code-change work ends in a pull request that the worker opens, and goes through Judgment and delivery. Work without a pull request, such as an audit, needs no source change and completes by its artifacts. Both run on one task with a task packet and end in a completion receipt. The assignment judgment looks separately at the instruction received, the settings requested and the settings returned.
 
 ### Control
 
-- An idle thread receives `turn/start`. An active thread receives `turn/steer` with `expectedTurnId`.
+- An idle thread receives `turn/start`. An active thread receives `turn/steer` with `expectedTurnId`. An idle ACP session receives `session/prompt`; an active one is steered only when the worker advertises steering, and otherwise its input waits for the turn to end.
 - Right before any input, LINA Core checks the thread, the turn, the process generation and the binding epoch again. A thread id alone never controls anything.
 - The protocol session and its process state establish whether a worker is active, waiting, dead or stalled; screen text never does. Recovery resumes the thread, or restarts a dead worker, once in the same work area before escalation, preserving the task, branch, receipts and the record of its review and CI fixes. Recovery does not grant another review-fix pass (see Stall and failure).
 - An open question or approval blocks ordinary input to that thread.
 - A worker thread on a remote host is not controlled until that host's thread, generation and epoch are bound again.
-- `turn/interrupt` is sent only with intent to cancel. The allowed reasons are a user request, the budget cap policy, a Node policy cancel (an observed disconnect from the main, grant expiry or revocation), and the stall rule: a worker that is alive but stalled past the stall rule is interrupted once so that its thread can be resumed (see Event-driven flow). Any other automatic interrupt goes to the user as a decision.
-- A cancel is final only when `turn/completed` reports `interrupted`.
+- `turn/interrupt`, or `session/cancel` for an ACP worker, is sent only with intent to cancel. The allowed reasons are a user request, the budget cap policy, a Node policy cancel (an observed disconnect from the main, grant expiry or revocation), and the stall rule: a worker that is alive but stalled past the stall rule is interrupted once so that its thread can be resumed (see Event-driven flow). Any other automatic interrupt goes to the user as a decision.
+- A cancel is final only when `turn/completed` reports `interrupted`, or when the ACP `session/prompt` reply reports the stop reason `cancelled`.
 - Pause stops LINA's delivery to the work thread. It does not stop execution. Paused work never resumes automatically.
 - Close keeps files, branches, worktrees and receipts and never deletes the thread. `thread/archive` is sent only on an explicit close.
 
@@ -992,9 +1025,9 @@ LINA Core, or the Node on a remote device, starts every worker as a child proces
 | Worker | Signal the adapter consumes | Read at an interval |
 | --- | --- | --- |
 | Codex | The turn-completed and thread-status-changed notifications of the app-server session, and its account rate-limit notifications | No |
-| Claude Code | The final result message of its streaming output, then process exit. Exit without a result is a failure | No |
+| ACP workers (Claude Code, Cursor, Gemini CLI, Grok, added agents) | The reply to `session/prompt` with its stop reason ends the turn; a JSON-RPC error on it is a typed failure; process exit before the reply is a failure, never done | No |
+| Claude Code, headless adapter | The final result message of its streaming output, then process exit. Exit without a result is a failure | No |
 | Antigravity CLI | The result event and status of its streaming output, then process exit. Success is confirmed from the pull request, never from the exit code | No |
-| Cursor (`cursor-agent`) | Headless run with `stream-json` output; process exit plus the final stream event ends the run. Session resume uses the chat id. Exact events and resume behavior are to be confirmed against the installed version by [#210](https://github.com/thisisjun786/lina/issues/210); exit 0 without a final event is unknown, not done | No (to be confirmed by #210) |
 
 - A completion event ends a turn. It is not a delivery. For code-change work the worker reports done only after it has waited for CI and the review bots and handled CI failures and P0 and P1 findings inside its turn (see Operating the pull request). The completion receipt names the resulting green pull request head; the manager still checks the work definition and Core records the merge before the task has landed. A session that dies or stalls before delivery follows once-only recovery in the same work area, not a done signal.
 - LINA installs no hook, plugin or setting in a worker to obtain a signal.
@@ -1109,16 +1142,17 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 
 ### Approvals
 
-- When the worker asks for an approval (for Codex: a command, a file change or permissions), the adapter routes the request to the originating conversation, and the person's answer goes back to the worker. On a remote device the Node relays both.
+- When the worker asks for an approval (for Codex: a command, a file change or permissions; for an ACP worker: `session/request_permission`), the adapter routes the request to the originating conversation, and the person's answer goes back to the worker. On a remote device the Node relays both.
+- For an ACP worker, the person's once maps to the worker's `allow_once` option and deny to `reject_once`. LINA never selects `allow_always` or `reject_always`, because they change the rules the worker remembers in the person's setup. A cancel answers every pending request of the turn with `cancelled`, as the protocol requires.
 - The worker's own sandbox and approval mode decide what it asks. LINA imposes no sandbox or approval policy of its own on a worker.
 - Arguments of the worker's tools are never rewritten (`updatedInput` is never used).
 - A linked worktree shares the common `.git`, so the protected-ref check is what keeps a worker's result to its own branch (see GitHub writes and merges).
 
 ### LINA tools for workers
 
-- LINA's work tools reach a worker through its adapter: for Codex, `thread/start.dynamicTools` in the namespace `lina`. LINA Core identifies the caller by thread, turn and call ids. For another worker, the adapter uses the per-run mechanism of that tool that installs nothing in the user's setup. Where a tool has no such channel, the adapter builds the receipt from the tool's final result and the pull request it opened, and marks it adapter-derived.
+- LINA's work tools reach a worker through its adapter: for Codex, `thread/start.dynamicTools` in the namespace `lina`. LINA Core identifies the caller by thread, turn and call ids. For an ACP worker, it is one stdio MCP server that `session/new` names for that session only (see ACP adapter). For another worker, the adapter uses the per-run mechanism of that tool that installs nothing in the user's setup. Where a tool has no such channel, the adapter builds the receipt from the tool's final result and the pull request it opened, and marks it adapter-derived.
 - The tools are: submit a completion receipt; ask a question; send a coordination request (to LINA Core only, never to another worker); read the task projection, which is the LINA materials and memory projections the task may read. GitHub work and other integrations need no LINA tool; the worker uses its own setup.
-- LINA Core declares the tools and handles `item/tool/call`. The receipt and question schemas are LINA's own and are versioned with the worker adapter.
+- LINA Core declares the tools and handles `item/tool/call`, or the MCP tool calls of an ACP worker's session server. The receipt and question schemas are LINA's own and are versioned with the worker adapter.
 - Only the worker thread itself submits receipts.
 - A projection read returns only the scope the task allows, carries a revision, and never returns a revoked item. A write happens only on an explicit request and passes the grant check.
 
@@ -1282,6 +1316,8 @@ A goal is in one of these states. The person sees them only through the progress
 **The liveness rule.** A goal that is not final always has at least one of these: a task or background run in progress, a named wait with a wake condition and a deadline, a recovery in progress, or a row in "Waiting for me". Core checks the rule after every transition it commits for the goal. A goal that has none is orphaned. Core then runs the derivation of the next action at once. When the derivation finds nothing to do, Core gives the manager session one turn that names the gap: the open criteria and the fact that nothing will move them. When that turn records no task, wait or decision either, the goal becomes `blocked` with a row that says in plain words that LINA could not find a way to finish it and what is missing. A goal never ends silently and never sits idle with open criteria.
 
 **Revision.** A correction by the person, a decision, or a late answer to a question whose deadline passed, is a new revision of the goal. Tasks whose inputs did not change keep their results. Tasks whose inputs changed, and the tasks that depend on them, are derived again. A criterion that was met stays met only while its evidence still refers to the current target.
+
+**Corrected-plan reconciliation.** The manager response to a corrected definition contains the complete task list for that canonical record revision, without add/update/remove patch fields. Core reconciles by task ID: the same ID with unchanged instructions, repository, base, write area and dependencies keeps its state and results; a changed definition replaces that task and re-derives it and its transitive dependents. New IDs are added. IDs absent from the complete list are retired and never re-run. Undispatched actions retire without spending attempts; already-claimed actions retain their reservations until Core reads their outcome and are never dispatched again. Their outcomes remain receipted against the old definition and cannot advance a replacement task with the same ID. No correction deletes branches, files or artifacts. The existing effect barrier is also checked when a manager response arrives, so a newly scheduled receipt read cannot be overtaken by a plan. The existing terminal-outcome fence preserves accepted task results; delayed reports cannot bind old effects to a reused task ID. Worker attempt numbers remain monotonic for each goal/task ID across replacement and removal followed by reintroduction; undispatched cancellations spend no attempt. Changed tasks retire their settled receipts through the existing supersession fence. PR inspection, merge and merge-evidence checks select only an accepted, non-superseded worker receipt for the current attempt, following an accepted observation back to its original effect. Unchanged tasks retain their accepted receipt across definition revisions.
 
 The conversation can correct an admitted goal through `revise_code_goal`, using
 its goal id and the latest canonical record revision. Admission returns the
@@ -1811,7 +1847,14 @@ reserves random LINA ids durably before publication. A retry reconciles those id
 through the records API, recovering publication interrupted before acknowledgement.
 It reports existing imports as reused and writes no second record or commit; it
 preserves later LINA edits and fails if an imported record is unavailable. The
-journal stays with the destination backup, outside product schemas and APIs.
+journal at `system/crw-takeover-journal.json` is captured as an opaque, hashed
+file with the destination backup, outside product schemas and APIs. Restore
+publishes the matching journal before canon; a generation without it removes
+later reservations, including when undoing an import in place. An interrupted
+restore blocks both Core and the importer until publication resumes. A restored
+retry retains the reserved ids even after a record moves and preserves user
+edits captured in that generation. Older backups that omitted the journal
+cannot recover lost reservations; they restore with no journal.
 Source ids exist only in provenance and observation text, never a product lookup.
 After import, Core uses the reported LINA ids through its ordinary record tools;
 the snapshot can be removed and Core never contacts the tracker.
@@ -1821,7 +1864,9 @@ successful records so the same verified snapshot can resume. Undo is an explicit
 restore of the pre-import backup, not an automatic deletion. The import alone is
 not the owner-approved operational switch. The headless `e2e/m3/crw-takeover.json`
 scenario uses the real tool and installed Core to read imported evidence, save a
-new result, reject source-id lookup and retain the record after restart.
+new result, reject source-id lookup and retain the record and result after
+backup/restore to a fresh root. It also restores a pre-import generation in place
+and verifies that later reservations do not survive.
 
 ### Switch admission and recovery
 
@@ -1905,11 +1950,11 @@ The running-Core acceptance scenario is `e2e/m3/operational-switch.json`.
 - Retention periods for closed workspaces: set during work engine implementation acceptance.
 - Whether Codex subagents inside a worker see the `lina` tools, and that a declined approval leaves the action unexecuted: confirmed by QA in the worker adapter implementation issue.
 - Remote-device worker hosting through Node and the worker's own pull-request path from the device: verified during Node implementation acceptance; unsupported until then.
-- The adapters for Claude Code, Antigravity CLI and Cursor: designed against the adapter boundary when each is added. Cursor uses the person's installed `cursor-agent` and sign-in. Its headless flags, sign-in status, streaming events, interrupt and chat-id resume are to be confirmed against the installed version by [#210](https://github.com/thisisjun786/lina/issues/210).
+- The ACP worker profiles: confirmed against each installed version when the profile is built, with live runs in the worker evaluation ([worker-protocols.md](../research/worker-protocols.md#evaluation-defined-before-building)). Which Claude Code adapter stays, ACP or headless, is decided by that evaluation.
 - The wire format of delivery layers, work events and progress data: added to [host-protocol.md](host-protocol.md) during work engine implementation acceptance.
 - The Korean words of the frame and of the date fields, and the exposure of the four-level priority: set by a card sort with non-developers and by use.
 - The thresholds of the to-do record (surviving briefings before a question, the rate at which rejected automatic additions fall back to candidates), Korean date parsing coverage (lunar dates, month ends, business days), the commit granularity and inbox form of the records repository, and its behavior at thousands of files: set by measurement during work engine implementation acceptance.
 - Retention periods for the directories and transcripts of finished background runs: set during work engine implementation acceptance, with those of closed workspaces.
 - The rule table for choosing a worker, and the quota signal each worker gives: provisional, set by measurement.
-- The completion signal of each worker other than Codex: confirmed by the adapter of that worker when it is built. Cursor's final stream event and process-exit handling are to be confirmed by [#210](https://github.com/thisisjun786/lina/issues/210).
+- The completion signal of each worker other than Codex: confirmed by the adapter of that worker when it is built, for ACP workers by the evaluation above.
 - The stage rule and the bar of the progress line, how a 목표 summarizes its 일, and the order of the lines: starting values set in Progress line, tuned by use.

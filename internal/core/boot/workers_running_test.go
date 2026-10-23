@@ -253,3 +253,55 @@ func TestConversationWorkerRunningOpenDuringRegistryUpdate(t *testing.T) {
 		t.Fatalf("opening a running row waited for the worker registry: %v", err)
 	}
 }
+
+func TestConversationWorkerProgressVisibilityMatchesRunning(t *testing.T) {
+	for _, action := range []string{"open", "dismiss"} {
+		t.Run(action, func(t *testing.T) {
+			r, probe := runningWorkerFixture(t)
+			check := func(want int) {
+				t.Helper()
+				p, err := r.ownerSnapshot(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = r.background.sessions.refresh(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				running, err := r.background.list.Build(t.Context(), r.person)
+				if err != nil || p.Rows == nil || len(*p.Rows) != want || len(running.Entries) != want {
+					t.Fatalf("views disagree: progress=%+v running=%+v want=%d err=%v", p.Rows, running, want, err)
+				}
+				if want > 0 {
+					line := (*p.Rows)[0].Line
+					if line.State == nil || string(*line.State) != running.Entries[0].View.State {
+						t.Fatalf("execution states disagree: progress=%+v running=%+v", line, running.Entries[0])
+					}
+					if line.Stage != "unknown" || line.Percent != nil || line.JustFinished != "unknown" || line.Next != "unknown" {
+						t.Fatalf("worker state invented a plan outcome: %+v", line)
+					}
+				}
+			}
+			check(1)
+			probe.snapshot.State = worker.Idle
+			check(0)
+			probe.snapshot.State = worker.Active
+			check(1)
+			probe.err = errors.New("snapshot unavailable")
+			check(1)
+			probe.err = nil
+			probe.snapshot.State = worker.Dead
+			check(1)
+			ref := runs.ListRef{Source: "session", ID: "fixture"}
+			var err error
+			if action == "open" {
+				err = r.background.list.Open(t.Context(), r.person, ref)
+			} else {
+				err = r.background.list.Dismiss(t.Context(), r.person, ref)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(0)
+		})
+	}
+}

@@ -9,6 +9,7 @@ type Line struct {
 	Name         string `json:"name"`
 	Kind         string `json:"kind"`
 	Stage        string `json:"stage"`
+	State        string `json:"state,omitempty"`
 	Percent      *int   `json:"percent"`
 	JustFinished string `json:"just_finished"`
 	Next         string `json:"next"`
@@ -25,6 +26,7 @@ type Entry struct {
 // Landed allows acknowledgement-based retirement without a success verdict.
 type Unit struct {
 	ID, Parent, Kind, Name string
+	State                  string // Optional observed execution state, independent of plan stage.
 	Done                   *bool
 	Active, Seen, Landed   bool
 	JustFinished           string
@@ -40,7 +42,7 @@ func Compute(units []Unit) []Entry {
 	}
 	rows := make(map[string]*row, len(units))
 	for _, u := range units {
-		line := Line{Name: u.Name, Kind: u.Kind, Stage: "unknown", JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting}
+		line := Line{Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting}
 		if u.JustFinished != "" {
 			line.JustFinished = u.JustFinished
 		}
