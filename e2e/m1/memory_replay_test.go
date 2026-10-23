@@ -177,7 +177,29 @@ func TestM1MemoryReplayInstalledCore(t *testing.T) {
 					db.Close()
 					t.Fatal(err)
 				}
-				_, err = db.ExecContext(h.ctx, "UPDATE conv_event SET body=?,material_id=NULL,material_revision=NULL WHERE id=?", string(raw), "request:"+evidence.TurnID+":0")
+				// Seed an old ledger only while this disposable Core is stopped.
+				// Restore the exact append-only trigger in the same transaction.
+				tx, err := db.BeginTx(h.ctx, nil)
+				if err != nil {
+					db.Close()
+					t.Fatal(err)
+				}
+				var trigger string
+				err = tx.QueryRowContext(h.ctx, "SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='conv_event_no_update'").Scan(&trigger)
+				if err == nil {
+					_, err = tx.ExecContext(h.ctx, "DROP TRIGGER conv_event_no_update")
+				}
+				if err == nil {
+					_, err = tx.ExecContext(h.ctx, "UPDATE conv_event SET body=?,material_id=NULL,material_revision=NULL WHERE id=?", string(raw), "request:"+evidence.TurnID+":0")
+				}
+				if err == nil {
+					_, err = tx.ExecContext(h.ctx, trigger)
+				}
+				if err == nil {
+					err = tx.Commit()
+				} else {
+					_ = tx.Rollback()
+				}
 				closeErr := db.Close()
 				if err != nil || closeErr != nil {
 					t.Fatalf("legacy evidence: %v %v", err, closeErr)
