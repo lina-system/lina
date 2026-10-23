@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"debug/buildinfo"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -56,6 +57,131 @@ type alphaResidentSample struct {
 	MemoryFull    *float64 `json:"memory_full_avg10,omitempty"`
 	IOSome        *float64 `json:"io_some_avg10,omitempty"`
 	IOFull        *float64 `json:"io_full_avg10,omitempty"`
+}
+
+// alphaResidentSampleGap is the declared maximum gap between resource samples
+// (evidence/v2-residency/budget.json). It is not a persistence deadline.
+const alphaResidentSampleGap = 2 * time.Second
+
+// alphaResidencyRecorder samples Core's counters and persists them apart from
+// the sampling path. A filesystem that stalls longer than the sample interval
+// must appear as write latency, never as a sampling gap: the collector's own
+// fsync is not evidence about Core.
+type alphaResidencyRecorder struct {
+	read    func() (alphaResidentSample, error)
+	now     func() time.Time
+	persist func([]alphaResidentSample) error
+
+	mu          sync.Mutex
+	pending     []alphaResidentSample
+	samples     int
+	persisted   int
+	gap         float64
+	write       time.Duration
+	last        time.Time
+	start       string
+	peak        uint64
+	measured    float64
+	failure     error
+	gaps        residencyGapRecord
+	lastWrite   float64
+	lastSync    float64
+	maximumRead float64
+	maximumSync float64
+}
+
+type alphaResidencyMetrics struct {
+	Samples        int
+	Persisted      int
+	MaximumGap     float64
+	MaximumWrite   float64
+	Peak           uint64
+	Measured       float64
+	ReadBeforeGap  float64
+	WriteBeforeGap float64
+	SyncBeforeGap  float64
+	MaximumRead    float64
+	MaximumSync    float64
+}
+
+func (r *alphaResidencyRecorder) sample() error {
+	readStart := r.now()
+	reading, err := r.read()
+	if err != nil {
+		return err
+	}
+	now := r.now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.start == "" {
+		r.start = reading.Start
+	} else if reading.Start != r.start {
+		r.failure = errors.New("Core process identity changed")
+	}
+	if r.samples > 0 {
+		gap := now.Sub(r.last).Seconds()
+		r.gap = max(r.gap, gap)
+		if gap > alphaResidentSampleGap.Seconds() {
+			r.failure = fmt.Errorf("resource sample gap %.3fs exceeds %.0fs", gap, alphaResidentSampleGap.Seconds())
+		}
+	}
+	reading.Read = now.Sub(readStart).Seconds()
+	if r.samples > 0 {
+		reading.Gap = now.Sub(r.last).Seconds()
+	}
+	reading.PreviousRead = r.gaps.read
+	reading.PreviousWrite = r.gaps.write
+	reading.PreviousSync = r.gaps.sync
+	r.gaps.note(reading.Gap, reading.Read, r.lastWrite, r.lastSync)
+	r.maximumRead = max(r.maximumRead, reading.Read)
+	r.last = now
+	r.samples++
+	r.peak = max(r.peak, reading.Peak)
+	r.measured = reading.Elapsed
+	r.pending = append(r.pending, reading)
+	return r.failure
+}
+
+// flush persists the samples taken since the previous flush and records how
+// long that took, so a later sampling failure is attributable.
+func (r *alphaResidencyRecorder) flush() error {
+	r.mu.Lock()
+	batch := r.pending
+	r.pending = nil
+	r.mu.Unlock()
+	if len(batch) == 0 {
+		return nil
+	}
+	begin := r.now()
+	err := r.persist(batch)
+	took := r.now().Sub(begin)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.write = max(r.write, took)
+	r.lastWrite = took.Seconds()
+	if err != nil {
+		return err
+	}
+	r.persisted += len(batch)
+	return nil
+}
+
+func (r *alphaResidencyRecorder) metrics() alphaResidencyMetrics {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return alphaResidencyMetrics{
+		Samples:        r.samples,
+		Persisted:      r.persisted,
+		MaximumGap:     r.gap,
+		MaximumWrite:   r.write.Seconds(),
+		Peak:           r.peak,
+		Measured:       r.measured,
+		ReadBeforeGap:  r.gaps.ReadBeforeMaximum,
+		WriteBeforeGap: r.gaps.WriteBeforeMaximum,
+		SyncBeforeGap:  r.gaps.SyncBeforeMaximum,
+		MaximumRead:    r.maximumRead,
+		MaximumSync:    r.maximumSync,
+	}
 }
 
 func alphaReadResident(pid int) (alphaResidentSample, error) {
@@ -137,6 +263,115 @@ func alphaProductCommit(binary string) string {
 	return ""
 }
 
+// A stalled filesystem is the collector's own latency, not a sampling gap: the
+// 24-hour run must not report a gap in Core's counters because resident.jsonl
+// blocked in fsync. The gap limit and the RSS budget keep their declared values.
+func TestAlphaResidencyPersistDoesNotDelaySampling(t *testing.T) {
+	t.Parallel()
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	block := make(chan struct{})
+	recorder := &alphaResidencyRecorder{
+		read: func() (alphaResidentSample, error) {
+			return alphaResidentSample{RSS: 1, Peak: 1, Start: "1"}, nil
+		},
+		now: clock.Now,
+		persist: func([]alphaResidentSample) error {
+			<-block
+			clock.Advance(3 * time.Second)
+			return nil
+		},
+	}
+	sampled := make(chan error, 1)
+	go func() { sampled <- recorder.sample() }()
+	select {
+	case err := <-sampled:
+		if err != nil {
+			close(block)
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		close(block)
+		t.Fatal("sampling waited for persistence")
+	}
+	flushed := make(chan error, 1)
+	go func() { flushed <- recorder.flush() }()
+	close(block)
+	select {
+	case err := <-flushed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("flush did not finish")
+	}
+	m := recorder.metrics()
+	if m.Samples != 1 || m.Persisted != 1 || m.MaximumGap != 0 {
+		t.Fatalf("metrics=%+v; a three-second write became a sampling gap", m)
+	}
+	if m.MaximumWrite < 3 {
+		t.Fatalf("write latency %.3fs was not recorded", m.MaximumWrite)
+	}
+}
+
+// A sampler that really was late still fails the declared limit.
+func TestAlphaResidencyLateSampleStillFails(t *testing.T) {
+	t.Parallel()
+	clock := &fakeClock{now: time.Unix(0, 0)}
+	recorder := &alphaResidencyRecorder{
+		read: func() (alphaResidentSample, error) {
+			return alphaResidentSample{RSS: 1, Peak: 1, Start: "1"}, nil
+		},
+		now:     clock.Now,
+		persist: func([]alphaResidentSample) error { return nil },
+	}
+	if err := recorder.sample(); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(alphaResidentSampleGap)
+	if err := recorder.sample(); err != nil {
+		t.Fatalf("a sample at the declared limit was rejected: %v", err)
+	}
+	clock.Advance(alphaResidentSampleGap + time.Millisecond)
+	if err := recorder.sample(); err == nil {
+		t.Fatal("a sample past the declared limit was accepted")
+	}
+}
+
+// A changed process identity is a failed run, not a new baseline.
+func TestAlphaResidencyRejectsReplacedCore(t *testing.T) {
+	t.Parallel()
+	start := "1"
+	recorder := &alphaResidencyRecorder{
+		read:    func() (alphaResidentSample, error) { return alphaResidentSample{RSS: 1, Peak: 1, Start: start}, nil },
+		now:     time.Now,
+		persist: func([]alphaResidentSample) error { return nil },
+	}
+	if err := recorder.sample(); err != nil {
+		t.Fatal(err)
+	}
+	start = "2"
+	if err := recorder.sample(); err == nil {
+		t.Fatal("a replaced Core process was accepted")
+	}
+}
+
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
 func alphaResidency(t *testing.T, duration time.Duration) int {
 	directory := os.Getenv("LINA_ALPHA_CAPTURES")
 	if !filepath.IsAbs(directory) {
@@ -162,6 +397,7 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 		Budget          uint64    `json:"peak_budget_bytes"`
 		Peak            uint64    `json:"peak_rss_bytes"`
 		Samples         int       `json:"samples"`
+		Persisted       int       `json:"persisted_samples"`
 		Probes          int       `json:"health_probes"`
 		MaximumGap      float64   `json:"maximum_sample_gap_seconds"`
 		ReadBeforeGap   float64   `json:"read_seconds_before_maximum_gap"`
@@ -174,9 +410,19 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 		Started         time.Time `json:"started_at"`
 		Ended           time.Time `json:"ended_at"`
 	}{Status: "incomplete", RequiredSeconds: 86400, Budget: alphaResidentBudget}
+	var recorder *alphaResidencyRecorder
 	defer func() {
 		if t.Failed() {
 			report.Status = "failed"
+		}
+		// A failed run still reports what it measured.
+		if recorder != nil {
+			m := recorder.metrics()
+			report.Samples, report.Persisted = m.Samples, m.Persisted
+			report.MaximumGap, report.MaximumWrite = m.MaximumGap, m.MaximumWrite
+			report.ReadBeforeGap, report.WriteBeforeGap, report.SyncBeforeGap = m.ReadBeforeGap, m.WriteBeforeGap, m.SyncBeforeGap
+			report.MaximumRead, report.MaximumSync = m.MaximumRead, m.MaximumSync
+			report.Peak, report.MeasuredSeconds = max(report.Peak, m.Peak), m.Measured
 		}
 		report.Ended = time.Now().UTC()
 		raw, _ := json.MarshalIndent(report, "", "  ")
@@ -216,11 +462,6 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 			h.stopCore(core)
 		}
 	}()
-	first, err := alphaReadResident(core.command.Process.Pid)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	var mainID, epoch string
 	probe := func() error {
 		ctx, cancel := context.WithTimeout(h.ctx, 2*time.Second)
@@ -262,69 +503,72 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 	observer.Close()
 	begin := time.Now()
 	report.Started = begin.UTC()
-	last := begin
-	var gaps residencyGapRecord
+	encoder := json.NewEncoder(samples)
+	recorder = &alphaResidencyRecorder{
+		now: time.Now,
+		read: func() (alphaResidentSample, error) {
+			reading, err := alphaReadResident(core.command.Process.Pid)
+			if err != nil {
+				return reading, err
+			}
+			reading.MemorySome, reading.MemoryFull = alphaPressureAvg10("memory")
+			reading.IOSome, reading.IOFull = alphaPressureAvg10("io")
+			reading.Elapsed = time.Since(begin).Seconds()
+			return reading, nil
+		},
+		persist: func(batch []alphaResidentSample) error {
+			for _, reading := range batch {
+				if err := encoder.Encode(reading); err != nil {
+					return err
+				}
+			}
+			syncStart := time.Now()
+			err := samples.Sync()
+			syncSeconds := time.Since(syncStart).Seconds()
+			recorder.mu.Lock()
+			recorder.lastSync = syncSeconds
+			recorder.maximumSync = max(recorder.maximumSync, syncSeconds)
+			recorder.mu.Unlock()
+			return err
+		},
+	}
 	sample := func() {
 		select {
 		case <-core.done:
 			t.Fatal("Core exited during residency")
 		default:
 		}
-		now := time.Now()
-		readStart := time.Now()
-		reading, err := alphaReadResident(core.command.Process.Pid)
-		if err != nil {
+		if err := recorder.sample(); err != nil {
 			t.Fatal(err)
 		}
-		reading.MemorySome, reading.MemoryFull = alphaPressureAvg10("memory")
-		reading.IOSome, reading.IOFull = alphaPressureAvg10("io")
-		readSeconds := time.Since(readStart).Seconds()
-		reading.Elapsed = now.Sub(begin).Seconds()
-		report.MeasuredSeconds = reading.Elapsed
-		gap := now.Sub(last).Seconds()
-		last = now
-		reading.Gap = gap
-		reading.Read = readSeconds
-		reading.PreviousRead = gaps.read
-		reading.PreviousWrite = gaps.write
-		reading.PreviousSync = gaps.sync
-		if reading.Start != first.Start {
-			t.Fatal("Core process identity changed")
-		}
-		report.Peak = max(report.Peak, reading.Peak)
-		report.Samples++
-		raw, err := json.Marshal(reading)
-		if err != nil {
-			t.Fatal(err)
-		}
-		writeStart := time.Now()
-		if _, err := samples.Write(append(raw, '\n')); err != nil {
-			t.Fatal(err)
-		}
-		writeSeconds := time.Since(writeStart).Seconds()
-		// File.Sync is fsync. Its duration stays on the next gap so a stall
-		// can be told apart from the scheduler without moving the limit.
-		syncStart := time.Now()
-		if err := samples.Sync(); err != nil {
-			t.Fatal(err)
-		}
-		syncSeconds := time.Since(syncStart).Seconds()
-		gaps.note(gap, readSeconds, writeSeconds, syncSeconds)
-		report.MaximumGap = gaps.Maximum
-		report.ReadBeforeGap = gaps.ReadBeforeMaximum
-		report.WriteBeforeGap = gaps.WriteBeforeMaximum
-		report.SyncBeforeGap = gaps.SyncBeforeMaximum
-		report.MaximumRead = max(report.MaximumRead, readSeconds)
-		report.MaximumWrite = max(report.MaximumWrite, writeSeconds)
-		report.MaximumSync = max(report.MaximumSync, syncSeconds)
-		if gap > 2 {
-			t.Fatalf("resource sample gap %.3fs exceeds two seconds; previous read %.3fs write %.3fs sync %.3fs", gap, gaps.ReadBeforeMaximum, gaps.WriteBeforeMaximum, gaps.SyncBeforeMaximum)
-		}
-		if reading.Peak > alphaResidentBudget {
-			t.Fatalf("Core peak RSS %d exceeds predeclared budget %d", reading.Peak, alphaResidentBudget)
+		if m := recorder.metrics(); m.Peak > alphaResidentBudget {
+			t.Fatalf("Core peak RSS %d exceeds predeclared budget %d", m.Peak, alphaResidentBudget)
 		}
 	}
 	sample()
+	// Persistence runs on its own goroutine so neither the sample interval nor
+	// a health probe waits for the filesystem.
+	flushCtx, stopFlush := context.WithCancel(t.Context())
+	flushed := make(chan struct{})
+	flushResult := make(chan error, 1)
+	// Every exit path stops the writer before the sample file closes.
+	defer func() { stopFlush(); <-flushed }()
+	go func() {
+		defer close(flushed)
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-flushCtx.Done():
+				return
+			case <-ticker.C:
+				if err := recorder.flush(); err != nil {
+					flushResult <- err
+					return
+				}
+			}
+		}
+	}()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	health := time.NewTicker(time.Minute)
@@ -356,6 +600,8 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 		case err := <-healthResult:
 			probing = false
 			finishProbe(err)
+		case err := <-flushResult:
+			t.Fatal(err)
 		case <-core.done:
 			t.Fatal("Core exited during residency")
 		case <-terminal.process.done:
@@ -364,6 +610,16 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 			t.Fatal(h.ctx.Err())
 		case <-deadline.C:
 			sample()
+			stopFlush()
+			<-flushed
+			select {
+			case err := <-flushResult:
+				t.Fatal(err)
+			default:
+			}
+			if err := recorder.flush(); err != nil {
+				t.Fatal(err)
+			}
 			if probing {
 				finishProbe(<-healthResult)
 				probing = false
@@ -374,7 +630,9 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 			terminal.process.wait(t, 0)
 			h.stopCore(core)
 			stopped = true
-			if duration >= 24*time.Hour && report.MeasuredSeconds >= 86400 {
+			// Decide on the metrics themselves: the deferred report writer runs
+			// after this return and must not be the only source of the duration.
+			if duration >= 24*time.Hour && recorder.metrics().Measured >= 86400 {
 				report.Status = "passed"
 			}
 			return report.Probes

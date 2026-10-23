@@ -62,6 +62,9 @@ func executionFixture(t *testing.T, unknown bool, close func(context.Context) er
 	return s, r
 }
 
+// One attempt joins its worker once. A deferred cleanup after delivery must not
+// join the process a second time: the live registry owns a kept session, and a
+// closed adapter cannot be joined twice.
 func TestRunAttemptsKeepsDeferredCloseAfterDelivery(t *testing.T) {
 	closes := 0
 	s, r := executionFixture(t, false, func(context.Context) error { closes++; return nil })
@@ -89,8 +92,8 @@ func TestRunAttemptsKeepsDeferredCloseAfterDelivery(t *testing.T) {
 		t.Fatalf("delivery lost receipt or closed adapter early: %+v closes=%d err=%v", card, closes, err)
 	}
 	e.closeDeferred()
-	if closes != 2 || executionReservations(t, s, r.ID) != 5 {
-		t.Fatalf("deferred adapter cleanup released reservations: closes=%d", closes)
+	if closes != 1 || executionReservations(t, s, r.ID) != 5 {
+		t.Fatalf("deferred adapter cleanup joined the process twice: closes=%d", closes)
 	}
 }
 
@@ -102,7 +105,7 @@ func TestExecutePreservesDeliveryAndCleanupOutcomes(t *testing.T) {
 	}{
 		{name: "settled", state: "decision", code: "worker_failed"},
 		{name: "unknown effects", state: "unknown", code: "worker_failed", unknown: true, reservations: 5},
-		{name: "late cleanup failure", state: "unknown", code: "cleanup_failed", lateFailure: true, reservations: 5},
+		{name: "cleanup failure", state: "unknown", code: "cleanup_failed", lateFailure: true, reservations: 5},
 		{name: "receipt failure", state: "running", code: "start_failed", receiptFailure: true, reservations: 5},
 		{name: "reservation failure", state: "unknown", code: "reservation_unreleased", releaseFailure: true, reservations: 5},
 	} {
@@ -119,10 +122,13 @@ func TestExecutePreservesDeliveryAndCleanupOutcomes(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if (card.Receipt != nil) != (closes == 2 && !tc.receiptFailure) {
-					t.Errorf("adapter close moved across receipt commit: closes=%d receipt=%v", closes, card.Receipt != nil)
+				// The attempt joins its process before delivery commits the
+				// receipt. A failed join is retried after delivery, and a
+				// successful one is never repeated.
+				if closes == 1 && card.Receipt != nil {
+					t.Errorf("adapter joined after the receipt committed: closes=%d", closes)
 				}
-				if closes == 1 && tc.receiptFailure {
+				if tc.receiptFailure {
 					if err := s.cfg.DB.Write(t.Context(), func(tx *canon.Tx) error {
 						_, err := tx.ExecContext(t.Context(), "CREATE TRIGGER reject_delivery BEFORE INSERT ON work_completions BEGIN SELECT RAISE(ABORT, 'fixture delivery failure'); END")
 						return err
@@ -130,7 +136,7 @@ func TestExecutePreservesDeliveryAndCleanupOutcomes(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if closes == 2 && tc.lateFailure {
+				if tc.lateFailure {
 					return errors.New("fixture cleanup failure")
 				}
 				return nil
@@ -149,7 +155,12 @@ func TestExecutePreservesDeliveryAndCleanupOutcomes(t *testing.T) {
 				t.Fatalf("read execution: %+v %v", records, err)
 			}
 			got := records[0]
-			if got.State != tc.state || got.Code != tc.code || closes != 2 || executionReservations(t, s, r.ID) != tc.reservations {
+			wantCloses := 1
+			if tc.lateFailure {
+				// The first join failed, so the deferred cleanup retries it.
+				wantCloses = 2
+			}
+			if got.State != tc.state || got.Code != tc.code || closes != wantCloses || executionReservations(t, s, r.ID) != tc.reservations {
 				t.Fatalf("outcome changed: state=%s code=%s closes=%d reservations=%d", got.State, got.Code, closes, executionReservations(t, s, r.ID))
 			}
 			if (tc.lateFailure || tc.receiptFailure || tc.releaseFailure) && got.Snapshot != nil {

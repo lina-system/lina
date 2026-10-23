@@ -1,0 +1,20 @@
+{
+  "side": "client",
+  "input": [
+    "normal/launcher_result.json",
+    "normal/launcher_reply.json"
+  ],
+  "output": [
+    "normal/launcher_result.json",
+    "normal/launcher_reply.json"
+  ],
+  "errors": [
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 2,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

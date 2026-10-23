@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// residencyGapRecord keeps the collector stall that preceded the widest
-// observation gap. The stall is the previous sample's read, write and fsync,
-// which the next observation cannot start until they return.
+// residencyGapRecord keeps the timing snapshot preceding the widest
+// observation gap: the previous read and latest completed background write/fsync,
+// without treating background persistence as a cause of sampling delay.
 type residencyGapRecord struct {
 	Maximum            float64
 	ReadBeforeMaximum  float64

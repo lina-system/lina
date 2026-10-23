@@ -113,7 +113,7 @@ kit changes and the documents-only exclusion in a disposable Git repository.
 
 ## Real model mode
 
-For QA and acceptance, use the intended real model (currently `claude-opus-5-5`),
+For QA and acceptance, use the intended real model (`claude-opus-5-5`),
 not a cheaper substitute. Configure these variables outside the repository:
 
 | Variable | Meaning |
@@ -137,11 +137,22 @@ API keys only; ChatGPT OAuth credentials cannot be redirected to them. No reques
 retries, redirects or substitute billing paths are enabled.
 
 Real tests skip when the opt-in switch or key is absent, including credential-free
-CI and foundation. With both present, invalid configuration, an unavailable
-endpoint or a broken stream fails the journey. Ordinary fixture tests still run.
+CI and foundation, and where Core cannot be installed. With both present,
+invalid configuration, an unavailable endpoint or a broken stream fails the
+journey. Ordinary fixture tests still run.
 Builds and ordinary product subprocesses retain their isolated environment;
 only the opted-in probe and the headless journey's Core receive the explicit
 provider configuration.
+
+`TestRealModelHeadlessConversation` installs Core in private temporary state,
+sends one message through the headless client over Core's socket, and requires a
+durable input acknowledgement, live deltas, completed assistant items replacing
+the streamed identities, and an inactive turn. It then restarts Core and
+requires the same canon history, text and item identities under the same
+conversation id in a new epoch. `TestHeadlessConversationFixture` runs the same
+client journey against a loopback server with no external credential. Both
+install real binaries, so hosts other than Linux skip with the same reason as
+the other installed scenarios; a skip is not a passing journey.
 
 ## Alpha owner-use acceptance
 
@@ -166,6 +177,27 @@ The result screen must show text from the completed agent reply attributed to
 the original conversation, input and recovered worker turn. Request-only and
 streaming frames do not qualify. The same reply ID and text must survive the
 second restart; a failed check retains delivery metadata and its terminal frame.
+
+A conversation body above the ledger's inline size is stored as a material and
+its event keeps a null body column. Attribution, the worker-output check and
+the failure diagnostic read those bodies through the ledger's own reader; a raw
+`conv_event.body` query silently returns an empty string and drops a delivered
+reply. `TestAlphaRecoveredReplyReadsSpilledBodies` holds that boundary for both
+a spilled worker completion and a spilled reply.
+
+The task's own corpus crosses that boundary when the worker answers it in full:
+40 situations in three Korean sentences each are 18,551 bytes, and the retained
+completion with its task packet is 19,065 bytes.
+`TestAlphaRecoveredReplySpilledCompletionEndToEnd` drives that size through the
+installed Core, a killed turn and the recovery continuation with the synthetic
+worker, and requires the completed delivery, the material-backed completion and
+the attributed reply. The same run reads the completion by raw column and shows
+the empty result the acceptance used to return.
+
+Every acceptance run logs each stored completion candidate with its session,
+turn, status, delivery state, material flag and body size, so a failure is
+measured rather than guessed. With `LINA_ALPHA_CAPTURES` set, the same record is
+written to `recovery-delivery.json` in that test's capture directory.
 
 To keep a measured product fixed while changing only the test harness, set
 `LINA_ALPHA_BUILD` to a private directory containing `binaries/lina`,
@@ -214,15 +246,18 @@ On Linux, the residency collector samples the installed Core's RSS and
 high-water mark once per second and checks its public protocol every minute.
 It rejects a process/epoch change, an exit, a missing counter, a sample gap over
 two seconds, or a peak above the predeclared 256 MiB budget. Each sample records
-the gap, the /proc read, and the previous sample's read, write and fsync
-(`File.Sync`) durations, plus memory and I/O pressure avg10 when the kernel
-exports them. A wide gap whose previous fsync is short is a scheduling delay;
-a gap that matches the previous fsync is collector I/O. Neither reading changes
-the two-second limit or the 256 MiB budget. The result records the harness
-source commit separately from the installed product commit and binary digest.
+its gap and read duration, the previous sample's read duration and snapshot of
+the latest completed background write and fsync (`File.Sync`) durations, plus
+memory and I/O pressure avg10 when the kernel exports them. Samples reach
+`resident.jsonl` on a separate goroutine, so a slow or stalled filesystem appears
+as `maximum_write_seconds` rather than blocking sampling. Background write
+latency includes fsync; `maximum_sync_seconds` records fsync alone. These
+observations do not attribute a sampling gap to background persistence or change
+the two-second limit or the 256 MiB budget. The result records the harness source
+commit separately from the installed product commit and binary digest.
 The full run requires a clean source commit, the real model opt-in and 86,400
-measured seconds; its TUI stays attached. The 65-second collector probe
-exercises a periodic health request and is always recorded as incomplete
+measured seconds; its TUI stays attached. The 65-second collector probe exercises
+a periodic health request and is always recorded as incomplete
 acceptance, even when the probe test succeeds. These are Linux Core measurements,
 not the separate two-platform V2 service-manager qualification.
 
