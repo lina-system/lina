@@ -17,6 +17,7 @@ import (
 )
 
 func TestPublicationRequiresOrderedPrefix(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"interleaved", "suffix", "reversed cover", "reversed tail", "child gap"} {
 		t.Run(kind, func(t *testing.T) {
 			db, s, _, _ := fixture(t)
@@ -51,6 +52,7 @@ func TestPublicationRequiresOrderedPrefix(t *testing.T) {
 }
 
 func TestRebuildRestoresSkipReasons(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"replay", "scaffold", "summary_echo", "provider_item"} {
 		t.Run(kind, func(t *testing.T) {
 			db, s, r, cfg := fixture(t)
@@ -131,6 +133,7 @@ func TestRebuildRestoresSkipReasons(t *testing.T) {
 }
 
 func TestPublicationTailSkipsStayOutsidePrefix(t *testing.T) {
+	t.Parallel()
 	db, s, _, _ := fixture(t)
 	_, err := ledger.New(db, nil).Admit(t.Context(), guard.EntrySystem, ledger.Input{ID: "audit", ConversationID: "conversation", AgentID: "agent", ScaffoldKind: "compaction_recorded", Surface: ledger.Surface{Kind: "app"}, OccurredAt: time.Unix(40, 0), RecordedAt: time.Unix(40, 0), TimeQuality: "observed", Body: "synthetic audit"})
 	if err != nil {
@@ -193,6 +196,7 @@ func TestPublicationTailSkipsStayOutsidePrefix(t *testing.T) {
 }
 
 func TestBuilderRejectsInterleavedSourcesBeforeModelWork(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	addEvent(t, db, "later", "conversation")
 	b.Generate = func(context.Context, PassSegment) (Text, error) {
