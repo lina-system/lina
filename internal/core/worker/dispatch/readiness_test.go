@@ -64,14 +64,24 @@ func TestReadinessRecheckedForNewTask(t *testing.T) {
 }
 
 func TestReadinessLegacyQuotaRecovery(t *testing.T) {
-	for _, mode := range []string{"refusal", "refusal-with-fallback", "measured-quota", "account-quota", "reset", "multiple-windows", "unattributed-stop", "executed-attempt"} {
+	for _, mode := range []string{"refusal", "refusal-with-fallback", "measured-quota", "account-quota", "reset", "multiple-windows", "unattributed-stop", "executed-attempt", "recovered-attempt", "correction-attempt"} {
 		t.Run(mode, func(t *testing.T) {
 			db := store(t)
 			r := Record{ID: "old-task", State: "finished", Worker: "cursor", Tried: []string{"cursor"}, ReadinessFailures: []ReadinessFailure{{Worker: "cursor", Code: "needs_sign_in"}}}
-			if mode == "refusal-with-fallback" {
+			if mode == "refusal-with-fallback" || mode == "recovered-attempt" || mode == "correction-attempt" {
 				r.Worker = "gemini"
 				r.Tried = append(r.Tried, "gemini")
 				r.Thread = &worker.Thread{ID: "fallback-session"}
+			}
+			if mode == "recovered-attempt" {
+				// Recovery retains readiness history but may replace the current
+				// attempt list after an intervening execution.
+				r.Recoveries = 1
+				r.Tried = []string{"gemini"}
+			}
+			if mode == "correction-attempt" {
+				r.ReturnReceipt = "correction"
+				r.Tried = []string{"gemini"}
 			}
 			if mode == "unattributed-stop" || mode == "executed-attempt" {
 				r.ReadinessFailures = nil

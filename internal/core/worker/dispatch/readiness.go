@@ -42,6 +42,11 @@ func (s *Service) recoverReadinessQuota(ctx context.Context, records []Record) e
 			if failure.Code == "needs_sign_in" {
 				failures[failure.Worker] = true
 				refused[failure.Worker] = true
+				// Recovery and correction retain failures while resetting Tried.
+				// That history cannot prove the worker never executed a later turn.
+				if r.Recoveries > 0 || r.ReturnReceipt != "" {
+					uncertain[failure.Worker] = true
+				}
 			}
 		}
 		for _, name := range r.Tried {
