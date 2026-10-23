@@ -35,8 +35,8 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 		}
 	}
 	for _, a := range revisionSnapshot(t, e).Actions {
-		if a.ID == managers[1].ID && (a.State != "finished" || !a.Superseded || a.RetirementReconciled) {
-			t.Fatalf("old report did not retain pending retirement: %+v", a)
+		if a.ID == managers[1].ID && (a.State != "finished" || !a.Superseded || len(a.Receipt) == 0) {
+			t.Fatalf("old report did not retain its retired receipt: %+v", a)
 		}
 	}
 	cfg := e.cfg
@@ -46,8 +46,8 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Reports retain obsolete receipts; reconciliation clears their markers.
-	// Restart before that step to prove the unfinished retirement is durable.
+	// Definition refresh may already clear the retirement marker. Restart and
+	// reconcile again to prove the receipt and repair eligibility are durable.
 	if err = e.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
