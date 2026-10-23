@@ -323,7 +323,7 @@ func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
 	}
 }
 
-func TestRecoveredWorkerCompletionStoresEvidenceWithoutNewTurn(t *testing.T) {
+func TestRecoveredWorkerCompletionQueuesOneResultWithoutWorkerReplay(t *testing.T) {
 	r := controlRuntime(t)
 	now := time.Now()
 	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "recovery-owner", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Produce the result"})
@@ -346,7 +346,7 @@ func TestRecoveredWorkerCompletionStoresEvidenceWithoutNewTurn(t *testing.T) {
 	var admitted int
 	if err = r.db.Read(t.Context(), func(tx *canon.Tx) error {
 		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM inbox WHERE source='worker-finish'").Scan(&admitted)
-	}); err != nil || admitted != 0 {
-		t.Fatalf("snapshot started a conversation turn: %d %v", admitted, err)
+	}); err != nil || admitted != 1 {
+		t.Fatalf("snapshot did not queue exactly one result: %d %v", admitted, err)
 	}
 }

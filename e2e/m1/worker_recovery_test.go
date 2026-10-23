@@ -141,10 +141,13 @@ func TestM2WorkerRecovery(t *testing.T) {
 				if scriptedCodingManager(t, w, req) {
 					return
 				}
-				if calls.Add(1) == 1 {
+				step := calls.Add(1)
+				if step == 1 {
 					emitPersonaCall(w, "start", "worker_start", map[string]any{"workdir": dir, "task_packet": "Preserve this task's result."})
-				} else {
+				} else if step == 2 {
 					emitResponse(w, "The worker is running.", true)
+				} else {
+					emitResponse(w, "The recovered result is available.", true)
 				}
 			}))
 			defer server.Close()
@@ -237,6 +240,23 @@ func TestM2WorkerRecovery(t *testing.T) {
 				})
 			}
 			client.Close()
+			reactions := 0
+			if mode != "unknown" {
+				reactions = 1
+			}
+			waitRecovery(t, h, func() bool {
+				db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer closeDB()
+				var completed int
+				err = db.QueryRowContext(h.ctx, "SELECT count(*) FROM turn_runs t JOIN inbox i ON i.id=t.inbox_id WHERE i.source='worker-finish' AND t.state='completed'").Scan(&completed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return completed == reactions
+			})
 			h.stopCore(core)
 			if record := read(); record.State != want {
 				t.Fatalf("recovery state=%+v", record)
@@ -244,8 +264,8 @@ func TestM2WorkerRecovery(t *testing.T) {
 			if raw, err := os.ReadFile(filepath.Join(dir, "turn-count")); err != nil || string(raw) != count {
 				t.Fatalf("turn count=%s want=%s: %v", raw, count, err)
 			}
-			if calls.Load() != before {
-				t.Fatal("reconciliation called the model")
+			if calls.Load() != before+int32(reactions) {
+				t.Fatalf("result reactions=%d want=%d", calls.Load()-before, reactions)
 			}
 			if raw, err := os.ReadFile(filepath.Join(dir, scenario.Artifact)); err != nil || string(raw) != scenario.Result {
 				t.Fatalf("artifact=%s: %v", raw, err)
@@ -277,6 +297,9 @@ func TestM2WorkerRecovery(t *testing.T) {
 			h.stopCore(core)
 			if raw, _ := os.ReadFile(filepath.Join(dir, "turn-count")); string(raw) != count {
 				t.Fatal("restart dispatched a third turn")
+			}
+			if calls.Load() != before+int32(reactions) {
+				t.Fatal("restart replayed result delivery")
 			}
 		})
 	}
