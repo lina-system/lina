@@ -58,13 +58,7 @@ func TestAlphaSpokenQuestionInstalledCore(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		var current struct{ Role, Content string }
-		for i := len(req.Input) - 1; i >= 0; i-- {
-			if json.Unmarshal(req.Input[i], &current) == nil && current.Role == "user" {
-				break
-			}
-		}
-		if strings.Contains(current.Content, workerQuestion) {
+		if strings.Contains(workerCompletionInput(req.Input), workerQuestion) {
 			t.Log("provider received the worker question")
 			emitResponse(w, reply, false)
 			w.(http.Flusher).Flush()
