@@ -1,0 +1,32 @@
+{
+  "what": "Create result.txt and submit the task pull request.",
+  "done": "The result file is committed and the task pull request passes its checks.",
+  "work_area": true,
+  "cases": [
+    {
+      "name": "success",
+      "choice": "quota-fallback",
+      "expected": "ready_for_review"
+    },
+    {
+      "name": "success",
+      "choice": "blocked",
+      "expected": "ready_for_review"
+    },
+    {
+      "name": "success",
+      "choice": "overlap",
+      "expected": "ready_for_review"
+    },
+    {
+      "name": "quota-exhausted",
+      "choice": "double-quota",
+      "expected": "worker_failed"
+    },
+    {
+      "name": "success",
+      "choice": "rule",
+      "expected": "ready_for_review"
+    }
+  ]
+}

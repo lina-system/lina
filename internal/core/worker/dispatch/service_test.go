@@ -76,14 +76,14 @@ func TestDispatchWaitsForCommittedReceiptAndNeverReplaysUncertainWork(t *testing
 	}
 	call.Arguments = original
 	call.ID = "overlap"
-	if tool.Execute(t.Context(), call).Code != loop.Denied {
-		t.Fatal("overlapping repository admitted")
+	if tool.Execute(t.Context(), call).Code != loop.OK {
+		t.Fatal("overlapping task did not queue")
 	}
 	if err = s.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	records, err := s.records(t.Context())
-	if err != nil || len(records) != 1 || records[0].State != "queued" {
+	if err != nil || len(records) != 2 || records[0].State != "queued" {
 		t.Fatalf("uncommitted tool output launched work: %+v %v", records, err)
 	}
 	r := records[0]

@@ -51,6 +51,7 @@ func Migrations() []Migration {
 		{Version: 37, SQL: workEngineSchema},
 		{Version: 38, SQL: recordsTodoSchema},
 		{Version: 39, SQL: workEventSequenceSchema},
+		{Version: 40, SQL: WorkerChoiceSchema},
 	}
 }
 

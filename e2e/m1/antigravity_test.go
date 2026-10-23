@@ -30,12 +30,12 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 	}
 	var scenario struct {
 		Cases []struct {
-			Name, Expected, Preset string
-			LegacyAdmission        bool `json:"legacy_admission"`
-			Omit                   string
-			DesignRef              string `json:"design_ref"`
-			MoveBase               bool   `json:"move_base"`
-			ToolCode               string `json:"tool_code"`
+			Name, Expected, Preset, Choice string
+			LegacyAdmission                bool `json:"legacy_admission"`
+			Omit                           string
+			DesignRef                      string `json:"design_ref"`
+			MoveBase                       bool   `json:"move_base"`
+			ToolCode                       string `json:"tool_code"`
 		}
 		What, Done string
 		WorkArea   bool `json:"work_area"`
@@ -98,6 +98,13 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 					t.Fatal(err)
 				}
 			}
+			codexScript, err := os.ReadFile("../m2/worker-choice-codex.mjs")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(bin, "codex"), codexScript, 0700); err != nil {
+				t.Fatal(err)
+			}
 			var calls atomic.Int32
 			var offered atomic.Bool
 			var moved atomic.Bool
@@ -128,7 +135,8 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 				if scriptedCodingManager(t, w, req) {
 					return
 				}
-				if calls.Add(1) == 1 {
+				callNumber := calls.Add(1)
+				if callNumber == 1 || test.Choice == "overlap" && callNumber == 3 {
 					for _, tool := range req.Tools {
 						if tool.Name == "dispatch_work" {
 							offered.Store(true)
@@ -159,6 +167,12 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			defer server.Close()
 			h, bootstrap := installedConversationHarness(t, server.URL)
 			ids := seedCodingFixture(t, h, bootstrap, test.Preset)
+			if test.Choice == "rule" {
+				table := map[string]any{"provisional": true, "rules": []any{map[string]any{"worker": "codex", "tags": []string{repo}, "priority": 10}}}
+				if err = os.WriteFile(filepath.Join(h.root, "system", "core", "worker-choice.json"), mustJSON(t, table), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 			t.Cleanup(cancel)
 			h.ctx = ctx
@@ -169,9 +183,13 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 				// The old manager decision is seeded; only delivery runs here.
 				managerTurns = 1
 			}
+			fixtureCase := workerCase
+			if test.Choice != "" {
+				fixtureCase = test.Choice
+			}
 			start := func() *process {
 				p := h.command("core", "--state-root", h.root, "--socket", h.socket)
-				p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+workerCase, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+				p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+fixtureCase, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 				p.start(t)
 				h.connectWithin(p, time.Minute).Close()
 				waitCoreReady(t, h)
@@ -196,9 +214,17 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 				assertDefinitionRefused(t, h, fixture)
 				return
 			}
+			if test.Choice == "overlap" {
+				admittedTurn(t, h, c, conversation, "delegate-overlap", "Create another result in the same write area.")
+				waitForAreaClaim(t, h, fixture)
+				if err = os.WriteFile(filepath.Join(fixture, "release-first"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				managerTurns++
+			}
 			found := false
 			inspect := func(e protocol.Envelope) {
-				if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil && strings.Contains(*item.Text, "antigravity") {
+				if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil && (strings.Contains(*item.Text, "antigravity:") || strings.Contains(*item.Text, "codex:")) {
 					if !strings.Contains(*item.Text, test.Expected) {
 						t.Fatalf("unexpected worker result: %s", *item.Text)
 					}
@@ -218,6 +244,9 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			c.Close()
 			h.stopCore(core)
 			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success", managerTurns)
+			if test.Choice != "" {
+				assertWorkerChoice(t, h, fixture, test.Choice)
+			}
 			if checkLegacy != nil {
 				checkLegacy()
 			}
@@ -259,8 +288,15 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			}
 			c.Close()
 			h.stopCore(core)
-			if calls.Load() != 2 {
+			expectedCalls := int32(2)
+			if test.Choice == "overlap" {
+				expectedCalls = 4
+			}
+			if calls.Load() != expectedCalls {
 				t.Fatalf("restart replayed provider: %d", calls.Load())
+			}
+			if test.Choice != "" {
+				assertWorkerChoice(t, h, fixture, test.Choice)
 			}
 			if test.LegacyAdmission {
 				launches, err := os.ReadFile(filepath.Join(fixture, "launches"))

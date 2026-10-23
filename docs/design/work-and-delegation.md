@@ -595,6 +595,28 @@ turns words such as “verified” into acceptance evidence.
 
 LINA chooses the worker for a task from the situation, the person's subscription quota and the host's capacity, and hands the task off. The situation is the kind of work and the repository. Quota is what each worker reports about its remaining quota; an unknown quota is a value, and for a worker that reports none LINA Core uses its own usage accounting ([runtime.md](runtime.md)). The choice follows an editable table of rules, marked provisional, which the power settings show ([surfaces.md](surfaces.md)). A worker whose quota row is ok is preferred, an unknown row is usable but unmeasured, a blocked row is unavailable until the stated reset (or until the next successful call when no reset is given), and a reset time is never inferred ([runtime.md](runtime.md#usage-and-cost)). If a worker stops on quota, rate limit, login expiry or repeated connection failure, LINA hands the same task packet to the next suitable worker without asking the person. Two workers never share a worktree.
 
+The installed `dispatch_work` path preserves the admitted packet, pinned base,
+method and assigned branch across one automatic replacement. The quota-stopped
+process tree is reaped before the replacement receives the workspace; partial
+work remains there. Each attempt gets its own execution generation. A second
+quota stop is retained as a terminal failed observation and cannot start a third
+worker. A restart preserves quota blocks, area claims and uncertain attempts.
+An explicit reset makes a blocked row eligible as unmeasured, without inventing
+a fresh quota measurement or reset time.
+
+The provisional worker rule table is read at startup from
+`system/core/worker-choice.json`. Its `rules` contain `worker`, `tags` and integer
+`priority`; the top-level `provisional` must be true. Tags match the work kind
+and local repository path. Quota eligibility and host capacity always win over
+priority. Without rules, otherwise equal candidates retain the installed
+Antigravity-then-Codex order. These rules grant no worker permissions.
+
+Queued tasks may share a repository. Core claims their declared areas in the
+same fenced transaction as handoff, and only free areas can start. The claim
+continues through delivery and manager judgment until trusted application;
+missing evidence and interrupted execution retain it. Receipt replay never
+resets the reservation or the number of attempted workers.
+
 ### Operating the pull request
 
 The worker owns its pull request to green. Inside the work thread it waits for CI and the review bots, fixes every CI failure and the P0 and P1 review findings once, and waits for the checks at the resulting head before reporting done. P2 and P3 findings are reported with the result and do not block the merge. The review and CI fix loop belongs to the worker's turn; it never goes through LINA Core as a round trip.
