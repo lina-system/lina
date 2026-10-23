@@ -60,7 +60,10 @@ var shapes = []*regexp.Regexp{
 // Recognize our exact placeholder only at a value boundary. That alternative
 // consumes the boundary without capturing it, preserving punctuation on recheck
 // while leaving a glued credential suffix to the captured value alternative.
-var assignment = regexp.MustCompile(`(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|token)["']?\s*[:=]\s*(?:(?-i:` + regexp.QuoteMeta(secret.Placeholder) + `)(?:$|[\s,;"'<>}\]).])|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;"'<>]+))`)
+const assignmentBoundary = `(?:$|[\s,;"'<>}\]).])`
+
+var assignment = regexp.MustCompile(`(?i)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret|token)["']?\s*[:=]\s*(?:(?-i:` + regexp.QuoteMeta(secret.Placeholder) + `)` + assignmentBoundary + `|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;"'<>]+))`)
+var afterAssignment = regexp.MustCompile(`^` + assignmentBoundary)
 var authorization = regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]+)`)
 var privateKey = regexp.MustCompile(`-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----`)
 
@@ -88,8 +91,18 @@ func Mask(text string, flagged ...Span) (Masked, error) {
 	}
 	for _, pattern := range []*regexp.Regexp{assignment, authorization} {
 		for _, match := range pattern.FindAllStringSubmatchIndex(text, -1) {
-			if match[2] >= 0 && text[match[2]:match[3]] != secret.Placeholder {
-				spans = append(spans, Span{Start: match[2], End: match[3]})
+			start, end := match[2], match[3]
+			if start < 0 {
+				continue
+			}
+			if pattern == assignment && (text[start] == '"' || text[start] == '\'') && !afterAssignment.MatchString(text[end:]) {
+				// Keep the quotes when removing them would glue public text to
+				// the placeholder and make a later check mask that text too.
+				start++
+				end--
+			}
+			if text[start:end] != secret.Placeholder {
+				spans = append(spans, Span{Start: start, End: end})
 			}
 		}
 	}
