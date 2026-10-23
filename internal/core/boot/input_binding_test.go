@@ -211,3 +211,41 @@ func TestInputBindingNoticeAndScope(t *testing.T) {
 		t.Fatal("foreign reply stole notice target", d)
 	}
 }
+
+func TestInputBindingRecoveryDoesNotStealFocus(t *testing.T) {
+	r := controlRuntime(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	state := intakereplay.State{Clock: now, Focus: intakereplay.Target{Class: "none"}, Items: []intakereplay.Item{{ID: "a", Title: "Garden", Kind: "project", State: "active", LastActivity: now}, {ID: "b", Title: "Library", Kind: "project", State: "active", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(ctx, state, intakereplay.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	makeInput := func(id, text string) ledger.Input {
+		return ledger.Input{ID: id, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text}
+	}
+	old, err := ledger.New(r.db, nil).Admit(ctx, guard.EntryOwner, makeInput("legacy", "Garden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.journal().Admit(ctx, guard.EntryOwner, makeInput("recent", "Library")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.inputBindingPacket(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	next, err := r.journal().Admit(ctx, guard.EntryOwner, makeInput("next", "continue"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(ctx, inputBindingID(next.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Target.ID != "b" || !d.Unresolved {
+		t.Fatal("recovered older input replaced recent focus", d)
+	}
+}

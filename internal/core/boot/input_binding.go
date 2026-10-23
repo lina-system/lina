@@ -69,7 +69,7 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 	}
 	// Read the latest binding and exchange before this input, using ledger order.
 	var raw, at string
-	err := tx.QueryRowContext(ctx, `SELECT b.body,p.recorded_at FROM conv_event b JOIN conv_event p ON p.id=b.parent_id WHERE b.conversation_id=? AND b.agent_id=? AND p.person_id=? AND b.scaffold_kind=? AND p.rowid<(SELECT rowid FROM conv_event WHERE id=?) ORDER BY b.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.PersonID, inputBindingKind, input.ID).Scan(&raw, &at)
+	err := tx.QueryRowContext(ctx, `SELECT b.body,p.recorded_at FROM conv_event b JOIN conv_event p ON p.id=b.parent_id WHERE b.conversation_id=? AND b.agent_id=? AND p.person_id=? AND b.scaffold_kind=? AND p.rowid<(SELECT rowid FROM conv_event WHERE id=?) ORDER BY p.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.PersonID, inputBindingKind, input.ID).Scan(&raw, &at)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return s, err
 	}
