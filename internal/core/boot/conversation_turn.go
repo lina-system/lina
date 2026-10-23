@@ -62,6 +62,8 @@ type turnState struct {
 	questions          *questionTurn
 	questionRoundCalls int
 	compaction         *conversationCompaction
+	launcherKey        string
+	launcherText       string
 }
 
 func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, input ledger.Event, inboxID int64) (err error) {
@@ -305,6 +307,14 @@ func (s *turnState) observe(ctx context.Context, e provider.Event) error {
 		if err := turn.New(r.db).CheckpointPartial(ctx, turnID, turn.Partial{Round: s.round - 1, Index: e.Index, Text: filter.sent}); err != nil {
 			return err
 		}
+		if requestID := launcherRequestID(input.Surface); requestID != "" {
+			s.launcherKey, s.launcherText = key, view.Text
+			if view.Text != "" {
+				if err := r.publishLauncherReply(requestID, key, view.Text, false); err != nil {
+					return err
+				}
+			}
+		}
 		if view.Cut {
 			// A result replaces the same stream row, retracting the unfinished
 			// sentence while retaining all subsequent text in its preview.
@@ -348,6 +358,11 @@ func (s *turnState) observe(ctx context.Context, e provider.Event) error {
 
 func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err error) error {
 	r, input, turnID := s.runtime, s.input, s.turnID
+	if requestID := launcherRequestID(input.Surface); requestID != "" {
+		// The panel always learns that this line finished, including after a
+		// stop or failure, so it never waits on a stream that ended.
+		defer func() { _ = r.publishLauncherReply(requestID, s.launcherKey, s.launcherText, true) }()
+	}
 	if s.promoted.ID != "" {
 		// The handle is durable before execution, and the run outlives this turn.
 		err = errors.Join(err, r.background.service.Release(context.WithoutCancel(ctx), s.promoted.ID))
@@ -376,6 +391,9 @@ func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err er
 			if filterErr != nil {
 				err = filterErr
 				break
+			}
+			if item.SpeakerKind == guard.Agent {
+				s.launcherKey, s.launcherText = item.ID, view.Text
 			}
 			if publishErr := r.publishReply(ctx, item.ID, turnID, view, eventLanguage(input)); publishErr != nil {
 				err = publishErr

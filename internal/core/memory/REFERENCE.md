@@ -93,6 +93,15 @@ actual worker binary and Core job socket, quoted stated memory and restart.
 
 Synthetic package tests and `e2e/m1/memory-jobs.json` exercise these operations with the real worker binary and Core job socket; model quality and installed scheduling remain composition concerns.
 
+### Scope check through citations
+
+`RestrictedEvents` returns the event ids that the person's `private` and
+`never-leaves` items rest on, so a common item or a raw ledger read cannot
+bypass another holder's scope. It reads them from the current `cite` rows of
+those items instead of decoding every record's evidence JSON; only ids leave
+the query. Removal and recovery keep those rows current, and an erased item's
+own citation history is deleted with it.
+
 ### Evidence quote switch
 
 New item and revision serialization removes rendered evidence quotes. Citation

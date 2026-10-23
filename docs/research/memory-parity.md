@@ -1,6 +1,6 @@
 # Research: LINA compaction and memory against LCM-X and Honcho on real history
 
-Research for [#849](https://github.com/thisisjun786/lina/issues/849). LINA's compaction was ported from LCM-X and its person memory from Honcho by reading their source and tests ([compaction reference](../../internal/core/compaction/reference.md), [memory reference](../../internal/core/memory/REFERENCE.md)). This note runs the owner's own Hermes history through both and compares the results. It is evidence, not a contract.
+Research for [#849](https://github.com/thisisjun786/lina/issues/849). LINA's compaction was ported from LCM-X and its person memory from Honcho by reading their source and tests ([compaction reference](../../internal/core/compaction/reference-spec.md), [memory reference](../../internal/core/memory/REFERENCE.md)). This note runs the owner's own Hermes history through both and compares the results. It is evidence, not a contract.
 
 The history, the fact checklists, the questions and every answer stay private on the machine that ran the check. This file holds counts and ratios only: no message text, no summary text, and no names of people, accounts or hosts. Profiles are named by the preset role they correspond to: system (the default profile), LINA, dev, knowledge, life and creative, plus two small profiles that no question came from.
 
