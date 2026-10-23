@@ -731,20 +731,22 @@ type RestartStatus struct {
 	RequestedEpoch  *string      `json:"requested_epoch,omitempty"`
 }
 type Result struct {
-	Body       *json.RawMessage  `json:"body,omitempty"`
-	Completion *CompletionStatus `json:"completion,omitempty"`
-	Provenance ResultProvenance  `json:"provenance"`
-	ResultID   string            `json:"result_id"`
-	RevisedBy  string            `json:"revised_by"`
-	Revision   json.Number       `json:"revision"`
-	RunID      *string           `json:"run_id,omitempty"`
-	SavedAs    *SavedReference   `json:"saved_as"`
-	Status     ResultStatus      `json:"status"`
-	Stream     *StreamMetadata   `json:"stream,omitempty"`
-	Summary    string            `json:"summary"`
-	Text       *string           `json:"text,omitempty"`
-	Title      string            `json:"title"`
-	Type       ResultType        `json:"type"`
+	Body          *json.RawMessage  `json:"body,omitempty"`
+	Completion    *CompletionStatus `json:"completion,omitempty"`
+	Next          *json.Number      `json:"next,omitempty"`
+	Provenance    ResultProvenance  `json:"provenance"`
+	ResultID      string            `json:"result_id"`
+	RevisedBy     string            `json:"revised_by"`
+	Revision      json.Number       `json:"revision"`
+	RunID         *string           `json:"run_id,omitempty"`
+	SavedAs       *SavedReference   `json:"saved_as"`
+	Status        ResultStatus      `json:"status"`
+	Stream        *StreamMetadata   `json:"stream,omitempty"`
+	Summary       string            `json:"summary"`
+	Text          *string           `json:"text,omitempty"`
+	TextTruncated *bool             `json:"text_truncated,omitempty"`
+	Title         string            `json:"title"`
+	Type          ResultType        `json:"type"`
 }
 type ResultEdit struct {
 	BaseRevision json.Number     `json:"base_revision"`
@@ -752,6 +754,7 @@ type ResultEdit struct {
 	ResultID     string          `json:"result_id"`
 }
 type ResultGet struct {
+	Offset   *json.Number `json:"offset,omitempty"`
 	ResultID string       `json:"result_id"`
 	Revision *json.Number `json:"revision,omitempty"`
 }
@@ -3827,6 +3830,13 @@ const clientSchemaJSON = `{
         },
         "completion": {
           "$ref": "#/$defs/completion_status"
+        },
+        "next": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "text_truncated": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -3887,6 +3897,10 @@ const clientSchemaJSON = `{
         },
         "revision": {
           "$ref": "#/$defs/result_revision"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [

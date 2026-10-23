@@ -2244,6 +2244,13 @@
         },
         "completion": {
           "$ref": "#/$defs/completion_status"
+        },
+        "next": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "text_truncated": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2304,6 +2311,10 @@
         },
         "revision": {
           "$ref": "#/$defs/result_revision"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [

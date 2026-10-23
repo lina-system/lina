@@ -491,11 +491,23 @@ Kinds, all in version 1.0:
 | Kind | Direction | Content |
 | --- | --- | --- |
 | `result` | Core to client | A result in card form, which is every field except `body` and `text`. It is sent on creation, on every revision and on a change of status, to every client subscribed to the conversation, and it is the history item for a result. When it answers `result_get` it also carries `body` and `text`. |
-| `result_get` | client to Core | Asks for one result by id, optionally at a revision. A result that was erased with its conversation answers `unavailable`. |
+| `result_get` | client to Core | Asks for one result by id, optionally at the current revision and a UTF-8 byte `offset`. A result that was erased with its conversation answers `unavailable`. |
 | `result_edit` | client to Core | The person's direct edit: the base revision and the replacement body. In version 1.0 only `summary` and `document_draft` accept it. A preview takes the edit as its next revision. A saved result refuses it with `out_of_scope`; the client edits the saved material through the material's own edit request. |
 | `result_save` | client to Core | Asks to save one revision, with the destination. It carries an `idempotency_key` built from the result id, the revision, the action and the destination, and the answer reports the effect state ([Effect states](#effect-states)) and the saved reference. A repeated request never makes a second record. |
 
 Applying the accepted hunks of a `comparison` is the apply request of delegated work, whose wire format is added with the work engine ([work-and-delegation.md](work-and-delegation.md)).
+
+Native typed-result cards keep their text preview bounded to 64 KiB, with
+`text_truncated` indicating that more content is available. With the `results`
+capability, `result_get` returns the retained summary and complete plain-text
+rendering in pages of at most 64 KiB. Its `result` reply carries one text page
+and optional `next` byte offset; this text fallback omits `body`. An absent
+offset starts at zero. Continuation requests must name the returned revision.
+Offsets must fall on UTF-8 boundaries. A changed revision returns
+`stale_revision`, an invalid offset returns `malformed`, and an absent result,
+another person's result or a deleted agent returns `unavailable`. Core resolves
+the person from the authenticated session and the agent and conversation from
+the owned result head on every page. Reading creates no turn or saved material.
 
 ## Node connection
 

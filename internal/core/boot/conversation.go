@@ -256,7 +256,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err := addOperations(&r.identity, clientsrv.AccountOperations(r.person, r.accounts, relay)); err != nil {
 		return nil, err
 	}
-	if err := addOperations(&r.identity, clientsrv.RecordOperations(r)); err != nil {
+	if err := addOperations(&r.identity, clientsrv.RecordOperations(r), r.resultOperations()); err != nil {
 		return nil, err
 	}
 	if err := addOperations(&r.identity, clientsrv.WebOperations(r)); err != nil {

@@ -6,6 +6,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"slices"
 	"strings"
@@ -29,6 +30,9 @@ type Block struct {
 	CompletionLabel          string
 	InlineReply              bool
 	RunID                    string
+	ResultID                 string
+	ResultRevision           json.Number
+	ResultTruncated          bool
 	RunState                 protocol.RunningState
 	RunReason                protocol.RunningReason
 	TurnKnown, TurnActive    bool

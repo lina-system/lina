@@ -15,6 +15,7 @@ import (
 type shellManagement struct {
 	Generation uint64
 	Request    protocol.Payload
+	Result     *resultPager
 }
 
 func (m *shellModel) activeAgent() string {
@@ -156,6 +157,11 @@ func (s *managementSession) request(ctx context.Context, c shellClient, p protoc
 	var id string
 	var err error
 	switch p := p.(type) {
+	case protocol.ResultGet:
+		id, err = c.Result(ctx, p)
+		if err == nil {
+			s.model.conversation.pager.result.requestID = id
+		}
 	case protocol.ProgressDigestGet, protocol.Stop, protocol.FollowUp, protocol.MultiTaskControl:
 		id, err = c.Control(ctx, p)
 	case protocol.ProgressGet:
@@ -199,6 +205,12 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 	}
 	delete(s.pending, *e.ReplyTo)
 	m := s.model
+	if _, result := request.(protocol.ResultGet); result {
+		p := &m.conversation.pager
+		if !p.open || p.result == nil || p.result.requestID != *e.ReplyTo {
+			return true, nil
+		}
+	}
 	if board, tracked := s.boardPending[*e.ReplyTo]; tracked {
 		delete(s.boardPending, *e.ReplyTo)
 		if !m.conversation.pager.open || m.conversation.pager.board != board || board.requestID != *e.ReplyTo {
@@ -228,6 +240,12 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 		return true, nil
 	}
 	switch p := e.Payload.(type) {
+	case protocol.Result:
+		original, ok := request.(protocol.ResultGet)
+		if !ok {
+			return true, errStream
+		}
+		return true, s.resultResponse(ctx, c, original, p)
 	case protocol.RecordResult:
 		original, ok := request.(protocol.RecordRequest)
 		if !ok {

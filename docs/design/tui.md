@@ -775,6 +775,14 @@ the full screen. The pager supports arrows, Page Up/Down, Home/End, `/` search,
 the terminal's own copy. No host clipboard read or write is installed by the
 composer or pager.
 
+Opening a truncated native typed-result card fetches its complete text through
+`result_get`, following bounded pages at the card's revision. The pager supports
+scrolling and search over the collected text while the conversation retains its
+bounded preview. Closing the pager, changing conversations or reconnecting
+discards pending detail replies; a changed or removed card invalidates its open
+detail. The same action works from restored cards after Core restarts and never
+submits the composer's draft or starts a model turn.
+
 Ctrl+T opens the entire retained visible conversation in the same pager, in
 message order, with the person's word and the agent's name as speaker labels.
 The sanitized plain text includes complete inline replies once; structured

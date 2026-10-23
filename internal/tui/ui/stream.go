@@ -334,6 +334,8 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 		if p.RunID != nil {
 			block.RunID = *p.RunID
 		}
+		block.ResultID, block.ResultRevision = p.ResultID, p.Revision
+		block.ResultTruncated = p.TextTruncated != nil && *p.TextTruncated
 		block.Title = p.Title
 		block.CompletionLabel = ""
 		if p.Completion != nil {

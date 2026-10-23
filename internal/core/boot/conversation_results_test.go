@@ -3,14 +3,64 @@ package boot
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/results"
+	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/result"
 )
+
+func TestTypedResultPreviewMarksReadableRemainder(t *testing.T) {
+	r, _, agent, _ := managementFixture(t)
+	r.agent, r.conversation = agent, "main:"+agent
+	var err error
+	r.topics, err = clientsrv.NewTopics("1", clientsrv.TopicOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(r.topics.Close)
+	store, err := r.resultStore(ledger.Surface{Kind: "tui"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"blocks": []any{map[string]any{"kind": "paragraph", "text": strings.Repeat("한글\n", 20000)}}, "from_summary": nil})
+	scope := result.Scope{PersonID: r.person, AgentID: agent, ConversationID: r.conversation, TurnID: "turn"}
+	card, err := store.Present(t.Context(), scope, result.PresentRequest{Type: result.DraftType, Title: "Long", Summary: "Ready.", Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := store.Read(t.Context(), scope, result.ReadRequest{ID: card.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.publishResult(t.Context(), value); err != nil {
+		t.Fatal(err)
+	}
+	start, sub, err := r.topics.Subscribe("conversation:"+r.conversation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	for _, event := range start.Snapshot.Items {
+		if event.Kind != protocol.KindResult {
+			continue
+		}
+		var p protocol.Result
+		if err := json.Unmarshal(event.Data, &p); err != nil {
+			t.Fatal(err)
+		}
+		if p.TextTruncated == nil || !*p.TextTruncated {
+			t.Fatal("truncated result has no readable remainder marker")
+		}
+		return
+	}
+	t.Fatal("missing result")
+}
 
 func TestTypedResultAndBreachCommitTogether(t *testing.T) {
 	stored, _, _, _ := managementFixture(t)
