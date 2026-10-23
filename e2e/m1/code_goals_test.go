@@ -58,8 +58,9 @@ func TestM2InstalledCodeGoalDriver(t *testing.T) {
 
 func installedCodeGoal(t *testing.T, mode string) {
 	var graph *stepGraphScenario
-	if mode == "step-graph" {
+	if mode == "step-graph" || mode == "ready-frontier" {
 		graph = newStepGraphScenario(t)
+		graph.mixed = mode == "ready-frontier"
 	}
 	fixture := t.TempDir()
 	repo := filepath.Join(fixture, "repo")
@@ -182,6 +183,10 @@ func installedCodeGoal(t *testing.T, mode string) {
 				kind = "labelled_claim"
 			}
 			completion = &result.CompletionRequest{WorkKind: "code", Evidence: []result.EvidenceReference{{Kind: kind, CallID: "owner-path-observation"}}}
+		}
+		if graph != nil && graph.mixed && strings.Contains(request.Instructions, "self-contained background brief") {
+			graph.respond(t, w, request)
+			return
 		}
 		if scriptedCodingManager(t, w, request, completion) {
 			return

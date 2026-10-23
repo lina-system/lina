@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
+import "sort"
+
 // A single repository is unambiguous, including for definitions saved before
 // service_repository existed. Never infer a service from task or merge order.
 func serviceRepository(g Goal) string {
@@ -35,6 +37,28 @@ func restoreMergedRevisions(g *Goal) {
 }
 
 func targetRevision(g Goal) string {
+	// A graph made entirely of runs and waits has no Git merge. Its observed
+	// results form a stable revision for runtime and criterion verification.
+	if len(g.Tasks) > 0 && g.ServiceTarget == "" {
+		onlyResults := true
+		for _, t := range g.Tasks {
+			if stepKind(t.Kind) == TaskStep {
+				onlyResults = false
+				break
+			}
+		}
+		if onlyResults {
+			var results [][2]string
+			for _, t := range g.Tasks {
+				if !stepLanded(t) {
+					return ""
+				}
+				results = append(results, [2]string{t.ID, t.Result.Revision})
+			}
+			sort.Slice(results, func(i, j int) bool { return results[i][0] < results[j][0] })
+			return actionID(Action{GoalID: g.ID, Revision: string(encode(results))})
+		}
+	}
 	if g.ServiceTarget == "" {
 		return g.TargetRevision
 	}

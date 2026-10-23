@@ -39,6 +39,9 @@ func TestConversationCompactionFailureRecoveryAndRetraction(t *testing.T) {
 	retracted := false
 	stream := func(_ context.Context, request provider.Request) (provider.Stream, error) {
 		calls++
+		if request.CacheIdentity != assemble.ConversationIdentity("main-test", agent, r.conversation) {
+			t.Fatal("summary lost conversation cache identity")
+		}
 		if refuse {
 			return nil, failed
 		}
@@ -59,8 +62,11 @@ func TestConversationCompactionFailureRecoveryAndRetraction(t *testing.T) {
 		if err != nil {
 			return provider.Request{}, err
 		}
-		in := assemble.Input{AgentID: agent, PersonaRevision: "fixture", Model: "fixture-model", Core: "core", Current: items[len(items)-1], History: items[:len(items)-1], MaxTokens: 22000}
+		in := assemble.Input{MainID: "main-test", ConversationID: r.conversation, AgentID: agent, PersonaRevision: "fixture", Model: "fixture-model", Core: "core", Current: items[len(items)-1], History: items[:len(items)-1], MaxTokens: 22000}
 		request, report, err := r.compactConversation(t.Context(), in, events, stream)
+		if err == nil && request.CacheIdentity != assemble.ConversationIdentity("main-test", agent, r.conversation) {
+			t.Fatal("compaction changed cache identity")
+		}
 		if err == nil && report.Failure != "" {
 			t.Fatalf("fit failed: %+v", report)
 		}
@@ -246,6 +252,12 @@ func TestConversationCompactionTrimsOptionalContext(t *testing.T) {
 					t.Fatalf("large history summary calls=%d", calls)
 				}
 			} else {
+				// The direct assembly baseline needs the same native person
+				// provenance that compaction obtains from the ledger.
+				if scenario == "short-history" {
+					previous := 1
+					in.PreviousInput = &previous
+				}
 				baseline, baselineReport := assemble.Assemble(in, conversationRequestSize)
 				if baselineReport.Failure != "" || !reflect.DeepEqual(request, baseline) || calls != 0 {
 					t.Fatalf("compaction changed the previously fitting request: calls=%d", calls)

@@ -316,7 +316,7 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 				if t != nil && a.Kind == PlanGoal {
 					t.RepairAsked = true
 				}
-				if t != nil && reserves(a) && a.ObserveActionID == "" {
+				if t != nil && workerAction(a.Kind) && a.ObserveActionID == "" {
 					t.Stage = TaskBuilding
 					t.Attempt = a.Attempt
 					t.NodeID = a.NodeID
@@ -585,6 +585,11 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			a.State = "unknown"
 		case OutcomeNeedsPerson:
 			a.State = "needs_person"
+			if t != nil && stepKind(t.Kind) != TaskStep && o.EffectsSettled {
+				a.State = "finished"
+				t.Stage = TaskNeedsPerson
+				t.EffectsSettled = true
+			}
 			if o.Handle != "" {
 				a.Handle = o.Handle
 			}
@@ -745,6 +750,16 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		}
 
 	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker:
+		if t != nil && stepKind(t.Kind) != TaskStep {
+			if !o.EffectsSettled || !o.Proof.proves(o.Proof.Revision) {
+				return ErrInvalid
+			}
+			t.Result = o.Proof
+			t.Stage = TaskDone
+			t.EffectsSettled = true
+			g.Evidence = append(g.Evidence, o.Proof)
+			return nil
+		}
 		if t == nil || o.Head == "" || !o.EffectsSettled {
 			return ErrInvalid
 		}
