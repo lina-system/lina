@@ -16,9 +16,48 @@ var CheckDimensions = []string{"size", "tokens", "network", "elements", "control
 var (
 	rawColor   = regexp.MustCompile(`(?i)#[0-9a-f]{3,8}\b|\b(rgba?|hsla?)\s*\(`)
 	fontDecl   = regexp.MustCompile(`(?i)(font-family|font)\s*:\s*([^;}"']+)`)
-	dataCheck  = regexp.MustCompile(`data-check\s*=\s*"([^"]+)"`)
+	tagPattern = regexp.MustCompile(`(?is)<\s*([a-z][a-z0-9-]*)\b([^>]*)>`)
+	checkAttr  = regexp.MustCompile(`(?i)\bdata-check\s*=\s*"([^"]+)"`)
+	idAttr     = regexp.MustCompile(`(?i)\bid\s*=\s*"([^"]+)"`)
+	roleAttr   = regexp.MustCompile(`(?i)\brole\s*=\s*"([^"]+)"`)
 	remoteAddr = regexp.MustCompile(`(?i)https?://|url\(\s*['"]?(https?:)?//|@import\b|\bsrc\s*=\s*['"]?(https?:)?//|\bhref\s*=\s*['"]?(https?:)?//`)
 )
+
+// controlTags and controlRoles are what a checklist item may point at when it
+// asks the person to act. A plain element cannot carry an action.
+var controlTags = []string{"button", "input", "select", "textarea", "summary"}
+
+var controlRoles = []string{"button", "checkbox", "switch", "radio", "textbox", "combobox"}
+
+// element is the part of a parsed tag the checks need.
+type element struct {
+	tag  string
+	id   string
+	role string
+	mark string
+}
+
+func elements(index string) []element {
+	var out []element
+	for _, match := range tagPattern.FindAllStringSubmatch(index, -1) {
+		e := element{tag: strings.ToLower(match[1])}
+		if m := checkAttr.FindStringSubmatch(match[2]); m != nil {
+			e.mark = m[1]
+		}
+		if m := idAttr.FindStringSubmatch(match[2]); m != nil {
+			e.id = m[1]
+		}
+		if m := roleAttr.FindStringSubmatch(match[2]); m != nil {
+			e.role = strings.ToLower(m[1])
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+func (e element) control() bool {
+	return slices.Contains(controlTags, e.tag) || slices.Contains(controlRoles, e.role)
+}
 
 func staticChecks(files map[string][]byte, checklist []result.MockItem) map[string]bool {
 	checks := map[string]bool{"size": true, "tokens": true, "network": true, "elements": true, "controls": true, "errors": true}
@@ -27,18 +66,55 @@ func staticChecks(files map[string][]byte, checklist []result.MockItem) map[stri
 		return checks
 	}
 	index := string(files["index.html"])
-	found := map[string]bool{}
-	for _, match := range dataCheck.FindAllStringSubmatch(index, -1) {
-		found[match[1]] = true
+	markers := map[string]element{}
+	ids := map[string]bool{}
+	duplicate := false
+	for _, e := range elements(index) {
+		if e.id != "" {
+			ids[e.id] = true
+		}
+		if e.mark == "" {
+			continue
+		}
+		if _, seen := markers[e.mark]; seen {
+			duplicate = true
+		}
+		markers[e.mark] = e
+	}
+	if duplicate {
+		checks["elements"] = false
 	}
 	for _, item := range checklist {
-		if !found[item.ID] {
+		e, ok := markers[item.ID]
+		if !ok {
+			// The item has no element at all; when it asks for an action the
+			// control is missing too.
 			checks["elements"] = false
+			if item.Action != "none" {
+				checks["controls"] = false
+			}
+			continue
+		}
+		if item.Action == "none" {
+			continue
+		}
+		if !e.control() {
+			checks["controls"] = false
+		}
+		if item.Action == "toggle" && !ids[item.Target] {
+			checks["controls"] = false
 		}
 	}
-	if len(found) > len(checklist) {
-		// An extra data-check is a control the person did not ask for.
-		checks["controls"] = false
+	declared := map[string]bool{}
+	for _, item := range checklist {
+		declared[item.ID] = true
+	}
+	for mark := range markers {
+		if !declared[mark] {
+			// An extra data-check is a control the person did not ask for.
+			checks["controls"] = false
+			break
+		}
 	}
 	for name, data := range files {
 		text := string(data)
