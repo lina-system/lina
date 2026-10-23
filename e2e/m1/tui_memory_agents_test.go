@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -200,10 +201,18 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 		waitScreen(t, h, terminal, "Fixture answer")
 	}
 	first := agentCommand("/agents")
-	if first.Agents == nil || len(*first.Agents) != 1 {
+	if first.Agents == nil || len(*first.Agents) != 8 {
 		t.Fatal("initial agent missing")
 	}
-	original := (*first.Agents)[0].AgentID
+	original := ""
+	for _, a := range *first.Agents {
+		if a.Preset != nil && *a.Preset == "lina" {
+			original = a.AgentID
+		}
+	}
+	if original == "" {
+		t.Fatal("Lina starter missing")
+	}
 	saved := memoryCommand("/memory remember " + scenario.Memory)
 	if saved.ItemID == nil {
 		t.Fatal("remember had no committed identity")
@@ -260,7 +269,7 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 	opened = false
 	chat("second agent fixture", "", "Synthetic private orchard")
 	deleted := agentCommand("/agents delete " + second)
-	if deleted.AgentID == nil || *deleted.AgentID != second || deleted.Agents == nil || len(*deleted.Agents) != 1 || (*deleted.Agents)[0].AgentID != original {
+	if deleted.AgentID == nil || *deleted.AgentID != second || deleted.Agents == nil || !reflect.DeepEqual(*deleted.Agents, *first.Agents) {
 		t.Fatal("delete did not remove the selected id")
 	}
 	watcher, err := clientapi.DialWithCapabilities(h.ctx, socket, "test", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
@@ -308,7 +317,7 @@ func memoryAgentRoundTrip(t *testing.T, binary, bundle string) {
 		t.Fatal(err)
 	}
 	agents, ok := e.Payload.(protocol.AgentResult)
-	if !ok || agents.Agents == nil || len(*agents.Agents) != 1 || (*agents.Agents)[0].AgentID != original {
+	if !ok || agents.Agents == nil || !reflect.DeepEqual(*agents.Agents, *first.Agents) {
 		t.Fatal("restart changed agent deletion")
 	}
 	client.Close()
@@ -333,13 +342,27 @@ func managementWithoutModelOrDefaultAgent(t *testing.T, binary, bundle string) {
 		t.Fatal("initial agent absent")
 	}
 	id := client.Welcome.Agents[0].AgentID
-	op := "delete"
-	if _, err = client.Agent(h.ctx, protocol.AgentRequest{Operation: &op, AgentID: &id}); err != nil {
+	op := "list"
+	if _, err = client.Agent(h.ctx, protocol.AgentRequest{Operation: &op}); err != nil {
 		t.Fatal(err)
 	}
 	e, err := client.Receive(h.ctx)
 	if err != nil || e.Error != nil {
-		t.Fatal("delete default failed", err)
+		t.Fatal("list failed", err)
+	}
+	list := e.Payload.(protocol.AgentResult)
+	if list.Agents == nil {
+		t.Fatal("missing agents")
+	}
+	op = "delete"
+	for _, a := range *list.Agents {
+		if _, err = client.Agent(h.ctx, protocol.AgentRequest{Operation: &op, AgentID: &a.AgentID}); err != nil {
+			t.Fatal(err)
+		}
+		e, err = client.Receive(h.ctx)
+		if err != nil || e.Error != nil {
+			t.Fatal("delete starter failed", err)
+		}
 	}
 	client.Close()
 	h.stopCore(core)

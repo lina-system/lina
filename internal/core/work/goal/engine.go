@@ -591,12 +591,15 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			// or a plan for this revision. A late result is not a Core failure.
 			a.State = "finished"
 			a.Superseded = true
-			// A corrected definition invalidates the repair assessment itself.
-			// Clear its marker with retirement so restart can ask it again.
-			if t != nil && a.Kind == PlanGoal && a.RecordRevision != g.RecordRevision && t.RepairedBy == "" {
-				t.RepairAsked = false
-				if err = put(v, "goal", g.ID, g); err != nil {
-					return err
+			if a.Kind == PlanGoal && !a.RetirementReconciled {
+				// Clear the assessment with its receipt. Reconciliation finishes
+				// retirement before deriving a replacement; later reports must
+				// not clear that replacement's marker.
+				if t != nil && t.RepairedBy == "" {
+					t.RepairAsked = false
+					if err = put(v, "goal", g.ID, g); err != nil {
+						return err
+					}
 				}
 			}
 			if !a.RetirementReconciled && hasExternalEffect(a) && !currentActionTarget(g, a) && !effectSettled(a, o) {

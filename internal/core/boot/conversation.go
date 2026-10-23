@@ -114,6 +114,8 @@ type conversationRuntime struct {
 	agents           *agents.Store
 	skills           *skills.Store
 	records          *records.Store
+	recordCaptureMu  sync.Mutex
+	recordCaptures   map[string]*recordCapture
 	persona          *coreexec.Persona
 	personaAuthority *authority.Service
 	personaGrants    map[string]grant.Grant
@@ -184,6 +186,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	if err != nil {
 		return nil, err
+	}
+	if selected, e := r.agents.Selected(ctx, r.person); e == nil {
+		first.Agent = selected
+	} else if !errors.Is(e, agents.ErrNotFound) {
+		return nil, e
 	}
 	r.removals, err = retract.Open(ctx, retract.Config{Canon: db, Root: root})
 	if err != nil {
@@ -257,6 +264,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
 		r.identity.Operations[kind] = op
 	}
+	for kind, op := range clientsrv.RecordOperations(r) {
+		r.identity.Operations[kind] = op
+	}
 	for kind, op := range clientsrv.WebOperations(r) {
 		r.identity.Operations[kind] = op
 	}
@@ -323,6 +333,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startTimers(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.resumeWorkerCompletions(ctx); err != nil {
+		return nil, err
+	}
 	success = true
 	return r, nil
 }
@@ -341,7 +354,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		select {
 		case <-r.ownerViews.done:
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 	}
 	if r.completionStop != nil {
@@ -353,18 +366,24 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		}
 	}
 	if r.workEngine != nil {
-		if err = r.workEngine.close(ctx); err != nil {
-			return err
+		waitErr := r.workEngine.close(ctx)
+		select {
+		case <-r.workEngine.done:
+			// A joined engine's failure must not skip the remaining cleanup.
+			// Check completion itself: a wait timeout leaves its stores in use.
+			err = r.workEngine.err
+		default:
+			return waitErr
 		}
 	}
 	if r.workerDispatch != nil {
-		if err = r.workerDispatch.Close(ctx); err != nil {
-			return err
+		if closeErr := r.workerDispatch.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 	}
 	if r.workerGitHub != nil {
-		if err = r.workerGitHub.Close(ctx); err != nil {
-			return err
+		if closeErr := r.workerGitHub.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 	}
 	if m := r.skillMaintenance; m != nil && m.stop != nil {
@@ -372,7 +391,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		select {
 		case <-m.done:
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 		m.stop = nil
 	}
@@ -381,7 +400,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		select {
 		case <-r.waitingDone:
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 		r.waitingStop = nil
 	}
@@ -391,7 +410,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		case result := <-r.growth.done:
 			err = errors.Join(err, result)
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 		r.growth.stop = nil
 	}
@@ -399,9 +418,8 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		r.channels.Close()
 	}
 	if r.lanes != nil {
-		err = r.lanes.Close(ctx)
-		if err != nil {
-			return err
+		if closeErr := r.lanes.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 	}
 	if r.workers != nil {
@@ -413,7 +431,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 			select {
 			case <-b.done:
 			case <-ctx.Done():
-				return ctx.Err()
+				return errors.Join(err, ctx.Err())
 			}
 		}
 		if b.service != nil {
@@ -488,7 +506,7 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 	}
 	digest := sha256.Sum256([]byte(r.person + "\x00" + r.conversation + "\x00" + *p.InputID))
 	eventID := "input:" + hex.EncodeToString(digest[:])
-	admission := &conversationAdmission{db: r.db, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
+	admission := &conversationAdmission{db: r.db, person: r.person, agent: r.agent, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
 	language, err := r.inputLanguage(ctx, *p.Text)
 	if err != nil {
 		return protocol.ItemDone{}, err
@@ -698,7 +716,7 @@ func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID stri
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work'))`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work','worker_session','worker_completion'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind NOT IN ('person','forwarded') OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`

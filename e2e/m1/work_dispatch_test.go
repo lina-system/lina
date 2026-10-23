@@ -20,7 +20,7 @@ import (
 
 func TestM2DispatchedWorkArea(t *testing.T) {
 	t.Parallel()
-	testAntigravityThroughInstalledCore(t, "../m2/work-dispatch.json", false)
+	testHeadlessWorkerThroughInstalledCore(t, "../m2/work-dispatch.json", false)
 }
 
 // Seed the durable boundary from before shared task-branch assignment: the dev

@@ -102,6 +102,10 @@ func runningWorkerFixture(t *testing.T) (*conversationRuntime, *runningWorkerPro
 
 func TestConversationWorkerRunningStates(t *testing.T) {
 	r, probe := runningWorkerFixture(t)
+	agent, err := r.agents.Get(t.Context(), r.agent)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name    string
 		state   worker.ThreadState
@@ -138,10 +142,10 @@ func TestConversationWorkerRunningStates(t *testing.T) {
 				t.Fatalf("running entries: %+v", snapshot)
 			}
 			row := snapshot.Entries[0]
-			if row.Ref != (runs.ListRef{Source: "session", ID: "fixture"}) || row.View.State != tc.want || row.View.AgentName != "LINA" {
+			if row.Ref != (runs.ListRef{Source: "session", ID: "fixture"}) || row.View.State != tc.want || row.View.AgentName != agent.Name {
 				t.Fatalf("worker projection: %+v", row)
 			}
-			owner, tool := strings.Index(row.View.Summary, "LINA"), strings.Index(row.View.Summary, "Codex")
+			owner, tool := strings.Index(row.View.Summary, agent.Name), strings.Index(row.View.Summary, "Codex")
 			if owner < 0 || tool <= owner || !strings.Contains(row.View.Summary, "Compare the options") || strings.ContainsAny(row.View.Summary, "\n\r") || strings.Contains(row.View.Summary, "private worker instructions") {
 				t.Fatalf("unsafe or unattributed summary: %q", row.View.Summary)
 			}

@@ -73,25 +73,12 @@ func (r *conversationRuntime) completionRunner(ctx context.Context, card work.Ca
 		return json.Unmarshal(raw, &origin)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		// Old records do not prove channel authority. Only an unambiguous personal
-		// conversation may use legacy recovery; a current binding cannot grant it.
-		if card.Task.ConversationID != "main:"+card.Task.AgentID {
-			return nil, channels.ErrDenied
-		}
-		var bindings int
-		err = r.db.Read(ctx, func(tx *canon.Tx) error {
-			return tx.QueryRowContext(ctx, "SELECT count(*) FROM channel_bindings WHERE conversation=?", card.Task.ConversationID).Scan(&bindings)
-		})
-		if err != nil {
-			return nil, err
-		}
-		if bindings != 0 {
-			return nil, channels.ErrDenied
-		}
-		origin = completionOrigin{Person: r.person, Agent: card.Task.AgentID, Conversation: card.Task.ConversationID}
-	} else if err != nil {
+		return nil, channels.ErrDenied
+	}
+	if err != nil {
 		return nil, err
 	}
+
 	if origin.Person != r.person || origin.Agent != card.Task.AgentID || origin.Conversation != card.Task.ConversationID {
 		return nil, channels.ErrDenied
 	}
