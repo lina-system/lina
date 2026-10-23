@@ -2365,6 +2365,10 @@ Implementation notes: [C-29 dispatch integration](../../internal/core/worker/dis
 
 Worker recovery implementation and acceptance scenarios are described in
 [the package notes](../../internal/core/worker/RECOVERY.md).
+Conversation-worker input persists its uncertain intent before dispatch and its
+accepted turn binding before returning success, independently of notifications.
+Unknown admission retains the directory reservation and cannot be settled by
+the previous turn's completion or replayed after restart.
 
 **C-60 ACP client and ACP workers (new).**
 Contract: [work-and-delegation.md](work-and-delegation.md#acp-adapter).
