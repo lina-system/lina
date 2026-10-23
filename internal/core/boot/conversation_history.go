@@ -26,6 +26,7 @@ var conversationHistorySources = `
         e.rowid AS fallback,1 AS phase,0 AS partial_position
  FROM conv_event e
  WHERE (e.speaker_kind IN ('person','agent','forwarded') OR e.scaffold_kind IN ` + scaffoldSQLList(displayScaffolds) + `)
+   AND coalesce(e.scaffold_kind,'')<>'provider_item'
    AND (coalesce(e.scaffold_kind,'')<>'result' OR (e.speaker_kind='agent' AND
         CASE WHEN json_valid(e.body) THEN json_type(e.body,'$.body')='object' ELSE 0 END
         AND EXISTS(SELECT 1 FROM result_heads h WHERE h.event_id=e.id)

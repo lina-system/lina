@@ -159,3 +159,27 @@ func TestCounterAlwaysReceivesConversationModel(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBoundaryRetainsCompleteTurns(t *testing.T) {
+	old := Record{ID: "old", Item: message(strings.Repeat("old ", 500)), User: true}
+	recent := []Record{
+		{ID: "recent", Item: message("read the catalog"), User: true},
+		{ID: "call", Item: []byte(`{"type":"function_call","call_id":"read","name":"skill_index","arguments":"{}"}`)},
+		{ID: "output", Item: []byte(`{"type":"function_call_output","call_id":"read","output":"catalog"}`)},
+		{ID: "reply", Item: []byte(`{"role":"assistant","content":"Catalog read."}`)},
+	}
+	p := Pass{Policy: Policy{ContextWindow: 3000, KeepUserTokens: 600}, Count: countBytes}
+	v := View{Request: provider.Request{Model: "model"}, History: append([]Record{old}, recent...), Input: Record{ID: "current", Item: message("continue"), User: true}}
+	segment, err := p.boundarySegment(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(segment.Verbatim, recent) || !reflect.DeepEqual(segment.Records, []Record{old}) {
+		t.Fatalf("retained tail split a turn: kept=%v records=%v", segment.Verbatim, segment.Records)
+	}
+	v.History[len(v.History)-1].Item = message(strings.Repeat("large reply ", 100))
+	segment, err = p.boundarySegment(v)
+	if err != nil || len(segment.Verbatim) != 0 || len(segment.Records) != len(v.History) {
+		t.Fatalf("oversized turn was partially retained: %+v %v", segment, err)
+	}
+}
