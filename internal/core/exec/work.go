@@ -11,10 +11,12 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/result"
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
 type PrepareWork struct {
+	WorkKind      string             `json:"work_kind,omitempty"`
 	Destination   string             `json:"destination,omitempty"`
 	TaskID        string             `json:"task_id"`
 	Title         string             `json:"title"`
@@ -34,10 +36,11 @@ type ReportWork struct {
 	Receipt work.Receipt `json:"receipt"`
 }
 type LandWork struct {
-	TaskID      string `json:"task_id"`
-	ReceiptID   string `json:"receipt_id"`
-	Fingerprint string `json:"fingerprint"`
-	Judgment    string `json:"judgment"`
+	Completion  result.CompletionRequest `json:"completion,omitempty"`
+	TaskID      string                   `json:"task_id"`
+	ReceiptID   string                   `json:"receipt_id"`
+	Fingerprint string                   `json:"fingerprint"`
+	Judgment    string                   `json:"judgment"`
 }
 
 func workInput(raw json.RawMessage, name string) (tools.Input, error) {
@@ -91,7 +94,7 @@ func RegisterWork(reg *tools.Registry, s *work.Service, agent, conversation stri
 				var a PrepareWork
 				err = decodeSkill(in.Arguments, &a)
 				if err == nil {
-					value, err = s.Prepare(ctx, l, work.Task{ID: a.TaskID, AgentID: agent, ConversationID: conversation, Title: a.Title, Done: a.Done, RequiresApply: a.RequiresApply, Destination: a.Destination}, a.Workspace)
+					value, err = s.Prepare(ctx, l, work.Task{WorkKind: a.WorkKind, ID: a.TaskID, AgentID: agent, ConversationID: conversation, Title: a.Title, Done: a.Done, RequiresApply: a.RequiresApply, Destination: a.Destination}, a.Workspace)
 				}
 			} else if name == "report_work_result" || name == "land_work_result" {
 				var card work.Card
@@ -123,7 +126,7 @@ func RegisterWork(reg *tools.Registry, s *work.Service, agent, conversation stri
 					var a LandWork
 					err = decodeSkill(in.Arguments, &a)
 					if err == nil {
-						value, err = s.LandFiles(ctx, a.TaskID, a.ReceiptID, a.Fingerprint, a.Judgment)
+						value, err = s.LandFiles(ctx, a.TaskID, a.ReceiptID, a.Fingerprint, a.Judgment, a.Completion)
 					}
 				}
 			} else {
@@ -168,10 +171,26 @@ func RegisterWork(reg *tools.Registry, s *work.Service, agent, conversation stri
 	return specs, nil
 }
 func WorkDeclarations() []provider.ToolDecl {
-	return []provider.ToolDecl{
+	declarations := []provider.ToolDecl{
 		provider.ToolDecl(`{"type":"function","name":"prepare_work","description":"Prepare a task directory, or a detached Git worktree at a full base commit. This allocates work only; it does not dispatch a worker. The worker creates the named task branch.","parameters":{"type":"object","properties":{"task_id":{"type":"string"},"title":{"type":"string"},"done":{"type":"string"},"requires_apply":{"type":"boolean"},"destination":{"type":"string","description":"Absolute destination folder for a non-code result. The worker writes out/ and report.md; Core snapshots them at done and lands a fresh bundle here."},"workspace":{"type":"object","properties":{"repository_id":{"type":"string"},"source":{"type":"string"},"base":{"type":"string"},"branch":{"type":"string"}},"additionalProperties":false}},"required":["task_id","title","done","workspace","requires_apply"],"additionalProperties":false}}`),
 		provider.ToolDecl(`{"type":"function","name":"retain_work_result","description":"Preserve a completed task receipt without a pull request as materials for backup. Requires an existing completed worker receipt; does not verify or apply it. For Git work, head is the exact task branch commit; otherwise head is empty.","parameters":{"type":"object","properties":{"task_id":{"type":"string"},"receipt_id":{"type":"string"},"head":{"type":"string"}},"required":["task_id","receipt_id","head"],"additionalProperties":false}}`),
 		provider.ToolDecl(`{"type":"function","name":"report_work_result","description":"Record a non-code worker receipt only after Core independently records the matching worker termination. A receipt cannot finish an active or unknown run. If termination is unobserved, wait and retry with a fresh tool call. Core fingerprints out/ files and directories and report.md and keeps a snapshot. Changes require reporting done again. This is a claim, not verification.","parameters":{"type":"object","properties":{"task_id":{"type":"string"},"run_id":{"type":"string"},"receipt":{"type":"object"}},"required":["task_id","run_id","receipt"],"additionalProperties":false}}`),
 		provider.ToolDecl(`{"type":"function","name":"land_work_result","description":"After judging the exact done snapshot against the task, land it at its recorded destination. Copies to a new versioned bundle and reads back hashes as file evidence. Changed results require a new done. Partial copies are retained and reported.","parameters":{"type":"object","properties":{"task_id":{"type":"string"},"receipt_id":{"type":"string"},"fingerprint":{"type":"string"},"judgment":{"type":"string"}},"required":["task_id","receipt_id","fingerprint","judgment"],"additionalProperties":false}}`),
 	}
+	for i, raw := range declarations {
+		var decl map[string]any
+		_ = json.Unmarshal(raw, &decl)
+		props := decl["parameters"].(map[string]any)["properties"].(map[string]any)
+		if decl["name"] == "prepare_work" {
+			props["work_kind"] = CompletionWorkKindSchema()
+		}
+		if decl["name"] == "land_work_result" {
+			props["completion"] = result.CompletionSchema()
+		}
+		declarations[i], _ = json.Marshal(decl)
+	}
+	return declarations
+}
+func CompletionWorkKindSchema() any {
+	return result.CompletionSchema()["properties"].(map[string]any)["work_kind"]
 }

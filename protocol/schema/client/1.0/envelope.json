@@ -2241,6 +2241,9 @@
         "run_id": {
           "type": "string",
           "minLength": 1
+        },
+        "completion": {
+          "$ref": "#/$defs/completion_status"
         }
       },
       "required": [
@@ -5852,6 +5855,29 @@
       "required": [
         "state",
         "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "completion_state": {
+      "type": "string",
+      "enum": [
+        "done",
+        "claimed"
+      ]
+    },
+    "completion_status": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/completion_state"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "label"
       ],
       "additionalProperties": false
     }

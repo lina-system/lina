@@ -52,10 +52,14 @@ func TestLiveTaskList(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot, err = list.Build(ctx, "person-1")
-	if err != nil || snapshot.Landed != 1 || snapshot.Entries[0].View.State != "done" {
+	if err != nil || snapshot.Landed != 1 || snapshot.Entries[0].View.State != "ready_for_review" {
 		t.Fatalf("done: %+v %v", snapshot, err)
 	}
 	oldRef := snapshot.Entries[0].Ref
+	page, _, err := s.SummaryPage(ctx, oldRef.ID, 0)
+	if err != nil || !strings.HasPrefix(page, "not verified:") {
+		t.Fatalf("claim presented as verified: %q %v", page, err)
+	}
 	if err = list.Dismiss(ctx, "person-1", oldRef); err != nil {
 		t.Fatal(err)
 	}
