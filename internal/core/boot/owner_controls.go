@@ -15,14 +15,17 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-func (r *conversationRuntime) startOwnerControls() {
-	r.identity.Operations[protocol.KindProgressDigestGet] = clientsrv.Operation{Capability: progressCapability, Handle: r.progressDigest}
-	if r.background == nil {
-		return
+func (r *conversationRuntime) startOwnerControls() error {
+	operations := map[protocol.Kind]clientsrv.Operation{
+		protocol.KindProgressDigestGet: {Capability: progressCapability, Handle: r.progressDigest},
 	}
-	r.identity.Operations[protocol.KindFollowUp] = clientsrv.Operation{Capability: runningCapability, Handle: r.followRun}
-	r.identity.Operations[protocol.KindMultiTaskControl] = clientsrv.Operation{Capability: runningCapability, Handle: r.stopAllRuns}
+	if r.background != nil {
+		operations[protocol.KindFollowUp] = clientsrv.Operation{Capability: runningCapability, Handle: r.followRun}
+		operations[protocol.KindMultiTaskControl] = clientsrv.Operation{Capability: runningCapability, Handle: r.stopAllRuns}
+	}
+	return addOperations(&r.identity, operations)
 }
+
 func (r *conversationRuntime) progressDigest(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
 	if err := r.authorize(s, nil); err != nil {
 		return clientsrv.Result{}, err

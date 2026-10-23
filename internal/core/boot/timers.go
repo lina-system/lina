@@ -171,11 +171,11 @@ func timerResult(id string, value any, err error) loop.Result {
 	}
 	return loop.Result{ID: id, Code: loop.OK, Output: raw}
 }
-func (r *conversationRuntime) prepareTimerTools(turnID string, bindings map[string]loop.Tool) []provider.ToolDecl {
+func (r *conversationRuntime) prepareTimerTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	// Delayed channel authority requires a persisted/revalidated binding. This
 	// increment admits schedules only from the authenticated private main lane.
 	if r.channelBinding != nil || r.conversation != "main:"+r.agent {
-		return nil
+		return nil, nil
 	}
 	store := timers.New(r.db)
 	bindings["create_timer"] = loop.Tool{
@@ -223,7 +223,7 @@ func (r *conversationRuntime) prepareTimerTools(turnID string, bindings map[stri
 			},
 		}
 	}
-	return timerDeclarations()
+	return timerDeclarations(), nil
 }
 func timerDeclarations() []provider.ToolDecl {
 	return []provider.ToolDecl{

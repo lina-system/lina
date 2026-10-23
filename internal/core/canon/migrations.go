@@ -66,6 +66,41 @@ func Migrations() []Migration {
 	}
 }
 
+// publishedMigrationTables records the first migration that creates each checked table.
+var publishedMigrationTables = []struct {
+	version int
+	table   string
+}{
+	{11, "retract_meta"}, {12, "turn_runs"}, {12, "turn_items"}, {12, "turn_calls"}, {12, "turn_partials"}, {13, "turn_control"}, {14, "turn_outcome"}, {15, "sum_node"}, {15, "sum_edge"}, {15, "sum_cover"},
+	{16, "owner_binding"}, {16, "sign_in_host"}, {16, "sign_in_identities"},
+	{17, "channel_connections"}, {17, "channel_bindings"}, {17, "channel_actions"}, {17, "channel_receipts"}, {17, "channel_outbound"},
+	{18, "telegram_buttons"}, {18, "telegram_presentations"},
+	{19, "exchanges"}, {19, "exch_msg"}, {19, "exch_event"}, {19, "exch_waiting"},
+	{20, "conversation_order"},
+	{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
+	{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
+	{31, "worker_dispatch"},
+	{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
+	{34, "waiting_decisions"},
+	{46, "work_worker_reservations"}, {46, "work_switches"}, {46, "work_switch_tasks"}, {46, "work_switch_events"},
+	{49, "result_heads"}, {49, "plan_drafts"}, {49, "plan_confirmations"}, {49, "plan_rejections"},
+	{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
+	{38, "records_todo"},
+	{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
+	{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
+	{30, "authority_merges"},
+	{48, "work_reviews"},
+	{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
+	{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
+	{37, "work_events"}, {37, "work_records"},
+	{44, "naming_breaches"},
+	{47, "exch_origins"}, {47, "exch_notices"}, {47, "artifact_changes"},
+	{50, "done_completions"}, {49, "result_saves"},
+	{42, "agent_starters"}, {42, "agent_selection"},
+	{45, "record_operations"}, {45, "record_candidates"},
+	{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
+}
+
 // Reject incompatible pre-release layouts before opening the writer. There is
 // no renumbering or repair path for development databases with a different
 // catalog. Generic canon users with their own migration lists are unaffected.
@@ -84,39 +119,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		return err
 	}
 	defer close()
-	for _, entry := range []struct {
-		version int
-		table   string
-	}{
-		{11, "retract_meta"}, {12, "turn_runs"}, {12, "turn_items"}, {12, "turn_calls"}, {12, "turn_partials"}, {13, "turn_control"}, {14, "turn_outcome"}, {15, "sum_node"}, {15, "sum_edge"}, {15, "sum_cover"},
-		{16, "owner_binding"}, {16, "sign_in_host"}, {16, "sign_in_identities"},
-		{17, "channel_connections"}, {17, "channel_bindings"}, {17, "channel_actions"}, {17, "channel_receipts"}, {17, "channel_outbound"},
-		{18, "telegram_buttons"}, {18, "telegram_presentations"},
-		{19, "exchanges"}, {19, "exch_msg"}, {19, "exch_event"}, {19, "exch_waiting"},
-		{20, "conversation_order"},
-		{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
-		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
-		{31, "worker_dispatch"},
-		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
-		{34, "waiting_decisions"},
-		{46, "work_worker_reservations"}, {46, "work_switches"}, {46, "work_switch_tasks"}, {46, "work_switch_events"},
-		{49, "result_heads"}, {49, "plan_drafts"}, {49, "plan_confirmations"}, {49, "plan_rejections"},
-		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
-		{38, "records_todo"},
-		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
-		{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
-		{30, "authority_merges"},
-		{48, "work_reviews"},
-		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
-		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
-		{37, "work_events"}, {37, "work_records"},
-		{44, "naming_breaches"},
-		{47, "exch_origins"}, {47, "exch_notices"}, {47, "artifact_changes"},
-		{50, "done_completions"}, {49, "result_saves"},
-		{42, "agent_starters"}, {42, "agent_selection"},
-		{45, "record_operations"}, {45, "record_candidates"},
-		{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
-	} {
+	for _, entry := range publishedMigrationTables {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {
 			return err
