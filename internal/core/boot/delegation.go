@@ -449,6 +449,9 @@ func (d *delegationRuntime) returnConflict(ctx context.Context, c work.Card) (wo
 	if err := d.checkScheduledPolicy(ctx, c.Task); err != nil {
 		return work.Run{}, err
 	}
+	if _, _, err := d.origin(ctx, c.Task); err != nil {
+		return work.Run{}, err
+	}
 	d.mu.Lock()
 	thread, ok := d.threads[c.Task.ID]
 	adapter := d.adapters[c.Task.ID]
