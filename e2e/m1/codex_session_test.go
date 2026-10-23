@@ -116,6 +116,13 @@ func codexSessionFixture() {
 			if expected != turn {
 				os.Exit(99)
 			}
+			if gate := os.Getenv("LINA_WORKER_INTERRUPT_GATE"); gate != "" {
+				response, err := http.Get(gate)
+				if err != nil {
+					os.Exit(101)
+				}
+				response.Body.Close()
+			}
 			state = "idle"
 			notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turn, "status": "interrupted"}})
 			reply(map[string]any{})

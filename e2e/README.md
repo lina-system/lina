@@ -466,7 +466,11 @@ expansion with stage provenance, refresh, folding and reopening. It exercises
 Core's read path and TUI. `TestM3WorkerLanesLiveSession` additionally starts the
 installed stdio worker fixture through Core's conversation tools, makes it write
 a real artifact, and expands its runtime lane to show the worker output without
-calling the model. Vendor transport is synthetic; no personal account is used.
+calling the model. While the worker holds an interrupt reply, the developer page
+must return its session as unknown when the five-second snapshot context expires.
+Only then does the fixture release the interrupt, produce its result and allow
+the refreshed lane to report idle. Vendor transport is synthetic; no personal
+account is used.
 
 `m2/progress-waiting.json` uses the installed Core and synthetic stdio worker
 journey to read the owner progress capability and full waiting list during an
