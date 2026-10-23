@@ -211,8 +211,9 @@ explicit without a sleep or a larger duration constant.
 dv heavy -- env GOMAXPROCS=2 go test ./e2e/m1 -run '^TestM2DispatchedWorkArea$/^host-capacity$' -count=1 -parallel=4 -timeout=6m -v
 ```
 
-The final PR records the repeated verification of the combined CPU, socket-path
-and capacity-wakeup corrections, including every earlier failed measurement.
+The repeated verification of the combined CPU, socket-path and capacity-wakeup
+corrections on the integrated branch is measured below, after the packet-frame
+correction, with every earlier failed measurement retained.
 
 ## Packet frame regression and pass rate
 
@@ -279,4 +280,53 @@ results in #1272 and #1270; worker steering and message guards in #1238 and
 fault. Every other failing test ran on one branch only, so no other e2e test met
 the two-branch threshold.
 
+## Final branch repetition
 
+`TestM2DispatchedWorkArea` was last measured at 29/30 on integrated head
+`6cdcb8e2`, before the capacity-wakeup correction, and only five times after it.
+This is the missing 30-repetition measurement, taken on the pull request branch
+merged with the dev head of 2026-10-23.
+
+The branch head was `188f06e1c5c485ced7b50859c83f5a97b98f1ed7`, the merge of
+`origin/dev` at `e668efc7` with the evidence commit; its source is identical to
+that dev head. The run used the repetition protocol above unchanged: four
+concurrent `go test -json -count=30 -parallel=4 -timeout=60m ./e2e/m1` shards
+with `GOMAXPROCS=2`, inside one `dv heavy` slot, from 2026-10-23T23:05:23Z to
+23:20:52Z. The host had 8 CPUs and ran Go 1.27.3 with Node.js 24.20.0; its
+one-minute load average sampled at shard completion ranged from 7.61 to 24.05,
+so the four two-CPU budgets covered the whole machine. Scenario and operation
+deadlines were unchanged, and no repetition was retried.
+
+All four shards exited 0 with Go package elapsed times of 836.281, 915.120,
+849.295 and 523.287 seconds.
+
+| Test | Final branch |
+| --- | --- |
+| `TestM1BackupInstalledConversation` | 30/30 (100%) |
+| `TestM1ReplayExportInstalledCore` | 30/30 (100%) |
+| `TestM1TUIToolRows` | 30/30 (100%) |
+| `TestM2ClaudeWorkerThroughInstalledCore` | 30/30 (100%) |
+| `TestM2DispatchedWorkArea` | 30/30 (100%) |
+| `TestM2WorkCompletions` | 30/30 (100%) |
+| `TestM2WorkDefinition` | 30/30 (100%) |
+| `TestM2WorkerChoice` | 30/30 (100%) |
+| `TestM2WorkerQuotaPartialRecovery` | 30/30 (100%) |
+| `TestM2WorkerQuotaWindows` | 30/30 (100%) |
+| `TestM3AntigravityThroughInstalledCore` | 30/30 (100%) |
+| `TestPersonaReplayExactSources` | 30/30 (100%) |
+
+All 43 test and subtest names ran and passed 30 times: 360/360 top-level runs and
+930/930 subtest runs, with no failure, skip or missing terminal observation.
+`TestM2DispatchedWorkArea` passed `success`, `host-capacity` and
+`legacy-admission` 30 times each. Every `host-capacity` repetition recorded the
+blocked dispatch under high load, the durable running claim and area lease
+before the fixture released the worker, and then exactly one attempt and one
+worker launch reaching `ready_for_review`; the same assertions covered every
+`quota-windows`, `quota-fallback` and `double-stop` packet comparison. This
+supplies the post-correction pass rate for the capacity-wakeup change from the
+same repetition protocol used for the earlier columns.
+
+The finite measurements in this file do not prove every schedule free of
+failures. They do establish that each named cause fails every repetition on a
+head that lacks its correction, and that the integrated branch passes the same
+load without retries or relaxed deadlines.
