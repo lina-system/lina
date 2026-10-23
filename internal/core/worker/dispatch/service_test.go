@@ -5,13 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
@@ -37,11 +40,18 @@ func store(t *testing.T) *canon.Store {
 	return db
 }
 func definition(t *testing.T) Definition {
-	return Definition{Repository: t.TempDir(), Base: "dev", Branch: "task-branch", What: "Produce result", Why: "Requested task", Scope: []string{"result.txt"}, Done: "file committed", DesignRefs: []string{"design.md#result"}, WriteArea: []string{"result.txt"}}
+	repo := t.TempDir()
+	gitFixture(t, repo, "init", "-b", "dev")
+	if err := os.WriteFile(filepath.Join(repo, "design.md"), []byte("# Result\nProduce result.txt.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gitFixture(t, repo, "add", "design.md")
+	gitFixture(t, repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Initial design")
+	return Definition{Repository: repo, Base: "dev", Branch: "task-branch", What: "Produce result", Why: "Requested task", Scope: []string{"result.txt"}, Done: "file committed", DesignRefs: []string{"design.md#result"}, WriteArea: []string{"result.txt"}}
 }
 func TestDispatchWaitsForCommittedReceiptAndNeverReplaysUncertainWork(t *testing.T) {
 	db := store(t)
-	s, err := Open(t.Context(), Config{DB: db, Epoch: 1})
+	s, err := openService(t, Config{DB: db, Epoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,14 +76,14 @@ func TestDispatchWaitsForCommittedReceiptAndNeverReplaysUncertainWork(t *testing
 	}
 	call.Arguments = original
 	call.ID = "overlap"
-	if tool.Execute(t.Context(), call).Code != loop.Denied {
-		t.Fatal("overlapping repository admitted")
+	if tool.Execute(t.Context(), call).Code != loop.OK {
+		t.Fatal("overlapping task did not queue")
 	}
 	if err = s.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	records, err := s.records(t.Context())
-	if err != nil || len(records) != 1 || records[0].State != "queued" {
+	if err != nil || len(records) != 2 || records[0].State != "queued" {
 		t.Fatalf("uncommitted tool output launched work: %+v %v", records, err)
 	}
 	r := records[0]
@@ -81,7 +91,7 @@ func TestDispatchWaitsForCommittedReceiptAndNeverReplaysUncertainWork(t *testing
 	if err = s.save(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := Open(t.Context(), Config{DB: db, Epoch: 1})
+	restarted, err := openService(t, Config{DB: db, Epoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +144,7 @@ func TestDispatchReturnsAssignedBranchWithoutChangingInput(t *testing.T) {
 			if alreadyNamed {
 				d.Branch = want
 			}
-			s, err := Open(t.Context(), Config{DB: db, Epoch: 1, Manage: func(_ context.Context, r Record) (Record, error) {
+			s, err := openService(t, Config{DB: db, Epoch: 1, Manage: func(_ context.Context, r Record) (Record, error) {
 				// The persisted request remains available for idempotency; the
 				// manager and worker must receive the actual assigned definition.
 				packet, err := taskPacket(r)
@@ -164,4 +174,36 @@ func TestDispatchReturnsAssignedBranchWithoutChangingInput(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
+		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
+	}
+	os.Exit(m.Run())
+}
+
+type testLeaser struct{}
+
+func (testLeaser) Acquire(context.Context, lease.Activity) (lease.Lease, error) {
+	return lease.New(func() {}), nil
+}
+func openService(t *testing.T, cfg Config) (*Service, error) {
+	t.Helper()
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Git, cfg.Activities, cfg.Environment = git, testLeaser{}, []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+	return Open(t.Context(), cfg)
+}
+func gitFixture(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null"}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
 }

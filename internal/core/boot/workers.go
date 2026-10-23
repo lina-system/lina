@@ -363,6 +363,11 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		if err != nil {
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
+		if r.workerDispatch != nil {
+			if err = r.workerDispatch.ObserveQuota(ctx, entry.adapter.Name(), rows); err != nil {
+				return tools.Result{State: tools.Failed}, err
+			}
+		}
 		body, err := json.Marshal(map[string]any{"rows": rows})
 		return tools.Result{State: tools.Applied, Body: body}, err
 	}
