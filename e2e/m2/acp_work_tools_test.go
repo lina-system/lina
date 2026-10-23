@@ -70,8 +70,8 @@ func verifyACPWorkTools(t *testing.T, h *harness, fixture string, record dispatc
 	}
 	readACPFixture(t, fixture, "listed.json", &listed)
 	want := worker.WorkToolDeclarations()
-	if len(listed.Tools) != 4 {
-		t.Fatal("agent did not list four work tools")
+	if len(listed.Tools) != len(want) {
+		t.Fatal("agent did not list the shared work tools")
 	}
 	for i, tool := range listed.Tools {
 		var schema any

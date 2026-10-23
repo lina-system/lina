@@ -67,8 +67,24 @@ func (e *workerSession) replyTool(event worker.Event, body any, err error) {
 	}
 	ctx, cancel := context.WithTimeout(e.origin.ctx, 10*time.Second)
 	defer cancel()
-	if err := e.adapter.Answer(ctx, event.Thread, worker.Answer{RequestID: event.ToolCall.ID, Result: framedToolReply("core", "tool", event.Thread.TaskID, e.requestKey(event.ToolCall.ID)+":reply", body, success)}); err != nil {
+
+	e.control.Lock()
+	defer e.control.Unlock()
+	raw, messages, prepareErr := e.mailboxReply(ctx, event, framedToolReply("core", "tool", event.Thread.TaskID, e.requestKey(event.ToolCall.ID)+":reply", body, success))
+	if prepareErr != nil {
+		e.bridgeFailure(prepareErr)
+		return
+	}
+	if err := e.adapter.Answer(ctx, event.Thread, worker.Answer{RequestID: event.ToolCall.ID, Result: raw}); err != nil {
+
 		e.bridgeFailure(err)
+		return
+	}
+	for _, m := range messages {
+		if err := e.steeringState(ctx, m, "delivered", ""); err != nil {
+			e.bridgeFailure(err)
+			return
+		}
 	}
 }
 func (e *workerSession) executeWorkTool(ctx context.Context, event worker.Event) (any, error) {
@@ -78,6 +94,8 @@ func (e *workerSession) executeWorkTool(ctx context.Context, event worker.Event)
 		return nil, errors.New("foreign work tool caller")
 	}
 	switch call.Name {
+	case "check_inbox":
+		return e.inboxTool(ctx, event)
 	case "read_projection":
 		if err := decodeWorkerArgs(call.Arguments, &struct{}{}); err != nil {
 			return nil, err

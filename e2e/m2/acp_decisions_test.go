@@ -4,6 +4,9 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -122,6 +125,9 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 			}
 			h.socket = installed.Socket
 			installedBinary := filepath.Join(state, "system/bin/lina")
+			if scenario.worker == "claude-acp" {
+				seedManagedACPDecisionFixture(t, state)
+			}
 			git := func(args ...string) string {
 				t.Helper()
 				c := exec.CommandContext(ctx, filepath.Join(bin, "git"), args...)
@@ -644,6 +650,53 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 	}
 }
 
+// Keep the form case on the built-in managed Claude profile. Its ACP program
+// is synthetic, as in the other decision cases; the real pinned npm/SDK chain
+// has its own TestClaudeACPThroughRunningCore acceptance. Seed a sealed cached
+// program so this protocol scenario neither installs packages nor uses a PATH
+// adapter that Core no longer launches.
+func seedManagedACPDecisionFixture(t *testing.T, state string) {
+	t.Helper()
+	source := filepath.Join(state, "system/adapters/claude-acp")
+	manifest := []byte(`{"name":"lina-acp-decision-fixture","version":"1.0.0","private":true}`)
+	packagePath := "node_modules/@agentclientprotocol/claude-agent-acp"
+	integrity := sha512.Sum512([]byte(acpDecisionsScript))
+	lock, err := json.Marshal(map[string]any{"lockfileVersion": 3, "packages": map[string]any{
+		"":          map[string]string{"version": "1.0.0"},
+		packagePath: map[string]string{"version": "1.0.0", "resolved": "https://registry.npmjs.org/@agentclientprotocol/claude-agent-acp/-/claude-agent-acp-1.0.0.tgz", "integrity": "sha512-" + base64.StdEncoding.EncodeToString(integrity[:])},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(path string, data []byte) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(source, "package.json"), manifest)
+	write(filepath.Join(source, "package-lock.json"), lock)
+	digest := fmt.Sprintf("%x", sha256.Sum256(append(append([]byte(nil), manifest...), lock...)))
+	target := filepath.Join(source, "runtime", digest)
+	files := map[string][]byte{
+		packagePath + "/package.json":  []byte(`{"name":"@agentclientprotocol/claude-agent-acp","version":"1.0.0","type":"module"}`),
+		packagePath + "/dist/index.js": []byte(acpDecisionsScript),
+	}
+	seal := map[string]string{}
+	for name, body := range files {
+		write(filepath.Join(target, filepath.FromSlash(name)), body)
+		seal[name] = fmt.Sprintf("%x", sha256.Sum256(body))
+	}
+	raw, err := json.Marshal(seal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(target, ".lina-integrity.json"), raw)
+}
+
 // Read fresh owner views while the worker is blocked on its unanswered request.
 // The fixture cannot finish until the test answers, so this has no duration race.
 func assertACPDecisionViews(t *testing.T, h *harness, runningRef, progressRef string) {
@@ -717,6 +770,7 @@ import readline from 'node:readline';
 const root=process.env.LINA_ACP_FIXTURE, mode=process.env.LINA_ACP_CASE;
 if(path.basename(process.argv[1])==='gh'){console.log('[]');process.exit(0)}
 if(process.argv[2]==='--version'){console.log('fixture-unverified-9');process.exit(0)}
+if(mode==='form'&&(path.basename(process.argv[1])!=='index.js'||!process.env.CLAUDE_CODE_EXECUTABLE))throw Error('managed Claude ACP fixture not selected');
 const send=x=>console.log(JSON.stringify({jsonrpc:'2.0',...x}));
 const reply=(id,result)=>send({id,result});
 let prompt;

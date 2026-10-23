@@ -238,6 +238,10 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			}
 			return
 		}
+		if scriptedWorkCompletion(w, request.Input) {
+			// Manager reports must not consume the person's forge refresh.
+			return
+		}
 		if preset != "" {
 			if calls.Add(1) == 1 {
 				declared := false
@@ -637,7 +641,7 @@ func testM3DependencyRelease(t *testing.T, fault *delegationStartFailure, confli
 			}
 			select {
 			case <-deadline.C:
-				t.Fatalf("task state not reached: %+v %v", c, err)
+				t.Fatalf("task state not reached: card=%+v wait=%+v provider_rounds=%d error=%v", c, c.WaitReason, calls.Load(), err)
 			case <-retry.C:
 			}
 		}

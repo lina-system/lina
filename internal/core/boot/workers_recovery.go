@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -221,6 +222,9 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 			go e.observe()
 		}
 		e.reconcileWorker(ctx)
+		if err := e.resumeSteering(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "worker mailbox recovery: %v\n", err)
+		}
 	}
 }
 

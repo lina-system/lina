@@ -4948,6 +4948,14 @@
     "replay_request": {
       "type": "object",
       "properties": {
+        "provider": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "fixture": {
+          "type": "string",
+          "maxLength": 524288
+        },
         "turn_id": {
           "type": "string",
           "maxLength": 512

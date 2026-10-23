@@ -46,5 +46,5 @@ func (r *conversationRuntime) prepareDispatchTools(turnID string, _ *toolPrepara
 	if r.channelBinding == nil || r.channelBinding.Scope.Tools {
 		bindings["dispatch_work"] = r.router.root.workerDispatch.Tool(dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID})
 	}
-	return []provider.ToolDecl{dispatch.Declaration()}, nil
+	return []provider.ToolDecl{r.router.root.workerDispatch.Declaration()}, nil
 }

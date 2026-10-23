@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"strings"
 	"time"
 
@@ -263,7 +264,24 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 	}
 	if err == nil {
 		sendCtx, cancel := context.WithTimeout(e.origin.ctx, 10*time.Second)
-		err = e.adapter.Answer(sendCtx, event.Thread, worker.Answer{RequestID: requestID, Result: raw})
+		if kind == "tool" {
+			e.control.Lock()
+			var messages []work.SteeringMessage
+			raw, messages, err = e.mailboxReply(sendCtx, event, raw)
+			if err == nil {
+				err = e.adapter.Answer(sendCtx, event.Thread, worker.Answer{RequestID: requestID, Result: raw})
+			}
+			if err == nil {
+				for _, m := range messages {
+					if err = e.steeringState(sendCtx, m, "delivered", ""); err != nil {
+						break
+					}
+				}
+			}
+			e.control.Unlock()
+		} else {
+			err = e.adapter.Answer(sendCtx, event.Thread, worker.Answer{RequestID: requestID, Result: raw})
+		}
 		cancel()
 	}
 	if err != nil {

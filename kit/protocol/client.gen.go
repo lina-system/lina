@@ -777,7 +777,9 @@ type ReplayRequest struct {
 	Candidates *[]ReplayCandidate `json:"candidates,omitempty"`
 	Effort     *string            `json:"effort,omitempty"`
 	Episode    *string            `json:"episode,omitempty"`
+	Fixture    *string            `json:"fixture,omitempty"`
 	Model      *string            `json:"model,omitempty"`
+	Provider   *string            `json:"provider,omitempty"`
 	TurnID     *string            `json:"turn_id,omitempty"`
 }
 type ReplayResult struct {
@@ -6618,6 +6620,14 @@ const clientSchemaJSON = `{
     "replay_request": {
       "type": "object",
       "properties": {
+        "provider": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "fixture": {
+          "type": "string",
+          "maxLength": 524288
+        },
         "turn_id": {
           "type": "string",
           "maxLength": 512

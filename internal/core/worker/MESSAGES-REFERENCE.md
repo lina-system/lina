@@ -29,3 +29,9 @@ question answers at its worker boundary. The message admission tables retain
 identities and counts without granting execution authority. Approval signatures
 are retained with canon's authenticated decision and consumed before delivery;
 private signing keys never enter worker setup or canon.
+
+The steering mailbox added in #979 keeps sender and speaker kind with each
+original text record. Delivery frames that source for push, turn and pull
+connections; tool-result envelopes are framed separately. Old records with no
+source metadata remain system evidence. Source is part of idempotent message
+identity, and owner decisions reset the per-task allowance only once.
