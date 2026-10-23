@@ -1,5 +1,6 @@
 {
   "chatgpt": ["reasoning_state"],
   "responses_api_key": ["reasoning_state"],
-  "claude": []
+  "claude": [],
+  "apple": []
 }

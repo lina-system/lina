@@ -98,7 +98,9 @@
         "record_request",
         "record_result",
         "a2a_request",
-        "a2a_result"
+        "a2a_result",
+        "local_task",
+        "local_task_result"
       ]
     },
     "message_id": {
@@ -1637,6 +1639,38 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/a2a_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "local_task"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/local_task"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "local_task_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/local_task_result"
           }
         }
       }
@@ -6228,6 +6262,118 @@
       },
       "required": [
         "operation"
+      ],
+      "additionalProperties": false
+    },
+    "local_task": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "enum": [
+            "intent",
+            "autocomplete",
+            "rewrite",
+            "title",
+            "classify",
+            "extract",
+            "summary"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "schema": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8192
+        },
+        "preference": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "local",
+            "main"
+          ]
+        },
+        "images": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "tools": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "mac_local": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "task",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "local_task_result": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "type": "string",
+          "enum": [
+            "local",
+            "main"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "fit",
+            "forced",
+            "schema_miss",
+            "unavailable",
+            "over_context",
+            "tools",
+            "image",
+            "kind",
+            "guided",
+            "empty"
+          ]
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "text": {
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "served_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "route",
+        "reason",
+        "provider",
+        "model",
+        "served_id"
       ],
       "additionalProperties": false
     }

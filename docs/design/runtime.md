@@ -231,7 +231,7 @@ Every model call of LINA's own engines goes through a provider adapter. A provid
 
 ### Providers
 
-The person signs in to each service themself, one account per service ([Accounts and sign-in](#accounts-and-sign-in)). There are four providers, in two fidelity classes.
+The person signs in to each service themself, one account per service ([Accounts and sign-in](#accounts-and-sign-in)). There are five providers, in two fidelity classes. The Apple provider has no account.
 
 | Provider | Class | Adapter | Account |
 | --- | --- | --- | --- |
@@ -239,8 +239,9 @@ The person signs in to each service themself, one account per service ([Accounts
 | Claude | Agent runtime | The Claude adapter, an external component on the Claude Agent SDK ([Provider adapters](#provider-adapters)) | The person's Claude subscription |
 | Grok | Agent runtime | Go, in LINA Core, driving the official `grok` command the person installed. Best effort. | The person's Grok account, signed in through that command's OAuth login |
 | Gemini | Model API | Go, in LINA Core: the Gemini API through the Go genai client | An API key the person enters |
+| Apple | Model API | A helper on the Mac that calls Apple Foundation Models ([On-device Apple model](#on-device-apple-model)) | None. The on-device model needs no sign-in, cost, or network. |
 
-- **Model-API providers** (ChatGPT, Gemini). LINA Core owns the loop, request assembly, tool dispatch, the ledger and compaction. Every request carries the full input it needs, and the ledger records the exact request input.
+- **Model-API providers** (ChatGPT, Gemini, and Apple for the short tasks below). LINA Core owns the loop, request assembly, tool dispatch, the ledger and compaction. Every request carries the full input it needs, and the ledger records the exact request input. Apple serves only the short-task route; it is not a conversation engine.
 - **Agent-runtime providers** (Claude, Grok). The vendor's process runs the inner tool loop of a turn, and LINA Core can only constrain it. Core still owns the turn, the ledger, the persona and context, compaction, and the authority of every tool. For each turn the adapter:
   - turns the runtime's built-in tools off and offers LINA's tools to it as MCP tools, so every tool call comes back to LINA Core and runs under the checks, approvals and effect ledger of this contract;
   - replaces the runtime's system prompt with LINA's, and loads no settings, skills, hooks, memory or MCP servers from the person's own setup of that tool;
@@ -249,6 +250,20 @@ The person signs in to each service themself, one account per service ([Accounts
   The guarantees that need the whole request in LINA's hands are not available from a runtime: the exact request input as sent, and encrypted reasoning carried back unchanged. The ledger names the class that served each request. Claude and Grok may serve as the conversation engine and as background sub-agent engines, with this reduced fidelity.
 
 Providers differ in what cuts cost and waiting time: prompt caches, cache marks and lifetimes, reasoning state, server state and discounted batch work. Each adapter declares which of these it can use for each model, and Core uses them under [Provider capabilities](#provider-capabilities). A request is never reduced to what every provider shares, and no provider feature is required for a request to succeed.
+
+### On-device Apple model
+
+Apple Foundation Models run on the Mac for small tasks, with no account, cost, or network. The helper is on-device. Private Cloud Compute is used only when the person turns it on. The public framework has no third-party Private Cloud Compute session, so that switch fails closed until the helper can serve it.
+
+Core sees the helper as a provider with a capability row the helper reports: context size, tool calling, guided generation, and image input. The on-device model is `apple-foundation-on-device`. Its row is a context of 4096 tokens, tool calling, guided generation, and no image input. The private-cloud model id is `apple-foundation-private-cloud`. The route is `LINA_APPLEFM_HELPER` (an absolute path), an optional `LINA_APPLEFM_MODEL`, and `LINA_APPLEFM_PRIVATE_CLOUD=1`. A partial setting is refused. The helper's environment is only the home, temporary directory, and locale; it never receives an API key.
+
+The short tasks are intent parsing of a launcher line, autocomplete, a short rewrite, a title or file name, classification, extraction into a schema, and a short-text summary. Routing is decided before any call. An unknown kind, any tool, any image, a schema when guided generation is off, a task larger than the context, or a helper that is not ready goes to the person's main model. The person can force local or main. A force to local does not override those limits. `mac_local` is part of the task digest. It does not keep a tool task on the device. This route does not run a tool loop, even when the model reports tool calling.
+
+Every structured result uses guided generation. The schema is a closed object whose fields are strings, integers, or booleans. A schema miss discards the object, sends the task once to the main model, and never fills a missing field. If the main model also misses, the ledger records that model and the result has no object. An invalid schema is refused before either call.
+
+`model_served` records the provider, model, route, reason, a digest of the task, and the token counts the helper reported. An unreported count stays unknown. The row does not store the task text. On-device tokens are not charged to the shared job budget. The measured samples are in [apple-foundation-models.md](../research/apple-foundation-models.md).
+
+The client capability is `local_model` 1.0 ([Local model capability](host-protocol.md#local-model-capability)).
 
 ### Requests
 
@@ -353,7 +368,7 @@ The Gemini adapter assembles its own stream by the same rules: deltas drive live
 
 - Automatic retries of an SDK are 0 for model-API providers, and the value is recorded in the release manifest. An agent runtime retries on its own and cannot be told not to; LINA Core records the retries the runtime reports and sets the runtime's turn and budget limits.
 - Once output has started, a request is never sent again. An accepted turn is never replayed automatically; a turn whose outcome is unknown stays unknown.
-- Failures are typed from the provider's own answer: account needs sign-in (authentication failed, refresh failed), not eligible, usage cap reached, provider unavailable (a failed connection, 503, 529), and request not accepted (an unsupported field or capability). A usage cap names no reset time that the provider did not give. None of these makes LINA retry on another account, another provider or another billing path.
+- Failures are typed from the provider's own answer: account needs sign-in (authentication failed, refresh failed), not eligible, usage cap reached, provider unavailable (a failed connection, 503, 529), and request not accepted (an unsupported field or capability). A usage cap names no reset time that the provider did not give. None of these makes LINA retry on another account, another provider or another billing path. The short-task route in [On-device Apple model](#on-device-apple-model) is the one exception: when the on-device model misses a schema or is unavailable, Core sends that task once to the person's main model. That call is a new request. The helper call is not sent again. A conversation turn still does not change provider.
 - LINA Core reads the request id, the error type and the usage that the provider reports from every response and records them in the ledger with the agent id of the request.
 
 ### Models and roles

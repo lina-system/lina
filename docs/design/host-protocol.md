@@ -628,6 +628,21 @@ acyclic dependencies. The result stream replaces the whole card on update;
 An `unknown` confirmation effect is not success. It is settled only by observing
 the exact saved records, never by automatically repeating publication.
 
+### Local model capability
+
+`local_model` version `1.0` adds `local_task` and `local_task_result` to client 1.0.
+A task is one of `intent`, `autocomplete`, `rewrite`, `title`, `classify`, `extract`,
+or `summary`, plus the text. Optional `preference` is `auto`, `local`, or `main`.
+Optional `schema` is a closed JSON Schema object of strings, integers, and booleans.
+Optional `images` is a count and `tools` names tools the task needs. `mac_local`
+records that those tools are on this Mac. A task that names tools still uses
+the main model, because this route does not call tools. The result names the route, the reason, the
+provider, the model, and `served_id`. Structured success returns `object`.
+Unstructured success returns `text`. A schema miss returns neither. The effect
+is `none`. An invalid schema is malformed. When neither model can serve, the
+reply is unavailable. The task text is not written to the ledger. Routing and
+fallback are in [On-device Apple model](runtime.md#on-device-apple-model).
+
 ## Operational work control
 
 The negotiated `work` capability, version `1.0`, installs `work_switch_request` and
