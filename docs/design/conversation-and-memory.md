@@ -267,6 +267,10 @@ memory and every personal Memory/Profile/PersonBrief projection must instead
 be re-read from its original ID and revision, under current scope and removal
 rules. Missing, forgotten or retracted memory excludes the whole dependent
 turn as `forgotten`; a changed revision or scope excludes it as `source_changed`.
+Profile statements are rebuilt in recorded order using the same whitespace
+projection as live preparation, including line breaks and Unicode whitespace.
+A correction successor makes its predecessor `source_changed`; retaining the
+old revision does not authorize export of the corrected statement.
 The manifest counts these reasons. Unknown source formats, old producers with
 insufficient assembly evidence, and digest mismatches remain `missing_assembly`;
 reconstruction never substitutes current content or drops a missing item.
