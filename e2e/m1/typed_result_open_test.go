@@ -41,6 +41,10 @@ func TestM1TypedResultOpenInstalledCore(t *testing.T) {
 	if card.ResultID == "" || card.Text == nil || len(*card.Text) > (64<<10)+200 || strings.Contains(*card.Text, "FINAL-CONTENT-READABLE") {
 		t.Fatal("missing bounded typed result preview")
 	}
+	beforeReads := calls.Load()
+	if beforeReads == 0 {
+		t.Fatal("result was not produced by a model tool call")
+	}
 	readAll := func() {
 		t.Helper()
 		request := protocol.ResultGet{ResultID: card.ResultID, Revision: &card.Revision}
@@ -139,7 +143,7 @@ func TestM1TypedResultOpenInstalledCore(t *testing.T) {
 	}
 	readAll()
 	openTUI()
-	if calls.Load() != 2 {
+	if calls.Load() != beforeReads {
 		t.Fatalf("reading/restart reran model: %d requests", calls.Load())
 	}
 }
