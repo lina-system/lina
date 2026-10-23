@@ -334,7 +334,11 @@ Artifacts have stable ids and media types, with provenance retained in Core.
 Downloads require task authorization; they never expose local paths or ambient
 credentials. Result delivery is deduplicated across restart. Core emits
 `COMPLETED` only after verifying the task's done condition, not merely from
-model text, a tool exit or a worker's completion claim.
+model text, a tool exit or a worker's completion claim. Deleting the published
+persona rejects a task that has not started. Its terminal owner notice cannot
+be delivered to the trashed conversation; that notice stays pending for the
+task and does not fail publication recovery or stop other publications.
+Restoring the persona before trash expiry delivers the notice.
 
 #### Publication setup and task profile
 
