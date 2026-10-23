@@ -252,11 +252,15 @@ and optional typed `data`. States use the proto enum names, such as
 `TASK_STATE_WORKING`. A LINA host envelope, grant, receipt or raw conversation
 history is never an A2A response.
 
-Outbound sends set `configuration.returnImmediately: true`. Inbound sends
-honor that field: true returns after durable admission; false or absent waits
-for a terminal or interrupted task as section 3.2.2 specifies. HTTP timeout or
-stream closure does not cancel admitted work. Lists use cursor pagination,
-descending status timestamp order, an empty `nextPageToken` on the final page,
+Outbound `SendMessage` requests set `configuration.returnImmediately: true`.
+Inbound non-streaming `SendMessage` requests honor that field: true returns
+after durable admission; false or absent waits for a terminal or interrupted
+task as [section 3.2.2](https://github.com/a2aproject/A2A/blob/v1.0.1/docs/specification.md#322-sendmessageconfiguration)
+specifies. `SendStreamingMessage` always delivers updates in real time;
+`returnImmediately` has no effect on streaming operations.
+
+HTTP timeout or stream closure does not cancel admitted work. Lists use cursor
+pagination, descending status timestamp order, an empty `nextPageToken` on the final page,
 and the specified history and `includeArtifacts` limits. Tokens are bound to
 the caller and query; neither counts nor pagination reveal another caller's work.
 

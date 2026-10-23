@@ -44,6 +44,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/reply"
+	"github.com/thisisjun786/lina/internal/core/results"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -122,6 +123,10 @@ type conversationRuntime struct {
 	records          *records.Store
 	recordCaptureMu  sync.Mutex
 	recordCaptures   map[string]*recordCapture
+	planResults      *results.Store
+	plans            *results.Planning
+	planning         *planningRuntime
+	planningMu       sync.Mutex
 	persona          *coreexec.Persona
 	personaAuthority *authority.Service
 	personaGrants    map[string]grant.Grant
@@ -223,6 +228,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	r.records.ReadCandidateMaterial = func(ctx context.Context, id string, revision int64) (string, error) {
 		return r.materials.Read(ctx, ledger.Material{ID: id, Revision: revision})
+	}
+	if err = r.initPlanning(); err != nil {
+		return nil, err
 	}
 	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
 	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant,
@@ -326,6 +334,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		r.identity.Operations[kind] = op
 	}
 	if err = r.startSkillMaintenance(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startPlanning(ctx); err != nil {
 		return nil, err
 	}
 	if err = r.startGrowth(ctx, controls); err != nil {
@@ -775,6 +786,11 @@ func (r *conversationRuntime) events(ctx context.Context, through string) ([]led
 	return events, nil
 }
 func (r *conversationRuntime) seedHistory(ctx context.Context) error {
+	if r.plans != nil {
+		if err := r.publishPlanRejections(ctx); err != nil {
+			return err
+		}
+	}
 	items, err := r.historyItems(ctx)
 	if err != nil {
 		return err
@@ -800,7 +816,14 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			if err := json.Unmarshal([]byte(text), &value); err != nil {
 				return err
 			}
-			if err := r.publishResult(ctx, value); err != nil {
+			// Managed plans retain their typed body and existing stream key.
+			// Ordinary results retain their completion assessment and stable key.
+			if item.key == value.ID {
+				err = r.publish(ctx, protocol.KindResult, value.ID, planWire(value))
+			} else {
+				err = r.publishResult(ctx, value)
+			}
+			if err != nil {
 				return err
 			}
 			continue
@@ -969,6 +992,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
+			if err := r.preparePlanningTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
 			if err := r.prepareWorkTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -999,6 +1025,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations = append(declarations, coreexec.ResultDeclarations()...)
 			declarations = append(declarations, workDeclarations...)
 			declarations = append(declarations, methodologyDeclarations()...)
+			declarations = append(declarations, coreexec.PlanningDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
 			webProvider, err := r.selectedWebProvider()
 			if err != nil {
