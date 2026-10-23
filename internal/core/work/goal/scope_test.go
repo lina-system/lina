@@ -134,6 +134,7 @@ func TestScopeCorrectionWaitsForEffectsWithoutBlockingOtherGoals(t *testing.T) {
 	if err = e.Report(t.Context(), worker.ID, 1, Observation{Status: OutcomeSucceeded, Head: "old-result", EffectsSettled: true}); err != nil {
 		t.Fatal(err)
 	}
+	observeRevisedWorker(t, e, worker, Observation{Status: OutcomeSucceeded, Head: "old-result", EffectsSettled: true})
 	if err = e.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}

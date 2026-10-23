@@ -5,36 +5,46 @@
 ## Running it
 
 ```sh
-node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note]
+node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note] [--jobs <count>]
 ```
 
 - `--range <base>..<head>` classifies the diff between two commits. The head must resolve to the checked-out commit; otherwise selection fails and no checks run. Check out the candidate first. Without the option, the base is the commit the checked-out change was developed on: its merge base with `dev`, or the previous `dev` head when the checkout is `dev` itself.
 - `--full` runs every current check, regardless of changed paths.
 - `--no-note` skips writing the evidence note.
+- `--jobs <count>` bounds local child processes; the default is at most four and never more than the available CPUs. At most one local e2e shard runs at a time, retaining the four-scenario Core/PTY bound while other checks overlap it.
 
 The script clears `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and every other `GIT_*` environment variable on entry; it works on the repository it runs in and takes the range as an argument. A run that integration or a release relies on happens in a clean worktree of the exact commit, in an environment that holds no credentials.
 
 ## Pull request CI
 
-The [CI workflow](../../.github/workflows/ci.yml) runs on pull requests targeting `dev` and pushes to `dev`, with one job named `foundation` on `ubuntu-24.04`. It checks out the event's `github.sha` with full history and without persisting Git credentials: the pull request merge commit from `refs/pull/<number>/merge`, or the pushed commit. It runs `node scripts/foundation.mjs --range <base>..<head> --no-note`, using the pull request's base SHA and that merge commit SHA, or the push's before and after SHAs. This verifies the proposed merge result even when the pull request branch is behind `dev`. A new branch push without a previous commit uses `--full --no-note`.
+The [CI workflow](../../.github/workflows/ci.yml) checks pull requests targeting `dev` (and the owner-requested `codex/ln-369-*` stack), pushes to `dev`, a nightly schedule, and manual runs. Every job checks out the event's `github.sha` with full history and without persisting Git credentials. A pull request selects the diff from its base SHA to its merge commit from `refs/pull/<number>/merge`. Pushes, nightly runs and manual runs select the full suite.
 
-Node comes from `.node-version` when present, otherwise Node 24. When `go.mod` exists, Go comes from its `toolchain` line; a missing toolchain fails setup. Actions are pinned to commit SHAs. The workflow installs actionlint 1.7.12 from a checksum-verified archive before verification. CI has read-only repository permissions, writes no evidence note, and never publishes or integrates a change.
+Selection runs once and publishes a plan bound to the candidate head, tree and a digest of the entire plan. Independent jobs read that same artifact: docs, automation, dependencies, build/vet/exhaustive, unit packages balanced by measured time, and e2e scenarios balanced by source file. The growing m1 corpus is split further; m2 and m3 tests that share the m1 harness are grouped by their milestone test names. The default plan has up to four unit shards and six m1, two m2 and one m3 acceptance shards, omitting empty shards. The final job keeps the single required check name `foundation` and aggregates results without rerunning any command. A missing, failed, cancelled, skipped, stale or duplicate selected result fails the gate, as does a failed upstream job.
 
-The Linux runner also installs Ubuntu's Bubblewrap package and an executable-specific AppArmor profile permitting `/usr/bin/bwrap` to create user namespaces. A direct namespace launch checks that setup before foundation runs the sandbox integration tests. These settings apply to the disposable CI runner; missing sandbox support is a verification failure.
+A documentation-only plan invokes no Go work. Node comes from `.node-version` when present, otherwise Node 24. Selection uses the exact workspace Go toolchain when Go inventory is needed; Go jobs also install the `toolchain` named in `go.mod`. Missing or inconsistent toolchain declarations fail verification. Actions are pinned to commit SHAs. Only automation installs checksum-verified actionlint 1.7.12. CI has read-only repository permissions, writes no evidence note, and never publishes or integrates a change.
+
+Jobs that exercise Linux sandboxing install Ubuntu's Bubblewrap package and the [checked AppArmor profile](../../scripts/verify/bwrap.apparmor) permitting `/usr/bin/bwrap` to create user namespaces. The Linux automation tests compile that profile with `apparmor_parser --skip-kernel-load --skip-cache`; they do not load it into the developer's kernel. A direct namespace launch probes CI setup before running tests. These settings apply to disposable CI runners; missing sandbox support is a verification failure.
 
 ## Execution
 
 ```text
-selection ----+---- docs --------+---- gate
-              +---- automation --+
-              +---- components --+
+selection ----+---- docs / automation / dependencies ----+---- foundation
+              +---- build / vet / exhaustive ------------+
+              +---- unit package shards -----------------+
+              +---- e2e scenario-file shards ------------+
 ```
 
-Everything runs in one process. `selection` records the exact base and candidate commits, the changed paths, the selected checks and the selection reason. It also checks Git whitespace errors: `git diff --check` over the range, or `git show --check` on the `HEAD` commit with `--full`. The selected checks run in parallel after selection. The gate only evaluates their results; it never reruns their commands. Each check has a bounded timeout. Go build, vet, analyzer and whole-module test commands share the remaining components budget described below; `go test -timeout=6m` also bounds package execution and emits stuck-test stack traces when that deadline is reached. This accommodates subprocess acceptance builds under concurrent cold-cache CI verification without changing individual test operation deadlines. The enclosing components check remains bounded at twenty minutes. The growing headless acceptance corpus is enumerated per package and executed in three disjoint batches of top-level tests, examples and fuzz seed tests. All batches run uncached with the same six-minute diagnostic timeout and share the same twenty-minute components budget; individual operation and scenario deadlines are unchanged. Each enumerated test runs exactly once, with its subtests. Independent acceptance scenarios run in parallel with `-parallel=4`, bounding Core and PTY subprocess concurrency independently of host CPU count. Same-bot Telegram scenarios, the Claude credential update scenario, environment-mutating tests, live-provider checks and subprocess entry points remain serial. The command-build cache is shared under a lock and cleaned after all scenarios have finished. An enumeration or batch failure fails the gate immediately.
+`node scripts/foundation.mjs` remains the single local entry point. It selects the same plan and starts bounded child processes, giving each Go process a share of the available CPUs through `GOMAXPROCS`. Locally, one e2e process at a time uses `-parallel=4`; in CI, each e2e shard has its own runner. All local checks share a 1200-second execution deadline. Each Go shard also keeps the existing component command budget, and `go test -timeout=6m` bounds package execution and emits stuck-test diagnostics. Individual operation and scenario deadlines are unchanged. A failed shard does not cancel independent shards.
+
+Selection records the exact base and candidate commits, changed paths, selected components, checks and shards, and the selection reason. It checks Git whitespace with `git diff --check` over the range, or `git show --check` on `HEAD` with `--full`. CI uses the same entry point with `--select <plan.json>`, `--plan <plan.json> --shard <id> --out <result.json>`, and `--plan <plan.json> --results <directory> --upstream <status> --no-note`. Worker results must match the selected head, tree and plan digest. Go JSON results must account for every selected package and e2e test; a zero exit code cannot hide an omitted test.
+
+Package and scenario weights in [test-times.json](../../scripts/verify/test-times.json) come from uncached `go test -json` measurements. They only affect placement. New packages and scenarios receive a default weight, and stale timing entries never omit work or cache a passing result. A scenario file stays together. Files with identical Go test names are joined only where `-run` cannot distinguish them; unrelated files remain separate. TestMain-only packages still receive an invocation.
+
+The Go parser discovers active Test, Example and Fuzz declarations and follows helper declarations and package initialization. Scenario imports and explicitly launched command packages are connected to the dependency graph from `go list -deps -test`. Changes to a source file, fixture, package testdata or embedded input select its consumers. Shared harness changes, unresolved dynamic commands and unmapped inputs select all scenarios. Go package build constraints determine the active source files. Full mode always runs the entire corpus, exactly once per top-level declaration, including subtests and fuzz seeds. The shared command-build cache inside each e2e process is locked and cleaned after its scenarios finish.
 
 ## Evidence
 
-When `foundation` passes on a clean checkout of the candidate commit, it writes its evidence as a JSON note on that commit under `refs/notes/foundation`: the head and base commits, the mode and selection reason, each check's result and duration, and the versions of the tools that ran. A run on a worktree with uncommitted changes reports its result and writes no note. A candidate other than the checked-out commit fails selection without running checks or writing a note.
+When `foundation` starts and finishes on a clean checkout of the same candidate commit and passes, it writes its evidence as a JSON note on that commit under `refs/notes/foundation`: the head and base commits, the mode and selection reason, each check's result and duration, and the versions of the tools that ran. A run on a worktree with uncommitted changes reports its result and writes no note. A candidate other than the checked-out commit fails selection without running checks or writing a note.
 
 The owner's local [integration script](integration.md) pushes the notes with `dev`. Pull request CI reports a GitHub check and writes no note. A note saves time: a [release](releases.md) reads it for the exact commit and, when it is missing or does not show a passing run of that commit, runs `foundation` again on that commit in a clean worktree.
 
@@ -55,9 +65,9 @@ Deleted paths and both sides of a rename participate. A `.md` suffix alone does 
 
 - **docs:** validate local file targets in all tracked Markdown and `LICENSE`, including links from unchanged documents to deleted targets (`scripts/verify/check-docs.mjs`). This does not validate external URLs, heading anchors, or the meaning of prose.
 - **automation:** run `actionlint` on workflow files when present, check JavaScript syntax and run the Node behavioral suite of the scripts under `scripts/`. A missing actionlint executable or invalid workflow fails the check. Tests that use Git run in disposable repositories with every `GIT_*` variable cleared. Integration and release tests run against a disposable bare remote; they never push to the real remote or publish a real release.
-- **components:** build, vet, run the pinned `exhaustive` analyzer, and run uncached tests for selected Go components (`scripts/verify/check-components.mjs`). Command builds go to a temporary directory; the check executes each produced command without arguments and verifies its usage error. Temporary outputs and the isolated home directory are removed when the check ends.
+- **components:** build, vet and run the pinned `exhaustive` analyzer in one shard, then run uncached unit and acceptance shards for selected Go components (`scripts/verify/check-components.mjs`). Command builds go to a temporary directory; the check executes each produced command without arguments and verifies its usage error. Temporary outputs and the isolated home directory are removed when the check ends.
 
-The scripts use Node 20 or newer and its built-in modules, Git, and actionlint on `PATH` for workflow validation and its regression tests. Linux release-assembly tests also require bubblewrap and working unprivileged user namespaces; CI installs bubblewrap, permits unprivileged user namespaces on its disposable Ubuntu runner and probes namespace setup before testing. Actual builds retain filesystem, PID and network isolation. Those platform-specific release tests are skipped on other hosts; the ordinary cross-build and Go tests still run. Use actionlint 1.7.12 to match CI; ShellCheck is used by actionlint when installed. Go components also need the exact Go toolchain named in the workspace.
+The scripts use Node 20 or newer and its built-in modules, Git, and actionlint on `PATH` for workflow validation and its regression tests. Linux release-assembly tests also require bubblewrap and working unprivileged user namespaces; CI installs bubblewrap, permits unprivileged user namespaces on its disposable Ubuntu runner and probes namespace setup before testing. Actual builds retain filesystem, PID and network isolation. Those platform-specific release tests are skipped on other hosts; the ordinary cross-build and Go tests still run. Use actionlint 1.7.12 to match CI; ShellCheck is used by actionlint when installed. Go components and the scenario-parser regression tests also need the exact Go toolchain named in the workspace.
 
 ## Timing and budget
 
@@ -82,7 +92,7 @@ A run above its bound is investigated before the bound is changed. A bound chang
 
 The gate (`scripts/verify/gate.mjs`) evaluates the selection and the check results in process, after the selected checks finish. Selection must succeed, every selected check must report `success`, and an unselected check must report `skipped`. Missing, failed, cancelled, malformed, or unexpectedly skipped results fail the gate.
 
-The output names the candidate, the selection reason, and each check's result. Successful runs also print Go's package timing for each acceptance batch; test enumeration timings are excluded. A passing `foundation` means the registered checks passed, not that unimplemented product behavior or model quality was established.
+The output names the candidate, the selection reason, and each check's result. Successful runs also print Go's package timings for the executed shards; CI result artifacts retain package and top-level test timings. A passing `foundation` means the registered checks passed, not that unimplemented product behavior or model quality was established.
 
 ## Iteration and extension
 
@@ -156,29 +166,29 @@ Markdown under `third_party/` is upstream content. The docs check skips it becau
 `dependencies` and `components` run after `selection`, in parallel with `docs` and `automation`. Selection lists the selected components. The gate evaluates both checks like the others: a selected check must report `success`, and an unselected check must report `skipped`.
 
 - **dependencies:** checks matching Go and exact toolchain declarations in both module manifests and `go.work`, exact `require` and `replace` versions, local replacement boundaries, `go mod verify`, `govulncheck` findings, exception validation, and Go licenses and notices in both modules. It validates the exceptions file before running Go and rejects vulnerability findings without a matching exception. License scanning covers the non-test import closure of LINA's commands and libraries, rejects licenses outside the allowed list, and requires a nonempty notice entry for each included third-party Go module. Module and workspace manifest or sum changes select it and every active component; full verification and automation or shared-configuration changes select it when Go manifests or sums are present or removed. Changes to `scripts/verify/dependency-exceptions.json` or `THIRD-PARTY-NOTICES.md` select `docs` and `dependencies`. Other prose-only and component-source-only changes skip it. The gate requires success when selected and an explicit skipped result otherwise, and the evidence records its result, duration and toolchain. Coverage and remaining checks are listed in the [dependency policy](dependencies.md#foundation-enforcement). It runs without credentials, with an isolated home and user configuration disabled, and keeps Go's public proxy and checksum defaults. Its behavioral tests inject every Go command and use no network.
-- **components:** uses Go from the shared `toolchain` line and runs `go build`, `go vet`, the `exhaustive` analyzer and `go test` with `-mod=readonly` for each selected component, in the directory of the module that holds it. The analyzer is a module tool pinned in `go.mod`, like `govulncheck` ([dependencies.md](dependencies.md)), and fails a switch over a closed set of variants that misses one. Build checks use the produced binary. Short component checks share one step and its module download. A component gets its own parallel step only when a measured run shows that the shared step is the bottleneck.
+- **components:** uses Go from the shared `toolchain` line and runs `go build`, `go vet`, the `exhaustive` analyzer and `go test` with `-mod=readonly` for each selected component, in the directory of the module that holds it. The analyzer is a module tool pinned in `go.mod`, like `govulncheck` ([dependencies.md](dependencies.md)), and fails a switch over a closed set of variants that misses one. Build checks use the produced binary. Build and analysis share one job. Measured package times distribute unit tests, and source files distribute acceptance tests across independent jobs; all use the same selection.
 
 The component check requires matching `go` and exact `toolchain` directives in both module manifests and `go.work`, sets `GOTOOLCHAIN` to that release, and checks the Go version actually used. It verifies module sums before building, including the root module that supplies the analyzer when only kit is selected. Commands sharing a module run together with their package patterns. Go subprocesses use an isolated home directory and an allowlist of environment variables, with user Go/Git configuration disabled; proxy and checksum settings retain Go's defaults. All Go builds and analyzer package loading use `-mod=readonly`, and builds use `CGO_ENABLED=0`.
 
 Component registration implements the `components` gate. The separate `dependencies` check implements the current Go dependency policy checks, including vulnerability scanning, exception validation, and license and notice checks. Dependency-change counts, npm checks (including application of install-script exceptions), non-Go component notices, vendored-tree integrity and upstream-fetch checks remain future work. Notice checks establish entry presence, not the legal completeness of the notice text. `go mod verify` checks downloaded module contents against cached hashes; readonly component builds also enforce the manifest and checksum inputs needed by those builds.
 
-The component check shares a 1195-second command budget, leaving five seconds for diagnostics and cleanup before foundation's 1200-second outer timeout. Go environment queries, token checks and command usage checks have a 30-second limit; module verification and protocol generation have a 120-second limit. Builds, vet, the exhaustive analyzer and uncached tests may use the remaining shared budget, so a progressing module test run can exceed 120 seconds as its package count grows. Every command's limit is capped by the remaining budget; it never resets between commands or modules. Output does not extend the overall deadline. A subprocess timeout fails verification and reports the command, its arguments, elapsed time and assigned budget.
+Each Go shard shares a 1195-second command budget across its commands, leaving five seconds for diagnostics and cleanup. The local executor also bounds all shard execution together at 1200 seconds. Go environment queries, token checks and command usage checks have a 30-second limit; module verification and protocol generation have a 120-second limit. Builds, vet, the exhaustive analyzer and uncached tests may use the remaining shared budget, so a progressing module test run can exceed 120 seconds as its package count grows. Every command's limit is capped by the remaining budget; it never resets between commands or modules. Output does not extend the overall deadline. A subprocess timeout fails verification and reports the command, its arguments, elapsed time and assigned budget.
 
-On PR #298, [CI run 39659531710](https://github.com/thisisjun786/lina/actions/runs/39659531710) exhausted the former 595-second components budget after about 200 seconds of setup, builds and analysis and 395 seconds of module compilation and tests. Completed packages passed, including exchanges; end-to-end verification was still unfinished. The 895-second budget accommodates that cold-run workload while retaining the four-minute Go package timeout and individual operation deadlines. Build-only and automation budgets remain unchanged.
+On PR #298, [CI run 39659531710](https://github.com/thisisjun786/lina/actions/runs/39659531710) exhausted the former 595-second components budget after about 200 seconds of setup, builds and analysis and 395 seconds of module compilation and tests. Completed packages passed, including exchanges; end-to-end verification was still unfinished. That change used an 895-second budget while retaining its then-current four-minute package timeout and individual operation deadlines. Build-only and automation budgets remain unchanged.
 
 On PR #485, [CI run 39783991019](https://github.com/thisisjun786/lina/actions/runs/39783991019)
 reached the six-minute e2e package limit while the 108-test suite was still
 progressing through shortcut fixtures (the current subtest had just started).
 No assertion failed before the package watchdog fired. The component check used
-548.3 seconds of its 895-second budget. The common acceptance batching now
-runs this growing corpus in disjoint groups without raising the six-minute
+548.3 seconds of its 895-second budget. The acceptance batching introduced then
+ran that corpus in disjoint groups without raising the six-minute
 package limit or changing individual operation deadlines and the shared
 895-second command budget. The regression simulates a progressing 390-second
 e2e suite after 200 seconds of setup and requires every scenario to run once
 while the enclosing component guard holds.
 
 
-On PR #398, [CI run 39682857682](https://github.com/thisisjun786/lina/actions/runs/39682857682) reached the four-minute end-to-end package limit while an installed-Core scenario had run for nine seconds and its current subtest for one second. The package-wide diagnostic deadline is now six minutes for the accumulated acceptance workload; individual operation deadlines and the fifteen-minute components guard are unchanged. A controlled-clock test verifies that a progressing five-minute package fits after compilation, while the existing hung-command tests retain the shared guard.
+On PR #398, [CI run 39682857682](https://github.com/thisisjun786/lina/actions/runs/39682857682) reached the four-minute end-to-end package limit while an installed-Core scenario had run for nine seconds and its current subtest for one second. That change raised the package-wide diagnostic deadline to six minutes while preserving individual operation deadlines and the then-current fifteen-minute guard. A controlled-clock test verifies that a progressing five-minute package fits after compilation, while the existing hung-command tests retain the shared guard.
 
 Build regression fixtures also share a 595-second allowance across their build CLI calls, including both cross-build targets, under automation's 600-second watchdog. They pass the remaining budget to `scripts/build.mjs --timeout-ms <milliseconds>`, reserving one second for the CLI to report failures before its wrapper expires. The build script defaults to 595 seconds when invoked directly. Its inner Go builds share the remaining deadline, with environment queries capped at 30 seconds and module verification and metadata generation at 120 seconds. Inner commands and the fixture wrapper use the same timeout diagnostics.
 
@@ -231,7 +241,7 @@ fail the check. The root and adapter npm projects have independent lockfiles.
 PR #523's [CI run 39785658738](https://github.com/thisisjun786/lina/actions/runs/39785658738)
 reached the six-minute package limit while the current TUI lifecycle scenario
 had run for two seconds. That branch initially used a ten-minute package diagnostic deadline. The
-acceptance batching from #127 now covers that growing corpus with three disjoint
+legacy acceptance batching from #127 covers that corpus with three disjoint
 six-minute batches inside the shared components budget described above.
 Individual operation deadlines and acceptance assertions remain in force;
 timeout or missing observations still fail verification.
@@ -241,7 +251,7 @@ passed its first acceptance batch in 245.6 seconds, then reached the second
 batch's six-minute diagnostic deadline during `TestM2UpdateDataOperations`;
 the current `slow-backup` subtest had run for 24 seconds. No assertion failed.
 Components used 800.9 seconds of the existing 895-second command budget.
-Acceptance now uses three disjoint batches to leave room for uneven scenario
+The legacy component runner uses three disjoint batches to leave room for uneven scenario
 durations, preserving every test, example and fuzz seed exactly once. A virtual
 clock regression models a 400-second group of long scenarios alongside shorter
 ones and requires the full corpus to finish under the unchanged package and
@@ -252,7 +262,7 @@ passed the first two batches in 251.7 and 234.3 seconds. Cold setup, builds,
 analysis and ordinary tests had already consumed about 300 seconds, so the
 895-second command budget left only 103.9 seconds for the final batch and
 interrupted it before its own six-minute diagnostic deadline. No assertion
-failed. The shared command budget is now 1195 seconds within a 1200-second
+failed. That change set the shared command budget to 1195 seconds within a 1200-second
 outer guard, retaining the five-second cleanup reserve and every individual
 operation limit. A virtual-clock regression requires 300 seconds of setup
 plus batches of 252, 234 and 300 seconds to finish in the same shared budget;
