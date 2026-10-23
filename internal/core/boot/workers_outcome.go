@@ -39,9 +39,27 @@ type workerCompletion struct {
 	Failure    worker.FailureKind  `json:"failure,omitempty"`
 }
 
+// A failed worker's result reaction reports its outcome. Only the recovery
+// controller or a later person instruction can authorize another execution.
+func failedWorkerReaction(input ledger.Event) bool {
+	if input.ScaffoldKind != "worker_completion" {
+		return false
+	}
+	var result workerCompletion
+	return json.Unmarshal([]byte(input.Body.Text()), &result) != nil || result.Status != worker.Done
+}
+
 func (e *workerSession) finish(ctx context.Context, event worker.Event) error {
+	return e.finishOutcome(ctx, event, e.output, true)
+}
+
+// Reconciliation queues the normal result reaction without starting a worker turn.
+func (e *workerSession) recoveredFinish(ctx context.Context, event worker.Event, output string) error {
+	return e.finishOutcome(ctx, event, output, event.Finish.Status == worker.Done)
+}
+func (e *workerSession) finishOutcome(ctx context.Context, event worker.Event, output string, enqueue bool) error {
 	completion := workerCompletion{
-		workerResult: workerResult{Owner: e.origin.agent, Manager: e.origin.conversation, Session: event.Thread.ID, Turn: event.Thread.TurnID, Generation: event.Thread.ProcessGeneration, Binding: event.Thread.BindingEpoch, State: worker.Idle, Worker: "codex", Version: e.compatibility.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: e.output},
+		workerResult: workerResult{Owner: e.origin.agent, Manager: e.origin.conversation, Session: event.Thread.ID, Turn: event.Thread.TurnID, Generation: event.Thread.ProcessGeneration, Binding: event.Thread.BindingEpoch, State: worker.Idle, Worker: "codex", Version: e.compatibility.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: output},
 		Workdir:      e.workdir, TaskPacket: e.packet, Status: event.Finish.Status, Failure: event.Finish.Failure,
 	}
 	if completion.Failure == worker.ConnectionFailure {
@@ -58,6 +76,19 @@ func (e *workerSession) finish(ctx context.Context, event worker.Event) error {
 	// Coding ownership stays with dev; the input and result belong to the
 	// requesting conversation, including its original channel restrictions.
 	r := e.origin.workerDelivery()
+	if _, err := r.journal().Get(ctx, id); err == nil {
+		return nil
+	} else if !errors.Is(err, ledger.ErrNotFound) {
+		return err
+	}
+
+	// A failed recovery is delivered by its decision row. It cannot feed an
+	// automatic model turn that might create another worker for the same task.
+	if !enqueue {
+		now := time.Now()
+		_, err := r.journal().Admit(ctx, guard.EntryTool, ledger.Input{ID: id, ConversationID: r.conversation, ParentID: e.input.ID, AgentID: r.agent, Surface: e.input.Surface, ScaffoldKind: "worker_completion", Locator: "worker-session:" + event.Thread.ID, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: string(raw)})
+		return err
+	}
 	masked, err := secrets.Mask(string(raw))
 	if err != nil {
 		return err

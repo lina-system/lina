@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -49,6 +50,8 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		}
 		What, Done             string
 		Worker, Binary, Script string
+		Recovery               bool
+		CrashRecovery          bool `json:"crash_recovery"`
 		WorkArea               bool `json:"work_area"`
 		CompletionEvents       bool `json:"completion_events"`
 		Definition             bool `json:"definition"`
@@ -127,8 +130,19 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = os.WriteFile(filepath.Join(bin, "codex"), codexScript, 0700); err != nil {
-				t.Fatal(err)
+			if scenario.CrashRecovery {
+				artifact, err := os.ReadFile("../m3/antigravity-worker.mjs")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(filepath.Join(bin, "artifact-worker"), artifact, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario.Binary != "codex" {
+				if err = os.WriteFile(filepath.Join(bin, "codex"), codexScript, 0700); err != nil {
+					t.Fatal(err)
+				}
 			}
 			var calls, providerCalls, deliveryCalls atomic.Int32
 			var completionHarness *harness
@@ -304,6 +318,36 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				h.stopCore(core)
 				return
 			}
+			if scenario.CrashRecovery {
+				waitDispatchedRecovery(t, h, func(rec dispatch.Record) bool {
+					if message, err := os.ReadFile(filepath.Join(fixture, "worker-error")); err == nil {
+						t.Fatalf("worker fixture: %s", message)
+					}
+					_, err := os.Stat(filepath.Join(fixture, "worker-ready"))
+					return err == nil && rec.Thread != nil
+				})
+				c.Close()
+				// The load fixture wraps Core. Kill its recorded child, then
+				// join the launcher before starting the replacement epoch.
+				if err := core.signal(os.Kill); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case <-core.done:
+				case <-h.ctx.Done():
+					t.Fatal("Core SIGKILL did not finish", h.ctx.Err())
+				}
+				core = start()
+				waitDispatchedRecovery(t, h, func(rec dispatch.Record) bool {
+					_, err := os.Stat(filepath.Join(fixture, "snapshot-requested"))
+					return err == nil && rec.State == "unknown"
+				})
+				if err = os.WriteFile(filepath.Join(fixture, "snapshot-release"), []byte("read"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				c, conversation = conversationClient(t, h)
+				events = nil
+			}
 			if test.ToolCode == "invalid_arguments" {
 				c.Close()
 				h.stopCore(core)
@@ -361,6 +405,11 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			if scenario.CompletionEvents {
 				waitCompletionHandled(t, h)
 			}
+			if scenario.CrashRecovery {
+				waitDispatchedRecovery(t, h, func(rec dispatch.Record) bool {
+					return rec.State == "finished" && rec.Announced && rec.Snapshot != nil && rec.Attempt == 1 && rec.Recoveries == 0
+				})
+			}
 			c.Close()
 			h.stopCore(core)
 			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success", managerTurns)
@@ -375,7 +424,11 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			}
 			if scenario.Worker == "claude" {
 				assertClaudeReceipt(t, h, workerCase)
+				if scenario.Recovery {
+					assertHeadlessRecovery(t, h)
+				}
 			}
+
 			if scenario.CompletionEvents {
 				assertWorkCompletion(t, h)
 			}
@@ -383,6 +436,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				checkLegacy()
 			}
 			if git("rev-parse", "dev") != sourceBase.Load().(string) {
+
 				t.Fatal("worker changed protected base")
 			}
 			if workerCase == "success" || workerCase == "pending" {
@@ -427,6 +481,12 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			}
 			c.Close()
 			h.stopCore(core)
+			if scenario.Recovery {
+				count, err := os.ReadFile(filepath.Join(fixture, "attempt-count"))
+				if err != nil || string(count) != "2" {
+					t.Fatalf("restart repeated a headless attempt: %s %v", count, err)
+				}
+			}
 			if scenario.Worker == "claude" && claudeUnknownCode(workerCase) != "" {
 				assertClaudeReceipt(t, h, workerCase)
 			}

@@ -28,11 +28,14 @@ import (
 func (s *Service) execute(ctx context.Context, r Record) {
 	// Shutdown does not replay a possibly effective dispatch. Recovery marks the
 	// running record unknown and retains the task's active reservation.
-	admitted, settled := false, false
+	observing := r.State == "unknown" && r.Thread != nil && r.WorkerName() == "codex"
+	admitted, settled := observing, false
 	deliverySaved := false
 	queued := false
 	defer func() {
 		if ctx.Err() == nil && !deliverySaved {
+			// A terminal snapshot is recoverable only with its committed receipt.
+			r.Snapshot = nil
 			r.State = "finished"
 			if queued {
 				r.State = "queued"
@@ -49,6 +52,9 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		}
 	}()
 	r.Code = "start_failed"
+	if observing {
+		r.Code = "reconciling"
+	}
 	if s.cfg.Work == nil || s.cfg.Area == nil {
 		return
 	}
@@ -124,12 +130,14 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		{ID: r.ID + ":worktree", Path: workdir},
 		{ID: r.ID + ":artifacts", Path: taskRoot},
 	}
-	if err = service.ReserveWorkerDirectories(ctx, directories); err != nil {
-		r.Code = "admission_refused"
-		if errors.Is(err, work.ErrControlHeld) {
-			r.Code = "control_held"
+	if !observing {
+		if err = service.ReserveWorkerDirectories(ctx, directories); err != nil {
+			r.Code = "admission_refused"
+			if errors.Is(err, work.ErrControlHeld) {
+				r.Code = "control_held"
+			}
+			return
 		}
-		return
 	}
 	for _, directory := range directories {
 		reservations = append(reservations, directory.ID)
@@ -176,10 +184,18 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			r.Protected[ref] = head
 		}
 	}
-	if r.ReturnReceipt != "" && !maps.Equal(priorProtected, r.Protected) {
+	if (observing || r.ReturnReceipt != "") && !maps.Equal(priorProtected, r.Protected) {
 		r.Protected = priorProtected
 		r.Code = "protected_ref_changed"
 		return
+	}
+	if r.ParentRefs == "" {
+		if observing {
+			return
+		}
+		r.ParentRefs = protected
+	} else {
+		protected = r.ParentRefs
 	}
 	if err = s.save(ctx, r); err != nil {
 		return
@@ -209,13 +225,17 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err = service.Create(ctx, work.Task{ID: r.ID, PersonID: r.Origin.Person, AgentID: ownerAgent, ConversationID: manager, Title: d.What, Done: d.Done, ArtifactRoots: []string{workdir, taskRoot}, Workspace: &workspace, RequiresApply: true}); err != nil {
 		return
 	}
-	if _, err = s.cfg.Area.Prepare(ctx, l, r.ID, workspace.Spec); err != nil {
-		return
-	}
-	if _, err = git(workdir, "remote", "set-url", "origin", remote); err != nil {
-		return
-	}
-	if err = os.MkdirAll(taskRoot, 0700); err != nil {
+	if !observing {
+		if _, err = s.cfg.Area.Prepare(ctx, l, r.ID, workspace.Spec); err != nil {
+			return
+		}
+		if _, err = git(workdir, "remote", "set-url", "origin", remote); err != nil {
+			return
+		}
+		if err = os.MkdirAll(taskRoot, 0700); err != nil {
+			return
+		}
+	} else if info, err := os.Stat(workdir); err != nil || !info.IsDir() {
 		return
 	}
 	protectedWorkRefs := func() (string, error) {
@@ -232,6 +252,17 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	if err != nil {
 		return
 	}
+	if r.WorkRefs == "" {
+		if observing {
+			return
+		}
+		r.WorkRefs = workProtected
+	} else {
+		workProtected = r.WorkRefs
+	}
+	if err = s.save(ctx, r); err != nil {
+		return
+	}
 	if r.Packet == "" {
 		r.Packet, err = taskPacket(r)
 		if err != nil || s.save(ctx, r) != nil {
@@ -242,153 +273,227 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	var run work.Run
 	var finish worker.Finish
 	var observation observation
-	for len(r.Tried) < 2 {
-		for _, directory := range directories {
-			if err = service.CheckWorker(ctx, directory.ID); err != nil {
-				r.Code = "control_held"
+	if observing {
+		readCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		snap, readErr := s.observeThread(readCtx, l, &r, workdir)
+		cancel()
+		if readErr != nil || snap.Finish == nil {
+			return
+		}
+		thread = snap.Thread
+		finish = *snap.Finish
+		r.Snapshot = &worker.ThreadSnapshot{Thread: thread, State: snap.State, Finish: snap.Finish, EffectsKnown: snap.EffectsKnown}
+		run = work.Run{ID: thread.AttemptID, TaskID: r.ID, Generation: r.Attempt, Worker: r.WorkerName(), ThreadID: thread.ID, TurnID: thread.TurnID, NodeID: s.cfg.Main}
+		card, readErr := service.Get(ctx, r.ID)
+		if readErr != nil {
+			return
+		}
+		if card.Run == nil || card.Run.ID != run.ID {
+			if err = service.Start(ctx, run); err != nil {
 				return
 			}
 		}
-		adapter, closeAdapter, selectErr := s.selectWorker(ctx, l, r)
-		if selectErr != nil {
-			return
+		observation = func() (json.RawMessage, []antigravity.DeniedAction) {
+			return mustJSON(map[string]any{"output": snap.Output, "finish": snap.Finish}), nil
 		}
-		if adapter == nil {
-			r.Wait = "worker_quota"
-			queued = true
-			return
-		}
-		closeWorker := closeAdapter
-		closeAdapter = func(closeCtx context.Context) error {
-			closeErr := closeWorker(closeCtx)
-			if closeErr != nil {
-				admitted, settled = true, false
-				queued, deliverySaved = false, false
-				r.Code = "cleanup_failed"
+	} else {
+		for len(r.Tried) < 2 {
+			for _, directory := range directories {
+				if err = service.CheckWorker(ctx, directory.ID); err != nil {
+					r.Code = "control_held"
+					return
+				}
 			}
-			return closeErr
-		}
-		defer closeAdapter(context.Background())
-		observation = observeAdapter(adapter)
-		r.Version, err = adapter.Version(ctx)
-		if err != nil {
-			closeAdapter(context.Background())
-			return
-		}
-		if err = s.reserveWorker(ctx, &r, adapter.Name()); err != nil {
-			closeAdapter(context.Background())
-			if errors.Is(err, errWorkerParked) {
-				continue
-			}
-			return
-		}
-		generation := r.GenerationBase + len(r.Tried)
-		run = work.Run{ID: fmt.Sprintf("%s:%d", r.ID, generation), TaskID: r.ID, Generation: generation, Worker: r.Worker, NodeID: s.cfg.Main}
-		// reserveWorker persisted this attempt before any launch. A crash is
-		// uncertain, never permission to consume another replacement.
-		for _, directory := range directories {
-			if err = service.CheckWorker(ctx, directory.ID); err != nil {
-				r.Code = "control_held"
+			adapter, closeAdapter, selectErr := s.selectWorker(ctx, l, r)
+			if selectErr != nil {
 				return
 			}
-		}
-		// A replacement launch can have effects before returning an error too.
-		admitted, settled = true, false
-		thread, err = adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: run.ID, Workdir: workdir, TaskPacket: r.Packet})
-		if err != nil {
-			admitted = true
-			closeAdapter(context.Background())
-			return
-		}
-		// ACP agentInfo is available only after the session handshake.
-		r.Version, err = adapter.Version(ctx)
-		if err == nil {
-			err = s.save(ctx, r)
-		}
-		if err != nil {
-			closeAdapter(context.Background())
-			return
-		}
-		run.ThreadID, run.TurnID = thread.ID, thread.TurnID
-		admitted, settled = true, false
-		if err = service.Start(ctx, run); err != nil {
-			closeAdapter(context.Background())
-			return
-		}
-		handle, unbind := func(worker.Event) {}, func() {}
-		if s.cfg.Bind != nil {
-			handle, unbind = s.cfg.Bind(r, adapter, thread, r.Packet, workdir)
-		}
-		observed := false
-		var progressSequence uint64
-		var progress progressBuffer
-		progressTick := time.NewTicker(progressInterval)
-		defer progressTick.Stop()
-		recordProgress := func(summary string, progressErr error) error {
-			if progressErr != nil || summary == "" {
-				return progressErr
+			if adapter == nil {
+				r.Wait = "worker_quota"
+				queued = true
+				return
 			}
-			progressSequence++
-			return service.ReportProgress(ctx, r.ID, run.ID, progressSequence, summary)
-		}
-		for !observed {
-			select {
-			case event, ok := <-adapter.Events():
-				if !ok || event.Thread != thread || event.Validate() != nil {
-					r.Code = "worker_protocol_error"
-					unbind()
-					closeAdapter(context.Background())
-					return
+			closeWorker := closeAdapter
+			closeAdapter = func(closeCtx context.Context) error {
+				closeErr := closeWorker(closeCtx)
+				if closeErr != nil {
+					admitted, settled = true, false
+					queued, deliverySaved = false, false
+					r.Code = "cleanup_failed"
 				}
-				if event.Progress != nil {
-					err = recordProgress(progress.Observe(*event.Progress, time.Now()))
-				} else if event.Finish != nil {
-					err = recordProgress(progress.Flush(time.Now(), true))
-				}
-				if err != nil {
-					r.Code = "progress_failed"
-					unbind()
-					closeAdapter(context.Background())
-					return
-				}
-				handle(event)
-				if event.Finish != nil {
-					finish = *event.Finish
-					observed = true
-				}
-			case now := <-progressTick.C:
-				if err = recordProgress(progress.Flush(now, false)); err != nil {
-					r.Code = "progress_failed"
-					unbind()
-					closeAdapter(context.Background())
-					return
-				}
-			case <-ctx.Done():
-				unbind()
+				return closeErr
+			}
+			defer closeAdapter(context.Background())
+			observation = observeAdapter(adapter)
+			r.Version, err = adapter.Version(ctx)
+			if err != nil {
 				closeAdapter(context.Background())
 				return
 			}
-		}
-		progressTick.Stop()
-		quotaStop := finish.Status == worker.Failed && (finish.Failure == worker.QuotaFailure || finish.Failure == worker.RateLimitFailure || finish.Failure == worker.LoginFailure)
-		if quotaStop {
-			err = s.park(ctx, adapter)
-		}
-		unbind()
-		// No second worker may touch this worktree until the first process
-		// and all of its descendants have been reaped.
-		closeErr := closeAdapter(ctx)
-		if err != nil || closeErr != nil {
-			return
-		}
-		if quotaStop && len(r.Tried) == 1 {
-			if err = service.Finish(ctx, r.ID, run.ID, "failed"); err != nil {
+			if err = s.reserveWorker(ctx, &r, adapter.Name()); err != nil {
+				closeAdapter(context.Background())
+				if errors.Is(err, errWorkerParked) {
+					continue
+				}
 				return
 			}
-			settled = true
-			continue
+			generation := r.Attempt
+			run = work.Run{ID: fmt.Sprintf("%s:%d", r.ID, generation), TaskID: r.ID, Generation: generation, Worker: r.Worker, NodeID: s.cfg.Main}
+			if r.Recoveries > 0 && s.cfg.AuthorizeRecovery != nil {
+				allowed, err := s.cfg.AuthorizeRecovery(ctx, r)
+				if err != nil || !allowed {
+					r.Code = "recovery_scope_changed"
+					closeAdapter(context.Background())
+					return
+				}
+			}
+			// reserveWorker persisted this attempt before any launch. A crash is
+			// uncertain, never permission to consume another replacement.
+			for _, directory := range directories {
+				if err = service.CheckWorker(ctx, directory.ID); err != nil {
+					r.Code = "control_held"
+					return
+				}
+			}
+			admitted, settled = true, false
+			thread, err = s.startAttempt(ctx, l, adapter, r, run.ID, workdir)
+			if err != nil {
+				admitted = true
+				closeAdapter(context.Background())
+				return
+			}
+			// ACP agentInfo is available only after the session handshake.
+			r.Version, err = adapter.Version(ctx)
+			if err == nil {
+				err = s.save(ctx, r)
+			}
+			if err != nil {
+				closeAdapter(context.Background())
+				return
+			}
+			var cancelled bool
+			_ = s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+				return tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(record,'$.canceled'),0) FROM worker_dispatch WHERE id=?`, r.ID).Scan(&cancelled)
+			})
+			if cancelled {
+				r.Canceled = true
+				_ = adapter.Interrupt(ctx, thread, worker.UserCancel)
+			}
+			run.ThreadID, run.TurnID = thread.ID, thread.TurnID
+			r.Thread = &thread
+			if err = s.save(ctx, r); err != nil {
+				closeAdapter(context.Background())
+				return
+			}
+			admitted, settled = true, false
+			if err = service.Start(ctx, run); err != nil {
+				closeAdapter(context.Background())
+				return
+			}
+			handle, unbind := func(worker.Event) {}, func() {}
+			if s.cfg.Bind != nil {
+				handle, unbind = s.cfg.Bind(r, adapter, thread, r.Packet, workdir)
+			}
+			observed := false
+			var progressSequence uint64
+			var progress progressBuffer
+			progressTick := time.NewTicker(progressInterval)
+			defer progressTick.Stop()
+			recordProgress := func(summary string, progressErr error) error {
+				if progressErr != nil || summary == "" {
+					return progressErr
+				}
+				progressSequence++
+				return service.ReportProgress(ctx, r.ID, run.ID, progressSequence, summary)
+			}
+			for !observed {
+				select {
+				case event, ok := <-adapter.Events():
+					if !ok || event.Thread != thread || event.Validate() != nil {
+						r.Code = "worker_protocol_error"
+						unbind()
+						closeAdapter(context.Background())
+						return
+					}
+					if event.Progress != nil {
+						err = recordProgress(progress.Observe(*event.Progress, time.Now()))
+					} else if event.Finish != nil {
+						err = recordProgress(progress.Flush(time.Now(), true))
+					}
+					if err != nil {
+						r.Code = "progress_failed"
+						unbind()
+						closeAdapter(context.Background())
+						return
+					}
+					if event.Approval != nil || event.Question != nil || event.ToolCall != nil || event.Progress != nil && event.Progress.Phase == "server_request_resolved" {
+						if r.PendingRequests == nil {
+							r.PendingRequests = map[string]bool{}
+						}
+						switch {
+						case event.Approval != nil:
+							r.PendingRequests[event.Approval.ID] = true
+						case event.Question != nil:
+							r.PendingRequests[event.Question.ID] = true
+						case event.ToolCall != nil:
+							r.PendingRequests[event.ToolCall.ID] = true
+						default:
+							delete(r.PendingRequests, event.Progress.ItemID)
+						}
+						if err = s.save(ctx, r); err != nil {
+							unbind()
+							closeAdapter(context.Background())
+							return
+						}
+					}
+					handle(event)
+					if event.Finish != nil {
+						finish = *event.Finish
+						observed = true
+					}
+				case now := <-progressTick.C:
+					if err = recordProgress(progress.Flush(now, false)); err != nil {
+						r.Code = "progress_failed"
+						unbind()
+						closeAdapter(context.Background())
+						return
+					}
+				case <-ctx.Done():
+					unbind()
+					closeAdapter(context.Background())
+					return
+				}
+			}
+			progressTick.Stop()
+			quotaStop := finish.Status == worker.Failed && (finish.Failure == worker.QuotaFailure || finish.Failure == worker.RateLimitFailure || finish.Failure == worker.LoginFailure)
+			if quotaStop {
+				err = s.park(ctx, adapter)
+			}
+			snapshot, snapshotErr := terminalSnapshot(ctx, adapter, thread)
+			if snapshotErr == nil {
+				r.Snapshot = &worker.ThreadSnapshot{Thread: snapshot.Thread, State: snapshot.State, Finish: snapshot.Finish, EffectsKnown: snapshot.EffectsKnown && len(snapshot.Pending) == 0 && len(r.PendingRequests) == 0}
+			}
+			if r.Snapshot == nil || r.Snapshot.Finish == nil {
+				r.Snapshot = &worker.ThreadSnapshot{Thread: thread, State: worker.Unknown, Finish: &finish}
+			}
+			unbind()
+			// No second worker may touch this worktree until the first process
+			// and all of its descendants have been reaped.
+			closeErr := closeAdapter(ctx)
+			if err != nil || closeErr != nil {
+				return
+			}
+			if quotaStop && len(r.Tried) == 1 && r.Snapshot.EffectsKnown {
+				r.Snapshot = nil
+				r.PendingRequests = nil
+				if err = service.Finish(ctx, r.ID, run.ID, "failed"); err != nil {
+					return
+				}
+				settled = true
+				continue
+			}
+			break
 		}
-		break
 	}
 	// Claude and Antigravity synthesize connection failures without a result.
 	// Codex alone also reports observed provider failures as "connection";
@@ -474,7 +579,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	}
 	evidence = []byte(masked.Text())
 	artifact := filepath.Join(taskRoot, "result.json")
-	if r.GenerationBase > 0 {
+	if r.Attempt > 1 || r.GenerationBase > 0 {
 		artifact = filepath.Join(taskRoot, fmt.Sprintf("result-%d.json", run.Generation))
 	}
 	if err = os.WriteFile(artifact, evidence, 0600); err != nil {
@@ -486,20 +591,27 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		Manifest: []work.Artifact{{Path: artifact, SHA256: hash}}, Provenance: []work.Provenance{{ArtifactID: "adapter-derived:" + r.ID, TaskID: r.ID, NodeID: s.cfg.Main, Path: artifact, SHA256: hash, ObservedAt: now}}}
 	receipt.RevisionHash = work.ManifestHash(receipt.Manifest)
 	receipt.EventID = work.ReceiptID(receipt)
-	if err = service.Submit(ctx, run.ID, receipt); err != nil {
-		r.Code = "receipt_failed"
-		return
-	}
-	if err = s.finish(ctx, r, run.ID, status); err != nil {
+	deliverySaved = true
+	if err = s.finish(ctx, r, run.ID, status, receipt); err != nil {
 		r.Code = "receipt_failed"
 	} else {
-		settled, deliverySaved = true, true
+		// A committed terminal receipt can still describe unknown effects.
+		// Only the committed recovery state can release its directory fence.
+		var state string
+		readErr := s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(ctx, "SELECT state FROM worker_dispatch WHERE id=?", r.ID).Scan(&state)
+		})
+		settled = readErr == nil && state != "unknown"
+		deliverySaved = true
 	}
 }
 func taskPacket(r Record) (string, error) {
 	definition, err := json.MarshalIndent(r.TaskDefinition(), "", "  ")
 	if err != nil {
 		return "", err
+	}
+	if r.Recoveries > 0 {
+		return skills.MethodPacket(fmt.Sprintf("Assignment: %s\nBase commit: %s\n", r.ID, r.BaseCommit)+"Continue the same task from the current files, branch and receipts. Do not recreate or clean the worktree, repeat completed effects, or reset review and CI allowances.\n"+string(definition), r.Method)
 	}
 	return skills.MethodPacket(fmt.Sprintf("Assignment: %s\nBase commit: %s\nCompletion: report the final worker result and PR; Core derives an adapter receipt from observed evidence. No additional material or memory projections are granted.\n", r.ID, r.BaseCommit)+"Implement this task definition in this worktree using your own setup. Create the named task branch from the detached base, or continue it if an earlier attempt already created it. Preserve partial work from an earlier attempt. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n"+string(definition), r.Method)
 }

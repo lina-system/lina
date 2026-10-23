@@ -209,3 +209,37 @@ func TestRestoreInvalidatesMergePermissionButKeepsUncertainReservation(t *testin
 		t.Fatalf("reservation: %+v %v", unknown, err)
 	}
 }
+
+func TestRestoreCannotResetWorkerRecoveryAllowance(t *testing.T) {
+	db := restoreDB(t)
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO worker_recovery VALUES('thread','{"ID":"thread","State":"running","Retries":0}');
+   INSERT INTO worker_dispatch VALUES('task','turn','repo','queued','{"id":"task","state":"queued","attempt":1,"snapshot":{"EffectsKnown":true}}');`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := invalidateAuthority(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		var state string
+		var canceled bool
+		if err := tx.QueryRowContext(t.Context(), `SELECT json_extract(record,'$.State'),COALESCE(json_extract(record,'$.Canceled'),0) FROM worker_recovery`).Scan(&state, &canceled); err != nil {
+			return err
+		}
+		if state != "unknown" || !canceled {
+			t.Errorf("restored session can recover again: %s canceled=%v", state, canceled)
+		}
+		var restored, known bool
+		if err := tx.QueryRowContext(t.Context(), `SELECT state,COALESCE(json_extract(record,'$.restored'),0),json_extract(record,'$.snapshot.EffectsKnown') FROM worker_dispatch`).Scan(&state, &restored, &known); err != nil {
+			return err
+		}
+		if state != "unknown" || !restored || !known {
+			t.Errorf("restored dispatch can launch or lost evidence: %s restored=%v known=%v", state, restored, known)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

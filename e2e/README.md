@@ -123,3 +123,19 @@ endpoint or a broken stream fails the journey. Ordinary fixture tests still run.
 Builds and ordinary product subprocesses retain their isolated environment;
 only the opted-in probe and the headless journey's Core receive the explicit
 provider configuration.
+
+`m2/worker-recovery.json`, executed by `TestM2WorkerRecovery`, kills installed
+Core during an active synthetic Codex task, gates the replacement thread's
+snapshot, and proves unknown state before reconciliation. It verifies settlement
+without a new turn, one continuation, a second-failure decision through the
+waiting protocol, retention of a real file, and no third turn across restart.
+`m2/headless-worker-recovery.json`, executed by `TestM2HeadlessWorkerRecovery`,
+checks Claude dispatch's two attempts, retained receipt artifacts and durable
+decision. These use synthetic workers and no authenticated accounts.
+
+`m2/goal-worker-recovery.json`, executed by `TestM2InstalledGoalWorkerRecovery`,
+starts a code goal through installed Core. A settled worker failure recovers
+once without a conversation dispatch receipt. The recovered worker commits a
+real result; startup reconciliation reads it and the goal completes through
+synthetic GitHub and service wires;
+a second failure stops for a decision and does not restart a third attempt.

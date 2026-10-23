@@ -51,35 +51,50 @@ type Definition struct {
 }
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
-	ReturnReceipt  string                     `json:"return_receipt,omitempty"`
-	GenerationBase int                        `json:"generation_base,omitempty"`
-	FailureReason  string                     `json:"failure_reason,omitempty"`
-	RepositoryKey  string                     `json:"repository_key,omitempty"`
-	Worker         string                     `json:"worker,omitempty"`
-	Tried          []string                   `json:"tried,omitempty"`
-	Packet         string                     `json:"packet,omitempty"`
-	AreaHeld       bool                       `json:"area_held,omitempty"`
-	Wait           string                     `json:"wait,omitempty"`
-	Result         json.RawMessage            `json:"result,omitempty"`
-	Goal           bool                       `json:"goal,omitempty"`
-	Protected      map[string]string          `json:"protected_refs,omitempty"`
-	Method         *skills.Body               `json:"method,omitempty"`
-	BaseCommit     string                     `json:"base_commit,omitempty"`
-	ChangedFiles   []string                   `json:"changed_files,omitempty"`
-	DesignText     map[string]string          `json:"design_at_base,omitempty"`
-	ChangeEvidence string                     `json:"change_evidence,omitempty"`
-	Owner          string                     `json:"owner,omitempty"`
-	Manager        string                     `json:"manager,omitempty"`
-	ID             string                     `json:"id"`
-	Origin         Origin                     `json:"origin"`
-	Definition     Definition                 `json:"definition"`
-	Branch         string                     `json:"branch,omitempty"`
-	State          string                     `json:"state"`
-	Code           string                     `json:"code,omitempty"`
-	Version        string                     `json:"version,omitempty"`
-	PR             *antigravity.PullRequest   `json:"pull_request,omitempty"`
-	Denied         []antigravity.DeniedAction `json:"denied_actions,omitempty"`
-	Announced      bool                       `json:"announced"`
+	Canceled        bool                       `json:"canceled,omitempty"`
+	ObserveAfter    int64                      `json:"observe_after,omitempty"`
+	ObserveEpoch    uint64                     `json:"observe_epoch,omitempty"`
+	ParentRefs      string                     `json:"parent_refs,omitempty"`
+	WorkRefs        string                     `json:"work_refs,omitempty"`
+	RecoveryThread  *worker.Thread             `json:"recovery_thread,omitempty"`
+	RecoveryWorker  string                     `json:"recovery_worker,omitempty"`
+	Restored        bool                       `json:"restored,omitempty"`
+	Attempt         int                        `json:"attempt,omitempty"`
+	Recoveries      int                        `json:"recoveries,omitempty"`
+	Snapshot        *worker.ThreadSnapshot     `json:"snapshot,omitempty"`
+	Thread          *worker.Thread             `json:"thread,omitempty"`
+	PendingRequests map[string]bool            `json:"pending_requests,omitempty"`
+	DecisionAt      int64                      `json:"decision_at,omitempty"`
+	GoalAction      string                     `json:"goal_action,omitempty"`
+	ReturnReceipt   string                     `json:"return_receipt,omitempty"`
+	GenerationBase  int                        `json:"generation_base,omitempty"`
+	FailureReason   string                     `json:"failure_reason,omitempty"`
+	RepositoryKey   string                     `json:"repository_key,omitempty"`
+	Worker          string                     `json:"worker,omitempty"`
+	Tried           []string                   `json:"tried,omitempty"`
+	Packet          string                     `json:"packet,omitempty"`
+	AreaHeld        bool                       `json:"area_held,omitempty"`
+	Wait            string                     `json:"wait,omitempty"`
+	Result          json.RawMessage            `json:"result,omitempty"`
+	Goal            bool                       `json:"goal,omitempty"`
+	Protected       map[string]string          `json:"protected_refs,omitempty"`
+	Method          *skills.Body               `json:"method,omitempty"`
+	BaseCommit      string                     `json:"base_commit,omitempty"`
+	ChangedFiles    []string                   `json:"changed_files,omitempty"`
+	DesignText      map[string]string          `json:"design_at_base,omitempty"`
+	ChangeEvidence  string                     `json:"change_evidence,omitempty"`
+	Owner           string                     `json:"owner,omitempty"`
+	Manager         string                     `json:"manager,omitempty"`
+	ID              string                     `json:"id"`
+	Origin          Origin                     `json:"origin"`
+	Definition      Definition                 `json:"definition"`
+	Branch          string                     `json:"branch,omitempty"`
+	State           string                     `json:"state"`
+	Code            string                     `json:"code,omitempty"`
+	Version         string                     `json:"version,omitempty"`
+	PR              *antigravity.PullRequest   `json:"pull_request,omitempty"`
+	Denied          []antigravity.DeniedAction `json:"denied_actions,omitempty"`
+	Announced       bool                       `json:"announced"`
 }
 
 // TaskDefinition exposes the actual assigned branch while retaining the
@@ -110,23 +125,24 @@ func taskBranch(requested, id string) string {
 }
 
 type Config struct {
-	Workers      []Factory
-	Rules        []work.ChoiceRule
-	Capacity     func(context.Context) int
-	Bind         func(Record, worker.Adapter, worker.Thread, string, string) (func(worker.Event), func())
-	Manage       func(context.Context, Record) (Record, error)
-	Skills       *skills.Store
-	DB           *canon.Store
-	Work         *work.Service
-	Area         *work.Area
-	Root, Main   string
-	Epoch        uint64
-	Binary, Git  string
-	PR           antigravity.PullRequestReader
-	Environment  []string
-	Activities   lease.Leaser
-	Publish      func(context.Context, Record) error
-	ClaudeBinary string
+	AuthorizeRecovery func(context.Context, Record) (bool, error)
+	Workers           []Factory
+	Rules             []work.ChoiceRule
+	Capacity          func(context.Context) int
+	Bind              func(Record, worker.Adapter, worker.Thread, string, string) (func(worker.Event), func())
+	Manage            func(context.Context, Record) (Record, error)
+	Skills            *skills.Store
+	DB                *canon.Store
+	Work              *work.Service
+	Area              *work.Area
+	Root, Main        string
+	Epoch             uint64
+	Binary, Git       string
+	PR                antigravity.PullRequestReader
+	Environment       []string
+	Activities        lease.Leaser
+	Publish           func(context.Context, Record) error
+	ClaudeBinary      string
 }
 type Service struct {
 	cfg     Config
@@ -423,12 +439,70 @@ func (s *Service) sync() {
 		return
 	}
 	for _, r := range records {
+		s.mu.Lock()
+		busy := s.running[r.ID]
+		s.mu.Unlock()
+		if r.State == "running" && !busy {
+			_ = s.cfg.DB.Write(s.ctx, func(tx *canon.Tx) error {
+				_, err := tx.ExecContext(s.ctx, `UPDATE worker_dispatch SET state='unknown',record=json_set(record,'$.state','unknown') WHERE id=? AND state='running' AND COALESCE(json_extract(record,'$.attempt'),0)=?`, r.ID, r.Attempt)
+				return err
+			})
+			continue
+		}
+		if r.State == "unknown" && !r.Restored && r.Thread != nil && r.WorkerName() == "codex" && r.Snapshot == nil && !busy && (r.ObserveEpoch != s.cfg.Epoch || time.Now().UnixNano() >= r.ObserveAfter) {
+			s.mu.Lock()
+			busy = s.running[r.ID]
+			if !busy {
+				s.running[r.ID] = true
+			}
+			s.mu.Unlock()
+			if busy {
+				continue
+			}
+			r.ObserveEpoch = s.cfg.Epoch
+			r.ObserveAfter = time.Now().Add(5 * time.Minute).UnixNano()
+			if s.save(s.ctx, r) != nil {
+				s.mu.Lock()
+				delete(s.running, r.ID)
+				s.mu.Unlock()
+				continue
+			}
+			s.wg.Add(1)
+			go func() { defer s.wg.Done(); s.execute(s.ctx, r) }()
+			continue
+		}
+		if r.State == "unknown" && r.Snapshot != nil && !busy {
+			if next, err := s.recoverRecord(s.ctx, r); err == nil {
+				r = next
+			}
+		}
 		if r.State == "queued" {
+			if r.Canceled {
+				r.State = "finished"
+				r.Code = "cancelled"
+				_ = s.save(s.ctx, r)
+				continue
+			}
+			if r.Recoveries > 0 && s.cfg.AuthorizeRecovery != nil {
+				allowed, err := s.cfg.AuthorizeRecovery(s.ctx, r)
+				if err != nil {
+					continue
+				}
+				if !allowed {
+					r.State = "finished"
+					r.Code = "recovery_scope_changed"
+					_ = s.save(s.ctx, r)
+					continue
+				}
+			}
 			var committed int
 			err = s.cfg.DB.Read(s.ctx, func(tx *canon.Tx) error {
 				return tx.QueryRowContext(s.ctx, `SELECT count(*) FROM turn_calls WHERE turn_id=? AND json_extract(call,'$.Name')='dispatch_work' AND json_extract(result,'$.code')='ok' AND json_extract(result,'$.output.id')=?`, r.Origin.Turn, r.ID).Scan(&committed)
 			})
-			if err != nil || committed == 0 && !(r.Goal && r.ReturnReceipt != "") {
+			// Goal actions start directly, without a conversation tool-call row.
+			// Their committed correction or recovery admits a queued attempt;
+			// recovery still passes the authority check above and before launch.
+			if err != nil || committed == 0 && !(r.Goal && (r.ReturnReceipt != "" || r.Recoveries > 0)) {
 				continue
 			}
 			s.mu.Lock()
@@ -449,7 +523,7 @@ func (s *Service) sync() {
 			}
 			s.wg.Add(1)
 			go func() { defer s.wg.Done(); s.execute(s.ctx, r) }()
-		} else if !r.Goal && (r.State == "finished" || r.State == "unknown") && !r.Announced {
+		} else if !r.Goal && (r.State == "finished" || r.State == "unknown" || r.State == "decision") && !r.Announced {
 			// Completed ledger deliveries belong exclusively to the durable reactor.
 			if s.cfg.Work != nil {
 				if card, e := s.cfg.Work.Get(s.ctx, r.ID); e == nil && card.Receipt != nil && !card.Active && card.TurnStatus != "" {

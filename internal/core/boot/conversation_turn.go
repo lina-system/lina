@@ -436,6 +436,11 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		declarations = nil
 		catalog = nil
 	}
+	if failedWorkerReaction(s.input) {
+		clear(s.bindings)
+		declarations = nil
+		catalog = nil
+	}
 	if r.channelBinding != nil {
 		for name, tool := range s.bindings {
 			execute := tool.Execute
