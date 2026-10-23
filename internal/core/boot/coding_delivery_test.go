@@ -219,7 +219,7 @@ func closedGitHubFixture(t *testing.T, r *conversationRuntime, head, reason stri
 }
 
 func TestCodingRetainedMergeIntentReconcilesBeforeOpenPRPreflight(t *testing.T) {
-	for _, state := range []string{"unknown", "queued", "merged"} {
+	for _, state := range []string{"unknown", "queued", "merged", "external"} {
 		t.Run(state, func(t *testing.T) {
 			r, a, d := conformanceFixture(t)
 			d.Definition.Repository = "/retained-clone"
@@ -234,16 +234,20 @@ func TestCodingRetainedMergeIntentReconcilesBeforeOpenPRPreflight(t *testing.T) 
 			}
 			merges := authority.NewMerges(r.db, r.epoch)
 			binding := authority.MergeBinding{ID: a.ID, Person: a.Origin.Person, Agent: a.Owner, Repository: "owner/repo", Base: "dev", Clone: d.Definition.Repository, Number: 7, Protected: d.Protected}
-			if err := merges.Bind(t.Context(), binding); err != nil {
-				t.Fatal(err)
+			if state != "external" {
+				if err := merges.Bind(t.Context(), binding); err != nil {
+					t.Fatal(err)
+				}
+				if err := merges.Accept(t.Context(), a.ID, a.Origin.Person, rr.Head); err != nil {
+					t.Fatal(err)
+				}
+				if err := merges.Record(t.Context(), a.ID, a.Origin.Person, state, json.RawMessage(`{}`)); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if err := merges.Accept(t.Context(), a.ID, a.Origin.Person, rr.Head); err != nil {
-				t.Fatal(err)
+			if state == "external" {
+				d.PR.State, d.Code = "MERGED", "pr_unverified"
 			}
-			if err := merges.Record(t.Context(), a.ID, a.Origin.Person, state, json.RawMessage(`{}`)); err != nil {
-				t.Fatal(err)
-			}
-			d.PR.State, d.Code = "MERGED", "pr_unverified"
 			commit := strings.Repeat("c", 40)
 			dir := t.TempDir()
 			binary := filepath.Join(dir, "gh")

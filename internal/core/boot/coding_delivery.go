@@ -100,7 +100,7 @@ func (r *conversationRuntime) deliverCoding(ctx context.Context, a codingAssignm
 	if d.Goal {
 		return "verified", nil
 	}
-	observation, err := r.mergeGoalPR(ctx, d, repo, goal.Action{Revision: rr.Head}, false)
+	observation, err := r.mergeGoalPR(ctx, d, repo, goal.Action{Revision: rr.Head}, d.PR.State == "MERGED")
 	if err != nil {
 		return "merge_pending", err
 	}
