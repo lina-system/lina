@@ -1125,6 +1125,11 @@ local source identities, so an old export cannot resurrect forgotten content.
 - Expiry is a duration the Node counts on a clock that includes suspend (candidates: `CLOCK_BOOTTIME`, `mach_continuous_time`); the numbers are Node acceptance values.
 - The seat lease ([non-competition.md](non-competition.md#seat-lease)) is a grant naming a GUI session plus Node-side exclusivity.
 - A receipt for an artifact carries provenance. Earlier-epoch receipts are read only while a Node is RECONCILING, matched on ids, and settle an effect as `reconciled`, not `receipted`.
+- `internal/node.ReceiveCopy` implements disposable input staging and complete
+  size/SHA-256 verification before returning a read-only path. Core's
+  `assets.OpenCopy` pins the requested asset revision and hash without writing
+  canon. These helpers do not implement Node hosting, grant issuance or the
+  `node` wire connection; their caller must supply that authority and lifecycle.
 - Noted for the Node phase, not yet in the contracts: LINA Core runs on the person's own computer by default, and other devices join as Nodes in one action. Nodes bid for work by free capacity, load, readiness and capabilities (a logged-in browser, a messenger app, a platform-only app, a GPU); work of a failed or vanished Node is offered to another. A Node keeps repositories only as a cache (clone on demand, worktree removed after merge), and for other work it gets read-only copies of the files it needs, fetched by content hash, and returns its outputs as result artifacts that Core files into the one canonical store. Credentials are granted per job and never copied into a Node's files. These rules are folded into the Node, work and storage contracts with the Node phase.
 
 ## Storage, backup and diagnosis

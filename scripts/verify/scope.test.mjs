@@ -257,6 +257,17 @@ test('asset store is registered with the lina Go checks', t => {
 
 });
 
+test('Node input copies are registered with the lina-node Go checks', t => {
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'internal/node'), { recursive: true });
+  writeFileSync(join(r.cwd, 'internal/node/copy.go'), 'package node\n');
+  const scope = r.classify(r.commit(), { base, full: true });
+  assert.deepEqual(scope.unmapped, []);
+  assert.ok(scope.selectedComponents.includes('lina-node'));
+  assert.ok(componentRegistry.find(component => component.name === 'lina-node').packages.includes('./internal/node/...'));
+});
+
 test('memory and its executor are registered with the lina Go checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');

@@ -19,15 +19,29 @@ const MaxReadBytes = 8 << 20
 // replaces EOF with ErrHashMismatch; closing early does not verify the content.
 // No store mutex or database transaction is held while the caller consumes it.
 func (s *Store) OpenRead(ctx context.Context, id string, rev int64) (io.ReadCloser, error) {
-	return s.openRead(ctx, id, rev, -1)
+	return s.openRead(ctx, id, rev, -1, "")
 }
 
-func (s *Store) openRead(ctx context.Context, id string, rev, limit int64) (io.ReadCloser, error) {
+// OpenCopy reads precisely the identified revision and content hash. A hash is
+// not an asset identity or permission: the caller must authorize id and rev
+// against the current grant before calling. Like OpenRead, EOF verifies bytes.
+func (s *Store) OpenCopy(ctx context.Context, id string, rev int64, expectedHash string) (io.ReadCloser, error) {
+	hash, err := hex.DecodeString(expectedHash)
+	if err != nil || len(hash) != sha256.Size || hex.EncodeToString(hash) != expectedHash {
+		return nil, ErrInvalid
+	}
+	return s.openRead(ctx, id, rev, -1, expectedHash)
+}
+
+func (s *Store) openRead(ctx context.Context, id string, rev, limit int64, expectedHash string) (io.ReadCloser, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, err := s.revision(ctx, id, rev)
 	if err != nil {
 		return nil, err
+	}
+	if expectedHash != "" && r.Hash != expectedHash {
+		return nil, ErrHashMismatch
 	}
 	if limit >= 0 && r.Size > limit {
 		return nil, ErrTooLarge
@@ -72,7 +86,7 @@ func (r *verifiedReader) Close() error { return r.file.Close() }
 // It rejects larger recorded sizes before opening the file and also limits the
 // actual bytes read, so an unexpectedly enlarged file cannot bypass the cap.
 func (s *Store) Read(ctx context.Context, id string, rev int64) ([]byte, error) {
-	r, err := s.openRead(ctx, id, rev, MaxReadBytes)
+	r, err := s.openRead(ctx, id, rev, MaxReadBytes, "")
 	if err != nil {
 		return nil, err
 	}

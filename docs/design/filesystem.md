@@ -84,6 +84,12 @@ An identical-byte edit still checks the epoch fence, current base revision and a
 
 The store records the person and asking agent with each metadata change, revision, export and trash transition. Trashing hides every revision from normal reads and export while preserving its bytes for recovery and backup; restoring keeps the id, revisions and hashes. The store's durable trash transitions are inputs to the removal-list and permanent-deletion coordinator, which owns the 30-day expiry and deletion propagation described in [materials-and-knowledge.md](materials-and-knowledge.md#inside-lina).
 
+`assets.OpenCopy` additionally requires the exact revision's SHA-256 hash before
+opening its bytes. It never resolves an asset by hash alone: the caller must
+authorize the asset id and revision against the current grant. The stream retains
+`OpenRead`'s terminal size and hash verification, including for older revisions;
+trashed assets are refused. This read path changes neither bytes nor metadata.
+
 The revision depends on where the bytes live:
 
 | Where the bytes live | Revision |
@@ -116,6 +122,15 @@ A connected source may declare a key that its owner keeps stable across renames,
 ### Files on Node devices
 
 A reference to a file on a Node device carries the provenance fields of [main-authority.md](main-authority.md): the asset id as the artifact id, the task id, the node id, the observed path, the revision and content hash, and the observation time. Such a reference is valid only under a current grant from the main. A stale grant makes the reference unusable until the file is observed again. Name, path or identical content alone never prove that two files on different devices are the same file.
+
+The Node input-copy helper consumes an authorized transfer into a fresh private
+directory. It checks the complete byte count and SHA-256 against the authorized
+revision before exposing a path, closes the writable descriptor and leaves the
+file with mode `0400`. A failed, interrupted or mismatching transfer removes its
+staging directory and exposes no copy. The Node disposes of the copy after use. A device owner can change their local file permissions; the copy is
+separate bytes, so even such a change cannot modify Core's canonical revision.
+This helper does not establish a connection or issue authority: the Node host
+must authorize the transfer and enforce the live grant before use.
 
 ## Connected sources
 
