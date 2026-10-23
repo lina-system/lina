@@ -1062,6 +1062,16 @@ artifact roots, keeping the worker's committed checkout clean. This single-worke
 the repository while queued, running or uncertain. It preserves the worktree and
 branch after completion. It does not provide the parallel chooser or merge flow.
 
+Before creating a worktree or launching the worker, `dispatch_work` atomically
+reserves the source repository, shared Git metadata, prospective worktree and result directory through
+the operational switch's directory gate. Multiple paths for one external task
+share its task binding while retaining every path for later adoption checks.
+Rollback fences a dispatch even though its new task id differs from the imported
+task id. A refused preflight releases its reservations after process cleanup;
+an attempted start or missing terminal result retains them across restart. A
+confirmed terminal result releases them only after process cleanup and the
+durable task finish. Shutdown alone is not terminal evidence.
+
 After a successful result, Core compares protected refs and changed files with
 the definition, then reads the branch's PR through fixed `ghclient` calls. Delivery
 requires an open, non-draft PR on the requested base and branch, the actual local
@@ -1794,6 +1804,74 @@ restore of the pre-import backup, not an automatic deletion. The import alone is
 not the owner-approved operational switch. The headless `e2e/m3/crw-takeover.json`
 scenario uses the real tool and installed Core to read imported evidence, save a
 new result, reject source-id lookup and retain the record after restart.
+
+### Switch admission and recovery
+
+Migration 46 adds switch reservations and history after the published migrations
+through 45, preserving skill maintenance, work engine events and records, to-do
+views, completion signals, timers, starters, worker choice, naming and record operations.
+
+The one-time operator command in `tools/crw-takeover/` connects to the running
+Core's owner-only `work` capability. It is excluded from release artifacts.
+Work tasks registered for external coordination carry `external_control: true`
+and their LINA person identity;
+Core refuses a new execution until an approved switch has activated their exact
+task set. Observation and a source snapshot never grant execution authority.
+
+An explicit owner `approve_switch` records the authenticated person, input
+message id, sorted task set and SHA-256 of the verified operator manifest. That
+manifest binds the import snapshot and the owner's inventory of quiesced parent
+sessions, flow engines and other hosts. Approval does not stop the old service.
+Core serializes one switch procedure, refuses overlapping task ownership and
+checks admission and each new run in the same canon write transaction.
+The running worker tools reserve their canonical work directory before process
+launch. `worker_start` obtains this admission before its coding-manager
+assignment turn and rechecks it before launching the worker. A directory overlapping an external task's artifact roots follows that
+task's switch gate, including symlink aliases. Missing artifact directories retain
+their missing suffix after resolving the existing ancestor; unresolved ancestors
+hold admission. Importing an externally controlled
+task and approving its switch both refuse existing workers in an overlapping
+directory, including workers that started before the task was imported. Import
+admission and worker reservations serialize in the same canon transaction; an
+identical import retry remains idempotent. Reservations survive loss of
+observations and restart; a terminal worker turn releases its reservation, even
+when the worker reports a provider connection failure. A synthesized
+`connection_lost` finish is not terminal evidence and retains the reservation.
+Input refused locally before sending a request preserves the existing turn's
+binding, or releases a new idle-turn reservation that never ran. Ambiguous
+input outcomes remain reserved as unknown. Every accepted worker input
+rebinds its reservation to the resulting turn before an older completion can
+release it, including a turn that became idle during steering. An unreadable
+resulting turn remains reserved as unknown. Steering checks the same gate,
+and an idle worker needs a new reservation before its next turn. Read-only
+snapshots and an explicit user interrupt remain available during rollback.
+Quota-based worker replacement rechecks the switch gate before selection and
+launch. An uncertain replacement launch retains the same directory reservation;
+a settled prior attempt cannot make that new launch safe to release.
+The same gate covers `dispatch_work`'s source repository and Git metadata, shared
+allocator clone, prospective task worktree and run evidence directory before
+allocation, even when that dispatch creates a new task identity.
+
+The operator records the old service state, disables its launch intent, stops it
+and independently verifies disabled intent, no running service, a free lock and
+no conflicting scope. Only then does `activate_switch` transfer control. Core
+stores the evidence as an opaque receipt; it never resolves external paths.
+Independent directors are not proven absent by a daemon status: the single owner
+must quiesce them before approval and keep them stopped while LINA directs work.
+
+The durable states are `approved`, `active`, `rollback_pending` and `rolled_back`.
+A failed or explicitly reversed transfer first enters `rollback_pending`, which
+blocks new runs. `release_switch` refuses while any active or unknown execution
+remains. Restart retains these reservations; timeout is not evidence of drain.
+Only durable `rolled_back` permits the operator to restore the previous service
+state, followed by a separate status verification. An interrupted operator or
+failed restoration requires explicit rollback with the retained journal.
+Preflight refusals before any external mutation leave the approval held.
+
+Switch history is append-only. Rollback preserves task facts, receipts,
+originals, worktrees, branches and produced results; it does not undo completed
+work. Rolled-back tasks remain gated as externally controlled. A rolled-back approval cannot be reused to reactivate control.
+The running-Core acceptance scenario is `e2e/m3/operational-switch.json`.
 
 ## Deferred
 
