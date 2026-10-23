@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,8 +46,29 @@ func (load workerLoad) wrap(t *testing.T, p *process) {
 	}
 	// Only this Core and its children see the fixture. Keep the real installed
 	// binary, sampler and CPU affinity; no product flag or sampler override.
-	p.command.Args = append([]string{bwrap, "--die-with-parent", "--bind", "/", "/", "--ro-bind", load.path, "/proc/loadavg", "--"}, p.command.Args...)
+	pidfile := load.path + ".core-pid"
+	// --dev-bind preserves /dev/null and other device semantics used by Git
+	// and Core's own sandbox probe. The shell execs Core at the recorded PID;
+	// graceful shutdown targets Core, while forced cleanup kills the launcher
+	// and --die-with-parent reaps its child.
+	p.command.Args = append([]string{bwrap, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", load.path, "/proc/loadavg", "--", "/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; shift; exec "$@"`, "worker-load", pidfile}, p.command.Args...)
 	p.command.Path = bwrap
+	p.signal = func(signal os.Signal) error {
+		raw, err := os.ReadFile(pidfile)
+		if err != nil {
+			return err
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err != nil || pid <= 0 {
+			return fmt.Errorf("invalid fixture Core pid: %q", raw)
+		}
+		child, err := os.FindProcess(pid)
+		if err != nil {
+			return err
+		}
+		defer child.Release()
+		return child.Signal(signal)
+	}
 }
 
 func workerDispatchRecords(ctx context.Context, h *harness) ([]dispatch.Record, error) {
