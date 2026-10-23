@@ -339,5 +339,16 @@ func (r *conversationRuntime) prepareCodingDecision(turnID string, bindings map[
 			}, "required": []string{"id", "severity", "file", "claim"}, "additionalProperties": false}},
 		}, "required": []string{"decision", "evidence"}, "additionalProperties": false},
 	})
-	return []provider.ToolDecl{decl}, err
+	if err != nil {
+		return nil, err
+	}
+	declarations := []provider.ToolDecl{decl}
+	if c.Phase == "delivery" {
+		read, err := r.prepareCodingEvidence(turnID, bindings)
+		if err != nil {
+			return nil, err
+		}
+		declarations = append(declarations, read)
+	}
+	return declarations, nil
 }

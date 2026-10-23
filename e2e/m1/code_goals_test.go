@@ -462,6 +462,9 @@ func installedCodeGoal(t *testing.T, mode string) {
 		t.Fatalf("restart replayed work: %s -> %s; calls=%d", before, after, calls.Load())
 	}
 	if strings.HasPrefix(mode, "completion-") {
+		if strings.Count(string(after), "owner-path-check\n") != 1 {
+			t.Fatalf("owner path check missing or rerun: %s", after)
+		}
 		db, closeDB := installedAcceptanceStore(t, h)
 		defer closeDB()
 		var card work.Card

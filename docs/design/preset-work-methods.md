@@ -141,6 +141,11 @@ Task cards retain completion evidence separately from worker execution,
 manager acceptance and application. An applied result may still be claimed;
 the work display says "not verified" and does not count that claim as verified
 completion. `coding_decision` accepts the same optional `completion` request.
+The manager's `read_coding_delivery` reopens only the Core observations already
+supplied for its assigned receipt and head: PR checks and reviews, diff and base
+design. It reads no other task or conversation and reruns no command. The manager
+still judges whether those observations establish the required evidence kind;
+a green PR alone does not establish an owner-path run.
 Core resolves it under the prepared manager policy and retains the assessment
 with the accepted receipt and head. Git application of that same delivery uses
 the retained assessment, including after restart; it does not require a live

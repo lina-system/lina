@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/result"
@@ -166,10 +167,22 @@ func scriptedCodingManager(t *testing.T, w http.ResponseWriter, request any, com
 		// Exercise the reference boundary with a real successful Core tool call.
 		// Evidence-kind interpretation remains the manager's responsibility.
 		if last.Type != "function_call_output" {
-			emitPersonaCall(w, "owner-path-observation", "query_records", map[string]any{"search": "", "kind": "goal", "after": "", "limit": 10})
+			emitPersonaCall(w, "owner-path-observation", "read_coding_delivery", map[string]any{})
 			return true
 		}
-		methodologyOutput(t, req, "ok", nil)
+		var observation struct {
+			Source string
+			Head   string
+			PR     antigravity.PullRequest `json:"pull_request"`
+		}
+		methodologyOutput(t, req, "ok", &observation)
+		ownerPath := false
+		for _, check := range observation.PR.Checks {
+			ownerPath = ownerPath || check.Name == "owner-path-run" && check.Status == "COMPLETED" && check.Conclusion == "SUCCESS"
+		}
+		if observation.Source != "core_observation" || observation.Head == "" || observation.PR.Head != observation.Head || !ownerPath {
+			t.Errorf("missing checked owner path: %+v", observation)
+		}
 		args["completion"] = completion[0]
 	}
 	emitPersonaCall(w, "coding-decision", "coding_decision", args)
