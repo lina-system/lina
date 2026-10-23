@@ -421,6 +421,16 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 				card, err = work.New(db).Get(ctx, record.ID)
 				return err == nil
 			}
+			if mode == "needs-sign-in" {
+				wait("sign-in refusal", func() bool { return read() && record.Code == "needs_sign_in" && record.State == "queued" })
+				if card.Run != nil || card.Receipt != nil || card.Active {
+					t.Fatal("refused session created a worker run or receipt", card)
+				}
+				if scenario.afterFinish != nil {
+					scenario.afterFinish(t, h, fixture, record)
+				}
+				return
+			}
 			wait("progress before finish", func() bool {
 				return read() && card.Active && card.Receipt == nil && len(card.Stages) > 0 && card.Stages[0].Source == "worker_report" && strings.Contains(card.Stages[0].Summary, "Working on result.txt")
 			})

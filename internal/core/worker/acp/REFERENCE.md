@@ -114,3 +114,19 @@ ends when the read loop consumes the load response, preserving live updates.
 Terminal snapshots retain a copy of the finish and conservatively keep effects
 unknown after tool activity, unknown update types or unfinished requests. Core
 MCP admission latches tool activity even when an answered call is no longer pending.
+
+## Grok handshake (#759)
+
+- **Seen:** The protocol measurements and issue #759 record Grok Build 1.0.68
+  answering ACP v1 with `loadSession`, `session/list`, `session/resume` and
+  `session/close`. Its version is `_meta.agentVersion`, alongside host details.
+  Without sign-in, `session/new` returns -32000. The existing Grok profile probes
+  `grok --version` and starts `grok --no-auto-update agent stdio`.
+- **Inferred:** Keep the CLI version as readiness and installation evidence.
+  Store only the handshake version and known capability names, never raw
+  metadata, nested capability metadata or authentication descriptions. Observed
+  capabilities do not enable unimplemented adapter operations.
+- **Unknown:** A signed-in vendor account round trip remains unverified. The
+  synthetic installed-Core scenario proves dispatch and receipt wiring, not a
+  vendor release. This implements the native LINA contract; no external harness
+  or memory-system behavior is ported.
