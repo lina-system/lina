@@ -162,9 +162,16 @@ remain unchanged. Existing unrelated executable hooks or a custom hooks path
 refuse the allocation rather than being disabled; a guard failure is a known
 pre-dispatch failure. Core's fixed Git administration can still fetch the next
 landed base and create a dependent worktree under the shared guard.
-Scheduled workers publish to origin's URL directly: a named-remote push also
-updates local tracking refs, which remain protected. The target remote and
-assigned branch are unchanged, and publication never disables the guard.
+A worker pushes its assigned branch with an ordinary `git push`, naming either
+the remote or its URL. Any supported Git version may then update the
+remote-tracking ref that mirrors that branch, so the guard permits exactly
+`refs/remotes/<remote>/<assigned branch name>` and nothing else under
+`refs/remotes/`. Every other remote-tracking ref, the protected heads and
+`refs/lina/*` stay closed, and publication never disables the guard.
+A clone that already holds a guard written by an earlier Core keeps serving its
+worktrees: Core recognizes its own guard by its header and binding use and
+replaces it in place on the next allocation. A hook Core did not write still
+refuses the allocation.
 The installed-Core [headless work-area scenario](../../e2e/m2/work-area.json)
 allocates two real linked worktrees, rejects cross-task branch updates, deletion
 and renaming into a reserved branch, commits on each assigned branch, and retains
@@ -1057,6 +1064,10 @@ worker notices. `worker_snapshot` can return the recorded terminal outcome when
 no live session remains, explicitly marked non-live; that record cannot authorize
 worker control. Unstarted completion follow-ups resume from canon after restart;
 a claimed turn is never replayed and a committed reply is not duplicated.
+A successful completion committed before the restart settles that exact turn's
+recovery record, so a restart never presents the finished session as an unknown
+live placeholder or recovers it again. Failed and transport-loss notices stay
+unknown until the thread is read.
 Channel replies follow the completion back to its original input, retaining that
 input's address and the existing outbound delivery identity across restart.
 Recovery resolves the retained channel inbox address and its current most-specific
@@ -1239,6 +1250,11 @@ The lifecycle adapter in #747 registers `claude-acp`, `cursor`, `gemini` and
 `grok` with `dispatch_work`; `claude` retains the headless adapter pending the
 worker evaluation. Each attempt records its version again after session
 initialization and reports an unverified version while continuing the task.
+Gemini CLI installation reads its version through `gemini --acp` and
+`initialize`, without opening a session or requiring sign-in. Dispatch uses the
+same profile and shared ACP adapter. A `session/new` authentication refusal
+reports Gemini as needing sign-in; a successful prompt still needs observed
+Git and PR evidence before Core derives a completion receipt.
 Synthetic protocol tests do not add vendor versions to the verified list.
 Progress is masked and recorded on the active work card as `worker_report`,
 using the existing ledger. Stream fragments retain their masking context in
@@ -2128,8 +2144,11 @@ or an executable. The file contains:
   requires the criterion's `expected` record fields. Registration supplies the
   reader, never authority to perform the effect being verified.
 
-QA and outcome checks run in a disposable checkout of the observed merge commit.
-Deploy uses that same pinned revision. Core passes `LINA_GOAL_REVISION`,
+QA and a task-bound outcome check run in a disposable checkout of that task's
+current result. A repair whose QA passes replaces the failed commit for those
+checks; the merge check stays on the historical merge commit. A task with no
+repair uses its observed merge commit. Deploy uses the pinned revision of the
+service repository. Core passes `LINA_GOAL_REVISION`,
 `LINA_GOAL_TARGET` and `LINA_GOAL_ACTION` to the registered command. Its JSON output
 contains `revision`, `target`, `passed` (boolean) and a nonempty `evidence` string
 describing the observation. Core requires matching revision and target, retains
@@ -2155,7 +2174,9 @@ output and current external evidence again before closing the goal. An earlier
 merge remains valid when its recorded commit is still an ancestor of the current
 base; a base that removed the commit fails the check. A custom criterion targeting
 a repository uses that repository's observed merged revision, independently of
-the service repository. Completion
+the service repository. A custom criterion that names a task uses that task's
+current result revision, the same revision its QA check uses. Evidence recorded
+against a superseded merge cannot meet it. Completion
 returns to the originating conversation and survives restart without repeating
 effects. An uncertain worker, merge, QA or deployment is observed; it is never
 re-executed by the observation path. A deployment retains its original connection

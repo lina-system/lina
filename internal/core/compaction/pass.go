@@ -19,11 +19,14 @@ var (
 
 // Policy counts the complete adapter request, including instructions and tools.
 // Zero optional values select the documented defaults. Equality triggers fitting.
-type Policy struct{ ContextWindow, TriggerPercent, KeepToolTokens, KeepUserTokens int }
+type Policy struct{ ContextWindow, TriggerPercent, KeepToolTokens, KeepUserTokens, EarlyPercent int }
 
 func (p Policy) normalized() (Policy, error) {
 	if p.TriggerPercent == 0 {
 		p.TriggerPercent = 90
+	}
+	if p.EarlyPercent == 0 {
+		p.EarlyPercent = 70
 	}
 	if p.KeepToolTokens == 0 {
 		p.KeepToolTokens = 40000
@@ -31,13 +34,18 @@ func (p Policy) normalized() (Policy, error) {
 	if p.KeepUserTokens == 0 {
 		p.KeepUserTokens = 20000
 	}
-	if p.ContextWindow <= 0 || p.TriggerPercent < 1 || p.TriggerPercent > 100 || p.KeepToolTokens < 0 || p.KeepUserTokens < 0 {
+	if p.ContextWindow <= 0 || p.TriggerPercent < 1 || p.TriggerPercent > 100 || p.KeepToolTokens < 0 || p.KeepUserTokens < 0 || p.EarlyPercent < 1 || p.EarlyPercent > p.TriggerPercent {
 		return p, ErrPass
 	}
 	return p, nil
 }
 func (p Policy) threshold() int {
 	return p.ContextWindow/100*p.TriggerPercent + p.ContextWindow%100*p.TriggerPercent/100
+}
+
+// earlyThreshold is P, the share at which a cold boundary may compact early.
+func (p Policy) earlyThreshold() int {
+	return p.ContextWindow/100*p.EarlyPercent + p.ContextWindow%100*p.EarlyPercent/100
 }
 
 // Record is a trusted, authorized ledger projection. Note is a deterministic
@@ -84,7 +92,11 @@ func (t Text) valid() bool {
 }
 
 type Pass struct {
-	Policy    Policy
+	Policy Policy
+	// Cold marks a turn boundary whose conversation cache has expired, so an
+	// early pass may rewrite history before the cache is warm again. Follow-up
+	// requests inside a turn never set it.
+	Cold      bool
 	Count     func(provider.Request) int
 	Summarize func(context.Context, PassSegment) (Text, error)
 	// Prepared returns immediately. Only a completed preparation for this exact
@@ -99,7 +111,9 @@ type Fitted struct {
 }
 
 // Sizes contains no content and can safely enter Details or the ledger.
-type Sizes struct{ Total, Threshold, Window, Fixed, Summary, History, Packet, Input, Active int }
+// Trigger is the boundary this pass fits below: P for a cold early pass and
+// Threshold otherwise.
+type Sizes struct{ Total, Threshold, Trigger, Window, Fixed, Summary, History, Packet, Input, Active int }
 
 func textItem(role, text string) provider.Item {
 	raw, _ := json.Marshal(struct {
@@ -150,6 +164,10 @@ func (v View) request() provider.Request {
 }
 func (p Pass) measure(v View) (Sizes, error) {
 	s := Sizes{Window: p.Policy.ContextWindow, Threshold: p.Policy.threshold()}
+	s.Trigger = s.Threshold
+	if p.Cold {
+		s.Trigger = p.Policy.earlyThreshold()
+	}
 	r := v.Request
 	r.Items = copyItems(v.Fixed)
 	s.Fixed = p.Count(r)
@@ -227,6 +245,13 @@ func (p Pass) Fit(ctx context.Context, v View, inTurn bool) (Fitted, error) {
 	v = copyView(v)
 	source := copyRecords(v.History)
 	result := func() (Fitted, error) { s, e := p.measure(v); return Fitted{View: v, Sizes: s}, e }
+	gate := p.Policy.threshold()
+	// Only a turn boundary whose cache already expired may rewrite history
+	// early; a warm cache or a follow-up request keeps the trigger.
+	cold := p.Cold && !inTurn
+	if cold {
+		gate = p.Policy.earlyThreshold()
+	}
 	fit := func() (Fitted, bool, error) {
 		o, e := result()
 		if e != nil {
@@ -238,8 +263,19 @@ func (p Pass) Fit(ctx context.Context, v View, inTurn bool) (Fitted, error) {
 		}
 		return o, false, nil
 	}
-	if out, ok, e := fit(); ok || e != nil {
-		return out, e
+	first, err := result()
+	if err != nil {
+		return first, err
+	}
+	// Cold compares against P: it rewrites the history now because the rewrite
+	// costs no cache, and does not stop merely because the request fits.
+	limit := first.Sizes.Threshold
+	if cold {
+		limit = gate
+	}
+	if first.Sizes.Total < limit {
+		first.Request = v.request()
+		return first, nil
 	}
 	// Only old tool outputs outside the fresh tail may be replaced. Calls,
 	// reasoning, tool ids and item placement are retained byte-for-byte.
@@ -271,8 +307,10 @@ func (p Pass) Fit(ctx context.Context, v View, inTurn bool) (Fitted, error) {
 			e.Item = stub
 		}
 	}
-	if out, ok, e := fit(); ok || e != nil {
-		return out, e
+	if !cold {
+		if out, ok, e := fit(); ok || e != nil {
+			return out, e
+		}
 	}
 	// Summaries consume original source items, never the deterministic stubs.
 	// Publication uses exact source items, never the shortened request projection.

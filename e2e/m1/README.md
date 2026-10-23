@@ -55,6 +55,16 @@ Failure coverage also includes:
   trailing context, tool discovery, later inputs and result text that appears
   only in retrieved context.
 
+- `TestM3WorkPanelEvaluation` records the fixed T-16 corpus
+  ([`work-panel.json`](../m3/work-panel.json)) through installed Core and the
+  real TUI at 120x34 in both languages and glyph modes, then reports E1 to E14
+  from the frames and Core's own card order. The driver admits each 일's corpus
+  graph as a step-graph revision before recording its work, and checks Core's
+  projected stage list against the graph. `TestM3WorkPanelChecksRejectWrongFrames`
+  is its self-test: it breaks one thing per check and requires that check to
+  fail. A check whose input the build does not publish yet reports missing
+  input, never a pass.
+
 - `TestM2WorkerDelayedCompletionOutput`: the model fixture selects the latest
   scenario input or worker result even when user-role ContextPacket evidence
   follows it. After recovery, a delayed first-turn completion arrives between
@@ -158,3 +168,12 @@ Core resolves the quote through memory management before and after restart;
 canon inspection verifies that item/revision evidence contains no quote text.
 The management renderer's synthetic [capture](../../evidence/generated-ui/memory-quotes.png)
 shows a quote and an erased-source status.
+
+`TestM1MessengerStoreInstalledCore` runs the real messenger store inside
+installed Core with a scripted adapter. Core reads two pages of one chat, an
+edit and a platform-reported deletion, stops between pages, and resumes from the
+committed cursor; a later run that re-serves the newest page adds nothing. The
+scenario checks the ledger records and their speaker kinds, the supersession and
+retraction relations, the tombstone that keeps the legacy reference, the
+coverage and cursor rows, the one index's documents with origin `messenger`, and
+that a URL secret is masked while the URL's public text stays.

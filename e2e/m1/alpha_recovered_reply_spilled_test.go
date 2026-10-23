@@ -84,7 +84,20 @@ func TestAlphaRecoveredReplySpilledCompletionEndToEnd(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "snapshot-release"), []byte("read now"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	waitRecovery(t, h, func() bool { return workerRecoveryReactions(t, h) == 1 })
+	// Wait for the delivery this case asserts, not for any completed worker
+	// delivery: the barrier and the assertions read the same committed rows
+	// through a normal read-only connection, so they cannot disagree about
+	// this turn. The inspection connection used elsewhere only promises a
+	// stable snapshot while writers are excluded.
+	last := ""
+	waitRecovery(t, h, func() bool {
+		state := alphaSpilledDeliveryState(t, h, conversation)
+		if state != last {
+			t.Logf("recovered delivery state=%q", state)
+			last = state
+		}
+		return state == "completed"
+	})
 
 	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
@@ -100,7 +113,6 @@ func TestAlphaRecoveredReplySpilledCompletionEndToEnd(t *testing.T) {
 	if stored.bytes <= ledger.InlineBytes {
 		t.Fatalf("retained completion is %d bytes, not above the inline limit %d", stored.bytes, ledger.InlineBytes)
 	}
-	t.Logf("retained completion: %d bytes stored as a material; delivery turn completed", stored.bytes)
 	// The delivery completed: the completion's inbox entry owns a completed turn.
 	var state string
 	if err := db.Read(h.ctx, func(tx *canon.Tx) error {
@@ -111,6 +123,7 @@ func TestAlphaRecoveredReplySpilledCompletionEndToEnd(t *testing.T) {
 	if state != "completed" {
 		t.Fatalf("delivery turn state=%s, want completed", state)
 	}
+	t.Logf("retained completion: %d bytes stored as a material; delivery turn completed", stored.bytes)
 	// Raw-column attribution finds nothing for a completed delivery. This is
 	// the acceptance's historical read and the reported failure.
 	if got, err := alphaRecoveredReply(h.ctx, db, alphaInlineBodies{}, conversation, attempt); err != nil || got != (alphaRecoveryReply{}) {
@@ -177,7 +190,8 @@ func alphaSpilledCompletion(t *testing.T, db *canon.Store, root, conversation st
 			return err
 		}
 		defer rows.Close()
-		for rows.Next() {
+		// ORDER BY rowid DESC, so the first row is the latest completion.
+		if rows.Next() {
 			var id, body, material string
 			var revision int64
 			if err := rows.Scan(&id, &body, &material, &revision); err != nil {
@@ -223,4 +237,29 @@ func alphaSpilledRecovery(t *testing.T, h *harness) recovery.Record {
 		t.Fatalf("recovery did not settle one finished attempt: %+v", records)
 	}
 	return records[0]
+}
+
+// alphaSpilledDeliveryState names the newest retained completion's delivery
+// turn in the conversation: empty until its inbox entry has a turn, then the
+// turn's state. Each read uses a normal read-only connection, so the barrier
+// sees the same committed rows as the assertions that follow it.
+func alphaSpilledDeliveryState(t *testing.T, h *harness, conversation string) string {
+	t.Helper()
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(t.Context())
+	var state string
+	if err := db.Read(h.ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, `SELECT coalesce((SELECT t.state
+ FROM conv_event w
+ JOIN inbox i ON i.native_id=w.id AND i.source='worker-finish' AND i.conversation=w.conversation_id
+ JOIN turn_runs t ON t.inbox_id=i.id
+ WHERE w.conversation_id=? AND w.scaffold_kind='worker_completion'
+ ORDER BY w.rowid DESC LIMIT 1),'')`, conversation).Scan(&state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return state
 }

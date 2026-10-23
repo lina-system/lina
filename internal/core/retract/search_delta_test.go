@@ -10,6 +10,7 @@ import (
 )
 
 func TestSearchRecoveryKeepsOtherHiddenAncestors(t *testing.T) {
+	t.Parallel()
 	db, removals, flow, _, _ := memoryFixture(t)
 	first := seedMemory(t, db, flow, "first", "first-conversation", "도서관 first")
 	second := seedMemory(t, db, flow, "second", "second-conversation", "도서관 second")
@@ -92,6 +93,7 @@ func TestSearchRecoveryKeepsOtherHiddenAncestors(t *testing.T) {
 }
 
 func TestSearchRefreshDeduplicatesCyclicEvidence(t *testing.T) {
+	t.Parallel()
 	db, removals, flow, _, _ := memoryFixture(t)
 	root := seedMemory(t, db, flow, "source", "conversation", "도서관 root")
 	child, err := deriveMemory(t, db, root.ID, "도서관 child")
@@ -120,6 +122,7 @@ func TestSearchRefreshDeduplicatesCyclicEvidence(t *testing.T) {
 }
 
 func TestMemoryStateRefreshOnlyTouchesDependents(t *testing.T) {
+	t.Parallel()
 	db, _, flow, _, _ := memoryFixture(t)
 	root := seedMemory(t, db, flow, "source", "conversation", "도서관 root")
 	child, err := deriveMemory(t, db, root.ID, "도서관 child")
@@ -147,9 +150,11 @@ func TestMemoryStateRefreshOnlyTouchesDependents(t *testing.T) {
 }
 
 func TestForgetWritesOnlyHiddenMemory(t *testing.T) {
+	t.Parallel()
 	for _, count := range []int{1, 100, 400} {
 		for _, derived := range []bool{false, true} {
 			t.Run(fmt.Sprintf("active-%d/derived-%t", count, derived), func(t *testing.T) {
+				t.Parallel()
 				db, removals, flow, _, _ := memoryFixture(t)
 				root := seedMemory(t, db, flow, "source", "conversation", "도서관 violet source")
 				seedUnrelatedSearchItems(t, db, count-1)
