@@ -293,9 +293,10 @@ func (s *Store) commitLocked(ctx context.Context, c Change, a Actor, operation *
 		}
 		if previous.todo != nil && previous.todo.Repeat != nil && candidate.todo != nil && candidate.todo.Repeat != nil {
 			before, after := previous.todo.Repeat, candidate.todo.Repeat
-			if before.Next != after.Next || before.Completed != after.Completed || before.Exhausted != after.Exhausted {
+			completed := requestedCompletion && previous.state != "completed"
+			if completed || before.Next != after.Next || before.Completed != after.Completed || before.Exhausted != after.Exhausted {
 				reason := "advanced"
-				if requestedCompletion && previous.state != "completed" {
+				if completed {
 					reason = "completed"
 				}
 				occurrence = &canon.RecordOccurrence{Record: c.ID, At: now.UTC().Format(time.RFC3339Nano), From: before.Next, Next: after.Next, Reason: reason, Exhausted: after.Exhausted}
