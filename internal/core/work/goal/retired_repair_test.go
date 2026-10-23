@@ -34,10 +34,14 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	retired := false
 	for _, a := range revisionSnapshot(t, e).Actions {
-		if a.ID == managers[1].ID && (a.State != "finished" || !a.Superseded || a.RetirementReconciled) {
-			t.Fatalf("old report did not retain pending retirement: %+v", a)
+		if a.ID == managers[1].ID {
+			retired = a.State == "finished" && a.Superseded
 		}
+	}
+	if !retired {
+		t.Fatal("old report did not retain the superseded assessment")
 	}
 	cfg := e.cfg
 	cfg.Epoch++
@@ -46,8 +50,8 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Reports retain obsolete receipts; reconciliation clears their markers.
-	// Restart before that step to prove the unfinished retirement is durable.
+	// Definition refresh may already clear a retired assessment. Restart before
+	// derivation to prove its durable receipt cannot strand the failed task.
 	if err = e.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
