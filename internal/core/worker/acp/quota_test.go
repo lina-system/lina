@@ -190,3 +190,35 @@ func TestFailureAdvertisementVersionAndScope(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeToolOutcomeFencesReplacement(t *testing.T) {
+	for _, tc := range []struct {
+		name, updates string
+		known         bool
+	}{
+		{"missing outcome", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write"}`, false},
+		{"running", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write","status":"in_progress"}`, false},
+		{"completed", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write"},{"sessionUpdate":"tool_call_update","toolCallId":"write","status":"completed"}`, true},
+		{"failed", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write"},{"sessionUpdate":"tool_call_update","toolCallId":"write","status":"failed"}`, true},
+		{"unknown status", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write","status":"future"}`, false},
+		{"update only", `{"sessionUpdate":"tool_call_update","toolCallId":"write","title":"Write"}`, false},
+		{"title after outcome", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write","status":"completed"},{"sessionUpdate":"tool_call_update","toolCallId":"write","title":"Done"}`, true},
+		{"one of two pending", `{"sessionUpdate":"tool_call","toolCallId":"write","title":"Write"},{"sessionUpdate":"tool_call","toolCallId":"read","title":"Read","status":"completed"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, ctx, l, s := fixture(t)
+			a.cfg.Environment = append(a.cfg.Environment, "ACP_INIT_META="+failureAdvertisement, "ACP_UPDATES=["+tc.updates+","+failureUpdate("limit", `[]`, "error")+"]")
+			th, err := a.Start(ctx, l, s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if f := terminal(t, ctx, a); f.Failure != worker.QuotaFailure {
+				t.Fatal(f)
+			}
+			snap, err := a.Snapshot(ctx, th)
+			if err != nil || snap.EffectsKnown != tc.known {
+				t.Fatalf("effects known=%v want=%v: %v", snap.EffectsKnown, tc.known, err)
+			}
+		})
+	}
+}

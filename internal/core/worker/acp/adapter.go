@@ -70,6 +70,8 @@ type Adapter struct {
 	extensionObserved time.Time
 	lastFinish        *worker.Finish
 	quotaRows         []provider.QuotaRow
+	nativeTools       map[string]bool
+	nativeOverflow    bool
 }
 
 var _ worker.Adapter = (*Adapter)(nil)
@@ -316,7 +318,7 @@ func (a *Adapter) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 		copy := *a.lastFinish
 		finish = &copy
 	}
-	return worker.ThreadSnapshot{Finish: finish, EffectsKnown: finish != nil && finish.Failure != worker.ConnectionFailure && len(a.pending) == 0, Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Capabilities: a.Capabilities(), Output: a.result.Output, Pending: a.pendingLocked()}, nil
+	return worker.ThreadSnapshot{Finish: finish, EffectsKnown: finish != nil && finish.Failure != worker.ConnectionFailure && a.effectsKnownLocked(), Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Capabilities: a.Capabilities(), Output: a.result.Output, Pending: a.pendingLocked()}, nil
 }
 func (a *Adapter) Result() Result {
 	a.mu.Lock()

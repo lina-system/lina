@@ -2435,7 +2435,8 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   categories/actions are classified. Prompt RPC errors and stop reasons retain
   precedence; warning updates and unknown metadata cannot finish a turn.
   A terminal ACP snapshot carries its observed finish; transport loss leaves
-  effects unknown. Dispatch persists streamed quota measurements before session
+  effects unknown, as do native tool calls without a reported terminal outcome.
+  Dispatch persists streamed quota measurements before session
   teardown and uses that snapshot to fence the one allowed replacement.
   The synthetic installed-Core scenario is `e2e/m2/acp_quota_test.go`.
 - Every child is owned through `kit/proc` and reaped with its process tree; LINA's own model credential is removed from its environment.

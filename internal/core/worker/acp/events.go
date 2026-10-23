@@ -127,10 +127,12 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 			p.Text = v.AgentThoughtChunk.Content.Text.Text
 		}
 	case v.ToolCall != nil:
+		a.observeNativeTool(string(v.ToolCall.ToolCallID), v.ToolCall.Status, true)
 		p.Phase = "tool_call"
 		p.ItemID = string(v.ToolCall.ToolCallID)
 		p.Text = v.ToolCall.Title
 	case v.ToolCallUpdate != nil:
+		a.observeNativeTool(string(v.ToolCallUpdate.ToolCallID), v.ToolCallUpdate.Status, false)
 		p.Phase = "tool_call_update"
 		p.ItemID = string(v.ToolCallUpdate.ToolCallID)
 		if v.ToolCallUpdate.Title != nil {
@@ -183,4 +185,41 @@ func (a *Adapter) emit(e worker.Event) bool {
 	case <-a.life.Done():
 		return false
 	}
+}
+
+// Native tools do not use the Core work-tool request map. Their explicit outcome
+// is required before a failed turn can authorize replacement of its worker.
+func (a *Adapter) observeNativeTool(id string, status *wire.ToolCallStatus, initial bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if id == "" {
+		a.nativeOverflow = true
+		return
+	}
+	if a.nativeTools == nil {
+		a.nativeTools = map[string]bool{}
+	}
+	known, exists := a.nativeTools[id]
+	if !exists && len(a.nativeTools) >= 1024 {
+		a.nativeOverflow = true
+		return
+	}
+	if initial {
+		known = false
+	}
+	if status != nil {
+		known = *status == wire.ToolCallStatusCompleted || *status == wire.ToolCallStatusFailed
+	}
+	a.nativeTools[id] = known
+}
+func (a *Adapter) effectsKnownLocked() bool {
+	if len(a.pending) != 0 || a.nativeOverflow {
+		return false
+	}
+	for _, known := range a.nativeTools {
+		if !known {
+			return false
+		}
+	}
+	return true
 }

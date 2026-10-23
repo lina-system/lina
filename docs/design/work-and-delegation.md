@@ -1116,6 +1116,9 @@ One adapter drives every worker that speaks the Agent Client Protocol, version 1
   quota rows; context-window usage is not subscription quota. Missing values
   remain unknown. Core saves reported rows before closing the session, and an
   exhausted worker permits only the existing single replacement after cleanup.
+  Native tool calls require a reported `completed` or `failed` outcome before
+  the adapter marks their effects known. An unfinished, unknown or untracked
+  tool outcome prevents automatic replacement even after a terminal reply.
 - **Never sent.** `authenticate` and `logout`, because the person signs in to a worker in the worker itself; `session/delete`; and `session/set_mode`. `session/close` is sent only on an explicit close.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
 
