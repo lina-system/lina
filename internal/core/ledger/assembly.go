@@ -3,6 +3,10 @@ package ledger
 
 import "github.com/thisisjun786/lina/kit/provider"
 
+// InputBeforeContextV1 identifies the layout used by new conversation requests.
+// An absent RequestLayout denotes historical context-before-input assembly.
+const InputBeforeContextV1 = "input-before-context-v1"
+
 // Reference names immutable source evidence; it never contains a context body.
 type Reference struct{ ID, Revision string }
 
@@ -10,6 +14,7 @@ type Assembly struct {
 	AgentID, PersonaRevision string
 	WorkMethodRevision       string `json:",omitempty"`
 	InstructionFormat        string `json:",omitempty"`
+	RequestLayout            string `json:",omitempty"`
 	AgentName                string `json:",omitempty"`
 	OwnerPersonID            string `json:",omitempty"`
 	Skills, Items            []Reference

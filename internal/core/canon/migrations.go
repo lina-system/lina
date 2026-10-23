@@ -64,6 +64,7 @@ func Migrations() []Migration {
 		{Version: 50, SQL: doneEvidenceSchema},
 		{Version: 51, SQL: conversationQuestionsSchema},
 		{Version: 52, SQL: workerRecoverySchema},
+		{Version: 53, SQL: retractSearchDeltaSchema},
 	}
 }
 

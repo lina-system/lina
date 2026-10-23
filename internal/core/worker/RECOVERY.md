@@ -3,13 +3,17 @@
 Contract: [Stall and failure](../../../docs/design/work-and-delegation.md#stall-and-failure).
 
 The #135 recovery path persists worker bindings and the one continuation allowance
-in canon. Installed Core marks unfinished sessions unknown before
+in canon migration 52. Installed Core marks unfinished sessions unknown before
 admission, resumes their existing Codex thread and reads the exact turn, paging
 its history without starting another turn. Missing or incomplete items, lost
 requests, failed reads and effects without independent evidence remain unknown.
 Thread completion alone cannot settle a command's external effects. A confirmed worker failure stays visible as Failed in running and progress views while its effects remain unknown; this observation does not release its directory reservation or authorize input. The event
 path and a five-minute safety sweep share this reconciliation. The sweep makes
-no model call. Confirmed successful completion evidence enters the normal result inbox;
+no model call. Transport-loss notices and confirmed terminal results have
+separate durable identities and are deduplicated independently. Previously stored
+notices remain immutable when a confirmed result is admitted under the published
+`:terminal` identity. A late loss notice cannot hide a recorded terminal result.
+Confirmed successful completion evidence enters the normal result inbox;
 its conversation response is a separate reaction and never starts a worker turn. A continuation intent commits before input; an uncertain send is
 never repeated, including after restart. The same task, thread, directory and
 prior receipts are retained. A second settled failure becomes a durable decision
@@ -37,3 +41,13 @@ when reconciliation already delivered that result. The installed-Core scenario
 `TestM2WorkerDelayedCompletionOutput` recovers one turn, continues the worker,
 and delivers the old completion between the new output and completion. It
 checks both stored results, file readback and result retention after restart.
+
+#999 checkpoints conversation-worker input before dispatch and after the adapter
+returns its binding. A pending input uses the existing unknown record with no
+exact turn, retaining its reservation and retry allowance. This also covers an
+active snapshot that becomes idle before the adapter receives input. A refused
+input restores the earlier record; uncertain input is never replayed. An intent
+without an exact turn remains held after restart. The separate
+`e2e/m2/worker-followup-recovery.json` scenario kills installed Core after a
+follow-up produces a file without notifications: an acknowledged turn is read
+back and its result delivered once, while a missing reply retains uncertainty.

@@ -35,15 +35,16 @@ func conversationClient(t *testing.T, h *harness, extra ...protocol.Capability) 
 	if !ok || history.ConversationID == nil {
 		t.Fatal("no conversation")
 	}
+	// Finish admission before live events can enter the readiness receive loop.
+	if err := awaitConversationAdmission(h.ctx, c); err != nil {
+		t.Fatal(err)
+	}
 	topic := "conversation:" + *history.ConversationID
 	if _, err = c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
 		t.Fatal(err)
 	}
 	if snapshot, err := c.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
 		t.Fatal("no history snapshot")
-	}
-	if err := awaitConversationAdmission(h.ctx, c); err != nil {
-		t.Fatal(err)
 	}
 	return c, *history.ConversationID
 }

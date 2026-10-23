@@ -22,10 +22,35 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
+// A queued start can predate the follow-up's returned binding. Serialize its
+// read with input and only checkpoint the adapter's current exact turn.
+func (e *workerSession) bindStartedRecovery(ctx context.Context, th worker.Thread) error {
+	e.control.Lock()
+	defer e.control.Unlock()
+	readCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	snap, err := e.adapter.Snapshot(readCtx, e.thread)
+	if err != nil || snap.Thread != th {
+		return err
+	}
+	if err := e.bindRecovery(ctx, th); err != nil {
+		return err
+	}
+	e.recoveryMu.Lock()
+	defer e.recoveryMu.Unlock()
+	if e.recovery.Thread == th {
+		e.transferRecoveryLease(th.TurnID)
+	}
+	return nil
+}
+
 func (e *workerSession) bindRecovery(ctx context.Context, th worker.Thread) error {
 	e.recoveryMu.Lock()
 	defer e.recoveryMu.Unlock()
 	rec := e.recovery
+	if rec.Thread.TurnID == "" && rec.RetryFrom != "" && rec.RetryFrom == th.TurnID {
+		return nil // The previous turn cannot bind an uncertain follow-up.
+	}
 	fresh := rec.ID == ""
 	if fresh {
 		packet, err := secrets.Mask(e.packet)
@@ -433,8 +458,9 @@ const recoveryContinuation = "Continue the same task from the current thread and
 func (e *workerSession) transferRecoveryLease(turn string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.reservationTurn = turn
 	for key, activity := range e.active {
-		if strings.HasPrefix(key, "recovery:") && strings.TrimPrefix(key, "recovery:") != turn {
+		if strings.HasPrefix(key, "unknown:") || strings.HasPrefix(key, "recovery:") && strings.TrimPrefix(key, "recovery:") != turn {
 			e.active[turn] = activity
 			delete(e.active, key)
 		}

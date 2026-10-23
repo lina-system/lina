@@ -262,3 +262,32 @@ func TestConversationTurnProviderFailure(t *testing.T) {
 	assertTurnPublished(t, r, input.ID, notice.ID)
 	assertTurnRequests(t, p, 1)
 }
+
+func TestFailedWorkerReactionKeepsDeclarationsWithoutExecution(t *testing.T) {
+	r, _ := turnRuntime(t)
+	var first provider.Request
+	for _, failure := range []bool{false, true} {
+		input, inboxID := admitTurnInput(t, r, fmt.Sprintf("reaction-%t", failure))
+		if failure {
+			input.ScaffoldKind = "worker_completion"
+		} // Unparseable completion is fail-closed.
+		s := turnState{runtime: r, input: input, turnID: "turn:" + input.ID, bindings: map[string]loop.Tool{}, filters: map[string]*conversationReplyStream{}, questions: &questionTurn{}}
+		if err := turn.New(r.db).Claim(t.Context(), s.turnID, r.conversation, inboxID); err != nil {
+			t.Fatal(err)
+		}
+		prepared, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !failure {
+			first = prepared.Request
+			continue
+		}
+		if len(first.Tools) == 0 || !reflect.DeepEqual(first.Tools, prepared.Request.Tools) || first.Instructions != prepared.Request.Instructions {
+			t.Error("failure reaction changed fixed instructions or tool declarations")
+		}
+		if len(s.bindings) != 0 {
+			t.Fatal("failure reaction can execute tools")
+		}
+	}
+}
