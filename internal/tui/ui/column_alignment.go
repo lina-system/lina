@@ -21,6 +21,7 @@ func alignedUnicodeRows(content string, width, height int) string {
 		var line strings.Builder
 		x := 0
 		drift, pending, clipped := false, false, false
+		wider := false
 		var parserState byte
 		for row != "" {
 			seq, cells, n, next := ansi.DecodeSequence(row, parserState, nil)
@@ -33,6 +34,7 @@ func alignedUnicodeRows(content string, width, height int) string {
 				continue
 			}
 			reserved := (render.Unicode{}).Width(seq)
+			wider = wider || reserved < cells
 			if clipped || x+reserved > width {
 				clipped = true
 				continue
@@ -47,7 +49,10 @@ func alignedUnicodeRows(content string, width, height int) string {
 				drift, pending = true, true
 			}
 		}
-		if drift {
+		// A terminal can also draw a cluster wider than its reservation.
+		// Seeking backward would erase that glyph; retain the normal renderer
+		// for such a row until a wider layout is negotiated.
+		if drift && !wider {
 			repair.WriteString(ansi.CursorPosition(1, y+1))
 			repair.WriteString(ansi.ResetStyle + ansi.EraseLineRight)
 			repair.WriteString(line.String())
