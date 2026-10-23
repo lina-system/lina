@@ -1,6 +1,6 @@
 # Work panel research
 
-Research for [#604](https://github.com/thisisjun786/lina/issues/604), read on 2026-10-22 and 2026-10-23. The question: how should LINA show many pieces of work at once, and the steps inside each? The proposal under test was one manager per 일, a step graph inside, a numbered stage list outside, and a TUI work panel with one row per 일. On 2026-10-23 the owner set the panel's form: a sidebar beside the conversation with one card per 일 holding its name, elapsed time and what it is doing now. The resulting design is in [work-and-delegation.md](../design/work-and-delegation.md#step-graph), [surfaces.md](../design/surfaces.md#progress-at-a-glance) and [tui.md](../design/tui.md#work-panel-and-stage-list-t-16).
+Research for [#604](https://github.com/thisisjun786/lina/issues/604), read on 2026-10-22 and 2026-10-23. The question: how should LINA show many pieces of work at once, and the steps inside each? The proposal under test was one manager per 일, a step graph inside, a numbered stage list outside, and a TUI work panel with one row per 일. On 2026-10-23 the owner set the panel's form: a sidebar beside the conversation with one card per 일 holding its name, elapsed time and what it is doing now. The resulting design is in [work-and-delegation.md](../design/work-and-delegation.md#step-graph), [surfaces.md](../design/surfaces.md#progress-at-a-glance) and [tui.md](../design/tui.md#work-panel-and-stage-list-t-16). This note is evidence for that design, not a contract.
 
 ## Findings
 
@@ -96,7 +96,7 @@ Complaints in public trackers:
 | The graph is never drawn | No product draws one in a terminal. A narrow pane fits about 2 parallel steps. | Kept. The acceptance check refuses edge and arrow characters. |
 | Worker sessions only under the current stage | Products hide transcripts and open them on request | Kept. Sessions end when their step lands, so live sessions follow the frontier. |
 | Order: needs you, running, waiting outside, done; fold done; cap rows | Products group by state, cap rows with "+N more" and never hide running rows | Kept, with one change: the overflow row gives only the hidden count and the hidden needs-you count, under the owner's wording rule. |
-| A count such as "2 at once" on a parallel stage | The owner's wording rule: a few words per stage | Changed. The label names the first step and the number of the others. |
+| A count such as "2 at once" on a parallel stage | The owner's wording rule: a few words per stage; [the owner-session research](m4-owner-agent-sessions.md) finds that status reports and notices must be short and stripped | Changed. The label names the first step and the number of the others. |
 | Elapsed time | The owner's card; products show an age on every row; complaints about work that looks hung | Kept on the 일's card only. Worker rows under a stage show the worker and its state word, without time; run records stay in Details. |
 | The model's own checklist as the plan display | Two products turned it off by default; users call it stale | Not used. The stage list comes from the ledger, and Now changes only on a step or wait event. |
 
