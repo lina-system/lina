@@ -648,7 +648,8 @@ type QuestionForm struct {
 	PluginName string      `json:"plugin_name"`
 }
 type ReadinessFailure struct {
-	Step string `json:"step"`
+	Step   string          `json:"step"`
+	Stream *StreamMetadata `json:"stream,omitempty"`
 }
 type ReceiptRef struct {
 	ID       string `json:"id"`
@@ -4276,6 +4277,9 @@ const clientSchemaJSON = `{
       "properties": {
         "step": {
           "type": "string"
+        },
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
         }
       },
       "required": [
@@ -5589,7 +5593,8 @@ const clientSchemaJSON = `{
             "run_status",
             "background_notice",
             "connected",
-            "disconnected"
+            "disconnected",
+            "readiness_failure"
           ],
           "x-go-type": "Kind"
         },
@@ -5898,6 +5903,22 @@ const clientSchemaJSON = `{
             "properties": {
               "payload": {
                 "$ref": "#/$defs/disconnected"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "readiness_failure"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/readiness_failure"
               }
             }
           }
