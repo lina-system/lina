@@ -507,11 +507,29 @@ func TestM2InstalledCodexLive(t *testing.T) {
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	// Discovery adds call/results after the current input. Classify the latest
-	// user input, rather than mistaking a load_tools receipt for a new request.
+	// Core appends its ContextPacket after the current input. Its mandatory
+	// clock marks that boundary; retrieved evidence after it also has user
+	// role. Discovery can append call/results after the packet as well.
+	end := len(inputs)
+	for i, raw := range inputs {
+		var item struct{ Role, Content string }
+		if json.Unmarshal(raw, &item) != nil || item.Role != "developer" {
+			continue
+		}
+		stamp, refs, ok := strings.Cut(item.Content, "\nReferences: ")
+		var references []struct{ ID string }
+		if !ok || json.Unmarshal([]byte(refs), &references) != nil || len(references) != 1 || !strings.HasPrefix(references[0].ID, "clock:") {
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339Nano, stamp); err == nil {
+			end = i
+			break
+		}
+	}
 	var item struct{ Role, Content string }
 	found := false
-	for i := len(inputs) - 1; i >= 0; i-- {
+	for i := end - 1; i >= 0; i-- {
+		item.Role, item.Content = "", ""
 		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
 			found = true
 			break
