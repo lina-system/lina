@@ -4,13 +4,17 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -109,6 +113,7 @@ func assertWorkerQuotaWindows(t *testing.T, h *harness, fixture string) {
 
 func TestM2WorkerQuotaIdentityRecovery(t *testing.T) {
 	t.Parallel()
+	t.Run("completion-request-layout", testWorkerCompletionRequestLayout)
 	for _, unknownWindow := range []bool{true, false} {
 		name := "unidentified-stop"
 		if unknownWindow {
@@ -152,6 +157,68 @@ func TestM2WorkerQuotaIdentityRecovery(t *testing.T) {
 			runCodexWorkToolsWithSetup(t, scenario, "", setup, func(h *harness, stage string, _ []protocol.Question) {
 				assertRecoveredWorkerQuota(t, h, stage)
 			})
+		})
+	}
+}
+
+// Exercise the real request layout without a process or timing dependency.
+// Packet evidence must not hide a current completion or revive an old one.
+func testWorkerCompletionRequestLayout(t *testing.T) {
+	message := func(role, content string) json.RawMessage {
+		raw, err := json.Marshal(map[string]string{"role": role, "content": content})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	evidence := func(origin, content string) json.RawMessage {
+		m, err := guard.Admit(guard.EntryTool, origin, content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, _ := m.Evidence()
+		return message(e.Role, e.Text)
+	}
+	const marker = "LINA_WORK_TOOLS_RESULT"
+	completion := evidence("worker-session:fixture", marker)
+	for _, tc := range []struct {
+		name    string
+		current json.RawMessage
+		want    bool
+	}{
+		{"current-completion", completion, true},
+		{"new-person-input", message("user", "Continue with a different task."), false},
+		{"other-tool-input", evidence("different-tool:fixture", "Another result."), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request, report := assemble.Assemble(assemble.Input{
+				AgentID: "fixture", PersonaRevision: "revision", Model: "fixture", MaxTokens: 100,
+				History: []provider.Item{completion}, Current: tc.current,
+				Profile: []provider.Item{message("user", "Remembered statement (fixture): Prefer brief replies.")},
+				Packet: assemble.ContextPacket{
+					{ID: "clock", Kind: assemble.Clock, Text: "Current fixture time."},
+					{ID: "memory", Kind: assemble.Memory, Text: "Earlier worker result: " + marker},
+					{ID: "material", Kind: assemble.Material, Revision: "1", Text: "Supporting material."},
+					{ID: "external", Kind: assemble.External, Origin: "source:fixture", Text: "External reference."},
+				},
+			}, func(r provider.Request) int { return len(r.Items) })
+			if report.Failure != "" {
+				t.Fatal(report)
+			}
+			// Tool discovery may add a call and receipt after the packet.
+			request.Items = append(request.Items,
+				json.RawMessage(`{"type":"function_call","name":"load_tools","call_id":"discovery","arguments":"{}"}`),
+				json.RawMessage(`{"type":"function_call_output","call_id":"discovery","output":"{}"}`))
+			response := httptest.NewRecorder()
+			if got := respondWorkerCompletion(response, request.Items, marker); got != tc.want {
+				t.Fatalf("completion recognized=%t, want %t with trailing context and discovery", got, tc.want)
+			}
+			if tc.want && !strings.Contains(response.Body.String(), marker) {
+				t.Fatal("completion response lost the worker result")
+			}
+			if !tc.want && response.Body.Len() != 0 {
+				t.Fatalf("past completion answered a new request: %s", response.Body.String())
+			}
 		})
 	}
 }

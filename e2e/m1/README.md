@@ -38,6 +38,16 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 
 Failure coverage also includes:
 
+- `TestM2WorkerQuotaIdentityRecovery`: the synthetic provider recognizes the
+  current worker completion before trailing ContextPacket evidence, standing
+  profile entries and tool-discovery receipts. A request assembled by Core
+  checks that a newer person or tool input cannot reuse a past completion.
+  Both quota recovery variants run installed Core, exercise worker tools and a
+  real artifact, and retain recovered quota and the result across restart.
+  This follows the [request layout](../../docs/design/conversation-and-memory.md#request-layout)
+  and [worker selection](../../docs/design/work-and-delegation.md#choosing-the-worker)
+  contracts.
+
 - `TestM2TimersInstalledCore`: the scripted provider selects the latest input
   or tool result, skipping the following ContextPacket instructions and external
   evidence. Installed Core creates a job result and a reminder, saves changed
