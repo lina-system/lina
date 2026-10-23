@@ -14,7 +14,7 @@ Every issue names, under Design, the spec sections it implements; a pull request
 | M1 | 나를 기억하는 리나와 대화 | Install LINA, sign in with ChatGPT and talk with Lina in the TUI and one Telegram chat, with memory that remembers, forgets and recalls with evidence, heavy work in the background, and backup and restore. |
 | M2 | 일 하나 맡기기 | Hand one 일 to a worker under a work definition, review its pull request once, merge or close it, see progress at a glance, route across more accounts, and update with rollback. |
 | M3 | 큰 일을 여러 작업·기기로 | Split a large 목표 into tasks that run in parallel across workers and devices: Nodes with grants bid for work, repositories are only cached on Nodes, plus plugins and the switch from the earlier work system. |
-| Later | Later | The LINA app (React and Wails, in a separate private repository) after M1 to M3, and decisions that wait for real use, such as when LINA leaves alpha. |
+| Later | Later | The LINA app (its own public repository, `thisisjun786/lina-app`) after M1 to M3, and decisions that wait for real use, such as when LINA leaves alpha. |
 
 ## M0 첫 스캐폴드
 
