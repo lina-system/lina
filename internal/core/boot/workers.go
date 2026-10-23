@@ -543,7 +543,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 			if callKey == "" {
 				callKey = string(in.Arguments)
 			}
-			message, inputErr = entry.storeSteering(ctx, turnID+":"+callKey, a.Text)
+			message, inputErr = entry.storeSteering(ctx, r.agent+":"+r.conversation+":"+turnID+":"+callKey, a.Text)
 			if inputErr == nil {
 				state, inputErr = entry.deliverSteering(ctx, message, snap, activity)
 			} else {

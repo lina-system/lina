@@ -55,7 +55,7 @@ func TestSwitchTerminalConnectionFailureReleasesExecution(t *testing.T) {
 	}
 }
 
-func TestSwitchRefusedInputKeepsCompletionBinding(t *testing.T) {
+func TestSwitchHeldInputKeepsCompletionBinding(t *testing.T) {
 	for _, status := range []worker.FinishStatus{worker.Done, worker.Interrupted} {
 		t.Run(string(status), func(t *testing.T) {
 			r, entry, probe := reviewWorkerFixture(t)
@@ -75,8 +75,12 @@ func TestSwitchRefusedInputKeepsCompletionBinding(t *testing.T) {
 				t.Fatal(err)
 			}
 			result, err := r.workerOperation(t.Context(), "worker_input", "conversation-turn", ledger.Event{}, in)
-			if err != nil || result.State != tools.Failed {
-				t.Errorf("definitive refusal reported as ambiguous: %+v %v", result, err)
+			if err != nil || result.State != tools.Applied {
+				t.Errorf("waiting input was not stored: %+v %v", result, err)
+			}
+			messages, err := r.work.SteeringMessages(t.Context(), "codex:thread")
+			if err != nil || len(messages) != 1 || messages[0].State != "held" || probe.inputs != 0 {
+				t.Fatalf("waiting input reached worker: %+v calls=%d err=%v", messages, probe.inputs, err)
 			}
 			if entry.reservationTurn != "old" || released {
 				t.Errorf("definitive refusal changed the active execution: turn=%s released=%v", entry.reservationTurn, released)
