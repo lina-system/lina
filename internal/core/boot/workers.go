@@ -26,6 +26,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/codex"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -35,16 +36,20 @@ import (
 )
 
 type workerRuntime struct {
-	mu       sync.Mutex
-	closed   bool
-	sessions map[string]*workerSession
-	starting sync.WaitGroup
+	recoveryWake chan struct{}
+	recoveryStop context.CancelFunc
+	recoveryDone chan struct{}
+	mu           sync.Mutex
+	closed       bool
+	sessions     map[string]*workerSession
+	starting     sync.WaitGroup
 }
 type workerSession struct {
+	cancelTask      func(context.Context) error
+	recoveryMu      sync.Mutex
+	recovery        recovery.Record
 	ownerControl    sync.Mutex
 	ownerRequests   map[string]string
-	reservation     string
-	reservationTurn string
 	adapter         worker.Adapter
 	close           func() error
 	compatibility   codex.Compatibility
@@ -66,6 +71,8 @@ type workerSession struct {
 	active          map[string]lease.Lease
 	control         sync.Mutex
 	done            chan struct{}
+	reservation     string
+	reservationTurn string
 }
 
 type workerArgs struct {
@@ -359,12 +366,14 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 		if err != nil {
 			return tools.Result{State: tools.Failed}, err
 		}
-		adapter, err := codex.Open(r.ctx, process, codex.Config{})
+		entry := &workerSession{origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, started: time.Now(), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
+		adapter, err := codex.Open(r.ctx, process, codex.Config{Bind: entry.bindRecovery})
 		if err != nil {
 			process.Release()
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
-		entry := &workerSession{reservation: reservation, adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, started: time.Now(), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
+		entry.adapter, entry.close, entry.compatibility = adapter, adapter.Close, adapter.Compatibility()
+		entry.reservation = reservation
 		activity, err := r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Hard, Reason: "Codex turn"})
 		if err != nil {
 			adapter.Close()
@@ -436,8 +445,18 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 	if closed || entry == nil || !entry.origin.workerConversation(r) {
 		return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker session unavailable in this conversation"))}, nil
 	}
+	if name == "worker_input" {
+		entry.recoveryMu.Lock()
+		state := entry.recovery.State
+		entry.recoveryMu.Unlock()
+		if state == "unknown" || state == "retrying" || state == "decision" || state == "parked" {
+			return tools.Result{State: tools.Failed, Body: workerError(errors.New("worker effects require reconciliation"))}, nil
+		}
+
+	}
 	if name == "worker_read_file" {
 		return r.readWorkerFile(ctx, entry.workdir, a.Path)
+
 	}
 	if name == "worker_quota" {
 		rows, err := entry.adapter.Quota(ctx)
@@ -480,6 +499,27 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 	var activity lease.Lease
 	if name == "worker_input" && snap.State == worker.Idle {
 		activity, err = r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Hard, Reason: "Codex turn"})
+		if err != nil {
+			return tools.Result{State: tools.Failed}, err
+		}
+	}
+	// Persistence must finish before taking the event/session mutex.
+	if name == "worker_interrupt" {
+		if entry.cancelTask != nil {
+			if err = entry.cancelTask(ctx); err != nil {
+				return tools.Result{State: tools.Failed}, err
+			}
+		}
+		entry.recoveryMu.Lock()
+		rec := entry.recovery
+		rec.Canceled = true
+		if rec.ID != "" {
+			err = (recovery.Recovery{DB: r.db}).Put(ctx, rec)
+		}
+		if err == nil {
+			entry.recovery = rec
+		}
+		entry.recoveryMu.Unlock()
 		if err != nil {
 			return tools.Result{State: tools.Failed}, err
 		}
@@ -532,6 +572,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 			err = entry.adapter.Input(ctx, snap.Thread, worker.Input{Text: a.Text})
 		}
 	case "worker_interrupt":
+
 		err = entry.adapter.Interrupt(ctx, snap.Thread, worker.UserCancel)
 	}
 	if name == "worker_input" {
@@ -613,12 +654,27 @@ func (e *workerSession) start(ctx context.Context, spec worker.StartSpec) (worke
 }
 
 func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
-	raw, _ := json.Marshal(workerResult{Live: true, Owner: e.origin.agent, Manager: e.origin.conversation, Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
+	e.recoveryMu.Lock()
+	state := e.recovery.State
+	e.recoveryMu.Unlock()
+	if state == "unknown" || state == "retrying" {
+		s.State = worker.Unknown
+	}
+	if state == "decision" || state == "parked" {
+		s.State = worker.Waiting
+	}
+	live := true
+	if _, retained := e.adapter.(*retainedWorker); retained {
+		live = false
+	}
+	raw, _ := json.Marshal(workerResult{Live: live, Owner: e.origin.agent, Manager: e.origin.conversation, Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
+
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
 }
 func (e *workerSession) observe() {
 	defer func() {
 		close(e.done)
+		e.origin.workers.wakeRecovery()
 		e.origin.notifyWorkerRunning()
 		e.origin.notifyOwnerViews()
 	}()
@@ -626,7 +682,12 @@ func (e *workerSession) observe() {
 		e.observeActivity(event)
 		switch event.Kind {
 		case worker.ProgressEvent:
+			if event.Progress.Phase == "started" {
+				e.transferRecoveryLease(event.Thread.TurnID)
+				_ = e.bindRecovery(e.origin.ctx, event.Thread)
+			}
 			if event.Progress.Phase == "server_request_resolved" {
+				_ = e.trackRecoveryRequest(event.Progress.ItemID, false)
 				e.stopRequest(event.Progress.ItemID)
 			}
 			if event.Progress.Phase == "item_completed" && event.Progress.Text != "" {
@@ -634,13 +695,47 @@ func (e *workerSession) observe() {
 			}
 		case worker.UsageEvent:
 		case worker.FinishEvent:
+			e.recoveryMu.Lock()
+			rec := e.recovery
+			if event.Thread == rec.Thread && event.Finish.Failure == worker.ConnectionFailure && event.Finish.Code == "connection_lost" && rec.Finish != nil && rec.Finish.Code != "connection_lost" {
+				// Losing the process after a terminal result cannot erase that
+				// turn's observation or settle any remaining unknown effects.
+				e.recoveryMu.Unlock()
+				continue
+			}
+			settled := rec.ID == ""
+			if event.Thread == rec.Thread {
+				rec.Finish = event.Finish
+			}
+			deliver := event.Finish.Status == worker.Done || rec.Canceled || rec.ID == "" || rec.Retries == 0
+			delivered := false
+			if deliver {
+				err := e.finish(e.origin.ctx, event)
+				delivered = err == nil
+				if err != nil && e.origin.ctx.Err() == nil {
+					fmt.Fprintf(os.Stderr, "worker completion admission failed: %v\n", err)
+				}
+			}
+			if rec.ID != "" {
+				rec.State = "unknown"
+				if delivered && (event.Finish.Status == worker.Done || rec.Canceled) {
+					rec.State = "finished"
+				}
+				if (recovery.Recovery{DB: e.origin.db}).Put(e.origin.ctx, rec) == nil {
+					e.recovery = rec
+					settled = rec.State != "unknown"
+				}
+			}
+			e.recoveryMu.Unlock()
 			// A transport-loss event is synthesized by the adapter. It proves
 			// neither terminal execution nor completed process cleanup. A real
 			// turn completion can also report a provider connection failure.
 			terminal := event.Finish.Failure != worker.ConnectionFailure || event.Finish.Code != "connection_lost"
 			e.stopRequests(event.Thread.TurnID)
 			e.mu.Lock()
-			if e.origin.work != nil && e.reservationTurn == event.Thread.TurnID && terminal {
+			// A terminal failure can retain unknown effects. Reconciliation
+			// keeps its directory fenced until those effects settle.
+			if e.origin.work != nil && e.reservationTurn == event.Thread.TurnID && terminal && settled {
 				if err := e.origin.work.ReleaseWorker(context.WithoutCancel(e.origin.ctx), e.reservation); err == nil {
 					e.reservation = ""
 					e.reservationTurn = ""
@@ -651,15 +746,22 @@ func (e *workerSession) observe() {
 				delete(e.active, event.Thread.TurnID)
 			}
 			e.mu.Unlock()
-			if err := e.finish(e.origin.ctx, event); err != nil && e.origin.ctx.Err() == nil {
-				fmt.Fprintf(os.Stderr, "worker completion admission failed: %v\n", err)
-			}
 			e.output = ""
+			e.origin.workers.wakeRecovery()
 		case worker.ApprovalEvent:
+			if e.trackRecoveryRequest(event.Approval.ID, true) != nil {
+				continue
+			}
 			e.requestApproval(event)
 		case worker.QuestionEvent:
+			if e.trackRecoveryRequest(event.Question.ID, true) != nil {
+				continue
+			}
 			e.requestQuestion(event)
 		case worker.ToolCallEvent:
+			if e.trackRecoveryRequest(event.ToolCall.ID, true) != nil {
+				continue
+			}
 			e.workTool(event)
 		}
 		if event.Kind != worker.UsageEvent && (event.Kind != worker.ProgressEvent || event.Progress.Phase == "started" || event.Progress.Phase == "server_request_resolved") {
@@ -699,6 +801,10 @@ func (r *conversationRuntime) workerConversation(other *conversationRuntime) boo
 	return r.person == other.person && (r.agent == other.agent && r.conversation == other.conversation || delivery.agent == other.agent && delivery.conversation == other.conversation)
 }
 func (b *workerRuntime) close() {
+	if b.recoveryStop != nil {
+		b.recoveryStop()
+		<-b.recoveryDone
+	}
 	b.mu.Lock()
 	b.closed = true
 	entries := make([]*workerSession, 0, len(b.sessions))

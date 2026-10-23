@@ -23,36 +23,12 @@ import (
 // the request projection. A failed generation/publication never drops sources.
 func (r *conversationRuntime) compactConversation(ctx context.Context, in assemble.Input, events []ledger.Event, stream func(context.Context, provider.Request) (provider.Stream, error)) (provider.Request, assemble.Report, error) {
 	limit := in.MaxTokens
+	// Build the fixed prefix without freezing optional-context budget drops.
+	// The published root must replace its covered events before size selection.
+	in.MaxTokens = int(^uint(0) >> 1)
 	request, report := assemble.Assemble(in, conversationRequestSize)
-	if report.Failure != "" && report.Failure != assemble.TooLarge {
+	if report.Failure != "" {
 		return provider.Request{}, report, assemble.ErrHistory
-	}
-	// Select optional context at the real budget before freezing the packet.
-	// Even when mandatory history is oversized, Assemble reports every optional
-	// budget drop it made. Keep those drops through compaction and reassembly.
-	var budgetDrops []assemble.Drop
-	omitted := map[string]bool{}
-	for _, drop := range report.Dropped {
-		if drop.Reason == assemble.Budget {
-			budgetDrops = append(budgetDrops, drop)
-			omitted[drop.ID] = true
-		}
-	}
-	var packet assemble.ContextPacket
-	for _, item := range in.Packet {
-		if !omitted[item.ID] {
-			packet = append(packet, item)
-		}
-	}
-	in.Packet = packet
-	if report.Failure == assemble.TooLarge {
-		// Only mandatory history/context remains; allow the fitting pass to
-		// reduce the former without carrying oversized optional material.
-		in.MaxTokens = int(^uint(0) >> 1)
-		request, report = assemble.Assemble(in, conversationRequestSize)
-		if report.Failure != "" {
-			return provider.Request{}, report, assemble.ErrHistory
-		}
 	}
 	fixed := len(request.Items) - len(in.History) - len(report.Items) - 1
 	if fixed < 0 || len(events) == 0 {
@@ -177,6 +153,47 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		}
 		view.History = append(view.History, item)
 	}
+	in.MaxTokens = limit
+	in.Summary = nil
+	in.History = append([]provider.Item(nil), profile...)
+	if len(view.Root) > 0 {
+		in.History = append(in.History, view.Root)
+	}
+	for _, item := range view.History {
+		in.History = append(in.History, item.Item)
+	}
+	request, report = assemble.Assemble(in, conversationRequestSize)
+	if report.Failure != "" && report.Failure != assemble.TooLarge {
+		return provider.Request{}, report, assemble.ErrHistory
+	}
+	// Select optional context against the published history projection, never
+	// the raw events it covers. Freeze real budget drops before further fitting.
+	var budgetDrops []assemble.Drop
+	omitted := map[string]bool{}
+	for _, drop := range report.Dropped {
+		if drop.Reason == assemble.Budget {
+			budgetDrops = append(budgetDrops, drop)
+			omitted[drop.ID] = true
+		}
+	}
+	var packet assemble.ContextPacket
+	for _, item := range in.Packet {
+		if !omitted[item.ID] {
+			packet = append(packet, item)
+		}
+	}
+	in.Packet = packet
+	if report.Failure == assemble.TooLarge {
+		// Only mandatory history/context remains; allow the fitting pass to
+		// reduce the former without carrying oversized optional material.
+		in.MaxTokens = int(^uint(0) >> 1)
+		request, report = assemble.Assemble(in, conversationRequestSize)
+		if report.Failure != "" {
+			return provider.Request{}, report, assemble.ErrHistory
+		}
+	}
+	view.Request = request
+	view.Packet = request.Items[fixed+len(in.History) : len(request.Items)-1]
 	builder := &compaction.Builder{Store: store, Events: r.journal(), Agent: r.agent, Conversation: r.conversation, Model: in.Model, GenerationRevision: string(in.Effort), Now: time.Now, NextID: func() string { return "summary:" + rand.Text() }}
 	builder.Generate = func(ctx context.Context, segment compaction.PassSegment) (compaction.Text, error) {
 		// Builder checked the exact coverage/frontier and supplied canonical

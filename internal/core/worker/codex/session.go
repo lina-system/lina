@@ -73,12 +73,23 @@ func (s *Session) Start(ctx context.Context, l lease.Lease, spec worker.StartSpe
 	}
 	thread := s.snapshot.Thread
 	s.mu.Unlock()
+	if s.bind != nil {
+		if err := s.bind(ctx, thread); err != nil {
+			return worker.Thread{}, err
+		}
+	}
 	if err := s.startTurn(ctx, spec.TaskPacket, thread); err != nil {
 		return worker.Thread{}, err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.snapshot.Thread, nil
+	thread = s.snapshot.Thread
+	s.mu.Unlock()
+	if s.bind != nil {
+		if err := s.bind(ctx, thread); err != nil {
+			return worker.Thread{}, err
+		}
+	}
+	return thread, nil
 }
 
 func input(text string) []wire.V2UserInput {
@@ -249,13 +260,17 @@ func (s *Session) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 	defer s.mu.Unlock()
 	if revision == s.revision {
 		s.snapshot.State = threadState(response.Thread.Status)
-		// A summary can briefly remain idle after turn/start was accepted. It
-		// must not authorize a second turn before the accepted one is observed.
+		// Summary order is not turn identity. Only an exact terminal reading
+		// can settle a lost completion; unrelated turns cannot change the handle.
+		for _, turn := range response.Thread.Turns {
+			if turn.ID == s.snapshot.Thread.TurnID {
+				if f := terminal(turn); f != nil {
+					s.finished[turn.ID] = true
+				}
+			}
+		}
 		if s.snapshot.State == worker.Idle && s.snapshot.Thread.TurnID != "" && !s.finished[s.snapshot.Thread.TurnID] {
 			s.snapshot.State = worker.Unknown
-		}
-		for _, turn := range response.Thread.Turns {
-			s.snapshot.Thread.TurnID = turn.ID
 		}
 	}
 	result := s.snapshot

@@ -26,7 +26,7 @@ func goalWorkerObservation(r dispatch.Record) goal.Observation {
 	o := goal.Observation{Handle: r.ID, Code: r.Code, Status: goal.OutcomeUnknown}
 	if r.State == "queued" || r.State == "running" {
 		o.Status = goal.OutcomeRunning
-	} else if r.State == "finished" {
+	} else if r.State == "finished" || r.State == "decision" {
 		o.EffectsSettled = true
 		o.Status = goal.OutcomeNeedsPerson
 		if r.Code == "ready_for_review" && r.PR != nil {

@@ -261,3 +261,29 @@ func TestInformationalMessagesDoNotEndTurn(t *testing.T) {
 		t.Fatalf("informational message ended turn: %+v", got)
 	}
 }
+
+func TestFailureSnapshotDistinguishesKnownAndUnknownEffects(t *testing.T) {
+	init := `printf '{"type":"system","subtype":"init","session_id":"fixture","cwd":"%s"}\n' "$PWD"` + "\n"
+	result := `echo '{"type":"result","subtype":"error_during_execution","session_id":"fixture","is_error":true}'` + "\n"
+	for _, tool := range []bool{false, true} {
+		t.Run(fmt.Sprint(tool), func(t *testing.T) {
+			body := init
+			if tool {
+				body += `echo '{"type":"assistant","session_id":"fixture","message":{"id":"m","content":[{"type":"tool_use","id":"call","name":"Bash"}]}}'` + "\n"
+			}
+			a, ctx, l, dir := fixture(t, body+result)
+			th, err := a.Start(ctx, l, worker.StartSpec{TaskID: "task", AttemptID: "attempt", Workdir: dir, TaskPacket: "task"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			finish(t, ctx, a)
+			if err = a.Close(ctx); err != nil {
+				t.Fatal(err)
+			}
+			snap, err := a.Snapshot(ctx, th)
+			if err != nil || snap.Finish == nil || snap.Finish.Status != worker.Failed || snap.EffectsKnown == tool {
+				t.Fatalf("failure evidence lost: %+v %v", snap, err)
+			}
+		})
+	}
+}

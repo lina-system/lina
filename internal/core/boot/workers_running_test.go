@@ -74,6 +74,11 @@ func TestConversationWorkerRunningObservesOutsideCanon(t *testing.T) {
 func runningWorkerFixture(t *testing.T) (*conversationRuntime, *runningWorkerProbe) {
 	t.Helper()
 	r := runRuntime(t)
+	if r.workers.recoveryStop != nil {
+		r.workers.recoveryStop()
+		<-r.workers.recoveryDone
+		r.workers.recoveryStop = nil
+	}
 	// Stop the periodic owner-view observer before installing mutable unit
 	// probes. Installed-Core scenarios exercise both live view producers.
 	if r.ownerViews != nil {
@@ -302,6 +307,33 @@ func TestConversationWorkerProgressVisibilityMatchesRunning(t *testing.T) {
 				t.Fatal(err)
 			}
 			check(0)
+		})
+	}
+}
+
+func TestWorkerRecoveryKeepsObservedFailureVisible(t *testing.T) {
+	r, probe := runningWorkerFixture(t)
+	entry := r.workers.sessions["fixture"]
+	entry.recovery.State = "unknown"
+	for _, tc := range []struct {
+		name  string
+		state worker.ThreadState
+		err   error
+		want  string
+	}{
+		{"observed failure", worker.Dead, nil, "failed"},
+		{"unavailable observation", worker.Dead, errors.New("snapshot unavailable"), "unknown"},
+		{"idle without settled effects", worker.Idle, nil, "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			probe.snapshot.State, probe.err = tc.state, tc.err
+			item, err := observeRunningWorker(t.Context(), entry)
+			if err != nil || item.State != tc.want {
+				t.Fatalf("recovery display=%s want=%s err=%v", item.State, tc.want, err)
+			}
+			if entry.recovery.State != "unknown" {
+				t.Fatal("display settled unknown effects")
+			}
 		})
 	}
 }
