@@ -49,6 +49,7 @@ func newAdapter(config Config, client *http.Client, baseURL string, apiKeyOnly b
 		return nil, err
 	}
 	config.RequestFields = slices.Clone(config.RequestFields)
+	config.Capabilities = slices.Clone(config.Capabilities)
 	if client == nil {
 		client = &http.Client{}
 	}
@@ -59,6 +60,25 @@ func newAdapter(config Config, client *http.Client, baseURL string, apiKeyOnly b
 }
 func (*Adapter) Provider() provider.ProviderID { return provider.ChatGPT }
 func (*Adapter) Class() provider.Class         { return provider.ModelAPI }
+func (*Adapter) Capabilities(model provider.ModelRef) provider.CapabilitySet {
+	if model == "" {
+		return nil
+	}
+	return provider.CapabilitySet{provider.ReasoningStateCapability}
+}
+
+// AdmittedCapabilities returns a copy of this adapter's configured narrowing.
+func (a *Adapter) AdmittedCapabilities(model provider.ModelRef) provider.CapabilitySet {
+	if model == "" {
+		return nil
+	}
+	admitted := slices.Clone(a.config.Capabilities)
+	if a.apiKeyOnly {
+		admitted = slices.DeleteFunc(admitted, func(c provider.Capability) bool { return !provider.Admitted("responses_api_key").Has(c) })
+	}
+	return admitted
+}
+
 func (a *Adapter) request(ctx context.Context, c provider.Credential, method, path string, body []byte) (*http.Response, error) {
 	if a.apiKeyOnly && c.Kind != provider.APIKey {
 		return nil, &provider.Failure{Kind: provider.NotAccepted}
@@ -119,6 +139,9 @@ func (*Adapter) Quota(ctx context.Context, c provider.Credential) ([]provider.Qu
 	return []provider.QuotaRow{{Provider: provider.ChatGPT, Account: c.Account, Window: provider.UnknownWindow, State: provider.QuotaUnknown, Source: provider.ErrorCode, Observed: time.Now().UTC()}}, nil
 }
 func (a *Adapter) body(r provider.Request) ([]byte, error) {
+	if err := provider.ValidateUse(r, a.Capabilities(r.Model), a.AdmittedCapabilities(r.Model)); err != nil {
+		return nil, err
+	}
 	reject := func() ([]byte, error) { return nil, &provider.Failure{Kind: provider.NotAccepted} }
 	if r.Model == "" || !r.Purpose.Valid() || r.Bridge != nil {
 		return reject()
