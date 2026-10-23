@@ -34,3 +34,13 @@ restart persistence; `e2e/m2/headless-worker-recovery.json` covers Claude dispat
 #135 commits a failed attempt's terminal observation and recovery reservation together. A completion from that old attempt cannot deliver the next attempt's result. Unknown effects retain their reservation; the second settled failure creates a decision. A reconciled success enters the normal result inbox without another worker turn.
 
 #930 admits a goal worker's committed recovery through the dispatch scheduler without requiring a conversation `turn_calls` receipt. The existing goal-action authorization and once-only recovery allowance still gate the attempt. `e2e/m2/goal-worker-recovery.json` covers a recovered result and a second failure through installed Core.
+
+#999 checkpoints conversation-worker input before dispatch and after the adapter
+returns its binding. A pending input uses the existing unknown record with no
+exact turn, retaining its reservation and retry allowance. This also covers an
+active snapshot that becomes idle before the adapter receives input. A refused
+input restores the earlier record; uncertain input is never replayed. An intent
+without an exact turn remains held after restart. The separate
+`e2e/m2/worker-followup-recovery.json` scenario kills installed Core after a
+follow-up produces a file without notifications: an acknowledged turn is read
+back and its result delivered once, while a missing reply retains uncertainty.

@@ -82,10 +82,21 @@ func recoveryWorkerFixture() {
 			_ = os.WriteFile(filepath.Join(dir, "turn-count"), []byte(strconv.Itoa(turns)), 0600)
 			turn := fmt.Sprintf("turn-%d", turns)
 			state = "active"
+			if (mode == "followup_reply" || mode == "followup_pending") && turns == 2 {
+				_ = os.WriteFile(filepath.Join(dir, "followup-result.txt"), []byte("Follow-up work survived."), 0600)
+				if mode == "followup_reply" {
+					reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
+				}
+				continue // No started or completed notification for the follow-up.
+			}
 			notify("turn/started", map[string]any{"threadId": "recovery-thread", "turn": map[string]any{"id": turn, "status": "inProgress"}})
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
 			if turns == 1 {
 				_ = os.WriteFile(filepath.Join(dir, "recovery-result.txt"), []byte("The worker preserved its work."), 0600)
+				if mode == "followup_reply" || mode == "followup_pending" {
+					state = "idle"
+					notify("turn/completed", map[string]any{"threadId": "recovery-thread", "turn": map[string]any{"id": turn, "status": "completed"}})
+				}
 				if mode == "disconnect_restart" {
 					return // Persisted work survives loss of both worker and Core.
 				}
@@ -119,7 +130,7 @@ func recoveryWorkerFixture() {
 				time.Sleep(time.Millisecond)
 			}
 			status := "failed"
-			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" {
+			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" || mode == "followup_reply" {
 				status = "completed"
 			}
 			items := []any{map[string]any{"type": "agentMessage", "id": "message", "text": "Retained worker result."}}

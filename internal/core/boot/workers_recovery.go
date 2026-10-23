@@ -22,6 +22,21 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
+// A queued start can predate the follow-up's returned binding. Serialize its
+// read with input and only checkpoint the adapter's current exact turn.
+func (e *workerSession) bindStartedRecovery(ctx context.Context, th worker.Thread) error {
+	e.control.Lock()
+	defer e.control.Unlock()
+	readCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	snap, err := e.adapter.Snapshot(readCtx, e.thread)
+	if err != nil || snap.Thread != th {
+		return err
+	}
+	e.transferRecoveryLease(th.TurnID)
+	return e.bindRecovery(ctx, th)
+}
+
 func (e *workerSession) bindRecovery(ctx context.Context, th worker.Thread) error {
 	e.recoveryMu.Lock()
 	defer e.recoveryMu.Unlock()
