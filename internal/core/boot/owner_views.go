@@ -17,7 +17,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/waiting/view"
-	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -213,30 +212,15 @@ func waitingRows(list waiting.List) []protocol.WaitingRow {
 }
 func number(n int) json.Number { return json.Number(strconv.Itoa(n)) }
 
-// goalTitles reads each goal's own sentence from the work engine's hydrated
-// snapshot. The execution ledger never holds the goal's prose, so a projection
-// that read only the ledger could not name the line.
+// goalTitles reads each goal's own sentence. The execution ledger never holds
+// the goal's prose. A definition the person removed, or that no longer parses,
+// leaves that goal's name unknown and does not change the other names. A
+// failed ledger read still fails the projection.
 func (r *conversationRuntime) goalTitles(ctx context.Context) (map[string]string, error) {
-	titles := map[string]string{}
 	if r.workEngine == nil || r.workEngine.engine == nil {
-		return titles, nil
+		return map[string]string{}, nil
 	}
-	s, err := r.workEngine.engine.Snapshot(ctx)
-	if err != nil {
-		// A definition the person removed or that no longer parses leaves the
-		// line's name unknown; it does not hide the rest of the line. A failed
-		// ledger read still fails the projection.
-		if errors.Is(err, goal.ErrDefinitionMissing) || errors.Is(err, goal.ErrInvalid) {
-			return titles, nil
-		}
-		return nil, err
-	}
-	for _, g := range s.Goals {
-		if g.Summary != "" {
-			titles[g.ID] = g.Summary
-		}
-	}
-	return titles, nil
+	return r.workEngine.engine.GoalSentences(ctx)
 }
 
 func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progress, error) {

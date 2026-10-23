@@ -10,6 +10,7 @@ int main(void) {
   test_decide();
   test_deadline();
   test_mechanism();
+  test_plugin();
   printf("native decision core: %d checks, %d failures\n", lina_test_checks, lina_test_failures);
   return lina_test_failures == 0 ? 0 : 1;
 }

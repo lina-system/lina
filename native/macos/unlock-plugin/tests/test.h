@@ -31,5 +31,6 @@ extern int lina_test_failures;
 void test_decide(void);
 void test_deadline(void);
 void test_mechanism(void);
+void test_plugin(void);
 
 #endif
