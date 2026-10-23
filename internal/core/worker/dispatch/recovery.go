@@ -138,6 +138,15 @@ func (s *Service) observeThread(ctx context.Context, l lease.Lease, r *Record, d
 }
 
 func (s *Service) startAttempt(ctx context.Context, l lease.Lease, adapter worker.Adapter, r Record, attemptID, dir string) (worker.Thread, error) {
+	if s.cfg.AuthorizeExecution != nil {
+		allowed, err := s.cfg.AuthorizeExecution(ctx, r)
+		if err != nil {
+			return worker.Thread{}, err
+		}
+		if !allowed {
+			return worker.Thread{}, work.ErrState
+		}
+	}
 	if reader, ok := adapter.(resumable); ok && r.RecoveryThread != nil && r.RecoveryWorker == adapter.Name() && len(r.Tried) == 1 {
 		old := *r.RecoveryThread
 		old.AttemptID = attemptID

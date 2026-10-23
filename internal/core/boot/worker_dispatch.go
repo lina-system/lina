@@ -63,7 +63,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{AuthorizeRecovery: r.authorizeWorkerRecovery, Rules: rules, Workers: factories, Bind: r.bindDispatchedWorker, Capacity: func(ctx context.Context) int {
+	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{ExecutionDeadline: r.publishedWorkerDeadline, AuthorizeExecution: r.authorizePublishedWorker, AuthorizeRecovery: r.authorizeWorkerRecovery, Rules: rules, Workers: factories, Bind: r.bindDispatchedWorker, Capacity: func(ctx context.Context) int {
 		host, err := goal.MainHost(ctx, r.main, r.root, goal.Resources{CPU: float64(runtime.NumCPU()), MemoryMB: math.MaxInt32, DiskMB: math.MaxInt32}, nil)
 		if err != nil {
 			return 0
@@ -150,7 +150,8 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 		return func(worker.Event) {}, func() {}
 	}
 	owner := newConversationView(r.router.root, record.Owner, record.Manager)
-	owner.codingDelivery = delivery
+	owner.codingDelivery = delivery.workerDelivery()
+	owner.externalTask = delivery.externalTask
 	e := &workerSession{cancelTask: func(ctx context.Context) error { return r.workerDispatch.Cancel(ctx, record.ID) }, adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, executionGeneration: record.Attempt, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
 	r.workers.mu.Lock()
 	r.workers.sessions[thread.ID] = e
@@ -184,6 +185,9 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 }
 
 func (r *conversationRuntime) authorizeWorkerRecovery(ctx context.Context, record dispatch.Record) (bool, error) {
+	if allowed, err := r.authorizePublishedWorker(ctx, record); err != nil || !allowed {
+		return allowed, err
+	}
 	if !record.Goal {
 		view, _, err := r.dispatchRecoveryView(ctx, record)
 		if err != nil {

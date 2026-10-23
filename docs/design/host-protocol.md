@@ -523,6 +523,13 @@ persona exposes a separate Core A2A listener on the tailnet, not the `client`
 or `node` listener. Core alone maps authenticated incoming work and remote observations
 to canonical local tasks and results.
 
+The publication listener serves only its Agent Cards, versioned A2A JSON-RPC/SSE
+and task-authorized artifact downloads. It uses the owner's TLS configuration
+and verifies the local tailscaled address before binding. It registers no host
+protocol handler. The owner receives publication progress, approvals and typed
+results through the existing conversation, waiting and result projections;
+the external caller receives only the separate A2A task projection.
+
 A Node can call a remote agent as part of a task the main dispatched. Its
 grant must name the approved remote connection and allowed call/data scope.
 Core carries the HTTP call so the Node receives no remote credential. The

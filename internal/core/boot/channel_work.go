@@ -290,6 +290,9 @@ func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationR
 	}
 }
 func (r *conversationRuntime) validateChannel(ctx context.Context) error {
+	if err := r.validateA2A(ctx); err != nil {
+		return err
+	}
 	if r.channelBinding == nil {
 		return nil
 	}

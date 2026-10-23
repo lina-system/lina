@@ -26,6 +26,20 @@ import (
 )
 
 func (s *Service) execute(ctx context.Context, r Record) {
+	if s.cfg.ExecutionDeadline != nil {
+		deadline, err := s.cfg.ExecutionDeadline(ctx, r)
+		if err != nil {
+			s.mu.Lock()
+			delete(s.running, r.ID)
+			s.mu.Unlock()
+			return
+		}
+		if !deadline.IsZero() {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, deadline)
+			defer cancel()
+		}
+	}
 	// Shutdown does not replay a possibly effective dispatch. Recovery marks the
 	// running record unknown and retains the task's active reservation.
 	observing := r.State == "unknown" && r.Thread != nil && r.WorkerName() == "codex"

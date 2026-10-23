@@ -119,6 +119,9 @@ func (b *workerRuntime) deliverAnswers(ctx context.Context) {
 			e.mu.Lock()
 			delete(e.approvals, id)
 			e.mu.Unlock()
+			if e.origin.validateA2A(ctx) != nil {
+				answer.Choice = authority.Deny
+			}
 			raw, err := approvalReply(*event.Approval, answer.Choice)
 			if err == nil {
 				sendCtx, cancel := context.WithTimeout(e.origin.ctx, 10*time.Second)

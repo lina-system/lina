@@ -204,6 +204,21 @@ An incoming request, OAuth scope, Agent Card or remote result cannot enlarge it.
 Changing or revoking the binding fences subsequent execution and disclosure,
 including an already open stream.
 
+Published admissions retain the issuer/subject/client identity, definition and
+binding fingerprint, expiry and deadline with the local task. Core checks that
+fingerprint before model/tool work, worker launch or recovery, an owner approval
+reply to the worker, and every externally visible projection. The incoming
+access token is introspected for each request and before stream updates; it is
+not retained as a credential for later execution. Token expiry bounds the
+admission's execution authority. A fresh access token may read a retained result
+only through the still-current binding and its original output scope.
+
+Only the existing authenticated owner surfaces answer local approvals. A2A
+follow-ups are forwarded task data, never owner answers. A cancellation request
+is durable before Core interrupts work. An interrupt acknowledgment without
+terminal execution evidence leaves the task unknown; it cannot produce a
+canceled or completed claim or authorize a replacement worker.
+
 A Core-executed outgoing call records the grant fields on the main: owner,
 requesting agent, task, command, epoch, host, OS user, exact scope and expiry;
 Node/boot/session fields are none. This is local authority for Core's A2A
