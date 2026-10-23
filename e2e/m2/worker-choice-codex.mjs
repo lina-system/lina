@@ -32,12 +32,15 @@ for await (const line of readline.createInterface({input:process.stdin})) {
   if(mode==='quota-fallback' && fs.readFileSync(path.join(cwd,'result.txt'),'utf8')!=='partial work\n') throw Error('partial work lost');
   fs.appendFileSync(path.join(root,'attempts'),'codex\n');
   fs.writeFileSync(path.join(root,'second-packet'),packet);
-  reply({turn:{id:'choice-turn',status:'inProgress'}});
   if(mode==='quota-windows') {
+   // A terminal notification may precede the start reply without turn/started.
+   // Keep this ordering explicit so quota handoff never depends on scheduling.
    send({method:'account/rateLimits/updated',params:{rateLimits:{primary:{usedPercent:100,windowDurationMins:300,resetsAt:Math.floor(Date.now()/1000)+3600},secondary:{usedPercent:25,windowDurationMins:10080,resetsAt:Math.floor(Date.now()/1000)+604800}}}});
    send({method:'turn/completed',params:{threadId:'choice-codex',turn:{id:'choice-turn',status:'failed',error:{message:'quota',codexErrorInfo:'usageLimitExceeded'}}}});
+   reply({turn:{id:'choice-turn',status:'inProgress'}});
    break;
   }
+  reply({turn:{id:'choice-turn',status:'inProgress'}});
   if(mode==='double-quota') {
    send({method:'turn/completed',params:{threadId:'choice-codex',turn:{id:'choice-turn',status:'failed',error:{message:'quota',codexErrorInfo:'usageLimitExceeded'}}}});
    break;
