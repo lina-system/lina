@@ -126,6 +126,11 @@ proves the bundle compiles and verifies but is not shippable; the job summary
 records which path ran. Notarization stays optional and needs
 `LINA_NOTARY_PROFILE` on a machine where the bundle is released.
 
+The arm64 build and signature run recorded for this bundle is in
+[`evidence/macos-unlock-bundle.json`](../../../evidence/macos-unlock-bundle.json).
+It covers the ad-hoc path; the Developer ID run happens once the certificate is
+in the repository secrets.
+
 The macOS cells of the
 [non-competition matrix](../../../docs/design/non-competition.md#matrix) stay
 `unverified until evidence` until the locked-Mac eval produces its record. A
