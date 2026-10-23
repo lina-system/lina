@@ -11,6 +11,7 @@ import (
 )
 
 func TestCitationPublicationRebuildAndRollback(t *testing.T) {
+	t.Parallel()
 	db, s, r, _ := fixture(t)
 	publish(t, s, proposal(t, s, "leaf"))
 	publish(t, s, Proposal{ID: "root", Expected: frontier(t, s), Children: []string{"leaf"}, Cover: []Coverage{{EventID: "e2"}}, Output: output("parent")})

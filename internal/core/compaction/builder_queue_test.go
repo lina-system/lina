@@ -14,6 +14,7 @@ import (
 )
 
 func TestBuilderQueuedInputCoverage(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"person", "forwarded", "unscoped", "missing-agent-reply", "summarized-queue", "unretained-current", "append-during-summary"} {
 		t.Run(scenario, func(t *testing.T) {
 			b, v, _ := builderFixture(t)
