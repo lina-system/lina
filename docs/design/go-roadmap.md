@@ -448,6 +448,7 @@ completion conditions to repository tests and installed Core scenarios.
 
 **G2-24 TUI records, progress and agent screens.** Views, memo inbox, progress view, quick add, board, steering, usage meter.
 - Done when: a quick add shows chips before it saves; every view is a Core query result drawn without client ranking; a progress view line holds no id-shaped field; the board groups Core's rows into Waiting for me, Running and Done; a follow-up note reaches a running background run at its next round trip; the usage meter reads "unknown" for an unreported quota.
+- #165 adds the three-group board over Core's waiting and running rows, run follow-ups and an account usage view. Account quota metadata is not present before #160; the view explicitly renders unknown instead of estimating it. Installed-Core TUI scenarios live in `e2e/m2/tui-board.json`, `tui-note.json` and `tui-usage.json`.
 - Depends on: G1-21, G2-13, G2-23, G2-25. Design refs: T-12, T-13, T-14.
 
 ### 2.G Accounts and routing

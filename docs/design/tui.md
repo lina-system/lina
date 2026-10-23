@@ -566,6 +566,16 @@ topics carry it. `e2e/m2/tui-home-waiting.json` checks an outside-change request
 on Home while an installed Core runs a worker through approval, a question and
 an artifact result, then removes resolved requests without changing the draft.
 
+`/board` draws the retained running rows and Core's full `waiting_get` result
+in three groups. Waiting requests retain Core's order; a run or task present
+in both sources appears once. Input-needed and person-blocked runs join Waiting
+for me. Other waiting and active runs stay in Running. Landed results, including
+ready-for-review, failed and stopped rows, stay in Done until Core removes them.
+An unknown run state remains explicitly unknown in Running. Progress updates
+refresh the waiting query; running updates and replacement snapshots regroup
+rows immediately, without changing the draft or moving selection to another
+identity. The board does not infer completion, progress or priority from text.
+
 ## Results, cards and the pager (T-13)
 
 Contract: [surfaces.md](surfaces.md#result-surfaces), [host-protocol.md](host-protocol.md#typed-results), [materials-and-knowledge.md](materials-and-knowledge.md#saving-a-result).
@@ -584,6 +594,18 @@ An approval or form question keeps a short labeled line in the conversation.
 Its expanded view shows the requesting agent, recommendation when supplied,
 summary, targets and choices. Opaque card references and revision tokens are
 routing data and never appear in that line or the waiting summary.
+
+The board's Enter key unfolds the selected row in place. Up/Down selects in
+Core's order within each group; expansion and selection follow row identities
+across updates. Collapsed summaries occupy one physical line, without routing
+ids. Expanded rows retain their full summary and Core-provided context and
+recommendation. A landed run offers `o` to open its result and `d` to dismiss;
+a live run offers `s` to request a stop and `n` to draft a targeted `/note`.
+F6 opens the existing authenticated decision flow when decisions are available;
+expanding a row never answers or approves it. Esc closes the board. Reconnect
+closes it and discards pending board reads. `e2e/m2/tui-board.json` exercises
+installed Core, an outside-change waiting request, a held background run, live
+landing and opening its result through the real TUI.
 
 ### Tool call rows
 
@@ -777,10 +799,10 @@ empty-list status.
 
 Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#settings). Each view is data that Core already computes. The TUI draws it as lines with keys. The roadmap builds the views with the Core feature behind each, and a view whose capability was not granted shows as unsupported (T-07).
 
-- **Board:** three groups of one-line rows (Waiting for me, Running, Done). Enter unfolds a row, with keys for the actions that apply.
-- **Steering:** `/note <run> <text>` queues a note for the target's next step. `/stop <run>` or `s` on a running row requests a stop; `/stop all` targets the person's background runs and live workers. These requests use the same Core handlers as a paired channel. Bare `/stop` interrupts the conversation. `/progress` reads the compact digest. `/waiting priority|lightest` opens the full waiting list; `o` switches its Core order, which survives refreshes.
+- **Board:** `/board` opens three groups of one-line rows (Waiting for me, Running, Done). Enter unfolds a row, with keys for the actions that apply (T-12/T-13).
+- **Steering:** `/note <run> <text>` queues a note for the target's next step. `/note <text>` selects the sole visible in-progress background run, excluding tasks and worker sessions. Core checks that it belongs to the focused conversation before accepting the note. With no unique target, a missing explicit reference, or an unavailable capability, the TUI gives local guidance to select a run in `/board`; it never sends the command as conversation input. Running rows currently lack conversation metadata, so the client does not guess between multiple visible runs or retry a refused target. The note appears once in the next background provider request, including when it arrived during a held final response (`e2e/m2/tui-note.json`). `/stop <run>` or `s` on a running row requests a stop; `/stop all` targets the person's background runs and live workers. These requests use the same Core handlers as a paired channel. Bare `/stop` interrupts the conversation. `/progress` reads the compact digest. `/waiting priority|lightest` opens the full waiting list; `o` switches its Core order, which survives refreshes.
 - **Agent tree and lanes (developer view):** indented lines (the persona as initial and name, sub-agents as plain indented text, workers as `[name]`), one line per worker for lanes, hand-offs as arrows, folded to one line by default. `/developer` opts into the recorded worker view through the `worker_lanes` capability. Core supplies each persona's name and each current task execution's worker/session identity; two sessions using the same tool remain separate lanes. Persona headings show initial and name, and indented `[worker] › task` lines are clipped to one physical row. Enter toggles the selected lane's thread, turn, node, generation and source-labeled stage summaries. Up/Down selects; `r` refreshes the current first page and `n` replaces it with the next bounded page. Refresh preserves selected and expanded identities; new executions start folded. Esc returns to the composer. Closing/reopening or reconnecting discards this view's expansion state and pending responses. No sub-agent relationship is inferred from worker names or text; the work ledger and installed worker runtime supply persona-to-worker edges only. Runtime sessions retain their adapter state and show masked output/version on expansion.
-- **Usage meter:** one line per connected account: plan, state, a block-character meter or "unknown".
+- **Usage meter:** `/usage` and `/accounts` open the same connected-account view. Each row shows Core's label, its plan when reported, state and usage. An unreported quota reads "unknown", including for an account whose state is usage capped; status and local request counts never become a quota percentage. The current `AccountSummary` protocol has no quota field, so every row shows unknown until Core supplies that metadata. `e2e/m2/tui-usage.json` checks installed Core's account metadata and the real TUI at 100 and 40 columns.
 
 Settings are commands and labeled blocks, all requests to Core:
 
@@ -803,8 +825,9 @@ scenario `e2e/m2/tui-composer-identity.json` covers creation and selection throu
 the TUI, a synthetic reply, and the empty composer after Core reconnect.
 
 `/help` opens the local command reference, including `/channels` and `/talk`.
-These commands are consumed locally even when Core has not granted their
-capabilities; they then show unsupported and never become model input.
+Slash commands are consumed locally even when Core has not granted their
+capabilities; they then show unsupported and never become model input. Unknown
+commands and unsupported argument forms show local guidance to `/help`.
 The TUI owns only transient display state. The `channels` and `exchanges`
 capabilities are granted only when their Core services are registered. The
 installed-Core acceptance scenarios are `e2e/m1/tui-channels.json` and

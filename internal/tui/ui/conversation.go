@@ -44,6 +44,7 @@ type inputHistory struct {
 }
 
 type textPager struct {
+	board                    *boardView
 	tool                     bool
 	developer, developerBusy bool
 	developerID              string
@@ -163,7 +164,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		class = term.Toggle
 	}
 	switch key.Name {
-	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+p":
+	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+p", "f6":
 		class = term.Toggle
 	}
 	if !m.gate.Admit(key, class, m.now()) {
@@ -272,6 +273,10 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		if !m.mutationsAllowed() {
 			return nil
 		}
+		if handled, command := m.boardCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			return command
+		}
 		if handled, command := m.developerCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
 			m.conversation.undo = nil
@@ -305,6 +310,12 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.reduceInput(state.EditDraft{})
 			m.conversation.undo = nil
 			return command
+		}
+		if strings.HasPrefix(text, "/") && text != "/stop" && !strings.HasPrefix(text, "/queue ") {
+			m.reduceInput(state.EditDraft{})
+			m.conversation.undo = nil
+			m.openPager(design.Text(m.styles.options.Language, "command.unknown"))
+			return nil
 		}
 		if m.conversation.agentMissing || m.conversation.agentPending {
 			return nil
@@ -622,6 +633,11 @@ func (m *shellModel) refreshResultStreams(message state.Msg) {
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
+	if p.board != nil && !p.searching {
+		if handled, cmd := m.boardKey(name); handled {
+			return cmd
+		}
+	}
 	if p.developer && !p.searching {
 		if handled, cmd := m.developerKey(name); handled {
 			return cmd
