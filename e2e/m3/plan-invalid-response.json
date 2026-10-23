@@ -1,0 +1,9 @@
+{
+  "goal": "Publish a workshop guide",
+  "done": "Guide is available",
+  "invalid": [
+    "This is not JSON",
+    "{\"title\":\"Guide\",\"summary\":\"Prepare the guide\",\"entries\":[{\"id\":\"a\",\"kind\":\"todo\",\"title\":\"Write\",\"parent\":\"\",\"done\":\"Written\",\"depends_on\":[\"b\"]},{\"id\":\"b\",\"kind\":\"todo\",\"title\":\"Check\",\"parent\":\"\",\"done\":\"Checked\",\"depends_on\":[\"a\"]}]}"
+  ],
+  "valid": {"title":"Guide plan","summary":"Write and check the guide","entries":[{"id":"write","kind":"todo","title":"Write the guide","parent":"","done":"Guide is written"}]}
+}

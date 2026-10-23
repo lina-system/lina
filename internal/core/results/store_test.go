@@ -49,7 +49,6 @@ func setup(t *testing.T) (*Store, *canon.Store, canon.Config, *testWriter) {
 	}
 	t.Cleanup(func() { controls.Close() })
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: Schema})
 	cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: controls, Migrations: ms}
 	db, err := canon.Open(t.Context(), cfg)
 	if err != nil {
