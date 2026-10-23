@@ -315,6 +315,13 @@ creates its assigned branch at the detached base, produces a real commit and
 attempts ordinary writes to protected refs. Assertions check the shared
 `work/tasks` allocation, independent parent clone, unchanged source checkout,
 clean result, artifact provenance and live-card equivalence to ledger replay.
+The shared installed-worker harness gives each Linux Core a private loadavg
+fixture through a Bubblewrap read-only bind mount. Its default is idle, so host
+load cannot park unrelated worker scenarios. The capacity case first observes
+`queued / host_capacity` with no attempt or launch, then lowers load and sends
+a new conversation input. The same work produces its result once and is not
+replayed after restart. Failures include dispatch state, wait, attempts and
+worker launch observations. Production sampling, limits and timeouts are unchanged.
 Run it with `go test -count=1 ./e2e/m1 -run '^TestM2DispatchedWorkArea$'`.
 
 `m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
@@ -474,6 +481,14 @@ waiting protocol, retention of a real file, and no third turn across restart.
 `m2/headless-worker-recovery.json`, executed by `TestM2HeadlessWorkerRecovery`,
 checks Claude dispatch's two attempts, retained receipt artifacts and durable
 decision. These use synthetic workers and no authenticated accounts.
+
+`m2/tui-board.json`, `m2/tui-note.json` and `m2/tui-usage.json` exercise the
+installed Core and real PTY TUI. The board combines an outside-change waiting
+request with a background run, updates its groups on landing and opens the
+result. The note journey holds a background provider response after ten
+foreground tool rounds, then checks one scoped follow-up in the next request.
+The account journey checks unknown quota independently of status and reported
+plan at 100 and 40 columns. External model wires and account data are synthetic.
 
 `m2/work-definition.json` drives `dispatch_work` through installed Core. It
 refuses missing done conditions, write areas and base-commit design sections,

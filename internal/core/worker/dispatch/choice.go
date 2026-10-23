@@ -193,24 +193,7 @@ func (s *Service) ObserveQuota(ctx context.Context, name string, rows []provider
 			if err = json.Unmarshal(raw, &prior); err != nil {
 				return err
 			}
-			var blockedAt time.Time
-			for _, q := range prior {
-				if q.State == provider.QuotaBlocked && q.Observed.After(blockedAt) {
-					blockedAt = q.Observed
-				}
-			}
-			if !blockedAt.IsZero() {
-				// A delayed endpoint reply cannot erase a newer observed stop.
-				// No measurement is not evidence of recovery.
-				if len(rows) == 0 {
-					return nil
-				}
-				for _, q := range rows {
-					if !q.Observed.After(blockedAt) {
-						return nil
-					}
-				}
-			}
+			rows = mergeQuotaObservations(prior, rows)
 		}
 		_, err = tx.ExecContext(ctx, "INSERT INTO worker_quota(worker,rows) VALUES(?,?) ON CONFLICT(worker) DO UPDATE SET rows=excluded.rows", name, mustJSON(rows))
 		return err
@@ -219,6 +202,41 @@ func (s *Service) ObserveQuota(ctx context.Context, name string, rows []provider
 		s.Wake()
 	}
 	return err
+}
+
+func mergeQuotaObservations(prior, rows []provider.QuotaRow) []provider.QuotaRow {
+	incoming := len(rows)
+	used := make([]bool, incoming)
+	for _, saved := range prior {
+		matched, recovered := false, false
+		unmeasured := saved.State == provider.QuotaUnknown && saved.UsedPct == nil && saved.ResetsAt == nil
+		inferredStop := saved.State == provider.QuotaBlocked && saved.Source == provider.ErrorCode
+		for i := 0; i < incoming; i++ {
+			q := rows[i]
+			if q.Provider != saved.Provider || q.Account != saved.Account {
+				continue
+			}
+			// Fresh account evidence supersedes an initial unknown placeholder
+			// or an error-inferred stop, neither of which identifies a limit.
+			if saved.Window == provider.UnknownWindow && (unmeasured || inferredStop) && q.Observed.After(saved.Observed) {
+				recovered = true
+			}
+			if q.Window == saved.Window && !used[i] && !matched {
+				matched = true
+				used[i] = true
+				// Sparse notifications retain sibling timestamps. Compare only
+				// the corresponding window, including delayed stop observations.
+				if !q.Observed.After(saved.Observed) {
+					rows[i] = saved
+				}
+			}
+		}
+		if !matched && !recovered {
+			// Absence is not evidence that a measured window recovered.
+			rows = append(rows, saved)
+		}
+	}
+	return rows
 }
 
 // selectWorker probes only eligible workers. A blocked cache survives restart;

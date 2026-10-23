@@ -580,13 +580,19 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		if err = e.hydrate(&g); err != nil {
 			return err
 		}
+		stale := staleInputs(g, a)
+		if stale && a.State == "finished" && !a.Superseded {
+			// This outcome was already accepted. Journal the late report without
+			// replacing its settlement or reopening it for another observation.
+			return nil
+		}
 		t := goalTask(&g, a.TaskID)
 		previousRevision := g.Revision
 		a.ObservedAt = e.cfg.Now().Unix()
 		a.ObserverEpoch = e.cfg.Epoch
 		a.Receipt = encode(o)
 		a.Deadline = e.cfg.Now().Add(SafetySweep).Unix()
-		if staleInputs(g, a) {
+		if stale {
 			// Retain the obsolete response as history, never as current evidence
 			// or a plan for this revision. A late result is not a Core failure.
 			a.State = "finished"

@@ -70,7 +70,9 @@ func newAdapterPeerScript(t *testing.T, quota string, beforeTurnReply, beforeQuo
 				result = map[string]any{"thread": map[string]any{"id": "thread"}, "cwd": params.Cwd, "model": "own"}
 			case "turn/start":
 				turn++
-				p.send(frame{Method: "turn/started", Params: json.RawMessage(fmt.Sprintf(`{"threadId":"thread","turn":{"id":"turn-%d","status":"inProgress"}}`, turn))})
+				if announceTurn {
+					p.send(frame{Method: "turn/started", Params: json.RawMessage(fmt.Sprintf(`{"threadId":"thread","turn":{"id":"turn-%d","status":"inProgress"}}`, turn))})
+				}
 				for _, early := range beforeTurnReply {
 					p.send(early)
 				}

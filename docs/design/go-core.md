@@ -896,8 +896,11 @@ there is no separate client endpoint.
   the published files.
 - `write_record(kind: todo)` accepts sentence-only capture and complete optional
   planning fields. It preserves them on text-only edits. Exact dates are checked
-  before publication; unresolved input returns `ambiguous_date`. Dependency
-  targets are owner-scoped and a recursive index query rejects cycles under the
+  before publication; unresolved input returns `ambiguous_date`. All to-do date
+  fields reject noncanonical timestamp syntax and offsets or instants outside
+  SQLite's date range before changing files, history or the index. Valid fractional
+  seconds and offset spellings are preserved for board/list and dated queries.
+  Dependency targets are owner-scoped and a recursive index query rejects cycles under the
   repository writer lock. The existing revision CAS and durable tool receipts
   apply unchanged. The tool cannot set work execution state or complete a
   delegated task. Planning-field edits may preserve an already `completed`
@@ -909,10 +912,74 @@ there is no separate client endpoint.
   today/upcoming/anytime queries, rescheduling and restart after index loss.
   `e2e/m2/todo-completed-planning.json` covers editing a completed delegated
   to-do through Core and retaining its fields and completion after restart.
-  Recurrence advancement, candidates and memo promotion remain #156.
-- Recurrence is Core's own parser for the subset (daily, weekly, monthly, yearly; interval; by-day; by-month-day; count; until) plus the from-completion flag. `Next(rule, from, zone)` advances only to a future occurrence. A table-driven corpus covers month ends and zone gaps.
+  `e2e/m2/todo-timestamps.json` covers timestamp refusals in all date fields,
+  an invalid edit, and valid timed tasks in board/list and dated views.
+  `e2e/m2/record-recurrence-promotion.json` exercises same-record recurrence
+  completion, model-free advancement at Core restart, memo promotion and undo.
+- Recurrence uses the native timer parser's daily, weekly, monthly and yearly
+  subset with interval, by-day, by-month-day, count and until. The public package
+  helper is `timers.Next(rule, from, zone)`, backed by the pure shared
+  `kit/calendar` calculator so the two store families do not import each other.
+  Existing series retain their start
+  anchor; a completion-relative series anchors at completion. `repeat.zone`
+  is an optional IANA name, defaulting to UTC for existing records. Core owns
+  the stored start, completed count and exhausted flag; tool arguments cannot
+  set them. Exhaustion stops scheduling without treating absence as completion.
+  Completion commits the future occurrence in the same file and clears its
+  dependencies, waiting state, planned start and checklist ticks. The same
+  publication checkpoint appends a `record_occurrence` event to the work ledger,
+  including the prior occurrence, next occurrence, time and completion/advance
+  reason. These events create no delegated work card. Core runs
+  overdue advancement at startup and each minute without a model or worker.
+  Date-only occurrences remain due throughout their civil day. Timed
+  to-dos preserve seconds and fractional seconds (up to Go time precision);
+  the ordinary timer schedule remains minute-based. The shared calendar resolves
+  DST gaps and folds as C-26 specifies. Tests cover month ends, leap years and zone gaps.
+
 - Reminders and pre-warnings are timer rows (C-26).
-- Candidates are rows with a source, confidence and numbered handle. An automatic addition writes an undo handle to the undo log.
+- Candidates are durable rows with a ledger source, exact quotation, confidence
+  and numbered handle. Installed `propose_candidate` and `list_candidates`
+  tools share the existing person/agent authority, leases and effect receipts.
+  An empty source resolves to the authenticated turn's retained input event.
+  Models and clients cannot supply source facts, owner, speaker or source hash.
+  At the fenced publication-intent write, Core resolves native provenance,
+  owner, agent, speaker, replay/view lineage, visibility and the exact retained
+  utterance again. Large immutable bodies are verified outside the transaction;
+  their metadata is re-read inside it. Missing, foreign, retracted, secret-bearing
+  or mismatched evidence remains pending without a record or undo operation.
+- The deterministic language subset recognizes direct owner commitments
+  (`I will`, `I'll`, `I promise to`, `내가 …할게`, `나는 …하겠다`) and owner-directed
+  requests (`Remind me to`, `I need to`). The full utterance must match the quote,
+  and the proposed title must match its action after whitespace/case normalization.
+  Other wording and sources stay candidates. This does not treat a model's
+  interpretation or confidence as a source fact. Existing open titles and source
+  links prevent duplicate additions. An undone source hash cannot be reintroduced
+  through a replay alias. Three rejected additions in one recognized class is
+  the initial fallback threshold; further items remain candidates. Numbered
+  pages retain unanswered proposals and define an explicit scope for presenting
+  a group, without automatically accepting it.
+- Automatic additions commit their numbered candidate, record and undo receipt
+  through the existing publication journal. A committed intent is the recovery
+  decision; restart finishes that exact decision without dispatching a tool or
+  reclassifying source text. The headless `e2e/m2/record-candidates.json` scenario
+  covers verified admission, forged and missing evidence, duplicate refusal,
+  notices, undo, and pending/rejected persistence after restart.
+
+`promote_memo` and `undo_record` use the existing authenticated record-tool
+registry. Promotion preserves the memo's id, path, title and note, sets its kind
+to `todo` and records the memo source. Its receipt includes a one-action undo
+handle. Undo restores the prior bytes as a new revision, or cancels a newly
+added candidate to-do; it refuses a subsequent edit. Both check the requesting
+person and record revision. An undo is idempotent and never reactivates a
+rejected candidate.
+
+Migration 45 adds the canonical `record_operations` and `record_candidates`
+machine-state tables, without modifying existing files. Operation membership,
+undo handles and candidate admission results travel in the records publication
+intent and commit with its index checkpoint. Recovery therefore cannot publish
+a promotion or automatic addition without its undo receipt. Durable operation
+notices are projected into the owning agent's conversation independently of a
+model reply and recovered on startup; existing notices are not republished.
 
 **C-18 Compaction and the summary tree (changed).** `compaction.Policy` is data with the values of [conversation-and-memory.md](conversation-and-memory.md#compaction-and-resume); the in-turn pass and the continuation turn follow the same section. The summary comes from an auxiliary request to the conversation model.
 
@@ -1291,8 +1358,9 @@ headless process (`--print --output-format stream-json --verbose`). The matching
 `result` ends the turn before process exit; missing results, invalid messages,
 reported errors and permission denials fail. Core owns and reaps the child tree.
 `dispatch_work` accepts `worker: "claude"` through the same durable admission,
-work allocation, PR checks and manager boundary as Antigravity. Omitted worker
-selection retains Antigravity for existing requests and stored records. The
+work allocation, PR checks and manager boundary as Antigravity. An explicit
+selection keeps that adapter; omitted selection uses the quota and situation
+chooser in C-57, with Antigravity first among otherwise equal candidates. The
 artifact retains the final result alongside the independently read PR; receipt
 provenance is `adapter-derived`. No worker settings or integrations are installed.
 The headless `e2e/m2/claude-worker.json` scenario exercises installed Core, actual
