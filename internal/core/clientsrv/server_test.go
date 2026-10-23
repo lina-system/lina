@@ -23,7 +23,7 @@ func TestUnsupportedEnvelopeVersion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Build the offered version as raw JSON: the 1.0 Go type cannot encode it.
+			// Build the offered version as raw JSON: the supported Go codec cannot encode it.
 			var envelope map[string]any
 			if err := json.Unmarshal(data, &envelope); err != nil {
 				t.Fatal(err)

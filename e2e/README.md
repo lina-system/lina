@@ -162,6 +162,10 @@ observation, requires the original task to finish with at most one continuation,
 and checks that another Core restart preserves the result without another
 delivery. An unresolved snapshot fails this scenario; retaining an unknown
 worker is not reported as successful recovery.
+The result screen must show text from the completed agent reply attributed to
+the original conversation, input and recovered worker turn. Request-only and
+streaming frames do not qualify. The same reply ID and text must survive the
+second restart; a failed check retains delivery metadata and its terminal frame.
 
 To keep a measured product fixed while changing only the test harness, set
 `LINA_ALPHA_BUILD` to a private directory containing `binaries/lina`,

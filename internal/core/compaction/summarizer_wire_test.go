@@ -19,6 +19,7 @@ type summaryTransport func(*http.Request) (*http.Response, error)
 
 func (f summaryTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 func TestAuxiliaryInstructionsReachResponsesWire(t *testing.T) {
+	t.Parallel()
 	cfg, err := responses.BuildConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +64,7 @@ func TestAuxiliaryInstructionsReachResponsesWire(t *testing.T) {
 }
 
 func TestCompactionRetainsConversationPrefixOnResponsesWire(t *testing.T) {
+	t.Parallel()
 	cfg, err := responses.BuildConfig()
 	if err != nil {
 		t.Fatal(err)

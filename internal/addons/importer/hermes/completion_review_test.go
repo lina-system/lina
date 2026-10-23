@@ -24,6 +24,7 @@ func (m importedMaterials) Read(ctx context.Context, ref ledger.Material) (strin
 }
 
 func TestReviewSealedMaterialReadsAreMaskedAndReversible(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	db := importStore(t)
 	writer, store := importMaterials(t, db)
@@ -70,6 +71,7 @@ func TestReviewSealedMaterialReadsAreMaskedAndReversible(t *testing.T) {
 }
 
 func TestReviewDiscoverSidecarsAndRehearseWithoutCanon(t *testing.T) {
+	t.Parallel()
 	req := importRequest(t)
 	source := t.TempDir()
 	dir := filepath.Join(source, "lcm-large-outputs")
