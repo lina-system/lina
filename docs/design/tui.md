@@ -329,8 +329,9 @@ Overlays form a stack and the top one receives keys first: agent list, command p
 The decision overlay occupies the conversation surface and keeps the connection
 status row. Its targets wrap at cell boundaries and can be read with Up/Down or
 Page Up/Page Down. Confirmation stays disabled unless the entire target area
-fits. A small terminal retains the size notice and status instead of an actionable
-card; enlarging it recomputes visibility.
+has been read across those pages. Paging never skips a row hidden by the
+continuation hint. A small terminal retains the size notice and status instead
+of an actionable card; resizing discards the reading record.
 
 Width tiers (P):
 
@@ -779,7 +780,7 @@ The approval record is Core's. The TUI shows it and sends the person's decision 
 
 **The card** shows what the contract says an approval request shows, the requesting agent with its recommendation first, and its choices ([main-authority.md](main-authority.md#approval)). Doing nothing means the action will not run. A request that a channel cannot present waits here ([main-authority.md](main-authority.md#channels)).
 
-- Target fields are never truncated. If they do not fit, a details view opens and confirm is disabled while any target field is cut.
+- Target fields are never truncated. If they do not fit, the details view scrolls. Confirmation becomes available only after every target page has been displayed, including every wrapped row. The reading record belongs to the open card's identity, epoch, revision and terminal dimensions; a changed revision or size discards it. Closing the card or reconnecting also clears it. Reading all pages permits a separate one-time confirmation; scrolling itself never decides anything.
 - Requests of one scope are one card. A changed group returns stale; the card refreshes and the person selects again.
 - A decision is two steps: select, then a separate confirm key. Keys are press-only. Esc closes the view and decides nothing. No free-text path answers an approval, and no `/approve` exists.
 - Outcomes the TUI handles: resolved, already resolved elsewhere, withdrawn, expired (not performed), stale epoch or group, and refused. A pending approval is stopped by a Core restart ([runtime.md](runtime.md#recovery)), and the card says so.
@@ -1333,6 +1334,14 @@ separate selection/confirmation presses, durable attribution and terminal cleanu
 The test creates no additional authority service. `e2e/m1/tui-cards.json` races
 two socket clients, changes a group after display, and drives the recording-writer
 bell replay assertion.
+
+`TestM2TUILongWorkerApprovalInstalledCore` runs the installed Core and TUI in a
+120x34 PTY with a synthetic model and Codex stdio peer. It reads a command's
+multi-page targets, selects Allow once and confirms separately, answers the
+worker's question, and verifies the worker's artifact and the conversation result.
+UI regressions cover skipped pages, wrapped targets, revision and size changes,
+reopening, reconnecting and press-only confirmation. The real-model owner
+acceptance remains in #853 and runs after #900 reaches dev.
 
 `e2e/m1/tui-questions.json` exercises a flat question through a separately
 running Core listener and the production client adapter. The question source

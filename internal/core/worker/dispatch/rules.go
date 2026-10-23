@@ -46,7 +46,7 @@ func ReadRules(root string) ([]work.ChoiceRule, error) {
 		return nil, work.ErrInvalid
 	}
 	for _, rule := range table.Rules {
-		if rule.Worker != "codex" && rule.Worker != "antigravity" || rule.Priority < -1000 || rule.Priority > 1000 || len(rule.Tags) > 16 {
+		if !ruleWorker(rule.Worker) || rule.Priority < -1000 || rule.Priority > 1000 || len(rule.Tags) > 16 {
 			return nil, work.ErrInvalid
 		}
 		for _, tag := range rule.Tags {

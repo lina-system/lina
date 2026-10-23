@@ -54,6 +54,13 @@ var readOnlyKinds = map[protocol.Kind]bool{
 	protocol.KindAgentTalkGet: true, protocol.KindAgentTalkExpand: true, protocol.KindAgentTalkSubscribe: true,
 }
 
+// These answer kinds require an eligible decider before capability dispatch.
+var deciderKinds = map[protocol.Kind]bool{
+	protocol.KindApprovalAnswer: true,
+	protocol.KindQuestionAnswer: true,
+	protocol.KindWaitingAnswer:  true,
+}
+
 // Work requests retain mutation admission for future work-record operations.
 // Only the implemented GitHub observation operations are reads during recovery.
 func readOnlyEnvelope(e protocol.Envelope) bool {

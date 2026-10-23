@@ -361,11 +361,8 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		return err
 	}
 	stack = append(stack, github.Close)
-	if cfg.Client.Operations == nil {
-		cfg.Client.Operations = make(map[protocol.Kind]clientsrv.Operation)
-	}
-	for kind, operation := range clientsrv.GitHubOperations(githubService{client: github, merges: mergeAuthority, agentExists: mergeAgentExists}) {
-		cfg.Client.Operations[kind] = operation
+	if err := addOperations(&cfg.Client, clientsrv.GitHubOperations(githubService{client: github, merges: mergeAuthority, agentExists: mergeAgentExists})); err != nil {
+		return err
 	}
 	if err := boundary(CanonOpened); err != nil {
 		return err
