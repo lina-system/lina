@@ -24,7 +24,7 @@ func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 	workdir := t.TempDir()
 	var calls atomic.Int32
 	var control map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
@@ -58,7 +58,7 @@ func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 		default:
 			emitResponse(w, "The worker received the finish instruction.", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)

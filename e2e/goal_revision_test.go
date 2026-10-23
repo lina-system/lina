@@ -125,6 +125,10 @@ func TestM2RunToDoneAfterQueuedSiblingRevision(t *testing.T) {
 		Driver:   func(e *work.Engine) (work.Driver, error) { engine = e; return w, nil },
 		MainHost: host,
 		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+			agent, err := fixtureWorkOwner(ctx, root)
+			if err != nil {
+				return err
+			}
 			node, _ := host(ctx)
 			if err := e.NodeChanged(ctx, node); err != nil {
 				return err

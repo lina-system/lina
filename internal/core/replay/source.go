@@ -41,6 +41,7 @@ type Event struct {
 	Relations []ledger.Relation `json:"relations,omitempty"`
 }
 type Episode struct {
+	WorkMethod      string                 `json:"work_method,omitempty"`
 	Version         int                    `json:"version"`
 	TurnID          string                 `json:"turn_id"`
 	Conversation    string                 `json:"conversation_id"`
@@ -242,7 +243,7 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 		}
 		// Older producers did not record reconstructible context source kinds. Do
 		// not replace those packets with today's memory or silently drop them.
-		if a.InstructionFormat == "persona-v1" || a.InstructionFormat == "persona-tui-v1" {
+		if a.InstructionFormat == "persona-v1" || a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" {
 			if a.OwnerPersonID != scope.Person {
 				return Exclusion("missing_assembly")
 			}
@@ -442,6 +443,12 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 	if err != nil || persona.Commit != ep.Evidence.Assembly.PersonaRevision {
 		return Episode{}, Exclusion("missing_persona")
 	}
+	if ep.Evidence.Assembly.InstructionFormat == "persona-tui-work-method-v1" {
+		if persona.WorkMethodRevision != ep.Evidence.Assembly.WorkMethodRevision {
+			return Episode{}, Exclusion("missing_persona")
+		}
+		ep.WorkMethod = persona.WorkMethod
+	}
 	raw, err := json.Marshal(persona.Layers)
 	if err != nil {
 		return Episode{}, err
@@ -454,7 +461,7 @@ func (s Source) loadSnapshot(ctx context.Context, scope Scope, id string) (Episo
 		return Episode{}, err
 	}
 	ep.Items, err = s.Project(history, ep.Conversation, scope.Agent)
-	if err == nil && (ep.Evidence.Assembly.InstructionFormat == "persona-v1" || ep.Evidence.Assembly.InstructionFormat == "persona-tui-v1") {
+	if err == nil && (ep.Evidence.Assembly.InstructionFormat == "persona-v1" || ep.Evidence.Assembly.InstructionFormat == "persona-tui-v1" || ep.Evidence.Assembly.InstructionFormat == "persona-tui-work-method-v1") {
 		if s.Rebuild == nil || s.Skill == nil {
 			return Episode{}, Exclusion("missing_assembly")
 		}

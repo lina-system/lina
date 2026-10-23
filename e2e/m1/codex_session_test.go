@@ -161,7 +161,7 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 	var calls atomic.Int32
 	var delayed atomic.Bool
 	var control map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
@@ -273,7 +273,7 @@ func testInstalledCodexSession(t *testing.T, slowManager bool) {
 		default:
 			emitResponse(w, "worker journey complete", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	if slowManager {
@@ -363,7 +363,7 @@ func TestM2InstalledCodexLive(t *testing.T) {
 	workdir := t.TempDir()
 	var calls atomic.Int32
 	var session string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			t.Error("invalid model request")
@@ -406,7 +406,7 @@ func TestM2InstalledCodexLive(t *testing.T) {
 		default:
 			emitResponse(w, "live worker result received: LINA_CODEX_OK", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)

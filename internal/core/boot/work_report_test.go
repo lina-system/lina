@@ -27,7 +27,8 @@ import (
 func TestWorkReportRequiresObservedExit(t *testing.T) {
 	for _, state := range []string{"no run", "active", "recovered unknown", "completed", "failed", "interrupted", "wrong run", "old generation", "other conversation"} {
 		t.Run(state, func(t *testing.T) {
-			r, _, agent, _ := managementFixture(t)
+			r, _, _, _ := managementFixture(t)
+			agent := workAgentFixture(t, r)
 			r.agent, r.conversation = agent, "conversation"
 			r.personaMu = &sync.Mutex{}
 			r.personaGrants = map[string]grant.Grant{}

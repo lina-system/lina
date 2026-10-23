@@ -304,7 +304,7 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 	finished := make(chan struct{})
 	var calls atomic.Int32
 	var quotaChecked atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/worker-finished" {
 			close(finished)
 			w.WriteHeader(http.StatusNoContent)
@@ -381,7 +381,7 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 			quotaChecked.Store(true)
 		}
 		emitResponse(w, "worker quota checked", true)
-	}))
+	})))
 	defer func() { server.CloseClientConnections(); server.Close() }()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)

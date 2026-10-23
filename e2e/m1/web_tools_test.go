@@ -39,7 +39,7 @@ func TestM1WebUnconfigured(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		var request struct {
 			Instructions string
@@ -66,7 +66,7 @@ func TestM1WebUnconfigured(t *testing.T) {
 			t.Error("missing explicit web setup status and notice in model instructions")
 		}
 		emitResponse(w, scenario.Notice, true)
-	}))
+	})))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)
@@ -171,7 +171,7 @@ func TestM1WebSearchExtractAndCitation(t *testing.T) {
 	const providerKey = "fc-synthetic-private-key"
 	// A successful provider may reflect the credential using JSON escapes.
 	const escapedKey = `\u0066c-synthetic-private-key`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v2/search" || r.URL.Path == "/v2/scrape" {
 			if r.Header.Get("Authorization") != "Bearer "+providerKey {
 				t.Error("stored key was not sent to provider")
@@ -254,7 +254,7 @@ func TestM1WebSearchExtractAndCitation(t *testing.T) {
 			t.Error("unexpected model call")
 			emitResponse(w, "Unexpected.", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, _ := installedConversationHarness(t, server.URL)
 	// The synthetic installation records the helper as its Core artifact. The

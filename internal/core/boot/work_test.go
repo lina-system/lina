@@ -18,7 +18,8 @@ import (
 )
 
 func TestWorkToolsBindAuthorityAndReplay(t *testing.T) {
-	r, _, agent, _ := managementFixture(t)
+	r, _, _, _ := managementFixture(t)
+	agent := workAgentFixture(t, r)
 	r.agent = agent
 	r.conversation = "conversation"
 	r.personaMu = &sync.Mutex{}

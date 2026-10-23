@@ -13,7 +13,8 @@ import (
 )
 
 func TestConversationCorrectsExistingGoalWithRevision(t *testing.T) {
-	r, _, agent, _ := managementFixture(t)
+	r, _, _, _ := managementFixture(t)
+	agent := workAgentFixture(t, r)
 	r.agent = agent
 	repo, err := records.Open(r.root, r.db)
 	if err != nil {
@@ -107,7 +108,7 @@ func TestConversationCorrectsExistingGoalWithRevision(t *testing.T) {
 	}
 	// Bindings use the authenticated conversation identity, never a supplied
 	// person/agent. A different person cannot revise this known goal id.
-	foreign := &conversationRuntime{person: "other-person", agent: r.agent, workEngine: r.workEngine}
+	foreign := &conversationRuntime{db: r.db, person: "other-person", agent: r.agent, workEngine: r.workEngine}
 	foreignBindings := map[string]loop.Tool{}
 	if _, err := foreign.prepareGoalWorkTools("foreign-turn", foreignBindings); err != nil {
 		t.Fatal(err)

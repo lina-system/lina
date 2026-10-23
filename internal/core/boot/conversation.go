@@ -853,6 +853,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	releaseCredentials := r.vault.BeginTurn()
 	defer releaseCredentials()
 	bindings := map[string]loop.Tool{}
+	var toolCatalog *turnToolCatalog
 	if r.channelBinding == nil || r.channelBinding.Scope.Tools {
 		if r.router.root.workerDispatch != nil {
 			bindings["dispatch_work"] = r.router.root.workerDispatch.Tool(dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID})
@@ -975,6 +976,14 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				declarations = nil
 				catalog = nil
 			}
+			if r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
+				state, err := r.agents.State(ctx, r.agent)
+				if err != nil {
+					return turn.PreparedRequest{}, err
+				}
+				toolCatalog = prepareToolGroups(declarations, agents.ProjectWorkMethod(persona, state), bindings)
+				declarations = toolCatalog.first
+			}
 			if r.channelBinding != nil {
 				for name, tool := range bindings {
 					execute := tool.Execute
@@ -997,7 +1006,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			request, report := assemble.Assemble(assemble.Input{
 				Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
 				AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
-				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID,
+				AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,
 				Catalog: catalog, AlwaysTools: declarations,
 				History: items, Current: current[0], Packet: packet,
 				Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
@@ -1009,7 +1018,10 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}
 				return turn.PreparedRequest{}, turn.ErrInvalid
 			}
-			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
+			if toolCatalog != nil {
+				toolCatalog.offset = len(request.Items)
+			}
+			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
 			assembly.Context, err = r.recordContextSources(ctx, packet, report)
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -1098,6 +1110,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		ResultCommitted: r.background.notify, ToolActivity: r.toolActivity, Loop: loop.Config{
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        bindings,
+			Transform: func(ctx context.Context, request provider.Request) (provider.Request, error) {
+				return toolCatalog.transform(ctx, request)
+			},
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
 				return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
 			},

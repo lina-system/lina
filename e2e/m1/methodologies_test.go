@@ -235,7 +235,7 @@ func TestStarterMethodologiesThroughInstalledCore(t *testing.T) {
 			var calls atomic.Int32
 			var source, draft, revised coreexec.RecordReceipt
 			const brief = "Synthetic brief: preserve this objective and evidence."
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var request methodologyRequest
 				if json.NewDecoder(r.Body).Decode(&request) != nil {
 					t.Error("invalid request")
@@ -299,7 +299,7 @@ func TestStarterMethodologiesThroughInstalledCore(t *testing.T) {
 					t.Error("unexpected provider round")
 					emitResponse(w, "Stopped.", true)
 				}
-			}))
+			})))
 			defer server.Close()
 			h, start := installedConversationHarness(t, server.URL)
 			core := start(true)
@@ -361,7 +361,7 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 		SearchRows       int    `json:"search_rows"`
 		ObservedAt       string `json:"observed_at"`
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request methodologyRequest
 		_ = json.NewDecoder(r.Body).Decode(&request)
 		switch calls.Add(1) {
@@ -386,7 +386,7 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 			t.Error("unexpected round")
 			emitResponse(w, "Stopped.", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)

@@ -116,7 +116,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			var moved atomic.Bool
 			var sourceBase atomic.Value
 			sourceBase.Store(base)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				providerCalls.Add(1)
 				var req struct {
 					Tools []struct{ Name string }
@@ -179,7 +179,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					methodologyOutput(t, methodologyRequest{Input: req.Input}, code, nil)
 					emitResponse(w, "Task accepted.", true)
 				}
-			}))
+			})))
 			defer server.Close()
 			h, bootstrap := installedConversationHarness(t, server.URL)
 			ids := seedCodingFixture(t, h, bootstrap, test.Preset)
