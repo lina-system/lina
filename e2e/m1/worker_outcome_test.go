@@ -159,7 +159,7 @@ func installedWorkerOutcome(t *testing.T, pendingAtRestart bool) {
 		h.stopCore(core)
 		core = start()
 		c, conversation = conversationClient(t, h)
-		waitWorkerCanon(t, h, `SELECT count(*) FROM conv_event e JOIN conv_event p ON p.id=e.parent_id JOIN turn_runs t ON t.id='turn:'||p.id WHERE p.scaffold_kind='worker_completion' AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'')<>'result' AND t.state='completed'`, 1)
+		waitWorkerCanon(t, h, `SELECT count(*) FROM conv_event e JOIN conv_event p ON p.id=e.parent_id JOIN turn_runs t ON t.id='turn:'||p.id WHERE p.scaffold_kind='worker_completion' AND e.speaker_kind='agent' AND coalesce(e.scaffold_kind,'') NOT IN ('result','provider_item') AND t.state='completed'`, 1)
 		voiced = 1
 	} else {
 		admittedTurn(t, h, c, conversation, "delegate", inputText)

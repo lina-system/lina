@@ -60,8 +60,8 @@ func TestM2TUIHomeWaitingInstalledCore(t *testing.T) {
 			waitComposerReady(t, h, terminal)
 			h.keys(terminal, "KEEP-DRAFT")
 			waitScreen(t, h, terminal, "KEEP-DRAFT")
-			h.keys(terminal, "\x10") // Ctrl+P proves the overview arrived.
-			waitScreen(t, h, terminal, "Esc "+design.Text(design.English, "shortcuts.close"))
+			h.keys(terminal, "\x10") // Ctrl+P focuses the live work panel.
+			waitScreen(t, h, terminal, design.Text(design.English, "work.title"))
 			waitScreen(t, h, terminal, request)
 			h.keys(terminal, "\x1b")
 			home := waitComposerReady(t, h, terminal)
