@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-// Package a2a owns the publication boundary; Core owns execution and results.
-package a2a
+// Package publication owns the publication boundary; Core owns execution and results.
+package publication
 
 import (
 	"bytes"

@@ -24,7 +24,7 @@ Schema cannot express. The repository's Node test discovery includes
 | `clean_install` | Built artifacts installed into a new, private state root. |
 | `headless_sha256` | The script's receipt for uncached M1 e2e and TUI UI tests on that commit. Every required scenario, all 13 startup boundaries and all seven turn boundaries must pass. The worker outcome scenario includes actual Core tool calls, a worker result file, read-back and restart recovery. |
 | `matrix` | Exactly `fresh`, `planned_restart`, `crash_restart`, `restore`, in that order. Each row has a result, READY observation, decimal uint64 epoch, opaque root id, replayed-effect count and owner-session evidence hash. Epochs rise strictly, including above JavaScript's safe integer range. The first three roots agree; restore uses another root. |
-| `restore` | Whole-generation id and zero forgotten hits in search, summaries and ContextPacket after restoring an older generation. |
+| `restore` | The original `generation-` id emitted by backup (RFC 4648 base32 suffix), and zero forgotten hits in search, summaries and ContextPacket after restoring an older generation. |
 | `checks` | A1–A9, in the order of the roadmap's LINA 1 acceptance list. Each has `pass`, `fail` or `not_run` and an evidence hash (null when unrun). Passing behavior checks reference this attempt's headless receipt. |
 | `failures` | Separate results for startup/turn SIGKILL, corrupt canon, canon write fault, disk full, unusable sandbox, slow client, dropped frames, channel replay, unavailable provider, expired token, usage cap, background SIGKILL and older-generation restore. |
 | `ui_ux` | Owner verdict on layout, readability, physical input and interaction, with the owner-session receipt. |
@@ -37,6 +37,8 @@ complete new set of checks. Never copy passing rows from the previous commit.
 Unrun matrix cells have null observations; unrun diagnoses have null root,
 query and citation and an empty event array. An unrun restore is null. These
 values preserve an interrupted attempt but cannot pass final acceptance.
+Terminal `gap` results retain their original measured files in failed attempts;
+they cannot pass the final attempt.
 
 ## Attachments and limits
 

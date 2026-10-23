@@ -222,9 +222,10 @@ with **1.0** on the wire. Its versioned
 [a2a.proto](https://github.com/a2aproject/A2A/blob/v1.0.1/specification/a2a.proto)
 defines message shapes and ProtoJSON representation; this section defines
 LINA's admission and behavior. The [research note](../research/a2a.md) records
-source findings and limits. Core implements publication through its existing
-conversation, effect, work and result paths; outbound calls and the Node relay
-remain separate implementation scopes.
+source findings and limits. Core implements publication and outbound connections
+through its existing conversation, effect, work and result paths. Both use the
+standard library without an SDK dependency. The Node relay remains a separate
+implementation scope.
 
 A2A is a separate Core integration, not an MCP plugin, channel, worker adapter
 or `node` connection. An A2A peer does not become a LINA person, client, Node
@@ -337,7 +338,7 @@ model text, a tool exit or a worker's completion claim.
 
 #### Publication setup and task profile
 
-The owner configures publication with `lina a2a --state-root <root> --config
+The owner configures publication with `lina a2a publish --state-root <root> --config
 <file>` while Core is stopped. `--credential-stdin` supplies the external
 issuer's introspection client secret to Core's existing secret store. The
 private `system/core/a2a.json` control record names the TLS certificate/key,
@@ -438,6 +439,43 @@ to the originating conversation and any still-authorized Node command.
 Remote `COMPLETED` is a claim checked against the local done condition, not a
 LINA receipt or automatic acceptance of an external effect.
 
+### Outbound connection controls
+
+The owner uses the `a2a` client capability to configure, inspect, revoke and
+sign in to remote connections. The installed `lina a2a` command accepts settings
+on standard input. Credentials are transient settings fields and never enter a
+conversation. Task profiles bind an effect class, input prefix and byte limit,
+output media type and byte limit, and either an expected artifact SHA256 or
+explicit owner review (an empty hash). In review mode, Core retains an unverified
+preview; only an eligible owner confirming the inspected artifact hash can
+produce a verified result revision. Model tools cannot perform that confirmation.
+This local done condition verifies the requested content; it does not certify unrelated
+remote effects. Unknown classification still asks, and preset ceilings apply.
+
+The `remote_agent` conversation tool lists configured task definitions, sends a
+bounded message, observes a retained call or requests cancellation. The initial
+scope is the owner's direct Core conversation. Channel delegation, publication
+and Node relay are not admitted by this tool. Material or history upload is not
+implicit: only the validated text argument becomes a message part.
+
+The running list exposes retained remote work. A bounded Core observer polls
+known tasks after the model turn ends and after restart under fresh observation
+authority. It never replays an unknown initial send. Current-epoch recorded
+answers resume a follow-up through ordinary authority and approval; answers
+left unused across restart cannot send work.
+
+Input questions require the owner's recorded answer before a follow-up. A sign-in
+wait points to connection settings. OAuth uses authorization code with PKCE,
+configured issuer/client endpoints, a session-bound browser relay, issuer/state
+checks and bounded token lifetime. Expiry requires another sign-in; no model
+provider credential or refresh-token fallback is used.
+
+Artifacts may arrive as text, structured data, bytes or same-origin HTTPS URLs.
+Core retains bounded permitted content and checks the expected hash against
+assembled artifact parts. Verified text and binary file results use the existing
+result journal and material store, with the original conversation and remote
+source, identity, time and hash. Other remote completion claims remain unverified.
+
 ### Recovery and failures
 
 Published sends require a nonempty `messageId`. Before dispatch, Core stores
@@ -447,7 +485,9 @@ id with changed input is invalid. JSON-RPC ids are correlation ids only.
 Outbound message ids are stable, but A2A makes remote send deduplication
 optional. An uncertain send is **unknown**, never an automatic replay or a
 reason to try another agent. Read or resubscribe to a known remote task;
-otherwise the owner must resolve the uncertainty.
+otherwise the owner must resolve the uncertainty. Unresolved work also reserves
+its exact input within the originating conversation, so a new model call id or
+a different connection cannot silently repeat it.
 
 Revocation, epoch change or Node disconnect blocks new sends and follow-ups.
 Accepted remote work may continue. Core reconciles it through narrowly

@@ -2,108 +2,109 @@
 package main
 
 import (
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"strings"
+	"strconv"
+	"time"
 
-	"github.com/thisisjun786/lina/internal/core/a2a"
-	"github.com/thisisjun786/lina/internal/core/ctlfiles"
-	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/internal/buildinfo"
+	"github.com/thisisjun786/lina/internal/clientapi"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// Settings arrive on stdin, never argv or conversation history. The same
+// authenticated client connection carries the existing browser sign-in relay.
 func runA2A(args []string) int {
+	if len(args) > 0 && args[0] == "publish" {
+		return runA2APublication(args[1:])
+	}
+	return runA2ARemote(args)
+}
+func runA2ARemote(args []string) int {
 	flags := flag.NewFlagSet("lina a2a", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	root := flags.String("state-root", "", "installed state root")
-	file := flags.String("config", "", "owner publication configuration")
-	credential := flags.Bool("credential-stdin", false, "read the introspection client secret from stdin")
+	socket := flags.String("socket", "", "Core client socket")
+	flags.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: lina a2a --socket <path> < request.json\nOperations: configure, list, revoke, credential, sign_in, calls, answer, verify_result.")
+	}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 64
 	}
-	if *root == "" || *file == "" || flags.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: lina a2a --state-root <path> --config <file> [--credential-stdin]")
+	if *socket == "" || flags.NArg() != 0 {
+		flags.Usage()
 		return 64
 	}
-	input, err := os.Open(*file)
+	decoder := json.NewDecoder(io.LimitReader(os.Stdin, 128<<10))
+	decoder.DisallowUnknownFields()
+	var request protocol.A2aRequest
+	if decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF {
+		fmt.Fprintln(os.Stderr, "lina a2a: invalid settings request")
+		return 64
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	c, err := clientapi.DialWithCapabilities(ctx, *socket, buildinfo.Version, []protocol.Capability{{Name: "a2a", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Publication configuration is unavailable.")
-		return 78
+		return developmentError("a2a", err)
 	}
-	raw, err := io.ReadAll(io.LimitReader(input, (64<<10)+1))
-	input.Close()
-	if err != nil || len(raw) > 64<<10 {
-		fmt.Fprintln(os.Stderr, "Publication configuration is too large.")
-		return 78
+	defer c.Close()
+	if _, err = c.A2A(ctx, request); err != nil {
+		return developmentError("a2a", err)
 	}
-	var source io.Reader = strings.NewReader("")
-	if *credential {
-		source = os.Stdin
-	}
-	if err = configureA2A(*root, raw, source); err != nil {
-		if errors.Is(err, ctlfiles.ErrLocked) {
-			fmt.Fprintln(os.Stderr, "Stop Core before changing publication setup.")
-		} else {
-			fmt.Fprintln(os.Stderr, "Publication configuration could not be saved.")
+	var listener *clientapi.SignInListener
+	defer func() {
+		if listener != nil {
+			listener.Close()
 		}
-		return 78
-	}
-	fmt.Fprintln(os.Stdout, "Publication configuration saved. Start Core to apply it.")
-	return 0
-}
-func configureA2A(root string, raw []byte, credential io.Reader) error {
-	cfg, err := a2a.ParseConfig(raw)
-	if err != nil {
-		return err
-	}
-	controls, err := ctlfiles.Open(root)
-	if err != nil {
-		return err
-	}
-	defer controls.Close()
-	if err = controls.Acquire(); err != nil {
-		return err
-	}
-	if cfg.Enabled {
-		data, err := controls.Read("main.json")
+	}()
+	for {
+		frame, err := c.Receive(ctx)
 		if err != nil {
-			return err
+			return developmentError("a2a", err)
 		}
-		var identity struct {
-			MainID string `json:"main_id"`
+		if frame.Error != nil {
+			return developmentError("a2a", &clientapi.Refusal{Cause: *frame.Error})
 		}
-		if json.Unmarshal(data, &identity) != nil || identity.MainID == "" {
-			return a2a.ErrInvalid
-		}
-		password, err := io.ReadAll(io.LimitReader(credential, 8193))
-		if err != nil || len(password) > 8192 {
-			return a2a.ErrInvalid
-		}
-		defer clear(password)
-		vault, err := secrets.OpenFiles(root)
-		if err != nil {
-			return err
-		}
-		defer vault.Close()
-		key := secrets.Key{Person: "person:" + identity.MainID, Service: a2a.CredentialService(cfg.OAuth), Name: cfg.OAuth.SecretName}
-		if len(password) > 0 {
-			value := strings.TrimSuffix(strings.TrimSuffix(string(password), "\n"), "\r")
-			if value == "" || strings.ContainsAny(value, "\r\n\x00") {
-				return a2a.ErrInvalid
+		switch p := frame.Payload.(type) {
+		case protocol.A2aResult:
+			if json.NewEncoder(os.Stdout).Encode(p) != nil {
+				return 74
 			}
-			if err = vault.Put(key, []byte(base64.StdEncoding.EncodeToString([]byte(cfg.OAuth.ClientID+":"+value)))); err != nil {
-				return err
+			return 0
+		case protocol.SignInListen:
+			listener, err = clientapi.ListenSignIn(ctx)
+			if err != nil {
+				return developmentError("a2a", err)
 			}
-		} else if _, err = vault.Get(key); err != nil {
-			return err
+			port := json.Number(strconv.Itoa(listener.Port()))
+			if _, err = c.SignInListening(ctx, protocol.SignInListening{Port: &port}); err != nil {
+				return developmentError("a2a", err)
+			}
+		case protocol.SignInOpen:
+			if listener == nil || p.URL == nil {
+				return 70
+			}
+			if err = clientapi.OpenSignInBrowser(ctx, *p.URL); err != nil {
+				return developmentError("a2a", err)
+			}
+			select {
+			case redirect := <-listener.Redirects():
+				if _, err = c.SignInRedirect(ctx, redirect); err != nil {
+					return developmentError("a2a", err)
+				}
+			case <-ctx.Done():
+				return 70
+			}
+		default:
+			return 70
 		}
 	}
-	return controls.Write("a2a.json", raw)
 }

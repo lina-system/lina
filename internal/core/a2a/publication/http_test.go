@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-package a2a
+package publication
 
 import (
 	"encoding/base64"

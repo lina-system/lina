@@ -261,6 +261,13 @@ or canceling the existing remote task; it cannot use reconciliation to send
 new work. If remote authority is also gone, the unknown result stays visible
 to the owner. Revocation cannot promise to undo work already accepted remotely.
 
+The outbound conversation tool uses the ordinary effect ledger and approval
+surface. Owner connection settings and recorded input answers cannot be supplied
+by the model. A fresh observation or cancellation grant is limited to the
+retained call; it never authorizes another send. An unknown outcome reserves
+its exact input in the originating conversation across model call ids and
+connections, until the uncertainty has been resolved.
+
 ## Approval
 
 Core validates a tool's arguments before checking authority or claiming its effect key. A durable effect claim precedes execution, and its result is recorded separately: no storage transaction spans a tool call. A repeated key returns the first recorded result or unknown, including after restart; it never executes again. A stale write is refused before the handler and records the observed revision and, when Core knows it, the previous writing agent. An unresolved effect reserves its target until reconciliation so another call cannot silently overwrite it.

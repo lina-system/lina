@@ -3,138 +3,191 @@ package boot
 
 import (
 	"context"
-	"crypto/tls"
+	"encoding/json"
 	"errors"
-	"github.com/thisisjun786/lina/kit/secret"
-	"net"
-	"net/http"
-	"os"
-	"sync/atomic"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/a2a"
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
-	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/kit/grant"
+	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
-// A2AOptions contains only in-process acceptance seams. Owner configuration
-// lives in system/core/a2a.json; no environment variable bypasses TLS/tailnet.
-type A2AOptions struct {
-	Listen    func(context.Context, string, string) (net.Listener, error)
-	Transport http.RoundTripper
-}
-type publicationRuntime struct {
-	recovered atomic.Bool
-	root      *conversationRuntime
-	store     *a2a.Store
-	server    *a2a.Server
-	stop      context.CancelFunc
-	done      chan struct{}
-	wake      chan struct{}
-}
-
-func (r *conversationRuntime) initPublications(ctx context.Context) error {
-	p := &publicationRuntime{root: r, store: &a2a.Store{DB: r.db}, wake: make(chan struct{}, 1)}
-	p.server = &a2a.Server{Store: p.store, Config: p.config, Secret: func(oauth a2a.OAuth) (secret.Secret, error) {
-		value, err := r.vault.Get(secrets.Key{Person: r.person, Service: a2a.CredentialService(oauth), Name: oauth.SecretName})
+func (r *conversationRuntime) initA2A(relay *clientsrv.SignInRelay) error {
+	r.remoteAgents = &a2a.Service{DB: r.db, Vault: r.vault, Epoch: r.epoch, Check: func(ctx context.Context, o a2a.Origin, c a2a.Connection, p a2a.Profile) error {
+		g, env, err := r.resolvePersonaGrant(ctx, o.GrantID)
 		if err != nil {
-			return secret.Secret{}, err
+			return err
 		}
-		return value, nil
-	}, Wake: func() {
-		select {
-		case p.wake <- struct{}{}:
-		default:
+		if g.Identity.Person != o.Person || g.Identity.Agent != o.Agent || g.Identity.TaskID != o.Turn || (g.Identity.Profile != "a2a" && g.Identity.Profile != "a2a-observe") || g.Identity.Revision != c.Revision {
+			return a2a.ErrScope
 		}
+		request := g.Identity
+		request.Tool = "remote_agent"
+		request.Target = g.Scope[0].Target
+		request.Write = g.Scope[0].Write
+		if err = grant.Check(g, request, env); err != nil {
+			return err
+		}
+		if g.Identity.Profile == "a2a-observe" {
+			p.Class = tools.Research
+		}
+		raw, _ := json.Marshal(map[string]string{"connection": c.ID, "revision": c.Revision})
+		return authority.CheckPreset(ctx, r.db, r.epoch, authority.PolicyRequest{Key: o.GrantID + ":ceiling", Person: o.Person, Agent: o.Agent, TaskID: o.Turn, Tool: "remote_agent", Target: request.Target, Class: p.Class, Arguments: raw})
 	}}
-	if _, err := p.config(); err != nil {
-		return err
-	}
-	if err := p.store.Recover(ctx); err != nil {
-		return err
-	}
-	r.publications = p
-	return nil
+	return addOperations(&r.identity, map[protocol.Kind]clientsrv.Operation{protocol.KindA2aRequest: {Capability: protocol.Capability{Name: "a2a", Version: "1.0"}, Handle: func(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
+		return r.a2aOperation(ctx, s, e, relay)
+	}}})
 }
-func (p *publicationRuntime) config() (a2a.Config, error) {
-	raw, err := p.root.controls.Read("a2a.json")
-	if errors.Is(err, os.ErrNotExist) {
-		return a2a.Config{}, nil
-	}
-	if err != nil {
-		return a2a.Config{}, err
-	}
-	return a2a.ParseConfig(raw)
+func (r *conversationRuntime) a2aOrigin(turn string) a2a.Origin {
+	return a2a.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turn, Main: r.main, Epoch: r.epoch}
 }
-func (p *publicationRuntime) authorize(ctx context.Context, rec a2a.Record) error {
-	if _, _, err := p.server.Authorized(rec, rec.Principal); err != nil {
-		return err
-	}
-	if rec.CancelRequested || time.Now().Unix() >= rec.Deadline {
-		return a2a.ErrDenied
-	}
-	_, err := p.root.agents.Get(ctx, rec.Agent)
-	return err
-}
-func (r *conversationRuntime) validateA2A(ctx context.Context) error {
-	if r.externalTask == "" {
+func a2aError(err error) error {
+	if err == nil {
 		return nil
 	}
-	if r.publications == nil {
-		return a2a.ErrDenied
+	code := protocol.ErrorUnavailable
+	if errors.Is(err, a2a.ErrScope) {
+		code = protocol.ErrorOutOfScope
 	}
-	rec, err := r.publications.store.Read(ctx, r.externalTask)
-	if err != nil {
-		return err
+	if errors.Is(err, a2a.ErrInvalid) || errors.Is(err, a2a.ErrDestination) {
+		code = protocol.ErrorMalformed
 	}
-	if err = r.publications.authorize(ctx, rec); err != nil {
-		return err
+	if errors.Is(err, a2a.ErrChanged) || errors.Is(err, a2a.ErrEvidence) {
+		code = protocol.ErrorStaleRevision
 	}
-	return r.publications.approved(ctx, rec)
+	return &clientsrv.OperationError{Code: code}
 }
-func startA2AListener(ctx context.Context, r *conversationRuntime, opts *A2AOptions, ready func() bool) (func(context.Context) error, <-chan error, error) {
-	if r == nil || r.publications == nil {
-		return nil, nil, nil
+func value(p *string) string {
+	if p == nil {
+		return ""
 	}
-	p := r.publications
-	c, err := p.config()
+	return *p
+}
+func (r *conversationRuntime) a2aOperation(ctx context.Context, s clientsrv.Session, e protocol.Envelope, relay *clientsrv.SignInRelay) (clientsrv.Result, error) {
+	if err := r.authorize(s, nil); err != nil {
+		return clientsrv.Result{}, err
+	}
+	if !s.CanDecide || s.Epoch != r.epoch {
+		return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorNotAuthorized}
+	}
+	p, ok := e.Payload.(protocol.A2aRequest)
+	if !ok {
+		return clientsrv.Result{}, malformedManagement()
+	}
+	out := protocol.A2aResult{Operation: p.Operation}
+	effect := protocol.EffectNone
+	var err error
+	// Reject misplaced credential and configuration fields rather than accepting
+	// an ambiguous settings request with ignored private data.
+	if p.Credential != nil && p.Operation != "configure" && p.Operation != "credential" || p.Connection != nil && p.Operation != "configure" || p.Answer != nil && p.Operation != "answer" || p.VerificationHash != nil && p.Operation != "verify_result" {
+		return clientsrv.Result{}, malformedManagement()
+	}
+	switch p.Operation {
+	case "configure":
+		if p.Connection == nil {
+			return clientsrv.Result{}, malformedManagement()
+		}
+		raw, _ := json.Marshal(p.Connection)
+		var c a2a.Connection
+		if json.Unmarshal(raw, &c) != nil {
+			return clientsrv.Result{}, malformedManagement()
+		}
+		c.Person = s.PersonID
+		credential := []byte(value(p.Credential))
+		defer clear(credential)
+		c, err = r.remoteAgents.Configure(ctx, c, credential)
+		if err == nil {
+			rows := []protocol.A2aConnectionStatus{{ID: c.ID, Enabled: c.Enabled, Revision: c.Revision}}
+			out.Connections = &rows
+			effect = protocol.EffectApplied
+		}
+	case "list":
+		var rows []a2a.Connection
+		rows, err = r.remoteAgents.Connections(ctx, s.PersonID)
+		statuses := []protocol.A2aConnectionStatus{}
+		for _, c := range rows {
+			statuses = append(statuses, protocol.A2aConnectionStatus{ID: c.ID, Enabled: c.Enabled, Revision: c.Revision})
+		}
+		out.Connections = &statuses
+	case "revoke":
+		err = r.remoteAgents.Revoke(ctx, s.PersonID, value(p.ConnectionID))
+		effect = protocol.EffectApplied
+	case "credential":
+		credential := []byte(value(p.Credential))
+		defer clear(credential)
+		err = r.remoteAgents.SetCredential(ctx, s.PersonID, value(p.ConnectionID), credential)
+		effect = protocol.EffectApplied
+	case "sign_in":
+		id := value(p.ConnectionID)
+		return relay.StartExternal(s, clientsrv.ExternalSignIn{Begin: func(ctx context.Context, port int) (string, error) {
+			return r.remoteAgents.BeginOAuth(ctx, s.PersonID, id, s.ConnectionID, port)
+		}, Complete: func(ctx context.Context, p protocol.SignInRedirect) error {
+			if p.URL != nil && p.Code == nil && p.State == nil && p.Iss == nil && p.Error == nil {
+				return r.remoteAgents.CompleteOAuthURL(ctx, s.ConnectionID, *p.URL)
+			}
+			if p.Error != nil || p.URL != nil {
+				return a2a.ErrSignIn
+			}
+			return r.remoteAgents.CompleteOAuth(ctx, s.ConnectionID, value(p.Code), value(p.State), value(p.Iss))
+		}, Disconnect: func() { r.remoteAgents.DisconnectOAuth(s.ConnectionID) }, Kind: protocol.KindA2aResult, Result: out})
+	case "calls":
+		var calls []a2a.Call
+		calls, err = r.remoteAgents.Calls(ctx, s.PersonID)
+		statuses := []protocol.A2aCallStatus{}
+		for _, c := range calls {
+			statuses = append(statuses, a2aStatus(c))
+		}
+		out.Calls = &statuses
+	case "verify_result":
+		o := r.a2aOrigin("owner-verification")
+		o.Agent = value(p.AgentID)
+		o.Conversation = "main:" + o.Agent
+		var verified a2a.Call
+		verified, err = r.remoteAgents.Accept(ctx, o, value(p.CallID), value(p.VerificationHash))
+		if err == nil {
+			err = r.deliverA2A(ctx, verified)
+		}
+		effect = protocol.EffectApplied
+	case "answer":
+		o := r.a2aOrigin("owner-answer")
+		o.Agent = value(p.AgentID)
+		o.Conversation = "main:" + o.Agent
+		err = r.remoteAgents.Answer(ctx, o, value(p.CallID), value(p.Answer))
+		if err == nil {
+			_ = r.decisions.PublishQuestion(ctx, "a2a:"+value(p.CallID))
+		}
+		effect = protocol.EffectApplied
+	default:
+		return clientsrv.Result{}, malformedManagement()
+	}
+	return clientsrv.Result{Kind: protocol.KindA2aResult, Payload: out, Effect: effect}, a2aError(err)
+}
+func a2aStatus(c a2a.Call) protocol.A2aCallStatus {
+	out := protocol.A2aCallStatus{ID: c.ID, Connection: c.Connection, AgentID: c.Origin.Agent, ConversationID: c.Origin.Conversation, State: c.State, Verified: c.Verified}
+	if c.TaskID != "" {
+		out.RemoteTask = &c.TaskID
+	}
+	if c.Question != "" {
+		out.Question = &c.Question
+	}
+	if c.Delivered && c.Validated {
+		id := "a2a:" + c.ID
+		out.ResultID = &id
+	}
+	return out
+}
+func (r *conversationRuntime) a2aEnvironment(ctx context.Context, g grant.Grant) (grant.Environment, error) {
+	parts := strings.Split(g.Scope[0].Target, ":")
+	if len(parts) < 2 {
+		return grant.Environment{}, tools.ErrInvalid
+	}
+	c, err := r.remoteAgents.Connection(ctx, g.Identity.Person, parts[1])
 	if err != nil || !c.Enabled {
-		return nil, nil, err
+		return grant.Environment{}, a2a.ErrScope
 	}
-	cert, err := tls.LoadX509KeyPair(c.Certificate, c.PrivateKey)
-	if err != nil {
-		return nil, nil, errors.New("A2A TLS configuration unavailable")
-	}
-	cfg := clientsrv.TailnetConfig{Address: c.Address, Socket: c.TailscaleSocket}
-	if opts != nil {
-		cfg.Listen = opts.Listen
-		p.server.Transport = opts.Transport
-	}
-	listener, err := clientsrv.ListenTailnet(ctx, cfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	p.server.Ready = func() bool { return ready() && p.recovered.Load() }
-	server := &http.Server{Handler: p.server, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return ctx }}
-	done := make(chan error, 1)
-	finished := make(chan struct{})
-	var servingError error
-	go func() {
-		defer close(finished)
-		err := server.Serve(tls.NewListener(listener, &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}))
-		if errors.Is(err, http.ErrServerClosed) {
-			err = nil
-		}
-		servingError = err
-		done <- err
-	}()
-	return func(phase context.Context) error {
-		err := server.Close()
-		select {
-		case <-finished:
-			return errors.Join(err, servingError)
-		case <-phase.Done():
-			return errors.Join(err, phase.Err())
-		}
-	}, done, nil
+	return grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: c.Revision}, nil
 }

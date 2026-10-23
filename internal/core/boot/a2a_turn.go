@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/thisisjun786/lina/internal/core/a2a"
+	a2a "github.com/thisisjun786/lina/internal/core/a2a/publication"
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/reply"

@@ -4,246 +4,241 @@ package a2a
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"time"
+	"fmt"
+	"strings"
+	"sync"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
-type Record struct {
-	OwnerApproval   string            `json:"owner_approval,omitempty"`
-	Published       bool              `json:"published,omitempty"`
-	Calls           map[string]string `json:"calls,omitempty"`
-	Task            Task              `json:"task"`
-	Publication     string            `json:"publication"`
-	Caller          string            `json:"caller"`
-	Principal       Principal         `json:"principal"`
-	Agent           string            `json:"agent"`
-	Conversation    string            `json:"conversation"`
-	Definition      Definition        `json:"definition"`
-	Authority       string            `json:"authority"`
-	Phase           string            `json:"phase"`
-	Deadline        int64             `json:"deadline"`
-	CancelRequested bool              `json:"cancel_requested"`
-	Delivered       string            `json:"delivered,omitempty"`
-	LocalWork       string            `json:"local_work,omitempty"`
-	InputEvent      string            `json:"input_event,omitempty"`
-	InboxID         int64             `json:"inbox_id,omitempty"`
-	ToolCalls       int               `json:"tool_calls"`
+type Service struct {
+	DB      *canon.Store
+	Vault   *secrets.Store
+	Network Network
+	Epoch   uint64
+	// Check is supplied by Core; it checks current task/preset authority before
+	// every transmission, including each card or artifact request.
+	Check    func(context.Context, Origin, Connection, Profile) error
+	mu       sync.Mutex
+	opMu     sync.Mutex
+	oauthMu  sync.Mutex
+	attempts map[string]oauthAttempt
 }
-type Store struct{ DB *canon.Store }
 
-func opaque() string {
-	var id [16]byte
-	if _, err := rand.Read(id[:]); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(id[:])
+func hash(b []byte) string { d := sha256.Sum256(b); return hex.EncodeToString(d[:]) }
+func randomID() string     { var b [16]byte; _, _ = rand.Read(b[:]); return hex.EncodeToString(b[:]) }
+func key(c Connection) secrets.Key {
+	return secrets.Key{Person: c.Person, Service: "a2a:" + c.ID, Name: "credential"}
 }
-func (s *Store) Admit(ctx context.Context, p Publication, b Binding, d Definition, pr Principal, req SendRequest, now time.Time) (Record, error) {
-	var r Record
-	// Configuration affects the reply, not the execution identity. The complete
-	// message/metadata still participates, including task and context references.
-	hash := digest([]any{req.Message, req.Metadata, req.Tenant})
-	err := s.DB.Write(ctx, func(tx *canon.Tx) error {
-		var savedHash, id string
-		err := tx.QueryRowContext(ctx, "SELECT hash,task FROM a2a_messages WHERE publication=? AND caller=? AND message=?", p.ID, pr.Key(), req.Message.MessageID).Scan(&savedHash, &id)
-		if err == nil {
-			if hash != savedHash {
-				return ErrInvalid
-			}
-			r, err = readRecord(ctx, tx, id)
-			return err
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if req.Message.TaskID != "" || req.Message.ContextID != "" {
-			id := req.Message.TaskID
-			if id == "" {
-				if err := tx.QueryRowContext(ctx, "SELECT id FROM a2a_tasks WHERE publication=? AND caller=? AND json_extract(record,'$.task.contextId')=?", p.ID, pr.Key(), req.Message.ContextID).Scan(&id); err != nil {
-					if errors.Is(err, sql.ErrNoRows) {
-						return ErrNotFound
-					}
-					return err
-				}
-			}
-			r, err = readRecord(ctx, tx, id)
-			if err != nil {
-				return err
-			}
-			if r.Publication != p.ID || r.Caller != pr.Key() || req.Message.ContextID != "" && req.Message.ContextID != r.Task.ContextID {
-				return ErrNotFound
-			}
-			if Terminal(r.Task.Status.State) || r.Definition.ID != d.ID || r.Authority != Fingerprint(p, b, d) || r.CancelRequested || len(r.Task.History) >= 16 {
-				return ErrInvalid
-			}
-			r.Task.History = append(r.Task.History, req.Message)
-			history, _ := json.Marshal(r.Task.History)
-			if len(history) > MaxInput {
-				return ErrInvalid
-			}
-			raw, err := json.Marshal(r)
-			if err != nil {
-				return err
-			}
-			if _, err = tx.ExecContext(ctx, "UPDATE a2a_tasks SET record=? WHERE id=?", raw, r.Task.ID); err != nil {
-				return err
-			}
-			_, err = tx.ExecContext(ctx, "INSERT INTO a2a_messages VALUES(?,?,?,?,?)", p.ID, pr.Key(), req.Message.MessageID, hash, r.Task.ID)
-			return err
-		}
-		var total int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM a2a_tasks WHERE phase!='terminal'").Scan(&total); err != nil {
-			return err
-		}
-		if total >= 32 {
-			return ErrCapacity
-		}
-		var active int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM a2a_tasks WHERE publication=? AND caller=? AND phase NOT IN ('terminal')", p.ID, pr.Key()).Scan(&active); err != nil {
-			return err
-		}
-		if active >= b.MaxActive {
-			return ErrCapacity
-		}
-		r = Record{Task: Task{ID: opaque(), ContextID: opaque(), Status: Status{State: Submitted, Timestamp: now.UTC().Format("2006-01-02T15:04:05.000000000Z")}, History: []Message{req.Message}}, Publication: p.ID, Caller: pr.Key(), Principal: pr, Agent: p.Agent, Conversation: p.Conversation, Definition: d, Authority: Fingerprint(p, b, d), Phase: "queued", Deadline: now.Add(time.Duration(d.Seconds) * time.Second).Unix()}
-		raw, err := json.Marshal(r)
+func (s *Service) epoch(ctx context.Context, tx *canon.Tx) error {
+	var current string
+	if err := tx.QueryRowContext(ctx, "SELECT epoch FROM canon_meta WHERE singleton=1").Scan(&current); err != nil {
+		return err
+	}
+	if current != fmt.Sprint(s.Epoch) {
+		return ErrScope
+	}
+	return nil
+}
+func (s *Service) Connection(ctx context.Context, person, id string) (c Connection, err error) {
+	err = s.DB.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		err := tx.QueryRowContext(ctx, "SELECT record FROM a2a_connections WHERE id=? AND person=?", id, person).Scan(&raw)
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, "INSERT INTO a2a_tasks VALUES(?,?,?,?,?,?)", r.Task.ID, p.ID, pr.Key(), r.Phase, r.Task.Status.Timestamp, raw); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, "INSERT INTO a2a_messages VALUES(?,?,?,?,?)", p.ID, pr.Key(), req.Message.MessageID, hash, r.Task.ID)
-		return err
+		return json.Unmarshal(raw, &c)
 	})
-	return r, err
-}
-func readRecord(ctx context.Context, tx *canon.Tx, id string) (Record, error) {
-	var r Record
-	var raw []byte
-	err := tx.QueryRowContext(ctx, "SELECT record FROM a2a_tasks WHERE id=?", id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return r, ErrNotFound
+		err = ErrScope
 	}
-	if err == nil {
-		err = json.Unmarshal(raw, &r)
-	}
-	return r, err
+	return
 }
-func (s *Store) Get(ctx context.Context, pub, caller, id string) (Record, error) {
-	var r Record
-	err := s.DB.Read(ctx, func(tx *canon.Tx) error {
-		var err error
-		r, err = readRecord(ctx, tx, id)
-		if err == nil && (r.Publication != pub || r.Caller != caller) {
-			return ErrNotFound
-		}
-		return err
-	})
-	if err != nil {
-		return Record{}, err
-	}
-	return r, nil
-}
-func (s *Store) Read(ctx context.Context, id string) (Record, error) {
-	var r Record
-	err := s.DB.Read(ctx, func(tx *canon.Tx) error { var e error; r, e = readRecord(ctx, tx, id); return e })
-	return r, err
-}
-func (s *Store) List(ctx context.Context, pub, caller string) ([]Record, error) {
-	return s.records(ctx, " WHERE publication=? AND caller=?", pub, caller)
-}
-func (s *Store) Pending(ctx context.Context) ([]Record, error) {
-	return s.records(ctx, " WHERE phase!='terminal' OR COALESCE(json_extract(record,'$.published'),0)=0")
-}
-func (s *Store) All(ctx context.Context) ([]Record, error) { return s.records(ctx, "") }
-func (s *Store) records(ctx context.Context, where string, args ...any) ([]Record, error) {
-	result := []Record{}
-	err := s.DB.Read(ctx, func(tx *canon.Tx) error {
-		rows, e := tx.QueryContext(ctx, "SELECT record FROM a2a_tasks"+where+" ORDER BY updated DESC,id DESC", args...)
-		if e != nil {
-			return e
+func (s *Service) Connections(ctx context.Context, person string) (out []Connection, err error) {
+	out = []Connection{}
+	err = s.DB.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT record FROM a2a_connections WHERE person=? ORDER BY id", person)
+		if err != nil {
+			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var raw []byte
-			var r Record
-			if e = rows.Scan(&raw); e != nil {
-				return e
+			var c Connection
+			if err = rows.Scan(&raw); err != nil {
+				return err
 			}
-			if e = json.Unmarshal(raw, &r); e != nil {
-				return e
+			if err = json.Unmarshal(raw, &c); err != nil {
+				return err
 			}
-			result = append(result, r)
+			out = append(out, c)
 		}
 		return rows.Err()
 	})
-	return result, err
+	return
 }
-func (s *Store) Update(ctx context.Context, id string, fn func(*Record) error) (Record, error) {
-	var r Record
-	err := s.DB.Write(ctx, func(tx *canon.Tx) error {
-		var e error
-		r, e = readRecord(ctx, tx, id)
-		if e != nil {
-			return e
+func (s *Service) saveConnection(ctx context.Context, c Connection) error {
+	raw, _ := json.Marshal(c)
+	return s.DB.Write(ctx, func(tx *canon.Tx) error {
+		if err := s.epoch(ctx, tx); err != nil {
+			return err
 		}
-		before := digest(r)
-		terminal, taskHash := Terminal(r.Task.Status.State), digest(r.Task)
-		if e = fn(&r); e != nil {
-			return e
-		}
-		if terminal && taskHash != digest(r.Task) {
-			return ErrInvalid
-		}
-		if before == digest(r) {
-			return nil
-		}
-		raw, e := json.Marshal(r)
-		if e != nil {
-			return e
-		}
-		_, e = tx.ExecContext(ctx, "UPDATE a2a_tasks SET phase=?,updated=?,record=? WHERE id=?", r.Phase, r.Task.Status.Timestamp, raw, id)
-		return e
+		_, err := tx.ExecContext(ctx, `INSERT INTO a2a_connections(id,person,revision,enabled,record) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,enabled=excluded.enabled,record=excluded.record WHERE person=excluded.person`, c.ID, c.Person, c.Revision, c.Enabled, raw)
+		return err
 	})
-	return r, err
 }
-func (s *Store) Claim(ctx context.Context, id string) (bool, error) {
-	claimed := false
-	_, err := s.Update(ctx, id, func(r *Record) error {
-		if r.Phase == "queued" && !r.CancelRequested {
-			r.Phase = "executing"
-			SetState(r, Working, time.Now())
-			claimed = true
-		}
-		return nil
-	})
-	return claimed, err
-}
-func (s *Store) Recover(ctx context.Context) error {
-	records, err := s.Pending(ctx)
+func (s *Service) Revoke(ctx context.Context, person, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, err := s.Connection(ctx, person, id)
 	if err != nil {
 		return err
 	}
-	for _, r := range records {
-		if r.Phase == "executing" {
-			if _, err = s.Update(ctx, r.Task.ID, func(r *Record) error { r.Phase = "unknown"; SetState(r, Unspecified, time.Now()); return nil }); err != nil {
+	c.Enabled = false
+	c.Revision = randomID()
+	return s.saveConnection(ctx, c)
+}
+func (s *Service) Call(ctx context.Context, o Origin, id string) (c Call, err error) {
+	err = s.DB.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		err := tx.QueryRowContext(ctx, "SELECT record FROM a2a_calls WHERE id=? AND person=? AND agent=? AND conversation=?", id, o.Person, o.Agent, o.Conversation).Scan(&raw)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(raw, &c)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		err = ErrScope
+	}
+	return
+}
+func (s *Service) save(ctx context.Context, c Call) error {
+	return s.DB.Write(ctx, func(tx *canon.Tx) error {
+		var prior []byte
+		if err := tx.QueryRowContext(ctx, "SELECT record FROM a2a_calls WHERE id=?", c.ID).Scan(&prior); err != nil {
+			return err
+		}
+		var old Call
+		if err := json.Unmarshal(prior, &old); err != nil {
+			return err
+		}
+		c.Delivered = c.Delivered || old.Delivered
+		raw, _ := json.Marshal(c)
+		if err := s.epoch(ctx, tx); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE a2a_calls SET record=? WHERE id=? AND person=? AND agent=? AND conversation=?`, raw, c.ID, c.Origin.Person, c.Origin.Agent, c.Origin.Conversation)
+		return err
+	})
+}
+func (s *Service) Undelivered(ctx context.Context) (out []Call, err error) {
+	err = s.DB.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT record FROM a2a_calls WHERE json_extract(record,'$.delivered')=0`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw []byte
+			var c Call
+			if err = rows.Scan(&raw); err != nil {
 				return err
 			}
+			if err = json.Unmarshal(raw, &c); err != nil {
+				return err
+			}
+			out = append(out, c)
+		}
+		return rows.Err()
+	})
+	return
+}
+
+// Delivered marks an already idempotently journaled observation. If Core dies
+// before this write, the deterministic journal identity prevents another result.
+func (s *Service) Delivered(ctx context.Context, c Call) error {
+	return s.DB.Write(ctx, func(tx *canon.Tx) error {
+		if err := s.epoch(ctx, tx); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE a2a_calls SET record=json_set(record,'$.delivered',json('true')) WHERE id=? AND person=? AND agent=? AND conversation=?`, c.ID, c.Origin.Person, c.Origin.Agent, c.Origin.Conversation)
+		return err
+	})
+}
+
+type observationAuthority struct{}
+
+func (s *Service) allowed(ctx context.Context, o Origin, c Connection, p Profile) error {
+	if current, ok := ctx.Value(observationAuthority{}).(Origin); ok {
+		o = current
+	}
+	if o.Person != c.Person || o.Agent == "" || o.Conversation == "" || o.Turn == "" || o.Epoch != s.Epoch || !c.Enabled {
+		return ErrScope
+	}
+	current, err := s.Connection(ctx, o.Person, c.ID)
+	if err != nil {
+		return err
+	}
+	if !current.Enabled || current.Revision != c.Revision {
+		return ErrScope
+	}
+	if err = s.DB.Read(ctx, func(tx *canon.Tx) error { return s.epoch(ctx, tx) }); err != nil {
+		return err
+	}
+	if s.Check == nil {
+		return ErrScope
+	}
+	return s.Check(ctx, o, c, p)
+}
+func profile(c Connection, name string) (Profile, error) {
+	for _, p := range c.Profiles {
+		if p.Name == name {
+			return p, nil
 		}
 	}
-	return nil
+	return Profile{}, ErrScope
 }
-func SetState(r *Record, state string, now time.Time) {
-	if r.Task.Status.State != state {
-		r.Task.Status = Status{State: state, Timestamp: now.UTC().Format("2006-01-02T15:04:05.000000000Z")}
+func (s *Service) Validate(ctx context.Context, o Origin, in Input) (Connection, Profile, error) {
+	c, err := s.Connection(ctx, o.Person, in.Connection)
+	if err != nil {
+		return c, Profile{}, err
 	}
-	if Terminal(state) {
-		r.Phase = "terminal"
+	p, err := profile(c, in.Task)
+	if err != nil {
+		return c, p, err
 	}
+	if len(in.Text) == 0 || len(in.Text) > p.MaxInput || (in.Call == "" && !strings.HasPrefix(in.Text, p.InputPrefix)) {
+		return c, p, ErrScope
+	}
+	return c, p, s.allowed(ctx, o, c, p)
+}
+
+func (s *Service) Calls(ctx context.Context, person string) (out []Call, err error) {
+	out = []Call{}
+	err = s.DB.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT record FROM a2a_calls WHERE person=? ORDER BY rowid", person)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var raw []byte
+			var c Call
+			if err = rows.Scan(&raw); err != nil {
+				return err
+			}
+			if err = json.Unmarshal(raw, &c); err != nil {
+				return err
+			}
+			out = append(out, c)
+		}
+		return rows.Err()
+	})
+	return
 }

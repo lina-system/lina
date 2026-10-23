@@ -4,7 +4,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/thisisjun786/lina/internal/core/a2a"
+	a2a "github.com/thisisjun786/lina/internal/core/a2a/publication"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"os"
 	"path/filepath"

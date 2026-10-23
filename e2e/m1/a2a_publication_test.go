@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
-	"github.com/thisisjun786/lina/internal/core/a2a"
+	a2a "github.com/thisisjun786/lina/internal/core/a2a/publication"
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
