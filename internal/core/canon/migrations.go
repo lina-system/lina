@@ -71,7 +71,9 @@ func Migrations() []Migration {
 		{Version: 57, SQL: A2ASchema},
 		{Version: 58, SQL: recallSchema},
 		{Version: 59, SQL: steeringSchema},
+
 		{Version: 60, SQL: recallScopeSchema},
+		{Version: 61, SQL: workerMessagesSchema},
 	}
 }
 
@@ -82,6 +84,7 @@ var publishedMigrationTables = []struct {
 }{
 	{59, "work_steering"}, {59, "work_steering_receipts"},
 	{56, "memory_extraction_cursor"},
+	{61, "worker_message_decisions"}, {61, "worker_message_budget"}, {61, "worker_message_admissions"},
 	{11, "retract_meta"}, {12, "turn_runs"}, {12, "turn_items"}, {12, "turn_calls"}, {12, "turn_partials"}, {13, "turn_control"}, {14, "turn_outcome"}, {15, "sum_node"}, {15, "sum_edge"}, {15, "sum_cover"},
 	{16, "owner_binding"}, {16, "sign_in_host"}, {16, "sign_in_identities"},
 	{17, "channel_connections"}, {17, "channel_bindings"}, {17, "channel_actions"}, {17, "channel_receipts"}, {17, "channel_outbound"},

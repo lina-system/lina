@@ -127,7 +127,7 @@ func TestM3WorkPanelInstalledCoreMatrix(t *testing.T) {
 							if err != nil {
 								t.Fatal(err)
 							}
-							elapsed := panelElapsed(time.Now().Sub(startTime))
+							elapsed := panelElapsed(time.Since(startTime))
 							if !strings.HasSuffix(rows[i], elapsed) && !strings.HasSuffix(rows[i], panelElapsed(beforeFrame.Sub(startTime))) {
 								t.Fatalf("E3 elapsed %q want %s", rows[i], elapsed)
 							}
@@ -179,7 +179,7 @@ func TestM3WorkPanelInstalledCoreMatrix(t *testing.T) {
 									}
 									count++
 									prefix := selectionMark + " " + render.Truncate(line.Name, 6, render.Unicode{})
-									matched = strings.HasPrefix(row, prefix) && (strings.HasSuffix(row, panelElapsed(time.Now().Sub(started))) || strings.HasSuffix(row, panelElapsed(before.Sub(started))))
+									matched = strings.HasPrefix(row, prefix) && (strings.HasSuffix(row, panelElapsed(time.Since(started))) || strings.HasSuffix(row, panelElapsed(before.Sub(started))))
 								}
 								return count == 1 && matched
 							})
@@ -350,7 +350,7 @@ func TestM3WorkPanelLiveCodexWorker(t *testing.T) {
 				t.Fatalf("live card %s: %v\n%s", phase, err, screenText(snap))
 			}
 			started, _ := time.Parse(time.RFC3339Nano, initial)
-			if !strings.HasSuffix(panelCellRows(snap, 80, 40)[2], panelElapsed(time.Now().Sub(started))) {
+			if !strings.HasSuffix(panelCellRows(snap, 80, 40)[2], panelElapsed(time.Since(started))) {
 				t.Fatalf("live elapsed fabricated: %s", screenText(snap))
 			}
 			t.Logf("live Core-launched Codex %s\n%s", phase, screenText(snap))

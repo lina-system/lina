@@ -478,6 +478,12 @@ func TestACPTypedFailuresThroughRunningCore(t *testing.T) {
 
 const quotaAgentScript = `#!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
+function messageText(text) {
+ if (!text.startsWith('<lina-message ')) return text;
+ const match=text.match(/^<lina-message [^>]*><text>([\s\S]*)<\/text><\/lina-message>$/);
+ if (!match) throw Error('invalid worker message frame');
+ return match[1].replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi,(_,e)=>e[0]==='#'?String.fromCodePoint(e[1].toLowerCase()==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"})[e]);
+}
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -504,7 +510,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   if(name==='claude-agent-acp'&&mode==='needs-sign-in'){send({id:m.id,error:{code:-32000,message:'account-detail-must-stay-private'}});break}
   reply(m.id,{sessionId:session});break;
  case 'session/prompt':{
-  const packet=m.params.prompt[0].text;
+  const packet=messageText(m.params.prompt[0].text);
   const prior=path.join(root,'previous-pid');
   if(fs.existsSync(prior)){
    try{process.kill(Number(fs.readFileSync(prior,'utf8')),0);throw Error('previous worker still alive')}
@@ -531,7 +537,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   const timer=setInterval(()=>{
    if(!fs.existsSync(path.join(root,'release')))return;
    clearInterval(timer);
-   const definition=JSON.parse(packet.slice(packet.indexOf('{')));
+   const definition=JSON.parse(messageText(packet).slice(messageText(packet).indexOf('{')));
    const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
    git('switch','-c',definition.branch);fs.writeFileSync('result.txt','ACP result\n');git('add','result.txt');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Create result');
    const head=git('rev-parse','HEAD');

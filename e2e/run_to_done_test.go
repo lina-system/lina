@@ -272,7 +272,7 @@ func TestM2RunToDoneCodeGoal(t *testing.T) {
 		MainHost: func(context.Context) (work.Node, error) {
 			return work.Node{ID: "main-work-fixture", Connected: true, ObservedAt: time.Now().Unix(), CPUCores: 4, CPULimit: 4, AvailableMemoryMB: 8000, MemoryLimitMB: 8000, AvailableDiskMB: 8000, DiskLimitMB: 8000, Workers: map[string]bool{"stub": true}}, nil
 		},
-		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+		Ready: func(ctx context.Context, e *work.Engine, person, _ string) error {
 			agent, err := fixtureWorkOwner(ctx, root)
 			if err != nil {
 				return err
