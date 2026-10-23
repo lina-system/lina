@@ -507,22 +507,33 @@ func TestM2InstalledCodexLive(t *testing.T) {
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	// Discovery adds call/results after the current input. Classify the latest
-	// user input, rather than mistaking a load_tools receipt for a new request.
-	var item struct{ Role, Content string }
+	// Core places the prepared ContextPacket after the current input. Its
+	// mandatory clock reference marks that boundary; later user-role evidence
+	// (including persona settings or retrieved worker results) is not the input.
+	// Discovery calls/results can follow the packet in the same turn.
+	for i, raw := range inputs {
+		var item struct{ Role, Content string }
+		if json.Unmarshal(raw, &item) == nil && item.Role == "developer" && strings.Contains(item.Content, `References: [{"id":"clock:`) {
+			inputs = inputs[:i]
+			break
+		}
+	}
+	var content string
 	found := false
 	for i := len(inputs) - 1; i >= 0; i-- {
+		var item struct{ Role, Content string }
 		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
+			content = item.Content
 			found = true
 			break
 		}
 	}
-	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+	if !found || !strings.Contains(content, `<external_evidence origin="worker-session:`) {
 		return false
 	}
 	if result == "" {
 		emitResponse(w, "Worker finished.", true)
-	} else if strings.Contains(item.Content, result) {
+	} else if strings.Contains(content, result) {
 		emitResponse(w, "Worker outcome: "+result, true)
 	} else {
 		emitResponse(w, "Worker stopped.", true)

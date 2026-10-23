@@ -38,6 +38,16 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 
 Failure coverage also includes:
 
+- `TestM2ProgressWaitingInstalledCore`: the worker obtains approval, receives
+  eight answers, writes its artifact and reports quota through installed Core.
+  Progress and waiting views clear resolved requests, survive restart and
+  publish outside record changes on an existing subscription. The synthetic
+  completion responder identifies the current input before the prepared
+  ContextPacket, following [request layout](../../docs/design/conversation-and-memory.md#request-layout).
+  `TestWorkerCompletionFixtureInput` uses Core's assembler to check completion
+  with trailing context and discovery receipts, and rejects old or retrieved
+  completions when the current input is another request.
+
 - `TestM2InstalledWorkerOutcome`: the pending-at-restart case releases the
   worker only after Core emits the successful `start-worker` tool activity.
   The provider continuation waits behind that release, so it cannot supply
