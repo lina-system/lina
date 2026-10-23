@@ -77,37 +77,41 @@ const (
 )
 
 type Task struct {
-	Kind           StepKind         `json:"kind,omitempty"`
-	Background     *BackgroundBrief `json:"background,omitempty"`
-	Wait           *StepWait        `json:"wait,omitempty"`
-	Result         Proof            `json:"result,omitempty"`
-	Name           string           `json:"name,omitempty"`
-	PRGeneration   uint64           `json:"pr_generation"`
-	Continuations  int              `json:"continuations"`
-	ThreadHandle   string           `json:"thread_handle,omitempty"`
-	Repairs        string           `json:"repairs,omitempty"`
-	RepairedBy     string           `json:"repaired_by,omitempty"`
-	ResultRevision string           `json:"result_revision,omitempty"`
-	RepairAsked    bool             `json:"repair_asked"`
-	ID             string           `json:"id"`
-	Done           string           `json:"done"`
-	Repository     string           `json:"repository"`
-	Base           string           `json:"base"`
-	Area           string           `json:"area"`
-	Worker         string           `json:"worker"`
-	Resources      Resources        `json:"resources"`
-	DependsOn      []string         `json:"depends_on"`
-	Stage          TaskStage        `json:"stage"`
-	Attempt        int              `json:"attempt"`
-	Recoveries     int              `json:"recoveries"`
-	EffectsSettled bool             `json:"effects_settled"`
-	Conflicts      int              `json:"conflicts"`
-	QARepairs      int              `json:"qa_repairs"`
-	NodeID         string           `json:"node_id"`
-	Head           string           `json:"head"`
-	PR             PRState          `json:"pr"`
-	Merge          Proof            `json:"merge"`
-	QA             Proof            `json:"qa"`
+	Kind       StepKind         `json:"kind,omitempty"`
+	Background *BackgroundBrief `json:"background,omitempty"`
+	Wait       *StepWait        `json:"wait,omitempty"`
+	Result     Proof            `json:"result,omitempty"`
+	Name       string           `json:"name,omitempty"`
+	// Session is the worker action that owns this step's worker session. Core
+	// records it with the dispatch reservation, so the live set is derivable
+	// before any process exists.
+	Session        string    `json:"session,omitempty"`
+	PRGeneration   uint64    `json:"pr_generation"`
+	Continuations  int       `json:"continuations"`
+	ThreadHandle   string    `json:"thread_handle,omitempty"`
+	Repairs        string    `json:"repairs,omitempty"`
+	RepairedBy     string    `json:"repaired_by,omitempty"`
+	ResultRevision string    `json:"result_revision,omitempty"`
+	RepairAsked    bool      `json:"repair_asked"`
+	ID             string    `json:"id"`
+	Done           string    `json:"done"`
+	Repository     string    `json:"repository"`
+	Base           string    `json:"base"`
+	Area           string    `json:"area"`
+	Worker         string    `json:"worker"`
+	Resources      Resources `json:"resources"`
+	DependsOn      []string  `json:"depends_on"`
+	Stage          TaskStage `json:"stage"`
+	Attempt        int       `json:"attempt"`
+	Recoveries     int       `json:"recoveries"`
+	EffectsSettled bool      `json:"effects_settled"`
+	Conflicts      int       `json:"conflicts"`
+	QARepairs      int       `json:"qa_repairs"`
+	NodeID         string    `json:"node_id"`
+	Head           string    `json:"head"`
+	PR             PRState   `json:"pr"`
+	Merge          Proof     `json:"merge"`
+	QA             Proof     `json:"qa"`
 }
 type GoalState string
 

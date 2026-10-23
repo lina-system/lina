@@ -42,6 +42,7 @@ func builderFixture(t *testing.T) (*Builder, View, *canon.Store) {
 	return b, v, db
 }
 func TestStoredSummaryFailurePublishesNothingAndPreservesRequest(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	failed := errors.New("unavailable")
 	b.Generate = func(context.Context, PassSegment) (Text, error) { return Text{}, failed }
@@ -52,6 +53,7 @@ func TestStoredSummaryFailurePublishesNothingAndPreservesRequest(t *testing.T) {
 	}
 }
 func TestPublishedNodeExpandsExactFactThroughTool(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	p := Pass{Policy: Policy{ContextWindow: 1500, KeepUserTokens: 100}, Count: countBytes, Summarize: b.Summarize, Prepared: b.Prepared, Publish: b.Publish}
 	got, err := p.Fit(t.Context(), v, false)
@@ -93,6 +95,7 @@ func TestPublishedNodeExpandsExactFactThroughTool(t *testing.T) {
 }
 
 func TestPreparedSummarySurvivesUnchangedSourcesWithNewVerbatimInput(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	calls := 0
 	b.Generate = func(context.Context, PassSegment) (Text, error) {
@@ -117,6 +120,7 @@ func TestPreparedSummarySurvivesUnchangedSourcesWithNewVerbatimInput(t *testing.
 	}
 }
 func TestPublicationAndAuditFailAtomically(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
 		_, err := tx.ExecContext(t.Context(), `CREATE TRIGGER fail_compaction_audit BEFORE INSERT ON conv_event WHEN NEW.scaffold_kind='compaction_recorded' BEGIN SELECT RAISE(ABORT,'audit_failed'); END`)
@@ -131,6 +135,7 @@ func TestPublicationAndAuditFailAtomically(t *testing.T) {
 	}
 }
 func TestNodeExpansionPagesDescendantsInLedgerOrderAndRejectsOtherAgent(t *testing.T) {
+	t.Parallel()
 	db, s, _, _ := fixture(t)
 	publish(t, s, proposal(t, s, "leaf"))
 	publish(t, s, Proposal{ID: "parent", Expected: frontier(t, s), Children: []string{"leaf"}, Cover: []Coverage{{EventID: "e2"}}, Output: output("combined")})
@@ -151,6 +156,7 @@ func TestNodeExpansionPagesDescendantsInLedgerOrderAndRejectsOtherAgent(t *testi
 }
 
 func TestStoredContinuationOverThresholdRetainsLineageAndSizes(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	v.Fixed = []provider.Item{message("fixed")}
 	v.Packet = []provider.Item{message("packet")}

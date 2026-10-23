@@ -73,13 +73,13 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{ApprovalKey: r.personaAuthority.WorkerApprovalKey(), AuthorizeRecovery: r.authorizeWorkerRecovery, Rules: rules, Workers: factories, Bind: r.bindDispatchedWorker, Capacity: func(ctx context.Context) int {
+	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{ApprovalKey: r.personaAuthority.WorkerApprovalKey(), ExecutionDeadline: r.publishedWorkerDeadline, AuthorizeExecution: r.authorizePublishedWorker, AuthorizeRecovery: r.authorizeWorkerRecovery, Rules: rules, Workers: factories, Bind: r.bindDispatchedWorker, Capacity: func(ctx context.Context) int {
 		host, err := goal.MainHost(ctx, r.main, r.root, goal.Resources{CPU: float64(runtime.NumCPU()), MemoryMB: math.MaxInt32, DiskMB: math.MaxInt32}, nil)
 		if err != nil {
 			return 0
 		}
 		return goal.Slots(host, nil, goal.Resources{CPU: 1, MemoryMB: 512, DiskMB: 1024}, time.Now())
-	}, DB: r.db, Work: r.work, Area: r.workArea, Skills: r.skills, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, ClaudeBinary: claude, Git: git, PR: r.workerGitHub, Environment: proc.WorkerEnvironment(), Activities: r.activities, Manage: func(ctx context.Context, record dispatch.Record) (dispatch.Record, error) {
+	}, DB: r.db, Work: r.work, Area: r.workArea, Skills: r.skills, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, ClaudeBinary: claude, Git: git, PR: r.workerGitHub, Environment: proc.WorkerEnvironment(), Activities: r.activities, Sessions: r.liveWorkers, Manage: func(ctx context.Context, record dispatch.Record) (dispatch.Record, error) {
 		raw, _ := json.Marshal(record.TaskDefinition())
 		a, err := r.assignCoding(ctx, record.Origin, record.ID, "dispatch_work", record.Definition.Repository, raw)
 		if err != nil {
@@ -124,6 +124,18 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 				}
 			}
 		}
+
+		// The existing completion reactor has just reopened PR evidence and run the
+		// manager. Publication must use that observation, not a stale cached scan.
+		if task, external := strings.CutPrefix(record.Origin.Turn, "turn:a2a-input:"); external {
+			rec, err := r.publications.store.Read(ctx, task)
+			if err != nil {
+				return err
+			}
+			if err = r.publications.observeWork(ctx, rec, record, true); err != nil {
+				return err
+			}
+		}
 		text := record.WorkerName() + ": " + record.Code
 		if record.Version != "" {
 			text += " (" + record.Version + "; unverified version)"
@@ -160,7 +172,8 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 		return func(worker.Event) {}, func() {}
 	}
 	owner := newConversationView(r.router.root, record.Owner, record.Manager)
-	owner.codingDelivery = delivery
+	owner.codingDelivery = delivery.workerDelivery()
+	owner.externalTask = delivery.externalTask
 	// Dispatch owns cancellation and the task reservation. Owner steering is
 	// restricted to the active turn, independently of scheduled-card ownership.
 	e := &workerSession{cancelTask: func(ctx context.Context) error { return r.workerDispatch.Cancel(ctx, record.ID) }, adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, executionGeneration: record.Attempt, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
@@ -185,6 +198,7 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 		case worker.ProgressEvent:
 			if event.Progress.Phase == "server_request_resolved" {
 				e.stopRequest(event.Progress.ItemID)
+				e.answerDelivered(e.origin.ctx, event.Thread)
 			}
 		case worker.FinishEvent:
 			if err := e.finishSteering(e.origin.ctx, event); err != nil {
@@ -204,6 +218,9 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 }
 
 func (r *conversationRuntime) authorizeWorkerRecovery(ctx context.Context, record dispatch.Record) (bool, error) {
+	if allowed, err := r.authorizePublishedWorker(ctx, record); err != nil || !allowed {
+		return allowed, err
+	}
 	if !record.Goal {
 		view, _, err := r.dispatchRecoveryView(ctx, record)
 		if err != nil {

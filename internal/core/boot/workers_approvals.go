@@ -119,6 +119,18 @@ func (b *workerRuntime) deliverAnswers(ctx context.Context) {
 			e.mu.Lock()
 			delete(e.approvals, id)
 			e.mu.Unlock()
+			if e.origin.validateA2A(ctx) != nil {
+				answer.Choice = authority.Deny
+			}
+			// An owner denial ends this external task's execution authority. Persist
+			// the stop before the reply can produce an interrupted receipt, so the
+			// ordinary worker recovery policy cannot retry the denied operation.
+			if answer.Choice == authority.Deny && e.origin.externalTask != "" && e.cancelTask != nil {
+				if err := e.cancelTask(ctx); err != nil {
+					e.bridgeFailure(err)
+					continue
+				}
+			}
 			raw, err := approvalReply(*event.Approval, answer.Choice)
 			if err == nil {
 				sendCtx, cancel := context.WithTimeout(e.origin.ctx, 10*time.Second)
@@ -179,10 +191,9 @@ func (e *workerSession) bridgeFailure(err error) {
 }
 
 // A scheduled task resumes only after all pending requests have been answered.
+// Clearing that wait also retries known-unsent push mail. The turn continues
+// in place, so there is no later started event to carry the retry.
 func (e *workerSession) answerDelivered(ctx context.Context, thread worker.Thread) {
-	if e.answered == nil {
-		return
-	}
 	e.mu.Lock()
 	pending := len(e.approvals) > 0
 	for _, q := range e.questions {
@@ -190,6 +201,11 @@ func (e *workerSession) answerDelivered(ctx context.Context, thread worker.Threa
 	}
 	e.mu.Unlock()
 	if !pending {
-		e.answered(ctx, thread)
+		if e.answered != nil {
+			e.answered(ctx, thread)
+		}
+		if err := e.resumeSteering(ctx); err != nil {
+			e.bridgeFailure(err)
+		}
 	}
 }

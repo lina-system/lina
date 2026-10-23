@@ -34,21 +34,9 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
-type Definition struct {
-	Worker     string   `json:"worker,omitempty"`
-	Kind       string   `json:"kind,omitempty"`
-	Skill      string   `json:"skill,omitempty"`
-	Repository string   `json:"repository"`
-	Base       string   `json:"base"`
-	Branch     string   `json:"branch"`
-	What       string   `json:"what"`
-	Why        string   `json:"why"`
-	Scope      []string `json:"scope"`
-	NotTouch   []string `json:"not_touch"`
-	Done       string   `json:"done"`
-	DesignRefs []string `json:"design_refs"`
-	WriteArea  []string `json:"write_area"`
-}
+// Definition is the canonical work contract shared with trusted Core admissions.
+type Definition = work.WorkerDefinition
+
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
 	ReadinessFailures []ReadinessFailure         `json:"readiness_failures,omitempty"`
@@ -126,26 +114,31 @@ func taskBranch(requested, id string) string {
 }
 
 type Config struct {
-	ApprovalKey       []byte
-	AuthorizeRecovery func(context.Context, Record) (bool, error)
-	Workers           []Factory
-	Rules             []work.ChoiceRule
-	Capacity          func(context.Context) int
-	Bind              func(Record, worker.Adapter, worker.Thread, string, string) (func(worker.Event), func())
-	Manage            func(context.Context, Record) (Record, error)
-	Skills            *skills.Store
-	DB                *canon.Store
-	Work              *work.Service
-	Area              *work.Area
-	Root, Main        string
-	Epoch             uint64
-	Binary, Git       string
-	PR                antigravity.PullRequestReader
-	Environment       []string
-	Activities        lease.Leaser
-	PrepareClaudeACP  func(context.Context, lease.Lease) (string, error)
-	Publish           func(context.Context, Record) error
-	ClaudeBinary      string
+	ApprovalKey        []byte
+	ExecutionDeadline  func(context.Context, Record) (time.Time, error)
+	AuthorizeExecution func(context.Context, Record) (bool, error)
+	AuthorizeRecovery  func(context.Context, Record) (bool, error)
+	Workers            []Factory
+	Rules              []work.ChoiceRule
+	Capacity           func(context.Context) int
+	Bind               func(Record, worker.Adapter, worker.Thread, string, string) (func(worker.Event), func())
+	Manage             func(context.Context, Record) (Record, error)
+	Skills             *skills.Store
+	DB                 *canon.Store
+	Work               *work.Service
+	Area               *work.Area
+	Root, Main         string
+	Epoch              uint64
+	Binary, Git        string
+	PR                 antigravity.PullRequestReader
+	Environment        []string
+	Activities         lease.Leaser
+	PrepareClaudeACP   func(context.Context, lease.Lease) (string, error)
+	Publish            func(context.Context, Record) error
+	ClaudeBinary       string
+	// Sessions owns worker sessions between turns. A goal step keeps its
+	// session while the step is in progress or its pull request is operated on.
+	Sessions *worker.Live
 }
 type Service struct {
 	cfg     Config
@@ -491,6 +484,18 @@ func (s *Service) sync() {
 				r.Code = "cancelled"
 				_ = s.save(s.ctx, r)
 				continue
+			}
+			if s.cfg.AuthorizeExecution != nil {
+				allowed, err := s.cfg.AuthorizeExecution(s.ctx, r)
+				if err != nil {
+					continue
+				}
+				if !allowed {
+					r.State = "finished"
+					r.Code = "authority_revoked"
+					_ = s.save(s.ctx, r)
+					continue
+				}
 			}
 			if r.Recoveries > 0 && s.cfg.AuthorizeRecovery != nil {
 				allowed, err := s.cfg.AuthorizeRecovery(s.ctx, r)

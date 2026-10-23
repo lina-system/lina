@@ -49,13 +49,13 @@ Work on a locked Mac stays off on every Mac until the [eval](../research/locked-
 Hard conditions:
 
 - The person's own unlock, by password or Touch ID, is never blocked, and LINA never slows it beyond the bound the eval declares. When any LINA part fails or is missing, the person unlocks through the normal lock screen.
-- No LINA part stores, types, reads or passes a password or any other credential. The login keychain stays locked during the work.
+- No LINA part stores, types, reads or passes a password or any other credential. Before it arms a ticket, the broker locks the login keychain and reads that it is locked, and the keychain stays locked during the work. Locking the screen, and a password-less unlock, do not establish that state. Install does not change the person's keychain auto-lock settings.
 - An unlock happens only for a task with a live locked-screen lease, and only through a peer whose code signature the plug-in has checked.
 - The person's first physical or remote input stops the work and locks the Mac again.
 
 ### Parts
 
-- **Unlock plug-in.** An authorization plug-in bundle in `/Library/Security/SecurityAgentPlugins/` with one mechanism. The mechanism runs in the privileged plug-in host, has no interface and answers only allow or deny. Its only state is a crash marker. It connects only to the lock broker of the person who turned the feature on, and it accepts an answer only after the signature check under Unlock.
+- **Unlock plug-in.** An authorization plug-in bundle in `/Library/Security/SecurityAgentPlugins/` with one mechanism. The mechanism runs in the privileged plug-in host, has no interface and answers only allow or deny. When the engine deactivates the mechanism, the plug-in calls `DidDeactivate` with the engine reference from mechanism creation and returns that call's status. Returning success without the call does not let the engine continue. Its only state is a crash marker. It connects only to the lock broker of the person who turned the feature on, and it accepts an answer only after the signature check under Unlock.
 - **Lock broker.** A small native executable of the Node, signed with LINA's Developer ID team and the hardened runtime, which launchd starts in the person's GUI session. It holds at most one unlock ticket, starts the unlock and locks the Mac again. It takes lease requests only from the Node, after the same kind of signature check.
 - **Cover.** A second native process of the Node in the same session. It draws the cover on every display, watches input and stops the work. The broker and the cover watch each other: when one of them exits during a lease, the other locks the Mac.
 - **Lock guard.** A root launchd daemon that can only restore the lock screen's authorization rule. It runs at boot and whenever the plug-in folder changes, and it carries the rollback command.
@@ -85,7 +85,7 @@ The guard restores the backup, or the stock rule when the backup is unusable, an
 ### Grant flow
 
 - **Turning it on.** The person turns on work on a locked Mac in settings, for one Mac. Core records this standing setting with the person, the Mac's Node, the main id and the date. It is listed with the standing grants and turned off there. The install pins the main id, and the broker refuses a lease from any other main.
-- **Each task.** When a step of a task needs the screen of a locked Mac, the agent asks. Core shows one approval request in "Waiting for me" and in the conversation. It names the agent, the task, the apps and the longest time, and says that the screen stays covered and that any key or click locks the Mac again. The choices are once and deny ([main-authority.md](main-authority.md#approval)). No standing grant covers it.
+- **Each task.** When a step of a task needs the screen of a locked Mac, the agent asks. Core shows one approval request in "Waiting for me" and in the conversation. It names the agent, the task, the apps and the longest time, and says that the screen stays covered, that the login keychain is locked for the lease, and that any key or click locks the Mac again. The choices are once and deny ([main-authority.md](main-authority.md#approval)). No standing grant covers it. The approval is the person's request to lock the login keychain for that lease.
 - **The lease.** After the approval, Core issues a grant. It names the Mac's GUI session, a locked-screen lease, the apps the task may drive, and an expiry deadline no later than the approved time. A locked-screen lease is a seat lease of its own kind. An ordinary seat lease still ends when the session locks, and it never turns into a locked-screen lease. The locked-screen lease ends at the first of these: the task ends, its deadline passes, a revoke, a disconnect, an immediate stop, the person's input, sleep, a switch of display or user, or a failure described below. A task that needs more time asks again.
 - **The Node.** The Node checks the grant ([main-authority.md](main-authority.md#authorization)) and passes the lease to the broker. Only the broker can arm a ticket.
 
@@ -93,7 +93,7 @@ The guard restores the backup, or the stock rule when the backup is unusable, an
 
 1. The cover draws its windows on every display while the session is still locked, so the cover is the first thing visible after the unlock.
 2. The broker wakes the display and waits, polling a few times a second up to a fixed deadline, until the lock screen is ready for an unlock attempt. A lock after display sleep reaches that state at a different time from a lock from the menu or the screen saver.
-3. The broker arms one ticket only while all of these hold: the lease is live, the session is locked, the cover is up on every display, both input watchers run, no input has arrived since the lease began, and the stop latch is clear. A ticket is bound to the lease, lives a few seconds at most and is used at most once.
+3. The broker arms one ticket only while all of these hold: the lease is live, the session is locked, the cover is up on every display, both input watchers run, no input has arrived since the lease began, the stop latch is clear, and the login keychain is locked by the broker's own lock and status read in this attempt ([Keychain and secrets](#keychain-and-secrets)). A ticket is bound to the lease, lives a few seconds at most and is used at most once.
 4. The broker submits the lock screen's unlock attempt once and types no characters. While the session is locked, the screen driver refuses all other input, so nothing reaches the lock screen's password field.
 5. macOS evaluates the lock screen's rule, and the plug-in runs first. It must answer within its fixed deadline, which the eval sets and which is at most 500 ms. The plug-in:
    - connects to the broker and reads the peer's audit token;
@@ -113,7 +113,7 @@ The plug-in logs each answer to the system log with the ticket id, and never a c
 - The agent's captures leave out only the cover's windows. A display added during the lease is covered before input resumes.
 - Two watchers run during the lease. One reads the HID devices: keyboard, pointer and trackpad. The other reads the session's input events, which also carry remote input such as Screen Sharing. Any event that the Node's driver did not post is the person's input.
 - At the person's first input, the driver's input gate closes at once and the event is swallowed. The broker locks the Mac, the lease ends with a receipt, the running command goes to CANCEL_REQUESTED ([main-authority.md](main-authority.md#node-states)) and the stop latch is set. LINA sends no input later than 1 s after the person's input, and the Mac is locked within 2 s of it.
-- The stop latch refuses every later ticket until the person unlocks by hand. A failed relock, a crash of the cover or the broker, and an unexpected answer path in the plug-in also set it.
+- The stop latch refuses every later ticket until the person unlocks by hand. A failed relock, a crash of the cover or the broker, an unexpected answer path in the plug-in, and a login keychain that is not locked during the lease also set it.
 - The cover never keeps the person out of an unlocked Mac. While it swallows input, the Mac is being locked. If the lock cannot be confirmed, the cover tells the person to press the Touch ID or power button to lock the Mac.
 
 ### Relock
@@ -124,12 +124,16 @@ Outside a lease, the broker and the cover hold no wake or keep-awake assertion. 
 
 ### Keychain and secrets
 
-The unlock passes no password, so the login keychain stays locked. A step that needs a keychain item or a password is refused before it runs, and it becomes a row in "Waiting for me" for the person at the Mac. A system authentication window is never a target: the lock screen outside the one submit, an administrator prompt, a keychain prompt. When one appears, the step stops. LINA never turns on secure event input, and the eval checks that none is left on after the work.
+The locked keychain in this section is the person's login keychain. A password-less unlock does not unlock it, and it does not lock one that is already unlocked. Locking the screen does not lock it either. Locking after a period of inactivity and locking when the computer sleeps are separate Keychain Access settings ([Apple's settings](https://support.apple.com/en-gb/guide/keychain-access/kyca1242/mac)). Install does not read or change those settings, and a setting is not a substitute for the check below.
+
+The approval of the lease is the person's request to lock the login keychain for that work. Before the broker arms a ticket, it locks that keychain and reads its status back, using the calls in [the research note](../research/locked-mac-computer-use.md#the-keychain). Both calls take the login keychain. Passing no keychain would lock and read the default keychain, which is not this check. The keychain counts as locked only when the lock call and the status call both succeed and the unlocked bit is clear. The broker arms the ticket only after that read in the same attempt. If either call fails, or the unlocked bit is set, it arms nothing, the Mac stays locked, the step fails and "Waiting for me" gets a row. The broker stores, types and passes no password, and it does not unlock the keychain or lock any other keychain.
+
+During the lease the broker reads the status on the same cadence as its lock-screen poll. A failed read, or a status whose unlocked bit is set, closes the input gate, locks the Mac and sets the stop latch. A step that needs a keychain item or a password is refused before it runs, and it becomes a row in "Waiting for me" for the person at the Mac. A system authentication window is never a target: the lock screen outside the one submit, an administrator prompt, a keychain prompt. When one appears, the step stops. LINA never turns on secure event input, and the eval checks that none is left on after the work.
 
 ### Work panel log
 
 - While the Mac is in use, the task's card says that it is using the locked Mac. The stage list then has one line for each lease: when the Mac was unlocked, when it was locked again, and why (the task ended, a key press, the deadline, a failure).
-- Details holds the audit trail: the approval with the person and the agent, the lease and its deadline, each ticket with its time and the plug-in's answer, how long the cover was up on each display, the stop with the kind of input (key, pointer, remote), the time the relock was confirmed and every refused step. Ids appear only in Details ([surfaces.md](surfaces.md#default-view)).
+- Details holds the audit trail: the approval with the person and the agent, the lease and its deadline, each ticket with its time, the keychain lock result and the locked-status read that preceded it, and the plug-in's answer, how long the cover was up on each display, the stop with the kind of input (key, pointer, remote), the time the relock was confirmed and every refused step. Ids appear only in Details ([surfaces.md](surfaces.md#default-view)).
 - Unlock and relock are Node effects with receipts. A relock receipt carries the observed locked state. Without it, the relock is unknown and stays a blocking row in "Waiting for me" until the Mac reports that it is locked or the person settles it.
 - When the lease ends, the conversation gets one line: the Mac is locked again, or it could not be locked, with the row.
 
@@ -141,6 +145,7 @@ The [eval](../research/locked-mac-computer-use.md#eval) is the acceptance test. 
 - A physical keypress during the task stops it within 1 s: no input from LINA after that, cancellation requested, and the key never reaches the app.
 - A manual password unlock still works after a plug-in crash or hang, after its removal and with no broker running, within the eval's latency bound over the stock unlock.
 - Install, uninstall and rollback leave `system.login.screensaver` equal to the backup in every key except its timestamps.
+- The runs that start with the login keychain unlocked stay unlocked until the broker locks it. The broker reads the locked status before it arms the ticket, and the keychain stays locked during the lease and after the relock. When that status cannot be established, no ticket is armed and the Mac stays locked. The harness supplies the lock only for the one run that starts locked.
 
 A passing eval is evidence for the lock and unlock column of the macOS row only. Every cell of the matrix stays `unverified until evidence` until its own record exists.
 

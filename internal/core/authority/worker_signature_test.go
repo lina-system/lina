@@ -10,6 +10,7 @@ import (
 )
 
 func TestWorkerAnswerHasSignedRecord(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	a := requestWorker(t, f)
 	if err := f.service.Answer(t.Context(), a.ID, owner(f), authority.Decision{Choice: authority.Once}); err != nil {

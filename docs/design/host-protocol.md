@@ -270,6 +270,7 @@ conversations.
 | Capability | What the client can do |
 | --- | --- |
 | Conversation | Start a conversation with an agent, send a message, interrupt, read history, subscribe to events, receive connect and disconnect notices |
+| Launcher | Send a one-line message to the last or a named agent's main conversation, receive its short form and a message locator ([Launcher capability](#launcher-capability)) |
 | Agent management | List the main's agents, create an agent from a preset or a description, rename, tune and delete an agent. LINA Core records each change with the person id. |
 | Work records | List, read, capture, edit, complete and reorder 목표 (goal), 일 (project), 할 일 (to-do), 계속 챙기는 것 (area) and memos; read the views (오늘 (today), 예정 (upcoming), 언제든 (anytime), 나중에 (later), the flow board) and the candidates; answer a proposal to add or split, and undo a promotion, an addition or an archive. Each is a request to LINA Core, and LINA Core computes the views. |
 | Memory | Remember, correct, forget and move an item between layers, open an item's evidence, expand a ledger event or a summary, run a memory import (rehearsal, run, report) and answer its promotion batches ([conversation-and-memory.md](conversation-and-memory.md)) |
@@ -440,6 +441,36 @@ The generated receivers exercise `conversation/` fixtures on both sides.
 provider. Real model credentials and real model validation are outside these
 fixtures.
 
+### Launcher capability
+
+The `launcher` capability (1.0) adds `launcher_request`, `launcher_result` and the
+`launcher` topic's `launcher_reply` items. A request carries `request_id`, an
+opaque `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`, `text` (1–16,384 Unicode characters)
+and an optional `agent_id`. Core resolves the named agent, otherwise the person's
+last selected agent and then the default agent, and admits the line through the
+existing conversation input path into that agent's `main:<agent>` conversation.
+There is no launcher-only conversation. The line is admitted as a follow-up, never
+as steering, so a line that arrives while the agent already runs a turn keeps its
+own turn and its replies always carry its request id. The request id is the input
+id, so a repeated request returns the original admission and starts no second
+turn; Core keeps the agent that first admitted the line, even after the person
+selects another agent, and accepts the inbox source either release used, so a
+line admitted before this capability shipped stays retryable. The request id is
+reserved for the launcher, so an `input` with an id in that namespace is refused
+as malformed. The result names the request, the conversation and the agent with
+an `applied` effect.
+
+The short form streams on the `launcher` topic keyed by `request_id`. Each
+`launcher_reply` carries the request, conversation and agent, the visible short
+`text` produced by the same reply budget as the conversation, and `done`.
+`message_id` locates the conversation item that holds the reply; a client opens
+that conversation at the item. The final event is `done: true`, and Core sends it
+after a stop or failure too, so a panel never waits on a stream that ended. The
+full reply and any typed result remain in the conversation. Pending approvals are
+read through the existing `waiting` capability; the launcher capability adds no
+second approval list. The launcher topic is available only to the authenticated
+person's connection and grants no device, clipboard or model authority.
+
 ## Typed results
 
 The Core tool request may carry optional `reply_type` (`chat`, `status`, `comparison`, `candidates`, `third_party`) for reply-shape measurement. A draft may name its `recipient` and mark a block’s `audience` (`recipient` or `person`). Older bodies omit these fields. They are data annotations, not authority, and do not change the Result RPC envelope. Core uses the existing `summary`, `text` and provenance fields to publish the bounded presentation.
@@ -604,6 +635,13 @@ never sends `hello`, receives a LINA grant or becomes a Node. Publishing a
 persona exposes a separate Core A2A listener on the tailnet, not the `client`
 or `node` listener. Core alone maps authenticated incoming work and remote observations
 to canonical local tasks and results.
+
+The publication listener serves only its Agent Cards, versioned A2A JSON-RPC/SSE
+and task-authorized artifact downloads. It uses the owner's TLS configuration
+and verifies the local tailscaled address before binding. It registers no host
+protocol handler. The owner receives publication progress, approvals and typed
+results through the existing conversation, waiting and result projections;
+the external caller receives only the separate A2A task projection.
 
 A Node can call a remote agent as part of a task the main dispatched. Its
 grant must name the approved remote connection and allowed call/data scope.
@@ -771,6 +809,17 @@ never means zero. Stage and unknown are codes localized by the client. An option
 `state` uses the `running_state` display codes for an observed conversation-worker
 execution state; it does not supply a plan stage or completion verdict. Older
 clients may omit this additional presentation field.
+
+An optional `stages` array carries a line's stage list, in order, as Core computed
+it ([work-and-delegation.md](work-and-delegation.md#stages)). An entry has its
+`kind` (`stage`, `design`, `checking` or `done`), a `label`, a `state`, and, for a
+numbered entry, its `number`. An entry state and a step state are one of `next`,
+`waiting`, `working`, `needs_input`, `failed`, `stopped`, `unknown`, `done` and
+`superseded`; the client localizes them. A `steps` array lists the entry's steps
+with a name, a state and the instant a step started; it holds no step id, and a
+line holds no identity at all. A line without a stage list omits the field, which
+older clients ignore. The stage word of a goal line is the label of its current
+stage entry.
 
 The optional `started_at` and `finished_at` fields are RFC 3339 instants recorded
 by Core; `now` is Core's short current-activity line. The TUI applies its snapshot

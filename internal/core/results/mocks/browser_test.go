@@ -30,6 +30,24 @@ type testLeaser struct{}
 func (testLeaser) Acquire(context.Context, lease.Activity) (lease.Lease, error) {
 	return lease.New(func() {}), nil
 }
+func TestChromiumSelectsCheckedRadio(t *testing.T) {
+	c := Chromium{Leaser: testLeaser{}}
+	fragment := `<main class="stack"><label class="row"><input type="radio" checked="checked" data-check="morning" data-action="select" aria-label="Morning"/>Morning</label><label class="row"><input type="radio" data-check="afternoon" data-action="select" aria-label="Afternoon"/>Afternoon</label><label class="row"><input type="checkbox" checked="checked" data-check="done" data-action="select" aria-label="Done"/>Done</label></main>`
+	items := []result.MockItem{
+		{ID: "morning", Description: "Morning", Action: "select"},
+		{ID: "afternoon", Description: "Afternoon", Action: "select"},
+		{ID: "done", Description: "Done", Action: "select"},
+	}
+	out, err := c.Draw(t.Context(), fragment, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range out.Checks {
+		if !check.Passed {
+			t.Errorf("check failed: %s", check.ID)
+		}
+	}
+}
 func TestChromiumDrawsCheckedMock(t *testing.T) {
 	c := Chromium{Leaser: testLeaser{}}
 	out, err := c.Draw(t.Context(), `<main class="stack"><h1 data-check="title">Tasks</h1><button data-check="filter" data-action="toggle" data-target="tasks">Today</button><section id="tasks" class="card">One task</section></main>`, []result.MockItem{{ID: "title", Description: "Tasks", Action: "none"}, {ID: "filter", Description: "Today", Action: "toggle", Target: "tasks"}})

@@ -83,6 +83,12 @@ func runCore(args []string) int {
 			return 78
 		}
 	}
+	if route != nil && route.Route == "claude_api_key" {
+		if err := os.Unsetenv("LINA_CLAUDE_API_KEY"); err != nil {
+			fmt.Fprintln(os.Stderr, "lina core: cannot isolate model credential")
+			return 78
+		}
+	}
 	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, Local: local, ClientManifest: *metadata, Work: &boot.WorkConfig{Installed: true}}
 	if *tailnet != "" {
 		cfg.Tailnet = &clientsrv.TailnetConfig{Address: *tailnet, Socket: *tailscaleSocket}

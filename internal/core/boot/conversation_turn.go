@@ -59,9 +59,20 @@ type turnState struct {
 	questions          *questionTurn
 	questionRoundCalls int
 	compaction         *conversationCompaction
+	launcherKey        string
+	launcherText       string
 }
 
 func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, input ledger.Event, inboxID int64) (err error) {
+	if r.externalTask != "" {
+		rec, err := r.publications.store.Read(ctx, r.externalTask)
+		if err != nil {
+			return err
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, time.Unix(min(rec.Deadline, rec.Principal.Expires), 0))
+		defer cancel()
+	}
 	turnID := "turn:" + input.ID
 	if err = r.setActive(ctx, true); err != nil {
 		return err
@@ -105,7 +116,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	prep := &turn.Preparation{
 		VerifyBuild:        r.verifyBuild,
 		SelectCapabilities: r.selectProviderCapabilities,
-		Account:            func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
+		Account:            func(context.Context) (provider.Credential, error) { return r.route.Account() },
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
 			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: r.route.Adapter.Class()}, nil
 		},
@@ -293,6 +304,14 @@ func (s *turnState) observe(ctx context.Context, e provider.Event) error {
 		if err := turn.New(r.db).CheckpointPartial(ctx, turnID, turn.Partial{Round: s.round - 1, Index: e.Index, Text: filter.sent}); err != nil {
 			return err
 		}
+		if requestID := launcherRequestID(input.Surface); requestID != "" {
+			s.launcherKey, s.launcherText = key, view.Text
+			if view.Text != "" {
+				if err := r.publishLauncherReply(requestID, key, view.Text, false); err != nil {
+					return err
+				}
+			}
+		}
 		if view.Cut {
 			// A result replaces the same stream row, retracting the unfinished
 			// sentence while retaining all subsequent text in its preview.
@@ -336,6 +355,11 @@ func (s *turnState) observe(ctx context.Context, e provider.Event) error {
 
 func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err error) error {
 	r, input, turnID := s.runtime, s.input, s.turnID
+	if requestID := launcherRequestID(input.Surface); requestID != "" {
+		// The panel always learns that this line finished, including after a
+		// stop or failure, so it never waits on a stream that ended.
+		defer func() { _ = r.publishLauncherReply(requestID, s.launcherKey, s.launcherText, true) }()
+	}
 	if s.promoted.ID != "" {
 		// The handle is durable before execution, and the run outlives this turn.
 		err = errors.Join(err, r.background.service.Release(context.WithoutCancel(ctx), s.promoted.ID))
@@ -364,6 +388,9 @@ func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err er
 			if filterErr != nil {
 				err = filterErr
 				break
+			}
+			if item.SpeakerKind == guard.Agent {
+				s.launcherKey, s.launcherText = item.ID, view.Text
 			}
 			if publishErr := r.publishReply(ctx, item.ID, turnID, view, eventLanguage(input)); publishErr != nil {
 				err = publishErr
@@ -412,6 +439,9 @@ func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err er
 
 func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.PreparedRequest, error) {
 	r, input, turnID := s.runtime, s.input, s.turnID
+	if r.externalTask != "" {
+		return s.prepareA2A(ctx, policy)
+	}
 	if err := r.refreshPersona(ctx); err != nil {
 		return turn.PreparedRequest{}, err
 	}
