@@ -122,6 +122,30 @@ Evidence: [What counts as done](../research/m4-owner-agent-sessions.md#what-coun
 - `handoff.owns` names the preset that owns an artifact kind. While one agent's open work changes an artifact, another agent's change to it becomes a hand-off to that agent. The other agent does not open a second change.
 - Decisions and threads are per agent across channels. An agent's sessions on different channels read the same decision records ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies), LINA rule 9).
 
+Core's private conversation tools `send_handoff` and `handoff_status` expose a
+pending admission separately from the receiver's committed delivery receipt.
+`next_check` is an explicit date with a time zone; it is independent of the
+reply deadline. With check-back enabled, Core durably raises the sender's item
+on that date or on a receiver report. A report arriving after an earlier date
+notice still raises the result. Each reason has one delivery key across
+restart. The sender's conversation lane checks the end condition and reports
+at a turn boundary; it does not turn the exchange into a person message or a
+"Waiting for me" decision. A receiver report remains a labelled claim until
+the sender checks it.
+
+`begin_artifact_change` opens a durable work lease with an artifact kind,
+stable identity and end condition. Core resolves the owning agent from the
+published `handoff.owns` records, retaining an existing open owner. A missing
+or ambiguous owner refuses admission. A second agent receives a queued
+hand-off instead of another lease. `finish_artifact_change` releases only the
+calling agent's work; a reply deadline never releases ownership. Record
+identities are `record:<id>`. The installed record writer also checks these
+leases, so a second agent cannot bypass the hand-off by writing directly.
+The receiver can read and revise that named record through the usual authority
+and revision checks. Other personal records and private knowledge are absent
+from the exchange request. These leases and sender waiting items survive Core
+restart and belong to the agent, independently of a client's lifetime.
+
 Ownership of artifact and work kinds across the eight starters:
 
 | Kind | Owner |

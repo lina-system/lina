@@ -4,10 +4,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/doc"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
@@ -37,12 +39,13 @@ type declaration struct {
 }
 
 type source struct {
-	Path         string
-	Package      string
-	Name         string
-	Imports      []string
-	Tests        []string
-	Declarations []declaration
+	SupervisorGuard bool
+	Path            string
+	Package         string
+	Name            string
+	Imports         []string
+	Tests           []string
+	Declarations    []declaration
 }
 
 func sorted(values map[string]bool) []string {
@@ -113,6 +116,55 @@ func runnable(name, prefix string) bool {
 	return !unicode.IsLower(next)
 }
 
+// Core and proc can re-exec the test binary as a supervisor. Reject an unsafe
+// harness during selection, before the acceptance process can recursively spawn.
+// Recognize the explicit early dispatch used by LINA's harnesses; comments and
+// strings containing the helper name cannot satisfy this check.
+func supervisorGuard(file *ast.File, fn *ast.FuncDecl) bool {
+	aliases := map[string]string{}
+	for _, imp := range file.Imports {
+		value := literal(imp.Path)
+		name := filepath.Base(value)
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		aliases[value] = name
+	}
+	osName, procName := aliases["os"], aliases["github.com/thisisjun786/lina/kit/proc"]
+	if osName == "" || procName == "" || fn.Body == nil {
+		return false
+	}
+	compact := func(node ast.Node) string {
+		var b bytes.Buffer
+		if format.Node(&b, token.NewFileSet(), node) != nil {
+			return ""
+		}
+		return strings.Join(strings.Fields(b.String()), "")
+	}
+	condition := "len(" + osName + ".Args)>1&&" + osName + ".Args[1]==\"proc-supervise\""
+	dispatch := osName + ".Exit(" + procName + ".SuperviseMain(" + osName + ".Args[2:]," + osName + ".Stderr))"
+	for _, stmt := range fn.Body.List {
+		if branch, ok := stmt.(*ast.IfStmt); ok && compact(branch.Cond) == condition && len(branch.Body.List) == 1 {
+			if compact(branch.Body.List[0]) == dispatch {
+				return true
+			}
+		}
+		ran := false
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Run" {
+					ran = true
+				}
+			}
+			return true
+		})
+		if ran {
+			return false
+		}
+	}
+	return false
+}
+
 func scan(root, name, pkg string) (source, error) {
 	clean := filepath.Clean(name)
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
@@ -135,6 +187,9 @@ func scan(root, name, pkg string) (source, error) {
 		switch value := node.(type) {
 		case *ast.FuncDecl:
 			name := value.Name.Name
+			if value.Recv == nil && name == "TestMain" {
+				result.SupervisorGuard = supervisorGuard(file, value)
+			}
 			result.Declarations = append(result.Declarations, describe(name, value, value.Recv == nil && (name == "init" || name == "TestMain")))
 			if value.Recv == nil && name != "TestMain" && (runnable(name, "Test") || runnable(name, "Fuzz")) {
 				tests[name] = true
@@ -178,12 +233,22 @@ func run() error {
 	}
 	result := []source{}
 	for _, pkg := range input.Packages {
+		requires, guarded := false, false
 		for _, file := range pkg.Files {
 			record, err := scan(input.Root, file, pkg.Path)
 			if err != nil {
 				return err
 			}
+			for _, imp := range record.Imports {
+				if imp == "github.com/thisisjun786/lina/internal/core/boot" || imp == "github.com/thisisjun786/lina/kit/proc" {
+					requires = true
+				}
+			}
+			guarded = guarded || record.SupervisorGuard
 			result = append(result, record)
+		}
+		if requires && !guarded {
+			return fmt.Errorf("%s: proc-supervise requires an early TestMain dispatch to os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))", pkg.Path)
 		}
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)

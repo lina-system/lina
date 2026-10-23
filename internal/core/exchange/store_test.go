@@ -392,3 +392,51 @@ func TestExpiryRemovesPersonDecisionAtomically(t *testing.T) {
 		t.Fatal("decision history lost")
 	}
 }
+
+func TestCheckbackDisabledAndConcurrentArtifactClaims(t *testing.T) {
+	s := exchange.New(database(t))
+	req := request()
+	req.Origin = &exchange.Origin{Person: "person", Conversation: "main:asker", CheckBack: false, NextCheck: now.Add(time.Minute)}
+	r, err := s.Start(t.Context(), req, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Report(t.Context(), r.DeliveryID, "answerer", exchange.Answer{Text: "Report", Evidence: []exchange.Evidence{{EventID: "source", At: now}}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Raise(t.Context(), now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	notices, err := s.Notices(t.Context(), "person")
+	if err != nil || len(notices) != 0 {
+		t.Fatalf("disabled: %+v %v", notices, err)
+	}
+	var wg sync.WaitGroup
+	for _, actor := range []string{"asker", "answerer"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			in := request()
+			in.DeliveryID = "change-" + actor
+			in.From = actor
+			in.To = "asker"
+			in.Origin = &exchange.Origin{Person: "person", Conversation: "main:" + actor, CheckBack: true, NextCheck: now.Add(time.Minute)}
+			got, err := s.BeginChange(t.Context(), exchange.Change{Person: "person", Artifact: exchange.Artifact{Kind: "code", ID: "repo"}, Owner: "asker", WorkID: "work-" + actor, Done: "Check passes"}, in, now)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if actor == "asker" && got.Change == nil || actor == "answerer" && got.Handoff == nil {
+				t.Errorf("actor=%s result=%+v", actor, got)
+			}
+		}()
+	}
+	wg.Wait()
+	if err = s.Expire(t.Context(), now.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := s.Change(t.Context(), "person", "repo")
+	if err != nil || lease.Owner != "asker" {
+		t.Fatalf("deadline stole ownership: %+v %v", lease, err)
+	}
+}

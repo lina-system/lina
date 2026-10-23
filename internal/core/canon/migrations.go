@@ -55,6 +55,7 @@ func Migrations() []Migration {
 		{Version: 41, SQL: TimersSchema},
 		{Version: 42, SQL: startersSchema},
 		{Version: 43, SQL: WorkerChoiceSchema},
+		{Version: 44, SQL: handoffsSchema},
 	}
 }
 
@@ -99,6 +100,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
 		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
 		{37, "work_events"}, {37, "work_records"},
+		{44, "exch_origins"}, {44, "exch_notices"}, {44, "artifact_changes"},
 		{42, "agent_starters"}, {42, "agent_selection"},
 	} {
 		var count int

@@ -155,11 +155,17 @@ type Write struct {
 // filtering happens in SQL before text matching, ranking, or a result limit.
 type RecallScope struct {
 	Agent, Person string
+	CommonOnly    bool // Exchange requests exclude the agent's private holder.
 	Projection    bool
 	ExternalModel bool // No never-leaves content or its evidence may reach a model endpoint.
 }
 
-func (s RecallScope) Holders() []Holder { return []Holder{Holder(s.Agent), All} }
+func (s RecallScope) Holders() []Holder {
+	if s.CommonOnly {
+		return []Holder{All, All}
+	}
+	return []Holder{Holder(s.Agent), All}
+}
 
 type Query struct {
 	After      string // Optional last item identity in the current revision order.

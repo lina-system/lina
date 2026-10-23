@@ -42,6 +42,17 @@ func (r *conversationRuntime) prepareRecordTools(turnID string, bindings map[str
 			if err != nil {
 				return loop.Result{ID: call.ID, Code: loop.Invalid}
 			}
+			if in.Write {
+				r.artifactMutex().Lock()
+				defer r.artifactMutex().Unlock()
+				redirected, err := r.routeArtifactWrite(ctx, turnID, call, in.Target)
+				if err != nil {
+					return exchangeResult(call.ID, nil, err)
+				}
+				if redirected != nil {
+					return *redirected
+				}
+			}
 			auth := grant.Request{GrantID: turn.EffectKey(turnID, spec.Name, in.Target, call.ID) + ":records", MainID: r.main, Epoch: r.epoch, TaskID: turnID, Host: r.main, OSUser: "core", Person: r.person, Agent: r.agent, Profile: "records"}
 			g := grant.Grant{Identity: auth, Expires: time.Now().Add(time.Hour), Scope: []grant.Permission{{Tool: spec.Name, Target: in.Target, Write: in.Write}}}
 			if in.Write {
