@@ -439,7 +439,7 @@
               "type": "object",
               "properties": {
                 "generation_id": {
-                  "$ref": "#/$defs/id"
+                  "$ref": "#/$defs/generationId"
                 },
                 "whole_generation": {
                   "type": "boolean"
@@ -619,7 +619,12 @@
                     ]
                   },
                   "result": {
-                    "$ref": "#/$defs/result"
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "gap",
+                      "not_run"
+                    ]
                   },
                   "evidence_sha256": {
                     "anyOf": [
@@ -674,6 +679,10 @@
         "diagnosis"
       ],
       "additionalProperties": false
+    },
+    "generationId": {
+      "type": "string",
+      "pattern": "^generation-[A-Z2-7]{26,}$"
     }
   }
 }
