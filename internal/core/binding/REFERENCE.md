@@ -7,3 +7,15 @@ Core composes the snapshot inside native person admission through the ledger's `
 The current binding enters the mandatory Waiting group of the ContextPacket. Steering carries its own binding at drain. Request evidence retains an `input-binding-v1` source and reconstructs it from the authorized ledger for replay. Record activity is a disposable projection of Git commit times.
 
 `TestM2InputBindingInstalledCore` executes write/read record tools, checks an exact reference and an offered option during a live turn, restarts Core, retries the consumed input and binds a card input. Rule tests cover normalization, ambiguity, finished work, aging and candidate priority. Core tests cover transactional rollback, context assembly and the synthetic production replay.
+
+Model choices are append-only `input_binding_choice` events keyed by the actual
+call and input. `Choice.Request` addresses a request ordinal; the admission event
+is retained. Current choices overlay those events, and a created receipt supplies
+the next focus identity. `input-choice-v1` context sources reconstruct immutable
+choice bytes for request replay.
+
+Target questions store their choice with the existing durable question record.
+Their resolution appends the selected or cancelled binding in the same transaction
+as the answer inbox event. General skipped-question defaults never resolve them.
+The optional Atropos judge receives a closed candidate list and revision; its
+accepted choices, probabilities and observed latency are ledger evidence.

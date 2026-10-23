@@ -324,10 +324,10 @@ func assertTurnRequests(t *testing.T, p *turnProvider, count int) {
 			"change_persona", "undo_persona", "fill_persona_setting", "fill_work_method",
 			"record_emotion", "set_emotion_expression", "record_relationship", "ask_question", "resolve_question", "remember_name",
 			"skill_notices", "skill_maintenance", "skill_index", "read_skill", "write_skill", "undo_skill",
-			"query_records", "read_record", "write_record", "promote_memo", "undo_record", "propose_candidate", "list_candidates",
+			"query_records", "read_record", "write_record", "promote_memo", "undo_record", "propose_candidate", "list_candidates", "read_work_progress", "follow_work",
 			"present_result", "read_result", "calculate",
 			"plan_index", "read_plan", "draft_plan", "start_run",
-			"send_handoff", "handoff_status", "begin_artifact_change", "finish_artifact_change",
+			"send_handoff", "handoff_status", "begin_artifact_change", "finish_artifact_change", "bind_input",
 			"load_tools", "call_tool", "create_timer", "timer_status", "cancel_timer",
 		}
 		if !reflect.DeepEqual(names, want) {

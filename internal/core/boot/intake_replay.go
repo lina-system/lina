@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/intakereplay"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
+	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -26,11 +27,23 @@ import (
 // ReplayIntakeCase runs the real Core conversation runtime in a fresh private
 // root. No existing install, provider credentials or worker process is used.
 // Fixture work is a snapshot, not a request to execute that work.
-func ReplayIntakeCase(ctx context.Context, c intakereplay.Case, router string) (result []intakereplay.Binding, err error) {
+func ReplayIntakeCase(ctx context.Context, c intakereplay.Case, router string) ([]intakereplay.Binding, error) {
+	return replayIntakeCase(ctx, c, router, nil)
+}
+
+// ReplayIntakeModelCase uses an explicit model route and only the real binding
+// tool. Private text goes only to that configured route; work never executes.
+func ReplayIntakeModelCase(ctx context.Context, c intakereplay.Case, route *modelpath.Config) ([]intakereplay.Binding, error) {
+	if route == nil {
+		return nil, errors.New("intake model route is not configured")
+	}
+	return replayIntakeCase(ctx, c, "core-model", route)
+}
+func replayIntakeCase(ctx context.Context, c intakereplay.Case, router string, route *modelpath.Config) (result []intakereplay.Binding, err error) {
 	if reason := intakereplay.Validate(c); reason != "" {
 		return nil, errors.New(reason)
 	}
-	if router != "focus-only" && router != "rules-then-focus" && router != "core-rules" {
+	if router != "focus-only" && router != "rules-then-focus" && router != "core-rules" && router != "core-model" {
 		return nil, errors.New("unknown router")
 	}
 	root, err := os.MkdirTemp("", "lina-ir-")
@@ -62,8 +75,12 @@ func ReplayIntakeCase(ctx context.Context, c intakereplay.Case, router string) (
 		return nil, err
 	}
 	savedID := "replay-binding"
-	r.intakeSnapshot = router == "core-rules"
+	r.intakeSnapshot = router == "core-rules" || router == "core-model"
 	r.intakeReplay = func(ctx context.Context, event ledger.Event) error {
+		if router == "core-model" {
+			savedID = inputBindingID(event.ID)
+			return r.replayModelBinding(ctx, event, route)
+		}
 		if router == "core-rules" {
 			savedID = inputBindingID(event.ID)
 			return nil
@@ -92,6 +109,16 @@ func ReplayIntakeCase(ctx context.Context, c intakereplay.Case, router string) (
 	}
 	if saved.SpeakerKind != guard.System || parent.PersonID != r.person || parent.Origin.Locator != id {
 		return nil, errors.New("invalid replay binding provenance")
+	}
+	if router == "core-model" {
+		choices, e := r.currentInputChoices(ctx, parent)
+		if e != nil {
+			return nil, e
+		}
+		for _, choice := range choices {
+			result = append(result, intakereplay.Binding{Target: choice.Target, Ask: choice.Question != "", Decider: choice.Decider})
+		}
+		return result, nil
 	}
 	if router == "core-rules" {
 		var d binding.Decision

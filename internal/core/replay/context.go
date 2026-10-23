@@ -130,12 +130,12 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 	var out []Context
 	for _, source := range a.Context {
 		c := Context{Source: source}
-		if source.Source != "persona-state-v1" && source.Source != "input-binding-v1" && (source.Material != nil || len(source.Evidence) > 0) {
+		if source.Source != "persona-state-v1" && source.Source != "input-binding-v1" && source.Source != "input-choice-v1" && (source.Material != nil || len(source.Evidence) > 0) {
 			return fail()
 		}
 		switch source.Source {
-		case "input-binding-v1":
-			if source.Material != nil || source.Revision != "" || len(source.Evidence) != 1 || source.ID != "binding:"+source.Evidence[0].ID {
+		case "input-binding-v1", "input-choice-v1":
+			if source.Material != nil || source.Revision != "" || len(source.Evidence) != 1 || (source.Source == "input-binding-v1" && source.ID != "binding:"+source.Evidence[0].ID) {
 				return fail()
 			}
 			if err = visible(ctx, tx, scope, source.ID); err != nil {
@@ -148,7 +148,7 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 			if e != nil {
 				return nil, nil, e
 			}
-			if event.ScaffoldKind != "input_binding" || event.ConversationID != ep.Conversation || event.ParentID != source.Evidence[0].ID {
+			if (source.Source == "input-binding-v1" && event.ScaffoldKind != "input_binding" || source.Source == "input-choice-v1" && event.ScaffoldKind != "input_binding_choice") || event.ConversationID != ep.Conversation || event.ParentID != source.Evidence[0].ID {
 				return fail()
 			}
 			c.Text = event.Body.Text()

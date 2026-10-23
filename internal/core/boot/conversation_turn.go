@@ -38,6 +38,9 @@ import (
 
 // turnState holds the inputs and mutable state shared by a conversation turn's callbacks.
 type turnState struct {
+	bindingSource      *ledger.Event
+	bindingRequest     int
+	bindingInputs      map[string]acceptedSteering
 	activity           lease.Lease
 	runtime            *conversationRuntime
 	input              ledger.Event
@@ -110,7 +113,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
 		Digest: assemble.Digest,
 	}
-	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions}
+	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions, bindingTurn: &s}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: s.complete,
 		StartFromTurn: func(ctx context.Context, h budget.Handoff) (budget.Handle, error) {
 			var err error
@@ -397,6 +400,9 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	s.items = s.items[:len(s.items)-1]
 	at := time.Now().UTC()
 	minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
+	if err := r.judgeInput(ctx, input); err != nil {
+		return turn.PreparedRequest{}, err
+	}
 	bound, err := r.inputBindingPacket(ctx, input)
 	if err != nil {
 		return turn.PreparedRequest{}, err
@@ -418,6 +424,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		r.preparePersonaTools,
 		r.prepareSkillTools,
 		r.prepareRecordTools,
+		r.prepareBindingWorkTools,
 		r.prepareResultTools,
 		r.prepareGoalWorkTools,
 		r.prepareMethodologyTools,
@@ -465,6 +472,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		catalog = nil
 	}
 	if r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
+		declarations = s.prepareInputBinding(declarations)
 		state, err := r.agents.State(ctx, r.agent)
 		if err != nil {
 			return turn.PreparedRequest{}, err

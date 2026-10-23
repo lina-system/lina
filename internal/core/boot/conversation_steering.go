@@ -42,10 +42,11 @@ func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, ste
 // Drained steering belongs to this turn; only the queue's final undrained
 // items are resubmitted as follow-ups, with their original durable identity.
 type conversationInputs struct {
-	runtime   *conversationRuntime
-	inputs    *loop.Inputs
-	failure   error
-	questions *questionTurn
+	bindingTurn *turnState
+	runtime     *conversationRuntime
+	inputs      *loop.Inputs
+	failure     error
+	questions   *questionTurn
 }
 
 func (q *conversationInputs) Drain() []provider.Item {
@@ -56,6 +57,12 @@ func (q *conversationInputs) Drain() []provider.Item {
 		accepted, ok := q.runtime.takeSteering(body)
 		if !ok {
 			continue
+		}
+		if q.bindingTurn != nil {
+			if q.bindingTurn.bindingInputs == nil {
+				q.bindingTurn.bindingInputs = map[string]acceptedSteering{}
+			}
+			q.bindingTurn.bindingInputs[accepted.event.ID] = accepted
 		}
 		runner := accepted.runner
 		if runner == nil {

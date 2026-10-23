@@ -72,8 +72,8 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 		address = r.channelAddress.Key()
 	}
 	// Read the latest binding and exchange before this input, using ledger order.
-	var raw, at string
-	err := tx.QueryRowContext(ctx, `SELECT b.body,p.recorded_at FROM conv_event b JOIN conv_event p ON p.id=b.parent_id WHERE b.conversation_id=? AND b.agent_id=? AND p.person_id=? AND b.scaffold_kind=? AND p.rowid<(SELECT rowid FROM conv_event WHERE id=?) AND (?='' OR EXISTS(SELECT 1 FROM channel_receipts receipt WHERE receipt.address=? AND p.id='channel-input:'||receipt.inbox_id)) ORDER BY p.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.PersonID, inputBindingKind, input.ID, address, address).Scan(&raw, &at)
+	var raw, at, previousID string
+	err := tx.QueryRowContext(ctx, `SELECT b.body,p.recorded_at,p.id FROM conv_event b JOIN conv_event p ON p.id=b.parent_id WHERE b.conversation_id=? AND b.agent_id=? AND p.person_id=? AND b.scaffold_kind=? AND p.rowid<(SELECT rowid FROM conv_event WHERE id=?) AND (?='' OR EXISTS(SELECT 1 FROM channel_receipts receipt WHERE receipt.address=? AND p.id='channel-input:'||receipt.inbox_id)) ORDER BY p.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.PersonID, inputBindingKind, input.ID, address, address).Scan(&raw, &at, &previousID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return s, err
 	}
@@ -83,6 +83,22 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 			return s, err
 		}
 		s.Focus = previous.Target
+		previousInput, e := ledger.New(questionTransaction{tx}, nil).Get(ctx, previousID)
+		if e != nil {
+			return s, e
+		}
+		choices, e := readInputChoices(ctx, tx, previousInput)
+		if e != nil {
+			return s, e
+		}
+		for _, c := range choices {
+			if c.Question == "" && !c.Cancelled {
+				s.Focus = c.Target
+				if c.CreatedID != "" {
+					s.Focus = binding.Target{Class: "existing", ID: c.CreatedID, Kind: c.Target.Kind}
+				}
+			}
+		}
 		// Agent replies also keep an exchange fresh; tool/system traffic does not.
 		var latest string
 		err = tx.QueryRowContext(ctx, `SELECT e.recorded_at FROM conv_event e WHERE e.conversation_id=? AND e.agent_id=? AND e.speaker_kind IN ('person','agent') AND e.rowid<(SELECT rowid FROM conv_event WHERE id=?) AND coalesce(e.scaffold_kind,'')<>'provider_item' AND (?='' OR EXISTS(SELECT 1 FROM channel_receipts receipt WHERE receipt.address=? AND ('channel-input:'||receipt.inbox_id=e.id OR 'channel-input:'||receipt.inbox_id=e.parent_id))) ORDER BY e.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.ID, address, address).Scan(&latest)
@@ -353,5 +369,21 @@ func (r *conversationRuntime) inputBindingPacket(ctx context.Context, input ledg
 	if err != nil {
 		return nil, err
 	}
-	return assemble.ContextPacket{{ID: event.ID, AgentID: input.AgentID, Kind: assemble.Waiting, Origin: "input-binding:" + input.ID, Text: event.Body.Text(), Evidence: []assemble.Ref{{ID: input.ID}}}}, nil
+	packet := assemble.ContextPacket{{ID: event.ID, AgentID: input.AgentID, Kind: assemble.Waiting, Origin: "input-binding:" + input.ID, Text: event.Body.Text(), Evidence: []assemble.Ref{{ID: input.ID}}}}
+	err = r.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT id,body FROM conv_event WHERE parent_id=? AND scaffold_kind=? ORDER BY rowid", input.ID, modelBindingKind)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, body string
+			if err = rows.Scan(&id, &body); err != nil {
+				return err
+			}
+			packet = append(packet, assemble.ContextItem{ID: id, AgentID: input.AgentID, Kind: assemble.Waiting, Origin: "input-choice:" + input.ID, Text: body, Evidence: []assemble.Ref{{ID: input.ID}}})
+		}
+		return rows.Err()
+	})
+	return packet, err
 }

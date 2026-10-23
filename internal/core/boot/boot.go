@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/backup"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -103,7 +104,9 @@ type Services struct {
 	Lifecycle func(*lifecycle.Restarter)
 }
 type Config struct {
-	Work *WorkConfig
+	// InputJudge is the optional non-chat closed-choice adapter; nil uses the main model.
+	InputJudge atropos.Judge
+	Work       *WorkConfig
 	// SandboxLauncher pins an optional trusted absolute OS launcher.
 	SandboxLauncher string
 	// Client supplies the installed person's agents, supported rows and handlers.
@@ -339,6 +342,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		conversation = runtime
 		runtime.replaySocket = cfg.Socket
 		runtime.webTransport = cfg.WebTransport
+		runtime.inputJudge = cfg.InputJudge
 		supported := cfg.Client.Supported
 		cfg.Client = runtime.identity
 		cfg.Client.Supported = supported
