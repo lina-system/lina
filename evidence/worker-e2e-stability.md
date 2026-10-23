@@ -164,3 +164,26 @@ branch regressions. The later loaded run exposed the additional harness CPU
 budget fault addressed here. The original passing baseline and the failing
 updated-dev trial are both retained; a finite repetition run does not establish
 that every possible schedule is free of failures.
+
+## Integration fixture correction
+
+The full gate after the final dev merge also exposed a management fixture whose
+`testing.T.TempDir` path grew beyond the Unix socket limit when `jobs.sock` was
+added. `TestGrowthCommittedAdoptionSurvivesNoticeFailure` failed both cases under
+a long temporary base with `bind: invalid argument`. The fixture now uses a short
+private directory prefix and removes it after its stores and growth service close.
+
+The same focused command and long temporary base failed before that change and
+passed afterwards (Go package execution: 8.864 seconds red, 1.773 seconds green):
+
+```sh
+go test ./internal/core/boot -run '^TestGrowthCommittedAdoptionSurvivesNoticeFailure$' -count=1 -v
+```
+
+The first full run also exhausted the boot package's six-minute watchdog after
+165 top-level tests had passed; the currently running test had run for only one
+second and was synchronizing an agent directory. The entire first run also reached the 1200-second shared limit before its final
+two e2e shards completed; this run is retained as a failure. The subsequent full
+gate uses a private temporary directory on a local data volume to avoid root-volume
+I/O contention, retaining the package, scenario and global deadlines. Its result
+is recorded for the final PR head.
