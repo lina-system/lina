@@ -3,14 +3,17 @@ package m4_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -21,6 +24,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/exchange"
+	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/proc"
@@ -93,6 +97,7 @@ func TestWorkMethodsThroughRunningCore(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(root, "system/core/main.json"), []byte(`{"main_id":"fixture"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
+	writeCoreFixtureManifest(t, root)
 	var mu sync.Mutex
 	rounds := map[string]int{}
 	catalogs := map[string][]string{}
@@ -295,6 +300,12 @@ func TestWorkMethodsThroughRunningCore(t *testing.T) {
 			}
 		}
 		c.Close()
+		mu.Lock()
+		observed := rounds[key]
+		mu.Unlock()
+		if observed != 4 {
+			t.Fatalf("%s turn ended before all model/tool stages: got %d requests", key, observed)
+		}
 	}
 	for range 2 {
 		select {
@@ -341,5 +352,49 @@ func TestWorkMethodsThroughRunningCore(t *testing.T) {
 	}
 	if rounds["lina"] != 4 || rounds["dev"] != 4 {
 		t.Errorf("rounds=%v", rounds)
+	}
+}
+
+// This scenario runs the real Core in the test executable. As in the installed
+// acceptance harness, provenance labels are synthetic but the running artifact's
+// digest and size are observed. The node entry is unused by this local scenario.
+func writeCoreFixtureManifest(t *testing.T, root string) {
+	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	digest := sha256.New()
+	size, err := io.Copy(digest, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binaries := []map[string]any{}
+	for _, name := range []string{"lina", "lina-node"} {
+		binaries = append(binaries, map[string]any{"name": name, "size": size, "sha256": fmt.Sprintf("%x", digest.Sum(nil))})
+	}
+	m := map[string]any{"version": "0.0.1-alpha.dev", "commit": strings.Repeat("a", 40), "date": "2026-10-23", "goToolchain": runtime.Version(), "kitVersion": 1,
+		"supportedCombinations": manifest.ClientCombinations(), "target": runtime.GOOS + "/" + runtime.GOARCH,
+		"providers": map[string]any{"chatgpt": map[string]any{"adapter": "responses", "retryCount": 0, "requestFields": []string{"model", "input", "store", "stream"}}},
+		"sqlite":    map[string]any{"module": "github.com/ncruces/go-sqlite3", "version": "v0.30.5", "moduleSum": "h1:6usmTQ6khriL8oWilkAZSJM/AIpAlVL2zFrlcpDldCE=", "sqliteVersion": "3.51.2", "wasmSHA256": strings.Repeat("d", 64), "execution": "wazero", "sqliteVec": nil}, "binaries": binaries}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "system/bin")
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "manifest.json")
+	if err = os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = manifest.Read(path); err != nil {
+		t.Fatal(err)
 	}
 }
