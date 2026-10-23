@@ -108,9 +108,25 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 		defer cancel()
 		screen, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool { return predicate(screenText(s)) })
 		if err != nil {
-			t.Fatalf("running list: %v\n%s", err, screenText(screen))
+			t.Fatalf("worker view: %v\n%s", err, screenText(screen))
 		}
 		return screenText(screen)
+	}
+	waitWorkCard := func(state string) {
+		t.Helper()
+		wait(func(s string) bool {
+			lines := strings.Split(strings.TrimSuffix(s, "\n"), "\n")
+			if len(lines) < 5 || strings.TrimSpace(lines[1]) != design.Text(design.English, "work.title") {
+				return false
+			}
+			// The overlay contains a two-row card, or only its title when
+			// empty. Exclude the conversation header and status footer.
+			if state == "" {
+				return strings.TrimSpace(strings.Join(lines[2:len(lines)-1], "\n")) == ""
+			}
+			return strings.HasPrefix(strings.TrimSpace(lines[2]), "Delegate a small file job. ") &&
+				strings.TrimSpace(lines[3]) == design.Text(design.English, "running.state."+state)
+		})
 	}
 	wait(func(s string) bool {
 		if !strings.Contains(s, design.Text(design.English, "running.keys")) {
@@ -128,21 +144,18 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 		h.keys(terminal, "\x1b")
 		waitComposerReady(t, h, terminal)
 		h.keys(terminal, "\x10") // Ctrl+P
-		wait(func(s string) bool {
-			return strings.Contains(s, "Delegate a small file job.") && strings.Contains(s, design.Text(design.English, "running.state.in_progress"))
-		})
+		waitWorkCard("in_progress")
 	}
-	// Keep the panel open: completion must update the live cards, without
-	// requiring Ctrl+R again or confusing an idle session with verified delivery.
+	// Keep the worker view open: completion must arrive as a live update,
+	// without reopening it or confusing an idle session with verified delivery.
 	admittedTurn(t, h, c, conversation, "finish-delegation", "Finish the worker's current job.")
 	receiveWorkerFollowups(t, h, c, 1)
 	if progress {
-		wait(func(s string) bool {
-			if failure {
-				return strings.Contains(s, "Delegate a small file job.") && strings.Contains(s, design.Text(design.English, "running.state.failed"))
-			}
-			return !strings.Contains(s, "Delegate a small file job.") && strings.Contains(s, design.Text(design.English, "work.title"))
-		})
+		if failure {
+			waitWorkCard("failed")
+		} else {
+			waitWorkCard("")
+		}
 		h.keys(terminal, "\x1b")
 		waitComposerReady(t, h, terminal)
 		h.keys(terminal, "\x12")
@@ -160,9 +173,7 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 		h.keys(terminal, "\x1b")
 		waitComposerReady(t, h, terminal)
 		h.keys(terminal, "\x10")
-		wait(func(s string) bool {
-			return strings.Contains(s, design.Text(design.English, "work.title")) && !strings.Contains(s, "Delegate a small file job.")
-		})
+		waitWorkCard("")
 	}
 	if calls.Load() != 4 {
 		t.Fatalf("worker rounds=%d", calls.Load())

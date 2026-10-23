@@ -96,6 +96,43 @@ test('abnormal package failure reports only started unfinished tests with bounde
   }
 });
 
+test('a package timeout leaves paused scenarios unknown instead of opening QA issues', async () => {
+  // Reduced from the #985 timeout: serial work consumes the package budget
+  // while an admission scenario waits at t.Parallel, including its child.
+  for (const nested of [false, true]) {
+    const events = [
+      { Action: 'run', Test: 'TestTwo' },
+      { Action: 'pause', Test: 'TestTwo' },
+      ...(nested ? [
+        { Action: 'cont', Test: 'TestTwo' },
+        { Action: 'run', Test: 'TestTwo/approved-before-restart' },
+        { Action: 'pause', Test: 'TestTwo/approved-before-restart' },
+      ] : []),
+      { Action: 'run', Test: 'TestOne' },
+      { Action: 'output', Test: 'TestTwo', Output: 'waiting for a parallel slot\n' },
+      { Action: 'output', Output: 'panic: test timed out\n' },
+      { Action: 'fail' },
+    ].map(event => JSON.stringify({ Package: 'example/e2e', ...event })).join('\n');
+    const input = fixture();
+    input.records[0].tests = goTestOutcomes(events);
+    assert.deepEqual(input.records[0].tests.map(({ test, result }) => [test, result]), [
+      ['TestTwo', 'unknown'], ['TestOne', 'fail'],
+    ], `nested=${nested}`);
+    const mock = github();
+    await reconcileQA({ ...options(mock), ...input });
+    assert.equal(mock.issues.length, 1);
+    assert.match(mock.issues[0].title, /TestOne/);
+    // Unknown is not recovery evidence for an already open finding either.
+    const earlier = fixture();
+    earlier.records[0].tests[1].result = 'fail';
+    await reconcileQA({ ...options(mock), ...earlier });
+    const later = fixture('fail', 2);
+    later.records[0].tests = input.records[0].tests;
+    await reconcileQA({ ...options(mock), ...later });
+    assert.equal(mock.issues[1].state, 'open');
+  }
+});
+
 test('a real Go timeout reaches QA reporting without inventing unexecuted tests', async t => {
   const sb = sandbox(t);
   sb.write(sb.dir, 'go.mod', 'module example/e2e\n\ngo 1.24\n');
