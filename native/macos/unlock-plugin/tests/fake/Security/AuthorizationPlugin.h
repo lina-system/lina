@@ -103,4 +103,19 @@ typedef struct AuthorizationCallbacks {
   OSStatus (*RemoveContextValue)(AuthorizationEngineRef inEngine, AuthorizationString inKey);
 } AuthorizationCallbacks;
 
+enum { kAuthorizationPluginInterfaceVersion = 0 };
+
+typedef struct AuthorizationPluginInterface {
+  uint32_t version;
+  OSStatus (*PluginDestroy)(AuthorizationPluginRef plugin);
+  OSStatus (*MechanismCreate)(AuthorizationPluginRef plugin, AuthorizationEngineRef engine,
+                              AuthorizationMechanismId mechanism_id, AuthorizationMechanismRef *out);
+  OSStatus (*MechanismInvoke)(AuthorizationMechanismRef reference);
+  OSStatus (*MechanismDeactivate)(AuthorizationMechanismRef reference);
+  OSStatus (*MechanismDestroy)(AuthorizationMechanismRef reference);
+} AuthorizationPluginInterface;
+
+OSStatus AuthorizationPluginCreate(const AuthorizationCallbacks *callbacks, AuthorizationPluginRef *out_plugin,
+                                   const AuthorizationPluginInterface **out_interface);
+
 #endif

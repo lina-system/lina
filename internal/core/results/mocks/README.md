@@ -17,7 +17,9 @@ Browser descendants are joined before the profile is removed.
 It rejects an entire candidate on unknown tags/attributes, executable content,
 remote resources, custom styles, duplicate ids and undeclared controls. The fixed
 shared template supplies all scripts/styles/fonts. Browser checks verify visible
-labels, actions and overflow at both widths. A missing renderer fails the run.
+labels, actions and overflow at both widths. A radio select is cleared, clicked,
+and restored, because clicking an already selected radio leaves it selected. A
+missing renderer fails the run.
 
 The ZIP contains `index.html`, `source.xhtml`, phone/desktop sandbox frames and a
 `miniapp/` starter from `design.MiniAppFiles`. The starter has local sample

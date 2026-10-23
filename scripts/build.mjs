@@ -111,9 +111,15 @@ export function build({ cwd = root, out, target, version: requestedVersion, exec
     const supportedCombinations = JSON.parse(invoke(['run', '-mod=readonly', './internal/core/manifest/clientinfo', target]));
     const crwPin = JSON.parse(invoke(['run', '-mod=readonly', './internal/core/work/pin/crwinfo']));
     if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
-    const providers = JSON.parse(readFileSync(join(cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
+    const providers = {
+      ...JSON.parse(readFileSync(join(cwd, 'kit/provider/responses/manifest.json'), 'utf8')),
+      ...JSON.parse(readFileSync(join(cwd, 'kit/provider/messages/manifest.json'), 'utf8')),
+    };
     if (providers.chatgpt.adapter !== 'responses' || providers.chatgpt.retryCount !== 0) {
       throw new Error('Responses manifest does not match the adapter or retry policy');
+    }
+    if (providers.claude_api_key.adapter !== 'messages' || providers.claude_api_key.retryCount !== 0) {
+      throw new Error('Messages manifest does not match the adapter or retry policy');
     }
     if (!clean() || gitOut(cwd, ['rev-parse', 'HEAD']) !== commit) return null;
     const providerCapabilities = JSON.parse(readFileSync(join(cwd, 'kit/provider/capabilities.json'), 'utf8'));

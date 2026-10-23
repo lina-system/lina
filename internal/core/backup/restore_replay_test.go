@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/retract"
 )
 
@@ -147,6 +148,42 @@ func TestRestoreReplaysRemovalsBeforeFirstReadInAnotherRoot(t *testing.T) {
 			events, err := ledger.New(restored, nil).Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "person", Text: "violet"})
 			if err != nil || len(events) != want {
 				t.Fatalf("ledger fallback exposed %d: %v", len(events), err)
+			}
+			// The replay also reaches the shared index before the first read: the
+			// generation was captured with the item indexed, and a recovered item
+			// waits in the queue instead of reappearing on its own.
+			indexed := func() int {
+				t.Helper()
+				var n int
+				if err := restored.Read(t.Context(), func(tx *canon.Tx) error {
+					return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_doc WHERE kind='memory' AND source_id=?", receipt.ID).Scan(&n)
+				}); err != nil {
+					t.Fatal(err)
+				}
+				return n
+			}
+			if n := indexed(); n != 0 {
+				t.Fatalf("restored index exposed the hidden item: %d", n)
+			}
+			if operation == "recover" {
+				drain := recall.New(restored, nil)
+				for range 10 {
+					var pending int
+					if err := restored.Read(t.Context(), func(tx *canon.Tx) error {
+						return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_pending").Scan(&pending)
+					}); err != nil {
+						t.Fatal(err)
+					}
+					if pending == 0 {
+						break
+					}
+					if _, err := drain.DrainBatch(t.Context()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if n := indexed(); n != 1 {
+					t.Fatalf("recovered item was not re-queued: %d", n)
+				}
 			}
 		})
 	}

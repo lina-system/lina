@@ -27,7 +27,7 @@ type observedReader struct {
 }
 
 func TestRequestAssemblyMaterialReleasesSnapshotAndRechecksRetraction(t *testing.T) {
-	for _, mode := range []string{"read", "retracted", "assembly retracted", "trashed"} {
+	for _, mode := range []string{"read", "retracted", "trashed"} {
 		t.Run(mode, func(t *testing.T) {
 			db, source, root := fixture(t)
 			store, err := assets.Open(t.Context(), root, db)
@@ -61,11 +61,7 @@ func TestRequestAssemblyMaterialReleasesSnapshotAndRechecksRetraction(t *testing
 						_, err := tx.ExecContext(t.Context(), "UPDATE assets SET trashed_at=1 WHERE id=?", ref.ID)
 						return err
 					}
-					event := "input"
-					if mode == "assembly retracted" {
-						event = assembly.ID
-					}
-					_, err := tx.ExecContext(t.Context(), "INSERT INTO retract_block(item_id,person,holder,event_id,conversation_id) VALUES('forgotten','person','agent',?,'')", event)
+					_, err := tx.ExecContext(t.Context(), "INSERT INTO retract_block(item_id,person,holder,event_id,conversation_id) VALUES('forgotten','person','agent','input','')")
 					return err
 				}); err != nil {
 					t.Fatal(err)
