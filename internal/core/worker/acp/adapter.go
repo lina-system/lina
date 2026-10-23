@@ -44,27 +44,32 @@ type Result struct {
 // An adapter owns one session. The process lifetime is independent of individual
 // control-call contexts; only Interrupt requests protocol cancellation.
 type Adapter struct {
-	cfg             Config
-	control         sync.Mutex
-	mu              sync.Mutex
-	client          *wire.Client
-	life            context.Context
-	cancel          context.CancelFunc
-	started, closed bool
-	thread          worker.Thread
-	spec            worker.StartSpec
-	state           worker.ThreadState
-	version         string
-	turn            uint64
-	nextRequest     uint64
-	requests        map[string]*pendingDecision
-	cancelled       bool
-	result          Result
-	events          chan worker.Event
-	turns           sync.WaitGroup
-	tools           *toolServer
-	pending         map[string]toolPending
-	turnEnded       chan struct{}
+	cfg               Config
+	control           sync.Mutex
+	mu                sync.Mutex
+	client            *wire.Client
+	life              context.Context
+	cancel            context.CancelFunc
+	started, closed   bool
+	thread            worker.Thread
+	spec              worker.StartSpec
+	state             worker.ThreadState
+	version           string
+	turn              uint64
+	nextRequest       uint64
+	requests          map[string]*pendingDecision
+	cancelled         bool
+	result            Result
+	events            chan worker.Event
+	turns             sync.WaitGroup
+	tools             *toolServer
+	pending           map[string]toolPending
+	turnEnded         chan struct{}
+	sessionFailures   atomic.Bool
+	extensionFailure  *worker.Finish
+	extensionObserved time.Time
+	lastFinish        *worker.Finish
+	quotaRows         []provider.QuotaRow
 }
 
 var _ worker.Adapter = (*Adapter)(nil)
@@ -74,10 +79,14 @@ func New(cfg Config) *Adapter {
 }
 func (a *Adapter) Name() string { return a.cfg.Profile.Name }
 func (a *Adapter) Capabilities() worker.CapabilitySet {
-	return worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.AskQuestions}
+	caps := worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.AskQuestions}
+	if a.cfg.Profile.RateLimitKey != "" || a.sessionFailures.Load() {
+		caps = append(caps, worker.ReportQuota)
+	}
+	return caps
 }
-func (a *Adapter) Events() <-chan worker.Event                        { return a.events }
-func (a *Adapter) Quota(context.Context) ([]provider.QuotaRow, error) { return nil, nil }
+func (a *Adapter) Events() <-chan worker.Event { return a.events }
+
 func (a *Adapter) Version(ctx context.Context) (string, error) {
 	a.control.Lock()
 	defer a.control.Unlock()
@@ -126,7 +135,9 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	if err := ctx.Err(); err != nil {
 		return worker.Thread{}, err
 	}
-	if err := a.Capabilities().Require(s.Required...); err != nil {
+	// Quota capability can only be known after extension negotiation.
+	required := slices.DeleteFunc(slices.Clone(s.Required), func(c worker.Capability) bool { return c == worker.ReportQuota })
+	if err := a.Capabilities().Require(required...); err != nil {
 		return worker.Thread{}, err
 	}
 	if s.Model != "" || s.Effort != "" {
@@ -159,8 +170,14 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	a.mu.Unlock()
 	handshake, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	initialized, err := c.Initialize(handshake, wire.Implementation{Name: "lina", Version: "1"})
+	meta := map[string]json.RawMessage{"jetbrains": json.RawMessage(`{"air":{"version":1,"capabilities":["sessionFailure"]}}`)}
+	initialized, err := c.InitializeWithMeta(handshake, wire.Implementation{Name: "lina", Version: "1"}, &meta)
 	if err != nil {
+		c.Close()
+		return worker.Thread{}, err
+	}
+	a.sessionFailures.Store(advertisesFailures(initialized.Meta))
+	if err := a.Capabilities().Require(s.Required...); err != nil {
 		c.Close()
 		return worker.Thread{}, err
 	}
@@ -220,6 +237,8 @@ func (a *Adapter) beginLocked(ctx context.Context, text string) (worker.Thread, 
 	a.turnEnded = make(chan struct{})
 	a.state = worker.Active
 	a.cancelled = false
+	a.extensionFailure = nil
+	a.lastFinish = nil
 	a.result.Output = ""
 	a.result.StopReason = ""
 	th := a.thread
@@ -292,7 +311,12 @@ func (a *Adapter) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 	if !a.matches(t) {
 		return worker.ThreadSnapshot{}, ErrThread
 	}
-	return worker.ThreadSnapshot{Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Capabilities: a.Capabilities(), Output: a.result.Output, Pending: a.pendingLocked()}, nil
+	var finish *worker.Finish
+	if a.lastFinish != nil {
+		copy := *a.lastFinish
+		finish = &copy
+	}
+	return worker.ThreadSnapshot{Finish: finish, EffectsKnown: finish != nil && finish.Failure != worker.ConnectionFailure && len(a.pending) == 0, Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Capabilities: a.Capabilities(), Output: a.result.Output, Pending: a.pendingLocked()}, nil
 }
 func (a *Adapter) Result() Result {
 	a.mu.Lock()

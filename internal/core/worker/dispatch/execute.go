@@ -499,6 +499,8 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			quotaStop := finish.Status == worker.Failed && (finish.Failure == worker.QuotaFailure || finish.Failure == worker.RateLimitFailure || finish.Failure == worker.LoginFailure)
 			if quotaStop {
 				err = s.park(ctx, adapter)
+			} else {
+				err = s.observeACPQuota(ctx, adapter)
 			}
 			snapshot, snapshotErr := terminalSnapshot(ctx, adapter, thread)
 			if snapshotErr == nil {

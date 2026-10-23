@@ -1105,6 +1105,17 @@ One adapter drives every worker that speaks the Agent Client Protocol, version 1
 - **Client boundary.** Request ids may be strings, integers or null; replies preserve the original id, and an omitted id denotes a notification. Closing the client waits for transport and owned-process teardown even when another failure started cleanup. The shared client marks load replay before publishing updates and clears that mark when it reads the load response. Its pending permission handles expire when the prompt replies. Cancelling a local wait leaves the operation outstanding; only an explicit `session/cancel` requests interruption. A stalled consumer that fills a client event queue fails the connection rather than dropping progress or blocking completion.
 - **Recovery.** Core records the session id. Once-only recovery starts the same command again in the same worktree and sends `session/resume` where the worker advertises it, otherwise `session/load`. The history that `session/load` replays is not reported again as new progress. A worker that offers neither is restarted with a new session.
 - **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of a request (-32000 is login expiry); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
+  Core opts into only AIR v1 `sessionFailure` and accepts it only when the
+  initialize response advertises it. Its error-severity category/actions map
+  to rate limited (`limit`/`retry`), quota exhausted (`limit`/no actions),
+  sign-in required (`access`/`login`) or connection lost
+  (`connection`/`new_session`). Warnings and unknown combinations do not end
+  a turn. The prompt reply remains the terminal boundary: request errors and
+  explicit non-success stop reasons take precedence over extension reports.
+  Claude's reported bucket, utilization, status and Unix-seconds reset become
+  quota rows; context-window usage is not subscription quota. Missing values
+  remain unknown. Core saves reported rows before closing the session, and an
+  exhausted worker permits only the existing single replacement after cleanup.
 - **Never sent.** `authenticate` and `logout`, because the person signs in to a worker in the worker itself; `session/delete`; and `session/set_mode`. `session/close` is sent only on an explicit close.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
 
@@ -1129,7 +1140,7 @@ Core validates the requested schema before consuming an accepted form answer.
 Secret and unsupported forms are declined without requesting secret input.
 A pending native decision leaves the prompt's work tools available; prompt
 completion expires both decision and work-tool requests.
-Steering, quota and recovery remain separate integrations;
+Steering and recovery remain separate integrations;
 requesting a capability that is not implemented fails before dispatch.
 
 #### Claude Code through ACP

@@ -3,6 +3,7 @@ package acp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -67,7 +68,15 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 				<-requests
 			}
 			if result.Err != nil {
-				a.finish(th, worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: "prompt_failed"})
+				f := worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: "prompt_failed"}
+				var rpc *wire.RPCError
+				if errors.As(result.Err, &rpc) {
+					f.Failure, f.Code = worker.WorkerFailure, fmt.Sprintf("rpc_%d", rpc.Code)
+					if rpc.Code == -32000 {
+						f.Failure = worker.LoginFailure
+					}
+				}
+				a.finish(th, f)
 				return
 			}
 			a.mu.Lock()
@@ -78,6 +87,11 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 			switch result.Response.StopReason {
 			case wire.StopReasonEndTurn:
 				f = worker.Finish{Status: worker.Done}
+				a.mu.Lock()
+				if a.extensionFailure != nil {
+					f = *a.extensionFailure
+				}
+				a.mu.Unlock()
 			case wire.StopReasonCancelled:
 				f = worker.Finish{Status: worker.Interrupted, Code: "worker_cancelled"}
 				if cancelled {
@@ -132,6 +146,12 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 			entries = append(entries, fmt.Sprintf("%s: %s", e.Status, e.Content))
 		}
 		p.Text = strings.Join(entries, "; ")
+	case v.SessionInfoUpdate != nil:
+		a.sessionFailure(v.SessionInfoUpdate.Meta)
+		return true
+	case v.UsageUpdate != nil:
+		a.vendorQuota(v.UsageUpdate.Meta)
+		return true
 	case len(v.Unrecognized) > 0:
 		a.mu.Lock()
 		a.result.Unknown = append(a.result.Unknown, append(json.RawMessage(nil), v.Unrecognized...))
@@ -145,6 +165,7 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 func (a *Adapter) finish(th worker.Thread, f worker.Finish) {
 	a.mu.Lock()
 	a.requests = nil
+	a.lastFinish = &f
 	if a.state == worker.Active || a.state == worker.Waiting {
 		close(a.turnEnded)
 	}

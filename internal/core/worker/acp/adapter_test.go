@@ -262,7 +262,7 @@ func agentFixture() {
 		}
 		switch f.Method {
 		case "initialize":
-			reply(f.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]any{"name": "fixture", "version": "fixture-9"}})
+			reply(f.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]any{"name": "fixture", "version": "fixture-9"}, "_meta": fixtureMeta()})
 		case "session/new":
 			if file := os.Getenv("ACP_MCP_CAPTURE"); file != "" {
 				raw, _ := json.Marshal(f.Params.McpServers)
@@ -276,6 +276,15 @@ func agentFixture() {
 			}
 			reply(f.ID, map[string]any{"sessionId": "fixture"})
 		case "session/prompt":
+			if raw := os.Getenv("ACP_UPDATES"); raw != "" {
+				var updates []json.RawMessage
+				if json.Unmarshal([]byte(raw), &updates) != nil {
+					os.Exit(17)
+				}
+				for _, update := range updates {
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "fixture", "update": update}})
+				}
+			}
 			text := f.Params.Prompt[0].Text
 			switch text {
 			case "permission", "question":
@@ -427,4 +436,11 @@ func TestSessionDeclaresWorkerTools(t *testing.T) {
 	if s.Name != "lina" || !filepath.IsAbs(s.Command) || len(s.Args) == 0 || s.Args[0] != "worker-tools" || len(s.Env) != 2 {
 		t.Fatal("invalid per-session MCP declaration")
 	}
+}
+
+func fixtureMeta() json.RawMessage {
+	if raw := os.Getenv("ACP_INIT_META"); raw != "" {
+		return json.RawMessage(raw)
+	}
+	return json.RawMessage(`null`)
 }

@@ -2430,6 +2430,14 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   It returns Core's record of the session: state, pending requests and the last message.
   After a Core restart the state is unknown until once-only recovery loads the session again.
 - `Quota` returns rows only from the session-failure extension and a profile's named rate-limit key; with neither, it returns none and the chooser treats the worker as unknown.
+  Worker initialization opts into AIR v1 session failures without changing the
+  shared client's provider defaults. Only advertised, error-severity machine
+  categories/actions are classified. Prompt RPC errors and stop reasons retain
+  precedence; warning updates and unknown metadata cannot finish a turn.
+  A terminal ACP snapshot carries its observed finish; transport loss leaves
+  effects unknown. Dispatch persists streamed quota measurements before session
+  teardown and uses that snapshot to fence the one allowed replacement.
+  The synthetic installed-Core scenario is `e2e/m2/acp_quota_test.go`.
 - Every child is owned through `kit/proc` and reaped with its process tree; LINA's own model credential is removed from its environment.
 
 **C-57 Work definition, choice and splitting (new).**
