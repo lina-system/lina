@@ -63,7 +63,7 @@ func (c namingCanon) Write(ctx context.Context, fn func(*canon.Tx) error) error 
 			return err
 		}
 		for _, admission := range c.replies {
-			if admission.Entry != guard.EntryAgent {
+			if admission.Entry != guard.EntryAgent || admission.Input.ScaffoldKind == "provider_item" {
 				continue
 			}
 			// Inspect the ledger's committed masked text, never hidden source bytes.

@@ -133,3 +133,19 @@ func TestActivityAboveComposerRule(t *testing.T) {
 		t.Fatalf("activity row budget: idle=%+v busy=%+v", idle, busy)
 	}
 }
+
+func TestWorkPanelKeepsTranscriptFloorAndColumn(t *testing.T) {
+	for width := 120; width <= 240; width += 20 {
+		for height := 10; height <= 40; height++ {
+			p := Plan(Size{width, height}, Caps{SidePane: true, Running: true, Cards: true}, Shape{WorkPanel: true, ActivityRows: 2, ComposerRows: 6, Attachments: true, RunningCount: 20, CardCount: 8, CardRows: 5})
+			if p.SidePane.Width != min(56, width/3) || p.SidePane.X != p.Conversation.Width+1 || p.Conversation.Height < 4 || p.Running.Height != 0 || p.SidePane.Y != 1 || p.SidePane.Y+p.SidePane.Height != p.Composer.Y-p.ComposerRule.Height {
+				t.Fatalf("panel lost at %dx%d: %+v", width, height, p)
+			}
+			for _, r := range []Rect{p.Conversation, p.Cards, p.Attachments, p.Activity} {
+				if r.Height > 0 && r.X+r.Width >= p.SidePane.X {
+					t.Fatalf("overlap at %dx%d: %+v", width, height, p)
+				}
+			}
+		}
+	}
+}
