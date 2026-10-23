@@ -99,7 +99,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	appendTools("")
 	hasItems := false
 	for _, b := range m.content.Blocks {
-		if !conversationBlock(b) {
+		if !m.conversationBlock(b) {
 			continue
 		}
 		hasItems = true

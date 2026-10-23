@@ -65,7 +65,8 @@ func Migrations() []Migration {
 		{Version: 51, SQL: conversationQuestionsSchema},
 		{Version: 52, SQL: workerRecoverySchema},
 		{Version: 53, SQL: retractSearchDeltaSchema},
-		{Version: 54, SQL: MemoryExtractionSchema},
+		{Version: 54, SQL: citeSchema},
+		{Version: 55, SQL: MemoryExtractionSchema},
 	}
 }
 
@@ -74,7 +75,7 @@ var publishedMigrationTables = []struct {
 	version int
 	table   string
 }{
-	{54, "memory_extraction_cursor"},
+	{55, "memory_extraction_cursor"},
 	{11, "retract_meta"}, {12, "turn_runs"}, {12, "turn_items"}, {12, "turn_calls"}, {12, "turn_partials"}, {13, "turn_control"}, {14, "turn_outcome"}, {15, "sum_node"}, {15, "sum_edge"}, {15, "sum_cover"},
 	{16, "owner_binding"}, {16, "sign_in_host"}, {16, "sign_in_identities"},
 	{17, "channel_connections"}, {17, "channel_bindings"}, {17, "channel_actions"}, {17, "channel_receipts"}, {17, "channel_outbound"},
@@ -102,6 +103,7 @@ var publishedMigrationTables = []struct {
 	{50, "done_completions"}, {49, "result_saves"},
 	{42, "agent_starters"}, {42, "agent_selection"},
 	{45, "record_operations"}, {45, "record_candidates"},
+	{54, "cite"},
 	{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
 }
 
