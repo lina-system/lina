@@ -19,7 +19,7 @@ func TestAlphaWorkerCrashInstalledCore(t *testing.T) {
 	t.Parallel()
 	workdir := t.TempDir()
 	var launches atomic.Int32
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	provider := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			t.Error("invalid provider input")
@@ -34,14 +34,14 @@ func TestAlphaWorkerCrashInstalledCore(t *testing.T) {
 		}
 		if last.Type == "function_call_output" {
 			if !strings.Contains(last.Output, `"active"`) {
-				t.Error("worker did not start")
+				t.Errorf("worker did not start: %s", last.Output)
 			}
 			emitResponse(w, "작업을 맡겼어요.", true)
 		} else {
 			launches.Add(1)
 			emitPersonaCall(w, "start-crash-worker", "worker_start", map[string]any{"workdir": workdir, "task_packet": "hold for input"})
 		}
-	}))
+	})))
 	defer provider.Close()
 	h, bootstrap := installedConversationHarness(t, provider.URL)
 	seedCodingFixture(t, h, bootstrap)
