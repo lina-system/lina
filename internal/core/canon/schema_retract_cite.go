@@ -26,7 +26,8 @@ const hiddenFromTarget = `WITH RECURSIVE affected(kind,id) AS (
   SELECT c.view_kind,c.view_id FROM affected a JOIN cite c INDEXED BY cite_target
    ON c.target_kind=a.kind AND c.target_id=a.id
   WHERE c.dropped_revision IS NULL
-  AND ((a.kind='event' AND c.view_kind='summary') OR (a.kind<>'event' AND c.view_kind IN ('summary','memory','record')))
+  AND ((a.kind='event' AND c.view_kind='summary' AND c.role='covers')
+   OR (a.kind<>'event' AND c.view_kind IN ('summary','memory','record')))
  )
  SELECT kind,id FROM affected`
 
@@ -95,7 +96,8 @@ WHEN NEW.state='active' AND OLD.state<>NEW.state BEGIN
   SELECT c.view_kind,c.view_id FROM affected a JOIN cite c INDEXED BY cite_target
    ON c.target_kind=a.kind AND c.target_id=a.id
   WHERE c.dropped_revision IS NULL
-  AND ((a.kind='event' AND c.view_kind='summary') OR (a.kind<>'event' AND c.view_kind IN ('summary','memory','record')))
+  AND ((a.kind='event' AND c.view_kind='summary' AND c.role='covers')
+   OR (a.kind<>'event' AND c.view_kind IN ('summary','memory','record')))
  )
  SELECT a.kind,a.id FROM affected a
  WHERE EXISTS(SELECT 1 FROM recall_source s WHERE s.kind=a.kind AND s.source_id=a.id)
@@ -109,7 +111,7 @@ CREATE TRIGGER retract_recall_excluded_insert AFTER INSERT ON retract_excluded_e
    UNION
    SELECT c.view_kind,c.view_id FROM affected a JOIN cite c INDEXED BY cite_target
     ON c.target_kind=a.kind AND c.target_id=a.id
-   WHERE c.dropped_revision IS NULL AND c.view_kind='summary'
+   WHERE c.dropped_revision IS NULL AND c.view_kind='summary' AND c.role='covers'
   ) SELECT kind,id FROM affected);
 END;
 
@@ -120,7 +122,7 @@ CREATE TRIGGER retract_recall_excluded_delete AFTER DELETE ON retract_excluded_e
   UNION
   SELECT c.view_kind,c.view_id FROM affected a JOIN cite c INDEXED BY cite_target
    ON c.target_kind=a.kind AND c.target_id=a.id
-  WHERE c.dropped_revision IS NULL AND c.view_kind='summary'
+  WHERE c.dropped_revision IS NULL AND c.view_kind='summary' AND c.role='covers'
  )
  SELECT a.kind,a.id FROM affected a
  WHERE EXISTS(SELECT 1 FROM recall_source s WHERE s.kind=a.kind AND s.source_id=a.id)

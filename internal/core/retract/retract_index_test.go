@@ -186,6 +186,34 @@ func TestRemovalHidesCitingViewsFromTheSharedIndex(t *testing.T) {
 		requireIndex(t, db, nil, []string{"summary:summary-summary-conversation", "event:cover-1"})
 	})
 
+	t.Run("summary that skipped the erased event stays", func(t *testing.T) {
+		db, _, _, _, _ := memoryFixture(t)
+		admit(t, db, "skip-1", "skip-conversation", "도서관 base")
+		if _, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "skip-copy", ConversationID: "skip-conversation", PersonID: "person-1", AgentID: "agent-1",
+			Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(11, 0), RecordedAt: time.Unix(11, 0), TimeQuality: "observed", Body: "도서관 copy", ReplayOf: "skip-1"}); err != nil {
+			t.Fatal(err)
+		}
+		tree := compaction.New(db)
+		frontier, err := tree.Frontier(t.Context(), "skip-conversation")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The node covered the base event and deliberately skipped its replay copy.
+		if _, err := tree.Publish(t.Context(), compaction.Proposal{Expected: frontier, ID: "skip-summary",
+			Cover:  []compaction.Coverage{{EventID: "skip-1"}, {EventID: "skip-copy", Reason: "replay"}},
+			Output: compaction.Output{Model: "fixture", PromptVersion: "v1", BuiltAt: time.Unix(20, 0), Text: "도서관 요약", Dropped: "details"}}); err != nil {
+			t.Fatal(err)
+		}
+		drainIndex(t, db)
+		requireIndex(t, db, []string{"summary:skip-summary", "event:skip-1", "event:skip-copy"}, nil)
+		eraseEvent(t, db, "skip-copy")
+		// A skipped event is not covered evidence: the summary keeps its index
+		// document, and the erased copy leaves.
+		requireIndex(t, db, []string{"summary:skip-summary", "event:skip-1"}, []string{"event:skip-copy"})
+		drainIndex(t, db)
+		requireIndex(t, db, []string{"summary:skip-summary"}, []string{"event:skip-copy"})
+	})
+
 	t.Run("item evidence is another forgotten item", func(t *testing.T) {
 		db, removals, flow, _, _ := memoryFixture(t)
 		root := seedMemory(t, db, flow, "source-1", "conversation-1", "도서관 violet root")
