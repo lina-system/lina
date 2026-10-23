@@ -31,7 +31,9 @@ JSON whitespace are not significant.
 The original `Hello`, `Welcome`, `ErrorPayload`, envelope, reference and closed-code
 API remains available. The [handshake fixtures](../../protocol/fixtures/client/1.0/)
 round-trip without changing JSON values. A question's flat form has `plugin_name`
-and `fields`; each field has `name`, `type`, and `choices` for a choice. A question
+and `fields`; each field has `name`, `type`, and `choices` for a choice. An
+optional field sets `optional` to true and may be omitted from an accepted
+answer. A question
 answer has `answer` (`accept`, `decline`, `cancel`), with a `values` map only for
 accept. Its generated `FormValue` holds exactly one string, number or boolean.
 

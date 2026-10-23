@@ -98,7 +98,7 @@ func (r *conversationRuntime) modelContext(ctx context.Context, through string) 
 	if r.channelBinding != nil && !r.channelBinding.Scope.Memory {
 		return history, nil, snapshot.Epoch, visible, nil
 	}
-	profile, err := memory.New(r.db).Profile(ctx, memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true}, time.Now().Unix(), 32, 4096, func(text string) int { return len(text) })
+	profile, err := r.memoryStore().Profile(ctx, memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true}, time.Now().Unix(), 32, 4096, func(text string) int { return len(text) })
 	if err != nil {
 		return nil, nil, 0, nil, err
 	}
@@ -121,7 +121,7 @@ func (r *conversationRuntime) validateModelContext(ctx context.Context, epoch ui
 	}
 	scope := memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true}
 	for _, ref := range refs {
-		hits, err := memory.New(r.db).Recall(ctx, scope, memory.Query{ID: ref.ID, At: time.Now().Unix(), Limit: 1})
+		hits, err := r.memoryStore().Recall(ctx, scope, memory.Query{ID: ref.ID, At: time.Now().Unix(), Limit: 1})
 		if err != nil {
 			return err
 		}
@@ -138,4 +138,9 @@ func (r *conversationRuntime) validateModelContext(ctx context.Context, epoch ui
 		return err
 	}
 	return nil
+}
+
+// memoryStore resolves evidence through the same ledger/material reader as turns.
+func (r *conversationRuntime) memoryStore() *memory.Store {
+	return memory.New(r.db).WithQuotes(ledger.New(r.db, r.materials).Citation)
 }

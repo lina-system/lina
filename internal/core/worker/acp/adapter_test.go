@@ -270,7 +270,7 @@ func agentFixture() {
 					capabilities["sessionCapabilities"] = map[string]any{"resume": map[string]any{}}
 				}
 			}
-			reply(f.ID, map[string]any{"protocolVersion": 1, "agentCapabilities": capabilities, "agentInfo": map[string]any{"name": "fixture", "version": "fixture-9"}})
+			reply(f.ID, map[string]any{"protocolVersion": 1, "agentCapabilities": capabilities, "agentInfo": map[string]any{"name": "fixture", "version": "fixture-9"}, "_meta": fixtureMeta()})
 		case "session/load", "session/resume":
 			want := "session/load"
 			if os.Getenv("ACP_RECOVERY") == "resume" {
@@ -300,6 +300,15 @@ func agentFixture() {
 			}
 			reply(f.ID, map[string]any{"sessionId": "fixture"})
 		case "session/prompt":
+			if raw := os.Getenv("ACP_UPDATES"); raw != "" {
+				var updates []json.RawMessage
+				if json.Unmarshal([]byte(raw), &updates) != nil {
+					os.Exit(17)
+				}
+				for _, update := range updates {
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "fixture", "update": update}})
+				}
+			}
 			text := f.Params.Prompt[0].Text
 			switch text {
 			case "rpc-error", "rpc-error-exit":
@@ -307,13 +316,16 @@ func agentFixture() {
 				if text == "rpc-error-exit" {
 					os.Exit(0)
 				}
-			case "permission", "question":
+			case "permission", "question", "refused-form":
 				pending, requestMode = f.ID, text
 				method := "session/request_permission"
 				params := json.RawMessage(`{"sessionId":"fixture","toolCall":{"toolCallId":"write","title":"Write result.txt","rawInput":{"path":"result.txt"}},"options":[{"optionId":"persist-allow","kind":"allow_always","name":"Always"},{"optionId":"one-allow","kind":"allow_once","name":"Once"},{"optionId":"persist-deny","kind":"reject_always","name":"Never"},{"optionId":"one-deny","kind":"reject_once","name":"Deny"}]}`)
-				if text == "question" {
+				if text == "question" || text == "refused-form" {
 					method = "elicitation/create"
 					params = json.RawMessage(`{"sessionId":"fixture","mode":"form","message":"Choose a name","requestedSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}`)
+				}
+				if text == "refused-form" {
+					params = json.RawMessage(`{"sessionId":"fixture","mode":"form","message":"Secret","requestedSchema":{"type":"object","properties":{"api_key":{"type":"string"}}}}`)
 				}
 				send(map[string]any{"jsonrpc": "2.0", "id": "decision", "method": method, "params": params})
 			case "exit":
@@ -461,4 +473,11 @@ func TestSessionDeclaresWorkerTools(t *testing.T) {
 	if s.Name != "lina" || !filepath.IsAbs(s.Command) || len(s.Args) == 0 || s.Args[0] != "worker-tools" || len(s.Env) != 2 {
 		t.Fatal("invalid per-session MCP declaration")
 	}
+}
+
+func fixtureMeta() json.RawMessage {
+	if raw := os.Getenv("ACP_INIT_META"); raw != "" {
+		return json.RawMessage(raw)
+	}
+	return json.RawMessage(`null`)
 }

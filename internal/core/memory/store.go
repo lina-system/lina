@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
@@ -20,7 +21,10 @@ type Canon interface {
 	Read(context.Context, func(*canon.Tx) error) error
 	Write(context.Context, func(*canon.Tx) error) error
 }
-type Store struct{ db Canon }
+type Store struct {
+	db     Canon
+	quotes QuoteReader
+}
 
 func New(db Canon) *Store       { return &Store{db: db} }
 func normalize(s string) string { return strings.Join(strings.Fields(strings.ToLower(s)), " ") }
@@ -301,7 +305,7 @@ func insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 		}
 		old.Revision++
 		slices.Sort(old.Sensitivity)
-		raw, err := json.Marshal(old)
+		raw, err := marshalRecord(old)
 		if err != nil {
 			return Item{}, err
 		}
@@ -320,7 +324,7 @@ func insertRecord(ctx context.Context, tx *canon.Tx, item Item) (Item, error) {
 	var id [16]byte
 	_, _ = rand.Read(id[:])
 	item.ID = hex.EncodeToString(id[:])
-	raw, err := json.Marshal(item)
+	raw, err := marshalRecord(item)
 	if err != nil {
 		return Item{}, err
 	}
@@ -342,7 +346,10 @@ func revision(ctx context.Context, tx *canon.Tx, item Item, raw []byte) error {
 	if err != nil {
 		return err
 	}
-	return canon.WriteEvidenceCitations(ctx, tx, "memory", item.ID, item.Revision, evidence)
+	if err := canon.WriteEvidenceCitations(ctx, tx, "memory", item.ID, item.Revision, evidence); err != nil {
+		return err
+	}
+	return recall.IndexText(ctx, tx, "memory", item.ID, item.Content)
 }
 func readItem(ctx context.Context, tx *canon.Tx, id string) (Item, error) {
 	var raw []byte
@@ -423,11 +430,6 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 				return err
 			}
 
-			for i := range hit.Evidence {
-				if hit.Evidence[i].SourceAgent != "" && hit.Evidence[i].SourceAgent != scope.Agent {
-					hit.Evidence[i].Quote = ""
-				}
-			}
 			hits = append(hits, hit)
 			if len(hits) == limit {
 				break
@@ -437,6 +439,12 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 	})
 	if err != nil {
 		return nil, err
+	}
+	for i := range hits {
+		hits[i].Evidence, err = s.Quotes(ctx, scope, "memory", hits[i].ID, hits[i].Revision, hits[i].Evidence)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return hits, nil
 }
