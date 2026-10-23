@@ -178,7 +178,7 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			if within(owner, "internal/tui") {
 				allowed := standard[imported] || within(imported, rootModule+"/internal/clientapi") ||
 					within(imported, rootModule+"/internal/design") || within(imported, rootModule+"/internal/tui") ||
-					within(imported, rootModule+"/kit/protocol")
+					(within(imported, rootModule+"/kit/protocol") || imported == rootModule+"/kit/secret")
 				charm := within(imported, "github.com/charmbracelet") || within(imported, "charm.land")
 				terminal := within(owner, "internal/tui/term") || within(owner, "internal/tui/ui")
 				// Goldmark and Chroma supply semantic spans only at the UI adapter.
