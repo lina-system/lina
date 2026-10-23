@@ -226,7 +226,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 			if err := json.Unmarshal(raw, &g); err != nil {
 				return false, err
 			}
-			if len(g.Waits) != 1 || g.Waits[0].Reason != "worker" {
+			if len(g.Waits) != 1 || g.Waits[0].Reason != "host_capacity" || g.Waits[0].Wake != "node.changed" {
 				return false, nil
 			}
 			if err := tx.QueryRowContext(h.ctx, "SELECT body FROM work_records WHERE kind='node'").Scan(&raw); err != nil {
