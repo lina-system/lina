@@ -167,6 +167,13 @@ the original conversation, input and recovered worker turn. Request-only and
 streaming frames do not qualify. The same reply ID and text must survive the
 second restart; a failed check retains delivery metadata and its terminal frame.
 
+A conversation body above the ledger's inline size is stored as a material and
+its event keeps a null body column. Attribution, the worker-output check and
+the failure diagnostic read those bodies through the ledger's own reader; a raw
+`conv_event.body` query silently returns an empty string and drops a delivered
+reply. `TestAlphaRecoveredReplyReadsSpilledBodies` holds that boundary for both
+a spilled worker completion and a spilled reply.
+
 To keep a measured product fixed while changing only the test harness, set
 `LINA_ALPHA_BUILD` to a private directory containing `binaries/lina`,
 `binaries/lina-node` and `pinned-binaries.json`. The manifest records
