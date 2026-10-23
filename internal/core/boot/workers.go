@@ -467,7 +467,11 @@ func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
 	if state == "decision" || state == "parked" {
 		s.State = worker.Waiting
 	}
-	raw, _ := json.Marshal(workerResult{Live: true, Owner: e.origin.agent, Manager: e.origin.conversation, Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
+	live := true
+	if _, retained := e.adapter.(*retainedWorker); retained {
+		live = false
+	}
+	raw, _ := json.Marshal(workerResult{Live: live, Owner: e.origin.agent, Manager: e.origin.conversation, Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
 
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
 }
@@ -496,9 +500,18 @@ func (e *workerSession) observe() {
 		case worker.FinishEvent:
 			e.recoveryMu.Lock()
 			rec := e.recovery
+			deliver := event.Finish.Status == worker.Done || rec.Canceled || rec.ID == ""
+			delivered := false
+			if deliver {
+				err := e.finish(e.origin.ctx, event)
+				delivered = err == nil
+				if err != nil && e.origin.ctx.Err() == nil {
+					fmt.Fprintf(os.Stderr, "worker completion admission failed: %v\n", err)
+				}
+			}
 			if rec.ID != "" {
 				rec.State = "unknown"
-				if event.Finish.Status == worker.Done || rec.Canceled {
+				if delivered {
 					rec.State = "finished"
 				}
 				if (reactor.Recovery{DB: e.origin.db}).Put(e.origin.ctx, rec) == nil {
@@ -511,9 +524,6 @@ func (e *workerSession) observe() {
 			e.active[event.Thread.TurnID].Release()
 			delete(e.active, event.Thread.TurnID)
 			e.mu.Unlock()
-			if err := e.finish(e.origin.ctx, event); err != nil && e.origin.ctx.Err() == nil {
-				fmt.Fprintf(os.Stderr, "worker completion admission failed: %v\n", err)
-			}
 			e.output = ""
 			e.origin.workers.wakeRecovery()
 		case worker.ApprovalEvent:

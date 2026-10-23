@@ -322,3 +322,31 @@ func TestWorkerCompletionRecoversOriginalChannelScope(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoveredWorkerCompletionStoresEvidenceWithoutNewTurn(t *testing.T) {
+	r := controlRuntime(t)
+	now := time.Now()
+	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "recovery-owner", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Produce the result"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "session", TurnID: "turn", AttemptID: "attempt", ProcessGeneration: 2, BindingEpoch: 2}
+	entry := &workerSession{origin: r, input: input, thread: thread, workdir: t.TempDir(), packet: "produce a result"}
+	event := worker.Event{Kind: worker.FinishEvent, Thread: thread, Finish: &worker.Finish{Status: worker.Done}}
+	if err = entry.recoveredFinish(t.Context(), event, "retained result"); err != nil {
+		t.Fatal(err)
+	}
+	if err = entry.finish(t.Context(), event); err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := r.recordedWorker(t.Context(), thread.ID)
+	if err != nil || recorded.Output != "retained result" || recorded.Live {
+		t.Fatalf("recovered evidence=%+v %v", recorded, err)
+	}
+	var admitted int
+	if err = r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM inbox WHERE source='worker-finish'").Scan(&admitted)
+	}); err != nil || admitted != 0 {
+		t.Fatalf("snapshot started a conversation turn: %d %v", admitted, err)
+	}
+}

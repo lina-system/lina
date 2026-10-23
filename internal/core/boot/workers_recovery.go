@@ -226,15 +226,12 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 	if next.State == "decision" && next.DecisionAt == 0 {
 		next.DecisionAt = time.Now().UnixNano()
 	}
-	if next.State == "finished" && snap.Finish != nil {
-		text := "Codex turn " + string(snap.Finish.Status) + "."
-		if snap.Output != "" {
-			text += "\n" + snap.Output
-		}
-		if err = e.origin.workerNotice(ctx, e.input, "worker-finish:"+next.ID+":"+next.Thread.TurnID, text); err != nil {
+	if snap.Finish != nil && (next.State == "finished" || next.State == "decision") {
+		if err = e.recoveredFinish(ctx, worker.Event{Kind: worker.FinishEvent, Thread: snap.Thread, Finish: snap.Finish}, snap.Output); err != nil {
 			return
 		}
 	}
+
 	var activity lease.Lease
 	if send {
 		arguments, _ := json.Marshal(workerArgs{Session: next.ID, Turn: next.Thread.TurnID, Generation: next.Thread.ProcessGeneration, Binding: next.Thread.BindingEpoch, Text: recoveryContinuation})
@@ -330,7 +327,7 @@ func (e *workerSession) answerRecovery(ctx context.Context, answer protocol.Ques
 // This adapter cannot execute; it is replaced only by a successful rebind.
 type retainedWorker struct{ snapshot worker.ThreadSnapshot }
 
-func (*retainedWorker) Name() string                              { return "codex" }
+func (s *retainedWorker) Name() string                            { return s.snapshot.Worker }
 func (s *retainedWorker) Version(context.Context) (string, error) { return s.snapshot.Version, nil }
 func (*retainedWorker) Capabilities() worker.CapabilitySet        { return nil }
 func (*retainedWorker) Start(context.Context, lease.Lease, worker.StartSpec) (worker.Thread, error) {
