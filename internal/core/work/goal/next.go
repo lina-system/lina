@@ -76,6 +76,7 @@ const (
 )
 
 type Task struct {
+	Name           string    `json:"name,omitempty"`
 	PRGeneration   uint64    `json:"pr_generation"`
 	Continuations  int       `json:"continuations"`
 	ThreadHandle   string    `json:"thread_handle,omitempty"`
@@ -116,6 +117,7 @@ const (
 )
 
 type Goal struct {
+	StepGraph         *StepGraph          `json:"step_graph,omitempty"`
 	Conversation      string              `json:"conversation"`
 	Turn              string              `json:"turn"`
 	RecordID          string              `json:"record_id"`

@@ -733,6 +733,7 @@ type RestartStatus struct {
 type Result struct {
 	Body       *json.RawMessage  `json:"body,omitempty"`
 	Completion *CompletionStatus `json:"completion,omitempty"`
+	Next       *json.Number      `json:"next,omitempty"`
 	Provenance ResultProvenance  `json:"provenance"`
 	ResultID   string            `json:"result_id"`
 	RevisedBy  string            `json:"revised_by"`
@@ -752,8 +753,10 @@ type ResultEdit struct {
 	ResultID     string          `json:"result_id"`
 }
 type ResultGet struct {
-	ResultID string       `json:"result_id"`
-	Revision *json.Number `json:"revision,omitempty"`
+	ConversationID *string      `json:"conversation_id,omitempty"`
+	Offset         *json.Number `json:"offset,omitempty"`
+	ResultID       string       `json:"result_id"`
+	Revision       *json.Number `json:"revision,omitempty"`
 }
 type ResultProvenance struct {
 	AgentID        string  `json:"agent_id"`
@@ -3827,6 +3830,11 @@ const clientSchemaJSON = `{
         },
         "completion": {
           "$ref": "#/$defs/completion_status"
+        },
+        "next": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -3887,6 +3895,15 @@ const clientSchemaJSON = `{
         },
         "revision": {
           "$ref": "#/$defs/result_revision"
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [

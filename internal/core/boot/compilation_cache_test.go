@@ -13,12 +13,16 @@ import (
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/thisisjun786/lina/kit/proc"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 // Crash tests repeatedly exec this test binary. Share only compiled SQLite
 // code with those children, never connections, database files or test results.
 // The parent's private directory is removed after all tests join their children.
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "file-tool" {
+		os.Exit(tools.Main(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
 		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
 	}

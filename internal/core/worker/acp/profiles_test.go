@@ -2,6 +2,8 @@
 package acp
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -37,5 +39,36 @@ func TestEnvironmentFiltersProfileCredentialToo(t *testing.T) {
 	}
 	if !slices.Contains(got, "PROVIDER_KEY=own") || !slices.Contains(got, "CLAUDE_CODE_EXECUTABLE=/tools/claude") {
 		t.Fatal("worker configuration lost")
+	}
+}
+
+func TestClaudeDiscoveryNeedsPersonToolNotGlobalACP(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"claude", "node", "npm", "gemini"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+	find := func(name string) *Profile {
+		for _, p := range Installed() {
+			if p.Name == name {
+				return &p
+			}
+		}
+		return nil
+	}
+	p := find("claude-acp")
+	if p == nil {
+		t.Fatal("Claude worker missing without a global ACP program")
+	}
+	if p.Command != filepath.Join(dir, "node") || p.VersionCommand != filepath.Join(dir, "claude") || !slices.Contains(p.Environment, "CLAUDE_CODE_EXECUTABLE="+p.VersionCommand) {
+		t.Fatalf("wrong Claude profile: %+v", p)
+	}
+	if err := os.Remove(filepath.Join(dir, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	if find("claude-acp") != nil || find("gemini") == nil {
+		t.Fatal("missing Claude affected another worker or stayed supported")
 	}
 }
