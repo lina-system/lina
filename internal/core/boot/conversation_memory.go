@@ -97,14 +97,3 @@ func (r *conversationRuntime) validateModelContext(ctx context.Context, epoch ui
 	}
 	return nil
 }
-
-// topicAuthorized runs at subscription admission and before each delivery.
-func (r *conversationRuntime) topicAuthorized(ctx context.Context, topic string) bool {
-	for _, prefix := range []string{"conversation:main:", "results:main:"} {
-		if len(topic) > len(prefix) && topic[:len(prefix)] == prefix {
-			_, err := r.agents.Get(ctx, topic[len(prefix):])
-			return err == nil
-		}
-	}
-	return topic == "progress" && r.ownerViews != nil || topic == "running" && r.background != nil || topic == "core" || topic == "waiting" && r.decisions != nil
-}
