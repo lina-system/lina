@@ -116,8 +116,12 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 		// Originals and byte-addressed flags stay in import_event for lossless
 		// reverse mapping; live consumers use the native masked representation.
 		var spans []secrets.Span
-		for _, s := range ScanSecrets([]byte(display)) {
-			spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
+		// Enriched bodies are JSON: Mask walks their decoded strings, including
+		// nested argument JSON. Plaintext offsets can split escaped quotes.
+		if material.Valid || display == r.body {
+			for _, s := range ScanSecrets([]byte(display)) {
+				spans = append(spans, secrets.Span{Start: s.Start, End: s.End, Sensitivity: s.Kind})
+			}
 		}
 		masked, err := secrets.Mask(display, spans...)
 		if err != nil {

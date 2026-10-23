@@ -260,3 +260,43 @@ func TestImportedToolCallUnknownPayloadsStayReadable(t *testing.T) {
 		})
 	}
 }
+
+func TestImportedToolCallQuotedSecrets(t *testing.T) {
+	req := importRequest(t)
+	src, err := canon.OpenSQLite(t.Context(), req.Profiles[0].LCMPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := `[{"id":"call","type":"function","function":{"name":"exec_command","arguments":"{\"cmd\":\"echo password=\\\"argument-private\\\"\"}"}}]`
+	_, err = src.Exec("UPDATE messages SET content=?,tool_calls=? WHERE store_id=2", `The password="content-private" is set.`, calls)
+	src.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Prepare(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	db := importStore(t)
+	if _, err = p.Import(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.Seal(t.Context(), db, func(context.Context) (string, error) { return "backup", nil }); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := Resolve(t.Context(), db, LegacyKey{string(HermesLCM), "profile", "messages", "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := ledger.New(db, nil).Get(t.Context(), ref.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid([]byte(e.Body.Text())) || !strings.Contains(e.Body.Text(), "exec_command") || strings.Contains(e.Body.Text(), "content-private") || strings.Contains(e.Body.Text(), "argument-private") {
+		t.Fatalf("invalid masking: %q", e.Body.Text())
+	}
+	if _, err = p.Verify(t.Context(), db); err != nil {
+		t.Fatal(err)
+	}
+}
