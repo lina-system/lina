@@ -100,7 +100,7 @@ func (s *Session) startTurn(ctx context.Context, text string, thread worker.Thre
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !started {
-		return err
+		return errors.Join(worker.ErrInputRefused, err)
 	}
 	s.startingTurn = false
 	if err != nil {
@@ -143,7 +143,7 @@ func (s *Session) Input(ctx context.Context, t worker.Thread, in worker.Input) e
 	s.control.Lock()
 	defer s.control.Unlock()
 	if strings.TrimSpace(in.Text) == "" {
-		return errors.New("empty worker input")
+		return errors.Join(worker.ErrInputRefused, errors.New("empty worker input"))
 	}
 	s.mu.Lock()
 	err := s.bound(t, true)
@@ -153,30 +153,35 @@ func (s *Session) Input(ctx context.Context, t worker.Thread, in worker.Input) e
 	}
 	s.mu.Unlock()
 	if err != nil {
-		return err
+		return errors.Join(worker.ErrInputRefused, err)
 	}
 	switch state {
 	case worker.Idle:
 		return s.startTurn(ctx, in.Text, t)
 	case worker.Active:
+		started := false
 		var response wire.V2TurnSteerResponse
 		err = s.callGuarded(ctx, string(wire.ClientRequestTurnSteerMethodTurnSteer), wire.V2TurnSteerParams{ThreadId: t.ID, ExpectedTurnId: t.TurnID, Input: input(in.Text)}, &response, func() error {
 			if err := s.bound(t, true); err != nil {
-				return err
+				return errors.Join(worker.ErrInputRefused, err)
 			}
 			if s.snapshot.State != worker.Active || len(s.pendingRequests()) > 0 {
-				return errors.New("Codex thread cannot accept ordinary input")
+				return errors.Join(worker.ErrInputRefused, errors.New("Codex thread cannot accept ordinary input"))
 			}
+			started = true
 			return nil
 		})
+		if !started {
+			return errors.Join(worker.ErrInputRefused, err)
+		}
 		if err == nil && response.TurnId != t.TurnID {
 			err = errors.New("Codex steering turn mismatch")
 		}
 		return err
 	case worker.Waiting, worker.Dead, worker.Unknown:
-		return errors.New("Codex thread cannot accept ordinary input")
+		return errors.Join(worker.ErrInputRefused, errors.New("Codex thread cannot accept ordinary input"))
 	}
-	return errors.New("unknown worker state")
+	return errors.Join(worker.ErrInputRefused, errors.New("unknown worker state"))
 }
 func (s *Session) Interrupt(ctx context.Context, t worker.Thread, why worker.Reason) error {
 	switch why {

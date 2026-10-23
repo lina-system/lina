@@ -29,6 +29,11 @@ func TestM2DispatchedWorkArea(t *testing.T) {
 // execute it, retaining the old manager arguments throughout delivery.
 func seedLegacyDispatch(t *testing.T, h *harness, owner, repo, what, done string) func() {
 	t.Helper()
+	return seedDispatchAdmission(t, h, owner, repo, what, done, "")
+}
+
+func seedDispatchAdmission(t *testing.T, h *harness, owner, repo, what, done, base string) func() {
+	t.Helper()
 	db, close := installedAcceptanceStore(t, h)
 	defer close()
 	var person, agent string
@@ -43,12 +48,18 @@ func seedLegacyDispatch(t *testing.T, h *harness, owner, repo, what, done string
 	manager := "legacy-manager"
 	origin := dispatch.Origin{Person: person, Agent: agent, Conversation: conversation, Turn: turn}
 	definition := dispatch.Definition{Repository: repo, Base: "dev", Branch: "task-branch", What: what, Why: "Prove real worker execution", Scope: []string{"result.txt"}, NotTouch: []string{"design.md"}, Done: done, DesignRefs: []string{"design.md#result"}, WriteArea: []string{"result.txt"}}
-	// This is the persisted codingAssignment wire format, including its original
-	// unsuffixed arguments. Never seed a current TaskDefinition as the old record.
-	assignment := mustJSON(t, map[string]any{"ID": id, "Manager": manager, "Owner": owner, "Conversation": "manager:" + manager, "Origin": origin, "Tool": "dispatch_work", "Target": repo, "Arguments": definition, "Delegated": true, "Verdict": ""})
 	record := dispatch.Record{ID: id, Origin: origin, Definition: definition, Owner: owner, Manager: "manager:" + manager, State: "queued"}
+	managerConversation := record.Manager
+	if base != "" {
+		// The manager decision committed, but dispatch has not yet recorded it.
+		record.State, record.BaseCommit = "admitting", base
+		record.RepositoryKey, record.Branch = "github.com/fixture/project", definition.Branch+"."+id
+		record.Owner, record.Manager = "", ""
+	}
+	// Legacy records keep their original unsuffixed manager arguments.
+	assignment := mustJSON(t, map[string]any{"ID": id, "Manager": manager, "Owner": owner, "Conversation": managerConversation, "Origin": origin, "Tool": "dispatch_work", "Target": repo, "Arguments": record.TaskDefinition(), "Delegated": true, "Verdict": ""})
 	if err := db.Write(h.ctx, func(tx *canon.Tx) error {
-		if _, err := tx.ExecContext(h.ctx, "INSERT INTO coding_managers(id,person,owner,unit,conversation) VALUES(?,?,?,?,?)", manager, person, owner, repo, record.Manager); err != nil {
+		if _, err := tx.ExecContext(h.ctx, "INSERT INTO coding_managers(id,person,owner,unit,conversation) VALUES(?,?,?,?,?)", manager, person, owner, repo, managerConversation); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(h.ctx, "INSERT INTO coding_assignments(id,manager,record) VALUES(?,?,?)", id, manager, assignment); err != nil {
@@ -84,8 +95,8 @@ func seedLegacyDispatch(t *testing.T, h *harness, owner, repo, what, done string
 			Arguments                    dispatch.Definition
 			Owner, Conversation, Verdict string
 		}
-		if err = json.Unmarshal(raw, &got); err != nil || !reflect.DeepEqual(got.Arguments, definition) || got.Owner != owner || got.Conversation != record.Manager || got.Verdict != "verified" || committed != 1 {
-			t.Fatalf("legacy manager definition/receipt changed: %+v committed=%d err=%v", got, committed, err)
+		if err = json.Unmarshal(raw, &got); err != nil || !reflect.DeepEqual(got.Arguments, record.TaskDefinition()) || got.Owner != owner || got.Conversation != managerConversation || got.Verdict != "verified" || committed != 1 {
+			t.Fatalf("manager definition/receipt changed: %+v committed=%d err=%v", got, committed, err)
 		}
 	}
 }

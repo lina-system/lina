@@ -4,6 +4,8 @@ package boot
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/codex"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
@@ -38,27 +41,29 @@ type workerRuntime struct {
 	starting sync.WaitGroup
 }
 type workerSession struct {
-	ownerControl  sync.Mutex
-	ownerRequests map[string]string
-	adapter       worker.Adapter
-	close         func() error
-	compatibility codex.Compatibility
-	origin        *conversationRuntime
-	input         ledger.Event
-	thread        worker.Thread
-	packet        string
-	workdir       string
-	scheduled     bool
-	answered      func(context.Context, worker.Thread)
-	started       time.Time
-	approvals     map[string]worker.Event
-	questions     map[string]*workerQuestion
-	output        string
-	process       lease.Lease
-	mu            sync.Mutex
-	active        map[string]lease.Lease
-	control       sync.Mutex
-	done          chan struct{}
+	ownerControl    sync.Mutex
+	ownerRequests   map[string]string
+	reservation     string
+	reservationTurn string
+	adapter         worker.Adapter
+	close           func() error
+	compatibility   codex.Compatibility
+	origin          *conversationRuntime
+	input           ledger.Event
+	thread          worker.Thread
+	packet          string
+	workdir         string
+	scheduled       bool
+	answered        func(context.Context, worker.Thread)
+	started         time.Time
+	approvals       map[string]worker.Event
+	questions       map[string]*workerQuestion
+	output          string
+	process         lease.Lease
+	mu              sync.Mutex
+	active          map[string]lease.Lease
+	control         sync.Mutex
+	done            chan struct{}
 }
 
 type workerArgs struct {
@@ -203,27 +208,55 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 				}
 			}
 			if name == "worker_start" {
-				// Admission has the caller's lifecycle, not the worker execution
-				// deadline. No start effect or short-lived grant exists while the
-				// manager lane/model is busy.
-				_, assignment, err := r.workerStartAssignment(ctx, turnID, in)
-				if err == nil {
-					err = r.runCodingManager(ctx, assignment, "assignment", nil)
-				}
-				if err == nil {
-					err = ctx.Err()
-				}
-				if err != nil {
-					result := loop.Result{ID: call.ID, Code: loop.Failed, Output: workerError(err)}
-					if errors.Is(err, authority.ErrPresetLimit) {
-						result.Code = loop.Denied
-						if effect, readErr := r.personaAuthority.Effect(ctx, "preset:coding:"+assignment.ID); readErr == nil {
-							result.Output = effect.Result.Body
-						}
-					} else if ctx.Err() != nil {
+				// Existing effects retain the registry's receipt/replay rules. Only
+				// a new execution needs manager admission and its temporary hold.
+				key := turn.EffectKey(turnID, name, in.Target, call.ID)
+				_, lookupErr := r.personaAuthority.Effect(ctx, key)
+				if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+					result := loop.Result{ID: call.ID, Code: loop.Failed, Output: workerError(lookupErr)}
+					if ctx.Err() != nil {
 						result.Code = loop.Aborted
 					}
 					return result
+				}
+				if errors.Is(lookupErr, sql.ErrNoRows) {
+					// Admission uses the caller's lifecycle, outside the worker's
+					// execution deadline and short-lived grant. No worker can run
+					// in this phase, so cancellation releases its directory hold.
+					assignment, err := func() (assignment codingAssignment, err error) {
+						var request workerArgs
+						_ = json.Unmarshal(in.Arguments, &request)
+						assignment.ID = codingID(turnID, name, string(in.Arguments))
+						// Preserve preset refusal evidence before inspecting a path.
+						err = authority.CheckPreset(ctx, r.db, r.epoch, authority.PolicyRequest{Key: "preset:coding:" + assignment.ID, Person: r.person, Agent: r.agent, TaskID: turnID, Tool: name, Target: request.Workdir, Class: tools.WorkerEffect, Arguments: in.Arguments})
+						if err != nil {
+							return assignment, err
+						}
+						_, assignment, reservation, err := r.workerStartAssignment(ctx, turnID, in)
+						if err != nil {
+							return assignment, err
+						}
+						defer func() {
+							err = errors.Join(err, r.work.ReleaseWorker(context.WithoutCancel(ctx), reservation))
+						}()
+						err = r.runCodingManager(ctx, assignment, "assignment", nil)
+						if err == nil {
+							err = ctx.Err()
+						}
+						return assignment, err
+					}()
+					if err != nil {
+						result := loop.Result{ID: call.ID, Code: loop.Failed, Output: workerError(err)}
+						if errors.Is(err, authority.ErrPresetLimit) {
+							result.Code = loop.Denied
+							if effect, readErr := r.personaAuthority.Effect(ctx, "preset:coding:"+assignment.ID); readErr == nil {
+								result.Output = effect.Result.Body
+							}
+						} else if ctx.Err() != nil {
+							result.Code = loop.Aborted
+						}
+						return result
+					}
 				}
 			}
 			auth := grant.Request{GrantID: turn.EffectKey(turnID, name, in.Target, call.ID) + ":worker", MainID: r.main, Epoch: r.epoch, TaskID: turnID, Host: r.main, OSUser: "core", Person: r.person, Agent: r.agent, Profile: "worker-session", Revision: strconv.FormatUint(r.epoch, 10)}
@@ -238,20 +271,35 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 	return nil
 }
 
-func (r *conversationRuntime) workerStartAssignment(ctx context.Context, turnID string, in tools.Input) (workerArgs, codingAssignment, error) {
+func (r *conversationRuntime) workerStartAssignment(ctx context.Context, turnID string, in tools.Input) (workerArgs, codingAssignment, string, error) {
 	var a workerArgs
 	_ = json.Unmarshal(in.Arguments, &a)
 	method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
 	if err != nil {
-		return a, codingAssignment{}, err
+		return a, codingAssignment{}, "", err
 	}
 	a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
 	if err != nil {
-		return a, codingAssignment{}, err
+		return a, codingAssignment{}, "", err
+	}
+	a.Workdir, err = filepath.EvalSymlinks(a.Workdir)
+	if err != nil {
+		return a, codingAssignment{}, "", err
+	}
+	if r.work == nil {
+		return a, codingAssignment{}, "", errors.New("work admission unavailable")
+	}
+	reservation := rand.Text()
+	if err = r.work.ReserveWorker(ctx, reservation, a.Workdir); err != nil {
+		return a, codingAssignment{}, "", err
 	}
 	origin := dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}
 	assignment, err := r.assignCoding(ctx, origin, codingID(turnID, "worker_start", string(in.Arguments)), "worker_start", a.Workdir, in.Arguments)
-	return a, assignment, err
+	if err != nil {
+		err = errors.Join(err, r.work.ReleaseWorker(context.WithoutCancel(ctx), reservation))
+		return a, assignment, "", err
+	}
+	return a, assignment, reservation, nil
 }
 
 func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input) (tools.Result, error) {
@@ -260,13 +308,26 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	}
 	var a workerArgs
 	_ = json.Unmarshal(in.Arguments, &a)
+	var reservation string
+	release := false
 	if name == "worker_start" {
 		var assignment codingAssignment
 		var err error
-		a, assignment, err = r.workerStartAssignment(ctx, turnID, in)
+		a, assignment, reservation, err = r.workerStartAssignment(ctx, turnID, in)
 		if err != nil {
-			return tools.Result{State: tools.Failed, Body: workerError(err)}, err
+			result := tools.Result{State: tools.Failed, Body: workerError(err)}
+			if errors.Is(err, work.ErrControlHeld) {
+				return result, nil
+			}
+			return result, err
 		}
+		release = true
+		admission := r.work
+		defer func() {
+			if release {
+				_ = admission.ReleaseWorker(context.WithoutCancel(ctx), reservation)
+			}
+		}()
 		if !assignment.Delegated {
 			return tools.Result{State: tools.Failed, Body: workerError(errors.New("coding_definition_not_delegated"))}, nil
 		}
@@ -294,21 +355,30 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 			process.Release()
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
-		entry := &workerSession{adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, started: time.Now(), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
+		entry := &workerSession{reservation: reservation, adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, started: time.Now(), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
 		activity, err := r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Hard, Reason: "Codex turn"})
 		if err != nil {
 			adapter.Close()
 			process.Release()
 			return tools.Result{State: tools.Failed}, err
 		}
-		thread, err := adapter.Start(ctx, process, worker.StartSpec{TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
-		if err != nil {
+		if err := r.work.CheckWorker(ctx, reservation); err != nil {
 			activity.Release()
 			adapter.Close()
 			process.Release()
+			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+		}
+		release = false // A launch error may have started a turn; retain its reservation.
+		thread, err := entry.start(ctx, worker.StartSpec{TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
+		if err != nil {
+			activity.Release()
+			if entry.reservation == "" {
+				return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+			}
 			return tools.Result{State: tools.Unknown, Body: workerError(err)}, err
 		}
 		entry.thread = thread
+		entry.reservationTurn = thread.TurnID
 		entry.active[thread.TurnID] = activity
 		// Registry access is brief and never encloses adapter I/O or canon
 		// writes: running-list actions also read it from the canon writer.
@@ -405,23 +475,78 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	// Keep the new activity private until its returned turn id is bound. A late
 	// finish for the prior turn can only release that prior turn's activity.
 	entry.mu.Lock()
+	if name == "worker_input" && r.work != nil {
+		if snap.State == worker.Idle {
+			// Snapshot is an authoritative terminal observation too. A delayed
+			// finish notification cannot retain the old reservation or release
+			// the next turn's reservation once its identity is installed.
+			if entry.reservation != "" && entry.reservationTurn == snap.Thread.TurnID {
+				if err = r.work.ReleaseWorker(ctx, entry.reservation); err != nil {
+					entry.mu.Unlock()
+					activity.Release()
+					return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+				}
+				entry.reservation = ""
+				entry.reservationTurn = ""
+			}
+			reservation := rand.Text()
+			if err = r.work.ReserveWorker(ctx, reservation, entry.workdir); err == nil {
+				entry.reservation = reservation
+				entry.reservationTurn = "unknown:" + reservation
+			}
+		} else {
+			err = r.work.CheckWorker(ctx, entry.reservation)
+		}
+		if err != nil {
+			entry.mu.Unlock()
+			activity.Release()
+			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+		}
+	}
 	switch name {
 	case "worker_input":
 		err = entry.adapter.Input(ctx, snap.Thread, worker.Input{Text: a.Text})
 	case "worker_interrupt":
 		err = entry.adapter.Interrupt(ctx, snap.Thread, worker.UserCancel)
 	}
-	if name == "worker_input" && snap.State == worker.Idle {
-		key := "unknown:" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	if name == "worker_input" {
+		if errors.Is(err, worker.ErrInputRefused) {
+			// No request left the adapter. Preserve an existing turn's binding
+			// so its queued completion can drain it. An idle turn's new
+			// reservation has no execution and can be released immediately.
+			if snap.State == worker.Idle {
+				activity.Release()
+				if r.work != nil && entry.reservation != "" {
+					if releaseErr := r.work.ReleaseWorker(context.WithoutCancel(ctx), entry.reservation); releaseErr != nil {
+						entry.mu.Unlock()
+						return tools.Result{State: tools.Unknown, Body: workerError(releaseErr)}, releaseErr
+					}
+					entry.reservation = ""
+					entry.reservationTurn = ""
+				}
+			}
+			entry.mu.Unlock()
+			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+		}
+		// Input may observe an idle worker after our active snapshot and start
+		// another turn. Bind every accepted input before queued completions can
+		// acquire mu; ambiguity keeps a reservation that no old event can free.
+		key := "unknown:" + rand.Text()
 		if err == nil {
 			current, readErr := entry.adapter.Snapshot(ctx, snap.Thread)
-			if readErr == nil {
+			if readErr == nil && current.Thread.TurnID != "" && current.State != worker.Unknown && current.State != worker.Dead {
 				key = current.Thread.TurnID
-			} else {
+			} else if readErr != nil {
 				err = readErr
 			}
 		}
-		entry.active[key] = activity
+		entry.reservationTurn = key
+		if snap.State == worker.Idle {
+			entry.active[key] = activity
+		} else if key != snap.Thread.TurnID {
+			entry.active[key] = entry.active[snap.Thread.TurnID]
+			delete(entry.active, snap.Thread.TurnID)
+		}
 	}
 	entry.mu.Unlock()
 	if err != nil {
@@ -441,6 +566,25 @@ func (e *workerSession) result(ctx context.Context, t worker.Thread) (tools.Resu
 	}
 	return e.encode(snap), nil
 }
+func (e *workerSession) start(ctx context.Context, spec worker.StartSpec) (worker.Thread, error) {
+	thread, err := e.adapter.Start(ctx, e.process, spec)
+	if err != nil {
+		closeErr := e.close()
+		e.process.Release()
+		// A definitive refusal dispatched no initial turn. Only successful
+		// process cleanup permits releasing its durable directory reservation.
+		if errors.Is(err, worker.ErrInputRefused) && closeErr == nil {
+			releaseErr := e.origin.work.ReleaseWorker(context.WithoutCancel(ctx), e.reservation)
+			if releaseErr == nil {
+				e.reservation = ""
+			}
+			err = errors.Join(err, releaseErr)
+		}
+		err = errors.Join(err, closeErr)
+	}
+	return thread, err
+}
+
 func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
 	raw, _ := json.Marshal(workerResult{Live: true, Owner: e.origin.agent, Manager: e.origin.conversation, Session: s.Thread.ID, Turn: s.Thread.TurnID, Generation: s.Thread.ProcessGeneration, Binding: s.Thread.BindingEpoch, State: s.State, Worker: s.Worker, Version: s.Version, Verified: e.compatibility.Verified, VerifiedVersions: e.compatibility.VerifiedVersions, Output: s.Output})
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
@@ -462,10 +606,22 @@ func (e *workerSession) observe() {
 			}
 		case worker.UsageEvent:
 		case worker.FinishEvent:
+			// A transport-loss event is synthesized by the adapter. It proves
+			// neither terminal execution nor completed process cleanup. A real
+			// turn completion can also report a provider connection failure.
+			terminal := event.Finish.Failure != worker.ConnectionFailure || event.Finish.Code != "connection_lost"
 			e.stopRequests(event.Thread.TurnID)
 			e.mu.Lock()
-			e.active[event.Thread.TurnID].Release()
-			delete(e.active, event.Thread.TurnID)
+			if e.origin.work != nil && e.reservationTurn == event.Thread.TurnID && terminal {
+				if err := e.origin.work.ReleaseWorker(context.WithoutCancel(e.origin.ctx), e.reservation); err == nil {
+					e.reservation = ""
+					e.reservationTurn = ""
+				}
+			}
+			if terminal {
+				e.active[event.Thread.TurnID].Release()
+				delete(e.active, event.Thread.TurnID)
+			}
 			e.mu.Unlock()
 			if err := e.finish(e.origin.ctx, event); err != nil && e.origin.ctx.Err() == nil {
 				fmt.Fprintf(os.Stderr, "worker completion admission failed: %v\n", err)

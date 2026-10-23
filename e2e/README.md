@@ -23,7 +23,14 @@ state: a completed turn on an observer socket does not prove the TUI has
 rendered it. LONG-QA waits for the idle viewport before stitching PgUp pages.
 
 The suite builds each command once per test run and removes the shared binaries
-after all scenarios finish. Foundation enumerates the acceptance tests and runs
+after all scenarios finish. These test binaries omit DWARF debugger data to reduce
+bundle copying and archiving. Test helper processes share a private SQLite Wasm
+compilation cache, with the default runtime limits and canon's digest verification.
+Only compiled code is shared; databases and results remain private to each scenario.
+The parent removes the cache after all helpers join. Installed command binaries
+and release builds retain their ordinary SQLite initialization.
+
+Foundation enumerates the acceptance tests and runs
 three disjoint batches under its shared components budget. This keeps a growing
 corpus from exhausting one package watchdog while preserving every scenario,
 assertion and operation deadline. Independent scenarios call `t.Parallel()` and
@@ -406,6 +413,18 @@ through a correction turn. Core returns it to the same worker exactly once,
 requires input for the remaining conflict, and retains the dependent's gate
 until the forge merge. Repeated observation and restart cannot resend work.
 
+`m3/operational-switch.json` exercises the owner-only switch on the real Core
+socket: missing approval, a failed transfer with explicit service restoration,
+a held external task, successful transfer, and a real Core-launched fixture
+worker output and receipt. It covers locally refused worker input, a confirmed
+terminal provider connection failure, restart with an outstanding execution,
+rollback refusal until drain, and preservation of originals, Git branches,
+worktree registrations, receipts and journals after explicit rollback. The
+external coordinator is synthetic; its call log checks that approval precedes
+stop and durable LINA release precedes external restart. Imported tasks and receipt facts use the engine API while Core is stopped,
+as in the M2 ledger scenario; worker start, interrupt, resume and result
+observation use the running Core tool registry and a separate stdio process.
+
 Installed-Core fixtures wait for command admission after connecting the socket.
 An empty input must be refused as malformed (or capability-not-negotiated for an
 unconfigured Core), rather than unavailable during recovery, before the scenario
@@ -522,6 +541,14 @@ scenario checks parsed terminal cells, the worker-written artifact and cleanup.
 explicit controls to running Core and inspect the durable target runs; the worker
 scenario observes its approval, question and real artifact through the digest.
 Only external provider and platform wires are scripted.
+
+`m2/tui-board.json`, `m2/tui-note.json` and `m2/tui-usage.json` exercise the
+installed Core and real PTY TUI. The board combines an outside-change waiting
+request with a background run, updates its groups on landing and opens the
+result. The note journey holds a background provider response after ten
+foreground tool rounds, then checks one scoped follow-up in the next request.
+The account journey checks unknown quota independently of status and reported
+plan at 100 and 40 columns. External model wires and account data are synthetic.
 
 `m2/work-definition.json` drives `dispatch_work` through installed Core. It
 refuses missing done conditions, write areas and base-commit design sections,

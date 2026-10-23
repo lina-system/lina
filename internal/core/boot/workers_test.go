@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/lease"
@@ -32,13 +34,21 @@ func TestWorkerStartCancelledDuringManagerAdmissionCanRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = newConversationView(r, first.Agent.ID, "main:"+first.Agent.ID)
-	call := provider.ToolCall{ID: "start", Name: "worker_start", Arguments: `{"workdir":"/tmp/synthetic","task_packet":"Inspect fixture"}`}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(workerArgs{Workdir: dir, TaskPacket: "Inspect fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := provider.ToolCall{ID: "start", Name: "worker_start", Arguments: string(raw)}
 	in, err := workerSchema(call.Name, json.RawMessage(call.Arguments))
 	if err != nil {
 		t.Fatal(err)
 	}
 	const turnID = "admission-turn"
-	a, err := r.assignCoding(t.Context(), dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}, codingID(turnID, call.Name, string(in.Arguments)), call.Name, "/tmp/synthetic", in.Arguments)
+	a, err := r.assignCoding(t.Context(), dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}, codingID(turnID, call.Name, string(in.Arguments)), call.Name, dir, in.Arguments)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +63,11 @@ func TestWorkerStartCancelledDuringManagerAdmissionCanRetry(t *testing.T) {
 	bindings := map[string]loop.Tool{}
 	if err = r.prepareWorkerTools(turnID, ledger.Event{}, bindings); err != nil {
 		t.Fatal(err)
+	}
+	cancelled, cancelBeforeAdmission := context.WithCancel(t.Context())
+	cancelBeforeAdmission()
+	if result := bindings[call.Name].Execute(cancelled, call); result.Code != loop.Aborted {
+		t.Fatalf("cancelled caller entered admission: %+v", result)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -90,6 +105,12 @@ func TestWorkerStartCancelledDuringManagerAdmissionCanRetry(t *testing.T) {
 	if _, err = r.personaAuthority.Effect(t.Context(), key); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("cancelled admission recorded a start: %v", err)
 	}
+	var reservations int
+	if err = r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM work_worker_reservations").Scan(&reservations)
+	}); err != nil || reservations != 0 {
+		t.Fatalf("cancelled admission retained directory reservations: %d %v", reservations, err)
+	}
 	// A later durable manager decision permits the identical request to reach
 	// dispatch. A closed runtime makes that attempt fail before spawning.
 	a.Delegated = true
@@ -103,6 +124,23 @@ func TestWorkerStartCancelledDuringManagerAdmissionCanRetry(t *testing.T) {
 	effect, err := r.personaAuthority.Effect(t.Context(), key)
 	if err != nil || result.Code != loop.Failed || effect.State != tools.Failed {
 		t.Fatalf("identical retry did not reach start: result=%+v effect=%+v err=%v", result, effect, err)
+	}
+	// A later ownership transfer must not turn a known receipt replay into
+	// another manager admission or execution attempt.
+	if err := r.work.Create(t.Context(), work.Task{ID: "external", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Transferred work", Done: "Result", ExternalControl: true, ArtifactRoots: []string{dir}}); err != nil {
+		t.Fatal(err)
+	}
+	replayed := bindings[call.Name].Execute(t.Context(), call)
+	priorJSON, err := json.Marshal(result.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedJSON, err := json.Marshal(replayed.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ID != result.ID || replayed.Code != result.Code || string(replayedJSON) != string(priorJSON) {
+		t.Fatalf("known receipt re-entered admission: prior=%s replayed=%s", priorJSON, replayedJSON)
 	}
 }
 

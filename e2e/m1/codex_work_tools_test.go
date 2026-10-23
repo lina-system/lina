@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -26,6 +27,8 @@ import (
 )
 
 type codexWorkScenario struct {
+	QuotaRecovery                  bool   `json:"quota_recovery,omitempty"`
+	UnknownQuotaWindow             bool   `json:"unknown_quota_window,omitempty"`
 	QuestionCount                  int    `json:"question_count,omitempty"`
 	Kind                           string `json:"kind,omitempty"`
 	Input, Result, Artifact        string
@@ -75,6 +78,7 @@ func codexWorkToolsFixture() {
 	const approvalID, projectionID = "71", `"projection-rpc"`
 	const coordinateID, receiptID = `"coordinate-rpc"`, `"receipt-rpc"`
 	initialized, approved, completed := false, false, false
+	quotaRead := false
 	cwd, assignment, receivedPacket := "", "", ""
 	pendingTools := map[string]bool{}
 	questionRequests := map[string]bool{}
@@ -253,6 +257,15 @@ func codexWorkToolsFixture() {
 				fail("Core changed server request id: " + string(r.ID))
 			}
 		case "thread/read":
+			if fixture.QuotaRecovery && quotaRead {
+				// A sparse update changes only primary. The adapter must retain
+				// secondary's original observation time through the next quota read.
+				primary := map[string]any{"usedPercent": fixture.FiveHour}
+				if fixture.UnknownQuotaWindow {
+					primary["windowDurationMins"] = 300
+				}
+				notify("account/rateLimits/updated", map[string]any{"rateLimits": map[string]any{"primary": primary}})
+			}
 			status, state := "inProgress", "active"
 			if completed {
 				status, state = "completed", "idle"
@@ -262,8 +275,17 @@ func codexWorkToolsFixture() {
 			if !completed {
 				fail("quota requested before worker completion")
 			}
+			initialFiveHour := fixture.FiveHour
+			if fixture.QuotaRecovery {
+				initialFiveHour = 100
+			}
+			quotaRead = true
+			primary := map[string]any{"usedPercent": initialFiveHour}
+			if !fixture.UnknownQuotaWindow {
+				primary["windowDurationMins"] = 300
+			}
 			reply(map[string]any{"accountId": "work-tools-account", "rateLimits": map[string]any{
-				"primary":   map[string]any{"usedPercent": fixture.FiveHour, "windowDurationMins": 300},
+				"primary":   primary,
 				"secondary": map[string]any{"usedPercent": fixture.Weekly, "windowDurationMins": 10080},
 			}})
 		default:
@@ -287,6 +309,11 @@ func TestM2CodexDevelopmentMethod(t *testing.T) {
 
 func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harness, string, []protocol.Question)) {
 	t.Helper()
+	runCodexWorkToolsWithSetup(t, scenario, kind, nil, observe)
+}
+
+func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(*harness), observe func(*harness, string, []protocol.Question)) {
+	t.Helper()
 	data, err := os.ReadFile(scenario)
 	if err != nil {
 		t.Fatal(err)
@@ -304,6 +331,7 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 	finished := make(chan struct{})
 	var calls atomic.Int32
 	var quotaChecked atomic.Bool
+	var sessionID, weeklyObserved atomic.Value
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/worker-finished" {
 			close(finished)
@@ -353,6 +381,7 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 				emitResponse(w, "worker session missing", true)
 				return
 			}
+			sessionID.Store(session.Session)
 			select {
 			case <-finished:
 			case <-r.Context().Done():
@@ -363,11 +392,32 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 			emitPersonaCall(w, "quota-worker", "worker_quota", map[string]any{"session": session.Session})
 			return
 		}
+		if fixture.QuotaRecovery && n == 4 {
+			emitPersonaCall(w, "recovered-quota", "worker_quota", map[string]any{"session": sessionID.Load().(string)})
+			return
+		}
+		last := int32(3)
+		if fixture.QuotaRecovery {
+			last = 5
+		}
 		var quota struct{ Rows []provider.QuotaRow }
-		if n != 3 || json.Unmarshal(result.Output, &quota) != nil {
+		if (n != 3 && n != last) || json.Unmarshal(result.Output, &quota) != nil {
 			t.Errorf("unexpected quota response at step %d: %s", n, result.Output)
 			emitResponse(w, "worker quota failed", true)
 			return
+		}
+		if fixture.QuotaRecovery && n == 3 {
+			if len(quota.Rows) != 2 || quota.Rows[0].State != provider.QuotaBlocked || quota.Rows[0].ResetsAt != nil || quota.Rows[1].State != provider.QuotaOK {
+				t.Errorf("missing independent initial quota: %s", result.Output)
+				emitResponse(w, "Worker quota unavailable.", true)
+				return
+			}
+			weeklyObserved.Store(quota.Rows[1].Observed)
+			emitPersonaCall(w, "refresh-worker", "worker_snapshot", map[string]any{"session": sessionID.Load().(string)})
+			return
+		}
+		if fixture.QuotaRecovery && (len(quota.Rows) != 2 || !quota.Rows[1].Observed.Equal(weeklyObserved.Load().(time.Time)) || !quota.Rows[0].Observed.After(weeklyObserved.Load().(time.Time))) {
+			t.Errorf("partial notification did not preserve independent observation times: %s", result.Output)
 		}
 		found := map[provider.Window]float64{}
 		for _, row := range quota.Rows {
@@ -385,6 +435,9 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 	defer func() { server.CloseClientConnections(); server.Close() }()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)
+	if setup != nil {
+		setup(h)
+	}
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {
@@ -392,6 +445,20 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 	}
 	if err = os.Symlink(exe, filepath.Join(bin, "codex")); err != nil {
 		t.Fatal(err)
+	}
+	if fixture.QuotaRecovery {
+		git, err := exec.LookPath("git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.Symlink(git, filepath.Join(bin, "git")); err != nil {
+			t.Fatal(err)
+		}
+		// Dispatch requires a GitHub executable, but this journey makes no
+		// remote calls. Any unexpected use must fail inside the fixture.
+		if err = os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\nexit 1\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	start := func() *process {
 		p := h.command("core", "--state-root", h.root, "--socket", h.socket)
@@ -526,8 +593,12 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 			}
 		}
 	}
-	if calls.Load() != 3 {
-		t.Fatalf("provider steps=%d, want 3", calls.Load())
+	wantCalls := int32(3)
+	if fixture.QuotaRecovery {
+		wantCalls = 5
+	}
+	if calls.Load() != wantCalls {
+		t.Fatalf("provider steps=%d, want %d", calls.Load(), wantCalls)
 	}
 	artifact, err := os.ReadFile(filepath.Join(workdir, fixture.Artifact))
 	if err != nil || string(artifact) != fixture.Result {

@@ -47,6 +47,7 @@ func TestProgressPagerUsesCurrentRowsWithoutIdentity(t *testing.T) {
 func TestOwnerCommandsAskCoreAndRetainWaitingOrder(t *testing.T) {
 	m := conversationShell()
 	m.Update(shellData{Generation: 1, Message: workListWelcome(t, "conversation", "running", "progress", "waiting")})
+	m.content.Blocks = []state.Block{{ID: "a-run", Topic: "running", RunID: "a-run", RunState: protocol.RunningStateWaiting}}
 	for _, text := range []string{"/progress", "/waiting lightest", "/stop a-run", "/stop all", "/note a-run Read appendix"} {
 		handled, cmd := m.ownerCommand(text)
 		if !handled || cmd == nil {
