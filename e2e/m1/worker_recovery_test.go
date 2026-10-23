@@ -96,6 +96,17 @@ func recoveryWorkerFixture() {
 						}
 					}()
 				}
+			} else if mode == "delayed" {
+				const output = "The follow-up result survived."
+				if err := os.WriteFile(filepath.Join(dir, "follow-up.txt"), []byte(output), 0600); err != nil {
+					os.Exit(89)
+				}
+				// The old turn was reconciled after restart. Its first live
+				// completion arrives between the new turn's output and finish.
+				notify("item/completed", map[string]any{"threadId": "recovery-thread", "turnId": turn, "item": map[string]any{"type": "agentMessage", "id": "follow-up", "text": output}})
+				notify("turn/completed", map[string]any{"threadId": "recovery-thread", "turn": map[string]any{"id": "turn-1", "status": "completed"}})
+				state = "idle"
+				notify("turn/completed", map[string]any{"threadId": "recovery-thread", "turn": map[string]any{"id": turn, "status": "completed"}})
 			} else {
 				// The second attempt observes the retained artifact and fails explicitly.
 				raw, err := os.ReadFile(filepath.Join(dir, "recovery-result.txt"))
@@ -116,7 +127,7 @@ func recoveryWorkerFixture() {
 				time.Sleep(time.Millisecond)
 			}
 			status := "failed"
-			if mode == "completed" || mode == "disconnect" {
+			if mode == "completed" || mode == "disconnect" || mode == "delayed" {
 				status = "completed"
 			}
 			items := []any{map[string]any{"type": "agentMessage", "id": "message", "text": "Retained worker result."}}
