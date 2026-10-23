@@ -83,11 +83,9 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 			return s, err
 		}
 		s.Focus = previous.Target
-		previousInput, e := ledger.New(questionTransaction{tx}, nil).Get(ctx, previousID)
-		if e != nil {
-			return s, e
-		}
-		choices, e := readInputChoices(ctx, tx, previousInput)
+		// Focus reads binding metadata only; a previous input body may be
+		// externalized and must not be opened under admission's transaction.
+		choices, e := readInputChoices(ctx, tx, ledger.Event{ID: previousID})
 		if e != nil {
 			return s, e
 		}

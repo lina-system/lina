@@ -88,7 +88,7 @@ func appendInputChoices(ctx context.Context, tx *canon.Tx, input ledger.Event, i
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = ledger.New(questionTransaction{tx}, nil).Admit(ctx, guard.EntrySystem, ledger.Input{ID: id, ParentID: input.ID, ConversationID: input.ConversationID, AgentID: input.AgentID, Surface: input.Surface, ScaffoldKind: modelBindingKind, OccurredAt: input.RecordedAt, RecordedAt: time.Now().UTC(), TimeQuality: "observed", Body: string(raw), Relations: []ledger.Relation{{TargetID: input.ID, Kind: "view_of"}}})
+	_, err = ledger.AppendSystemSnapshot(ctx, tx, ledger.Input{ID: id, ParentID: input.ID, ConversationID: input.ConversationID, AgentID: input.AgentID, Surface: input.Surface, ScaffoldKind: modelBindingKind, OccurredAt: input.RecordedAt, RecordedAt: time.Now().UTC(), TimeQuality: "observed", Body: string(raw), Relations: []ledger.Relation{{TargetID: input.ID, Kind: "view_of"}}})
 	return err
 }
 func (r *conversationRuntime) currentInputChoices(ctx context.Context, input ledger.Event) (out []binding.Choice, err error) {
@@ -189,6 +189,17 @@ var errBindingPending = errors.New("input_target_pending")
 func (r *conversationRuntime) saveModelBinding(ctx context.Context, input ledger.Event, id string, choices []binding.Choice, decider string) (out []binding.Choice, err error) {
 	if input.PersonID != r.person || input.AgentID != r.agent || input.ConversationID != r.conversation || input.SpeakerKind != guard.Person || r.channelBinding != nil && !r.channelBinding.Scope.Tools {
 		return nil, binding.ErrChoice
+	}
+	normalized, err := json.Marshal(choices)
+	if err != nil {
+		return nil, err
+	}
+	masked, err := secrets.Mask(string(normalized))
+	if err != nil {
+		return nil, err
+	}
+	if err = json.Unmarshal([]byte(masked.Text()), &choices); err != nil {
+		return nil, err
 	}
 	err = r.db.Write(ctx, func(tx *canon.Tx) error {
 		// An immutable call is idempotent, including its originally pending card.

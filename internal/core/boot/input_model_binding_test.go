@@ -248,3 +248,15 @@ func TestModelBindingJudgeWiring(t *testing.T) {
 		})
 	}
 }
+
+func TestModelBindingLargeInputSnapshot(t *testing.T) {
+	r := controlRuntime(t)
+	text := strings.Repeat("Synthetic long input. ", 900)
+	input := questionPersonInput(t, r, "large-input", text)
+	if _, err := r.saveModelBinding(t.Context(), input, "large-choice", []binding.Choice{{Quote: text, Target: binding.Target{Class: "none"}}}, "model"); err != nil {
+		t.Fatal(err)
+	}
+	// Admission may read a previous large input's binding without opening its
+	// externalized body under the canon writer.
+	_ = questionPersonInput(t, r, "after-large", "Continue")
+}
