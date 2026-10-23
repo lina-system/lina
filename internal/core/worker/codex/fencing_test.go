@@ -170,3 +170,38 @@ func TestLN133OldRequestCannotAnswerReusedWireID(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCanceledSteeringIsDefinitivelyRefused(t *testing.T) {
+	p := newAdapterPeer(t, `{"rateLimits":{}}`)
+	th := p.start(t)
+	ctx, cancel := context.WithCancel(p.ctx)
+	cancel()
+	err := p.s.Input(ctx, th, worker.Input{Text: "continue"})
+	if !errors.Is(err, worker.ErrInputRefused) || !errors.Is(err, context.Canceled) {
+		t.Errorf("undispatched steering became ambiguous: %v", err)
+	}
+	// A subsequent round trip orders all prior writes before checking the wire.
+	if snap := p.snapshot(t, th); snap.Thread != th || snap.State != worker.Active {
+		t.Fatalf("refused input changed original turn: %+v", snap)
+	}
+	for {
+		f := <-p.received
+		if f.Method == "turn/steer" {
+			t.Fatal("cancelled steering reached worker")
+		}
+		if f.Method == "thread/read" {
+			break
+		}
+	}
+}
+
+func TestSteeringWriteFailureRemainsAmbiguous(t *testing.T) {
+	p := newAdapterPeer(t, `{"rateLimits":{}}`)
+	th := p.start(t)
+	if err := p.s.stdin.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.s.Input(p.ctx, th, worker.Input{Text: "continue"}); err == nil || errors.Is(err, worker.ErrInputRefused) {
+		t.Fatalf("write failure was treated as a definitive refusal: %v", err)
+	}
+}

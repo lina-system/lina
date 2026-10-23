@@ -185,3 +185,64 @@ func TestSwitchInputRebindsBeforeOldCompletion(t *testing.T) {
 		t.Fatal("reservation did not follow new turn", entry.reservationTurn)
 	}
 }
+
+type refusedStartProbe struct {
+	workerProbe
+	err error
+}
+
+func (p *refusedStartProbe) Start(context.Context, lease.Lease, worker.StartSpec) (worker.Thread, error) {
+	return worker.Thread{}, p.err
+}
+
+func TestSwitchStartRefusalReleasesOnlyAfterCleanup(t *testing.T) {
+	for _, outcome := range []string{"refused", "ambiguous", "cleanup_failed"} {
+		t.Run(outcome, func(t *testing.T) {
+			r, entry, _ := reviewWorkerFixture(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			startErr := errors.Join(worker.ErrInputRefused, context.Canceled)
+			if outcome == "ambiguous" {
+				startErr = context.Canceled
+			}
+			entry.adapter = &refusedStartProbe{err: startErr}
+			closed, released := false, false
+			entry.process = lease.New(func() {
+				if !closed {
+					t.Error("process lease released before cleanup")
+				}
+				released = true
+			})
+			entry.close = func() error {
+				closed = true
+				if err := r.work.CheckWorker(t.Context(), entry.reservation); err != nil {
+					t.Errorf("reservation released before cleanup: %v", err)
+				}
+				if outcome == "cleanup_failed" {
+					return errors.New("cleanup failed")
+				}
+				return nil
+			}
+			if _, err := entry.start(ctx, worker.StartSpec{}); !errors.Is(err, context.Canceled) {
+				t.Fatal("lost launch error", err)
+			}
+			if !closed || !released {
+				t.Fatal("failed start was not cleaned up")
+			}
+			if err := r.work.Recover(t.Context(), "restart"); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.work.RequestRollback(t.Context(), "switch", r.person, "launch failed"); err != nil {
+				t.Fatal(err)
+			}
+			err := r.work.CompleteRollback(t.Context(), "switch", r.person, "check launch outcome")
+			if outcome == "refused" {
+				if err != nil || entry.reservation != "" {
+					t.Fatalf("undispatched start retained reservation: %q %v", entry.reservation, err)
+				}
+			} else if !errors.Is(err, work.ErrActiveRun) {
+				t.Fatal("uncertain start lost reservation", err)
+			}
+		})
+	}
+}

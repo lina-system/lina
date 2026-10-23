@@ -97,8 +97,7 @@ func TestOwnerControlsReachManagedChannelWorker(t *testing.T) {
 	if err := manager.work.ReserveWorker(t.Context(), entry.reservation, entry.workdir); err != nil {
 		t.Fatal(err)
 	}
-	r.workers.sessions["managed"] = entry
-	t.Cleanup(func() { r.workers = nil })
+	addWorkerFixtureSessions(t, r, map[string]*workerSession{"managed": entry})
 	s := clientsrv.Session{PersonID: r.person}
 	id := "session:managed"
 	for _, scope := range []string{"channel:other", delivery.conversation} {

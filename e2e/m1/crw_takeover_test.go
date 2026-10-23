@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,13 +18,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/backup"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/tools/crw-takeover/importer"
 )
 
 // Real operator binary -> canonical records -> installed Core -> model tool
-// execution -> durable new result. The source export is removed before Core runs.
+// execution -> durable new result -> backup/restore -> idempotent retry. Core
+// reads the restored evidence after the source export has been removed.
 func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "crw-takeover")
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
@@ -113,7 +116,7 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	// This scenario includes installation, two imports and three
+	// This scenario includes installation, import retries, two restores and three
 	// Core starts. Compile commands before its runtime budget starts; wait for
 	// explicit listening/admission at each start, never for an elapsed delay.
 	buildCommand(t, "lina-node")
@@ -169,15 +172,35 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 	run(false)
 	client.Close()
 	h.stopCore(core)
+	capture := func() string {
+		t.Helper()
+		p := h.command("backup", "--state-root", h.root)
+		p.start(t)
+		p.wait(t, 0)
+		generation := strings.TrimSpace(strings.TrimPrefix(p.stdout.String(), "Verified backup: "))
+		if _, err := backup.Verify(h.ctx, generation); err != nil {
+			t.Fatal(err)
+		}
+		return generation
+	}
+	restore := func(generation string) {
+		t.Helper()
+		p := h.command("restore", "--state-root", h.root, "--generation", generation)
+		p.start(t)
+		p.wait(t, 0)
+	}
+	beforeImport := capture()
+	prior := run(true)
+	restore(beforeImport)
+	if _, err := os.Stat(filepath.Join(h.root, "system/crw-takeover-journal.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("pre-import restore retained later reservations", err)
+	}
 	imported = run(true)
 	again := run(true)
 	for i, row := range imported.Rows {
-		if row.Outcome != "imported" || row.Reused || !again.Rows[i].Reused || row.LINAID != again.Rows[i].LINAID {
+		if row.Outcome != "imported" || row.Reused || row.LINAID == prior.Rows[i].LINAID || !again.Rows[i].Reused || row.LINAID != again.Rows[i].LINAID {
 			t.Fatal(imported, again)
 		}
-	}
-	if err = os.Remove(source); err != nil {
-		t.Fatal(err)
 	}
 	core = start()
 	client, conversation := conversationClient(t, h)
@@ -193,6 +216,34 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 	}
 	client.Close()
 	h.stopCore(core)
+	afterImport := capture()
+	// A fresh destination has compatible installation controls but no journal
+	// or records. The generation must carry both and the result Core produced.
+	other := newHarness(t, h.binary)
+	other.ctx = scenarioContext
+	for _, path := range []string{"system/core/main.json", "system/core/epoch", "system/bin/manifest.json"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(other.root, path)), 0700); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(h.root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(other.root, path), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h = other
+	restore(afterImport)
+	again = run(true)
+	for i, row := range imported.Rows {
+		if !again.Rows[i].Reused || again.Rows[i].LINAID != row.LINAID {
+			t.Fatal("restored import duplicated records", imported, again)
+		}
+	}
+	if err = os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
 	core = start()
 	client, conversation = conversationClient(t, h)
 	admittedTurn(t, h, client, conversation, "takeover-restart", "Read the imported workshop again.")
