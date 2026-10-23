@@ -281,13 +281,26 @@ func (s *Service) park(ctx context.Context, a worker.Adapter) error {
 		}
 	}
 	now := time.Now()
-	if len(rows) == 0 {
-		rows = []provider.QuotaRow{{State: provider.QuotaBlocked}}
+	rows = append([]provider.QuotaRow(nil), rows...)
+	blocked := false
+	for _, row := range rows {
+		blocked = blocked || row.State == provider.QuotaBlocked
+	}
+	if !blocked {
+		// An error without an exhausted window cannot borrow a healthy
+		// window's reset. Keep its measurements and record an unknown stop.
+		stop := provider.QuotaRow{Window: provider.UnknownWindow, State: provider.QuotaBlocked}
+		if len(rows) > 0 {
+			stop.Provider, stop.Account = rows[0].Provider, rows[0].Account
+		}
+		rows = append(rows, stop)
 	}
 	for i := range rows {
-		rows[i].State = provider.QuotaBlocked
-		rows[i].Source = provider.ErrorCode
 		rows[i].Observed = now
+		if rows[i].State != provider.QuotaBlocked {
+			continue
+		}
+		rows[i].Source = provider.ErrorCode
 		if rows[i].ResetsAt != nil && !rows[i].ResetsAt.After(now) {
 			rows[i].ResetsAt = nil
 		}

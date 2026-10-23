@@ -17,6 +17,7 @@ for await (const line of readline.createInterface({input:process.stdin})) {
  case 'initialize':reply({userAgent:'fixture'});break;
  case 'initialized':break;
  case 'account/rateLimits/read':
+  if(mode==='quota-windows') {reply({accountId:'fixture-account',rateLimits:{}});break;}
   reply({rateLimits: mode==='quota-fallback' || mode==='double-quota' || mode==='rule' ? {} : {primary:{usedPercent:100,windowDurationMins:60,resetsAt:Math.floor(Date.now()/1000)+3600}}});break;
  case 'thread/start':
   cwd=p.cwd;
@@ -32,6 +33,11 @@ for await (const line of readline.createInterface({input:process.stdin})) {
   fs.appendFileSync(path.join(root,'attempts'),'codex\n');
   fs.writeFileSync(path.join(root,'second-packet'),packet);
   reply({turn:{id:'choice-turn',status:'inProgress'}});
+  if(mode==='quota-windows') {
+   send({method:'account/rateLimits/updated',params:{rateLimits:{primary:{usedPercent:100,windowDurationMins:300,resetsAt:Math.floor(Date.now()/1000)+3600},secondary:{usedPercent:25,windowDurationMins:10080,resetsAt:Math.floor(Date.now()/1000)+604800}}}});
+   send({method:'turn/completed',params:{threadId:'choice-codex',turn:{id:'choice-turn',status:'failed',error:{message:'quota',codexErrorInfo:'usageLimitExceeded'}}}});
+   break;
+  }
   if(mode==='double-quota') {
    send({method:'turn/completed',params:{threadId:'choice-codex',turn:{id:'choice-turn',status:'failed',error:{message:'quota',codexErrorInfo:'usageLimitExceeded'}}}});
    break;

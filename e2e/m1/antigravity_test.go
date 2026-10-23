@@ -176,7 +176,7 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			defer server.Close()
 			h, bootstrap := installedConversationHarness(t, server.URL)
 			ids := seedCodingFixture(t, h, bootstrap, test.Preset)
-			if test.Choice == "rule" {
+			if test.Choice == "rule" || test.Choice == "quota-windows" {
 				table := map[string]any{"provisional": true, "rules": []any{map[string]any{"worker": "codex", "tags": []string{repo}, "priority": 10}}}
 				if err = os.WriteFile(filepath.Join(h.root, "system", "core", "worker-choice.json"), mustJSON(t, table), 0600); err != nil {
 					t.Fatal(err)

@@ -23,6 +23,10 @@ func TestM2WorkerChoice(t *testing.T) {
 }
 func assertWorkerChoice(t *testing.T, h *harness, fixture, mode string) {
 	t.Helper()
+	if mode == "quota-windows" {
+		assertWorkerQuotaWindows(t, h, fixture)
+		return
+	}
 	read := func(name string) string {
 		b, err := os.ReadFile(filepath.Join(fixture, name))
 		if err != nil {

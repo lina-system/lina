@@ -473,3 +473,10 @@ repository choice rules, and overlapping-area waits across restart. The worker
 creates the real result file and Git commit; GitHub observations are synthetic.
 The first quota-stopped process deliberately remains alive until Core reaps it,
 and the replacement checks that it is gone before touching the workspace.
+
+`m2/worker-quota-windows.json` drives a Codex quota stop with an exhausted
+five-hour window and a healthy weekly window through installed Core. The
+replacement worker commits a real result. Persisted quota keeps the windows
+independent before and after restart, and selection at the reported short-window
+reset does not wait for the healthy weekly window. Reset-boundary assertions use
+explicit times rather than waiting for a provider window.

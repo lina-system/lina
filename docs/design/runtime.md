@@ -327,6 +327,12 @@ The Gemini adapter assembles its own stream by the same rules: deltas drive live
 
 An unreported value is `unknown`, never zero, and LINA never invents a reset time that the provider did not give.
 
+Parking a worker preserves each window's reported state. An exhausted five-hour
+window does not block a healthy weekly window; only exhausted windows determine
+when the worker becomes eligible again. A stop without an identified exhausted
+window adds an unknown-window block with no reset, preserving the reported
+measurements rather than assigning the stop to a healthy window.
+
 | Path | What the provider reports | Source of the rows |
 | --- | --- | --- |
 | ChatGPT plan, LINA's own calls | No number. Usage-limit, eligibility and capability error codes only | The error code and LINA's own token count. A usage-limit answer makes the state blocked, with no reset time. |

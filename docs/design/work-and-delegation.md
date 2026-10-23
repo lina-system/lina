@@ -607,6 +607,11 @@ quota stop is retained as a terminal failed observation and cannot start a third
 worker. A restart preserves quota blocks, area claims and uncertain attempts.
 An explicit reset makes a blocked row eligible as unmeasured, without inventing
 a fresh quota measurement or reset time.
+Parking preserves independently reported healthy, warning and unknown windows;
+their later resets cannot extend an exhausted window's block. If no exhausted
+window is reported or cached, the stop is recorded separately with an unknown
+window and reset. `e2e/m2/worker-quota-windows.json` covers the installed Core
+handoff and durable per-window state across restart.
 
 The provisional worker rule table is read at startup from
 `system/core/worker-choice.json`. Its `rules` contain `worker`, `tags` and integer
