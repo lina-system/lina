@@ -2,6 +2,7 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -22,6 +23,7 @@ import (
 
 func TestNamesReachEveryAgentAndCountRetiredAliases(t *testing.T) {
 	t.Parallel()
+	const agentCount = 8
 	var calls atomic.Int32
 	type request struct {
 		Input, Tools []json.RawMessage
@@ -87,6 +89,11 @@ func TestNamesReachEveryAgentAndCountRetiredAliases(t *testing.T) {
 	}))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
+	// Each agent adds a native turn, export and sandboxed replay to the base
+	// scenario. Keep each command's deadline while budgeting their full sum.
+	ctx, cancel := context.WithTimeout(t.Context(), (3+3*agentCount)*operationTimeout)
+	defer cancel()
+	h.ctx = ctx
 	core := start(true)
 	c, conversation := conversationClient(t, h, protocol.Capability{Name: "agents", Version: "1.0"})
 	createdIn := conversation
@@ -105,7 +112,7 @@ func TestNamesReachEveryAgentAndCountRetiredAliases(t *testing.T) {
 		t.Fatal("agents list", err, e.Error)
 	}
 	list := e.Payload.(protocol.AgentResult)
-	if list.Agents == nil || len(*list.Agents) != 8 {
+	if list.Agents == nil || len(*list.Agents) != agentCount {
 		t.Fatal("missing starter agents")
 	}
 	// Correct from a different agent so every replay must validate common
