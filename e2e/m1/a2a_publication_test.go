@@ -458,9 +458,6 @@ func testM3A2APublication(t *testing.T, mode string) {
 				t.Fatal(h.ctx.Err())
 			}
 		}
-		stopReceive()
-		<-receiveDone
-
 		if ownerApproval.Card == nil || ownerApproval.ConversationID == nil || *ownerApproval.ConversationID != cfg.Publications[0].Conversation {
 			t.Fatal("approval lost owner conversation")
 		}
@@ -468,8 +465,27 @@ func testM3A2APublication(t *testing.T, mode string) {
 		if !bytes.Contains(body, []byte(`"code":-32601`)) {
 			t.Fatal("caller answered owner approval", string(body))
 		}
-		if _, err = ownerClient.AnswerApproval(h.ctx, protocol.ApprovalAnswer{CardID: &ownerApproval.Card.ID, Revision: &ownerApproval.Card.Revision, Choice: protocol.ApprovalChoiceDeny}); err != nil {
+		answerID, err := ownerClient.AnswerApproval(h.ctx, protocol.ApprovalAnswer{CardID: &ownerApproval.Card.ID, Revision: &ownerApproval.Card.Revision, Choice: protocol.ApprovalChoiceDeny})
+		if err != nil {
 			t.Fatal(err)
+		}
+		answered := false
+		for !answered {
+			select {
+			case next := <-frames:
+				if next.err != nil {
+					t.Fatal(next.err)
+				}
+				if next.frame.ReplyTo != nil && *next.frame.ReplyTo == answerID {
+					answer, ok := next.frame.Payload.(protocol.ApprovalAnswer)
+					if !ok || next.frame.Error != nil || answer.Outcome == nil || *answer.Outcome != protocol.DecisionOutcomeResolved {
+						t.Fatalf("owner denial was not recorded: %+v", next.frame)
+					}
+					answered = true
+				}
+			case <-h.ctx.Done():
+				t.Fatal("owner denial acknowledgment missing")
+			}
 		}
 	}
 	if mode == "uncertain-cancel" || mode == "revoked-running" {
