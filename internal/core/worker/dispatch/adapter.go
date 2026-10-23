@@ -4,7 +4,6 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
 	workeracp "github.com/thisisjun786/lina/internal/core/worker/acp"
@@ -13,14 +12,9 @@ import (
 	"github.com/thisisjun786/lina/kit/lease"
 )
 
-type attempt interface {
-	worker.Adapter
-	Close(context.Context) error
-}
-
 type observation func() (json.RawMessage, []antigravity.DeniedAction)
 
-// WorkerAvailable reports the adapter registrations used by explicit dispatch.
+// WorkerAvailable reports the adapter registrations available to dispatch.
 // A dispatcher for another worker does not establish this worker's readiness.
 func (s *Service) WorkerAvailable(name string) bool {
 	if s == nil {
@@ -31,27 +25,7 @@ func (s *Service) WorkerAvailable(name string) bool {
 			return true
 		}
 	}
-	return name == "antigravity" && s.cfg.Binary != "" || name == "claude" && s.cfg.ClaudeBinary != ""
-}
-
-// Keep vendor results intact in the artifact while sharing the durable dispatch
-// and PR evidence path. Nothing is inferred from worker prose.
-func (s *Service) attempt(name string) (attempt, observation, error) {
-	switch name {
-	case "antigravity":
-		if s.cfg.Binary == "" {
-			break
-		}
-		a := antigravity.New(antigravity.Config{Binary: s.cfg.Binary, Environment: s.cfg.Environment, Epoch: s.cfg.Epoch, Leaser: s.cfg.Activities})
-		return a, observeAdapter(a), nil
-	case "claude":
-		if s.cfg.ClaudeBinary == "" {
-			break
-		}
-		a := claudecode.New(claudecode.Config{Binary: s.cfg.ClaudeBinary, Environment: s.cfg.Environment, Epoch: s.cfg.Epoch, Leaser: s.cfg.Activities})
-		return a, observeAdapter(a), nil
-	}
-	return nil, nil, errors.New("worker unavailable")
+	return false
 }
 
 func observeAdapter(adapter worker.Adapter) observation {
@@ -83,21 +57,18 @@ func (s *Service) workersFor(r Record) []Factory {
 	if r.ReturnReceipt != "" {
 		name = r.Worker
 	}
-	if name == "" {
-		return s.cfg.Workers
-	}
+	var factories []Factory
 	for _, f := range s.cfg.Workers {
-		if f.Name == name {
+		if f.Open == nil {
+			continue
+		}
+		if name == "" && f.Chooser {
+			factories = append(factories, f)
+		} else if name != "" && f.Name == name && (f.Explicit || r.ReturnReceipt != "") {
 			return []Factory{f}
 		}
 	}
-	return []Factory{{Name: name, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
-		a, _, err := s.attempt(name)
-		if err != nil {
-			return nil, nil, err
-		}
-		return a, a.Close, nil
-	}}}
+	return factories
 }
 
 // InstalledACPFactories makes ACP workers available to the same chooser as the
@@ -105,23 +76,65 @@ func (s *Service) workersFor(r Record) []Factory {
 func InstalledACPFactories(cfg Config) []Factory {
 	var factories []Factory
 	for _, profile := range workeracp.Installed() {
-		factories = append(factories, Factory{Name: profile.Name, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
-			a := workeracp.New(workeracp.Config{Profile: profile, Environment: cfg.Environment, Epoch: cfg.Epoch, Leaser: cfg.Activities})
-			return a, a.Close, nil
-		}})
+		factories = append(factories, acpFactory(cfg, profile))
 	}
 	return factories
 }
 
-// Keep definition admission aligned with the built-in adapter registrations.
-func registeredWorker(name string) bool {
-	if name == "" || name == "antigravity" || name == "claude" {
-		return true
-	}
+func acpFactory(cfg Config, profile workeracp.Profile) Factory {
+	return Factory{Name: profile.Name, Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+		a := workeracp.New(workeracp.Config{Profile: profile, Environment: cfg.Environment, Epoch: cfg.Epoch, Leaser: cfg.Activities})
+		return a, a.Close, nil
+	}}
+}
+
+// Registry metadata is independent of installation. Admission and rule files
+// remain readable when a worker is absent; only configured factories can run.
+func workerRegistry() []Factory {
+	factories := []Factory{AntigravityFactory(Config{}), ClaudeFactory(Config{}), CodexFactory("")}
 	for _, profile := range workeracp.BuiltinProfiles() {
-		if profile.Name == name {
+		factories = append(factories, acpFactory(Config{}, profile))
+	}
+	return factories
+}
+
+func explicitWorkers() []string {
+	var names []string
+	for _, f := range workerRegistry() {
+		if f.Explicit {
+			names = append(names, f.Name)
+		}
+	}
+	return names
+}
+
+func ruleWorker(name string) bool {
+	for _, f := range workerRegistry() {
+		if f.Name == name && f.Rules {
 			return true
 		}
 	}
 	return false
+}
+
+func registerBinaries(cfg Config) []Factory {
+	factories := append([]Factory(nil), cfg.Workers...)
+	add := func(f Factory) {
+		for _, registered := range factories {
+			if registered.Name == f.Name {
+				return
+			}
+		}
+		factories = append(factories, f)
+	}
+	if cfg.Binary != "" {
+		f := AntigravityFactory(cfg)
+		// An explicit factory list already defines the chooser and its order.
+		f.Chooser = len(cfg.Workers) == 0
+		add(f)
+	}
+	if cfg.ClaudeBinary != "" {
+		add(ClaudeFactory(cfg))
+	}
+	return factories
 }
