@@ -86,10 +86,12 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: strconv.FormatInt(a.Revision, 10)}, nil
 }
 
-func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID string, input ledger.Event, persona agents.Preparation, settings agents.State, at time.Time, bindings map[string]loop.Tool, questions *questionTurn) ([]assemble.Skill, assemble.ContextPacket, error) {
+func (r *conversationRuntime) preparePersonaTools(turnID string, preparation *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
+	ctx, input := preparation.ctx, preparation.event
+	persona, settings, at, questions := preparation.persona, preparation.settings, preparation.at, preparation.questions
 	versions, err := r.skills.Catalog(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var catalog []assemble.Skill
 	var packet assemble.ContextPacket
@@ -99,7 +101,7 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 		}
 		body, err := r.skills.Read(ctx, v)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		catalog = append(catalog, assemble.Skill{ID: v.ID, Description: v.Description})
 		packet = append(packet, assemble.ContextItem{ID: "skill:" + v.ID, Revision: v.Commit, Kind: assemble.SkillBody, Text: body.Files["SKILL.md"].Text})
@@ -119,7 +121,7 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	scope := coreexec.PersonaScope{Agent: r.agent, Person: r.person, Conversation: r.conversation, Input: input.ID, Revision: persona.Revision}
 	specs, err := coreexec.RegisterPersona(registry, r.persona, scope)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for _, spec := range specs {
 		bindings[spec.Name] = turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID)
@@ -127,7 +129,7 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	scope.StateRevision = agents.StateRevision(settings)
 	questionPreference, err := r.prepareQuestionTool(ctx, turnID, input, agents.ProjectWorkMethod(persona, settings), bindings, questions)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	packet = append(packet, questionPreference)
 	scope.ExpressionRevision = agents.ExpressionRevision(settings)
@@ -150,17 +152,17 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 
 	settingSpec, err := coreexec.RegisterPersonaSettings(registry, r.persona, scope)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	bindings[settingSpec.Name] = turn.Tool(registry, settingSpec, tools.Call{Auth: stateAuth}, turnID)
 	methodSpec, err := coreexec.RegisterWorkMethod(registry, r.persona, scope)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	bindings[methodSpec.Name] = turn.Tool(registry, methodSpec, tools.Call{Auth: stateAuth}, turnID)
 	emotionSpecs, err := coreexec.RegisterEmotion(registry, r.persona, scope)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for _, spec := range emotionSpecs {
 		binding := stateAuth
@@ -171,11 +173,11 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	}
 	emotion, err := agents.ProjectEmotion(settings, r.conversation, persona.Revision, at, agents.DefaultEmotionPolicy(), coreexec.SensitivePersonaInput(input))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	shape, err := reply.ShapeEmotion(emotion, reply.ChatBudget())
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	shapeData, _ := json.Marshal(shape)
 	packet = append(packet, assemble.ContextItem{ID: "persona-expression:" + r.agent, Revision: scope.ExpressionRevision + ":" + scope.StateRevision, AgentID: r.agent, Kind: assemble.Commitments, Text: string(shapeData)})
@@ -189,7 +191,7 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	// the grant's CAS revision remain unchanged by this projection.
 	visible, err := r.removals.Snapshot(ctx, r.person, r.agent)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	values := make(map[string]string, len(settings.Settings))
 	var sourceIDs []string
@@ -233,7 +235,7 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	r.personaMu.Unlock()
 	relationshipSpec, err := coreexec.RegisterRelationship(registry, r.persona, scope)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	bindings[relationshipSpec.Name] = turn.Tool(registry, relationshipSpec, tools.Call{Auth: relationshipAuth}, turnID)
 	if r.channelBinding == nil || r.channelBinding.Scope.Memory {
@@ -246,11 +248,18 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 		r.personaMu.Unlock()
 		spec, err := coreexec.RegisterName(registry, r.persona, scope)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		bindings[spec.Name] = turn.Tool(registry, spec, tools.Call{Auth: nameAuth}, turnID)
 	}
-	return catalog, packet, nil
+	preparation.catalog, preparation.packet = catalog, packet
+	declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
+	declarations = append(declarations, coreexec.EmotionDeclarations()...)
+	declarations = append(declarations, coreexec.RelationshipDeclaration(), askQuestionDeclaration(), resolveQuestionDeclaration())
+	if r.channelBinding == nil || r.channelBinding.Scope.Memory {
+		declarations = append(declarations, coreexec.NameDeclaration())
+	}
+	return declarations, nil
 }
 
 // The tool's success receipt has committed before After invokes this method.

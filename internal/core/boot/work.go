@@ -71,11 +71,11 @@ func (r *conversationRuntime) recoverWorkAuthority(ctx context.Context) error {
 		return tools.Result{State: tools.Cancelled, Body: body, Revision: revision}, true, err
 	})
 }
-func (r *conversationRuntime) prepareWorkTools(turnID string, bindings map[string]loop.Tool) error {
+func (r *conversationRuntime) prepareWorkTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	specs, err := coreexec.RegisterWork(registry, r.work, r.agent, r.conversation)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, spec := range specs {
 		validated := turn.Tool(registry, spec, tools.Call{}, turnID)
@@ -119,7 +119,7 @@ func (r *conversationRuntime) prepareWorkTools(turnID string, bindings map[strin
 			return turn.Tool(selected, spec, tools.Call{Auth: auth}, turnID).Execute(ctx, call)
 		}}
 	}
-	return nil
+	return coreexec.WorkDeclarations(), nil
 }
 
 func (r *conversationRuntime) workOwner(ctx context.Context, turnID, name string, in tools.Input) (string, string, error) {
