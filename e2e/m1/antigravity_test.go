@@ -32,6 +32,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		Cases []struct {
 			Name, Expected, Preset, Choice string
 			LegacyAdmission                bool `json:"legacy_admission"`
+			PendingAdmission               bool `json:"pending_admission"`
 			Omit                           string
 			DesignRef                      string `json:"design_ref"`
 			MoveBase                       bool   `json:"move_base"`
@@ -66,7 +67,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		t.Run(test.Name, func(t *testing.T) {
 			t.Parallel()
 			workerCase := test.Name
-			if test.Preset != "" || test.LegacyAdmission || test.MoveBase {
+			if test.Preset != "" || test.LegacyAdmission || test.PendingAdmission || test.MoveBase {
 				workerCase = "success"
 			}
 			var err error
@@ -116,6 +117,15 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			var moved atomic.Bool
 			var sourceBase atomic.Value
 			sourceBase.Store(base)
+			moveBase := func() {
+				if err := os.WriteFile(filepath.Join(repo, "design.md"), []byte("# New design\n"), 0600); err != nil {
+					t.Error(err)
+					return
+				}
+				git("add", "design.md")
+				git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Move base after validation")
+				sourceBase.Store(git("rev-parse", "dev"))
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				providerCalls.Add(1)
 				var req struct {
@@ -130,13 +140,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				// execution cannot race this fixture's admission boundary.
 				for _, tool := range req.Tools {
 					if tool.Name == "coding_decision" && test.MoveBase && moved.CompareAndSwap(false, true) {
-						if err := os.WriteFile(filepath.Join(repo, "design.md"), []byte("# New design\n"), 0600); err != nil {
-							t.Error(err)
-							return
-						}
-						git("add", "design.md")
-						git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Move base after validation")
-						sourceBase.Store(git("rev-parse", "dev"))
+						moveBase()
 					}
 				}
 				if scenario.CompletionEvents && completionHarness != nil {
@@ -200,6 +204,11 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				// The old manager decision is seeded; only delivery runs here.
 				managerTurns = 1
 			}
+			if test.PendingAdmission {
+				checkLegacy = seedDispatchAdmission(t, h, ids["dev"], repo, scenario.What, scenario.Done, base)
+				managerTurns = 1
+				moveBase()
+			}
 			fixtureCase := workerCase
 			if test.Choice != "" {
 				fixtureCase = test.Choice
@@ -213,12 +222,19 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				return p
 			}
 			core := start()
+			if test.PendingAdmission {
+				// Opening Core twice must retain the incomplete admission without
+				// allocating a worktree or starting the worker.
+				h.stopCore(core)
+				assertPendingDispatch(t, h, base)
+				core = start()
+			}
 			t.Cleanup(func() {
 				if t.Failed() && test.Choice == "quota-windows" {
 					logWorkerQuotaState(t, h)
 				}
 			})
-			if test.LegacyAdmission {
+			if test.LegacyAdmission || test.PendingAdmission {
 				if _, err = os.Stat(filepath.Join(fixture, "workdir")); !os.IsNotExist(err) {
 					t.Fatal("legacy admission ran before its conversation receipt", err)
 				}
@@ -235,6 +251,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				h.stopCore(core)
 				assertDefinitionRefused(t, h, fixture)
 				return
+			}
+			if test.PendingAdmission {
+				assertDispatchResumed(t, h, base, ids["dev"])
 			}
 			if test.Choice == "overlap" {
 				admittedTurn(t, h, c, conversation, "delegate-overlap", "Create another result in the same write area.")
@@ -339,7 +358,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			if test.Choice != "" {
 				assertWorkerChoice(t, h, fixture, test.Choice)
 			}
-			if test.LegacyAdmission {
+			if test.LegacyAdmission || test.PendingAdmission {
 				launches, err := os.ReadFile(filepath.Join(fixture, "launches"))
 				if err != nil || string(launches) != "worker\n" {
 					t.Fatalf("legacy admission did not execute exactly once: %q %v", launches, err)

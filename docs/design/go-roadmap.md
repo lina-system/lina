@@ -368,7 +368,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-18 Work definition and worker choice.** `dispatch_work`, task packet, chooser, quota fallback.
 - #138 wires quota-aware Antigravity/Codex choice, fenced write-area claims and one durable packet-preserving handoff into installed Core. `e2e/m2/worker-choice.json` covers quota, overlap, editable situation rules and restart with real task artifacts.
-- Definition validation (#137): invalid definitions and unresolved base-commit sections are refused before admission. Valid packets retain the assignment and pinned base through queueing and retries. `e2e/m2/work-definition.json` covers refusal and a real worker result through running Core.
+- Definition validation (#137): invalid definitions and unresolved base-commit sections are refused before admission. Valid packets retain the assignment and pinned base through queueing and retries. `e2e/m2/work-definition.json` covers refusal and a real worker result through running Core. Admission recovery (#728) persists that snapshot before the manager runs; `e2e/m2/work-admission.json` covers a restart between manager approval and queueing, a moved base branch and the resulting worker artifact.
 - Done when: a definition without a done condition or write area is refused; two tasks with overlapping write areas are never in flight together; a worker whose quota row is blocked is not chosen before its reset; unknown quota is usable; a quota stop hands the same packet once to the next worker.
 - Depends on: G2-01, G2-04. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#work-definition).
 
