@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
+	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/exchange"
@@ -176,6 +177,7 @@ func (r *conversationRuntime) receiveHandoff(ctx context.Context, receipt exchan
 			}
 		}
 		req := prepared.Request
+		req.CacheIdentity = assemble.ConversationIdentity(r.main, record.To, record.ID)
 		if origin.Artifact.ID != "" {
 			contextBody, err := json.Marshal(map[string]any{"artifact": origin.Artifact})
 			if err != nil {

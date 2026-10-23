@@ -11,6 +11,7 @@ import (
 type ProfileMapping struct {
 	Profile, Agent, Person string
 	OwnerChannels          []OwnerChannel
+	CandidateOwnerChannels []OwnerChannelCandidate
 }
 
 // SourceGap names absent numeric ids between observed source rows. It does not
@@ -18,6 +19,18 @@ type ProfileMapping struct {
 type SourceGap struct {
 	System, Instance, Table string
 	After, Before           int64
+}
+
+// UIDLineageMapping accounts for one host row whose UID has canonical/version
+// bindings in more than one lineage within its profile. An empty Lineage means
+// the row was retained as its own event; Reason explains that decision.
+type UIDLineageMapping struct {
+	Source            LegacyKey
+	SessionRoot       string
+	CandidateLineages []string
+	Lineage           string
+	Reason            string
+	EventID           string
 }
 
 // RehearsalReport contains counts and opaque identities, never source bodies
@@ -33,12 +46,14 @@ type RehearsalReport struct {
 	MissingBytes                                 []string
 	Gaps                                         []SourceGap
 	SampledReferences                            []LegacyKey
+	AmbiguousUIDRows                             int
+	UIDLineageMappings                           []UIDLineageMapping
 }
 
 // Rehearse uses only the prepared snapshot. It neither opens nor writes canon.
 // All keys are checked; the deterministic sample is an additional report aid.
 func (p *Plan) Rehearse() (RehearsalReport, error) {
-	report := RehearsalReport{Conversations: len(p.conversations), Inventory: p.inventory, Mappings: p.mappings}
+	report := RehearsalReport{Conversations: len(p.conversations), Inventory: p.inventory, Mappings: p.mappings, AmbiguousUIDRows: len(p.uidLineages), UIDLineageMappings: p.uidLineages}
 	counts := map[string]*Reconciliation{}
 	destinations := map[string]map[string]bool{}
 	for _, t := range p.inventory {

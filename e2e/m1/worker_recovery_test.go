@@ -36,6 +36,7 @@ func recoveryWorkerFixture() {
 		turns, _ = strconv.Atoi(string(raw))
 	}
 	state := "idle"
+	steered := false
 	scan := bufio.NewScanner(os.Stdin)
 	enc := json.NewEncoder(os.Stdout)
 	for scan.Scan() {
@@ -130,8 +131,31 @@ func recoveryWorkerFixture() {
 				state = "idle"
 				notify("turn/completed", map[string]any{"threadId": "recovery-thread", "turn": map[string]any{"id": turn, "status": "failed"}})
 			}
+		case "turn/steer":
+			var expected string
+			_ = json.Unmarshal(f.Params["expectedTurnId"], &expected)
+			if (mode != "steer_snapshot_failure" && mode != "steer_pending") || turns != 1 || expected != "turn-1" || steered {
+				os.Exit(90)
+			}
+			steered = true
+			// Persist real work, but emit no event that could repair Core's binding.
+			file, err := os.OpenFile(filepath.Join(dir, "steer-count"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+			if err != nil {
+				os.Exit(91)
+			}
+			_, _ = file.WriteString("1")
+			_ = file.Close()
+			// The artifact is the crash barrier: publish it after the send count.
+			_ = os.WriteFile(filepath.Join(dir, "followup-result.txt"), []byte("Follow-up work survived."), 0600)
+			if mode != "steer_pending" {
+				reply(map[string]any{"turnId": expected})
+			}
 		case "thread/read":
-			reply(map[string]any{"thread": thread()})
+			if steered && mode == "steer_snapshot_failure" {
+				_ = enc.Encode(map[string]any{"id": f.ID, "error": map[string]any{"code": -32000, "message": "snapshot temporarily unavailable"}})
+			} else {
+				reply(map[string]any{"thread": thread()})
+			}
 		case "thread/turns/list":
 			_ = os.WriteFile(filepath.Join(dir, "snapshot-requested"), []byte("read"), 0600)
 			for {
@@ -141,7 +165,7 @@ func recoveryWorkerFixture() {
 				time.Sleep(time.Millisecond)
 			}
 			status := "failed"
-			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" || mode == "delayed" || mode == "followup_reply" {
+			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" || mode == "delayed" || mode == "followup_reply" || mode == "steer_snapshot_failure" || mode == "steer_pending" {
 				status = "completed"
 			}
 			items := []any{map[string]any{"type": "agentMessage", "id": "message", "text": "Retained worker result."}}
