@@ -1483,6 +1483,13 @@ for the evidence boundary and account-free acceptance limits.
   the next opened session uses the next actual run generation. Other start
   errors retain their uncertain outcome. The Cursor installed-Core scenario in
   `e2e/m2/cursor_worker_test.go` exercises this path.
+- ACP approval and form events use the existing `boot` worker bridge. The
+  adapter retains single-use request handles and validates offered once options
+  and form values before sending. Snapshots expose pending requests as waiting;
+  cancel and prompt completion invalidate them. Core's existing authority claim
+  consumes approval answers before delivery and stops unused answers on restart.
+  No new storage format or migration is introduced. The headless scenario in
+  `e2e/m2/acp_decisions_test.go` exercises owner answers through the running Core.
 - An ACP session id is the thread id. ACP version 1 has no turn id, so Core assigns one per `session/prompt` request and binds every update, request and reply of that request to it, with the process generation and binding epoch.
 
 | ACP message | `worker.Event` |

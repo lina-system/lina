@@ -11,6 +11,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	acpadapter "github.com/thisisjun786/lina/internal/core/worker/acp"
 	wire "github.com/thisisjun786/lina/third_party/codex-app-server/upstream"
 )
 
@@ -30,6 +31,8 @@ func (e *workerSession) requestApproval(event worker.Event) {
 	// and permissions; a person's answer never rewrites worker tool arguments.
 	summary := "Codex requests additional access"
 	switch req.Method {
+	case "session/request_permission":
+		summary = e.adapter.Name() + " requests approval"
 	case "item/commandExecution/requestApproval":
 		summary = "Codex wants to run a command"
 	case "item/fileChange/requestApproval":
@@ -58,6 +61,11 @@ func approvalReply(request worker.Request, choice authority.Choice) (json.RawMes
 		decision = json.RawMessage(`"accept"`)
 	}
 	switch request.Method {
+	case "session/request_permission":
+		if choice != authority.Once && choice != authority.Deny {
+			return nil, errors.New("unsupported ACP approval choice")
+		}
+		return acpadapter.PermissionReply(request.Params, choice == authority.Once)
 	case "item/commandExecution/requestApproval":
 		return json.Marshal(wire.CommandExecutionRequestApprovalResponse{Decision: decision})
 	case "item/fileChange/requestApproval":
@@ -155,7 +163,11 @@ func (e *workerSession) stopMatching(turnID, requestID string) {
 	}
 }
 func (e *workerSession) bridgeFailure(err error) {
-	_ = e.origin.workerNotice(e.origin.ctx, e.input, e.requestKey(fmt.Sprintf("error:%d", time.Now().UnixNano())), "Codex request could not be delivered: "+err.Error())
+	name := "Codex"
+	if _, ok := e.adapter.(*acpadapter.Adapter); ok {
+		name = e.adapter.Name()
+	}
+	_ = e.origin.workerNotice(e.origin.ctx, e.input, e.requestKey(fmt.Sprintf("error:%d", time.Now().UnixNano())), name+" request could not be delivered: "+err.Error())
 }
 
 // A scheduled task resumes only after all pending requests have been answered.
