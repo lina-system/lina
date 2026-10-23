@@ -209,30 +209,7 @@ func retireUndispatchedActions(v *View, g *Goal) error {
 		if a.GoalID != g.ID || a.ObserveActionID != "" || (a.State != "queued" && a.State != "awaiting_authorization") || a.GoalRevision == g.Revision {
 			continue
 		}
-		t := goalTask(g, a.TaskID)
-		if t != nil {
-			switch a.Kind {
-			case Assign:
-				t.Stage = TaskReady
-				t.NodeID = ""
-			case Resume:
-				t.Stage = TaskWorkerLost
-			case RepairConflict:
-				t.Stage = TaskConflicted
-			case ContinueWorker:
-				t.Stage = TaskNoReceipt
-			case RepairQA:
-				t.Stage = TaskQAFailed
-			case PlanGoal:
-				t.RepairAsked = false
-			case InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, CheckCriterion:
-			}
-			if reserves(a) {
-				refundRecovery(t, a.Kind)
-				t.Attempt--
-				t.EffectsSettled = true
-			}
-		}
+		restoreUndispatchedTask(g, a)
 		a.State = "finished"
 		a.Superseded, a.RetirementReconciled = true, true
 		if err := put(v, "action", a.ID, a); err != nil {
@@ -240,6 +217,34 @@ func retireUndispatchedActions(v *View, g *Goal) error {
 		}
 	}
 	return nil
+}
+
+// restoreUndispatchedTask refunds only work that never reached execution.
+func restoreUndispatchedTask(g *Goal, a Action) {
+	t := goalTask(g, a.TaskID)
+	if t != nil {
+		switch a.Kind {
+		case Assign:
+			t.Stage = TaskReady
+			t.NodeID = ""
+		case Resume:
+			t.Stage = TaskWorkerLost
+		case RepairConflict:
+			t.Stage = TaskConflicted
+		case ContinueWorker:
+			t.Stage = TaskNoReceipt
+		case RepairQA:
+			t.Stage = TaskQAFailed
+		case PlanGoal:
+			t.RepairAsked = false
+		case InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, CheckCriterion:
+		}
+		if reserves(a) {
+			refundRecovery(t, a.Kind)
+			t.Attempt--
+			t.EffectsSettled = true
+		}
+	}
 }
 
 // Cancellation before dispatch and a settled quota interruption both leave the
@@ -466,7 +471,7 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 // action after a crash is observed, never returned to the execution queue.
 func (e *Engine) Claim(ctx context.Context, id string) (Action, error) {
 	var out Action
-	err := e.journal.Update(ctx, Transition{ID: "claim:" + rand.Text(), Kind: "action.claimed", At: e.cfg.Now().Unix()}, func(v *View) error {
+	err := e.journal.Update(ctx, Transition{ID: "claim:" + rand.Text(), Kind: "action.claim_checked", At: e.cfg.Now().Unix()}, func(v *View) error {
 		a, err := loadAction(v, id)
 		if err != nil {
 			return err
@@ -490,12 +495,51 @@ func (e *Engine) Claim(ctx context.Context, id string) (Action, error) {
 		if g.DefinitionPending && a.Kind != PlanGoal && a.ObserveActionID == "" {
 			return ErrConflict
 		}
+		if reserves(a) && a.ObserveActionID == "" {
+			s, err := snapshotView(v)
+			if err != nil {
+				return err
+			}
+			t := goalTask(&g, a.TaskID)
+			if t == nil {
+				return ErrInvalid
+			}
+			// The award already owns one reservation. Count every other
+			// reservation, including queued siblings, against the latest report.
+			others := make([]Action, 0, len(s.Actions))
+			for _, other := range s.Actions {
+				if other.ID != a.ID {
+					others = append(others, other)
+				}
+			}
+			eligible := false
+			now := e.cfg.Now()
+			for _, n := range s.Nodes {
+				if n.ID == a.NodeID && n.Workers[t.Worker] && n.QuotaReset[t.Worker] <= now.Unix() && Slots(n, others, a.Resources, now) > 0 {
+					eligible = true
+					break
+				}
+			}
+			if !eligible {
+				restoreUndispatchedTask(&g, a)
+				a.State = "finished"
+				if err = put(v, "action", a.ID, a); err != nil {
+					return err
+				}
+				// Commit the release before returning a claim conflict. The
+				// journal wake derives a new award or a named capacity wait.
+				return put(v, "goal", g.ID, g)
+			}
+		}
 		a.State = "claimed"
 		a.Epoch = e.cfg.Epoch
 		a.InputVersion = inputVersion(g, a)
 		out = a
 		return put(v, "action", id, a)
 	})
+	if err == nil && out.ID == "" {
+		err = ErrConflict
+	}
 	return out, err
 }
 
@@ -547,6 +591,14 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			// or a plan for this revision. A late result is not a Core failure.
 			a.State = "finished"
 			a.Superseded = true
+			// A corrected definition invalidates the repair assessment itself.
+			// Clear its marker with retirement so restart can ask it again.
+			if t != nil && a.Kind == PlanGoal && a.RecordRevision != g.RecordRevision && t.RepairedBy == "" {
+				t.RepairAsked = false
+				if err = put(v, "goal", g.ID, g); err != nil {
+					return err
+				}
+			}
 			if !a.RetirementReconciled && hasExternalEffect(a) && !currentActionTarget(g, a) && !effectSettled(a, o) {
 				// A different target cannot inherit this effect. Retain its
 				// lease and bounded observation wait until its outcome is known.
