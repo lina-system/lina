@@ -122,6 +122,7 @@ func TestObserveQuotaFreshnessPerWindow(t *testing.T) {
 		{"other provider", []provider.QuotaRow{blocked}, []provider.QuotaRow{otherProvider}, []provider.QuotaRow{otherProvider, blocked}, false},
 		{"unknown stop other account", []provider.QuotaRow{unknownStop}, []provider.QuotaRow{otherAccount}, []provider.QuotaRow{otherAccount, unknownStop}, false},
 		{"repeated window rows", []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), blocked}, []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), recovered}, []provider.QuotaRow{row(provider.FiveHour, provider.QuotaOK, 1), recovered}, true},
+		{"initial unknown replaced", []provider.QuotaRow{row(provider.UnknownWindow, provider.QuotaUnknown, 0)}, []provider.QuotaRow{recovered, weekly}, []provider.QuotaRow{recovered, weekly}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := &Service{cfg: Config{DB: store(t)}}

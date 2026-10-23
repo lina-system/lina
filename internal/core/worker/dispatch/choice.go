@@ -209,14 +209,16 @@ func mergeQuotaObservations(prior, rows []provider.QuotaRow) []provider.QuotaRow
 	used := make([]bool, incoming)
 	for _, saved := range prior {
 		matched, recovered := false, false
+		unmeasured := saved.State == provider.QuotaUnknown && saved.UsedPct == nil && saved.ResetsAt == nil
+		inferredStop := saved.State == provider.QuotaBlocked && saved.Source == provider.ErrorCode
 		for i := 0; i < incoming; i++ {
 			q := rows[i]
 			if q.Provider != saved.Provider || q.Account != saved.Account {
 				continue
 			}
-			// A stop with no identified window is inferred from an error,
-			// not a separate measured limit. Fresh account evidence clears it.
-			if saved.Window == provider.UnknownWindow && saved.State == provider.QuotaBlocked && saved.Source == provider.ErrorCode && q.Observed.After(saved.Observed) {
+			// Fresh account evidence supersedes an initial unknown placeholder
+			// or an error-inferred stop, neither of which identifies a limit.
+			if saved.Window == provider.UnknownWindow && (unmeasured || inferredStop) && q.Observed.After(saved.Observed) {
 				recovered = true
 			}
 			if q.Window == saved.Window && !used[i] && !matched {
