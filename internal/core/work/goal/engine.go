@@ -197,6 +197,67 @@ func goalTask(g *Goal, id string) *Task {
 	return nil
 }
 
+// A goal revision invalidates undispatched actions, including their reservations and
+// one-shot planning/recovery counters. They have never been dispatched. Claimed
+// actions retain their receipts and reservations until their effects settle.
+func retireUndispatchedActions(v *View, g *Goal) error {
+	for _, r := range v.Records("action") {
+		var a Action
+		if err := json.Unmarshal(r.Body, &a); err != nil {
+			return err
+		}
+		if a.GoalID != g.ID || a.ObserveActionID != "" || (a.State != "queued" && a.State != "awaiting_authorization") || a.GoalRevision == g.Revision {
+			continue
+		}
+		t := goalTask(g, a.TaskID)
+		if t != nil {
+			switch a.Kind {
+			case Assign:
+				t.Stage = TaskReady
+				t.NodeID = ""
+			case Resume:
+				t.Stage = TaskWorkerLost
+			case RepairConflict:
+				t.Stage = TaskConflicted
+			case ContinueWorker:
+				t.Stage = TaskNoReceipt
+			case RepairQA:
+				t.Stage = TaskQAFailed
+			case PlanGoal:
+				t.RepairAsked = false
+			case InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, CheckCriterion:
+			}
+			if reserves(a) {
+				refundRecovery(t, a.Kind)
+				t.Attempt--
+				t.EffectsSettled = true
+			}
+		}
+		a.State = "finished"
+		a.Superseded, a.RetirementReconciled = true, true
+		if err := put(v, "action", a.ID, a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Cancellation before dispatch and a settled quota interruption both leave the
+// task's one recovery available. A quota attempt still retains its attempt id.
+func refundRecovery(t *Task, kind ActionKind) {
+	switch kind {
+	case Resume:
+		t.Recoveries--
+	case ContinueWorker:
+		t.Continuations--
+	case RepairConflict:
+		t.Conflicts--
+	case RepairQA:
+		t.QARepairs--
+	case Assign, InspectPR, Merge, RunQA, Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion:
+	}
+}
+
 func (e *Engine) Admit(ctx context.Context, g Goal) error {
 	if e.cfg.AuthorizeGoal != nil {
 		if err := e.cfg.AuthorizeGoal(ctx, g); err != nil {
@@ -206,10 +267,11 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 	if g.CreatedAt == 0 {
 		g.CreatedAt = e.cfg.Now().Unix()
 	}
+	g.ServiceRepository = serviceRepository(g)
 	if err := validateGoal(g); err != nil {
 		return err
 	}
-	if g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || g.Deployment != (Proof{}) || g.Verification != (Proof{}) {
+	if g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || len(g.MergedRevisions) > 0 || g.Deployment != (Proof{}) || g.Verification != (Proof{}) {
 		return ErrInvalid
 	}
 	for _, t := range g.Tasks {
@@ -355,7 +417,7 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					if a.GoalID != g.ID || a.State == "finished" {
 						continue
 					}
-					if a.State == "needs_person" {
+					if a.State == "needs_person" || a.State == "awaiting_authorization" {
 						person = true
 					} else {
 						active = true
@@ -475,6 +537,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			return err
 		}
 		t := goalTask(&g, a.TaskID)
+		previousRevision := g.Revision
 		a.ObservedAt = e.cfg.Now().Unix()
 		a.ObserverEpoch = e.cfg.Epoch
 		a.Receipt = encode(o)
@@ -518,6 +581,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 				return err
 			}
 			a.State = "finished"
+			refundRecovery(t, a.Kind)
 			t.Stage = TaskReady
 			t.NodeID = ""
 			t.EffectsSettled = true
@@ -554,12 +618,33 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 				t.EffectsSettled = o.EffectsSettled
 			}
 		case OutcomeConflict:
-			if t == nil || a.Kind != Merge {
+			if t == nil || a.Kind != Merge && a.Kind != InspectPR {
 				return ErrInvalid
+			}
+			if a.Kind == InspectPR {
+				// Only an explicit conflict for the inspected current head spends
+				// the existing rebase allowance. Mergeable=false alone is unknown.
+				if o.PR.Head == "" || o.PR.Head != a.Revision || o.PR.Head != t.Head || o.PR.Mergeable {
+					return ErrInvalid
+				}
+				t.PR = o.PR
+				t.PR.ObservedAt = a.ObservedAt
 			}
 			a.State = "finished"
 			t.Stage = TaskConflicted
 		case OutcomeFailed:
+			if a.Kind == Verify {
+				if t != nil || !o.Proof.fails(a.Revision) {
+					return ErrInvalid
+				}
+				if g.TargetRevision != a.Revision || g.Revision != a.GoalRevision {
+					return ErrConflict
+				}
+				a.State = "finished"
+				g.Verification = o.Proof
+				g.Evidence = append(g.Evidence, o.Proof)
+				break
+			}
 			if t == nil {
 				a.State = "needs_person"
 				break
@@ -581,9 +666,9 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 				t.Stage = TaskQAFailed
 				t.QA = o.Proof
 				g.Evidence = append(g.Evidence, o.Proof)
-			case InspectPR, Merge:
+			case InspectPR, Merge, PlanGoal:
 				a.State = "needs_person"
-			case Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion:
+			case Deploy, Verify, Observe, Decide, CheckCriterion:
 				return ErrInvalid
 			}
 		case OutcomeSucceeded:
@@ -594,12 +679,18 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		default:
 			return ErrInvalid
 		}
+		if g.Revision != previousRevision {
+			if err = retireUndispatchedActions(v, &g); err != nil {
+				return err
+			}
+		}
 		if err = put(v, "goal", g.ID, g); err != nil {
 			return err
 		}
 		return put(v, "action", id, a)
 	})
 }
+
 func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 	switch a.Kind {
 	case CheckCriterion:
@@ -680,8 +771,19 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		t.Merge = o.Proof
 		t.QA = Proof{}
 		t.Stage = TaskMerged
-		g.TargetRevision = o.Proof.Revision
-		g.Deployment = Proof{}
+		if g.MergedRevisions == nil {
+			g.MergedRevisions = map[string]string{}
+		}
+		g.MergedRevisions[t.Repository] = o.Proof.Revision
+		previous := g.TargetRevision
+		if g.ServiceTarget == "" {
+			g.TargetRevision = o.Proof.Revision
+		} else {
+			g.TargetRevision = targetRevision(*g)
+		}
+		if previous != g.TargetRevision {
+			g.Deployment = Proof{}
+		}
 		g.Verification = Proof{}
 		g.Evidence = append(g.Evidence, o.Proof)
 	case RunQA:
@@ -711,11 +813,15 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		}
 		g.Evidence = append(g.Evidence, o.Proof)
 	case Deploy:
-		if t != nil || g.ServiceTarget == "" || !o.Proof.proves(a.Revision) || g.TargetRevision != a.Revision {
+		if t != nil || g.ServiceTarget == "" || !o.Proof.proves(a.Revision) {
 			return ErrInvalid
 		}
-		g.Deployment = o.Proof
 		g.Evidence = append(g.Evidence, o.Proof)
+		// A settled old deployment remains history, but a corrected service
+		// binding needs fresh evidence even when both repositories share a SHA.
+		if a.GoalRevision == g.Revision && g.TargetRevision == a.Revision {
+			g.Deployment = o.Proof
+		}
 	case Verify:
 		if t != nil || !o.Proof.proves(a.Revision) || g.TargetRevision != a.Revision {
 			return ErrInvalid
@@ -760,6 +866,82 @@ func (e *Engine) Run(ctx context.Context) error {
 		}
 	}
 }
+
+// Only a pre-dispatch authority refusal enters this state. Execution outcomes
+// needing a person remain distinct: a change hint cannot safely replay them.
+func (e *Engine) awaitAuthorization(ctx context.Context, claimed Action) error {
+	return e.journal.Update(ctx, Transition{ID: "authorization.wait:" + rand.Text(), Kind: "authorization.waiting", At: e.cfg.Now().Unix()}, func(v *View) error {
+		a, err := loadAction(v, claimed.ID)
+		if err != nil {
+			return err
+		}
+		if a.State != "claimed" || a.Epoch != e.cfg.Epoch {
+			return ErrConflict
+		}
+		g, err := loadGoal(v, a.GoalID)
+		if err != nil {
+			return err
+		}
+		if err = e.hydrate(&g); err != nil {
+			return err
+		}
+		a.State = "awaiting_authorization"
+		a.Receipt = encode(Observation{Status: OutcomeNeedsPerson, EffectsSettled: true})
+		if a.Signal != claimed.Signal {
+			// An approval hint arrived while Authorize was still reading. Do
+			// not lose that wake; the next claim rechecks current authority.
+			a.State = "queued"
+		}
+		// Authorize refused before Execute. A retry may therefore freeze fresh
+		// inputs, but it must still pass authority again before any effect.
+		if a.GoalRevision == g.Revision && currentActionTarget(g, a) {
+			a.InputVersion = inputVersion(g, a)
+		}
+		if err = put(v, "action", a.ID, a); err != nil {
+			return err
+		}
+		// A definition/repair revision can commit while Authorize runs.
+		if err = retireUndispatchedActions(v, &g); err != nil {
+			return err
+		}
+		return put(v, "goal", g.ID, g)
+	})
+}
+
+func (e *Engine) releaseDispatch(id string) {
+	e.mu.Lock()
+	delete(e.running, id)
+	e.mu.Unlock()
+	// Reconciliation may have consumed an authorization hint while this slot
+	// was still busy. Wake again after release so a queued retry runs now.
+	e.journal.notify()
+}
+
+func (e *Engine) observationDue(a Action) bool {
+	return (a.State == "claimed" || a.State == "running" || a.State == "unknown") && (a.Epoch != e.cfg.Epoch && a.ObserverEpoch != e.cfg.Epoch || a.Deadline <= e.cfg.Now().Unix())
+}
+
+// The previous dispatch may have finished or parked after step's snapshot but
+// before it released the running reservation. Re-read after acquiring that
+// reservation so an authorization retry is never observed as an executed effect.
+func (e *Engine) readObservable(ctx context.Context, id string) (Action, error) {
+	var a Action
+	err := e.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		if err := tx.QueryRowContext(ctx, "SELECT body FROM work_records WHERE kind='action' AND id=?", id).Scan(&raw); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return err
+		}
+		if !e.observationDue(a) {
+			return ErrConflict
+		}
+		return nil
+	})
+	return a, err
+}
+
 func (e *Engine) step(ctx context.Context) error {
 	if err := e.Reconcile(ctx); err != nil {
 		return err
@@ -775,7 +957,7 @@ func (e *Engine) step(ctx context.Context) error {
 	}
 	for _, a := range s.Actions {
 		execute := a.State == "queued"
-		observe := (a.State == "claimed" || a.State == "running" || a.State == "unknown") && (a.Epoch != e.cfg.Epoch && a.ObserverEpoch != e.cfg.Epoch || a.Deadline <= e.cfg.Now().Unix())
+		observe := e.observationDue(a)
 		if !execute && !observe {
 			continue
 		}
@@ -786,23 +968,27 @@ func (e *Engine) step(ctx context.Context) error {
 		}
 		e.running[a.ID] = true
 		e.mu.Unlock()
+		var current Action
 		if execute {
-			claimed, err := e.Claim(ctx, a.ID)
-			if err != nil {
-				e.mu.Lock()
-				delete(e.running, a.ID)
-				e.mu.Unlock()
-				if errors.Is(err, ErrConflict) {
-					continue
-				}
-				return err
-			}
-			a = claimed
+			current, err = e.Claim(ctx, a.ID)
+		} else {
+			current, err = e.readObservable(ctx, a.ID)
 		}
+		if err != nil {
+			e.mu.Lock()
+			delete(e.running, a.ID)
+			e.mu.Unlock()
+			if errors.Is(err, ErrConflict) {
+				continue
+			}
+			return err
+		}
+		a = current
 		e.wg.Go(func() {
-			defer func() { e.mu.Lock(); delete(e.running, a.ID); e.mu.Unlock() }()
+			defer e.releaseDispatch(a.ID)
 			var o Observation
 			var err error
+			authorizationDenied := false
 			effectMayHaveStarted := observe || a.ObserveActionID != ""
 			if effectMayHaveStarted {
 				source := a
@@ -813,6 +999,8 @@ func (e *Engine) step(ctx context.Context) error {
 			} else if err = e.cfg.Driver.Authorize(ctx, a); err == nil {
 				effectMayHaveStarted = true
 				o, err = e.cfg.Driver.Execute(ctx, a)
+			} else if errors.Is(err, ErrNeedsPerson) {
+				authorizationDenied = true
 			}
 			if errors.Is(err, ErrNeedsPerson) {
 				o = Observation{Status: OutcomeNeedsPerson, EffectsSettled: !effectMayHaveStarted}
@@ -822,7 +1010,12 @@ func (e *Engine) step(ctx context.Context) error {
 			// Cancellation can leave a dispatched effect uncertain. The durable claim
 			// survives; only an active generation may acknowledge the observation.
 			if ctx.Err() == nil {
-				if err := e.Report(ctx, a.ID, e.cfg.Epoch, o); err != nil && ctx.Err() == nil {
+				if authorizationDenied {
+					err = e.awaitAuthorization(ctx, a)
+				} else {
+					err = e.Report(ctx, a.ID, e.cfg.Epoch, o)
+				}
+				if err != nil && ctx.Err() == nil {
 					select {
 					case e.failures <- err:
 					default:

@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "preset": "dev",
+  "tools": {
+    "declare_first": [
+      "work",
+      "github",
+      "terminal"
+    ]
+  },
+  "handoff": {
+    "owns": [
+      "code",
+      "pull_request",
+      "worker_task"
+    ]
+  },
+  "workers": {
+    "dispatch": true
+  }
+}

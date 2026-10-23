@@ -67,6 +67,50 @@ func TestQuotaFailoverSpendsNoRecovery(t *testing.T) {
 		t.Fatalf("quota consumed recovery or reused parked worker: %+v", task)
 	}
 }
+
+func TestQuotaRestoresInterruptedRecoveryAllowances(t *testing.T) {
+	for _, kind := range []ActionKind{Resume, ContinueWorker, RepairConflict} {
+		t.Run(string(kind), func(t *testing.T) {
+			e := revisionEngine(t, readyTask("a"))
+			interrupt := func(workerKind ActionKind) {
+				switch kind {
+				case Resume:
+					revisionReport(t, e, "a", workerKind, Observation{Status: OutcomeFailed, EffectsSettled: true})
+				case ContinueWorker:
+					revisionReport(t, e, "a", workerKind, Observation{Status: OutcomeNoReceipt, Handle: "thread", EffectsSettled: true})
+				case RepairConflict:
+					revisionReport(t, e, "a", workerKind, Observation{Status: OutcomeSucceeded, Head: "head", EffectsSettled: true})
+					revisionReport(t, e, "a", InspectPR, revisionPR("head"))
+					revisionReport(t, e, "a", Merge, Observation{Status: OutcomeConflict})
+				case Assign, InspectPR, Merge, RunQA, RepairQA, Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion:
+					t.Fatalf("unsupported quota fixture: %s", kind)
+				}
+			}
+			interrupt(Assign)
+			quota := Observation{Status: OutcomeQuota, EffectsSettled: true, QuotaReset: 200}
+			a := revisionReport(t, e, "a", kind, quota)
+			if err := e.Report(t.Context(), a.ID, a.Epoch, quota); err != nil {
+				t.Fatal(err)
+			}
+			task := revisionSnapshot(t, e).Goals[0].Tasks[0]
+			if task.Recoveries != 0 || task.Continuations != 0 || task.Conflicts != 0 || task.Attempt != 2 {
+				t.Fatalf("quota spent the %s allowance: %+v", kind, task)
+			}
+			if err := e.NodeChanged(t.Context(), readyNode("other")); err != nil {
+				t.Fatal(err)
+			}
+			interrupt(Assign)
+			// The replacement worker can still receive the interrupted recovery.
+			next := revisionAction(t, e, "a", kind)
+			if next.NodeID != "other" || next.Attempt != 4 {
+				t.Fatalf("quota failover lost recovery: %+v", next)
+			}
+			if _, err := e.Claim(t.Context(), next.ID); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 func TestWorkerWithoutReceiptGetsOnlyOneContinuation(t *testing.T) {
 	e, a := claimedAssignment(t)
 	if err := e.Report(t.Context(), a.ID, 1, Observation{Status: OutcomeNoReceipt, EffectsSettled: true, Handle: "thread"}); err != nil {
@@ -96,4 +140,22 @@ func TestWorkerWithoutReceiptGetsOnlyOneContinuation(t *testing.T) {
 	if s.Goals[0].Tasks[0].Stage != TaskWorkerLost {
 		t.Fatal("second empty ending kept looping")
 	}
+}
+
+func TestPRChangeSignalInvalidatesCachedMergeProofs(t *testing.T) {
+	e, worker := claimedAssignment(t)
+	if err := e.Report(t.Context(), worker.ID, 1, Observation{Status: OutcomeSucceeded, Head: "old-head", EffectsSettled: true}); err != nil {
+		t.Fatal(err)
+	}
+	inspection := claimOnlyAction(t, e, InspectPR)
+	proof := Proof{Revision: "old-head", Ref: "old-proof", Passed: true}
+	if err := e.Report(t.Context(), inspection.ID, 1, Observation{Status: OutcomeSucceeded, PR: PRState{Head: "old-head", Checks: proof, Review: proof, Verified: proof, Mergeable: true}}); err != nil {
+		t.Fatal(err)
+	}
+	// No merge has been queued yet. A change signal must still invalidate all
+	// cached authority for that head before the next derivation can merge it.
+	if err := e.Signal(t.Context(), Signal{ID: "head-changed", GoalID: worker.GoalID, TaskID: worker.TaskID}); err != nil {
+		t.Fatal(err)
+	}
+	claimOnlyAction(t, e, InspectPR)
 }

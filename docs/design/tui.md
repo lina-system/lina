@@ -275,6 +275,10 @@ The client computes no state of work. It shows the words and marks Core sends ([
 
 **Presentation kinds** are the kinds of version 1.0 of the client connection ([host-protocol.md](host-protocol.md#client-connection)): output delta, item done, turn state, approval request, question, result card, running-list update, background notice, progress view, waiting list, Details, readiness failure, and the results of agent, work-record, account, memory, channel and exchange requests, and error. An unknown kind is ignored and counted. The wire carries codes and parameters, and the TUI owns the Korean and English catalogs. Display strings travel only for text the person or an agent wrote. A secret placeholder from Core renders as a placeholder, and the TUI has no way to reveal one.
 
+Worker question-answer notices in conversation history carry a short, readable
+acknowledgement. Core keeps dynamic-tool response envelopes out of these display
+bodies, both during delivery and when restoring history.
+
 ## Layout, tiers and row budget (T-07)
 
 The screen is a pure function of State and terminal size. Core's validated welcome determines which regions are available ([host-protocol.md](host-protocol.md#versions-and-capabilities)). Running and waiting lists take no rows when empty or not granted. Missing list capabilities produce one localized, plain-language local notice outside conversation history, combining both missing lists into one explanation. Replayed welcomes and reconnects with the same capabilities do not add another notice; a later grant removes the obsolete explanation from the status line. No fallback string or peer diagnostic decides capability availability.
@@ -541,6 +545,9 @@ An open running pager applies accepted `running` topic updates and replacement
 snapshots immediately, including completed and removed rows, without polling or
 requiring the person to close and reopen it. Refreshing its text preserves the
 pager's reading offset (clamped to the remaining content) and active search.
+Conversation-started workers use this same Ctrl+R list, with the owner agent's
+name before the worker's tool name. Their rows leave the open pager when the
+worker becomes idle; that removal does not claim verified task completion.
 List updates do not focus the pager or change the draft. Decision answering remains the typed approval/question flow
 of T-04; the composer never turns a list row into an approval.
 
@@ -707,6 +714,15 @@ changed group cannot partially approve.
 
 **Questions.** A form question renders its flat schema as prompts, and a URL question follows the contract, opening the URL only on an explicit key. Core refuses a form that asks for a secret, and the TUI shows the refusal. An unknown outcome of an effect is a question card with the dispositions of [main-authority.md](main-authority.md#command-outcomes). The TUI adds no option Core did not list.
 
+Worker questions identify the originating agent by its display name in both the
+form header and the conversation card row, consistently with Home and approvals.
+Core resolves decision names from the agent store, including agents created or
+renamed since startup. Agent IDs remain routing data. The installed-Core test
+`TestM2TUIWorkerQuestionNameInstalledCore` types a worker request in the real TUI,
+accepts its approval, answers its question and checks the resulting artifact.
+It distinguishes the worker's owning coding agent from the conversation agent
+and covers renaming that owner after Core starts.
+
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 
 The TUI negotiates `accounts` and `sign_in_relay` independently of conversation.
@@ -762,7 +778,7 @@ empty-list status.
 Contract: [surfaces.md](surfaces.md#agent-surfaces), [surfaces.md](surfaces.md#settings). Each view is data that Core already computes. The TUI draws it as lines with keys. The roadmap builds the views with the Core feature behind each, and a view whose capability was not granted shows as unsupported (T-07).
 
 - **Board:** three groups of one-line rows (Waiting for me, Running, Done). Enter unfolds a row, with keys for the actions that apply.
-- **Steering:** `/note` queues a note for the run's next step, which is the follow-up of the running list. Esc or `/stop` on a row stops it.
+- **Steering:** `/note <run> <text>` queues a note for the target's next step. `/stop <run>` or `s` on a running row requests a stop; `/stop all` targets the person's background runs and live workers. These requests use the same Core handlers as a paired channel. Bare `/stop` interrupts the conversation. `/progress` reads the compact digest. `/waiting priority|lightest` opens the full waiting list; `o` switches its Core order, which survives refreshes.
 - **Agent tree and lanes (developer view):** indented lines (the persona as initial and name, sub-agents as plain indented text, workers as `[name]`), one line per worker for lanes, hand-offs as arrows, folded to one line by default. `/developer` opts into the recorded worker view through the `worker_lanes` capability. Core supplies each persona's name and each current task execution's worker/session identity; two sessions using the same tool remain separate lanes. Persona headings show initial and name, and indented `[worker] › task` lines are clipped to one physical row. Enter toggles the selected lane's thread, turn, node, generation and source-labeled stage summaries. Up/Down selects; `r` refreshes the current first page and `n` replaces it with the next bounded page. Refresh preserves selected and expanded identities; new executions start folded. Esc returns to the composer. Closing/reopening or reconnecting discards this view's expansion state and pending responses. No sub-agent relationship is inferred from worker names or text; the work ledger and installed worker runtime supply persona-to-worker edges only. Runtime sessions retain their adapter state and show masked output/version on expansion.
 - **Usage meter:** one line per connected account: plan, state, a block-character meter or "unknown".
 
@@ -1267,6 +1283,11 @@ result-type negotiation and full wire bodies remain tracked in
 | View to cells | `View` drawn into a cell buffer in test code | Cell contents, cursor position, widths |
 | End to end | The program with a recording writer and an emulator | Zero bytes on an unchanged state; bounds on writes; final cells |
 | PTY | The built binary against the fake Core | Start, connect, refuse, recover, quit |
+
+The recording writer derives cursor visibility from parsed DECTCEM (DEC mode
+25) changes. This state is global across main and alternate screens; switching
+screens does not restore an obsolete per-screen visibility value. The recorder
+retains the original output bytes and never injects a successful teardown.
 
 No test sleeps. Assertions check ids, codes, counts and bytes, never prose or rendered strings, and no golden file pins renderer bytes ([AGENTS.md](../../AGENTS.md)). Wall-clock bounds are measured in the spike and in benchmark runs, and recorded as evidence. The PTY layer does not replace S1 to S11.
 

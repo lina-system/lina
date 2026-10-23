@@ -128,8 +128,12 @@ func TestReviewScopeCorrectionReachesManagerAndPreservesOtherGoals(t *testing.T)
 			}
 			reviewReconcile(t, e)
 			g := reviewGoal(t, e, "g")
-			if g.State != GoalBlocked || !g.DefinitionPending || g.AttentionID == "" {
-				t.Fatalf("unreconciled old tasks escaped correction fence: %+v", g)
+			if propose {
+				if g.DefinitionPending || len(g.Tasks) != 1 || g.Tasks[0].ID != "new" || g.Tasks[0].Repository != "new-repo" {
+					t.Fatalf("settled removed tasks prevented scoped replanning: %+v", g)
+				}
+			} else if g.State != GoalBlocked || !g.DefinitionPending || g.AttentionID == "" {
+				t.Fatalf("empty correction plan cleared the fence: %+v", g)
 			}
 			restart, err := NewEngine(e.cfg)
 			if err != nil {

@@ -18,6 +18,8 @@ type Signal struct {
 
 // Signal persists an integration's change hint. It carries no instructions or
 // outcome claims: dispatch reads the current receipt or PR before progressing.
+// An action-id hint for an authorization wait retries Authorize, not approval;
+// the trusted authority must still grant the exact action before Execute runs.
 func (e *Engine) Signal(ctx context.Context, s Signal) error {
 	if s.ID == "" || (s.ActionID == "") == (s.GoalID == "" || s.TaskID == "") {
 		return ErrInvalid
@@ -30,12 +32,29 @@ func (e *Engine) Signal(ctx context.Context, s Signal) error {
 			if err != nil {
 				return err
 			}
-			if a.TaskID == "" {
+			if a.TaskID == "" || a.State == "awaiting_authorization" {
 				if a.State == "finished" {
 					return nil
 				}
 				a.Signal = hex.EncodeToString(sum[:])
 				a.Deadline = e.cfg.Now().Unix()
+				if a.State == "awaiting_authorization" {
+					g, err := loadGoal(v, a.GoalID)
+					if err != nil {
+						return err
+					}
+					if err = e.hydrate(&g); err != nil {
+						return err
+					}
+					// Published authorization waits predate dispatch tokens. This
+					// state proves Execute never ran, so retry authority with current
+					// inputs instead of observing an effect that does not exist.
+					a.Receipt = encode(Observation{Status: OutcomeNeedsPerson, EffectsSettled: true})
+					if a.GoalRevision == g.Revision && currentActionTarget(g, a) {
+						a.InputVersion = inputVersion(g, a)
+					}
+					a.State = "queued"
+				}
 				return put(v, "action", a.ID, a)
 			}
 			// Integrations retain the original effect key after a stale report
@@ -71,6 +90,11 @@ func (e *Engine) Signal(ctx context.Context, s Signal) error {
 				} else {
 					a.Signal = hex.EncodeToString(sum[:])
 					a.Deadline = e.cfg.Now().Unix()
+					if a.State == "queued" && a.Epoch == 0 && a.ObserveActionID == "" && a.GoalRevision == g.Revision && currentActionTarget(g, a) {
+						// No dispatch has read these inputs yet. Claim will freeze
+						// the current generation before authorization and execution.
+						a.InputVersion = inputVersion(g, a)
+					}
 				}
 				if err = put(v, "action", a.ID, a); err != nil {
 					return err

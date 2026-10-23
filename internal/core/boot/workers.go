@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/skills"
@@ -33,8 +34,11 @@ type workerRuntime struct {
 	mu       sync.Mutex
 	closed   bool
 	sessions map[string]*workerSession
+	starting sync.WaitGroup
 }
 type workerSession struct {
+	ownerControl  sync.Mutex
+	ownerRequests map[string]string
 	adapter       worker.Adapter
 	close         func() error
 	compatibility codex.Compatibility
@@ -43,6 +47,7 @@ type workerSession struct {
 	thread        worker.Thread
 	packet        string
 	workdir       string
+	started       time.Time
 	approvals     map[string]worker.Event
 	questions     map[string]*workerQuestion
 	output        string
@@ -172,6 +177,9 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 		}
 		validated := turn.Tool(registry, spec, tools.Call{}, turnID)
 		bindings[name] = loop.Tool{Validate: validated.Validate, Execute: func(ctx context.Context, call provider.ToolCall) loop.Result {
+			if _, err := validated.Validate(call); err != nil {
+				return loop.Result{ID: call.ID, Code: loop.Invalid}
+			}
 			in, err := spec.Schema(json.RawMessage(call.Arguments))
 			if err != nil {
 				return loop.Result{ID: call.ID, Code: loop.Invalid}
@@ -181,6 +189,30 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 				_ = json.Unmarshal(in.Arguments, &a)
 				if !strings.Contains(input.Body.Text(), a.Quote) {
 					return loop.Result{ID: call.ID, Code: loop.Denied}
+				}
+			}
+			if name == "worker_start" {
+				// Admission has the caller's lifecycle, not the worker execution
+				// deadline. No start effect or short-lived grant exists while the
+				// manager lane/model is busy.
+				_, assignment, err := r.workerStartAssignment(ctx, turnID, in)
+				if err == nil {
+					err = r.runCodingManager(ctx, assignment, "assignment", nil)
+				}
+				if err == nil {
+					err = ctx.Err()
+				}
+				if err != nil {
+					result := loop.Result{ID: call.ID, Code: loop.Failed, Output: workerError(err)}
+					if errors.Is(err, authority.ErrPresetLimit) {
+						result.Code = loop.Denied
+						if effect, readErr := r.personaAuthority.Effect(ctx, "preset:coding:"+assignment.ID); readErr == nil {
+							result.Output = effect.Result.Body
+						}
+					} else if ctx.Err() != nil {
+						result.Code = loop.Aborted
+					}
+					return result
 				}
 			}
 			auth := grant.Request{GrantID: turn.EffectKey(turnID, name, in.Target, call.ID) + ":worker", MainID: r.main, Epoch: r.epoch, TaskID: turnID, Host: r.main, OSUser: "core", Person: r.person, Agent: r.agent, Profile: "worker-session", Revision: strconv.FormatUint(r.epoch, 10)}
@@ -195,25 +227,37 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, input ledger.Eve
 	return nil
 }
 
+func (r *conversationRuntime) workerStartAssignment(ctx context.Context, turnID string, in tools.Input) (workerArgs, codingAssignment, error) {
+	var a workerArgs
+	_ = json.Unmarshal(in.Arguments, &a)
+	method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
+	if err != nil {
+		return a, codingAssignment{}, err
+	}
+	a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
+	if err != nil {
+		return a, codingAssignment{}, err
+	}
+	origin := dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}
+	assignment, err := r.assignCoding(ctx, origin, codingID(turnID, "worker_start", string(in.Arguments)), "worker_start", a.Workdir, in.Arguments)
+	return a, assignment, err
+}
+
 func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input) (tools.Result, error) {
+	if name == "worker_start" || name == "worker_input" || name == "worker_interrupt" {
+		defer r.notifyWorkerRunning()
+	}
 	var a workerArgs
 	_ = json.Unmarshal(in.Arguments, &a)
 	if name == "worker_start" {
-		method, err := r.skills.ResolveMethod(ctx, a.Kind, a.Skill)
+		var assignment codingAssignment
+		var err error
+		a, assignment, err = r.workerStartAssignment(ctx, turnID, in)
 		if err != nil {
-			return tools.Result{State: tools.Failed}, err
+			return tools.Result{State: tools.Failed, Body: workerError(err)}, err
 		}
-		a.TaskPacket, err = skills.MethodPacket(a.TaskPacket, method)
-		if err != nil {
-			return tools.Result{State: tools.Failed}, err
-		}
-		origin := dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}
-		assignment, err := r.assignCoding(ctx, origin, codingID(turnID, name, string(in.Arguments)), name, a.Workdir, in.Arguments)
-		if err != nil {
-			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
-		}
-		if err = r.runCodingManager(ctx, assignment, "assignment", nil); err != nil {
-			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
+		if !assignment.Delegated {
+			return tools.Result{State: tools.Failed, Body: workerError(errors.New("coding_definition_not_delegated"))}, nil
 		}
 		owner := newConversationView(r.router.root, assignment.Owner, assignment.Conversation)
 		owner.codingDelivery = r
@@ -223,10 +267,13 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	b := r.workers
 	if name == "worker_start" {
 		b.mu.Lock()
-		defer b.mu.Unlock()
 		if b.closed {
+			b.mu.Unlock()
 			return tools.Result{State: tools.Failed}, errors.New("worker runtime closed")
 		}
+		b.starting.Add(1)
+		b.mu.Unlock()
+		defer b.starting.Done()
 		process, err := r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Reported, Reason: "Codex session"})
 		if err != nil {
 			return tools.Result{State: tools.Failed}, err
@@ -236,7 +283,7 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 			process.Release()
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
-		entry := &workerSession{adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
+		entry := &workerSession{adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, started: time.Now(), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
 		activity, err := r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Hard, Reason: "Codex turn"})
 		if err != nil {
 			adapter.Close()
@@ -252,13 +299,23 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		}
 		entry.thread = thread
 		entry.active[thread.TurnID] = activity
-		if b.sessions[thread.ID] != nil {
+		// Registry access is brief and never encloses adapter I/O or canon
+		// writes: running-list actions also read it from the canon writer.
+		b.mu.Lock()
+		if b.closed {
+			err = errors.New("worker runtime closed")
+		} else if b.sessions[thread.ID] != nil {
+			err = errors.New("duplicate worker session identity")
+		} else {
+			b.sessions[thread.ID] = entry
+		}
+		b.mu.Unlock()
+		if err != nil {
 			activity.Release()
 			adapter.Close()
 			process.Release()
-			return tools.Result{State: tools.Unknown}, errors.New("duplicate worker session identity")
+			return tools.Result{State: tools.Unknown}, err
 		}
-		b.sessions[thread.ID] = entry
 		// This notice commits the installed version independently of a model summary.
 		notice := fmt.Sprintf("Codex %s session started.", entry.compatibility.Version)
 		if !entry.compatibility.Verified {
@@ -352,8 +409,11 @@ func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
 }
 func (e *workerSession) observe() {
-	defer e.origin.notifyOwnerViews()
-	defer close(e.done)
+	defer func() {
+		close(e.done)
+		e.origin.notifyWorkerRunning()
+		e.origin.notifyOwnerViews()
+	}()
 	for event := range e.adapter.Events() {
 		switch event.Kind {
 		case worker.ProgressEvent:
@@ -385,6 +445,9 @@ func (e *workerSession) observe() {
 			e.requestQuestion(event)
 		case worker.ToolCallEvent:
 			e.workTool(event)
+		}
+		if event.Kind != worker.UsageEvent && (event.Kind != worker.ProgressEvent || event.Progress.Phase == "started" || event.Progress.Phase == "server_request_resolved") {
+			e.origin.notifyWorkerRunning()
 		}
 		e.origin.notifyOwnerViews()
 	}
@@ -427,6 +490,9 @@ func (b *workerRuntime) close() {
 		entries = append(entries, e)
 	}
 	b.mu.Unlock()
+	// Starts registered before shutdown finish or clean up their unregistered
+	// processes before Close returns. Waiting never holds the registry mutex.
+	b.starting.Wait()
 	for _, e := range entries {
 		e.close()
 		<-e.done
