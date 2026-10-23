@@ -84,3 +84,17 @@ frozen vocabulary. `TestM1ShippedPersonaInstallAndTools` loads each embedded pai
 through installed Core, replaces stale layers, observes the prepared request
 and exercises a real skill tool and its conversation result. These tests prove
 publication and preparation; the content comparison above establishes fidelity.
+
+`TestM4StarterPersonaRevision` guards the M4 revision itself for every preset. A
+requirement is the contract's concept set, each group listing alternative
+wordings, and it is met when one paragraph carries one member of every group.
+The test requires each preset's core changes, Arin's honorific correction
+example, and each persona's name, character and voice markers. It also rejects a
+topic-dependent register switch and a fixed nothing-to-decide line in either
+layer. `TestM4RequirementMatcher` proves that rewritten text still passes, that a
+dropped or separated change fails, and that both negative checks distinguish a
+switch or closing from stable voice and open decisions. The test guards content,
+not model behaviour; the replay evaluation stays #590. A mutation run against
+the shipped layers (dropped claim rule, added closing line, added topic switch,
+removed voice marker) failed each check and passed again after restoring the
+files.
