@@ -5,11 +5,12 @@
 ## Running it
 
 ```sh
-node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note] [--jobs <count>]
+node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note] [--jobs <count>] [--event <event>] [--e2e]
 ```
 
 - `--range <base>..<head>` classifies the diff between two commits. The head must resolve to the checked-out commit; otherwise selection fails and no checks run. Check out the candidate first. Without the option, the base is the commit the checked-out change was developed on: its merge base with `dev`, or the previous `dev` head when the checkout is `dev` itself.
 - `--full` runs every current check, regardless of changed paths.
+- `--event pull_request` excludes e2e from a range plan unless `--e2e` is also given. CI supplies the event and derives the opt-in from the PR label `e2e`. Local selection is unchanged and `--full` always includes all acceptance scenarios.
 - `--no-note` skips writing the evidence note.
 - `--jobs <count>` bounds local child processes; the default is at most four and never more than the available CPUs. At most one local e2e shard runs at a time, retaining the four-scenario Core/PTY bound while other checks overlap it.
 
@@ -17,13 +18,39 @@ The script clears `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and every other `
 
 ## Pull request CI
 
-The [CI workflow](../../.github/workflows/ci.yml) checks pull requests targeting `dev` (and the owner-requested `codex/ln-369-*` stack), pushes to `dev`, a nightly schedule, and manual runs. Every job checks out the event's `github.sha` with full history and without persisting Git credentials. A pull request selects the diff from its base SHA to its merge commit from `refs/pull/<number>/merge`. Pushes, nightly runs and manual runs select the full suite.
+The [CI workflow](../../.github/workflows/ci.yml) checks pull requests targeting `dev` (and the owner-requested `codex/ln-369-*` stack), pushes to `dev`, a nightly schedule, and manual runs. Every job checks out the event's `github.sha` with full history and without persisting Git credentials. A pull request selects the diff from its base SHA to its merge commit from `refs/pull/<number>/merge`. PRs exclude e2e by default; the `e2e` label selects reached scenarios, and adding or removing it starts a fresh selection. Pushes, nightly runs and manual runs select the full suite. Post-merge runs have distinct concurrency groups so a newer push does not cancel running or pending verification.
 
 Selection runs once and publishes a plan bound to the candidate head, tree and a digest of the entire plan. Independent jobs read that same artifact: docs, automation, dependencies, build/vet/exhaustive, unit packages balanced by measured time, and e2e scenarios balanced by source file. The growing m1 corpus is split further; m2 and m3 tests that share the m1 harness are grouped by their milestone test names. The default plan has up to four unit shards and six m1, two m2 and one m3 acceptance shards, omitting empty shards. The final job keeps the single required check name `foundation` and aggregates results without rerunning any command. Shard artifact names include the workflow run attempt and download into separate directories. The gate reads the highest numbered attempt available for each shard, retaining earlier results for jobs that were not rerun. An earlier failure cannot overwrite a newer success, and a newer failure cannot fall back to an earlier success. A missing, failed, cancelled, skipped, stale or duplicate selected result fails the gate, as does a failed upstream job.
 
-A documentation-only plan invokes no Go work. Node comes from `.node-version` when present, otherwise Node 24. Selection uses the exact workspace Go toolchain when Go inventory is needed; Go jobs also install the `toolchain` named in `go.mod`. Missing or inconsistent toolchain declarations fail verification. Actions are pinned to commit SHAs. Only automation installs checksum-verified actionlint 1.7.12. CI has read-only repository permissions, writes no evidence note, and never publishes or integrates a change.
+A documentation-only plan invokes no Go work. Node comes from `.node-version` when present, otherwise Node 24. Selection uses the exact workspace Go toolchain when Go inventory is needed; Go jobs also install the `toolchain` named in `go.mod`. Missing or inconsistent toolchain declarations fail verification. Actions are pinned to commit SHAs. Only automation installs checksum-verified actionlint 1.7.12. Verification jobs have read-only repository permissions, write no evidence note, and never publish or integrate a change. Only the separate post-merge QA job has issue-write permission; PRs never execute its reporter.
 
 Jobs that exercise Linux sandboxing install Ubuntu's Bubblewrap package and the [checked AppArmor profile](../../scripts/verify/bwrap.apparmor) permitting `/usr/bin/bwrap` to create user namespaces. The Linux automation tests compile that profile with `apparmor_parser --skip-kernel-load --skip-cache`; they do not load it into the developer's kernel. A direct namespace launch probes CI setup before running tests. These settings apply to disposable CI runners; missing sandbox support is a verification failure.
+
+## Post-merge QA issues
+
+After a full run on `dev` (push, nightly or manual), the independent QA job
+reads the exact plan and newest shard result artifacts, including failures.
+`scripts/verify/post-merge-qa.mjs` opens or updates a `qa` issue for each failing
+Go top-level test, with nested failure lines, the tested head, first failing
+commit range and workflow run. Configure the repository's `QA_MILESTONE`
+variable to the current milestone number; a missing setting fails reporting
+instead of assigning findings to a guessed milestone.
+
+Issue identity includes branch, package and test name in a machine-readable
+body marker. Repeated failures update the same issue, including reopening a
+resolved finding. An explicit pass on a later descendant head closes it.
+Same-head reruns, skipped or missing tests, invalid artifacts and older heads
+do not prove recovery. Each test is reconciled independently of unrelated test
+failures. The first failing range survives updates. Reporting is serialized
+and its token is available only to the reporter step, never to verification.
+PR runs perform only the QA job's scope check and cannot write issues.
+
+For validation before landing, dispatch CI on an explicitly named
+`qa/e2e-*` branch. It uses the same full plan and reporter, with issue identity
+isolated from `dev`. A temporary push trigger on that validation branch can
+exercise the push path; it is not part of the production workflow. Retain the
+failure and recovery run links as acceptance evidence. Post-merge findings
+never enter another PR's foundation selection or gate.
 
 ## Execution
 
@@ -31,7 +58,7 @@ Jobs that exercise Linux sandboxing install Ubuntu's Bubblewrap package and the 
 selection ----+---- docs / automation / dependencies ----+---- foundation
               +---- build / vet / exhaustive ------------+
               +---- unit package shards -----------------+
-              +---- e2e scenario-file shards ------------+
+              +---- e2e (post-merge / PR opt-in) ---------+
 ```
 
 `node scripts/foundation.mjs` remains the single local entry point. It selects the same plan and starts bounded child processes, giving each Go process a share of the available CPUs through `GOMAXPROCS`. Locally, one e2e process at a time uses `-parallel=4`; in CI, each e2e shard has its own runner. All local checks share a 1200-second execution deadline. Each Go shard also keeps the existing component command budget, and `go test -timeout=6m` bounds package execution and emits stuck-test diagnostics. Individual operation and scenario deadlines are unchanged. A failed shard does not cancel independent shards.
