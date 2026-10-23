@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/lease"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 type disconnectedResultProbe struct {
@@ -251,5 +252,51 @@ func TestWorkerOutputSurvivesDelayedCompletion(t *testing.T) {
 				t.Fatalf("result admission: completions=%d previous=%d queued=%d err=%v", completions, priorResults, queued, err)
 			}
 		})
+	}
+}
+
+// A crash between committing the turn's completion and storing its recovery
+// state must not restart the session as an unknown live placeholder. The
+// committed completion is the exact turn's terminal observation.
+func TestWorkerRecoveryUsesCommittedCompletionAfterCrash(t *testing.T) {
+	r := controlRuntime(t)
+	if r.workers.recoveryStop != nil {
+		r.workers.recoveryStop()
+		<-r.workers.recoveryDone
+		r.workers.recoveryStop = nil
+	}
+	ctx, now := t.Context(), time.Now()
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "restart-input", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Create result.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "restart-session", TurnID: "turn-1", TaskID: "task", AttemptID: "attempt", ProcessGeneration: 1, BindingEpoch: 1}
+	entry := &workerSession{origin: r, input: input, thread: thread, workdir: t.TempDir(), packet: "Create result.txt"}
+	if err := entry.finish(ctx, worker.Event{Kind: worker.FinishEvent, Thread: thread, Finish: &worker.Finish{Status: worker.Done}}); err != nil {
+		t.Fatal(err)
+	}
+	rec := recovery.Record{ID: thread.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: input.ID, Workdir: entry.workdir, Packet: entry.packet, Thread: thread, State: "unknown", Epoch: 1}
+	if err := (recovery.Recovery{DB: r.db}).Put(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	r.reconcileWorkers(ctx, map[string]bool{})
+	in, err := workerSchema("worker_snapshot", json.RawMessage(`{"session":"restart-session"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.workerOperation(ctx, "worker_snapshot", "recall", input, in)
+	var recorded workerCompletion
+	if err != nil || got.State != tools.Applied || json.Unmarshal(got.Body, &recorded) != nil || recorded.Status != worker.Done || recorded.Turn != thread.TurnID || recorded.Live {
+		t.Fatalf("restart lost the committed outcome: %s %v", got.Body, err)
+	}
+	records, err := (recovery.Recovery{DB: r.db}).Records(ctx)
+	if err != nil || len(records) != 1 || records[0].State != "finished" {
+		t.Fatalf("terminal turn stayed pending: %+v %v", records, err)
+	}
+	r.workers.mu.Lock()
+	_, retained := r.workers.sessions[thread.ID]
+	r.workers.mu.Unlock()
+	if retained {
+		t.Fatal("finished worker retained as an unknown live placeholder")
 	}
 }

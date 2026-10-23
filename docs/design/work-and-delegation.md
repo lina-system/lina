@@ -1057,6 +1057,9 @@ worker notices. `worker_snapshot` can return the recorded terminal outcome when
 no live session remains, explicitly marked non-live; that record cannot authorize
 worker control. Unstarted completion follow-ups resume from canon after restart;
 a claimed turn is never replayed and a committed reply is not duplicated.
+A completion committed before the restart settles that exact turn's recovery
+record, so a restart never presents the finished session as an unknown live
+placeholder or recovers it again.
 Channel replies follow the completion back to its original input, retaining that
 input's address and the existing outbound delivery identity across restart.
 Recovery resolves the retained channel inbox address and its current most-specific
