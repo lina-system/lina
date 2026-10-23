@@ -261,6 +261,12 @@ Every client connection acts for one person ([product-families.md](product-famil
 
 One connection reaches every agent of the main. A conversation kind, and a question asked in a conversation, names the conversation by its conversation id, and the conversation's participating agents follow from it. A request that starts a conversation names its participating agent by agent id. Every history item and every conversation event carries the agent id of the agent that spoke or acted, next to the person id where a person acted ([product-families.md](product-families.md)). A system-originated event, such as a background notice, carries the agent id of the conversation's agent and is marked as system-originated.
 
+A question's `conversation_id` remains its display scope when delivered or
+replayed on the person's global `waiting` topic, including after resolution.
+Clients retain that id when projecting the card into a conversation transcript.
+Global waiting access to pending questions does not make them history in other
+conversations.
+
 | Capability | What the client can do |
 | --- | --- |
 | Conversation | Start a conversation with an agent, send a message, interrupt, read history, subscribe to events, receive connect and disconnect notices |
