@@ -16,6 +16,7 @@ import (
 )
 
 func TestStoppedPartialAndOutcomeAreAtomic(t *testing.T) {
+	t.Parallel()
 	for _, reject := range []bool{false, true} {
 		t.Run(map[bool]string{false: "commit", true: "rollback"}[reject], func(t *testing.T) {
 			db, cfg := database(t)
@@ -112,6 +113,7 @@ func TestStoppedPartialAndOutcomeAreAtomic(t *testing.T) {
 }
 
 func TestVisibleCheckpointsSurviveFailedTerminalWrite(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{"failure-write-fault", "completion-write-fault", "completed"} {
 		t.Run(outcome, func(t *testing.T) {
 			db, cfg := database(t)

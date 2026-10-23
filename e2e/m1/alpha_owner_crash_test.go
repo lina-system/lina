@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -126,47 +127,106 @@ func alphaOwnerRecoveredReply(t *testing.T, h *harness, conversation string, att
 		t.Fatal(err)
 	}
 	defer db.Close(context.Background())
-	reply, err := alphaRecoveredReply(h.ctx, db, conversation, attempt)
+	reply, err := alphaRecoveredReply(h.ctx, db, alphaLedgerBodies{h.root}, conversation, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Every run records the retained bodies it attributed, so a later failure is
+	// measured against the same evidence instead of a disposable database.
+	alphaRecoveryReplyDiagnostic(t, h, db, conversation, attempt)
 	if reply.ID == "" || strings.TrimSpace(reply.Body) == "" {
-		alphaRecoveryReplyDiagnostic(t, h, db, conversation, attempt)
 		t.Fatal("recovered result has no completed reply in the originating conversation")
 	}
 	return reply
 }
 
+// A failed attribution retains every stored candidate, its delivery state and
+// its body size, including bodies the ledger keeps in materials instead of the
+// conversation column.
 func alphaRecoveryReplyDiagnostic(t *testing.T, h *harness, db *canon.Store, conversation string, attempt recovery.Record) {
 	t.Helper()
 	t.Logf("expected recovery delivery: conversation=%s input=%s session=%s turn=%s", conversation, attempt.Input, attempt.Thread.ID, attempt.Thread.TurnID)
+	type candidate struct {
+		completion, conversation, input, agent, state, reply, replyConversation, replyAgent, scaffold string
+		completionMaterial, replyMaterial                                                             bool
+	}
+	var candidates []candidate
 	err := db.Read(h.ctx, func(tx *canon.Tx) error {
 		rows, err := tx.QueryContext(h.ctx, `SELECT w.id,w.conversation_id,coalesce(w.parent_id,''),w.agent_id,
- json_extract(w.body,'$.turn'),json_extract(w.body,'$.status'),coalesce(t.state,''),
- coalesce(e.id,''),coalesce(e.conversation_id,''),coalesce(e.agent_id,''),coalesce(e.scaffold_kind,''),length(coalesce(e.body,''))
+ coalesce(t.state,''),
+ coalesce(e.id,''),coalesce(e.conversation_id,''),coalesce(e.agent_id,''),coalesce(e.scaffold_kind,''),
+ coalesce(w.material_id,'')<>'',coalesce(e.material_id,'')<>''
  FROM conv_event w
  LEFT JOIN inbox i ON i.native_id=w.id AND i.source='worker-finish' AND i.conversation=w.conversation_id
  LEFT JOIN turn_runs t ON t.inbox_id=i.id AND t.conversation=w.conversation_id
  LEFT JOIN conv_event e ON e.parent_id=w.id
- WHERE w.scaffold_kind='worker_completion' AND json_extract(w.body,'$.session')=?
- ORDER BY w.rowid,e.rowid`, attempt.Thread.ID)
+ WHERE w.scaffold_kind='worker_completion'
+ ORDER BY w.rowid,e.rowid`)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var completion, conv, input, agent, turn, status, state, reply, replyConv, replyAgent, scaffold string
-			var size int
-			if err := rows.Scan(&completion, &conv, &input, &agent, &turn, &status, &state, &reply, &replyConv, &replyAgent, &scaffold, &size); err != nil {
+			var c candidate
+			if err := rows.Scan(&c.completion, &c.conversation, &c.input, &c.agent, &c.state, &c.reply, &c.replyConversation, &c.replyAgent, &c.scaffold, &c.completionMaterial, &c.replyMaterial); err != nil {
 				return err
 			}
-			t.Logf("recovery delivery candidate: completion=%s conversation=%s input=%s agent=%s turn=%s status=%s delivery=%s reply=%s reply_conversation=%s reply_agent=%s scaffold=%s reply_bytes=%d", completion, conv, input, agent, turn, status, state, reply, replyConv, replyAgent, scaffold, size)
+			candidates = append(candidates, c)
 		}
 		return rows.Err()
 	})
 	if err != nil {
 		t.Logf("recovery delivery diagnostic: %v", err)
+		return
 	}
+	bodies := alphaLedgerBodies{h.root}
+	retained := []map[string]any{}
+	for _, c := range candidates {
+		completion, completionErr := alphaEventBody(h.ctx, db, bodies, c.completion)
+		var fields struct{ Session, Turn, Status string }
+		if completionErr == nil {
+			_ = json.Unmarshal([]byte(completion), &fields)
+		}
+		replyBytes := -1
+		var replyErr error
+		if c.reply != "" {
+			var body string
+			body, replyErr = alphaEventBody(h.ctx, db, bodies, c.reply)
+			replyBytes = len(body)
+		}
+		t.Logf("recovery delivery candidate: completion=%s conversation=%s input=%s agent=%s session=%s turn=%s status=%s delivery=%s completion_material=%t completion_bytes=%d completion_error=%v reply=%s reply_conversation=%s reply_agent=%s scaffold=%s reply_material=%t reply_bytes=%d reply_error=%v", c.completion, c.conversation, c.input, c.agent, fields.Session, fields.Turn, fields.Status, c.state, c.completionMaterial, len(completion), completionErr, c.reply, c.replyConversation, c.replyAgent, c.scaffold, c.replyMaterial, replyBytes, replyErr)
+		retained = append(retained, map[string]any{
+			"completion": c.completion, "conversation": c.conversation, "input": c.input, "agent": c.agent,
+			"session": fields.Session, "turn": fields.Turn, "status": fields.Status, "delivery": c.state,
+			"completion_material": c.completionMaterial, "completion_bytes": len(completion), "completion_error": alphaErrorText(completionErr),
+			"reply": c.reply, "reply_conversation": c.replyConversation, "reply_agent": c.replyAgent, "scaffold": c.scaffold,
+			"reply_material": c.replyMaterial, "reply_bytes": replyBytes, "reply_error": alphaErrorText(replyErr),
+		})
+	}
+	// A real-model failure must leave the metadata that attributes it, so the
+	// next investigation does not depend on a disposable database.
+	raw, err := json.MarshalIndent(map[string]any{"inline_limit": ledger.InlineBytes, "conversation": conversation, "input": attempt.Input, "session": attempt.Thread.ID, "turn": attempt.Thread.TurnID, "candidates": retained}, "", "  ")
+	if err != nil {
+		t.Logf("recovery delivery retention encode: %v", err)
+		return
+	}
+	if directory := os.Getenv("LINA_ALPHA_CAPTURES"); directory != "" {
+		directory = filepath.Join(directory, t.Name())
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			t.Logf("recovery delivery retention: %v", err)
+			return
+		}
+		if err := os.WriteFile(filepath.Join(directory, "recovery-delivery.json"), append(raw, '\n'), 0600); err != nil {
+			t.Logf("recovery delivery retention: %v", err)
+		}
+	}
+}
+
+func alphaErrorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func alphaOwnerRecoveryRecords(t *testing.T, h *harness) []recovery.Record {

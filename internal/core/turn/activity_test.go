@@ -70,6 +70,7 @@ func assertActivityCommitted(t *testing.T, db *canon.Store, ctx context.Context,
 }
 
 func TestToolActivityConcurrentDurableBoundaries(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -141,6 +142,7 @@ func TestToolActivityConcurrentDurableBoundaries(t *testing.T) {
 }
 
 func TestToolActivityFailedStartPreventsExecutionAndClosesActivity(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	startErr := errors.New("activity start failed")
 	var events []turn.ToolActivity
@@ -177,6 +179,7 @@ func TestToolActivityFailedStartPreventsExecutionAndClosesActivity(t *testing.T)
 }
 
 func TestToolActivityFinishFailureAndCancellationPreserveReceipts(t *testing.T) {
+	t.Parallel()
 	for _, state := range []tools.State{tools.Applied, tools.Unknown} {
 		for _, cancelled := range []bool{false, true} {
 			t.Run(string(state)+"/cancel="+map[bool]string{false: "false", true: "true"}[cancelled], func(t *testing.T) {
@@ -240,6 +243,7 @@ func TestToolActivityFinishFailureAndCancellationPreserveReceipts(t *testing.T) 
 }
 
 func TestToolActivityDoesNotFinishBeforeResultCommit(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	var events []turn.ToolActivity
 	tool := loop.Tool{Validate: func(provider.ToolCall) (string, error) { return "", nil }, Execute: func(context.Context, provider.ToolCall) loop.Result { return loop.Result{Code: loop.OK} }}

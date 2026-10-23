@@ -18,6 +18,7 @@ import (
 )
 
 func TestFailedTurnNoticeCommitsWithState(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name                  string
 		refuseNotice, partial bool
@@ -123,6 +124,7 @@ func TestFailedTurnNoticeCommitsWithState(t *testing.T) {
 // A provider authentication refusal mid-turn is a state of the account: the
 // durable notice asks the person to sign in instead of reporting a lost reply.
 func TestSignInRefusalNotice(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	event := inputEvent(t, db)
 	store := turn.New(db)

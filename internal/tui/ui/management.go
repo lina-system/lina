@@ -204,6 +204,12 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 	}
 	delete(s.pending, *e.ReplyTo)
 	m := s.model
+	if action, ok := request.(protocol.SurfaceAction); ok {
+		p := m.conversation.pager.surface
+		if !m.conversation.pager.open || p == nil || p.id != action.ResultID || string(p.revision) != string(action.Revision) || p.inputID != action.InputID {
+			return true, nil
+		}
+	}
 	if board, tracked := s.boardPending[*e.ReplyTo]; tracked {
 		delete(s.boardPending, *e.ReplyTo)
 		if !m.conversation.pager.open || m.conversation.pager.board != board || board.requestID != *e.ReplyTo {

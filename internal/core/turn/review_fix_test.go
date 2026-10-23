@@ -56,6 +56,7 @@ func reviewResponse(calls ...provider.ToolCall) provider.Stream {
 }
 
 func TestCancellationPreservesCommittedDispatchResult(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		state tools.State
 		code  loop.Code
@@ -104,6 +105,7 @@ func TestCancellationPreservesCommittedDispatchResult(t *testing.T) {
 }
 
 func TestCustomToolNormalizesRawInputBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	const patch = "*** Begin Patch\n*** Update File: document\n-old\n+new\n*** End Patch"
 	sawRaw := false
 	spec := reviewSpec("apply_patch", func(raw json.RawMessage) (tools.Input, error) {
@@ -158,6 +160,7 @@ func TestCustomToolNormalizesRawInputBeforeDispatch(t *testing.T) {
 }
 
 func TestCustomNormalizationKeepsFunctionAndOutputJSONValidation(t *testing.T) {
+	t.Parallel()
 	for _, custom := range []bool{false, true} {
 		t.Run(map[bool]string{false: "invalid_function_input", true: "invalid_normalized_custom_input"}[custom], func(t *testing.T) {
 			schemaCalls, runs := 0, 0

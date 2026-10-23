@@ -294,10 +294,14 @@ if(path.basename(process.argv[1])==='gh') {
 if(process.argv[2]==='--version'){console.log('fixture-unverified-9');process.exit(0);}
 if(process.env.LINA_RESPONSES_API_KEY)throw Error('Core credential leaked');
 fs.writeFileSync(file('credential-filtered'),'1');
-const starts=fs.existsSync(file('starts.json'))?JSON.parse(fs.readFileSync(file('starts.json'))):[];
-starts.push({PID:process.pid,Cwd:process.cwd()});fs.writeFileSync(file('starts.json'),JSON.stringify(starts));
-if(starts.length>2)throw Error('third automatic start');
-const attempt=starts.length;
+let attempt=0;
+const startSession=()=>{
+ if(attempt)throw Error('duplicate session on one process');
+ const starts=fs.existsSync(file('starts.json'))?JSON.parse(fs.readFileSync(file('starts.json'))):[];
+ starts.push({PID:process.pid,Cwd:process.cwd()});fs.writeFileSync(file('starts.json'),JSON.stringify(starts));
+ if(starts.length>2)throw Error('third automatic start');
+ attempt=starts.length;
+};
 let session='acp-recovery', pending, packet;
 const send=x=>console.log(JSON.stringify({jsonrpc:'2.0',...x}));
 const reply=(id,result)=>send({id,result});
@@ -309,6 +313,8 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  case 'initialize':
   reply(m.id,{protocolVersion:1,agentInfo:{name:'fixture',version:'fixture-unverified-9'},agentCapabilities:{loadSession:mode!=='fresh',...(mode==='resume'?{sessionCapabilities:{resume:{}}}:{})}});break;
  case 'session/new':case 'session/load':case 'session/resume':
+  // Installation only initializes ACP; it does not consume a work attempt.
+  startSession();
   if(m.params.cwd!==process.cwd()||m.params.mcpServers.length!==1||m.params.mcpServers[0].name!=='lina')throw Error('wrong worktree/tools');
   if(attempt===1){
    if(m.method!=='session/new')throw Error('initial session not new');

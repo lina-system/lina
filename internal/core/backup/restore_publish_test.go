@@ -9,6 +9,7 @@ import (
 )
 
 func TestRestorePublicationResumesAtEveryBoundary(t *testing.T) {
+	t.Parallel()
 	// Inject after each durable rename, including after canon publication.
 	for stop := 0; stop < 15; stop++ {
 		rootPath := t.TempDir()
@@ -74,6 +75,7 @@ func TestRestorePublicationResumesAtEveryBoundary(t *testing.T) {
 }
 
 func TestRestorePublicationRefusesSymlink(t *testing.T) {
+	t.Parallel()
 	rootPath := t.TempDir()
 	outside := t.TempDir()
 	if err := os.Symlink(outside, filepath.Join(rootPath, "staging")); err != nil {

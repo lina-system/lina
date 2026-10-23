@@ -333,7 +333,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	var canon Canon
 	var conversation *conversationRuntime
 	if ownsConversation && len(recovery.Halt) == 0 {
-		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport)
+		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport, tailnetIP(cfg.Tailnet))
 		if openErr != nil {
 			return openErr
 		}
