@@ -4,5 +4,5 @@ package e2e_test
 import "testing"
 
 func TestM1FoundationQAProbe(t *testing.T) {
-    t.Fatal("LN-824 intentional post-merge QA lifecycle validation")
+    t.Log("LN-824 post-merge QA recovery validation")
 }
