@@ -23,6 +23,9 @@ func (s WorkListSource) Read(ctx context.Context, tx *canon.Tx, id string) (List
 		return ListItem{}, err
 	}
 	state := c.State
+	if c.Completion != nil && c.Completion.State == "claimed" {
+		state = "ready_for_review"
+	}
 	if state == "input_needed" {
 		state = "needs_input"
 	}

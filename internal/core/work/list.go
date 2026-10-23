@@ -87,7 +87,11 @@ func (s *Service) SummaryPage(ctx context.Context, id string, offset int64) (str
 		return "", 0, ErrState
 	}
 	var b strings.Builder
-	b.WriteString(c.State + ": " + c.Task.Title + "\n")
+	state := c.State
+	if c.Completion != nil {
+		state = c.Completion.Label
+	}
+	b.WriteString(state + ": " + c.Task.Title + "\n")
 	for _, stage := range c.Stages {
 		b.WriteString(stage.Name + " (" + stage.Source + "): " + stage.Summary + "\n")
 	}

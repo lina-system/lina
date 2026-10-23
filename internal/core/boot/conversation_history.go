@@ -15,13 +15,14 @@ import (
 // and for durable outcomes committed before their first publication.
 const conversationHistorySources = `
  SELECT e.conversation_id,CASE WHEN e.scaffold_kind='result' AND e.speaker_kind='agent' AND json_valid(e.body)
-        THEN printf('result-card:%s:%d',json_extract(e.body,'$.result_id'),json_extract(e.body,'$.revision')) ELSE e.id END AS item_key,
+        THEN 'result-card:'||json_extract(e.body,'$.result_id') ELSE e.id END AS item_key,
         e.id AS event_id,'' AS partial,'' AS turn_id,
         e.rowid AS fallback,1 AS phase,0 AS partial_position
  FROM conv_event e
  WHERE (e.speaker_kind IN ('person','agent','forwarded') OR e.scaffold_kind IN ('interruption','failure','skill_change','persona_change','worker_session','run_handoff','background_notice','worker_result','coding_handoff','timer'))
    AND (coalesce(e.scaffold_kind,'')<>'result' OR (e.speaker_kind='agent' AND
-        CASE WHEN json_valid(e.body) THEN json_type(e.body,'$.body')='object' ELSE 0 END))
+        CASE WHEN json_valid(e.body) THEN json_type(e.body,'$.body')='object' ELSE 0 END
+        AND EXISTS(SELECT 1 FROM result_heads h WHERE h.event_id=e.id)))
  UNION ALL
  SELECT e.conversation_id,printf('%s:%d:%d',r.id,p.round+1,p.ordinal),'',p.body,r.id,
         e.rowid,0,p.rowid

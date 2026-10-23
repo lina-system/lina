@@ -104,5 +104,5 @@ func (r *conversationRuntime) publishResult(ctx context.Context, value result.Re
 	if value.Completion != nil {
 		p.Completion = &protocol.CompletionStatus{State: protocol.CompletionState(value.Completion.State), Label: value.Completion.Label}
 	}
-	return r.publish(ctx, protocol.KindResult, "result-card:"+value.ID+":"+strconv.Itoa(value.Revision), p)
+	return r.publish(ctx, protocol.KindResult, "result-card:"+value.ID, p)
 }
