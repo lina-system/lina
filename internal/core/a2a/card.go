@@ -180,6 +180,8 @@ func (s *Service) Configure(ctx context.Context, c Connection, credential []byte
 		}
 		switch p.Class {
 		case tools.Research, tools.Calculation, tools.PrivateDraft, tools.ExternalEffect, tools.InvestmentOrder, tools.BindingExecution, tools.Unclassified:
+		case tools.LocalWrite, tools.CommandEffect, tools.WorkerEffect, tools.RelayEffect:
+			return Connection{}, ErrInvalid
 		default:
 			return Connection{}, ErrInvalid
 		}
