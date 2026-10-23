@@ -39,11 +39,6 @@ func Index(ctx context.Context, tx *canon.Tx, kind, id, text string) error {
 		return e
 	}
 	if err == nil {
-		masked, e := secrets.Mask(text)
-		if e != nil {
-			return e
-		}
-		text = masked.DerivedText()
 		result, e := tx.ExecContext(ctx, `INSERT INTO recall_doc(kind,source_id,revision,person,holder,conversation,occurred_at,speaker_kind,origin,replay) VALUES(?,?,?,?,?,?,?,?,?,?)`, s.kind, s.id, s.revision, s.person, s.holder, s.conversation, s.occurred, s.speaker, s.origin, s.replay)
 		if e != nil {
 			return e
@@ -61,6 +56,16 @@ func Index(ctx context.Context, tx *canon.Tx, kind, id, text string) error {
 	}
 	_, err = tx.ExecContext(ctx, "DELETE FROM recall_pending WHERE kind=? AND source_id=?", kind, id)
 	return err
+}
+
+// IndexText derives text for writers holding an unprojected source body.
+// Event writers instead pass their existing derived projection to Index.
+func IndexText(ctx context.Context, tx *canon.Tx, kind, id, text string) error {
+	masked, err := secrets.Mask(text)
+	if err != nil {
+		return err
+	}
+	return Index(ctx, tx, kind, id, masked.DerivedText())
 }
 
 // PairTokens preserves occurrence counts for BM25. Composed Hangul runs become

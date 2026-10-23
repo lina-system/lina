@@ -346,7 +346,7 @@ func revision(ctx context.Context, tx *canon.Tx, item Item, raw []byte) error {
 	if err := canon.WriteEvidenceCitations(ctx, tx, "memory", item.ID, item.Revision, evidence); err != nil {
 		return err
 	}
-	return recall.Index(ctx, tx, "memory", item.ID, item.Content)
+	return recall.IndexText(ctx, tx, "memory", item.ID, item.Content)
 }
 func readItem(ctx context.Context, tx *canon.Tx, id string) (Item, error) {
 	var raw []byte

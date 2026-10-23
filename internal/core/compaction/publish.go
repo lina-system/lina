@@ -50,7 +50,7 @@ func (s *Store) publish(ctx context.Context, p Proposal, audit func(*canon.Tx) e
 		if err := canon.WriteSummaryCitations(ctx, tx, n.ID, n.Revision); err != nil {
 			return err
 		}
-		if err := recall.Index(ctx, tx, "summary", n.ID, n.Output.Text); err != nil {
+		if err := recall.IndexText(ctx, tx, "summary", n.ID, n.Output.Text); err != nil {
 			return err
 		}
 		if audit != nil {

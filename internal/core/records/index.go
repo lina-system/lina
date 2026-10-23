@@ -157,7 +157,7 @@ func putProjection(ctx context.Context, tx *canon.Tx, r indexRow) error {
 			}
 		}
 	}
-	return recall.Index(ctx, tx, "record", r.id, d.title+"\n"+d.note)
+	return recall.IndexText(ctx, tx, "record", r.id, d.title+"\n"+d.note)
 }
 
 func (s *Store) ensureIndex(ctx context.Context, head string, files map[string]string) error {
