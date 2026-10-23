@@ -54,7 +54,7 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 		env, err := r.recordEnvironment(ctx, g)
 		return g, env, err
 	}
-	if g.Identity.Profile == "web" {
+	if g.Identity.Profile == "web" || g.Identity.Profile == "memory-read" {
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true}, nil
 	}
 	if g.Identity.Profile == "skills" {

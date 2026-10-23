@@ -93,7 +93,10 @@ func (p *Plan) publishConversation(ctx context.Context, tx *canon.Tx, c *convers
 		if err := tx.QueryRowContext(ctx, "SELECT material_id,material_revision FROM import_event WHERE id=?", r.id).Scan(&material, &materialRevision); err != nil {
 			return err
 		}
-		display := r.body
+		display, err := publishedBody(r)
+		if err != nil {
+			return err
+		}
 		if material.Valid {
 			found := false
 			for _, attachment := range c.records {

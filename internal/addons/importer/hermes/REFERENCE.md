@@ -61,3 +61,20 @@ they do not establish current acceptance or change the contracts.
 The shared canon catalog appends import storage and completion receipts at migration 24, after the unchanged published migrations 1–23.
 Core, backup and restore can reopen imported state using that same catalog.
 Empty import tables do not load an adapter or start a run.
+
+### Imported tool-call bodies
+
+- **seen** — LCM-X `store.py:477-497,2129-2147` at the pinned revision
+  stores `tool_calls` separately from content, decodes the JSON on read and
+  restores both fields in `to_openai_msg`. The local reference directories were
+  unavailable; these lines were read from that revision's public source.
+- **seen** — LINA's native transcript stores function calls with `type`,
+  `call_id`, `name` and string `arguments`. The summary builder and event
+  expansion consume the live ledger body, not `legacy_ref.fields`.
+- **inferred** — Seal can publish an assistant body containing its content and
+  an ordered list of those native call items while leaving the staged body and
+  source reference fields intact for byte-exact row reconstruction.
+- **unknown** — Unregistered call formats and local installation modifications.
+  An unsupported nonempty call payload stays in the live body as
+  `unparsed_tool_calls`, preserving its exact source text rather than guessing
+  executable fields or losing arguments. Existing sealed conversations remain append-only.
