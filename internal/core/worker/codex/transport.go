@@ -71,6 +71,7 @@ type Session struct {
 	snapshot                worker.ThreadSnapshot
 	started                 bool
 	finished                map[string]bool
+	finishEvents            map[string]bool // Notifications emitted, distinct from terminal readback.
 	tools                   map[string]bool
 	requests                map[string]*serverRequest
 	nextRequest             uint64
