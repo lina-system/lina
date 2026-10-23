@@ -107,28 +107,7 @@ func restoreDeniedAssignment(t *Task, a Action) {
 	if t == nil || !reserves(a) || t.Attempt != a.Attempt {
 		return
 	}
-	t.Attempt = max(0, t.Attempt-1)
-	if a.Kind == Assign {
-		t.Stage = TaskReady
-		t.NodeID = ""
-	}
-	if a.Kind == Resume {
-		t.Stage = TaskWorkerLost
-		t.Recoveries = max(0, t.Recoveries-1)
-	}
-	if a.Kind == RepairConflict {
-		t.Stage = TaskConflicted
-		t.Conflicts = max(0, t.Conflicts-1)
-	}
-	if a.Kind == ContinueWorker {
-		t.Stage = TaskNoReceipt
-		t.Continuations = max(0, t.Continuations-1)
-	}
-	if a.Kind == RepairQA {
-		t.Stage = TaskQAFailed
-		t.QARepairs = max(0, t.QARepairs-1)
-	}
-	t.EffectsSettled = a.Kind != Assign
+	restoreWorkerAward(t, a, true, a.Kind != Assign)
 }
 
 func correctionEffectsPending(v *View, goalID string) (bool, error) {

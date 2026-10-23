@@ -346,8 +346,7 @@ func (r *conversationRuntime) initPlanning() error {
 	return nil
 }
 func (r *conversationRuntime) startPlanning(ctx context.Context) error {
-	r.identity.Operations[protocol.KindPlanRequest] = clientsrv.Operation{Capability: protocol.Capability{Name: "planning", Version: "1.0"}, Handle: r.planOperation}
-	return nil
+	return addOperations(&r.identity, map[protocol.Kind]clientsrv.Operation{protocol.KindPlanRequest: {Capability: protocol.Capability{Name: "planning", Version: "1.0"}, Handle: r.planOperation}})
 }
 
 func (r *conversationRuntime) publishPlanRejections(ctx context.Context) error {

@@ -26,8 +26,8 @@ func nextLaneCursor(source, after string) *string {
 	return &s
 }
 
-func (r *conversationRuntime) startWorkerLanes() {
-	r.identity.Operations[protocol.KindProgressGet] = clientsrv.Operation{
+func (r *conversationRuntime) startWorkerLanes() error {
+	return addOperations(&r.identity, map[protocol.Kind]clientsrv.Operation{protocol.KindProgressGet: {
 		Capability: protocol.Capability{Name: "worker_lanes", Version: "1.0"},
 		Handle: func(ctx context.Context, s clientsrv.Session, e protocol.Envelope) (clientsrv.Result, error) {
 			if err := r.authorize(s, nil); err != nil {
@@ -65,7 +65,7 @@ func (r *conversationRuntime) startWorkerLanes() {
 			p.NextCursor = next
 			return clientsrv.Result{Kind: protocol.KindProgress, Payload: p}, nil
 		},
-	}
+	}})
 }
 
 // Runtime sessions have no durable task receipt yet. Read their owning adapter's

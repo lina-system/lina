@@ -35,6 +35,7 @@ type codexWorkScenario struct {
 	Input, Result, Artifact        string
 	Question, Answer, Coordination string
 	TaskPacket                     string  `json:"task_packet"`
+	Command                        string  `json:"command,omitempty"`
 	FiveHour                       float64 `json:"five_hour"`
 	Weekly                         float64
 }
@@ -169,9 +170,13 @@ func codexWorkToolsFixture() {
 			}
 			notify("turn/started", map[string]any{"threadId": thread, "turn": map[string]any{"id": turn, "status": "inProgress"}})
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
+			command := fixture.Command
+			if command == "" {
+				command = "write result.txt"
+			}
 			send(map[string]any{"id": json.RawMessage(approvalID), "method": "item/commandExecution/requestApproval", "params": map[string]any{
 				"threadId": thread, "turnId": turn, "itemId": "artifact-command", "startedAtMs": 1800000000000,
-				"command": "write result.txt", "cwd": cwd, "availableDecisions": []string{"accept", "decline"},
+				"command": command, "cwd": cwd, "availableDecisions": []string{"accept", "decline"},
 			}})
 		case "":
 			if len(r.Error) != 0 {
