@@ -308,7 +308,7 @@ A request is laid out from what changes least to what changes most, so the prefi
 5. **Conversation history**: the compaction summary, if any (the root of the summary tree), and then every earlier item of the conversation from the ledger, in order: messages, reasoning items, tool calls and tool outputs, carried unchanged ([runtime.md](runtime.md)). It only grows at its end. Its earlier part changes only at compaction (see Compaction and resume) and when the person deletes conversation content (see Deleting a conversation).
 6. **ContextPacket** (input items), from the most binding to the most optional:
    1. the current time and the agent's present emotional state
-   2. commitments, decisions, the person's standing preferences about how the agent talks and works with them, the reasons for corrections that apply, and the reply budget of the surface the turn answers on (see Reply shape)
+   2. commitments, decisions, the person's standing preferences about how the agent talks and works with them, the reasons for corrections that apply, the person's names in scope (see [Names](preset-work-methods.md#names)), and the reply budget of the surface the turn answers on (see Reply shape)
    3. state that waits on the person: open questions, pending approvals, the state of active tasks and plans, and one short line for each background run of this conversation that is running, waiting, or landed and not yet delivered (what it does, its state and when it started)
    4. the skill bodies this request needs
    5. the standing profile, recalled memory items and the person brief, with their evidence ids
@@ -802,6 +802,7 @@ Memory holds these kinds of items:
 
 | Kind | Holds | Default layer |
 | --- | --- | --- |
+| Name | The person's current name for a device, organisation, artifact or place, with retired aliases and its applicable subject and scope | Common |
 | Fact | Something true about the person or their world, including a verified work result | Common |
 | Preference | A like, a dislike or a refusal | Common, except how the person likes one agent to talk, which is that agent's personal knowledge |
 | Commitment | A promise made by an agent or by the person, with what and when | Common |
@@ -810,6 +811,8 @@ Memory holds these kinds of items:
 | Shared history | An episode an agent and the person went through together | That agent's personal knowledge |
 | Relationship | The state of the relationship between an agent and the person | That agent's personal knowledge |
 | Emotion observation | What an agent observed about the person's emotion, kept apart from the agent's own emotion | That agent's personal knowledge |
+
+A `name` item also carries `name.current` and `name.retired_aliases`. Its subject identifies what is named; the ordinary holder, scope and validity fields determine where it applies. Core stores names through the same evidence-checked memory writer. The conversation's `remember_name` tool records explicit names and corrections from the current person's quote. The memory management `correct` action on a name takes its new current name as text and retains its aliases and identity. See [Names](preset-work-methods.md#names) for ContextPacket placement and breach counting.
 
 Every item carries:
 

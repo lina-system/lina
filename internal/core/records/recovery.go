@@ -15,7 +15,11 @@ import (
 
 // A publication is journaled before changing any tracked file, index or ref.
 // It names immutable Git objects, not a second copy of the document bytes.
-type publication struct{ Parent, Commit, Path, Blob, OldPath, OldBlob string }
+type publication struct {
+	Parent, Commit, Path, Blob, OldPath, OldBlob string
+	Operation                                    *recordOperation        `json:"operation,omitempty"`
+	Occurrence                                   *canon.RecordOccurrence `json:"occurrence,omitempty"`
+}
 type recordState struct {
 	head, token string
 	pending     *publication
@@ -94,6 +98,11 @@ func (r *Store) release(ctx context.Context, token string) error {
 func (r *Store) remember(ctx context.Context, token string, p publication) error {
 	raw, _ := json.Marshal(p)
 	return r.db.Write(ctx, func(tx *canon.Tx) error {
+		if p.Operation != nil && p.Operation.Validate != nil {
+			if err := p.Operation.Validate(ctx, tx); err != nil {
+				return err
+			}
+		}
 		changed, err := tx.ExecContext(ctx, "UPDATE records_state SET pending=? WHERE singleton=1 AND head=? AND lock_token=? AND pending IS NULL", raw, p.Parent, token)
 		if err != nil {
 			return err
@@ -140,6 +149,16 @@ func (r *Store) checkpoint(ctx context.Context, p publication) error {
 		}
 		if err = putProjection(ctx, tx, indexRow{id: id, path: p.Path, blob: p.Blob, revision: p.Commit, doc: doc}); err != nil {
 			return err
+		}
+		if err = checkpointOperation(ctx, tx, p, id); err != nil {
+			return err
+		}
+		if p.Occurrence != nil {
+			key := "record-occurrence:" + p.Commit
+			data, _ := json.Marshal(map[string]any{"key": key, "task_id": "record:" + id, "kind": "record_occurrence", "occurrence": p.Occurrence})
+			if _, err = tx.ExecContext(ctx, "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", "record:"+id, key, data); err != nil {
+				return err
+			}
 		}
 		_, err = tx.ExecContext(ctx, "UPDATE records_index_state SET head=? WHERE singleton=1", p.Commit)
 		return err

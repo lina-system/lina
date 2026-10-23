@@ -8,16 +8,46 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
+	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
 func TestM2WorkerQuotaWindows(t *testing.T) {
 	t.Parallel()
 	testHeadlessWorkerThroughInstalledCore(t, "../m2/worker-quota-windows.json", false)
+}
+
+func TestM2WorkerQuotaPartialRecovery(t *testing.T) {
+	t.Parallel()
+	runCodexWorkTools(t, "../m2/codex-quota-recovery.json", "", func(h *harness, stage string, _ []protocol.Question) {
+		if stage != "completed" && stage != "restarted" {
+			return
+		}
+		db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close(context.Background())
+		var raw []byte
+		err = db.Read(h.ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(h.ctx, "SELECT rows FROM worker_quota WHERE worker='codex'").Scan(&raw)
+		})
+		var rows []provider.QuotaRow
+		if err != nil || json.Unmarshal(raw, &rows) != nil {
+			t.Fatalf("quota evidence: %s %v", raw, err)
+		}
+		if len(rows) != 2 || rows[0].State != provider.QuotaOK || rows[1].State != provider.QuotaOK || !rows[0].Observed.After(rows[1].Observed) {
+			t.Fatalf("%s: partial recovery did not reach dispatch: %s", stage, raw)
+		}
+		if work.ChooseWorker([]work.WorkerCandidate{{Name: "codex", Slots: 1, Quota: rows}}, nil, nil, nil, time.Now()) != "codex" {
+			t.Fatalf("%s: recovered worker remains unavailable", stage)
+		}
+	})
 }
 
 func logWorkerQuotaState(t *testing.T, h *harness) {

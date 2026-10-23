@@ -40,6 +40,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
+	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/reply"
@@ -214,6 +215,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	r.records, err = records.Open(root, db)
 	if err != nil {
 		return nil, err
+	}
+	r.records.ReadCandidateMaterial = func(ctx context.Context, id string, revision int64) (string, error) {
+		return r.materials.Read(ctx, ledger.Material{ID: id, Revision: revision})
 	}
 	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
 	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant,
@@ -880,6 +884,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		delete(r.personaGrants, turnID+":state")
 		delete(r.personaGrants, turnID+":expression")
 		delete(r.personaGrants, turnID+":relationship")
+		delete(r.personaGrants, turnID+":names")
 		delete(r.personaGrants, turnID+":coding")
 		for id, g := range r.personaGrants {
 			if g.Identity.TaskID == turnID && g.Identity.Profile == "results" {
@@ -896,6 +901,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	var replyShapes reply.Shapes
 
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: input.Surface, Now: time.Now}
+	var preparedNames []memory.Item
 	prep := &turn.Preparation{
 		VerifyBuild: r.verifyBuild,
 		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
@@ -948,6 +954,12 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return turn.PreparedRequest{}, err
 			}
 			minimum = append(minimum, methodology...)
+			namePacket, names, err := r.namePacket(ctx, at)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			preparedNames = names
+			minimum = append(minimum, namePacket...)
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -957,7 +969,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			if err := r.prepareRecordTools(turnID, bindings); err != nil {
+			if err := r.prepareRecordTools(turnID, input.ID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
 			workDeclarations, err := r.prepareGoalWorkTools(turnID, bindings)
@@ -973,6 +985,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
+			if r.channelBinding == nil || r.channelBinding.Scope.Memory {
+				declarations = append(declarations, coreexec.NameDeclaration())
+			}
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
 			declarations = append(declarations, coreexec.ResultDeclarations()...)
@@ -1120,7 +1135,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 		}
 		var err error
-		saved, err = ledger.New(db, r.materials).AdmitBatch(ctx, batch)
+		saved, err = ledger.New(namingCanon{Canon: db, person: r.person, agent: r.agent, names: preparedNames, replies: batch}, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
 	inputQueue := &conversationInputs{runtime: r, inputs: inputs}
@@ -1134,7 +1149,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        bindings,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
-				return r.resultNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result)))
+				return r.resultNotice(ctx, input, call, r.recordNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))))
 			},
 			Inputs: inputQueue,
 			Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
@@ -1151,6 +1166,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				// fences follow-up rounds; the existing turn flow records the refusal.
 				if err := r.validateChannel(ctx); err != nil {
 					return nil, err
+				}
+				if round == 1 {
+					refs := make([]turn.Reference, 0, len(preparedNames))
+					for _, name := range preparedNames {
+						refs = append(refs, turn.Reference{ID: name.ID, Revision: strconv.FormatInt(name.Revision, 10)})
+					}
+					if err := r.validateModelContext(ctx, memoryEpoch, refs); err != nil {
+						return nil, err
+					}
 				}
 				if err := r.validateModelContext(ctx, memoryEpoch, memoryRefs); err != nil {
 					return nil, err

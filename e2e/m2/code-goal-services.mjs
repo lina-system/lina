@@ -12,15 +12,8 @@ const read=()=>JSON.parse(fs.readFileSync(path.join(root,'pr.json'),'utf8'));
 const mergedFile=path.join(root,'merged');
 const merged=()=>fs.existsSync(mergedFile)?fs.readFileSync(mergedFile,'utf8'):'';
 const event=(s)=>fs.appendFileSync(path.join(root,'events'),s+'\n');
-if(name==='host-report') {
- console.log(JSON.stringify({cpu_cores:1,load_cpu:0,available_memory_mb:1024,available_disk_mb:1024}));
-} else if(name==='gh') {
- if(args[0]==='pr' && args[1]==='create') { event('worker-pr'); console.log('https://github.com/fixture/project/pull/17'); }
- else if(args[0]==='pr' && args[1]==='view') console.log(JSON.stringify(read()));
- else if(args[0]==='pr' && args[1]==='merge') {
-  const pr=read();
-  if(args[args.indexOf('--match-head-commit')+1]!==pr.headRefOid || !args.includes('--merge')) throw Error('unpinned merge');
-  if(merged()) throw Error('merge repeated');
+const merge=(source)=>{
+ const pr=read();
   const wd=fs.readFileSync(path.join(root,'workdir'),'utf8');
   const head=pr.headRefOid, tree=git('-C',wd,'rev-parse',head+'^{tree}');
   const base=JSON.parse(fs.readFileSync(path.join(root,'allocation.json'),'utf8')).Base;
@@ -28,7 +21,28 @@ if(name==='host-report') {
   // Publish the fixture merge object as a real remote would. The source clone's
   // protected branch stays unchanged; QA later checks out this exact object.
   git('-C',path.join(root,'repo'),'fetch','--no-tags',wd,sha);
-  fs.writeFileSync(mergedFile,sha);event('merge');
+  fs.writeFileSync(mergedFile,sha);event(source);
+};
+if(name==='host-report') {
+ console.log(JSON.stringify({cpu_cores:1,load_cpu:0,available_memory_mb:1024,available_disk_mb:1024}));
+} else if(name==='gh') {
+ if(args[0]==='pr' && args[1]==='create') { event('worker-pr'); console.log('https://github.com/fixture/project/pull/17'); }
+ else if(args[0]==='pr' && args[1]==='view') {
+  if(process.env.LINA_GOAL_MODE==='external-merge') {
+   const countFile=path.join(root,'pr-reads');
+   const count=(fs.existsSync(countFile)?Number(fs.readFileSync(countFile,'utf8')):0)+1;
+   fs.writeFileSync(countFile,String(count));
+   // Worker delivery and goal inspection each read twice. Merge between
+   // inspection and execution, before Core has created a merge binding.
+   if(count===5) merge('external-merge');
+  }
+  console.log(JSON.stringify({...read(),state:merged()?'MERGED':'OPEN'}));
+ }
+ else if(args[0]==='pr' && args[1]==='merge') {
+  const pr=read();
+  if(args[args.indexOf('--match-head-commit')+1]!==pr.headRefOid || !args.includes('--merge')) throw Error('unpinned merge');
+  if(merged()) throw Error('merge repeated');
+  merge('merge');
  } else if(args[0]==='api' && args.includes('--slurp')) console.log('[[]]');
  else if(args[0]==='api') {
   const pr=read(), sha=merged();
