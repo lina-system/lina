@@ -879,6 +879,43 @@ LINA Core, or the Node on a remote device, starts every worker as a child proces
 - LINA installs no hook, plugin or setting in a worker to obtain a signal.
 - A worker that reports a typed failure (an error code, an authentication or billing category, a rate-limit category) produces a failure event with that type.
 
+### Claude Code headless adapter
+
+Core resolves the person's installed `claude` and launches it in the task
+worktree with `--print --output-format stream-json --verbose`, sending the task
+packet on stdin. Its login, provider, permissions, instructions and integrations
+remain its own. Core adds no hook, plugin, skill, permission bypass or settings
+file. The installed version is recorded and reported as unverified until an
+account-backed round trip establishes compatibility.
+
+A `system/init` message binds the session and must match the requested cwd and
+any explicit model. Assistant messages supply progress; the final `result`
+supplies usage and ends the turn immediately, even while the process remains
+alive. Core then reaps the process tree before releasing its activity. EOF
+without a result, malformed messages, mismatched sessions, error results and
+permission denials are failures. Other informational messages cannot complete a
+turn. Interactive approvals, work tools, resume and steering are not advertised
+by this one-attempt headless adapter.
+
+With `claude`, `git` and `gh` installed, `dispatch_work` can select `worker:
+"claude"`. Existing omitted selections remain Antigravity. The same authorized,
+committed admission and assigned worktree rules apply. No schema migration is
+needed: the optional worker selection stays in the durable task definition.
+An unavailable selected executable yields `worker_unavailable` without a
+substitute worker. A final success is only a worker report. Core reads the
+assigned branch's PR, current head, checks and review before recording readiness;
+pending or missing evidence cannot become delivery. The artifact preserves the
+final result and PR observations, masks secrets, omits denial tool inputs and
+marks receipt provenance `adapter-derived`. Acceptance and merge remain separate.
+Results return to the originating conversation and survive restart without
+replaying execution.
+
+`e2e/m2/claude-worker.json` covers result-before-exit, real file and commit
+creation, the derived receipt, denied permissions, missing results, pending PR
+checks and restart. The installed Core and Git work are real; the Claude and
+GitHub boundaries are synthetic. This establishes the integration contract,
+not authenticated worker execution or a verified Claude version.
+
 ### Antigravity headless adapter
 
 Core resolves the installed `agy` executable and runs it as a supervised child
@@ -1248,6 +1285,7 @@ Every ready task starts at once, limited only by the person's quota and by what 
 
 - The main host and each connected Node report what they can take; on an installation without Node, the main host alone reports, through the same report that Core makes for itself. A report holds its cores, its load, its available memory and disk, its declared resource caps ([non-competition.md](non-competition.md)), the workers ready on it and their quota rows, and its current reservations. Core computes the free slots of each host from these, and does not use a fixed count per host, per repository or per fleet. A report that is stale or unknown counts as no free capacity, and a Node that is disconnected or yielding gets nothing new.
 - A slot is reserved in the same transaction that claims the task, so two derivations never place the same task or overfill a Node. An award to a Node carries a token and a deadline; an award whose outcome is unknown is resolved by reading that Node's receipt before the task can go anywhere else.
+- A replacement observation keeps the original dispatched effect's identity for matching the Node's measured work. That reservation still counts against resource caps, but is not subtracted again from measured CPU, available memory or disk. Unobserved reservations remain deducted until the Node reports them.
 - Ready tasks are placed in a stable order: tasks of goals with a person's deadline first, then by dependency depth, then by the age of the goal. Within that order, a task goes to the Node with the most headroom that has a suitable worker, and Nodes kept for the person's own use come last.
 - Dependency depth visits each task and its edges at most once per goal during a derivation, reusing shared ancestors across ready tasks. Depths are recomputed from each new snapshot and are never shared between goals.
 - Background runs and plugin effects run in Core and use the person's model and service accounts. They follow the run limits of Background runs and the account's own rate limits, and they never take a Node slot.

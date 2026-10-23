@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"fixture","cwd":"WORKDIR"}
+{"type":"result","subtype":"success","session_id":"fixture","is_error":false,"result":"Permission needed.","permission_denials":[{"tool_name":"Bash","tool_use_id":"tool","tool_input":{"command":"true"}}]}
