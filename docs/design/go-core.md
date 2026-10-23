@@ -2438,7 +2438,8 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   A terminal snapshot retains the failed turn and unresolved-effect evidence;
   only a settled attempt may start the replacement in its existing worktree.
   Session restoration prefers advertised resume over load, preserves the recorded
-  session id and excludes replay from progress and output. The next process has a
+  session id and excludes replay from progress and output. Live updates received
+  after the restore response belong to the next turn. The next process has a
   fresh binding and work-tool server. Restore failure and Core-crash uncertainty
   do not authorize another prompt or a fresh-session fallback.
   It changes no storage schema and never claims completion.
