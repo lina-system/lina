@@ -43,6 +43,26 @@ func TestMain(m *testing.M) {
 // This scenario launches the real Core command. Only the model, ACP agent and
 // GitHub boundary are synthetic; dispatch, worktrees, commits and cards are real.
 func TestACPWorkersThroughRunningCore(t *testing.T) {
+	runACPWorkersThroughRunningCore(t, []acpScenario{
+		{name: "success", worker: "gemini", binary: "gemini", mode: "success"},
+		{name: "cursor", worker: "cursor", binary: "cursor-agent", mode: "success"},
+		{name: "grok", worker: "grok", binary: "grok", mode: "success"},
+		{name: "claude-acp", worker: "claude-acp", binary: "claude-agent-acp", mode: "success"},
+		{name: "exit", worker: "gemini", binary: "gemini", mode: "exit"},
+		{name: "cancel", worker: "gemini", binary: "gemini", mode: "cancel"},
+	})
+}
+
+type acpScenario struct {
+	name, worker, binary, mode string
+	script                     string
+	parallel                   bool
+	environment                []string
+	setup                      func(*testing.T, string)
+	beforeFinish, afterFinish  func(*testing.T, *harness, string, dispatch.Record)
+}
+
+func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 	binary := filepath.Join(t.TempDir(), "lina")
 	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-ldflags=-w", "-o", binary, "./cmd/lina")
 	build.Dir = "../.."
@@ -55,15 +75,11 @@ func TestACPWorkersThroughRunningCore(t *testing.T) {
 	if out, err := nodeBuild.CombinedOutput(); err != nil {
 		t.Fatalf("build Node: %v\n%s", err, out)
 	}
-	for _, scenario := range []struct{ name, worker, binary, mode string }{
-		{"success", "gemini", "gemini", "success"},
-		{"cursor", "cursor", "cursor-agent", "success"},
-		{"grok", "grok", "grok", "success"},
-		{"claude-acp", "claude-acp", "claude-agent-acp", "success"},
-		{"exit", "gemini", "gemini", "exit"},
-		{"cancel", "gemini", "gemini", "cancel"},
-	} {
+	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
+			if scenario.parallel {
+				t.Parallel()
+			}
 			mode := scenario.mode
 			ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
 			defer cancel()
@@ -72,6 +88,9 @@ func TestACPWorkersThroughRunningCore(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer os.RemoveAll(root)
+			if scenario.setup != nil {
+				scenario.setup(t, root)
+			}
 			state := filepath.Join(root, "state")
 			h := &harness{ctx: ctx, root: state}
 			bin, repo, fixture := filepath.Join(root, "bin"), filepath.Join(root, "repo"), filepath.Join(root, "fixture")
@@ -102,9 +121,14 @@ func TestACPWorkersThroughRunningCore(t *testing.T) {
 				names = append(names, "claude")
 			}
 			for _, name := range names {
-				write(filepath.Join(bin, name), acpAgentScript, 0700)
+				script := scenario.script
+				if script == "" {
+					script = acpAgentScript
+				}
+				write(filepath.Join(bin, name), script, 0700)
 			}
 			env := []string{"PATH=" + bin, "HOME=" + root, "XDG_CONFIG_HOME=" + root, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TERMINAL_PROMPT=0", "LANG=C", "LINA_ACP_FIXTURE=" + fixture, "LINA_ACP_CASE=" + mode, "LINA_ACP_WORKER=" + scenario.worker}
+			env = append(env, scenario.environment...)
 			write(filepath.Join(bin, "systemctl"), "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$2\" in show) printf 'not-found\\n';; daemon-reload|enable) exit 0;; *) exit 97;; esac\n", 0700)
 			bundle := makeInstallBundle(t, root, binary, nodeBinary)
 			setup := exec.CommandContext(ctx, binary, "install", "--state-root", state, "--unit-dir", filepath.Join(root, "units"), "--bundle", bundle)
@@ -408,8 +432,14 @@ func TestACPWorkersThroughRunningCore(t *testing.T) {
 					t.Fatal("Core finalized cancel before reply")
 				}
 			}
+			if scenario.beforeFinish != nil {
+				scenario.beforeFinish(t, h, fixture, record)
+			}
 			write(filepath.Join(fixture, "release"), "", 0600)
 			wait("terminal observation", func() bool { return read() && (record.State == "finished" || record.State == "unknown") })
+			if scenario.afterFinish != nil {
+				scenario.afterFinish(t, h, fixture, record)
+			}
 			switch mode {
 			case "exit":
 				if record.State != "unknown" || record.Code != "prompt_failed" || card.Receipt != nil {
@@ -468,7 +498,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   if(m.params.protocolVersion!==1||m.params.clientCapabilities.fs||m.params.clientCapabilities.terminal)throw Error('unexpected capabilities');
   reply(m.id,{protocolVersion:1,...(worker==='cursor'||worker==='grok'?{}:{agentInfo:{name:'fixture',version:worker==='claude-acp'?'adapter-fixture-1':'fixture-unverified-9'}})});break;
  case 'session/new':
-  if(m.params.cwd!==process.cwd()||m.params.mcpServers.length!==0)throw Error('unexpected session setup');
+  if(m.params.cwd!==process.cwd()||m.params.mcpServers.length!==1||m.params.mcpServers[0].name!=='lina'||m.params.mcpServers[0].args[0]!=='worker-tools')throw Error('unexpected session setup');
   fs.writeFileSync(path.join(root,'cwd'),process.cwd());reply(m.id,{sessionId:'acp-fixture'});break;
  case 'session/prompt':
   pending=m.id;packet=m.params.prompt[0].text;progress('Working on result.txt');

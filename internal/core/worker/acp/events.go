@@ -138,6 +138,9 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 }
 func (a *Adapter) finish(th worker.Thread, f worker.Finish) {
 	a.mu.Lock()
+	if a.state == worker.Active {
+		close(a.turnEnded)
+	}
 	a.state = worker.Idle
 	if f.Failure == worker.ConnectionFailure {
 		a.state = worker.Dead
