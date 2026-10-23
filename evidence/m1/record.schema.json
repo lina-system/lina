@@ -1,0 +1,688 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "type": "object",
+  "properties": {
+    "format": {
+      "const": 1
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/attempt"
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "format",
+    "attempts"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "epoch": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,19}$"
+    },
+    "result": {
+      "enum": [
+        "pass",
+        "fail",
+        "not_run"
+      ]
+    },
+    "check": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "$ref": "#/$defs/result"
+        },
+        "evidence_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "result",
+        "evidence_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "cause": {
+      "enum": [
+        "boot_started",
+        "turn_started",
+        "task_started",
+        "operation_started",
+        "operation_succeeded",
+        "operation_failed",
+        "model_failed",
+        "task_stopped",
+        "storage_failed",
+        "permission_denied",
+        "network_failed",
+        "effect_unknown"
+      ]
+    },
+    "class": {
+      "enum": [
+        "model",
+        "interrupted",
+        "storage",
+        "permission",
+        "network",
+        "internal"
+      ]
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "$ref": "#/$defs/id"
+        },
+        "time": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+        },
+        "component": {
+          "enum": [
+            "conversation",
+            "task",
+            "memory",
+            "materials",
+            "node",
+            "app",
+            "os"
+          ]
+        },
+        "conversation_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "epoch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/epoch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cause": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/cause"
+            },
+            "parent_event_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/id"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "code",
+            "parent_event_id"
+          ],
+          "additionalProperties": false
+        },
+        "result": {
+          "enum": [
+            "pending",
+            "success",
+            "failure",
+            "cancelled",
+            "denied",
+            "unknown"
+          ]
+        },
+        "next_action": {
+          "enum": [
+            "none",
+            "continue",
+            "report_failure",
+            "reconcile",
+            "request_approval"
+          ]
+        },
+        "error_class": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/class"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "event_id",
+        "time",
+        "component",
+        "conversation_id",
+        "task_id",
+        "agent_id",
+        "epoch",
+        "node_id",
+        "cause",
+        "result",
+        "next_action",
+        "error_class"
+      ],
+      "additionalProperties": false
+    },
+    "diagnosis": {
+      "type": "object",
+      "properties": {
+        "error_class": {
+          "enum": [
+            "model",
+            "interrupted",
+            "storage"
+          ]
+        },
+        "injection_root": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "query": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "task_id": {
+                  "$ref": "#/$defs/id"
+                }
+              },
+              "required": [
+                "task_id"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "citation": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "root_event_id": {
+                  "$ref": "#/$defs/id"
+                },
+                "event_id": {
+                  "$ref": "#/$defs/id"
+                },
+                "error_class": {
+                  "$ref": "#/$defs/class"
+                },
+                "cause_code": {
+                  "$ref": "#/$defs/cause"
+                }
+              },
+              "required": [
+                "root_event_id",
+                "event_id",
+                "error_class",
+                "cause_code"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          },
+          "minItems": 0
+        },
+        "result": {
+          "$ref": "#/$defs/result"
+        }
+      },
+      "required": [
+        "error_class",
+        "injection_root",
+        "query",
+        "citation",
+        "events",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "matrixRow": {
+      "type": "object",
+      "properties": {
+        "step": {
+          "enum": [
+            "fresh",
+            "planned_restart",
+            "crash_restart",
+            "restore"
+          ]
+        },
+        "epoch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/epoch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "root_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ready": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effects_replayed": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/result"
+        }
+      },
+      "required": [
+        "step",
+        "epoch",
+        "root_id",
+        "ready",
+        "effects_replayed",
+        "evidence_sha256",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "attempt": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "$ref": "#/$defs/id"
+        },
+        "commit": {
+          "$ref": "#/$defs/commit"
+        },
+        "host": {
+          "enum": [
+            "linux-amd64",
+            "linux-arm64",
+            "darwin-amd64",
+            "darwin-arm64"
+          ]
+        },
+        "manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "clean_install": {
+          "type": "boolean"
+        },
+        "headless_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "matrix": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/matrixRow"
+          },
+          "minItems": 4
+        },
+        "restore": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "generation_id": {
+                  "$ref": "#/$defs/generationId"
+                },
+                "whole_generation": {
+                  "type": "boolean"
+                },
+                "forgotten_search_hits": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "forgotten_summary_hits": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "forgotten_context_hits": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "generation_id",
+                "whole_generation",
+                "forgotten_search_hits",
+                "forgotten_summary_hits",
+                "forgotten_context_hits"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checks": {
+          "type": "object",
+          "properties": {
+            "A1": {
+              "$ref": "#/$defs/check"
+            },
+            "A2": {
+              "$ref": "#/$defs/check"
+            },
+            "A3": {
+              "$ref": "#/$defs/check"
+            },
+            "A4": {
+              "$ref": "#/$defs/check"
+            },
+            "A5": {
+              "$ref": "#/$defs/check"
+            },
+            "A6": {
+              "$ref": "#/$defs/check"
+            },
+            "A7": {
+              "$ref": "#/$defs/check"
+            },
+            "A8": {
+              "$ref": "#/$defs/check"
+            },
+            "A9": {
+              "$ref": "#/$defs/check"
+            }
+          },
+          "required": [
+            "A1",
+            "A2",
+            "A3",
+            "A4",
+            "A5",
+            "A6",
+            "A7",
+            "A8",
+            "A9"
+          ],
+          "additionalProperties": false
+        },
+        "failures": {
+          "type": "object",
+          "properties": {
+            "startup_kill": {
+              "$ref": "#/$defs/check"
+            },
+            "turn_kill": {
+              "$ref": "#/$defs/check"
+            },
+            "corrupt_canon": {
+              "$ref": "#/$defs/check"
+            },
+            "canon_write_fault": {
+              "$ref": "#/$defs/check"
+            },
+            "disk_full": {
+              "$ref": "#/$defs/check"
+            },
+            "sandbox_unusable": {
+              "$ref": "#/$defs/check"
+            },
+            "slow_client": {
+              "$ref": "#/$defs/check"
+            },
+            "dropped_frames": {
+              "$ref": "#/$defs/check"
+            },
+            "channel_replay": {
+              "$ref": "#/$defs/check"
+            },
+            "provider_unavailable": {
+              "$ref": "#/$defs/check"
+            },
+            "expired_token": {
+              "$ref": "#/$defs/check"
+            },
+            "usage_cap": {
+              "$ref": "#/$defs/check"
+            },
+            "background_kill": {
+              "$ref": "#/$defs/check"
+            },
+            "older_restore": {
+              "$ref": "#/$defs/check"
+            }
+          },
+          "required": [
+            "startup_kill",
+            "turn_kill",
+            "corrupt_canon",
+            "canon_write_fault",
+            "disk_full",
+            "sandbox_unusable",
+            "slow_client",
+            "dropped_frames",
+            "channel_replay",
+            "provider_unavailable",
+            "expired_token",
+            "usage_cap",
+            "background_kill",
+            "older_restore"
+          ],
+          "additionalProperties": false
+        },
+        "ui_ux": {
+          "$ref": "#/$defs/check"
+        },
+        "terminals": {
+          "type": "object",
+          "properties": {
+            "confirmed": {
+              "type": "boolean"
+            },
+            "ids": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/id"
+              },
+              "minItems": 1
+            },
+            "records": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "terminal_id": {
+                    "$ref": "#/$defs/id"
+                  },
+                  "scenario": {
+                    "enum": [
+                      "S1",
+                      "S2",
+                      "S3",
+                      "S4",
+                      "S5",
+                      "S6",
+                      "S7",
+                      "S8",
+                      "S9",
+                      "S10",
+                      "S11"
+                    ]
+                  },
+                  "result": {
+                    "enum": [
+                      "pass",
+                      "fail",
+                      "gap",
+                      "not_run"
+                    ]
+                  },
+                  "evidence_sha256": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/sha256"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "terminal_id",
+                  "scenario",
+                  "result",
+                  "evidence_sha256"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 11
+            }
+          },
+          "required": [
+            "confirmed",
+            "ids",
+            "records"
+          ],
+          "additionalProperties": false
+        },
+        "diagnosis": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnosis"
+          },
+          "minItems": 3
+        }
+      },
+      "required": [
+        "run_id",
+        "commit",
+        "host",
+        "manifest_sha256",
+        "clean_install",
+        "headless_sha256",
+        "matrix",
+        "restore",
+        "checks",
+        "failures",
+        "ui_ux",
+        "terminals",
+        "diagnosis"
+      ],
+      "additionalProperties": false
+    },
+    "generationId": {
+      "type": "string",
+      "pattern": "^generation-[A-Z2-7]{26,}$"
+    }
+  }
+}

@@ -88,7 +88,7 @@ func TestM1ProviderFailureHistory(t *testing.T) {
 			defer server.Close()
 			h, start := installedConversationHarness(t, server.URL)
 			core := start(true)
-			client, conversation := conversationClient(t, h)
+			client, _ := conversationClient(t, h)
 			terminal, _ := h.startConversationTUI(120, 60, "TERM=xterm-256color")
 			waitComposerReady(t, h, terminal)
 			h.keys(terminal, input+"\r")
@@ -124,7 +124,7 @@ func TestM1ProviderFailureHistory(t *testing.T) {
 			h.stopCore(core)
 			waitScreen(t, h, terminal, design.Text(design.English, "retrying"))
 			core = start(true)
-			client, conversation = conversationClient(t, h)
+			client, conversation := conversationClient(t, h)
 			if client.Welcome.Epoch == before {
 				t.Fatal("restart did not advance epoch")
 			}

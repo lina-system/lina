@@ -1,5 +1,8 @@
 {
-  "connect": [{"request": "hello.json", "emit": ["welcome.json"]}],
-  "refuse": [{"request": "hello.json", "emit": ["unsupported_combination.json"]}],
+  "connect": [[{"request": "hello.json", "emit": ["welcome.json"]}]],
+  "refuse": [
+    [{"request": "hello.json", "emit": ["unsupported_combination.json"]}],
+    [{"request": "hello-legacy.json", "emit": ["unsupported_combination.json"]}]
+  ],
   "locales": ["en_US.UTF-8", "ko_KR.UTF-8"]
 }

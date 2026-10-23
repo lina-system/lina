@@ -190,8 +190,9 @@ test('cross-builds Linux and macOS binaries with target metadata and an explicit
     assert.equal(result.status, 0, `${target}: ${result.stderr ?? ''}${result.error?.message ?? ''}`);
     const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
     assert.equal(manifest.target, target);
-    assert.equal(manifest.supportedCombinations.length, 1);
-    assert.equal(manifest.supportedCombinations[0].platform, target);
+    assert.deepEqual(manifest.supportedCombinations.map(row => row.protocolVersion).sort(), ['1.0', '1.1']);
+    for (const row of manifest.supportedCombinations) assert.equal(row.platform, target);
+    assert.ok(manifest.supportedCombinations.find(row => row.protocolVersion === '1.1').capabilities.some(cap => cap.name === 'mocks'));
     assert.equal(manifest.version, '0.0.1-alpha.20261021.1');
     for (const binary of manifest.binaries) {
       const path = join(out, binary.name);
@@ -264,8 +265,13 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.match(manifest.sqlite.sqliteVersion, /^3\.\d+\.\d+$/);
     assert.equal(manifest.sqlite.execution, 'wazero');
     assert.deepEqual(manifest.sqlite.sqliteVec, { version: 'v0.1.6', sha256: manifest.sqlite.wasmSHA256 });
-    const providerConfig = JSON.parse(readFileSync(join(f.cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
+    const providerConfig = {
+      ...JSON.parse(readFileSync(join(f.cwd, 'kit/provider/responses/manifest.json'), 'utf8')),
+      ...JSON.parse(readFileSync(join(f.cwd, 'kit/provider/messages/manifest.json'), 'utf8')),
+    };
     assert.deepEqual(manifest.providers, providerConfig);
+    assert.equal(manifest.providers.claude_api_key.adapter, 'messages');
+    assert.deepEqual(manifest.providerCapabilities, JSON.parse(readFileSync(join(f.cwd, 'kit/provider/capabilities.json'), 'utf8')));
     assert.equal(manifest.providers.chatgpt.adapter, 'responses');
     assert.equal(manifest.providers.chatgpt.retryCount, 0);
     assert.deepEqual(manifest.crwPin, JSON.parse(readFileSync(join(f.cwd, 'internal/core/work/pin/pin.json'), 'utf8')));
@@ -463,4 +469,24 @@ test('build validates shipped persona pairs before producing release artifacts',
   assert.throws(() => build({ cwd: f.cwd, out: f.out, execute: run }), /persona validation failed/);
   assert.equal(validated, true);
   assert.equal(existsSync(join(f.out, 'manifest.json')), false);
+});
+
+test('build includes pinned Claude ACP inputs and their artifact digests', t => {
+  const f = fixture(t);
+  const result = build({cwd:f.cwd,out:f.out,execute:(_command,args,options)=>{
+    if(args[0]==='env')return {status:0,stdout:options.env.GOTOOLCHAIN,stderr:''};
+    if(args[0]==='build'){
+      const binary=args[args.indexOf('-o')+1];
+      f.write(dirname(binary),binary.split(/[\\/]/).at(-1),'synthetic binary');
+    }
+    return {status:0,stdout:args[0]==='run'?(args.includes('./internal/core/manifest/clientinfo')?'[]':'{}'):'',stderr:''};
+  }});
+  const names=['adapters/claude-acp/package.json','adapters/claude-acp/package-lock.json'];
+  assert.deepEqual(result.installFiles?.map(file=>file.name),names);
+  for(const file of result.installFiles){
+    const bytes=readFileSync(join(f.out,file.name));
+    assert.deepEqual(bytes,readFileSync(join(f.cwd,file.name)));
+    assert.equal(file.size,bytes.length);
+    assert.equal(file.sha256,createHash('sha256').update(bytes).digest('hex'));
+  }
 });

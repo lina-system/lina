@@ -22,6 +22,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/compaction"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/manifest"
@@ -57,9 +58,21 @@ type turnState struct {
 	replyShapes        reply.Shapes
 	questions          *questionTurn
 	questionRoundCalls int
+	compaction         *conversationCompaction
+	launcherKey        string
+	launcherText       string
 }
 
 func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, input ledger.Event, inboxID int64) (err error) {
+	if r.externalTask != "" {
+		rec, err := r.publications.store.Read(ctx, r.externalTask)
+		if err != nil {
+			return err
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, time.Unix(min(rec.Deadline, rec.Principal.Expires), 0))
+		defer cancel()
+	}
 	turnID := "turn:" + input.ID
 	if err = r.setActive(ctx, true); err != nil {
 		return err
@@ -101,8 +114,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: input.Surface, Now: time.Now}
 	prep := &turn.Preparation{
-		VerifyBuild: r.verifyBuild,
-		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
+		VerifyBuild:        r.verifyBuild,
+		SelectCapabilities: r.selectProviderCapabilities,
+		Account:            func(context.Context) (provider.Credential, error) { return r.route.Account() },
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
 			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: r.route.Adapter.Class()}, nil
 		},
@@ -110,8 +124,25 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
 		Digest: assemble.Digest,
 	}
-	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions}
+	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions, retainBinding: func(input string, index int, item provider.Item) {
+		if s.compaction == nil {
+			return
+		}
+		c := s.compaction
+		if c.transient == nil {
+			c.transient = map[string]compaction.Record{}
+		}
+		id := fmt.Sprintf("input-binding:%s:%d", input, index)
+		c.transient[id] = compaction.Record{ID: id, Item: append(provider.Item(nil), item...)}
+		c.pending[id] = true
+	}}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: s.complete,
+		Finish: func(ctx context.Context, tx *canon.Tx, cause error) error {
+			if errors.Is(cause, compaction.ErrContinuation) {
+				return s.recordCompactionContinuation(ctx, resultTransaction{tx})
+			}
+			return nil
+		},
 		StartFromTurn: func(ctx context.Context, h budget.Handoff) (budget.Handle, error) {
 			var err error
 			s.promoted, err = r.promoteRun(ctx, input, h)
@@ -121,7 +152,17 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        s.bindings,
 			Transform: func(ctx context.Context, request provider.Request) (provider.Request, error) {
-				return s.toolCatalog.transform(ctx, request)
+				request, err := s.toolCatalog.transform(ctx, request)
+				if err != nil {
+					return request, err
+				}
+				// A presented body is durable; the follow-up request carries the
+				// bounded reference so a long result cannot outgrow the model.
+				request = assemble.CondenseResultCalls(request)
+				if s.compaction == nil {
+					return request, nil
+				}
+				return s.compaction.transform(ctx, request)
 			},
 			Before: s.questions.before,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
@@ -163,7 +204,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			},
 			Observe: s.observe,
 		}})
-	return s.publishOutcome(ctx, out, err)
+	err = s.publishOutcome(ctx, out, err)
+	if err == nil {
+		if preparationErr := s.prepareSummaryAfterDelivery(ctx, out); preparationErr != nil {
+			_ = s.recordCompaction(ctx, "preparation_failed", struct {
+				Code string `json:"code"`
+			}{"summary_unavailable"})
+		}
+	}
+	return err
 }
 
 func (s *turnState) complete(ctx context.Context, db turn.Canon) error {
@@ -255,6 +304,14 @@ func (s *turnState) observe(ctx context.Context, e provider.Event) error {
 		if err := turn.New(r.db).CheckpointPartial(ctx, turnID, turn.Partial{Round: s.round - 1, Index: e.Index, Text: filter.sent}); err != nil {
 			return err
 		}
+		if requestID := launcherRequestID(input.Surface); requestID != "" {
+			s.launcherKey, s.launcherText = key, view.Text
+			if view.Text != "" {
+				if err := r.publishLauncherReply(requestID, key, view.Text, false); err != nil {
+					return err
+				}
+			}
+		}
 		if view.Cut {
 			// A result replaces the same stream row, retracting the unfinished
 			// sentence while retaining all subsequent text in its preview.
@@ -298,6 +355,11 @@ func (s *turnState) observe(ctx context.Context, e provider.Event) error {
 
 func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err error) error {
 	r, input, turnID := s.runtime, s.input, s.turnID
+	if requestID := launcherRequestID(input.Surface); requestID != "" {
+		// The panel always learns that this line finished, including after a
+		// stop or failure, so it never waits on a stream that ended.
+		defer func() { _ = r.publishLauncherReply(requestID, s.launcherKey, s.launcherText, true) }()
+	}
 	if s.promoted.ID != "" {
 		// The handle is durable before execution, and the run outlives this turn.
 		err = errors.Join(err, r.background.service.Release(context.WithoutCancel(ctx), s.promoted.ID))
@@ -326,6 +388,9 @@ func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err er
 			if filterErr != nil {
 				err = filterErr
 				break
+			}
+			if item.SpeakerKind == guard.Agent {
+				s.launcherKey, s.launcherText = item.ID, view.Text
 			}
 			if publishErr := r.publishReply(ctx, item.ID, turnID, view, eventLanguage(input)); publishErr != nil {
 				err = publishErr
@@ -357,6 +422,9 @@ func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err er
 			if noticeErr != nil {
 				return errors.Join(err, noticeErr)
 			}
+			if shown, showErr := r.publishCompactionFailure(ctx, notice, turnID); shown || showErr != nil {
+				return errors.Join(err, showErr)
+			}
 			text := notice.Body.Text()
 			speaker := protocol.ConversationSpeakerSystem
 			return errors.Join(err, r.publish(ctx, protocol.KindItemDone, notice.ID, protocol.ItemDone{Text: &text, Speaker: &speaker}))
@@ -371,6 +439,9 @@ func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err er
 
 func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.PreparedRequest, error) {
 	r, input, turnID := s.runtime, s.input, s.turnID
+	if r.externalTask != "" {
+		return s.prepareA2A(ctx, policy)
+	}
 	if err := r.refreshPersona(ctx); err != nil {
 		return turn.PreparedRequest{}, err
 	}
@@ -397,6 +468,11 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	s.items = s.items[:len(s.items)-1]
 	at := time.Now().UTC()
 	minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
+	bound, err := r.inputBindingPacket(ctx, input)
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
+	minimum = append(minimum, bound...)
 	settings, err := r.agents.State(ctx, r.agent)
 	if err != nil {
 		return turn.PreparedRequest{}, err
@@ -414,11 +490,13 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		r.prepareSkillTools,
 		r.prepareRecordTools,
 		r.prepareResultTools,
+		r.prepareMiniAppTools,
 		r.prepareGoalWorkTools,
 		r.prepareMethodologyTools,
 		r.preparePlanningTools,
 		r.prepareRunTools,
 		r.prepareWebTools,
+		r.prepareA2ATools,
 		r.prepareDispatchTools,
 		r.prepareWorkTools,
 		r.prepareWorkerTools,
@@ -459,12 +537,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		declarations = nil
 		catalog = nil
 	}
-	if failedWorkerReaction(s.input) {
-		clear(s.bindings)
-		declarations = nil
-		catalog = nil
-	}
-	if !failedWorkerReaction(s.input) && r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
+	if r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
 		state, err := r.agents.State(ctx, r.agent)
 		if err != nil {
 			return turn.PreparedRequest{}, err
@@ -487,6 +560,11 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	if err := r.bindDoneEvidence(ctx, persona, s.bindings); err != nil {
 		return turn.PreparedRequest{}, err
 	}
+	if failedWorkerReaction(s.input) {
+		// Keep the cacheable declarations stable. A failure notice still grants
+		// no tool execution, including through the deferred-tool bridge.
+		clear(s.bindings)
+	}
 	packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
 	if err != nil {
 		return turn.PreparedRequest{}, err
@@ -494,13 +572,15 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	if err := pinPersonaState(packet, r.agent, r.conversation); err != nil {
 		return turn.PreparedRequest{}, err
 	}
+	window, count := r.conversationBudget()
 	request, report, err := r.compactConversation(ctx, assemble.Input{
+		MainID: r.main, ConversationID: r.conversation,
 		Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
 		AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
 		AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,
 		Catalog: catalog, AlwaysTools: declarations,
 		History: s.items, Current: current[0], Packet: packet,
-		Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
+		Model: policy.Model, Effort: policy.Effort, MaxTokens: window,
 	}, s.events, func(ctx context.Context, request provider.Request) (provider.Stream, error) {
 		r.dispatchMu.RLock()
 		defer r.dispatchMu.RUnlock()
@@ -510,8 +590,21 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		if err := r.validateChannel(ctx); err != nil {
 			return nil, err
 		}
-		return r.route.Adapter.Stream(ctx, s.activity, request)
-	})
+		activity, err := r.activities.Acquire(ctx, lease.Activity{Class: lease.Live, Reason: "conversation summary"})
+		if err != nil {
+			return nil, err
+		}
+		meter, _ := ctx.Value(summaryUsageKey{}).(*summaryUsage)
+		if meter != nil {
+			meter.called = true
+		}
+		stream, err := r.route.Adapter.Stream(ctx, activity, request)
+		if err != nil {
+			activity.Release()
+			return nil, err
+		}
+		return &summaryStream{Stream: stream, release: activity.Release, meter: meter}, nil
+	}, func(c *conversationCompaction) { s.compaction = c })
 	if err != nil {
 		return turn.PreparedRequest{}, err
 	}
@@ -522,10 +615,19 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		}
 		return turn.PreparedRequest{}, turn.ErrInvalid
 	}
+	if s.compaction != nil {
+		s.compaction.logSizes = func(ctx context.Context, sizes compaction.Sizes) error {
+			return s.recordCompaction(ctx, "request_sizes", sizes)
+		}
+		s.compaction.session, err = compaction.NewSession(s.compaction.pass, s.compaction.view, s.resolveCompactionItems)
+		if err != nil {
+			return turn.PreparedRequest{}, err
+		}
+	}
 	if s.toolCatalog != nil {
 		s.toolCatalog.offset = len(request.Items)
 	}
-	assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), s.memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), s.memoryRefs...)}
+	assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v2", RequestLayout: ledger.InputBeforeContextV1, PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), s.memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), s.memoryRefs...)}
 	assembly.Context, err = r.recordContextSources(ctx, packet, report)
 	if err != nil {
 		return turn.PreparedRequest{}, err
@@ -547,7 +649,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	for _, ref := range report.Skills {
 		assembly.Skills = append(assembly.Skills, turn.Reference{ID: ref.ID, Revision: ref.Revision})
 	}
-	return turn.PreparedRequest{Request: request, Assembly: assembly, Counter: conversationRequestSize, MaxTokens: 128000}, nil
+	return turn.PreparedRequest{Request: request, Assembly: assembly, Counter: count, MaxTokens: window}, nil
 }
 
 func (r *conversationRuntime) verifyBuild(ctx context.Context) error {

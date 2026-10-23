@@ -6,9 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
-	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
+	"github.com/thisisjun786/lina/internal/core/toolcatalog"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/tools"
@@ -18,13 +18,13 @@ import (
 // descriptions cannot change group membership or grant authority.
 func declarationGroup(name string) string {
 	switch name {
-	case "prepare_work", "retain_work_result", "report_work_result", "land_work_result", "dispatch_work", "dispatch_code_goal", "revise_code_goal", "worker_start", "worker_input", "worker_interrupt", "worker_snapshot", "worker_quota", "worker_read_file":
+	case "prepare_work", "retain_work_result", "report_work_result", "land_work_result", "dispatch_work", "dispatch_code_goal", "revise_code_goal", "submit_step_graph", "read_step_graph", "worker_start", "worker_input", "worker_interrupt", "worker_snapshot", "worker_quota", "worker_read_file":
 		return "work"
 	case "create_timer", "timer_status", "cancel_timer":
 		return "calendar"
 	case "observe_health", "repair_records_index":
 		return "device"
-	case "web_search", "web_extract":
+	case "web_search", "web_extract", "remote_agent":
 		return "web_research"
 	}
 	return "" // Core's always-declared set.
@@ -47,11 +47,12 @@ func prepareToolGroups(all []provider.ToolDecl, method agents.WorkMethodSettings
 	c := &turnToolCatalog{all: slices.Clone(all)}
 	byName := map[string]provider.ToolDecl{}
 	initial := map[string]bool{}
-	var names []string
+	var names, order []string
 	for _, d := range all {
 		name := declarationName(d)
 		byName[name] = d
 		names = append(names, name)
+		order = append(order, name)
 	}
 	slices.Sort(names)
 	decode := func(raw string) ([]string, error) {
@@ -89,7 +90,8 @@ func prepareToolGroups(all []provider.ToolDecl, method agents.WorkMethodSettings
 		raw, _ := json.Marshal(struct {
 			Loaded       []string            `json:"loaded_tools"`
 			Declarations []provider.ToolDecl `json:"declarations"`
-		}{requested, declarations})
+			Order        []string            `json:"declaration_order"`
+		}{requested, declarations, order})
 		return loop.Result{ID: call.ID, Code: loop.OK, Output: raw}
 	}}
 	loader, _ := json.Marshal(map[string]any{"type": "function", "name": "load_tools", "description": "Load available tools for this turn. Loading changes declarations only; each call still checks permissions.", "parameters": map[string]any{"type": "object", "properties": map[string]any{"tools": map[string]any{"type": "array", "minItems": 1, "uniqueItems": true, "items": map[string]any{"type": "string", "enum": names}}}, "required": []string{"tools"}, "additionalProperties": false}})
@@ -159,58 +161,9 @@ func prepareToolGroups(all []provider.ToolDecl, method agents.WorkMethodSettings
 	return c
 }
 
-// Reconstruct on-demand declarations from committed tool outputs in this turn,
-// not mutable callback state or a previous turn's history. This also works when
-// the tool journal replays an already committed load result.
-func (c *turnToolCatalog) transform(_ context.Context, r provider.Request) (provider.Request, error) {
+func (c *turnToolCatalog) transform(ctx context.Context, r provider.Request) (provider.Request, error) {
 	if c == nil {
 		return r, nil
 	}
-	loaded := map[string]bool{}
-	calls := map[string]bool{}
-	for _, item := range r.Items[c.offset:] {
-		var wire struct{ Type, Name, CallID, Output string }
-		// CallID uses the provider's snake-case spelling.
-		var id struct {
-			CallID string `json:"call_id"`
-		}
-		if json.Unmarshal(item, &wire) != nil || json.Unmarshal(item, &id) != nil {
-			continue
-		}
-		if wire.Type == "function_call" && wire.Name == "load_tools" {
-			calls[id.CallID] = true
-		}
-		if wire.Type != "function_call_output" || !calls[id.CallID] {
-			continue
-		}
-		var result struct {
-			Code   loop.Code `json:"code"`
-			Output struct {
-				Loaded []string `json:"loaded_tools"`
-			} `json:"output"`
-		}
-		if json.Unmarshal([]byte(wire.Output), &result) != nil || result.Code != loop.OK {
-			continue
-		}
-		for _, name := range result.Output.Loaded {
-			loaded[name] = true
-		}
-	}
-	r.Tools = slices.Clone(c.first)
-	for _, d := range c.first {
-		delete(loaded, declarationName(d))
-	}
-	for _, d := range c.all {
-		if loaded[declarationName(d)] {
-			r.Tools = append(r.Tools, d)
-		}
-	}
-	if start := strings.Index(r.Instructions, "<enabled_tools>\n"); start >= 0 {
-		start += len("<enabled_tools>\n")
-		if end := strings.Index(r.Instructions[start:], "\n</enabled_tools>"); end >= 0 {
-			raw, _ := json.Marshal(r.Tools)
-			r.Instructions = r.Instructions[:start] + string(raw) + r.Instructions[start+end:]
-		}
-	}
-	return r, nil
+	return (&toolcatalog.Catalog{First: c.first, All: c.all, Offset: c.offset}).Transform(ctx, r)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 func TestQuestionLiveSteering(t *testing.T) {
@@ -49,11 +50,19 @@ func TestQuestionLiveSteering(t *testing.T) {
 				t.Fatal("unconsumed steering authorized resolution", got)
 			}
 			queue := &conversationInputs{runtime: r, inputs: inputs, questions: gate}
-			if drained := queue.Drain(); len(drained) != 1 || queue.failure != nil {
+			if drained := queue.Drain(); len(drained) != 2 || string(drained[0]) != string(items[0]) || queue.failure != nil {
 				t.Fatalf("drain=%v error=%v", drained, queue.failure)
 			}
 			if err := gate.check(t.Context()); err == nil {
 				t.Error("consumed answer did not require a new question assessment")
+			}
+			if !sameTurn {
+				if got := questionCall(t, bindings, "resolve_question", "related-again", map[string]string{"id": question.ID, "kind": "related", "quote": input.Body.Text()}); got.Code != loop.OK {
+					t.Fatal(got)
+				}
+				if err := gate.check(t.Context()); err == nil {
+					t.Error("earlier related assessment cleared the new answer gate")
+				}
 			}
 			for _, id := range []string{"answer", "retry"} {
 				if got := questionCall(t, bindings, "resolve_question", id, args); got.Code != loop.OK {
@@ -140,6 +149,12 @@ func TestQuestionSteeringDefaultSource(t *testing.T) {
 	if got := questionCall(t, bindings, "resolve_question", "related", map[string]string{"id": question.ID, "kind": "related", "quote": first.Body.Text()}); got.Code != loop.OK {
 		t.Fatal("earlier consumed source was lost", got)
 	}
+	if err := gate.check(t.Context()); err == nil {
+		t.Error("earlier related assessment allowed completion before the topic change was assessed")
+	}
+	if got := gate.before(t.Context(), provider.ToolCall{ID: "work", Name: "write_record"}); got == nil || got.Code != loop.Invalid {
+		t.Errorf("earlier related assessment allowed work: %+v", got)
+	}
 	for _, id := range []string{"default", "retry"} {
 		if got := questionCall(t, bindings, "resolve_question", id, map[string]string{"id": question.ID, "kind": "default_applied", "quote": next.Body.Text()}); got.Code != loop.OK {
 			t.Fatal(got)
@@ -152,6 +167,64 @@ func TestQuestionSteeringDefaultSource(t *testing.T) {
 	notice, err := r.journal().Get(t.Context(), question.ID+":default:"+next.ID)
 	if err != nil || notice.ParentID != next.ID {
 		t.Fatalf("default notice source: %+v %v", notice, err)
+	}
+	if err := gate.check(t.Context()); err != nil {
+		t.Fatal("default resolution did not release the gate", err)
+	}
+}
+
+func TestQuestionSteeringRelatedInputs(t *testing.T) {
+	r := controlRuntime(t)
+	input := questionPersonInput(t, r, "ask", "Prepare a draft")
+	bindings, gate := questionBindings(t, r, input, agents.ProjectWorkMethod(agents.Preparation{}, agents.State{}))
+	result := questionCall(t, bindings, "ask_question", "format", waiting.QuestionDraft{Question: "Which format?", Recommendation: "Use a table", Default: "table"})
+	var question waiting.ConversationQuestion
+	if result.Code != loop.OK || json.Unmarshal(result.Output, &question) != nil {
+		t.Fatal(result)
+	}
+	first := questionPersonInput(t, r, "first", "Why a table? Is it easier to compare?")
+	last := questionPersonInput(t, r, "last", "Why a table? Does it fit on one page?")
+	for _, event := range []ledger.Event{first, last} {
+		if err := gate.consume(t.Context(), acceptedSteering{event: event, runner: r}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"earlier", "retry"} {
+		if got := questionCall(t, bindings, "resolve_question", id, map[string]string{"id": question.ID, "kind": "related", "quote": first.Body.Text()}); got.Code != loop.OK {
+			t.Fatal(got)
+		}
+		if err := gate.check(t.Context()); err == nil {
+			t.Error("earlier related assessment cleared the latest input gate")
+		}
+	}
+	// A shared quote selects the latest input. Once assessed, reprocessing an
+	// earlier input must not erase that assessment and block work again.
+	if got := questionCall(t, bindings, "resolve_question", "latest", map[string]string{"id": question.ID, "kind": "related", "quote": "Why a table?"}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	if got := questionCall(t, bindings, "resolve_question", "earlier-again", map[string]string{"id": question.ID, "kind": "related", "quote": first.Body.Text()}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	if err := gate.check(t.Context()); err != nil {
+		t.Fatal("latest related input assessed but gate remained blocked", err)
+	}
+	// Identical text arriving as a new event still needs a fresh assessment.
+	repeated := questionPersonInput(t, r, "repeated", last.Body.Text())
+	if err := gate.consume(t.Context(), acceptedSteering{event: repeated, runner: r}); err != nil {
+		t.Fatal(err)
+	}
+	if err := gate.check(t.Context()); err == nil {
+		t.Error("new event with repeated text inherited an older assessment")
+	}
+	if got := questionCall(t, bindings, "resolve_question", "repeated", map[string]string{"id": question.ID, "kind": "related", "quote": repeated.Body.Text()}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	if err := gate.check(t.Context()); err != nil {
+		t.Fatal("repeated text could not be assessed", err)
+	}
+	stored, err := waiting.NewConversationQuestions(r.db).Get(t.Context(), question.ID)
+	if err != nil || stored.Resolution != nil {
+		t.Fatalf("related assessments closed the question: %+v %v", stored, err)
 	}
 }
 

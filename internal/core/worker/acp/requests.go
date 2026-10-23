@@ -18,6 +18,9 @@ type pendingDecision struct {
 }
 
 func (a *Adapter) permission(th worker.Thread, p *wire.Permission) bool {
+	a.mu.Lock()
+	a.effectSeen = true
+	a.mu.Unlock()
 	if string(p.Request.SessionID) != th.ID {
 		a.finish(th, worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure, Code: "foreign_request"})
 		return false
@@ -101,6 +104,16 @@ func (a *Adapter) Answer(ctx context.Context, th worker.Thread, answer worker.An
 	}
 	var send func() error
 	if p.permission != nil {
+		if len(a.spec.ApprovalKey) > 0 {
+			allow, err := worker.VerifyApproval(a.spec.ApprovalKey, th, p.request, answer.Approval)
+			if err != nil {
+				return err
+			}
+			expected, err := PermissionReply(p.request.Params, allow)
+			if err != nil || string(expected) != string(answer.Result) {
+				return errors.New("ACP approval does not match signed choice")
+			}
+		}
 		var response wire.RequestPermissionResponse
 		if json.Unmarshal(answer.Result, &response) != nil || response.Outcome.Selected == nil && response.Outcome.Cancelled == nil {
 			return errors.New("invalid ACP approval answer")
@@ -124,7 +137,16 @@ func (a *Adapter) Answer(ctx context.Context, th worker.Thread, answer worker.An
 		if count != 1 {
 			return errors.New("ACP permission option is not unique or was not offered")
 		}
-		send = func() error { return p.permission.Answer(ctx, option) }
+		var meta *map[string]json.RawMessage
+		if answer.Approval != nil {
+			raw, err := json.Marshal(answer.Approval)
+			if err != nil {
+				return err
+			}
+			fields := map[string]json.RawMessage{"lina/approval": raw}
+			meta = &fields
+		}
+		send = func() error { return p.permission.AnswerWithMeta(ctx, option, meta) }
 	} else {
 		var response wire.CreateElicitationResponse
 		if json.Unmarshal(answer.Result, &response) != nil || response.Accept == nil && response.Decline == nil && response.Cancel == nil {

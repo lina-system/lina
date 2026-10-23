@@ -31,7 +31,7 @@ func TestScheduledOutcome(t *testing.T) {
 				t.Fatal(err)
 			}
 			thread := worker.Thread{ID: "scheduled-session", TurnID: "turn", TaskID: "task", AttemptID: "task:1", ProcessGeneration: 1, BindingEpoch: 1}
-			entry := &workerSession{scheduled: true, origin: r, input: input, thread: thread, packet: "Inspect the assigned files.", workdir: t.TempDir()}
+			entry := &workerSession{adapter: &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, tier: "pull"}, scheduled: true, origin: r, input: input, thread: thread, packet: "Inspect the assigned files.", workdir: t.TempDir()}
 			r.workers.mu.Lock()
 			r.workers.sessions[thread.ID] = entry
 			r.workers.mu.Unlock()
@@ -54,6 +54,9 @@ func TestScheduledOutcome(t *testing.T) {
 				},
 			})
 			if err := d.reactor.Schedule(t.Context(), []work.Task{stopTask(r, thread.TaskID)}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := entry.storeSteering(t.Context(), "pending-at-stop", "pending correction"); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(t.Context())
@@ -86,6 +89,14 @@ func TestScheduledOutcome(t *testing.T) {
 				send(worker.Event{Thread: thread, Kind: worker.FinishEvent, Finish: &finish})
 			}
 			send(worker.Event{Thread: thread, Kind: worker.ProgressEvent, Progress: &worker.Progress{Phase: "barrier"}})
+			messages, mailErr := r.work.SteeringMessages(t.Context(), "fake:"+thread.ID)
+			wantMail := "stored"
+			if finish.Status == worker.Done || finish.Status == worker.Interrupted {
+				wantMail = "refused"
+			}
+			if mailErr != nil || len(messages) != 1 || messages[0].State != wantMail {
+				t.Fatalf("scheduled mailbox after finish: %+v %v", messages, mailErr)
+			}
 			got, err := r.recordedWorker(t.Context(), thread.ID)
 			if err != nil || got.Output != output || got.Status != finish.Status || got.Failure != finish.Failure || got.Live {
 				t.Fatalf("scheduled result lost: output=%q status=%q failure=%q live=%v err=%v", got.Output, got.Status, got.Failure, got.Live, err)

@@ -60,6 +60,9 @@ func TestM2InstalledSkillMaintenance(t *testing.T) {
 			t.Error(err)
 			return
 		}
+		if answerEmptyMemoryExtraction(w, request.Input) {
+			return
+		}
 		maintenance := len(request.Input) > 0 && strings.Contains(string(request.Input[0]), "Klotho's skill maintenance job")
 		if !maintenance {
 			offered := map[string]bool{}

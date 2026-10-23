@@ -20,9 +20,9 @@ func TestM1TUIShell(t *testing.T) {
 		t.Fatal(err)
 	}
 	var scenario struct {
-		Connect []fakecore.Step `json:"connect"`
-		Refuse  []fakecore.Step `json:"refuse"`
-		Locales []string        `json:"locales"`
+		Connect [][]fakecore.Step `json:"connect"`
+		Refuse  [][]fakecore.Step `json:"refuse"`
+		Locales []string          `json:"locales"`
 	}
 	if err := json.Unmarshal(data, &scenario); err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestM1TUIShell(t *testing.T) {
 			language := design.LanguageFor(locale)
 			for _, test := range []struct {
 				name, state string
-				steps       []fakecore.Step
+				connections [][]fakecore.Step
 				exit        int
 			}{
 				{"connect", "live", scenario.Connect, 0},
@@ -43,8 +43,8 @@ func TestM1TUIShell(t *testing.T) {
 				t.Run(test.name, func(t *testing.T) {
 					h := newHarness(t, binary)
 					var done <-chan error
-					if test.steps != nil {
-						done = h.fakeCore(test.steps, true)
+					if test.connections != nil {
+						done = h.fakeCoreConnections(true, test.connections...)
 					}
 					term := h.startTUI("TERM=xterm-256color", "NO_COLOR=1", "LC_ALL="+locale)
 					expectCatalogState(t, h, term, language, "connecting")

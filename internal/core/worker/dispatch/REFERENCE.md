@@ -32,6 +32,16 @@ The initial resource estimate is one CPU, 512 MiB memory and 1024 MiB disk per a
 Canon migration 43 replaces the repository-wide unique index with fenced area claims and durable worker quota.
 A late quota snapshot cannot erase a newer observed stop; admission rechecks quota before reserving the attempt.
 
+#962 keeps a definitive pre-prompt sign-in refusal in `ReadinessFailures` and
+`Tried`, without writing `worker_quota`. A new task therefore opens a session
+again after external sign-in. At startup, `recoverReadinessQuota` removes a
+legacy single unmeasured, unidentified error stop only when all retained
+attempts at that worker were readiness refusals. Potential execution, measured
+quota and account/bucket identities prevent invalidation. No schema changes.
+The readiness regression tests cover new-task selection, legacy recovery and
+preserved quota blocks; the installed Cursor scenario covers refusal, fallback,
+external sign-in, restart and a new adapter-derived result.
+
 ### C-58 correction delivery
 
 #144 connects the completion reactor's dispatch delivery to that judgment.
@@ -42,3 +52,17 @@ Completed worker processes are restarted with the retained packet; Core does not
 Each generation retains its own result artifact.
 A stale completion cannot overwrite the queued correction.
 An unchanged corrected head retains its previous failed check and closes against the new receipt without a second review.
+
+### C-59 live goal sessions
+
+#766 keeps a goal step's worker process past its turn while the step is in
+progress or its pull request is operated on.
+`dispatch` adopts a delivered goal worker into `worker.Live` under the action id
+that dispatched it; every other outcome joins the process as before.
+An attempt joins its process at most once: the deferred cleanup is a no-op for
+an adopted session, and the registry ends it when the step leaves the frontier.
+A failed join stays retryable and keeps the session.
+A new attempt of the same task ends an earlier kept session before it starts, so
+one worktree never has two workers.
+The registry is per Core process; after a restart only the recorded thread and
+receipt are read.

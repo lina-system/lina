@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/kit/provider"
 )
 
 // ControlSchema is a separate numbered migration after Schema and the ledger
@@ -47,7 +48,16 @@ func interruptNotice(ctx context.Context, tx *canon.Tx, id string, cause Interru
 	return terminalNotice(ctx, tx, id, &cause.Issuer, "interruption", "notice."+string(cause.Issuer))
 }
 
-func failureNotice(ctx context.Context, tx *canon.Tx, id string) error {
+func failureNotice(ctx context.Context, tx *canon.Tx, id string, cause error) error {
+	if errors.Is(cause, ErrRequestTooLarge) {
+		return terminalNotice(ctx, tx, id, nil, "failure", "notice.request_too_large")
+	}
+	// An authentication refusal is a state of the account, not a retryable
+	// fault: the person is told to sign in.
+	var failure *provider.Failure
+	if errors.As(cause, &failure) && failure.Kind == provider.NeedsSignIn {
+		return terminalNotice(ctx, tx, id, nil, "failure", "notice.sign_in")
+	}
 	return terminalNotice(ctx, tx, id, nil, "failure", "notice.failed")
 }
 

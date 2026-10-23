@@ -49,3 +49,19 @@ the local allocation source must remain separately identifiable.
 Unknown: CRW does not define LINA's dispatch-tool branch naming, GitHub remote
 configuration or adapter observation storage. These follow LINA's work-area
 contract. This change runs no CRW executable or review workflow.
+
+## Own-branch push (#1325)
+
+Seen: CRW's recorded worktree carries no remote-tracking restriction; the
+worker publishes with its own Git setup. Git 2.56 release notes: a push to a
+URL that uniquely matches a configured remote now updates that remote's
+fetch refspec, so `@{push}` and the remote-tracking branch move on push.
+
+Inferred: the guard must not decide publication by how the worker names the
+remote. It allows the single remote-tracking ref that mirrors the task's own
+assigned branch, for any remote, and keeps the rest of `refs/remotes/` closed.
+An earlier Core's guard is replaced in place, so an upgrade needs no work-area
+surgery; a hook Core did not write still refuses the allocation.
+
+Unknown: the reference does not state which Git versions a worker host runs.
+Tests exercise the guard alone, not a network push.

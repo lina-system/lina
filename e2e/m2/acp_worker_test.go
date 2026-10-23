@@ -14,6 +14,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -47,23 +49,31 @@ func TestACPWorkersThroughRunningCore(t *testing.T) {
 		{name: "success", worker: "gemini", binary: "gemini", mode: "success"},
 		{name: "cursor", worker: "cursor", binary: "cursor-agent", mode: "success"},
 		{name: "grok", worker: "grok", binary: "grok", mode: "success"},
-		{name: "claude-acp", worker: "claude-acp", binary: "claude-agent-acp", mode: "success"},
 		{name: "exit", worker: "gemini", binary: "gemini", mode: "exit"},
 		{name: "cancel", worker: "gemini", binary: "gemini", mode: "cancel"},
 	})
 }
 
 type acpScenario struct {
+	profiles                   string
+	startupWarnings            []string
 	name, worker, binary, mode string
+	unavailable                string
 	script                     string
 	parallel                   bool
 	answerQuestions            bool
 	environment                []string
 	setup                      func(*testing.T, string)
+	bundleFiles                func(*testing.T, string, string)
+	beforeDispatch             func(*testing.T, string)
 	beforeFinish, afterFinish  func(*testing.T, *harness, string, dispatch.Record)
 }
 
 func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
+	bwrap, err := exec.LookPath("bwrap")
+	if err != nil {
+		t.Fatal(err)
+	}
 	binary := filepath.Join(t.TempDir(), "lina")
 	build := exec.CommandContext(t.Context(), "go", "build", "-mod=readonly", "-ldflags=-w", "-o", binary, "./cmd/lina")
 	build.Dir = "../.."
@@ -132,6 +142,9 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			env = append(env, scenario.environment...)
 			write(filepath.Join(bin, "systemctl"), "#!/bin/sh\n# SPDX-License-Identifier: Apache-2.0\ncase \"$2\" in show) printf 'not-found\\n';; daemon-reload|enable) exit 0;; *) exit 97;; esac\n", 0700)
 			bundle := makeInstallBundle(t, root, binary, nodeBinary)
+			if scenario.bundleFiles != nil {
+				scenario.bundleFiles(t, root, bundle)
+			}
 			setup := exec.CommandContext(ctx, binary, "install", "--state-root", state, "--unit-dir", filepath.Join(root, "units"), "--bundle", bundle)
 			setup.Env = env
 			if out, err := setup.CombinedOutput(); err != nil {
@@ -147,6 +160,9 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			}
 			h.socket = installed.Socket
 			installedBinary := filepath.Join(state, "system/bin/lina")
+			if scenario.profiles != "" {
+				write(filepath.Join(state, "system/core/worker-profiles.json"), scenario.profiles, 0600)
+			}
 			git := func(args ...string) string {
 				t.Helper()
 				c := exec.CommandContext(ctx, filepath.Join(bin, "git"), args...)
@@ -164,6 +180,7 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Initial design")
 			git("remote", "add", "origin", "https://github.com/fixture/project.git")
 			var requestCount atomic.Int32
+			var missingObserved atomic.Bool
 			var cancelRequested atomic.Bool
 			var cancelSent atomic.Bool
 			var cancelArgs atomic.Value
@@ -171,7 +188,12 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			fixtureErrors := make(chan error, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var req struct {
-					Tools []struct{ Name string }
+					Tools []struct {
+						Name       string
+						Parameters struct {
+							Properties map[string]struct{ Enum []string }
+						}
+					}
 					Input []json.RawMessage
 				}
 				if e := json.NewDecoder(r.Body).Decode(&req); e != nil {
@@ -185,7 +207,12 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 							Code   string
 							Output json.RawMessage
 						}
-						if json.Unmarshal([]byte(item.Output), &result) != nil || result.Code != "ok" {
+						decodeErr := json.Unmarshal([]byte(item.Output), &result)
+						missing := decodeErr == nil && result.Code == "tool_unavailable" && scenario.unavailable != "" && strings.Contains(string(result.Output), "claude")
+						if missing {
+							missingObserved.Store(true)
+						}
+						if decodeErr != nil || (result.Code != "ok" && !missing) {
 							select {
 							case fixtureErrors <- fmt.Errorf("tool failed: %s", item.Output):
 							default:
@@ -248,25 +275,39 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 					emitPersonaCall(w, "cancel", "worker_interrupt", cancelArgs.Load())
 					return
 				}
-				if requestCount.Add(1) == 1 {
+				count := requestCount.Add(1)
+				if count == 1 || (scenario.unavailable != "" && count == 2) {
 					available := false
 					for _, tool := range req.Tools {
-						available = available || tool.Name == "dispatch_work"
+						if tool.Name == "dispatch_work" {
+							available = slices.Contains(tool.Parameters.Properties["worker"].Enum, scenario.worker)
+						}
 					}
-					offered <- available
+					if count == 1 {
+						offered <- available
+					}
 					if !available {
 						emitResponse(w, "Worker unavailable.", true)
 						return
 					}
-					emitPersonaCall(w, "dispatch", "dispatch_work", map[string]any{"repository": repo, "base": "dev", "branch": "acp-result", "worker": scenario.worker, "what": "Create result.txt", "why": "Exercise ACP execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": "A committed result file with verified PR evidence", "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}})
+					selected := scenario.worker
+					if scenario.unavailable != "" && count == 1 {
+						selected = scenario.unavailable
+					}
+					emitPersonaCall(w, fmt.Sprintf("dispatch-%d", count), "dispatch_work", map[string]any{"repository": repo, "base": "dev", "branch": "acp-result", "worker": selected, "what": "Create result.txt", "why": "Exercise ACP execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": "A committed result file with verified PR evidence", "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}})
 					return
 				}
 				emitResponse(w, "Task accepted.", true)
 			}))
 			defer server.Close()
+			loadfile, pidfile := filepath.Join(fixture, "loadavg"), filepath.Join(fixture, "core.pid")
+			write(loadfile, "0.00 0.00 0.00 1/1 1\n", 0600)
 			start := func() func() {
 				t.Helper()
-				c := exec.CommandContext(ctx, installedBinary, "core", "--state-root", state, "--socket", h.socket)
+				// Isolate only the resource sample, as in the Cursor scenario. The
+				// real Core sampler and capacity admission still run.
+				args := []string{bwrap, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", loadfile, "/proc/loadavg", "--", "/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; shift; exec "$@"`, "acp-load", pidfile, installedBinary, "core", "--state-root", state, "--socket", h.socket}
+				c := exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", `"$@" & child=$!; wait "$child"`, "acp-load-parent"}, args...)...)
 				c.Env = append(append([]string(nil), env...), "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture", "LINA_RESPONSES_API_KEY=synthetic-core-key")
 				var logs bytes.Buffer
 				c.Stdout = &logs
@@ -282,9 +323,21 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 						return
 					}
 					stopped = true
-					c.Process.Signal(syscall.SIGTERM)
+					rawPID, pidErr := os.ReadFile(pidfile)
+					pid, parseErr := strconv.Atoi(strings.TrimSpace(string(rawPID)))
+					if pidErr != nil || parseErr != nil || pid <= 0 {
+						t.Error("missing Core process identity", pidErr, parseErr)
+						c.Process.Kill()
+					} else {
+						syscall.Kill(pid, syscall.SIGTERM)
+					}
 					select {
 					case e := <-done:
+						for _, cause := range scenario.startupWarnings {
+							if !strings.Contains(logs.String(), cause) {
+								t.Errorf("startup did not report %q: %s", cause, &logs)
+							}
+						}
 						if e != nil {
 							t.Errorf("Core exit: %v %s", e, &logs)
 						}
@@ -369,6 +422,9 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 					}
 				}
 			}()
+			if scenario.beforeDispatch != nil {
+				scenario.beforeDispatch(t, root)
+			}
 			key, text := "delegate", "Create result.txt through the ACP worker."
 			if _, err = c.Input(ctx, protocol.Input{ConversationID: &conversation, InputID: &key, Text: &text}); err != nil {
 				t.Fatal(err)
@@ -421,6 +477,16 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 				card, err = work.New(db).Get(ctx, record.ID)
 				return err == nil
 			}
+			if mode == "needs-sign-in" {
+				wait("sign-in refusal", func() bool { return read() && record.Code == "needs_sign_in" && record.State == "queued" })
+				if card.Run != nil || card.Receipt != nil || card.Active {
+					t.Fatal("refused session created a worker run or receipt", card)
+				}
+				if scenario.afterFinish != nil {
+					scenario.afterFinish(t, h, fixture, record)
+				}
+				return
+			}
 			wait("progress before finish", func() bool {
 				return read() && card.Active && card.Receipt == nil && len(card.Stages) > 0 && card.Stages[0].Source == "worker_report" && strings.Contains(card.Stages[0].Summary, "Working on result.txt")
 			})
@@ -466,13 +532,18 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 				scenario.beforeFinish(t, h, fixture, record)
 			}
 			write(filepath.Join(fixture, "release"), "", 0600)
-			wait("terminal observation", func() bool { return read() && (record.State == "finished" || record.State == "unknown") })
+			wait("terminal observation", func() bool {
+				return read() && (record.State == "finished" || record.State == "unknown" || record.State == "decision")
+			})
 			if scenario.afterFinish != nil {
 				scenario.afterFinish(t, h, fixture, record)
 			}
+			if scenario.unavailable != "" && !missingObserved.Load() {
+				t.Fatal("missing worker cause not returned through running Core")
+			}
 			switch mode {
 			case "exit":
-				if record.State != "unknown" || record.Code != "prompt_failed" || card.Receipt != nil {
+				if record.State != "decision" || record.Code != "prompt_failed" || record.Attempt != 2 || record.Recoveries != 1 || card.Receipt == nil || card.Receipt.Outcome != "failed" {
 					t.Fatal("open prompt exit became done", record, card)
 				}
 			case "cancel":
@@ -495,10 +566,17 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 type harness struct {
 	ctx          context.Context
 	root, socket string
+	logs         *bytes.Buffer
 }
 
 const acpAgentScript = `#!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
+function messageText(text) {
+ if (!text.startsWith('<lina-message ')) return text;
+ const match=text.match(/^<lina-message [^>]*><text>([\s\S]*)<\/text><\/lina-message>$/);
+ if (!match) throw Error('invalid worker message frame');
+ return match[1].replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi,(_,e)=>e[0]==='#'?String.fromCodePoint(e[1].toLowerCase()==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"})[e]);
+}
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -532,10 +610,11 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   fs.writeFileSync(path.join(root,'cwd'),process.cwd());reply(m.id,{sessionId:'acp-fixture'});break;
  case 'session/prompt':
   pending=m.id;packet=m.params.prompt[0].text;progress('Working on result.txt');
+  if(process.env.LINA_ACP_CASE==='invalid-stop-exit'){reply(pending,{stopReason:'bogus'});process.exit(0)}
   if(process.env.LINA_ACP_CASE==='cancel')break;
   release(()=>{
    if(process.env.LINA_ACP_CASE==='exit')process.exit(0);
-   const definition=JSON.parse(packet.slice(packet.indexOf('{')));
+   const definition=JSON.parse(messageText(packet).slice(messageText(packet).indexOf('{')));
    const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
    git('switch','-c',definition.branch);fs.writeFileSync('result.txt','ACP result\n');git('add','result.txt');git('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Create ACP result');
    const head=git('rev-parse','HEAD');
@@ -663,12 +742,6 @@ func seedMethodologyAgents(t *testing.T, h *harness, person, selected string) ma
 		}
 	}
 	return ids
-}
-
-type methodologyRequest struct {
-	Instructions string
-	Tools        []struct{ Name string }
-	Input        []json.RawMessage
 }
 
 func makeInstallBundle(t *testing.T, base, lina, node string) string {

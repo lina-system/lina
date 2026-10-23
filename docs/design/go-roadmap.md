@@ -26,6 +26,35 @@ This document is informative. It orders the Go design of LINA Core and the termi
 11. One review per pull request. A high-risk contract change may get one extra independent read, and there is no standing gate of several verifiers.
 12. Design documents are written in English. Summaries for the person are in Korean.
 
+### LINA 1 acceptance record
+
+The [M1 record schema](../../evidence/m1/record.schema.json) and
+[owner runbook](../../evidence/m1/runbook.md) make rules 2, 7 and 10 checkable.
+One record retains complete attempts, each bound to one dev commit, build
+manifest, host code and fresh-install id. A1–A9 and every named failure injection
+have an explicit result. Headless receipts come from uncached Core/TUI tests;
+the owner's UI/UX verdict and confirmed S1–S11 terminal records are additional
+requirements. Synthetic tests cannot stand in for a hand run. The UI/UX verdict
+and each serial-matrix row that ran cite an owner-observation receipt
+(`format` 1, `kind` `owner-observation`) for that attempt. The headless receipt
+cannot stand in for that receipt.
+
+The serial matrix records fresh READY, planned restart, crash restart and
+whole-generation restore into a different root of the same main. Its decimal
+uint64 epochs rise strictly; restarts repeat no effect, and older-generation
+restore exposes zero forgotten search, summary or context hits. The restore row
+records the generation id backup prints: `generation-` plus its RFC 4648 base32
+text, at least 26 characters. Independent fault-test roots check their own
+epoch sequences, not this serial counter.
+
+After a failure, retain the failed attempt and append a complete attempt on the
+fixing dev commit, with a new run id, new install roots and new evidence. A
+measured terminal `gap`, including S7, stays `gap` with its original spike file.
+Unrun cells stay explicit and cannot pass. The checker verifies attachment hashes,
+commit bindings, result coverage, matrix invariants and diagnosis citations.
+Only an entirely passing final attempt can accept the phase; schema validity
+alone and this runbook's existence are not acceptance evidence.
+
 ## Phases
 
 Development starts with LINA Core and the TUI. The LINA app follows once they are usable and does not block Core work.
@@ -143,7 +172,7 @@ Run the issue's package checks with `go test ./internal/core/ledger/... ./intern
 - #62 implements the agent store, immutable Git persona revisions, durable per-turn persona preparation, preset fan-out, first-run initialization and recoverable 30-day trash with immediate binding termination. Package scenarios use real canon and files; account sign-in, conversation preparation and channel transport flows have no client endpoint in this increment.
 
 **G1-31 Accounts and Sign in with ChatGPT.** Single refresh actor, sign-in relay, owner binding, V1 record.
-- #81 implements the client relay and immutable owner binding with recorded issuer wires. Live V1 remains `pending_owner_signin`; the [owner runbook](../../evidence/v1-chatgpt.md) states the command, observations and outstanding remote-client proof.
+- #81 implements the client relay and immutable owner binding with recorded issuer wires. The Responses request surface is observed live: four completed turns, the encrypted reasoning round trip, parallel function calls including `apply_patch`, and each undocumented field. That run used the person's own ChatGPT plan account through a Responses-compatible gateway, not LINA's sign-in route, so the sign-in flow, LINA's own route and the remote client remain unobserved; the [owner runbook](../../evidence/v1-chatgpt.md) states the commands and the outstanding remote-client proof.
 - Done when: one refresh runs at a time per account and a rotated refresh token is stored before use; a failed refresh shows needs sign-in and uses no other account; a second ChatGPT account never changes the binding; no token appears in a log, request, sandbox or client; the V1 record states what the request surface accepted.
 - Depends on: G1-06, G1-08, G1-18. Design refs: C-47; [runtime.md](runtime.md#chatgpt).
 - #80 implements the account store, serialized refresh and idle keep-alive, durable token rotation and account states. Package tests cover persistence, concurrent calls, interruption, failed refresh, turn exclusion and secret projections. The sign-in relay, issuer exchange, owner binding, protocol/TUI exposure and V1 record remain with their owning increments.

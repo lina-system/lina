@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Synthetic installed worker and forge; actual Core, Git and task worktrees run.
+function messageText(text) {
+ if (!text.startsWith('<lina-message ')) return text;
+ const match=text.match(/^<lina-message [^>]*><text>([\s\S]*)<\/text><\/lina-message>$/);
+ if (!match) throw Error('invalid worker message frame');
+ return match[1].replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi,(_,e)=>e[0]==='#'?String.fromCodePoint(e[1].toLowerCase()==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"})[e]);
+}
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -57,7 +63,7 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
       if(['read_projection','ask','coordinate','submit_receipt'].includes(kind)) {
         if(!message.result?.success)throw new Error(`work tool failed: ${kind} ${JSON.stringify(message)}`);
         const text=message.result.contentItems.find(item=>item.type==='inputText')?.text;
-        const result=JSON.parse(text);
+        const result=JSON.parse(messageText(text));
         if(kind==='read_projection') {
           if(result.assignment_id!==thread.id||!result.task_packet.includes('Work definition:'))throw new Error('foreign projection');
           thread.projection=result;
@@ -81,7 +87,9 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
           send({method:'turn/completed',params:{threadId:thread.id,turn:thread.turn}});
         }
       } else if(kind==='question') {
-        if(message.result?.answers?.answer?.answers?.[0]!=='confirmed')throw new Error('question answer did not reach worker');
+        // Core frames person answers; the vendor sees the frame and reads its body.
+        const answer=message.result?.answers?.answer?.answers?.[0];
+        if(typeof answer!=='string'||messageText(answer)!=='confirmed'||!answer.includes('speaker_kind="person"'))throw new Error('question answer did not reach worker');
         send({id:`${thread.id}:approval`,method:'item/commandExecution/requestApproval',params:{threadId:thread.id,turnId:thread.turn.id,itemId:'write',startedAtMs:1800000000000,command:'write scheduled artifact',cwd:thread.cwd,availableDecisions:['accept','decline']}});
       } else if(kind==='approval') {
         if(message.result?.decision!=='accept')throw new Error('approval did not reach worker');
@@ -105,7 +113,7 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
       case 'turn/start': {
         const thread=threads.get(p.threadId);thread.count++;
         if(thread.count===1) {
-          thread.definition=JSON.parse(p.input[0].text.split('Work definition:\n')[1]);
+          thread.definition=JSON.parse(messageText(p.input[0].text).split('Work definition:\n')[1]);
           writeFileSync(join(root,`${thread.id}.definition.json`),JSON.stringify(thread.definition));
         } else if(!cfg.conflict||thread.count!==cfg.conflict.returns+1||!p.input[0].text.includes('unmergeable'))throw new Error('unexpected conflict return');
         thread.turn={id:`turn-${thread.count}`,status:'inProgress',items:[]};
@@ -117,7 +125,11 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
       }
       case 'turn/steer': {
         const thread=threads.get(p.threadId);
-        if(!cfg.outcomes || thread.turn.id!==p.expectedTurnId || thread.turn.status!=='inProgress' || p.input[0].text!=='Report the outcome.')throw new Error('invalid owner follow-up');
+        // Core frames every input with its provenance; the owner text stays
+        // verbatim inside an authenticated person frame bound to this task.
+        const framed=p.input[0].text;
+        const frame=/^<lina-message sender="([^"]+)" speaker_kind="person" work_id="([^"]+)" id="([^"]+)"><text>/.exec(framed);
+        if(!cfg.outcomes || thread.turn.id!==p.expectedTurnId || thread.turn.status!=='inProgress' || !frame || frame[1]==='' || frame[3]==='' || frame[2]!==thread.id || messageText(framed)!=='Report the outcome.')throw new Error('invalid owner follow-up');
         send({id,result:{turnId:thread.turn.id}});
         callTool(thread,'read_projection',{});
         return;

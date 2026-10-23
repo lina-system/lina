@@ -138,8 +138,23 @@ export function distinctScenarios(scenarios) {
   return result;
 }
 
+// An acceptance shard is one `go test` process under the six-minute package
+// timeout. Measured work above this budget buys another shard, because a
+// failing sibling otherwise leaves no time for the remaining scenarios: run
+// 40015895235 reached 355 s in its single m3 shard and killed scenarios that
+// had not started. Scenario files stay together, so a lone heavy file can
+// still exceed the budget without a splittable neighbour.
+export const shardBudgetSeconds = 240;
+
+// A milestone keeps its minimum shard count and gains shards until the measured
+// work of each fits the package timeout.
+export function shardCountFor(items, minimum) {
+  const measured = items.reduce((sum, item) => sum + (item.seconds ?? 0), 0);
+  return Math.max(minimum, Math.ceil(measured / shardBudgetSeconds));
+}
+
 export function planComponents({ cwd, scope, inventory = readInventory, unitCount = 4,
-  e2eCounts = { m1: 6, m2: 2, m3: 1 }, timings }) {
+  e2eCounts = { m1: 6, m2: 2, m3: 2 }, timings }) {
   if (!scope.components) return { tasks: [], selectedComponents: [], scenarios: [], e2eReason: 'no-components' };
   const data = inventory(cwd);
   const byPath = new Map(data.packages.map(pkg => [pkg.path, pkg]));
@@ -183,7 +198,7 @@ export function planComponents({ cwd, scope, inventory = readInventory, unitCoun
       const items = files.filter(scenario => scenario.milestone === milestone).map(scenario => ({
         ...scenario, id: scenario.file, seconds: scenario.files.reduce((sum, file) => sum + (timings.scenarios?.[file] ?? 1), 0),
       }));
-      for (const shard of balance(items, e2eCounts[milestone] ?? 2)) {
+      for (const shard of balance(items, shardCountFor(items, e2eCounts[milestone] ?? 2))) {
         const number = (counters.get(milestone) ?? 0) + 1;
         counters.set(milestone, number);
         const tests = shard.flatMap(scenario => scenario.tests).sort();

@@ -35,8 +35,9 @@ type toolPreparer func(string, *toolPreparation, map[string]loop.Tool) ([]provid
 func (r *conversationRuntime) prepareRunTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	if r.channelBinding == nil || r.channelBinding.Scope.Tools {
 		bindings[runs.StartToolName] = r.background.service.StartTool(r.runOrigin(turnID))
+		bindings["build_mock"] = r.buildMockTool(turnID)
 	}
-	return []provider.ToolDecl{startRunDeclaration()}, nil
+	return []provider.ToolDecl{startRunDeclaration(), buildMockDeclaration()}, nil
 }
 
 func (r *conversationRuntime) prepareDispatchTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
@@ -46,5 +47,5 @@ func (r *conversationRuntime) prepareDispatchTools(turnID string, _ *toolPrepara
 	if r.channelBinding == nil || r.channelBinding.Scope.Tools {
 		bindings["dispatch_work"] = r.router.root.workerDispatch.Tool(dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID})
 	}
-	return []provider.ToolDecl{dispatch.Declaration()}, nil
+	return []provider.ToolDecl{r.router.root.workerDispatch.Declaration()}, nil
 }

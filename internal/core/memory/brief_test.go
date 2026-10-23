@@ -9,6 +9,7 @@ import (
 )
 
 func TestPersonBriefCitationsTopicAgeAndSupersededJobs(t *testing.T) {
+	t.Parallel()
 	db := jobDatabase(t)
 	store := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}
@@ -35,6 +36,18 @@ func TestPersonBriefCitationsTopicAgeAndSupersededJobs(t *testing.T) {
 	if err := publish(newer, []BriefSentence{sentence, {Text: "uncited assertion"}, {Text: "fabricated source", Citations: []Evidence{{Kind: MemoryItem, ID: "missing", Revision: 1}}}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		var count int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM cite WHERE view_kind='person_brief' AND view_id=? AND added_revision=? AND target_kind='memory' AND target_id=? AND target_revision=? AND dropped_revision IS NULL", canon.BriefCitationID(scope.Person, scope.Agent), newer.Generation, item.ID, item.Revision).Scan(&count); err != nil {
+			return err
+		}
+		if count != 1 {
+			t.Errorf("published brief citations=%d", count)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	got, err := store.PersonBrief(t.Context(), scope, "tea", 6, 100, personOrigin)
 	if err != nil || len(got) != 1 || len(got[0].Citations) != 1 {
 		t.Fatalf("brief: %+v %v", got, err)
@@ -58,6 +71,7 @@ func TestPersonBriefCitationsTopicAgeAndSupersededJobs(t *testing.T) {
 }
 
 func TestBriefEmptyBackoffAndRevocation(t *testing.T) {
+	t.Parallel()
 	db := jobDatabase(t)
 	store := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}
@@ -91,6 +105,7 @@ func TestBriefEmptyBackoffAndRevocation(t *testing.T) {
 }
 
 func TestBriefNeverLeavesAndCrossAgentScope(t *testing.T) {
+	t.Parallel()
 	db := jobDatabase(t)
 	store := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}
@@ -108,6 +123,7 @@ func TestBriefNeverLeavesAndCrossAgentScope(t *testing.T) {
 }
 
 func TestBriefDispatchRechecksPreparedEvidence(t *testing.T) {
+	t.Parallel()
 	db := jobDatabase(t)
 	store := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}

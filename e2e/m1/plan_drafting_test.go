@@ -56,6 +56,9 @@ func TestM3PlanDrafting(t *testing.T) {
 			t.Error("bad provider request")
 			return
 		}
+		if answerEmptyMemoryExtraction(w, req.Input) {
+			return
+		}
 		n := calls.Add(1)
 		switch n {
 		case 1:
@@ -283,7 +286,7 @@ func TestM3PlanDrafting(t *testing.T) {
 	client.Close()
 	h.stopCore(core)
 	core = start()
-	conv, conversation = conversationClient(t, h)
+	conv, _ = conversationClient(t, h)
 	client = connect()
 	restored, failure := request(protocol.PlanRequest{Operation: "get", ResultID: &id})
 	if failure != nil || restored.Result == nil || restored.Result.Revision != "2" {
@@ -308,7 +311,7 @@ func TestM3PlanDrafting(t *testing.T) {
 	client.Close()
 	h.stopCore(core)
 	core = start()
-	conv, conversation = conversationClient(t, h)
+	conv, _ = conversationClient(t, h)
 	client = connect()
 	again, failure := request(protocol.PlanRequest{Operation: "confirm", ResultID: &id, Revision: &current})
 	if failure != nil || again.Revision == nil || *again.Revision != head || git("rev-parse", "HEAD") != head {

@@ -5,6 +5,7 @@ package work
 import (
 	"errors"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/work/observation"
 	"github.com/thisisjun786/lina/kit/result"
 	"time"
 )
@@ -94,31 +95,33 @@ type GoalDecision struct {
 	Decision QuestionDecision
 }
 type Card struct {
-	StartedAt      time.Time          `json:"started_at,omitzero"`
-	FinishedAt     time.Time          `json:"finished_at,omitzero"`
-	Activity       string             `json:"activity,omitempty"`
-	Scheduling     Scheduling         `json:"scheduling,omitempty"`
-	WaitReason     *ScheduleWait      `json:"wait_reason,omitempty"`
-	Completion     *result.Completion `json:"completion,omitempty"`
-	Head           string             `json:"head,omitempty"`
-	CompletionHead string             `json:"completion_head,omitempty"`
-	FileSnapshot   *FileSnapshot      `json:"file_snapshot,omitempty"`
-	FileEvidence   *FileEvidence      `json:"file_evidence,omitempty"`
-	FileCopies     []FileCopy         `json:"file_copies,omitempty"`
-	Materials      []Material         `json:"materials,omitempty"`
-	ResultHead     string             `json:"result_head,omitempty"`
-	Revision       uint64             `json:"revision"`
-	Waits          map[string]Wait    `json:"waits,omitempty"`
-	Decisions      []GoalDecision     `json:"decisions,omitempty"`
-	Task           Task               `json:"task"`
-	State          string             `json:"state"`
-	Run            *Run               `json:"run,omitempty"`
-	Active         bool               `json:"active"`
-	TurnStatus     string             `json:"turn_status,omitempty"`
-	Receipt        *Receipt           `json:"receipt,omitempty"`
-	Verdict        string             `json:"verdict,omitempty"`
-	Applied        bool               `json:"applied"`
-	Stages         []Stage            `json:"stages"`
+	Steering       []SteeringMessage     `json:"steering,omitempty"`
+	Doing          *observation.Snapshot `json:"doing,omitempty"`
+	StartedAt      time.Time             `json:"started_at,omitzero"`
+	FinishedAt     time.Time             `json:"finished_at,omitzero"`
+	Activity       string                `json:"activity,omitempty"`
+	Scheduling     Scheduling            `json:"scheduling,omitempty"`
+	WaitReason     *ScheduleWait         `json:"wait_reason,omitempty"`
+	Completion     *result.Completion    `json:"completion,omitempty"`
+	Head           string                `json:"head,omitempty"`
+	CompletionHead string                `json:"completion_head,omitempty"`
+	FileSnapshot   *FileSnapshot         `json:"file_snapshot,omitempty"`
+	FileEvidence   *FileEvidence         `json:"file_evidence,omitempty"`
+	FileCopies     []FileCopy            `json:"file_copies,omitempty"`
+	Materials      []Material            `json:"materials,omitempty"`
+	ResultHead     string                `json:"result_head,omitempty"`
+	Revision       uint64                `json:"revision"`
+	Waits          map[string]Wait       `json:"waits,omitempty"`
+	Decisions      []GoalDecision        `json:"decisions,omitempty"`
+	Task           Task                  `json:"task"`
+	State          string                `json:"state"`
+	Run            *Run                  `json:"run,omitempty"`
+	Active         bool                  `json:"active"`
+	TurnStatus     string                `json:"turn_status,omitempty"`
+	Receipt        *Receipt              `json:"receipt,omitempty"`
+	Verdict        string                `json:"verdict,omitempty"`
+	Applied        bool                  `json:"applied"`
+	Stages         []Stage               `json:"stages"`
 }
 
 // AcceptedCompletion retains Core's prepared assessment until Git application.
@@ -130,6 +133,8 @@ type AcceptedCompletion struct {
 // Event has one payload selected by Kind. Events are admitted by Service only;
 // clients and workers never append arbitrary events or acceptance judgments.
 type Event struct {
+	Steering       *SteeringMessage          `json:"steering,omitempty"`
+	Doing          *observation.Snapshot     `json:"doing,omitempty"`
 	RecordedAt     string                    `json:"recorded_at,omitempty"`
 	Scheduling     *Scheduling               `json:"scheduling,omitempty"`
 	WaitReason     *ScheduleWait             `json:"wait_reason,omitempty"`

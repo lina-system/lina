@@ -240,6 +240,9 @@ func agentFixture() {
 	progress := func(text string) {
 		send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "fixture", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": text}}}})
 	}
+	thought := func(text string) {
+		send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "fixture", "update": map[string]any{"sessionUpdate": "agent_thought_chunk", "content": map[string]any{"type": "text", "text": text}}}})
+	}
 	var pending json.RawMessage
 	var requestMode string
 	for scan.Scan() {
@@ -249,6 +252,7 @@ func agentFixture() {
 			Result json.RawMessage
 			Params struct {
 				Cwd        string
+				SessionID  string
 				McpServers []json.RawMessage
 				Prompt     []struct{ Text string }
 			}
@@ -262,7 +266,40 @@ func agentFixture() {
 		}
 		switch f.Method {
 		case "initialize":
-			reply(f.ID, map[string]any{"protocolVersion": 1, "agentInfo": map[string]any{"name": "fixture", "version": "fixture-9"}})
+			capabilities := map[string]any{}
+			if mode := os.Getenv("ACP_RECOVERY"); mode != "" && mode != "fresh" {
+				capabilities["loadSession"] = true
+				if mode == "resume" {
+					capabilities["sessionCapabilities"] = map[string]any{"resume": map[string]any{}}
+				}
+			}
+			reply(f.ID, map[string]any{"protocolVersion": 1, "agentCapabilities": capabilities, "agentInfo": map[string]any{"name": "fixture", "version": "fixture-9"}, "_meta": fixtureMeta()})
+		case "session/load", "session/resume":
+			want := "session/load"
+			if os.Getenv("ACP_RECOVERY") == "resume" {
+				want = "session/resume"
+			}
+			cwd, _ := os.Getwd()
+			if f.Method != want || f.Params.SessionID != "fixture" || f.Params.Cwd != cwd || len(f.Params.McpServers) != 1 {
+				os.Exit(17)
+			}
+			os.WriteFile("restored", []byte(f.Method), 0600)
+			if f.Method == "session/load" {
+				for range 1024 {
+					progress("REPLAY_ONLY")
+				}
+			}
+			// Live updates before the response fill the adapter's restore hold.
+			// The burst exceeds the client queue and the hold together, so the
+			// response cannot be read before the hold reaches its bound.
+			if os.Getenv("ACP_RESTORE_BURST") == "overflow" {
+				for range 1024 {
+					thought("LIVE_AFTER_RESTORE")
+				}
+			}
+			reply(f.ID, map[string]any{})
+			// A live update follows the restore response and must reach the adapter.
+			thought("LIVE_AFTER_RESTORE")
 		case "session/new":
 			if file := os.Getenv("ACP_MCP_CAPTURE"); file != "" {
 				raw, _ := json.Marshal(f.Params.McpServers)
@@ -276,18 +313,43 @@ func agentFixture() {
 			}
 			reply(f.ID, map[string]any{"sessionId": "fixture"})
 		case "session/prompt":
+			if raw := os.Getenv("ACP_UPDATES"); raw != "" {
+				var updates []json.RawMessage
+				if json.Unmarshal([]byte(raw), &updates) != nil {
+					os.Exit(17)
+				}
+				for _, update := range updates {
+					send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "fixture", "update": update}})
+				}
+			}
 			text := f.Params.Prompt[0].Text
 			switch text {
-			case "permission", "question":
+			case "rpc-error", "rpc-error-exit":
+				send(map[string]any{"jsonrpc": "2.0", "id": f.ID, "error": map[string]any{"code": -32603, "message": "private-prompt-detail", "data": map[string]any{"detail": "private-error-data"}}})
+				if text == "rpc-error-exit" {
+					os.Exit(0)
+				}
+			case "permission", "question", "refused-form":
 				pending, requestMode = f.ID, text
 				method := "session/request_permission"
 				params := json.RawMessage(`{"sessionId":"fixture","toolCall":{"toolCallId":"write","title":"Write result.txt","rawInput":{"path":"result.txt"}},"options":[{"optionId":"persist-allow","kind":"allow_always","name":"Always"},{"optionId":"one-allow","kind":"allow_once","name":"Once"},{"optionId":"persist-deny","kind":"reject_always","name":"Never"},{"optionId":"one-deny","kind":"reject_once","name":"Deny"}]}`)
-				if text == "question" {
+				if text == "question" || text == "refused-form" {
 					method = "elicitation/create"
 					params = json.RawMessage(`{"sessionId":"fixture","mode":"form","message":"Choose a name","requestedSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}}`)
 				}
+				if text == "refused-form" {
+					params = json.RawMessage(`{"sessionId":"fixture","mode":"form","message":"Secret","requestedSchema":{"type":"object","properties":{"api_key":{"type":"string"}}}}`)
+				}
 				send(map[string]any{"jsonrpc": "2.0", "id": "decision", "method": method, "params": params})
+			case "invalid-stop-exit":
+				reply(f.ID, map[string]any{"stopReason": "bogus"})
+				os.Exit(0)
 			case "exit":
+				os.Exit(0)
+			case "malformed":
+				send(map[string]any{"jsonrpc": "invalid", "method": "session/update"})
+			case "partial":
+				fmt.Fprint(os.Stdout, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fixture","update":{"sessionUpdate":"tool_call"`)
 				os.Exit(0)
 			case "unknown":
 				pending = f.ID
@@ -427,4 +489,11 @@ func TestSessionDeclaresWorkerTools(t *testing.T) {
 	if s.Name != "lina" || !filepath.IsAbs(s.Command) || len(s.Args) == 0 || s.Args[0] != "worker-tools" || len(s.Env) != 2 {
 		t.Fatal("invalid per-session MCP declaration")
 	}
+}
+
+func fixtureMeta() json.RawMessage {
+	if raw := os.Getenv("ACP_INIT_META"); raw != "" {
+		return json.RawMessage(raw)
+	}
+	return json.RawMessage(`null`)
 }

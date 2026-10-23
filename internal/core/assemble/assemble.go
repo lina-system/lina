@@ -5,9 +5,6 @@
 package assemble
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"sort"
 
@@ -47,6 +44,8 @@ type ContextItem struct {
 }
 type ContextPacket []ContextItem
 type Input struct {
+	MainID, ConversationID         string
+	PreviousInput                  *int // Exclusive position in History from native person provenance, nil if absent.
 	WorkMethod                     string
 	Core, AgentID, PersonaRevision string
 	AgentName, OwnerPersonID       string // Prepared identity; when present, the persona is projected once in Instructions.
@@ -55,6 +54,7 @@ type Input struct {
 	AlwaysTools, LoadedTools       []provider.ToolDecl // Already in stable declaration order.
 	Summary                        provider.Item
 	History                        []provider.Item // Native ledger projection, in ledger order; never imported history.
+	Profile                        []provider.Item // Authorized standing-profile projections, placed in packet group 5.
 	Packet                         ContextPacket
 	Current                        provider.Item
 	Model                          provider.ModelRef
@@ -82,6 +82,7 @@ type Drop struct {
 
 // Report is safe to record: it contains identities, digests and counts, no bodies.
 type Report struct {
+	Layout                         *provider.RequestLayout `json:",omitempty"`
 	AgentID, PersonaRevision, Hash string
 	Skills, Items                  []Ref
 	Dropped                        []Drop
@@ -106,29 +107,7 @@ func clone(items []provider.Item) []provider.Item {
 
 // Digest covers the logical model request, including exact opaque item bytes.
 // Credentials and a runtime's live tool bridge are deliberately not input data.
-func Digest(r provider.Request) string {
-	h := sha256.New()
-	write := func(b []byte) {
-		var n [8]byte
-		binary.BigEndian.PutUint64(n[:], uint64(len(b)))
-		h.Write(n[:])
-		h.Write(b)
-	}
-	write([]byte("lina-request-v1"))
-	meta, _ := json.Marshal([]string{string(r.Model), string(r.Effort), r.Instructions, string(r.Purpose)})
-	write(meta)
-	fields, _ := json.Marshal(r.Fields)
-	write(fields)
-	for _, list := range [][]provider.Item{r.Tools, r.Items} {
-		var n [8]byte
-		binary.BigEndian.PutUint64(n[:], uint64(len(list)))
-		h.Write(n[:])
-		for _, raw := range list {
-			write(raw)
-		}
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
+func Digest(r provider.Request) string { return provider.RequestDigest(r) }
 
 func group(k Kind) int {
 	switch k {
@@ -205,7 +184,7 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 	if len(in.Summary) > 0 && !json.Valid(in.Summary) {
 		return fail(Invalid)
 	}
-	for _, list := range [][]provider.Item{in.History, in.AlwaysTools, in.LoadedTools} {
+	for _, list := range [][]provider.Item{in.History, in.Profile, in.AlwaysTools, in.LoadedTools} {
 		for _, raw := range list {
 			if !json.Valid(raw) {
 				return fail(Invalid)
@@ -214,6 +193,12 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 	}
 	r := provider.Request{Model: in.Model, Effort: in.Effort, Purpose: provider.Turn, Fields: append(provider.FieldList(nil), in.Fields...)}
 	r.Tools = append(clone(in.AlwaysTools), clone(in.LoadedTools)...)
+	if in.MainID != "" || in.ConversationID != "" {
+		if in.MainID == "" || in.ConversationID == "" {
+			return fail(Invalid)
+		}
+		r.CacheIdentity = ConversationIdentity(in.MainID, in.AgentID, in.ConversationID)
+	}
 	if in.AgentName != "" || in.OwnerPersonID != "" {
 		if in.AgentName == "" || in.OwnerPersonID == "" {
 			return fail(Invalid)
@@ -230,10 +215,23 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 	}
 	catalog, _ := json.Marshal(in.Catalog)
 	r.Items = append(r.Items, message("developer", string(catalog)))
+	r.Layout = &provider.RequestLayout{Fixed: provider.Position{Items: len(r.Items), Tools: len(in.AlwaysTools)}}
+	historyStart := len(r.Items)
+	if len(in.Summary) > 0 {
+		historyStart++
+	}
+	if in.PreviousInput != nil {
+		if *in.PreviousInput <= 0 || *in.PreviousInput > len(in.History) {
+			return fail(Invalid)
+		}
+		r.Layout.PreviousInput = &provider.Position{Items: historyStart + *in.PreviousInput, Tools: len(r.Tools)}
+	}
 	if len(in.Summary) > 0 {
 		r.Items = append(r.Items, append(provider.Item(nil), in.Summary...))
 	}
 	r.Items = append(r.Items, clone(in.History)...)
+	r.Items = append(r.Items, append(provider.Item(nil), in.Current...))
+	r.Layout.CurrentInput = provider.Position{Items: len(r.Items), Tools: len(r.Tools)}
 	prefix := len(r.Items)
 	var packet ContextPacket
 	seen := map[string]Kind{}
@@ -286,14 +284,21 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 	sort.SliceStable(selected, func(i, j int) bool { return group(selected[i].Kind) < group(selected[j].Kind) })
 	build := func() bool {
 		r.Items = r.Items[:prefix]
+		profileAdded := false
 		for _, item := range selected {
+			if !profileAdded && group(item.Kind) >= 5 {
+				r.Items = append(r.Items, clone(in.Profile)...)
+				profileAdded = true
+			}
 			raw, ok := contextMessage(item)
 			if !ok {
 				return false
 			}
 			r.Items = append(r.Items, raw)
 		}
-		r.Items = append(r.Items, append(provider.Item(nil), in.Current...))
+		if !profileAdded {
+			r.Items = append(r.Items, clone(in.Profile)...)
+		}
 		report.Tokens = counter(r)
 		return report.Tokens >= 0
 	}
@@ -327,6 +332,7 @@ func Assemble(in Input, counter Counter) (provider.Request, Report) {
 			report.Skills = append(report.Skills, ref)
 		}
 	}
+	report.Layout = r.Layout.Clone()
 	report.Hash = Digest(r)
 	return r, report
 }

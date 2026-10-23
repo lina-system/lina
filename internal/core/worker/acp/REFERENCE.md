@@ -49,6 +49,19 @@ and C-29/C-60 in [Go Core](../../../../docs/design/go-core.md#work-engine).
   or verify a vendor release. This implements LINA's native ACP contract; no
   Hermes, Honcho, LCM-X or CRW behavior is copied.
 
+## Form projection (#1135)
+
+- **Seen:** The waiting-card bridge refuses secret-like field names and requires
+  a value for every projected field. ACP object schemas distinguish `required`
+  properties. Array items can name enum values or titled options. A schema miss
+  used to return a terminal refused outcome while the worker request stayed pending.
+- **Inferred:** Decline those field names before publishing a card. Mark properties
+  absent from `required` as optional and omit a blank answer. Show multi-select
+  values and titles in the question text. Return malformed for a schema miss so
+  the card stays open for a correction, decline, or cancel.
+- **Unknown:** No installed vendor form was exercised. This follows the ACP
+  adapter contract; no Hermes, Honcho, LCM-X or CRW behavior is copied.
+
 ## Session work tools (#749)
 
 - **Seen:** LINA's existing Core work-tool handlers validate `work.Receipt` and
@@ -88,4 +101,122 @@ they do not establish current acceptance or change the contracts.
 
 `internal/core/worker/acp` implements C-29 on that client.
 A profile holds the worker name, the command and arguments, the environment variables it sets (such as `CLAUDE_CODE_EXECUTABLE`), the version probe and the vendor rate-limit key it may read.
-Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added profiles come from an editable settings file defined by their own issue.
+Claude Code, Cursor, Gemini CLI and Grok are built-in profiles. Added profiles
+come from the C-60 settings file. Dispatch resolves their executable at startup
+and keeps the resulting factories local to that Core service.
+
+## Typed failures and quota (#750)
+
+- **Seen:** `claude-agent-acp` v0.94.0's `src/air-extension.ts`,
+  `src/session-failure-extension.ts` and `src/acp-agent.ts` advertise AIR v1
+  `sessionFailure` in initialize's top-level metadata after client opt-in.
+  `session_info_update._meta.jetbrains.air.sessionFailure` carries severity,
+  category and actions, not the implementation's internal failure kind.
+  Error category `limit` with `retry` means rate limited; with no actions it
+  means quota exhausted. `access` with `login` means sign-in required.
+  `connection` with `new_session` means lost connection. Warnings describe
+  retries and are not terminal. Claude's `rate_limit_info` is forwarded at
+  `usage_update._meta["_claude/rateLimit"]`.
+- **Inferred:** Decode only advertised machine fields, never failure prose.
+  Keep request errors and stop reasons ahead of extension failures. A missing
+  quota report creates no measurement, and absent windows/resets remain unknown.
+- **Unknown:** Live vendor account behavior and future extension shapes are
+  unverified. This implements native ACP contracts, not an external worker
+  orchestration port; no Hermes, Honcho, LCM-X or CRW code is copied.
+
+## Once-only recovery (#751)
+
+- **Seen:** The native shared client provides `ResumeSession` and `LoadSession`,
+  marking replay at the read-loop boundary. Dispatch commits `Recoveries` and
+  `RecoveryThread` before scheduling another attempt; its recovery policy turns
+  a second settled failure into a persistent decision. Headless adapters retain
+  uncertainty after tool activity.
+- **Inferred:** A settled failed attempt needs a continuation entry point that
+  starts the same command and worktree, restores the recorded session, then
+  prompts it under a new process binding. This is different from reconciling an
+  unknown turn after Core itself crashes. Loading a session cannot prove such
+  an unknown turn or its effects settled.
+- **Unknown:** Synthetic agents do not verify vendor releases or external
+  effects. No Hermes, Honcho, LCM-X or CRW behavior is newly ported here.
+
+`RecoverAttempt` is used only by dispatch after a committed recovery allowance.
+It prefers advertised resume, otherwise load, otherwise a new session, with a
+fresh session tool server. A restore error never falls back to another session.
+Recovery uses `LoadSessionWithoutReplay` to exclude history before queue admission;
+the ordinary shared-client load API still publishes tagged replay. Suppression
+ends when the read loop consumes the load response, preserving live updates:
+restore keeps every non-replay update it receives and the first prompt drains
+them before the turn's own events, so post-response session metadata, progress
+and tool evidence still reach the adapter and the work card.
+Terminal snapshots retain a copy of the finish and conservatively keep effects
+unknown after tool activity, unknown update types or unfinished requests. Core
+MCP admission latches tool activity even when an answered call is no longer pending.
+A prompt failure marks the attempt settled only when the prompt error itself is
+the end of the stream (EOF or a closed pipe) and the connection ended the same
+way; a malformed completion reply that races the end, or a truncated stream,
+leaves effects unknown.
+
+## Review follow-ups (#1174)
+
+- **Seen:** Codex reviewed the recovery change in PR #1131 and raised two P2
+  findings: death-only recovery was authorized from the connection error alone,
+  and the restore loop discarded live updates that arrived after the load
+  response.
+- **Inferred:** Both are ordering defects inside one adapter, not contract
+  changes. Recovery eligibility needs the prompt's own error to be a stream
+  end, and the restore boundary needs to hand live updates to the next turn
+  rather than drop them.
+- **Unknown:** Vendor agents were not observed emitting live updates between a
+  restore response and the first prompt; the synthetic fixtures do.
+
+## Pinned Claude ACP program (#752)
+
+- **Seen:** `@agentclientprotocol/claude-agent-acp` 0.94.0's published
+  `dist/acp-agent.js` selects `CLAUDE_CODE_EXECUTABLE` before its bundled CLI,
+  uses `settingSources: ["user", "project", "local"]`, and starts the SDK query
+  during session creation. Its own version is returned by ACP initialize.
+  Installing its lockfile with scripts disabled and optional packages omitted
+  installs 107 packages, with no optional Claude binary. The release's SDK is
+  0.3.303 and the ACP SDK is 2.0.0 (which negotiates ACP v1).
+- **Inferred:** Discovery should require the person's Claude and Node, not a
+  globally installed ACP wrapper. Installation belongs at session start, after
+  selection, and the existing worker version probe must keep using Claude.
+- **Unknown:** A synthetic Claude stream establishes integration, not a verified
+  live vendor version. The live test is separately opted in. This is a native
+  ACP integration, not a Hermes, Honcho, LCM-X or CRW port.
+
+## Grok handshake (#759)
+
+- **Seen:** The protocol measurements and issue #759 record Grok Build 1.0.68
+  answering ACP v1 with `loadSession`, `session/list`, `session/resume` and
+  `session/close`. Its version is `_meta.agentVersion`, alongside host details.
+  Without sign-in, `session/new` returns -32000. The existing Grok profile probes
+  `grok --version` and starts `grok --no-auto-update agent stdio`.
+- **Inferred:** Keep the CLI version as readiness and installation evidence.
+  Store only the handshake version and known capability names, never raw
+  metadata, nested capability metadata or authentication descriptions. Observed
+  capabilities do not enable unimplemented adapter operations.
+- **Unknown:** A signed-in vendor account round trip remains unverified. The
+  synthetic installed-Core scenario proves dispatch and receipt wiring, not a
+  vendor release. This implements the native LINA contract; no external harness
+  or memory-system behavior is ported.
+
+## Added worker profiles (#754)
+
+- **Seen:** The current Core discovers only built-in ACP commands. The shared
+  adapter already accepts command/argv profiles, reads `agentInfo.version` and
+  emits unverified compatibility progress when no verified versions are supplied.
+  Dispatch admission and tool declarations previously used only built-in names.
+- **Inferred:** Startup must validate added settings independently of installed
+  built-ins, reserve all built-in names and feed the same service-local factory
+  list to selection, admission and tool declarations. A malformed entry must not
+  disable unrelated workers or expose argument values in diagnostics.
+- **Unknown:** Synthetic execution does not verify any installed vendor release.
+  This extends LINA's existing contract; no Hermes, Honcho, LCM-X or CRW behavior
+  is ported.
+
+`TestAddedACPWorkersThroughRunningCore` uses the installed Core, synthetic ACP
+and model boundaries, real Git worktrees and a committed artifact. It covers
+added dispatch and unverified progress, rejected profiles and preserved built-in
+execution. Parser and registry tests cover invalid fields, resource limits,
+reserved names, duplicates, executable resolution and per-service isolation.

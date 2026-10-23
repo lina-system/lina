@@ -4,6 +4,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
 	workeracp "github.com/thisisjun786/lina/internal/core/worker/acp"
@@ -83,7 +84,7 @@ func InstalledACPFactories(cfg Config) []Factory {
 
 func acpFactory(cfg Config, profile workeracp.Profile) Factory {
 	return Factory{Name: profile.Name, Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
-		a := workeracp.New(workeracp.Config{Profile: profile, Environment: cfg.Environment, Epoch: cfg.Epoch, Leaser: cfg.Activities})
+		a := workeracp.New(workeracp.Config{Profile: profile, Environment: cfg.Environment, Epoch: cfg.Epoch, Leaser: cfg.Activities, Prepare: cfg.PrepareClaudeACP})
 		return a, a.Close, nil
 	}}
 }
@@ -98,10 +99,15 @@ func workerRegistry() []Factory {
 	return factories
 }
 
-func explicitWorkers() []string {
+func explicitWorkers(added ...Factory) []string {
 	var names []string
 	for _, f := range workerRegistry() {
 		if f.Explicit {
+			names = append(names, f.Name)
+		}
+	}
+	for _, f := range added {
+		if f.Explicit && f.Open != nil && !slices.Contains(names, f.Name) {
 			names = append(names, f.Name)
 		}
 	}
@@ -137,4 +143,18 @@ func registerBinaries(cfg Config) []Factory {
 		add(ClaudeFactory(cfg))
 	}
 	return factories
+}
+
+// ACP quota arrives with the prompt, after selection's initial empty snapshot.
+// Save it before closing this session so later choices see the reported windows.
+func (s *Service) observeACPQuota(ctx context.Context, adapter worker.Adapter) error {
+	a, ok := adapter.(*workeracp.Adapter)
+	if !ok {
+		return nil
+	}
+	rows, err := a.Quota(ctx)
+	if err != nil || len(rows) == 0 {
+		return err
+	}
+	return s.ObserveQuota(ctx, a.Name(), rows)
 }

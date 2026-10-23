@@ -111,13 +111,27 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			return err
 		}
 		text := e.Body.Text()
+		if e.ScaffoldKind == "failure" {
+			var turnID string
+			err := r.db.Read(ctx, func(tx *canon.Tx) error {
+				return tx.QueryRowContext(ctx, "SELECT turn_id FROM turn_control WHERE notice_event=?", e.ID).Scan(&turnID)
+			})
+			if err == nil {
+				if shown, err := r.publishCompactionFailure(ctx, e, turnID); err != nil {
+					return err
+				} else if shown {
+					continue
+				}
+			}
+		}
 		if e.ScaffoldKind == "result" {
 			var value result.Result
 			if err := json.Unmarshal([]byte(text), &value); err != nil {
 				return err
 			}
 			var err error
-			if value.Type == result.PlanType {
+			// historyItems gives only managed drafts their bare result ID.
+			if value.Type == result.PlanType && item.key == value.ID {
 				err = r.publish(ctx, protocol.KindResult, value.ID, planWire(value))
 			} else if e.SpeakerKind == guard.Agent {
 				err = r.publishTypedResult(ctx, e)

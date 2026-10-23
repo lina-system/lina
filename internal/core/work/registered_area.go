@@ -80,14 +80,14 @@ func (a *Area) ProtectLinkedWorktree(ctx context.Context, l lease.Lease, git, id
 	if configured != "" && configured != filepath.Join(common, hooks) {
 		// A clone already managed by Prepare has this same guard in hooks/.
 		body, e := root.ReadFile(filepath.Join("hooks", "reference-transaction"))
-		if configured != filepath.Join(common, "hooks") || e != nil || string(body) != refGuard {
+		if configured != filepath.Join(common, "hooks") || e != nil || !linaGuard(body) {
 			return ErrState
 		}
 		hooks = "hooks"
 	}
 	guard := filepath.Join(hooks, "reference-transaction")
 	if body, err := root.ReadFile(guard); err == nil {
-		if string(body) != refGuard {
+		if !linaGuard(body) {
 			return ErrState
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {

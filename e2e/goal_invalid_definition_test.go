@@ -121,7 +121,7 @@ func TestM2InvalidGoalDoesNotStopCoreWork(t *testing.T) {
 	phase := 0
 	cfg := boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/client.sock"), Work: &boot.WorkConfig{
 		Driver: func(*work.Engine) (work.Driver, error) { return w, nil }, MainHost: host,
-		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+		Ready: func(ctx context.Context, e *work.Engine, person, _ string) error {
 			agent, err := fixtureWorkOwner(ctx, root)
 			if err != nil {
 				return err

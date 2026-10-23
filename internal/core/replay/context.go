@@ -130,10 +130,28 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 	var out []Context
 	for _, source := range a.Context {
 		c := Context{Source: source}
-		if source.Source != "persona-state-v1" && (source.Material != nil || len(source.Evidence) > 0) {
+		if source.Source != "persona-state-v1" && source.Source != "input-binding-v1" && (source.Material != nil || len(source.Evidence) > 0) {
 			return fail()
 		}
 		switch source.Source {
+		case "input-binding-v1":
+			if source.Material != nil || source.Revision != "" || len(source.Evidence) != 1 || source.ID != "binding:"+source.Evidence[0].ID {
+				return fail()
+			}
+			if err = visible(ctx, tx, scope, source.ID); err != nil {
+				return nil, nil, err
+			}
+			if err = visible(ctx, tx, scope, source.Evidence[0].ID); err != nil {
+				return nil, nil, err
+			}
+			event, e := ledger.New(readTx{tx}, s.Materials).Get(ctx, source.ID)
+			if e != nil {
+				return nil, nil, e
+			}
+			if event.ScaffoldKind != "input_binding" || event.ConversationID != ep.Conversation || event.ParentID != source.Evidence[0].ID {
+				return fail()
+			}
+			c.Text = event.Body.Text()
 		case "clock-v1":
 			if source.ID != "clock:"+ep.TurnID || source.Revision != "" {
 				return fail()
@@ -179,6 +197,20 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 			if source.Source == "relationship-v1" && item.Kind != memory.Relationship || source.Source == "name-v1" && item.Kind != memory.Name {
 				return fail()
 			}
+			// Resolve own sources through the replay cache first. Its missing
+			// material signal must reach withMaterials before quote projection
+			// turns unavailable bytes into display metadata.
+			for _, ref := range item.Evidence {
+				if ref.Kind == memory.Event && ref.SourceAgent == scope.Agent {
+					if _, err := ledger.New(readTx{tx}, s.Materials).Get(ctx, ref.ID); err != nil {
+						return nil, nil, err
+					}
+				}
+			}
+			item.Evidence, err = memory.New(readTx{tx}).WithQuotes(ledger.New(readTx{tx}, s.Materials).Citation).Quotes(ctx, memory.RecallScope{Person: scope.Person, Agent: scope.Agent, Projection: true}, "memory", item.ID, item.Revision, item.Evidence)
+			if err != nil {
+				return nil, nil, err
+			}
 			c.Memory = &item
 		default:
 			return fail()
@@ -191,7 +223,7 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 // ValidateEpisode also catches memory revisions changed without a revocation.
 func (s Source) ValidateEpisode(ctx context.Context, ep Episode) error {
 	a := ep.Evidence.Assembly
-	if a.InstructionFormat == "persona-v1" || a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" {
+	if a.InstructionFormat == "persona-v1" || a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" || a.InstructionFormat == "persona-tui-work-method-v2" {
 		at, err := time.Parse(time.RFC3339Nano, a.PreparedAt)
 		if err != nil {
 			return Exclusion("missing_assembly")

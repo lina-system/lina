@@ -109,6 +109,13 @@ type resumable interface {
 	Reconcile(context.Context, worker.Thread) (worker.ThreadSnapshot, error)
 }
 
+// A settled-attempt restarter must not be used to observe an unknown attempt.
+// ACP can restore a session, but its protocol cannot read an exact prior turn.
+type attemptRecoverer interface {
+	worker.Adapter
+	RecoverAttempt(context.Context, lease.Lease, worker.StartSpec, worker.Thread) (worker.Thread, error)
+}
+
 func (s *Service) observeThread(ctx context.Context, l lease.Lease, r *Record, dir string) (worker.ThreadSnapshot, error) {
 	for _, f := range s.workersFor(*r) {
 		if f.Name != r.WorkerName() {
@@ -138,6 +145,24 @@ func (s *Service) observeThread(ctx context.Context, l lease.Lease, r *Record, d
 }
 
 func (s *Service) startAttempt(ctx context.Context, l lease.Lease, adapter worker.Adapter, r Record, attemptID, dir string) (worker.Thread, error) {
+	if s.cfg.AuthorizeExecution != nil {
+		allowed, err := s.cfg.AuthorizeExecution(ctx, r)
+		if err != nil {
+			return worker.Thread{}, err
+		}
+		if !allowed {
+			return worker.Thread{}, work.ErrState
+		}
+	}
+	if r.ReturnReceipt != "" {
+		if err := worker.ResetMessages(ctx, s.cfg.DB, r.ID, "manager-return:"+r.ReturnReceipt); err != nil {
+			return worker.Thread{}, err
+		}
+	}
+	spec := worker.StartSpec{TaskID: r.ID, AttemptID: attemptID, Workdir: dir, TaskPacket: worker.FrameMessage(r.Owner, "agent", r.ID, attemptID+":start", r.Packet), ApprovalKey: s.cfg.ApprovalKey}
+	if reader, ok := adapter.(attemptRecoverer); ok && r.Recoveries == 1 && r.RecoveryThread != nil && r.RecoveryWorker == adapter.Name() && len(r.Tried) == 1 {
+		return reader.RecoverAttempt(ctx, l, spec, *r.RecoveryThread)
+	}
 	if reader, ok := adapter.(resumable); ok && r.RecoveryThread != nil && r.RecoveryWorker == adapter.Name() && len(r.Tried) == 1 {
 		old := *r.RecoveryThread
 		old.AttemptID = attemptID
@@ -152,11 +177,11 @@ func (s *Service) startAttempt(ctx context.Context, l lease.Lease, adapter worke
 		if snap.Finish == nil || !snap.EffectsKnown || len(snap.Pending) > 0 {
 			return worker.Thread{}, work.ErrState
 		}
-		if err = adapter.Input(ctx, th, worker.Input{Text: r.Packet}); err != nil {
+		if err = adapter.Input(ctx, th, worker.Input{Text: worker.FrameMessage("core", "system", r.ID, attemptID+":resume", r.Packet)}); err != nil {
 			return worker.Thread{}, err
 		}
 		current, err := adapter.Snapshot(ctx, th)
 		return current.Thread, err
 	}
-	return adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: attemptID, Workdir: dir, TaskPacket: r.Packet})
+	return adapter.Start(ctx, l, spec)
 }

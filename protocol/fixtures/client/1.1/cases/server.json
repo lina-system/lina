@@ -1,0 +1,26 @@
+{
+  "side": "server",
+  "input": [
+    "mock-read.json",
+    "mock-asset.json",
+    "mock-build.json",
+    "miniapp-list.json"
+  ],
+  "output": [
+    "mock-read.json",
+    "mock-asset.json",
+    "mock-build.json",
+    "miniapp-list.json"
+  ],
+  "errors": [
+    "",
+    "",
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 4,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

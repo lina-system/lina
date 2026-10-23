@@ -42,6 +42,7 @@ func budgetConfig(t *testing.T, calls func(int) []provider.ToolCall) (loop.Confi
 }
 
 func TestToolWallBudgetFinishesEffectAndPromotesItsReceipt(t *testing.T) {
+	t.Parallel()
 	for _, state := range []tools.State{tools.Applied, tools.Unknown} {
 		t.Run(string(state), func(t *testing.T) {
 			now := time.Unix(100, 0)
@@ -84,6 +85,7 @@ func TestToolWallBudgetFinishesEffectAndPromotesItsReceipt(t *testing.T) {
 }
 
 func TestOutcomeQualitySurvivesReopenAndDoesNotTuneMeter(t *testing.T) {
+	t.Parallel()
 	db, dbConfig := database(t)
 	store := turn.New(db)
 	cfg, _ := budgetConfig(t, func(int) []provider.ToolCall { return nil })
@@ -110,6 +112,7 @@ func TestOutcomeQualitySurvivesReopenAndDoesNotTuneMeter(t *testing.T) {
 }
 
 func TestContinuationRestoresBudgetAfterReopen(t *testing.T) {
+	t.Parallel()
 	db, dbConfig := database(t)
 	gauge := (budget.Meter{}).Start("turn", time.Now())
 	for range 6 {
@@ -146,6 +149,7 @@ func TestContinuationRestoresBudgetAfterReopen(t *testing.T) {
 }
 
 func TestQueuedCallDoesNotStartAfterToolWallBudget(t *testing.T) {
+	t.Parallel()
 	for _, elapsed := range []time.Duration{31 * time.Second, time.Minute} {
 		t.Run(elapsed.String(), func(t *testing.T) {
 			now := time.Unix(100, 0)
@@ -176,6 +180,7 @@ func TestQueuedCallDoesNotStartAfterToolWallBudget(t *testing.T) {
 }
 
 func TestSoftBudgetRejectsCallsAndKeepsHandoffToolsAndPrefix(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	gauge := (budget.Meter{}).Start("turn", time.Now())
 	for range 6 {
@@ -201,6 +206,7 @@ func TestSoftBudgetRejectsCallsAndKeepsHandoffToolsAndPrefix(t *testing.T) {
 }
 
 func TestHardBudgetPromotesAllGatheredStateWithoutAnotherModelRequest(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	cfg, executed := budgetConfig(t, func(request int) []provider.ToolCall {
 		if request > 10 {
@@ -227,6 +233,7 @@ func TestHardBudgetPromotesAllGatheredStateWithoutAnotherModelRequest(t *testing
 }
 
 func TestPromotionExcludesUnrelatedPreparedContext(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	gauge := (budget.Meter{}).Start("turn", time.Now())
 	for range 9 {
@@ -249,6 +256,7 @@ func TestPromotionExcludesUnrelatedPreparedContext(t *testing.T) {
 }
 
 func TestReportTurnNeverExecutesOrReturnsToModelForTools(t *testing.T) {
+	t.Parallel()
 	for _, attemptsTool := range []bool{false, true} {
 		t.Run(fmt.Sprint(attemptsTool), func(t *testing.T) {
 			db, _ := database(t)
@@ -278,5 +286,73 @@ func TestReportTurnNeverExecutesOrReturnsToModelForTools(t *testing.T) {
 				t.Fatalf("outcome=%+v err=%v", result, err)
 			}
 		})
+	}
+}
+
+func TestSoftBudgetAdmitsOnlyValidatedBridgedHandoff(t *testing.T) {
+	t.Parallel()
+	for _, valid := range []bool{true, false} {
+		t.Run(fmt.Sprint(valid), func(t *testing.T) {
+			db, _ := database(t)
+			gauge := (budget.Meter{}).Start("turn", time.Now())
+			for range 6 {
+				gauge.Round()
+			}
+			cfg, _ := budgetConfig(t, func(round int) []provider.ToolCall {
+				if round > 1 {
+					return nil
+				}
+				return []provider.ToolCall{{ID: "bridge", Name: "call_tool", Arguments: `{"name":"dispatch_work","arguments":{}}`}}
+			})
+			executed := 0
+			cfg.Request.Tools = append(cfg.Request.Tools, []byte(`{"type":"function","name":"call_tool"}`))
+			cfg.Tools["call_tool"] = loop.Tool{Validate: func(provider.ToolCall) (string, error) {
+				if !valid {
+					return "", tools.ErrInvalid
+				}
+				return "work", nil
+			}, Execute: func(context.Context, provider.ToolCall) loop.Result {
+				executed++
+				return loop.Result{Code: loop.Denied}
+			}}
+			out, err := turn.New(db).Run(t.Context(), turn.Options{ID: "turn", Conversation: "conversation", InboxID: admit(t, db), Loop: cfg, Budget: gauge})
+			want, calls := turn.BudgetReached, 0
+			if valid {
+				want, calls = loop.Denied, 1
+			}
+			if err != nil || len(out.Results) != 1 || out.Results[0].Code != want || executed != calls {
+				t.Fatalf("out=%+v executed=%d err=%v", out, executed, err)
+			}
+		})
+	}
+}
+
+func TestBridgedHandoffCannotCrossHardToolBudget(t *testing.T) {
+	t.Parallel()
+	db, _ := database(t)
+	now := time.Unix(100, 0)
+	gauge := (budget.Meter{Now: func() time.Time { return now }}).Start("turn", now)
+	for range 6 {
+		gauge.Round()
+	}
+	cfg, _ := budgetConfig(t, func(int) []provider.ToolCall {
+		return []provider.ToolCall{
+			{ID: "first", Name: "call_tool", Arguments: `{"name":"dispatch_work","arguments":{}}`},
+			{ID: "second", Name: "call_tool", Arguments: `{"name":"dispatch_work","arguments":{}}`},
+			{ID: "read", Name: "call_tool", Arguments: `{"name":"worker_snapshot","arguments":{}}`},
+		}
+	})
+	executed := 0
+	cfg.Request.Tools = append(cfg.Request.Tools, []byte(`{"type":"function","name":"call_tool"}`))
+	cfg.Tools["call_tool"] = loop.Tool{Validate: func(provider.ToolCall) (string, error) { return "work", nil }, Execute: func(context.Context, provider.ToolCall) loop.Result {
+		executed++
+		now = now.Add(time.Minute)
+		return loop.Result{Code: loop.OK}
+	}}
+	out, err := turn.New(db).Run(t.Context(), turn.Options{ID: "turn", Conversation: "conversation", InboxID: admit(t, db), Loop: cfg, Budget: gauge, StartFromTurn: func(context.Context, budget.Handoff) (budget.Handle, error) {
+		return budget.Handle{ID: "run", State: "working"}, nil
+	}})
+	if err != nil || executed != 1 || len(out.Results) != 3 || out.Results[0].Code != loop.OK || out.Results[1].Code != turn.BudgetReached || out.Results[2].Code != turn.BudgetReached {
+		t.Fatalf("out=%+v executed=%d err=%v", out, executed, err)
 	}
 }

@@ -17,6 +17,7 @@ import (
 // ID, epoch and revision are opaque routing data and are not display fields.
 type Card struct {
 	Topic                          string
+	ConversationID                 string
 	Token                          string
 	pending                        *CardAnswerRequest
 	ID, Epoch                      string
@@ -45,6 +46,7 @@ const (
 type CardView struct {
 	Fields                  map[string]string
 	ID                      string
+	Notice                  string
 	Choice                  protocol.ApprovalChoice
 	TargetsVisible, Pending bool
 }
@@ -70,6 +72,10 @@ type CardAnswerResult struct {
 	Request CardAnswerRequest
 	Outcome CardOutcome
 }
+
+// CardAnswerInvalid clears a question submit that failed validation and keeps
+// the draft. The card stays open so the owner can correct, decline, or cancel.
+type CardAnswerInvalid struct{ Request CardAnswerRequest }
 type CardBell struct{ Agent, Summary string }
 
 func (PutCard) isMsg()            {}
@@ -80,6 +86,7 @@ func (CardTargetsVisible) isMsg() {}
 func (ConfirmCard) isMsg()        {}
 func (CardAnswerRequest) isMsg()  {}
 func (CardAnswerResult) isMsg()   {}
+func (CardAnswerInvalid) isMsg()  {}
 func (CardBell) isMsg()           {}
 
 func (s State) cardIndex(id string) int {
@@ -177,6 +184,7 @@ func (s State) reduceCard(msg Msg) (State, []Cmd) {
 		if s.CardView.Fields == nil {
 			s.CardView.Fields = map[string]string{}
 		}
+		s.CardView.Notice = ""
 		s.CardView.Fields[m.Name] = m.Value
 	case AnswerQuestion:
 		c, ok := s.CurrentCard()
@@ -222,6 +230,16 @@ func (s State) reduceCard(msg Msg) (State, []Cmd) {
 		if s.CardView.ID == m.Request.ID {
 			s.CardView = CardView{ID: m.Request.ID}
 		}
+	case CardAnswerInvalid:
+		at := s.cardIndex(m.Request.ID)
+		if at < 0 || m.Request.Epoch != s.Epoch || s.Cards[at].pending == nil || s.Cards[at].pending.Sequence != m.Request.Sequence || s.Cards[at].pending.Revision != m.Request.Revision || s.Cards[at].Token != m.Request.Token {
+			return s, nil
+		}
+		s.Cards[at].pending = nil
+		if s.CardView.ID == m.Request.ID {
+			s.CardView.Pending = false
+			s.CardView.Notice = "card.form_invalid"
+		}
 	}
 	return s, nil
 }
@@ -240,6 +258,9 @@ func QuestionValues(form *protocol.QuestionForm, fields map[string]string) (prot
 	values := protocol.FormValues{}
 	for _, field := range form.Fields {
 		text, exists := fields[field.Name]
+		if field.Optional != nil && *field.Optional && (!exists || text == "") {
+			continue
+		}
 		if !exists {
 			return nil, false
 		}

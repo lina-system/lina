@@ -205,7 +205,7 @@ func verifyComposition(ctx context.Context, directory string) (manifest.Manifest
 	defer root.Close()
 	seen := map[string]bool{}
 	for i, artifact := range artifacts {
-		if i >= len(m.Binaries) && (!strings.HasPrefix(artifact.Name, "adapters/claude/") || !filepath.IsLocal(artifact.Name) || filepath.ToSlash(filepath.Clean(artifact.Name)) != artifact.Name || strings.Contains(artifact.Name, "\\")) {
+		if i >= len(m.Binaries) && (!(strings.HasPrefix(artifact.Name, "adapters/claude/") || artifact.Name == "adapters/claude-acp/package.json" || artifact.Name == "adapters/claude-acp/package-lock.json") || !filepath.IsLocal(artifact.Name) || filepath.ToSlash(filepath.Clean(artifact.Name)) != artifact.Name || strings.Contains(artifact.Name, "\\")) {
 			return m, errors.New("invalid adapter artifact")
 		}
 		digest, err := hex.DecodeString(artifact.SHA256)
@@ -235,8 +235,15 @@ func verifyComposition(ctx context.Context, directory string) (manifest.Manifest
 			return m, fmt.Errorf("artifact digest mismatch: %s", artifact.Name)
 		}
 	}
-	if len(extra.InstallFiles) > 0 && (!seen["adapters/claude/package.json"] || !seen["adapters/claude/package-lock.json"]) {
-		return m, errors.New("Claude adapter requires pinned package and lockfile")
+	for _, adapter := range []string{"claude", "claude-acp"} {
+		prefix := "adapters/" + adapter + "/"
+		present := false
+		for name := range seen {
+			present = present || strings.HasPrefix(name, prefix)
+		}
+		if present && (!seen[prefix+"package.json"] || !seen[prefix+"package-lock.json"]) {
+			return m, errors.New("Claude adapter requires pinned package and lockfile")
+		}
 	}
 	return m, nil
 }

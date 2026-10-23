@@ -28,14 +28,19 @@ import (
 // and usage counts under duplicate application, and observes the next valid
 // preview without publishing unconfirmed plan records.
 func TestM3PlanInvalidResponseReleasesQueue(t *testing.T) {
-	raw, err := os.ReadFile("../m3/plan-invalid-response.json")
+	runPlanInvalidResponseScenario(t, "../m3/plan-invalid-response.json")
+}
+
+func runPlanInvalidResponseScenario(t *testing.T, fixture string) {
+	t.Helper()
+	raw, err := os.ReadFile(fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var scenario struct {
-		Goal, Done string
-		Invalid    []string
-		Valid      jobapi.PlanDraft
+		Kind, Goal, Done string
+		Invalid          []string
+		Valid            jobapi.PlanDraft
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
@@ -43,9 +48,12 @@ func TestM3PlanInvalidResponseReleasesQueue(t *testing.T) {
 	var root string
 	var turns, auxiliary atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Tools []json.RawMessage }
+		var req struct{ Tools, Input []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
+			return
+		}
+		if answerEmptyMemoryExtraction(w, req.Input) {
 			return
 		}
 		if len(req.Tools) != 0 {
@@ -89,7 +97,7 @@ func TestM3PlanInvalidResponseReleasesQueue(t *testing.T) {
 	}
 	t.Cleanup(func() { client.Close() })
 	agent := client.Welcome.Agents[0].AgentID
-	if _, err = client.Plan(ctx, protocol.PlanRequest{AgentID: agent, Operation: "accept_project", Title: &scenario.Goal, Done: &scenario.Done}); err != nil {
+	if _, err = client.Plan(ctx, protocol.PlanRequest{AgentID: agent, Operation: "accept_" + scenario.Kind, Title: &scenario.Goal, Done: &scenario.Done}); err != nil {
 		t.Fatal(err)
 	}
 	e, err := client.Receive(ctx)
@@ -125,7 +133,7 @@ func TestM3PlanInvalidResponseReleasesQueue(t *testing.T) {
 	conv.Close()
 	h.stopCore(core)
 	core = start()
-	conv, conversation = conversationClient(t, h)
+	conv, _ = conversationClient(t, h)
 	request.Epoch = epoch()
 	again, err := api.Aux(ctx, request)
 	if err != nil || string(again.Output) != string(first.Output) || auxiliary.Load() != 1 {
@@ -149,6 +157,9 @@ func TestM3PlanInvalidResponseReleasesQueue(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if card, ok := e.Payload.(protocol.Result); ok && card.Type == protocol.ResultTypePlanView {
+				t.Fatalf("invalid draft %d published a preview: %+v", n, card)
+			}
 			if item, ok := e.Payload.(protocol.ItemDone); ok && item.Stream != nil && item.Stream.Key == "plan-rejection:"+job+":"+strconv.Itoa(n+1) {
 				if item.Text == nil || *item.Text == "" {
 					t.Fatal("missing rejection outcome")
@@ -163,6 +174,7 @@ func TestM3PlanInvalidResponseReleasesQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	worker()
+	var preview protocol.Result
 	for {
 		e, err := conv.Receive(ctx)
 		if err != nil {
@@ -172,17 +184,19 @@ func TestM3PlanInvalidResponseReleasesQueue(t *testing.T) {
 			if card.Title != scenario.Valid.Title || card.Revision != "1" {
 				t.Fatal(card)
 			}
+			preview = card
 			break
 		}
 	}
 	for query, want := range map[string]int{
-		"SELECT count(*) FROM plan_rejections":                                    len(scenario.Invalid),
-		"SELECT count(*) FROM conv_event WHERE scaffold_kind='plan_rejection'":    len(scenario.Invalid),
-		"SELECT count(*) FROM result_heads":                                       1,
-		"SELECT count(*) FROM moirai_aux WHERE output IS NOT NULL":                len(scenario.Invalid) + 1,
-		"SELECT count(*) FROM moirai_applied WHERE job='" + job + "'":             len(scenario.Invalid) + 1,
-		"SELECT count(*) FROM budget_usage WHERE run='" + job + "' AND settled=1": len(scenario.Invalid) + 1,
-		"SELECT sum(charged) FROM budget_usage WHERE run='" + job + "'":           8192 * (len(scenario.Invalid) + 1),
+		"SELECT count(*) FROM plan_rejections":                                           len(scenario.Invalid),
+		"SELECT count(*) FROM conv_event WHERE scaffold_kind='plan_rejection'":           len(scenario.Invalid),
+		"SELECT count(*) FROM result_heads":                                              1,
+		"SELECT count(*) FROM plan_confirmations":                                        0,
+		"SELECT count(*) FROM moirai_aux WHERE job='" + job + "' AND output IS NOT NULL": len(scenario.Invalid) + 1,
+		"SELECT count(*) FROM moirai_applied WHERE job='" + job + "'":                    len(scenario.Invalid) + 1,
+		"SELECT count(*) FROM budget_usage WHERE run='" + job + "' AND settled=1":        len(scenario.Invalid) + 1,
+		"SELECT sum(charged) FROM budget_usage WHERE run='" + job + "'":                  8192 * (len(scenario.Invalid) + 1),
 	} {
 		var got int
 		if err := db.QueryRowContext(ctx, query).Scan(&got); err != nil || got != want {
@@ -204,6 +218,24 @@ func TestM3PlanInvalidResponseReleasesQueue(t *testing.T) {
 	if auxiliary.Load() != int64(len(scenario.Invalid)+1) {
 		t.Fatal("model repeated", auxiliary.Load())
 	}
+	// The next valid draft must also survive the record store's dependency checks.
+	client, err = clientapi.DialWithCapabilities(ctx, h.socket, "test", []protocol.Capability{{Name: "planning", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := json.Number(preview.Revision)
+	if _, err = client.Plan(ctx, protocol.PlanRequest{AgentID: agent, Operation: "confirm", ResultID: &preview.ResultID, Revision: &revision}); err != nil {
+		t.Fatal(err)
+	}
+	e, err = client.Receive(ctx)
+	if err != nil || e.Error != nil {
+		t.Fatal("valid draft confirmation failed", e, err)
+	}
+	confirmed, ok := e.Payload.(protocol.PlanResponse)
+	if !ok || confirmed.EffectState == nil || *confirmed.EffectState != protocol.EffectApplied || confirmed.Records == nil || len(*confirmed.Records) != len(scenario.Valid.Entries) {
+		t.Fatal("valid draft did not create its records", confirmed)
+	}
+	client.Close()
 	conv.Close()
 	h.stopCore(core)
 }

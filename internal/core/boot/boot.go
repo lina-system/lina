@@ -103,6 +103,7 @@ type Services struct {
 	Lifecycle func(*lifecycle.Restarter)
 }
 type Config struct {
+	A2A  *A2AOptions
 	Work *WorkConfig
 	// SandboxLauncher pins an optional trusted absolute OS launcher.
 	SandboxLauncher string
@@ -332,7 +333,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	var canon Canon
 	var conversation *conversationRuntime
 	if ownsConversation && len(recovery.Halt) == 0 {
-		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport)
+		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport, tailnetIP(cfg.Tailnet))
 		if openErr != nil {
 			return openErr
 		}
@@ -480,6 +481,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 		return err
 	}
+	if conversation != nil {
+		conversation.startRecall(ctx)
+	}
 	var workDone <-chan struct{}
 	if conversation != nil && cfg.Work != nil {
 		if err := conversation.startWork(ctx, cfg.Work); err != nil {
@@ -494,6 +498,13 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		if err := cfg.Services.Reconcile(ctx, recovery); err != nil {
 			return err
 		}
+	}
+	a2aClose, a2aDone, err := startA2AListener(serving, conversation, cfg.A2A, func() bool { return !recovering.Load() })
+	if err != nil {
+		return err
+	}
+	if a2aClose != nil {
+		stack = append(stack, a2aClose)
 	}
 	if err := boundary(Reconciled); err != nil && !errors.Is(err, context.Canceled) {
 		return err
@@ -538,6 +549,14 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	// Join the observer before closing any of the stores it uses.
 	defer func() { stopRestart(); <-restartDone }()
 	select {
+	case err := <-a2aDone:
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err == nil && ctx.Err() == nil {
+			return errors.New("A2A service stopped before shutdown")
+		}
+		return err
 	case <-workDone:
 		if ctx.Err() != nil {
 			return nil

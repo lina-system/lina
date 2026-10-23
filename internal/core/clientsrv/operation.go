@@ -12,6 +12,9 @@ import (
 // Handlers must honor cancellation and must not retain the request payload.
 type Operation struct {
 	Capability protocol.Capability
+	// Alternatives admit the same operation through another negotiated grant.
+	// Used when a newer capability adopts an existing request kind.
+	Alternatives []protocol.Capability
 	// AdditionalCapabilities share this wire kind; CapabilityFor selects the
 	// one required by each request before the handler is called.
 	AdditionalCapabilities []protocol.Capability
@@ -23,12 +26,13 @@ type Operation struct {
 // Session contains connection facts established by Core. No request payload
 // supplies its person, epoch or decider eligibility.
 type Session struct {
-	ConnectionID string
-	Capabilities []protocol.Capability
-	PersonID     string
-	Epoch        uint64
-	ClientID     string
-	CanDecide    bool
+	ProtocolVersion string
+	ConnectionID    string
+	Capabilities    []protocol.Capability
+	PersonID        string
+	Epoch           uint64
+	ClientID        string
+	CanDecide       bool
 }
 
 // Result leaves envelope identity and correlation under the listener's control.
@@ -64,6 +68,12 @@ var deciderKinds = map[protocol.Kind]bool{
 // Work requests retain mutation admission for future work-record operations.
 // Only the implemented GitHub observation operations are reads during recovery.
 func readOnlyEnvelope(e protocol.Envelope) bool {
+	if p, ok := e.Payload.(protocol.MockRequest); ok {
+		return p.Action == "read" || p.Action == "asset"
+	}
+	if p, ok := e.Payload.(protocol.MiniAppRequest); ok && e.Kind == protocol.KindMiniAppRequest {
+		return p.Operation == "list" || p.Operation == "open" || p.Operation == "history"
+	}
 	if readOnlyKinds[e.Kind] {
 		return true
 	}

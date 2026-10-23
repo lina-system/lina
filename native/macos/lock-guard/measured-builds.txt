@@ -1,0 +1,4 @@
+# macOS builds on which the locked-Mac eval passed, one per line, as
+# `sw_vers -buildVersion` prints them. A comment line is not a build, and an
+# empty list turns locked-Mac work off everywhere except the eval's own test
+# Mac, which the eval marks with /var/db/lina/locked-screen/eval-test-mac.

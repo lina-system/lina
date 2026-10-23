@@ -45,7 +45,8 @@ The build manifest may also carry:
   canonical map takes precedence over the legacy field. If neither supplies a
   list, no version is verified.
 - `installFiles`: an array of `{ "name", "size", "sha256" }` records for
-  `adapters/claude/` files in the bundle. A provided adapter must include
+  `adapters/claude/` files and the `adapters/claude-acp/package.json` and
+  `adapters/claude-acp/package-lock.json` files in the bundle. A provided adapter must include
   `package.json` and `package-lock.json`. Files are copied to `system/adapters/`;
   installation does not run npm or download the SDK. Builds without those files
   report the Claude component unavailable.
@@ -69,3 +70,7 @@ Service rendering and installation live in
 [`internal/core/install`](../internal/core/install/install.go). The
 [runtime contract](../docs/design/runtime.md#the-lina-command) governs product
 behavior.
+
+The macOS parts of a desktop install — the unlock plug-in, the lock guard, the
+installer and the rollback command — are packaged separately; see
+[the macOS package](macos/README.md).
