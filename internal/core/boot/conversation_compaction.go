@@ -84,11 +84,18 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		return record, nil
 	}
 	// The auxiliary caller preserves only the fixed prefix and the selected
-	// segment, never this turn's input or transient ContextPacket.
+	// segment, never this turn's input or transient ContextPacket. Its layout and
+	// marks are trimmed to the segment so the summary reuses the cached prefix.
 	auxiliaryRequest := request
 	auxiliaryRequest.Credential = r.route.Request(nil).Credential
-	auxiliaryRequest.Layout = nil                  // The summary has no current input or transient packet boundaries.
 	auxiliaryRequest.Items = request.Items[:fixed] // Profiles must not become summary source text.
+	// The summary request carries the conversation's cache identity and the marks
+	// that fall inside its segment, so the provider can serve it from the cache.
+	selected, err := r.selectProviderCapabilities(auxiliaryRequest)
+	if err != nil {
+		return provider.Request{}, report, err
+	}
+	auxiliaryRequest.Capabilities = selected.Capabilities
 	auxiliary := compaction.Auxiliary{Request: auxiliaryRequest, RetainPrefix: true, Stream: stream}
 	store := compaction.New(r.db)
 	frontier, err := store.Frontier(ctx, r.conversation)
@@ -214,7 +221,13 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	}
 	view.Request = request
 	view.Packet = request.Items[fixed+len(in.History)+1:]
-	configuration, _ := json.Marshal(auxiliaryRequest)
+	// The summary configuration identity covers what changes its quality: the
+	// model, effort, instructions, tools, fields and fixed items. Request
+	// positions and marks move every turn and must not invalidate a preparation.
+	identity := auxiliaryRequest
+	identity.Layout = nil
+	identity.Capabilities = provider.CapabilityUse{}
+	configuration, _ := json.Marshal(identity)
 	builder := &compaction.Builder{Store: store, Events: r.journal(), Agent: r.agent, Conversation: r.conversation, CurrentInput: current.ID, Model: in.Model, GenerationRevision: fmt.Sprintf("%s:%x", in.Effort, sha256.Sum256(configuration)), Now: time.Now, NextID: func() string { return "summary:" + rand.Text() }}
 	builder.Generate = func(ctx context.Context, segment compaction.PassSegment) (compaction.Text, error) {
 		// Builder checked the exact coverage/frontier and supplied canonical
@@ -229,7 +242,11 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		return auxiliary.Summarize(ctx, segment)
 	}
 	c := &conversationCompaction{builder: builder, pending: map[string]bool{}, preparations: r.summaryState().candidates()}
-	pass := compaction.Pass{Policy: compaction.Policy{ContextWindow: limit}, Count: count, Summarize: c.summarize, Prepared: c.prepared, Publish: c.publish}
+	cold, err := r.cacheCold(ctx, in.Model, time.Now())
+	if err != nil {
+		return provider.Request{}, report, err
+	}
+	pass := compaction.Pass{Policy: compaction.Policy{ContextWindow: limit}, Cold: cold, Count: count, Summarize: c.summarize, Prepared: c.prepared, Publish: c.publish}
 	fitted, err := pass.Fit(ctx, view, false)
 	if err != nil && err != compaction.ErrTooLarge {
 		return provider.Request{}, report, err

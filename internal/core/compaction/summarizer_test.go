@@ -2,6 +2,7 @@
 package compaction
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -58,5 +59,59 @@ func TestAuxiliarySummaryUsesOnlySegmentAndRejectsIncompleteStream(t *testing.T)
 				t.Fatalf("bad auxiliary request: %+v", sent)
 			}
 		})
+	}
+}
+
+func TestRetainedPrefixRequestKeepsSegmentToolsAndMarks(t *testing.T) {
+	fixed := message("fixed")
+	tool := provider.ToolDecl(`{"type":"function","name":"read_file","parameters":{"type":"object"}}`)
+	prefix := provider.Position{Items: 1, Tools: 1}
+	previous := provider.Position{Items: 2, Tools: 1}
+	current := provider.Position{Items: 6, Tools: 1}
+	stream := &summaryStream{events: []provider.Event{{Kind: provider.ItemDone, Item: summaryItem(t)}, {Kind: provider.Terminal}}}
+	var sent provider.Request
+	a := Auxiliary{RetainPrefix: true, Request: provider.Request{
+		Model: "model", Credential: provider.NewCredential("account", provider.APIKey, "synthetic-token"),
+		Instructions: "fixed persona", Items: []provider.Item{fixed}, Tools: []provider.ToolDecl{tool},
+		CacheIdentity: strings.Repeat("a", 64),
+		Layout:        &provider.RequestLayout{Fixed: prefix, PreviousInput: &previous, CurrentInput: current},
+		Capabilities: provider.CapabilityUse{CacheIdentity: strings.Repeat("a", 64), CacheMarks: []provider.CacheMark{
+			{Position: prefix, Lifetime: provider.Cache1Hour},
+			{Position: previous, Lifetime: provider.Cache1Hour},
+			{Position: current, Lifetime: provider.Cache1Hour},
+		}},
+	}, Stream: func(_ context.Context, r provider.Request) (provider.Stream, error) { sent = r; return stream, nil }}
+	root := SummaryItem(Text{Requests: "open", Topics: "root", Actions: "none", Values: "42", Omitted: "detail"}, false)
+	segment := PassSegment{RootID: "root", Root: root, Records: []Record{{ID: "r1", Item: message("one")}},
+		Verbatim: []Record{{ID: "v", Item: message("verbatim tail")}}, Protected: []Record{{ID: "p", Item: message("packet")}}}
+	if _, err := a.Summarize(t.Context(), segment); err != nil {
+		t.Fatal(err)
+	}
+	if len(sent.Items) != 4 || !bytes.Equal(sent.Items[0], fixed) || !bytes.Equal(sent.Items[1], root) || !strings.Contains(string(sent.Items[2]), "one") || !strings.Contains(string(sent.Items[3]), "unanswered_requests") {
+		t.Fatalf("summary request did not carry the fixed prefix, root, segment and instruction: %s", sent.Items)
+	}
+	raw, _ := json.Marshal(sent.Items)
+	if strings.Contains(string(raw), "verbatim tail") || strings.Contains(string(raw), "packet") {
+		t.Fatal("summary request carried a verbatim tail or ContextPacket")
+	}
+	if len(sent.Tools) != 1 || !bytes.Equal(sent.Tools[0], tool) || sent.Bridge != nil || sent.Purpose != provider.Auxiliary {
+		t.Fatalf("summary request changed tools or acquired execution: %+v", sent)
+	}
+	if sent.Layout == nil || sent.Layout.Fixed != prefix || sent.Layout.CurrentInput != (provider.Position{Items: 3, Tools: 1}) || sent.Layout.PreviousInput == nil || *sent.Layout.PreviousInput != previous {
+		t.Fatalf("summary request layout: %+v", sent.Layout)
+	}
+	if len(sent.Capabilities.CacheMarks) != 2 || sent.Capabilities.CacheMarks[0].Position != prefix || sent.Capabilities.CacheMarks[1].Position != previous {
+		t.Fatalf("summary request kept marks outside its prefix: %+v", sent.Capabilities.CacheMarks)
+	}
+}
+
+func TestSummaryToolCallFailsWithoutRunning(t *testing.T) {
+	stream := &summaryStream{events: []provider.Event{{Kind: provider.ToolCallReady, Call: &provider.ToolCall{ID: "call", Name: "read_file"}}, {Kind: provider.Terminal}}}
+	a := Auxiliary{Request: provider.Request{Model: "model"}, Stream: func(context.Context, provider.Request) (provider.Stream, error) { return stream, nil }}
+	if _, err := a.Summarize(t.Context(), PassSegment{Records: []Record{{ID: "fact", Item: message("value 42")}}}); !errors.Is(err, ErrSummary) {
+		t.Fatalf("tool call did not fail the summary: %v", err)
+	}
+	if !stream.closed {
+		t.Fatal("failed summary left its stream open")
 	}
 }

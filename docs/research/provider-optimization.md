@@ -158,6 +158,8 @@ On the Claude retention prefix of about 12,000 tokens, hits started in 979 and 1
 | Grok | shared prefix, tools unchanged | 24,072 | 17,536 | 0 | 6,536 |
 | Grok | shared prefix, `tool_choice: none` | 24,093 | 1,152 | 0 | 22,941 |
 
+The table comes from the #850 run. The public replay now measures one summary request of this shape, so its plain tokens can be reproduced with `lina provider-replay` and compared across a change ([fixture](../../testdata/provider-replay/README.md)).
+
 The shared-prefix request carried the conversation's request unchanged through its history, then the summary instruction. On ChatGPT's route the shared request read only the instructions and tools, because the history's cache entry ended after that turn's packet and input. A second identical request read 99%. With the packet after the input, each turn writes an entry at the end of its input, so a summary request can reuse the history up to the last of those entries in its segment. That case was not measured.
 
 ### Server state and batch probes

@@ -36,6 +36,24 @@ func TestM2ProviderReplay(t *testing.T) {
 				w.WriteHeader(400)
 				return
 			}
+			summary := len(request.Input) > 0 && strings.Contains(string(request.Input[len(request.Input)-1]), "unanswered_requests")
+			if summary {
+				// The summary request keeps the fixed prefix, the tools and the
+				// segment, and ends with the summary instruction.
+				if len(request.Tools) < 40 || request.Instructions == "" || len(request.Input) != 42 {
+					t.Error("summary request changed the cached prefix or escaped its segment")
+				}
+				for _, item := range request.Input {
+					// Packets and live inputs belong after the segment, never in it.
+					if strings.Contains(string(item), "Public replay turn") {
+						t.Error("summary request carried the packet or the verbatim tail")
+					}
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"{\\\"unanswered_requests\\\":\\\"none\\\"}\"}\n\n")
+				fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":101,\"input_tokens_details\":{\"cached_tokens\":70},\"output_tokens\":3}}}\n\n")
+				return
+			}
 			if n <= 12 && (len(request.Input) < 82 || len(request.Tools) < 40 || request.Instructions == "") {
 				t.Error("fixture lost persona/history/tools")
 			}
@@ -102,7 +120,7 @@ func TestM2ProviderReplay(t *testing.T) {
 			out := filepath.Join(h.root, fmt.Sprintf("provider-report-%d", arm))
 			paths = append(paths, filepath.Join(out, "report.json"))
 			report := run(fixture, "--fixture", out)
-			if report.Failure != "" || report.Provider != "chatgpt" || len(report.Requests) != 6 {
+			if report.Failure != "" || report.Provider != "chatgpt" || len(report.Requests) != 7 {
 				t.Fatalf("report: %+v", report)
 			}
 			for i, row := range report.Requests {
@@ -115,7 +133,12 @@ func TestM2ProviderReplay(t *testing.T) {
 					}
 					continue
 				}
-				if row.Input == nil || *row.Input != int64(101+i) || row.Read == nil || *row.Read != 70 || row.Plain == nil || *row.Plain != int64(31+i) {
+				want := int64(101 + i)
+				if row.Turn == "summary" {
+					// The summary is the seventh request, after the four turns.
+					want = 101
+				}
+				if row.Input == nil || *row.Input != want || row.Read == nil || *row.Read != 70 || row.Plain == nil || *row.Plain != want-70 {
 					t.Fatalf("usage: %+v", row)
 				}
 			}

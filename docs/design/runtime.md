@@ -325,7 +325,7 @@ The rules for each capability:
   - after the person's input of the previous turn;
   - after the person's input of the current turn;
   - in a follow-up request, after the newest item of the turn.
-  An adapter whose provider needs explicit marks places them there; the others ignore them. The Claude adapter sends each earlier turn as its own text block of the runtime prompt and marks the last one, then sends the person's input and the ContextPacket.
+  An adapter whose provider needs explicit marks places them there; the others ignore them. The Claude adapter sends each earlier turn as its own text block of the runtime prompt and marks the last one, then sends the person's input and the ContextPacket. A compaction summary request marks only the boundaries inside its segment ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)).
   Boundaries are exclusive counts in the request's item and tool arrays. The
   fixed boundary excludes tools loaded on demand. A missing previous input or
   newest follow-up item has no boundary; Core does not substitute external
@@ -337,7 +337,7 @@ The rules for each capability:
 - **Compaction.** Compaction and its summary request reuse the cache as [Compaction and resume](conversation-and-memory.md#compaction-and-resume) says.
 - **Server state and provider compaction.** Neither is admitted today. The plan routes refuse server state. On OpenAI's API, a chained request is billed for all earlier input again. xAI refuses instructions together with a chained request, so the chain cannot carry LINA's instructions on every request. A provider's own compaction returns a summary LINA cannot read, expand, check against retraction or delete with its sources.
 - **Batch and flex.** A background job (not a turn, a continuation or a background run) may use a provider's batch or flex tier when its account's route offers one and the job's deadline is longer than the tier's window. Each submission is recorded. A batch that fails or passes its window runs as a normal request.
-- **Provider replay.** One fixed, synthetic replay of LINA-shaped turns runs on each provider, with real accounts on opt-in. It reports, for every request, the input, read, written and plain tokens and the time to the first token. A change to a capability or to these rules carries its before and after from this replay. The episode export can feed the same replay from the person's own conversations on their machine, and those results stay off the repository.
+- **Provider replay.** One fixed, synthetic replay of LINA-shaped turns runs on each provider, with real accounts on opt-in. It reports, for every request, the input, read, written and plain tokens and the time to the first token. A change to a capability or to these rules carries its before and after from this replay, which also measures one compaction summary request so its plain tokens compare beside the conversation's. The episode export can feed the same replay from the person's own conversations on their machine, and those results stay off the repository.
 
 The development command is `lina provider-replay --provider <name> --socket
 <path> --fixture <file> --out <new-directory>`. Both caller and running Core
