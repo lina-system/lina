@@ -114,6 +114,7 @@ func taskBranch(requested, id string) string {
 }
 
 type Config struct {
+	ApprovalKey        []byte
 	ExecutionDeadline  func(context.Context, Record) (time.Time, error)
 	AuthorizeExecution func(context.Context, Record) (bool, error)
 	AuthorizeRecovery  func(context.Context, Record) (bool, error)

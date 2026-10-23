@@ -65,7 +65,7 @@ func TestM1MemoryReplayInstalledCore(t *testing.T) {
 				return core
 			}
 			core := start()
-			c, conversation := conversationClient(t, h)
+			c, _ := conversationClient(t, h)
 			agent := c.Welcome.Agents[0].AgentID
 			c.Close()
 			memory := func(operation, id, text string) protocol.MemoryResult {
@@ -104,7 +104,7 @@ func TestM1MemoryReplayInstalledCore(t *testing.T) {
 			if first.ItemID == nil || second.ItemID == nil {
 				t.Fatal("missing memory identity")
 			}
-			c, conversation = conversationClient(t, h)
+			c, conversation := conversationClient(t, h)
 			admittedTurn(t, h, c, conversation, "memory-replay", "Use my preferences. api_key=synthetic-secret-value")
 			c.Close()
 			mu.Lock()

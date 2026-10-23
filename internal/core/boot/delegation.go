@@ -413,7 +413,7 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 	if err != nil {
 		return work.Run{}, err
 	}
-	adapter, err := codex.Open(d.ctx, process, codex.Config{Executable: d.config.Codex})
+	adapter, err := codex.Open(d.ctx, process, codex.Config{Executable: d.config.Codex, ApprovalKey: d.root.personaAuthority.WorkerApprovalKey()})
 	if err != nil {
 		process.Release()
 		return work.Run{}, err
@@ -428,7 +428,7 @@ func (d *delegationRuntime) start(ctx context.Context, c work.Card) (run work.Ru
 	// A named-remote push also writes local tracking refs. Publish to the same
 	// origin URL directly so workers need no bypass of the shared ref guard.
 	packet := "The shared Git directory guards base, other-task and remote-tracking refs. Keep that guard enabled. Publish your assigned branch using origin's URL as the git push destination, rather than the origin alias, so only the remote branch is updated.\n" + p.Packet
-	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: packet, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
+	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: c.Task.ID, AttemptID: c.Task.ID + ":1", Workdir: p.Workdir, TaskPacket: worker.FrameMessage(c.Task.AgentID, "agent", c.Task.ID, c.Task.ID+":start", packet), ApprovalKey: d.root.personaAuthority.WorkerApprovalKey(), Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
 	if err != nil {
 		return work.Run{}, err
 	}
@@ -501,7 +501,7 @@ func (d *delegationRuntime) returnConflict(ctx context.Context, c work.Card) (wo
 	d.mu.Lock()
 	d.leases["pending:"+c.Task.ID] = l
 	d.mu.Unlock()
-	if err = adapter.Input(ctx, thread, worker.Input{Text: "Your pull request is unmergeable after another landing. Resolve the conflict on your existing branch, run the relevant checks, and update the same pull request. This is the single automatic conflict return; do not merge it."}); err != nil {
+	if err = adapter.Input(ctx, thread, worker.Input{Text: worker.FrameMessage("core", "system", thread.TaskID, "", "Your pull request is unmergeable after another landing. Resolve the conflict on your existing branch, run the relevant checks, and update the same pull request. This is the single automatic conflict return; do not merge it.")}); err != nil {
 		return work.Run{}, err
 	}
 	snapshot, err := adapter.Snapshot(ctx, thread)

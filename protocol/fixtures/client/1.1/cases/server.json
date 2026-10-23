@@ -1,0 +1,23 @@
+{
+  "side": "server",
+  "input": [
+    "mock-read.json",
+    "mock-asset.json",
+    "mock-build.json"
+  ],
+  "output": [
+    "mock-read.json",
+    "mock-asset.json",
+    "mock-build.json"
+  ],
+  "errors": [
+    "",
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 3,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

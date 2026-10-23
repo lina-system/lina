@@ -105,3 +105,20 @@ func TestSteeringRestoreAndInvalidAcknowledgement(t *testing.T) {
 		t.Fatal("receipt history was mutable")
 	}
 }
+
+func TestSteeringSourceSurvivesResumeAndCannotBeReattributed(t *testing.T) {
+	s, db := testStore(t)
+	m := SteeringMessage{ID: "source", Session: "fake:thread", Person: "owner", Agent: "manager", Conversation: "work", Text: "continue", Tier: "turn", SentAt: time.Now().UTC(), Sender: "manager", SpeakerKind: "agent"}
+	if _, err := s.StoreSteering(t.Context(), m); err != nil {
+		t.Fatal(err)
+	}
+	resumed := New(db)
+	messages, err := resumed.SteeringMessages(t.Context(), m.Session)
+	if err != nil || len(messages) != 1 || messages[0].Sender != "manager" || messages[0].SpeakerKind != "agent" {
+		t.Fatal(messages, err)
+	}
+	m.Sender, m.SpeakerKind = "owner", "person"
+	if _, err := resumed.StoreSteering(t.Context(), m); err == nil {
+		t.Fatal("retry changed manager input into person input")
+	}
+}

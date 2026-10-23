@@ -337,6 +337,9 @@ func (c *channelRuntime) channelRunResults(ctx context.Context, view *conversati
 			if record.Origin.Turn != "turn:"+parent || record.Origin.Agent != view.agent || record.Origin.Person != view.person {
 				continue
 			}
+			if record.Brief.Result == "mock" && record.Artifact.Done {
+				continue
+			} // The checked typed result already has this input as its parent.
 			id := "channel-result:" + n.ID
 			if _, err = view.journal().Get(ctx, id); err == nil {
 				continue

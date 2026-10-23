@@ -32,8 +32,9 @@ var ErrUnsupported = errors.New("Codex capability not implemented")
 // Config selects the installed executable, never its settings or credentials.
 // Empty Executable resolves codex on the person's PATH.
 type Config struct {
-	Executable string
-	Bind       func(context.Context, worker.Thread) error
+	ApprovalKey []byte
+	Executable  string
+	Bind        func(context.Context, worker.Thread) error
 }
 
 type Compatibility struct {
@@ -51,6 +52,7 @@ type frame struct {
 }
 
 type Session struct {
+	approvalKey             []byte
 	doing                   doing.Reader
 	bind                    func(context.Context, worker.Thread) error
 	quotaWake               chan struct{}
@@ -142,7 +144,7 @@ func Open(ctx context.Context, l lease.Lease, cfg Config) (*Session, error) {
 		return nil, err
 	}
 	life, cancel := context.WithCancel(ctx)
-	s := &Session{bind: cfg.Bind, quotaWake: make(chan struct{}, 1), owner: owner, cancel: cancel, stdin: inW, processDone: make(chan struct{}), readerDone: make(chan struct{}), events: make(chan worker.Event, 257), pending: map[string]chan frame{}, finished: map[string]bool{}, version: v, generation: generations.Add(1)}
+	s := &Session{approvalKey: append([]byte(nil), cfg.ApprovalKey...), bind: cfg.Bind, quotaWake: make(chan struct{}, 1), owner: owner, cancel: cancel, stdin: inW, processDone: make(chan struct{}), readerDone: make(chan struct{}), events: make(chan worker.Event, 257), pending: map[string]chan frame{}, finished: map[string]bool{}, version: v, generation: generations.Add(1)}
 	go func() {
 		defer close(s.processDone)
 		err := owner.Run(life, l, proc.Command{Path: path, Args: []string{"app-server", "--listen", "stdio://"}, Env: env, Stdin: inR, Stdout: outW, Stderr: io.Discard})

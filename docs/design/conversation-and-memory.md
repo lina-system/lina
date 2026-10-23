@@ -1270,7 +1270,7 @@ What each source object becomes:
 | Host database message, by message uid | The canonical event of that uid. The fields the lossless context database lacks (reasoning, finish reason, platform message id) are kept as preserved body fields. A uid it lacks gets its own event. Every (session, row) copy becomes a legacy reference of that event. | Sealed canon |
 | Uid bindings and relations of the lossless context database | Legacy references, and `view_of` and `supersedes` relations between events | Legacy references stay |
 | Summary node and its provenance | A node of the summary tree flagged `legacy` and `unverified`, and flagged `degraded`, `out_of_segment_text` or `language_mismatch` where they apply. Its source ids become child links, and a link that does not resolve is an import error. | Read-only history |
-| Large-output sidecar file | A LINA material referenced by the output event. Its hash is recomputed and compared. Missing bytes are marked `bytes_unavailable`. | Sealed canon (bytes) |
+| Large-output sidecar file | A LINA material referenced by the output event. Its hash is recomputed and compared. Missing bytes are marked `bytes_unavailable`. When the same event also publishes a tool-call projection, the projection is the live inline body and the import record keeps the sidecar material. | Sealed canon (bytes) |
 | Honcho workspace and peers | An import batch record and a peer map the person confirms | The map is canon |
 | Honcho session | `source_session` on events. An imported conversation only for agent-to-agent and gateway sessions with no host counterpart. | History |
 | Honcho message | A legacy reference on the host or lossless-context event it matches, otherwise a standalone event flagged `honcho-only` | Sealed canon |

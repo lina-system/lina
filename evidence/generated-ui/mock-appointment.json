@@ -1,0 +1,38 @@
+{
+  "case_id": "appointment",
+  "checks": [
+    {
+      "id": "elements",
+      "passed": true
+    },
+    {
+      "id": "controls",
+      "passed": true
+    },
+    {
+      "id": "tokens",
+      "passed": true
+    },
+    {
+      "id": "network",
+      "passed": true
+    },
+    {
+      "id": "errors",
+      "passed": true
+    },
+    {
+      "id": "layout_390",
+      "passed": true
+    },
+    {
+      "id": "layout_1280",
+      "passed": true
+    }
+  ],
+  "judge": "unqualified",
+  "owner_labels": 0,
+  "request": "다음 주 치과, 되는 시간 셋 중에 골라 줘",
+  "text": true,
+  "version": 1
+}

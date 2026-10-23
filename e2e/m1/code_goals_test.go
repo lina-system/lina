@@ -326,7 +326,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		c.Close()
 		h.stopCore(core)
 		core = start()
-		c, conversation = conversationClient(t, h)
+		c, _ = conversationClient(t, h)
 		events = nil
 	}
 	if restarting {
@@ -338,7 +338,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		c.Close()
 		h.stopCore(core)
 		core = start()
-		c, conversation = conversationClient(t, h)
+		c, _ = conversationClient(t, h)
 		close(releaseProbe)
 		events = nil
 		if mode == "restart-unhealthy-probe" {
@@ -346,7 +346,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 			c.Close()
 			h.stopCore(core)
 			core = start()
-			c, conversation = conversationClient(t, h)
+			c, _ = conversationClient(t, h)
 		}
 	}
 	if strings.HasPrefix(mode, "worker-recovery") {
@@ -367,7 +367,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		c.Close()
 		h.stopCore(core)
 		core = start()
-		c, conversation = conversationClient(t, h)
+		c, _ = conversationClient(t, h)
 		events = nil
 	}
 	done := false
