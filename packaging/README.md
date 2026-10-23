@@ -45,7 +45,8 @@ The build manifest may also carry:
   canonical map takes precedence over the legacy field. If neither supplies a
   list, no version is verified.
 - `installFiles`: an array of `{ "name", "size", "sha256" }` records for
-  `adapters/claude/` files in the bundle. A provided adapter must include
+  `adapters/claude/` files and the `adapters/claude-acp/package.json` and
+  `adapters/claude-acp/package-lock.json` files in the bundle. A provided adapter must include
   `package.json` and `package-lock.json`. Files are copied to `system/adapters/`;
   installation does not run npm or download the SDK. Builds without those files
   report the Claude component unavailable.

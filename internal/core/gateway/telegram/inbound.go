@@ -29,6 +29,7 @@ var pairCode = regexp.MustCompile(`^[a-f0-9]{32}$`)
 // identities. File IDs are opaque references; importing them requires the
 // already-admitted owner's binding and the usual import boundary.
 type Message struct {
+	ReplyTo   string   `json:"reply_to,omitempty"`
 	ID        string   `json:"message_id"`
 	Text      string   `json:"text"`
 	Files     []string `json:"files,omitempty"`
@@ -74,6 +75,9 @@ func (a *Adapter) runUpdates(ctx context.Context, in gateway.Admitter, previous 
 				}
 			} else {
 				body := Message{ID: strconv.FormatInt(m.MessageId, 10), Text: m.Text, Forwarded: m.ForwardOrigin != nil}
+				if m.ReplyToMessage != nil {
+					body.ReplyTo = strconv.FormatInt(m.ReplyToMessage.MessageId, 10)
+				}
 				if body.Text == "" {
 					body.Text = m.Caption
 				}

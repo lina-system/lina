@@ -132,6 +132,7 @@ func (c *channelRuntime) admitChannelInput(ctx context.Context, shared *conversa
 	var body struct {
 		Text      string `json:"text"`
 		Forwarded bool   `json:"forwarded"`
+		ReplyTo   string `json:"reply_to"`
 	}
 	if json.Unmarshal(event.Body, &body) != nil {
 		return channels.ErrInvalid
@@ -146,7 +147,15 @@ func (c *channelRuntime) admitChannelInput(ctx context.Context, shared *conversa
 		if body.Forwarded {
 			entry, person = guard.EntryForwarded, ""
 		}
-		input, err = shared.journal().Admit(ctx, entry, ledger.Input{ID: id, ConversationID: binding.Conversation, PersonID: person, AgentID: binding.Agent, Surface: ledger.Surface{Kind: "channel", Platform: event.Platform, ChatID: event.Chat}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: in.native, Body: body.Text})
+		runner := newConversationView(c.r, binding.Agent, binding.Conversation)
+		runner.channelBinding = &binding
+		runner.channelAddress = event.Address
+		var reply string
+		reply, err = c.channelReplyEvent(ctx, event.Address, body.ReplyTo)
+		if err != nil {
+			return err
+		}
+		input, err = runner.journal().Admit(ctx, entry, ledger.Input{ID: id, ConversationID: binding.Conversation, PersonID: person, AgentID: binding.Agent, Surface: ledger.Surface{Kind: "channel", Platform: event.Platform, ChatID: event.Chat, ReplyTo: reply}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Locator: in.native, Body: body.Text})
 	}
 	if err != nil {
 		return err

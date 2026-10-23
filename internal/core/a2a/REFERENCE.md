@@ -74,7 +74,7 @@ Requests carry `A2A-Version: 1.0`. The input is one `application/json` data part
 data, not a new protocol skill selector. Result bytes are an A2A raw part;
 authorized downloads use `/a2a/<id>/artifacts/<task>/<artifact>`.
 
-Migration 55 appends task and message-dedup tables. No existing data is rewritten
+Migration 56 appends task and message-dedup tables. No existing data is rewritten
 or deleted. Older binaries retain the existing newer-schema refusal. Publication
 can be disabled independently of retained work and results. Task/context IDs
 are opaque; message IDs are scoped to publication and issuer/subject/client.
