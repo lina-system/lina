@@ -30,7 +30,9 @@ func terminal(t wire.V2Turn) *worker.Finish {
 // Recover rebinds an existing thread without sending input or changing settings.
 // The original turn remains the reconciliation target, even if other turns exist.
 func (s *Session) Recover(ctx context.Context, t worker.Thread, workdir string, tools []worker.Tool) (worker.Thread, error) {
-	s.control.Lock()
+	if err := s.control.Lock(ctx); err != nil {
+		return worker.Thread{}, err
+	}
 	defer s.control.Unlock()
 	if t.ID == "" || t.TurnID == "" || !filepath.IsAbs(workdir) {
 		return worker.Thread{}, errors.New("incomplete recovery binding")
@@ -65,7 +67,9 @@ func (s *Session) Recover(ctx context.Context, t worker.Thread, workdir string, 
 // status or prose cannot settle those effects. Such items require independent
 // reconciliation and conservatively keep EffectsKnown false here.
 func (s *Session) Reconcile(ctx context.Context, t worker.Thread) (worker.ThreadSnapshot, error) {
-	s.control.Lock()
+	if err := s.control.Lock(ctx); err != nil {
+		return worker.ThreadSnapshot{}, err
+	}
 	defer s.control.Unlock()
 	s.mu.Lock()
 	err := s.bound(t, true)
