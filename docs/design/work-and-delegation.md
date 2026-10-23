@@ -1379,6 +1379,12 @@ A second settled failure creates one persistent decision row in the originating
 conversation. Its choices keep work paused or stop it; neither starts a third
 automatic attempt. Files, branches and earlier receipts remain intact.
 
+Goal workers use the same recovery queue. A committed recovery allowance admits
+their queued attempt without a conversation tool-call receipt, because the goal
+engine starts the original worker directly. Core revalidates the goal action
+before claiming and starting recovery; cancellation, changed scope and unknown
+effects still prevent another attempt. Goal observation only reads the dispatch.
+
 Claude and Antigravity dispatch can recover once from a committed terminal
 snapshot whose full observation contains no tool activity. The second attempt
 uses the same pinned base and worktree and keeps separate receipt artifacts.

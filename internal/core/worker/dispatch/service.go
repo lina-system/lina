@@ -500,7 +500,10 @@ func (s *Service) sync() {
 			err = s.cfg.DB.Read(s.ctx, func(tx *canon.Tx) error {
 				return tx.QueryRowContext(s.ctx, `SELECT count(*) FROM turn_calls WHERE turn_id=? AND json_extract(call,'$.Name')='dispatch_work' AND json_extract(result,'$.code')='ok' AND json_extract(result,'$.output.id')=?`, r.Origin.Turn, r.ID).Scan(&committed)
 			})
-			if err != nil || committed == 0 && !(r.Goal && r.ReturnReceipt != "") {
+			// Goal actions start directly, without a conversation tool-call row.
+			// Their committed correction or recovery admits a queued attempt;
+			// recovery still passes the authority check above and before launch.
+			if err != nil || committed == 0 && !(r.Goal && (r.ReturnReceipt != "" || r.Recoveries > 0)) {
 				continue
 			}
 			s.mu.Lock()

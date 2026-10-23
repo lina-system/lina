@@ -586,6 +586,12 @@ waiting protocol, retention of a real file, and no third turn across restart.
 checks Claude dispatch's two attempts, retained receipt artifacts and durable
 decision. These use synthetic workers and no authenticated accounts.
 
+`m2/goal-worker-recovery.json`, executed by `TestM2InstalledGoalWorkerRecovery`,
+starts a code goal through installed Core. A settled worker failure recovers
+once without a conversation dispatch receipt. The recovered worker commits a
+real result and the goal completes through synthetic GitHub and service wires;
+a second failure stops for a decision and does not restart a third attempt.
+
 `m2/tui-board.json`, `m2/tui-note.json` and `m2/tui-usage.json` exercise the
 installed Core and real PTY TUI. The board combines an outside-change waiting
 request with a background run, updates its groups on landing and opens the
