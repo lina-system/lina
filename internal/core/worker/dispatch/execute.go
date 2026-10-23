@@ -36,7 +36,7 @@ func (s *Service) execute(r Record) {
 	defer func() {
 		if ctx.Err() == nil && !settled {
 			r.State = "finished"
-			if admitted && (!settled || r.Snapshot != nil && r.Snapshot.Finish != nil && r.Snapshot.Finish.Status != worker.Done) {
+			if admitted {
 				r.State = "unknown"
 			}
 			_ = s.save(ctx, r)

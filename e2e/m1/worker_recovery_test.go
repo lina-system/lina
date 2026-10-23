@@ -243,7 +243,29 @@ func TestM2WorkerRecovery(t *testing.T) {
 				t.Fatalf("artifact=%s: %v", raw, err)
 			}
 			// A second Core restart cannot reset the recovery allowance.
+			previousObserved := read().ObservedAt
 			core = start()
+			if mode == "unknown" {
+				waitRecovery(t, h, func() bool { return read().ObservedAt > previousObserved })
+			}
+			if mode == "retry" {
+				restored, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "restored-recovery", []protocol.Capability{{Name: "waiting", Version: "1.0"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				waitRecovery(t, h, func() bool {
+					if _, err := restored.Waiting(h.ctx, protocol.WaitingGet{}); err != nil {
+						t.Fatal(err)
+					}
+					frame, err := restored.Receive(h.ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					list, ok := frame.Payload.(protocol.Waiting)
+					return ok && list.Rows != nil && len(*list.Rows) == 1
+				})
+				restored.Close()
+			}
 			h.stopCore(core)
 			if raw, _ := os.ReadFile(filepath.Join(dir, "turn-count")); string(raw) != count {
 				t.Fatal("restart dispatched a third turn")

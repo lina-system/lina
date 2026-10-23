@@ -2,6 +2,7 @@
 package dispatch
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -62,6 +63,11 @@ func TestDispatchRecoversOnceOnlyAfterAllEffectsSettle(t *testing.T) {
 		if e.Kind == "finished" {
 			ends++
 		}
+	}
+	// An old completion cannot publish a terminal result for the new attempt.
+	s.cfg.Publish = func(context.Context, Record) error { t.Fatal("old completion published during recovery"); return nil }
+	if found, err := s.React(t.Context(), work.Completion{TaskID: task.ID, Attempt: "task:1"}, card); !found || err != nil {
+		t.Fatalf("old completion not consumed: %v %v", found, err)
 	}
 	if starts != 2 || ends != 2 {
 		t.Fatalf("attempt history lost: starts=%d ends=%d", starts, ends)

@@ -36,7 +36,7 @@ func TestWorkerRecoveryDecisionIsDurableAndDoesNotSendInput(t *testing.T) {
 		t.Fatalf("decision rows=%+v %v", rows, err)
 	}
 	id, rev := "worker-request:recovery:thread", "1"
-	action := "keep_paused"
+	action := "Keep paused"
 	values := protocol.FormValues{"action": protocol.FormValue{String: &action}}
 	q := workerQuestions{runtime: r}
 	answer := protocol.QuestionAnswer{CardID: &id, Revision: &rev, Answer: protocol.QuestionAnswerActionAccept, Values: &values}

@@ -6,10 +6,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 )
 
@@ -21,6 +23,9 @@ func (s *Service) finish(ctx context.Context, r Record, runID, status string) er
 	return s.cfg.DB.Write(ctx, func(tx *canon.Tx) error {
 		if err := work.FinishIn(ctx, tx, r.ID, runID, status, head); err != nil {
 			return err
+		}
+		if r.Snapshot != nil && r.Snapshot.Finish != nil && r.Snapshot.Finish.Status != worker.Done {
+			r = recoveryRecord(r)
 		}
 		return saveRecord(ctx, tx, r)
 	})
@@ -46,6 +51,14 @@ func (s *Service) React(ctx context.Context, event work.Completion, card work.Ca
 	}
 	if err != nil {
 		return true, err
+	}
+	// A handled failure can already have queued or started the next generation.
+	// Its old completion is an observation, not a delivery for the new attempt.
+	if r.Attempt > 0 && event.Attempt != fmt.Sprintf("%s:%d", r.ID, r.Attempt) {
+		return true, nil
+	}
+	if r.State == "queued" || r.State == "running" {
+		return true, nil
 	}
 	if r.Announced {
 		return true, nil

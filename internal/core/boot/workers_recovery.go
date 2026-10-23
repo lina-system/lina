@@ -62,7 +62,7 @@ func (r *conversationRuntime) startWorkerRecovery(ctx context.Context) error {
 	b.recoveryDone = make(chan struct{})
 	go func() {
 		defer close(b.recoveryDone)
-		ticker := time.NewTicker(5 * time.Minute)
+		ticker := time.NewTicker(reactor.SweepInterval)
 		defer ticker.Stop()
 		attempted := map[string]bool{}
 		for {
@@ -286,7 +286,7 @@ func (e *workerSession) recoveryDecision(rec reactor.Record) {
 		return
 	}
 	recommendation := "Keep the work paused and inspect the result."
-	card := protocol.Question{ConversationID: e.origin.workerDelivery().conversation, Card: &protocol.DecisionCard{ID: id, Revision: "1", Agent: e.origin.router.root.decisions.AgentName(e.origin.agent), Summary: "The worker failed again. The work is paused.", Recommendation: &recommendation, Targets: []protocol.DecisionTarget{}}, Form: &protocol.QuestionForm{PluginName: "Worker recovery", Fields: []protocol.FormField{{Name: "action", Type: protocol.FormFieldTypeChoice, Choices: &[]string{"keep_paused", "stop"}}}}}
+	card := protocol.Question{ConversationID: e.origin.workerDelivery().conversation, Card: &protocol.DecisionCard{ID: id, Revision: "1", Agent: e.origin.router.root.decisions.AgentName(e.origin.agent), Summary: "The worker failed again. The work is paused.", Recommendation: &recommendation, Targets: []protocol.DecisionTarget{}}, Form: &protocol.QuestionForm{PluginName: "Worker recovery", Fields: []protocol.FormField{{Name: "action", Type: protocol.FormFieldTypeChoice, Choices: &[]string{"Keep paused", "Stop"}}}}}
 	e.questions[id] = &workerQuestion{card: card, kind: "recovery", requested: time.Unix(0, rec.DecisionAt)}
 	e.mu.Unlock()
 	_ = e.origin.router.root.decisions.PublishQuestion(e.origin.ctx, id)
@@ -297,7 +297,7 @@ func (e *workerSession) answerRecovery(ctx context.Context, answer protocol.Ques
 		return protocol.DecisionOutcomeRefused, nil
 	}
 	v := (*answer.Values)["action"].String
-	if v == nil || (*v != "keep_paused" && *v != "stop") {
+	if v == nil || (*v != "Keep paused" && *v != "Stop") {
 		return protocol.DecisionOutcomeRefused, nil
 	}
 	e.recoveryMu.Lock()
@@ -309,7 +309,7 @@ func (e *workerSession) answerRecovery(ctx context.Context, answer protocol.Ques
 	rec.State = "parked"
 	rec.Decision = *v
 	rec.DecidedAt = time.Now().UnixNano()
-	rec.Canceled = *v == "stop"
+	rec.Canceled = *v == "Stop"
 	if err := (reactor.Recovery{DB: e.origin.db}).Put(ctx, rec); err != nil {
 		return protocol.DecisionOutcomeRefused, err
 	}

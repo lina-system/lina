@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Package reactor owns durable worker recovery decisions, never worker effects.
+// Recovery retains worker decisions separately from the effects they observe.
 package reactor
 
 import (
