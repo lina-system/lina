@@ -589,7 +589,10 @@ Overview reads reject lane pagination. The overview has `rows`, at most five
 `waiting` rows and `waiting_more`. A progress row separates its opaque `ref`
 from its display-only `line`: name, kind, stage, optional percent, just_finished,
 next, waiting count and hierarchy depth. An absent percent means unknown; it
-never means zero. Stage and unknown are codes localized by the client.
+never means zero. Stage and unknown are codes localized by the client. An optional
+`state` uses the `running_state` display codes for an observed conversation-worker
+execution state; it does not supply a plan stage or completion verdict. Older
+clients may omit this additional presentation field.
 
 A `progress_update` replaces the overview atomically, retaining the normal topic
 cursor and snapshot/replay behavior. A changed full waiting list advances this

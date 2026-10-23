@@ -40,7 +40,7 @@ func CheckRestore(path string) error {
 
 // Restore publishes the replayed removal list before canon and keeps the old
 // areas under the pending directory until all replacements are durable.
-var restoreAreas = []string{"backups/removals", "versions", "materials", "derived", "workspace", "canon"}
+var restoreAreas = []string{"backups/removals", "versions", "materials", "derived", "workspace", operatorJournal, "canon"}
 
 func restoreSync(root *os.Root, path string) error {
 	f, err := root.Open(path)
@@ -56,7 +56,7 @@ func restoreBoundary(after func(string) error, name string) error {
 	return nil
 }
 
-func commitRestore(root *os.Root, prepared string, after func(string) error) error {
+func commitRestore(root *os.Root, prepared string, m Manifest, after func(string) error) error {
 	if _, err := root.Lstat(restorePending); !errors.Is(err, os.ErrNotExist) {
 		return ErrRestorePending
 	}
@@ -69,36 +69,53 @@ func commitRestore(root *os.Root, prepared string, after func(string) error) err
 	if err := restoreBoundary(after, "pending"); err != nil {
 		return err
 	}
-	return resumeRestore(root, after)
+	return resumeRestore(root, m, after)
 }
 
-func resumeRestore(root *os.Root, after func(string) error) error {
+func resumeRestore(root *os.Root, m Manifest, after func(string) error) error {
 	for _, area := range restoreAreas {
 		next := restorePending + "/new/" + area
 		previous := restorePending + "/previous/" + area
+		absentJournal := area == operatorJournal && !hasOperatorJournal(m)
 		nextInfo, err := root.Lstat(next)
-		if errors.Is(err, os.ErrNotExist) {
+		if absentJournal {
+			// Absence is part of the captured generation, including older
+			// manifests. It must retire any newer reservation journal too.
+			if !errors.Is(err, os.ErrNotExist) {
+				return ErrRestorePending
+			}
+		} else if errors.Is(err, os.ErrNotExist) {
 			// The prepared entry is absent only after its rename into place.
 			if _, err := root.Lstat(area); err != nil {
 				return err
 			}
 			continue
-		}
-		if err != nil {
+		} else if err != nil {
 			return err
 		}
-		if area == "backups/removals" {
-			if !nextInfo.Mode().IsRegular() {
+		if !absentJournal {
+			if area == "backups/removals" || area == operatorJournal {
+				if !nextInfo.Mode().IsRegular() {
+					return ErrRestorePending
+				}
+			} else if !nextInfo.IsDir() {
 				return ErrRestorePending
 			}
-		} else if !nextInfo.IsDir() {
-			return ErrRestorePending
 		}
 		_, err = root.Lstat(previous)
 		if errors.Is(err, os.ErrNotExist) {
 			if info, err := root.Lstat(area); err == nil {
-				if info.Mode()&os.ModeSymlink != 0 {
+				if info.Mode()&os.ModeSymlink != 0 || area == operatorJournal && !info.Mode().IsRegular() {
 					return ErrRestorePending
+				}
+				if area == operatorJournal {
+					// Also permits resuming a plan prepared by an older binary.
+					if err := privateDir(root, filepath.Dir(previous)); err != nil {
+						return err
+					}
+					if err := restoreSync(root, restorePending+"/previous"); err != nil {
+						return err
+					}
 				}
 				if err := root.Rename(area, previous); err != nil {
 					return err
@@ -120,11 +137,13 @@ func resumeRestore(root *os.Root, after func(string) error) error {
 		if _, err := root.Lstat(area); !errors.Is(err, os.ErrNotExist) {
 			return ErrRestorePending
 		}
-		if err := root.Rename(next, area); err != nil {
-			return err
-		}
-		if err := errors.Join(restoreSync(root, filepath.Dir(next)), restoreSync(root, filepath.Dir(area))); err != nil {
-			return err
+		if !absentJournal {
+			if err := root.Rename(next, area); err != nil {
+				return err
+			}
+			if err := errors.Join(restoreSync(root, filepath.Dir(next)), restoreSync(root, filepath.Dir(area))); err != nil {
+				return err
+			}
 		}
 		if err := restoreBoundary(after, "installed:"+area); err != nil {
 			return err

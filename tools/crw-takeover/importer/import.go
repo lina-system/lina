@@ -123,7 +123,7 @@ func Import(ctx context.Context, repo records.Repo, actor records.Actor, data []
 			}
 			// A later LINA edit is not permission to overwrite it from the old snapshot.
 		} else if readErr == nil {
-			if !bytes.Equal(existing.Data, change.Data) {
+			if !bytes.Equal(existing.Data, change.Data) && !matchesLegacyTodo(existing.Data, change.Data, kinds[i]) {
 				return loss(errors.New("reserved LINA id has different content"))
 			}
 		} else if !errors.Is(readErr, records.ErrNotFound) {
@@ -153,6 +153,33 @@ func Import(ctx context.Context, repo records.Repo, actor records.Actor, data []
 	}
 	return report, err
 }
+
+// An older importer may have published a to-do before acknowledging its journal
+// entry. Reconstruct only that exact encoding from the verified snapshot. Never
+// normalize the existing record: that could conceal a later edit or a collision.
+func matchesLegacyTodo(existing, current []byte, kind string) bool {
+	if kind != "todo" {
+		return false
+	}
+	front, body, ok := strings.Cut(string(current), "\n---\n")
+	if !ok {
+		return false
+	}
+	var lines []string
+	for _, line := range strings.Split(front, "\n") {
+		switch line {
+		case "state: open":
+			line = "state: active"
+		case "state: completed":
+			line = "state: done"
+		}
+		if !strings.HasPrefix(line, "deadline_source: ") {
+			lines = append(lines, line)
+		}
+	}
+	return string(existing) == strings.Join(lines, "\n")+"\n---\n"+body
+}
+
 func quote(s string) string { b, _ := json.Marshal(s); return string(b) }
 func convert(r sourceRecord, kind, id string, index int, links map[string]string, raw json.RawMessage, hash string, actor records.Actor) records.Change {
 	state := "active"

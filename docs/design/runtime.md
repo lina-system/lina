@@ -39,13 +39,14 @@ External components (document parsers, OCR, the local transcription component, t
 
 ## Installed tools
 
-LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Antigravity or Cursor, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
+LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Cursor, Gemini CLI, Grok or Antigravity, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
 
 - LINA uses the installed tool found on `PATH` or at a path the user configured, and records the version it observed.
 - LINA lists the versions of each such tool that it has verified. A version not on the list is reported to the user as unverified, with the version found and the verified versions, and LINA still uses the tool. A function becomes unsupported only when its tool is missing, can't be started or connected to, or fails its protocol handshake, and LINA says why.
 - LINA never installs, updates or pins the tool on its own, and installs nothing inside it.
 - LINA OS may offer to install these tools for the user ([product-families.md](product-families.md)).
 - Nothing in this section applies to the Claude Agent SDK package. LINA installs that package itself, on first use of a Claude account, under Provider adapters.
+- Nor does it apply to the `claude-agent-acp` program that lets the ACP adapter drive Claude Code ([work-and-delegation.md](work-and-delegation.md#claude-code-through-acp)). The release pins it with its own lockfile, and LINA installs it on first use of the Claude Code worker, under the same rules as the Claude adapter's lockfile, without its optional packages. It always runs the person's installed `claude`; LINA still never installs, updates or pins Claude Code itself.
 
 ## Processes
 
@@ -56,7 +57,7 @@ LINA uses some tools that the user installs and that LINA neither ships nor pins
 | `lina` TUI | Go on Bubble Tea, a static binary | A user process connected to LINA Core over its local socket or the tailnet | The terminal surface ([surfaces.md](surfaces.md)) |
 | LINA app | TypeScript on React, in a bundled shell: Wails v3 (Go) on macOS, Windows and Linux, a WebView host on mobile, Capacitor by default | A user process on the person's device, connected to LINA Core over its local socket or the tailnet | The app surface ([surfaces.md](surfaces.md)) |
 | Node | Go, a static binary | A service on each device | Device execution under grants |
-| Worker | The coding tool the user installed or signed in to, with the user's own configuration; Codex runs as `codex app-server`; Claude Code, Antigravity and Cursor (`cursor-agent`) run as headless child processes; the Cursor adapter is deferred to [#210](https://github.com/thisisjun786/lina/issues/210) | A stdio child of LINA Core, or of Node on a remote device | Workers, one child per task in flight |
+| Worker | The coding tool the user installed or signed in to, with the user's own configuration; Codex runs as `codex app-server`; Claude Code, Cursor, Gemini CLI, Grok and added agents run through the Agent Client Protocol, Claude Code under the pinned `claude-agent-acp` program; Antigravity runs as a headless child process ([work-and-delegation.md](work-and-delegation.md#workers)) | A stdio child of LINA Core, or of Node on a remote device | Workers, one child per task in flight |
 | Claude adapter | LINA's own TypeScript on Node.js, an external component pinned by the release, with the Claude Agent SDK installed on the person's machine (see Provider adapters) | A stdio child of LINA Core, started on first use of a Claude account and stopped after an idle period | Model calls through a Claude account |
 | Grok command | The official `grok` command the user installed | A stdio child of LINA Core, started for a turn and driven by the Go Grok adapter | Model calls through a Grok account |
 | Sandboxed commands | Whatever a tool call runs | Children of LINA Core inside the OS sandbox | Shell and file tools |
@@ -429,7 +430,7 @@ release assembly retains its explicit file allowlist without the SDK.
 
 ### Grok
 
-LINA runs no OAuth client against the Grok service, because the service documents no registration for other applications. The Grok adapter drives the official `grok` command that the person installed ([Installed tools](#installed-tools)) over the Agent Client Protocol (`grok agent` on standard input and output), because only that interface carries tool approvals. The command's headless print mode is read-only streaming with fixed allow and deny rules, and is used only for one-shot calls.
+LINA runs no OAuth client against the Grok service, because the service documents no registration for other applications. The Grok adapter drives the official `grok` command that the person installed ([Installed tools](#installed-tools)) over the Agent Client Protocol (`grok agent stdio`), on the same ACP client as the ACP workers ([go-core.md](go-core.md#work-engine), C-60), because only that interface carries tool approvals. The command's headless print mode is read-only streaming with fixed allow and deny rules, and is used only for one-shot calls.
 
 - The person signs in with the command's own OAuth login: the browser, or a device code on a host with no browser. LINA stores nothing. It learns the state of the account from a cheap authenticated call, not from the command's files.
 - The adapter sets the command's telemetry and trace-upload switches explicitly, to off, restricts its built-in tools and offers LINA's tools as for any agent runtime.

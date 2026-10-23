@@ -51,8 +51,12 @@ func (load workerLoad) wrap(t *testing.T, p *process) {
 	// and Core's own sandbox probe. The shell execs Core at the recorded PID;
 	// graceful shutdown targets Core, while forced cleanup kills the launcher
 	// and --die-with-parent reaps its child.
-	p.command.Args = append([]string{bwrap, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", load.path, "/proc/loadavg", "--", "/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; shift; exec "$@"`, "worker-load", pidfile}, p.command.Args...)
-	p.command.Path = bwrap
+	wrapped := append([]string{bwrap, "--die-with-parent", "--dev-bind", "/", "/", "--ro-bind", load.path, "/proc/loadavg", "--", "/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; shift; exec "$@"`, "worker-load", pidfile}, p.command.Args...)
+	// Linux parent-death signals track the thread that forked the child.
+	// A Go runtime thread can retire while the test process remains alive.
+	// The shell stays as bwrap's single-threaded parent until its child exits.
+	p.command.Args = append([]string{"/bin/sh", "-c", `"$@" & child=$!; wait "$child"`, "worker-load-parent"}, wrapped...)
+	p.command.Path = "/bin/sh"
 	p.signal = func(signal os.Signal) error {
 		raw, err := os.ReadFile(pidfile)
 		if err != nil {
