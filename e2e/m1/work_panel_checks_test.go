@@ -4,6 +4,7 @@ package e2e_test
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -306,13 +307,16 @@ func panelClipCells(text string, cells int) string {
 }
 
 func panelShowsCard(facts frameFacts, card panelCard) bool {
-	prefix := panelClipCells(card.Name, 6)
 	for _, shown := range facts.Cards {
-		if strings.Contains(shown.Body, prefix) || panelClipEquals(shown.Name, card.Name) {
+		if panelCardIs(shown, card) {
 			return true
 		}
 	}
 	return false
+}
+
+func panelCardIs(shown shownCard, card panelCard) bool {
+	return strings.Contains(shown.Body, panelClipCells(card.Name, 6)) || panelClipEquals(shown.Name, card.Name)
 }
 
 func panelClipEquals(shown, full string) bool {
@@ -343,11 +347,14 @@ func checkVisible(r *panelRecording) panelVerdict {
 			return v
 		}
 		facts := parsePanelFrame(frame, c)
-		for _, card := range c.Cards {
+		// Names repeat in the corpus, so each waiting card is read at its own
+		// place in Core's order; the first window starts at the top of it.
+		active, _ := panelActive(c)
+		for i, card := range active {
 			if card.Waiting == 0 {
 				continue
 			}
-			if !panelShowsCard(facts, card) {
+			if i >= len(facts.Cards) || !panelCardIs(facts.Cards[i], card) {
 				v.Detail = fmt.Sprintf("%s: the card that waits on the person is not in the first frame (%q)", c.Name, panelClipCells(card.Name, 6))
 				return v
 			}
@@ -854,12 +861,21 @@ func checkOrder(r *panelRecording) panelVerdict {
 				v.Detail = c.Name + ": the pass after a move records no moved 일 or rank"
 				return v
 			}
-			if rankOf(pass.Rank, pass.Moved) != 0 {
-				v.Detail = fmt.Sprintf("%s: the moved 일 is at rank %d on the next pass", c.Name, rankOf(pass.Rank, pass.Moved)+1)
+			if i == 0 || rankOf(c.Passes[i-1].Rank, pass.Moved) < 0 || rankOf(pass.Rank, pass.Moved) < 0 {
+				v.Detail = c.Name + ": no pass before the move ranks the moved 일"
 				return v
 			}
-			if i > 0 && rankOf(c.Passes[i-1].Rank, pass.Moved) == 0 {
-				v.Detail = fmt.Sprintf("%s: the moved 일 did not change rank", c.Name)
+			// A move key shifts the 일 one place up or down. 일 admitted or
+			// finished between the passes are not part of the move.
+			before := rankWithin(c.Passes[i-1].Rank, pass.Rank)
+			after := rankWithin(pass.Rank, c.Passes[i-1].Rank)
+			from, to := rankOf(before, pass.Moved), rankOf(after, pass.Moved)
+			if to != from-1 && to != from+1 {
+				v.Detail = fmt.Sprintf("%s: the moved 일 went from rank %d to %d, not one place", c.Name, from+1, to+1)
+				return v
+			}
+			if !slices.Equal(withoutID(before, pass.Moved), withoutID(after, pass.Moved)) {
+				v.Detail = fmt.Sprintf("%s: a move changed the order of other 일", c.Name)
 				return v
 			}
 			// Started is the dispatch order, so each start must outrank the next.
@@ -868,10 +884,6 @@ func checkOrder(r *panelRecording) panelVerdict {
 					v.Detail = fmt.Sprintf("%s: pass %d started a lower-ranked 일 first", c.Name, pass.Seq)
 					return v
 				}
-			}
-			if len(pass.Started) > 0 && pass.Started[0] != pass.Moved {
-				v.Detail = fmt.Sprintf("%s: pass %d started %q instead of the moved 일", c.Name, pass.Seq, pass.Started[0])
-				return v
 			}
 			// The next frame carries the moved 일 in its new place.
 			if frame, ok := panelFrameFor(c, pass.Seq); ok && cardIndexOf(c.Cards, pass.Moved) > 0 {
@@ -909,6 +921,21 @@ func rankOf(rank []string, id string) int {
 		}
 	}
 	return -1
+}
+
+// rankWithin keeps the rank's 일 that the other rank also holds, in order.
+func rankWithin(rank, other []string) []string {
+	out := []string{}
+	for _, id := range rank {
+		if contains(other, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func withoutID(rank []string, id string) []string {
+	return slices.DeleteFunc(slices.Clone(rank), func(other string) bool { return other == id })
 }
 
 func panelFrameFor(c panelCase, seq int64) (panelFrame, bool) {
