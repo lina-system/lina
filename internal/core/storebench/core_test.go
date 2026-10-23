@@ -73,7 +73,7 @@ func TestHeadlessCore(t *testing.T) {
 	if client.Welcome.PersonID != person || len(client.Welcome.Agents) == 0 {
 		t.Fatal("Core identity missing")
 	}
-	a := client.Welcome.Agents[0].ID
+	a := client.Welcome.Agents[0].AgentID
 	request := func(operation string, id *string) protocol.MemoryResult {
 		t.Helper()
 		requestID, err := client.Memory(ctx, protocol.MemoryRequest{Operation: &operation, AgentID: &a, ItemID: id})
