@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 package progress
 
-import "sort"
+import (
+	"sort"
+	"time"
+)
 
 // Line is display data only. Identity and navigation belong to Entry, never to
 // the line. A nil percentage is unobserved, including an empty denominator.
 type Line struct {
-	Name         string `json:"name"`
-	Kind         string `json:"kind"`
-	Stage        string `json:"stage"`
-	State        string `json:"state,omitempty"`
-	Percent      *int   `json:"percent"`
-	JustFinished string `json:"just_finished"`
-	Next         string `json:"next"`
-	Waiting      int    `json:"waiting"`
-	Depth        int    `json:"depth"`
+	StartedAt    time.Time `json:"started_at,omitzero"`
+	FinishedAt   time.Time `json:"finished_at,omitzero"`
+	Now          string    `json:"now,omitempty"`
+	Name         string    `json:"name"`
+	Kind         string    `json:"kind"`
+	Stage        string    `json:"stage"`
+	State        string    `json:"state,omitempty"`
+	Percent      *int      `json:"percent"`
+	JustFinished string    `json:"just_finished"`
+	Next         string    `json:"next"`
+	Waiting      int       `json:"waiting"`
+	Depth        int       `json:"depth"`
 }
 type Entry struct {
 	Ref  string
@@ -25,6 +31,8 @@ type Entry struct {
 // Done is used only to retire a seen completion; it cannot supply a plan stage.
 // Landed allows acknowledgement-based retirement without a success verdict.
 type Unit struct {
+	StartedAt, FinishedAt  time.Time
+	Now                    string
 	ID, Parent, Kind, Name string
 	State                  string // Optional observed execution state, independent of plan stage.
 	Done                   *bool
@@ -42,7 +50,7 @@ func Compute(units []Unit) []Entry {
 	}
 	rows := make(map[string]*row, len(units))
 	for _, u := range units {
-		line := Line{Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting}
+		line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting}
 		if u.JustFinished != "" {
 			line.JustFinished = u.JustFinished
 		}

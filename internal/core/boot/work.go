@@ -129,7 +129,15 @@ func (r *conversationRuntime) workOwner(ctx context.Context, turnID, name string
 			return "", "", err
 		}
 		if request.Workspace.RepositoryID == "" {
-			return r.agent, r.conversation, nil
+			method, err := r.preparedMethod(ctx, turnID, r.agent)
+			if err != nil {
+				return "", "", err
+			}
+			if dispatches(method) {
+				return r.agent, r.conversation, nil
+			}
+			a, err := r.assignCoding(ctx, dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: turnID}, request.TaskID, name, "work:"+request.TaskID, in.Arguments)
+			return a.Owner, a.Conversation, err
 		}
 		if !filepath.IsAbs(request.Workspace.Source) {
 			return "", "", work.ErrInvalid
