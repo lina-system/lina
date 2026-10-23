@@ -14,6 +14,12 @@ func TestGeminiReadinessThroughRunningCore(t *testing.T) {
 
 const geminiAgentScript = `#!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
+function messageText(text) {
+ if (!text.startsWith('<lina-message ')) return text;
+ const match=text.match(/^<lina-message [^>]*><text>([\s\S]*)<\/text><\/lina-message>$/);
+ if (!match) throw Error('invalid worker message frame');
+ return match[1].replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi,(_,e)=>e[0]==='#'?String.fromCodePoint(e[1].toLowerCase()==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"})[e]);
+}
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -45,7 +51,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   reply(m.id,{sessionId:session});break;
  case 'session/prompt': {
   if(name==='gemini'&&process.env.LINA_ACP_CASE==='needs-sign-in'&&!fs.existsSync(path.join(root,'signed-in')))throw Error('prompt without sign-in');
-  const packet=m.params.prompt[0].text;
+  const packet=messageText(m.params.prompt[0].text);
   send({method:'session/update',params:{sessionId:session,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Working on result.txt'}}}});
   const timer=setInterval(()=>{
    if(!fs.existsSync(path.join(root,'release')))return;
