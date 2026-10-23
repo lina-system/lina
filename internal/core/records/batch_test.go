@@ -7,6 +7,7 @@ import (
 )
 
 func TestBatchPublishesOneRevisionAndRejectsAllOnConflict(t *testing.T) {
+	t.Parallel()
 	s, root, _ := setup(t)
 	changes := []Change{{ID: "project", Path: "projects/work.md", Data: doc("project", "Work")}, {ID: "todo", Path: "projects/task.md", Data: doc("todo", "Task")}}
 	rev, err := s.CommitBatch(t.Context(), changes, actor)
@@ -33,6 +34,7 @@ func TestBatchPublishesOneRevisionAndRejectsAllOnConflict(t *testing.T) {
 }
 
 func TestBatchRecoveryRetainsEveryRecord(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"intent", "file", "index", "ref", "checkpoint"} {
 		t.Run(stage, func(t *testing.T) {
 			s, root, db := setup(t)
@@ -65,6 +67,7 @@ func TestBatchRecoveryRetainsEveryRecord(t *testing.T) {
 }
 
 func TestBatchTodoLinksUseTheCompleteCandidate(t *testing.T) {
+	t.Parallel()
 	s, root, _ := setup(t)
 	changes := []Change{
 		{ID: "second", Path: "projects/second.md", Data: todoDocument("second", "belongs_to: [\"project\"]\nblocked_by: [\"first\"]\n")},
@@ -80,6 +83,7 @@ func TestBatchTodoLinksUseTheCompleteCandidate(t *testing.T) {
 }
 
 func TestBatchTodoLinksRejectInvalidCandidatesWithoutPublishing(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, first, second string
 		want                error
@@ -106,6 +110,7 @@ func TestBatchTodoLinksRejectInvalidCandidatesWithoutPublishing(t *testing.T) {
 }
 
 func TestBatchTodoLinksRejectCycleThroughPublishedRecords(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	first := Change{ID: "first", Path: "projects/first.md", Data: todoDocument("first", "")}
 	first.Base = commit(t, s, first)
@@ -122,6 +127,7 @@ func TestBatchTodoLinksRejectCycleThroughPublishedRecords(t *testing.T) {
 }
 
 func TestBatchTodoLinksRejectForeignParent(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	before, _ := s.Head(t.Context())
 	_, err := s.CommitBatch(t.Context(), []Change{
