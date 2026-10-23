@@ -547,7 +547,12 @@ not a path the worker must read or a skill to install. Queued dispatch stores
 that snapshot with the work definition, so later catalog edits, removal and
 process restarts cannot substitute another body. Replayed admissions first
 match the persisted origin and complete definition, then reuse that snapshot;
-only new admissions resolve the current catalog. The Codex `worker_start` session path
+only new admissions resolve the current catalog. A saved dispatch admission has
+already passed its manager decision. An identical retry returns that admission
+without assigning or running the manager again, including admissions saved before
+task branches included the task ID. The original manager definition and ownership
+remain intact. A retry cannot reset execution state, and queued work still waits
+for its conversation tool receipt to commit. The Codex `worker_start` session path
 uses the same resolver and exposes the same packet through `read_projection`.
 The existing `dispatch_work` definition carries these fields for Antigravity.
 
