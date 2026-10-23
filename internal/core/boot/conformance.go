@@ -33,7 +33,7 @@ func (r *conversationRuntime) beginConformance(ctx context.Context, a codingAssi
 	if err = review.New(r.db).Claim(ctx, rr); err != nil {
 		return rr, err
 	}
-	result := review.Assess(*d.PR, repo, d.TaskDefinition().Branch, d.Definition.Base, d.ChangedFiles, d.Definition.WriteArea)
+	result := review.Assess(d.PR.Verify(repo, d.TaskDefinition().Branch, d.Definition.Base, d.PR.Head), d.ChangedFiles, d.Definition.WriteArea)
 	if result.State == "" && d.Code == "pr_unverified" {
 		result = review.Record{State: "blocked", Cause: "merge_precondition", Evidence: "The delivered head does not satisfy GitHub merge prerequisites."}
 	}

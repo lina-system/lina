@@ -4,15 +4,14 @@ package review
 import (
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/work"
-	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 )
 
 // Assess is Core's mechanical boundary, not a model finding classifier. The
 // existing GitHub reader requires all observed checks and current-head review.
 // An empty State means the manager may check the definition, not acceptance.
-func Assess(p antigravity.PullRequest, repository, branch, base string, files, areas []string) Record {
-	if err := p.Verify(repository, branch, base, p.Head); err != nil {
-		return Record{State: "blocked", Cause: "merge_precondition", Evidence: err.Error()}
+func Assess(precondition error, files, areas []string) Record {
+	if precondition != nil {
+		return Record{State: "blocked", Cause: "merge_precondition", Evidence: precondition.Error()}
 	}
 	var misses []string
 	for _, file := range files {

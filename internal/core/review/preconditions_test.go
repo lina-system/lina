@@ -17,16 +17,16 @@ func greenPR() antigravity.PullRequest {
 func TestFailedCheckIsPreconditionAndScopeMissIsNotModelFinding(t *testing.T) {
 	p := greenPR()
 	p.Checks[0].Conclusion = "FAILURE"
-	r := Assess(p, "owner/repo", "task", "dev", []string{"src/a.go"}, []string{"src/**"})
+	r := Assess(p.Verify("owner/repo", "task", "dev", p.Head), []string{"src/a.go"}, []string{"src/**"})
 	if r.State != "blocked" || r.Cause != "merge_precondition" || r.Verdict != "" || len(r.Findings) != 0 {
 		t.Fatalf("CI became a verdict/finding: %+v", r)
 	}
 	p = greenPR()
-	r = Assess(p, "owner/repo", "task", "dev", []string{"src/a.go", "outside.txt"}, []string{"src/**"})
+	r = Assess(p.Verify("owner/repo", "task", "dev", p.Head), []string{"src/a.go", "outside.txt"}, []string{"src/**"})
 	if r.State != "complete" || r.Verdict != "needs_changes" || !strings.Contains(r.Evidence, "outside.txt") || len(r.Findings) != 0 {
 		t.Fatalf("scope miss: %+v", r)
 	}
-	r = Assess(p, "owner/repo", "task", "dev", []string{"src/deep/a.go"}, []string{"src/**"})
+	r = Assess(p.Verify("owner/repo", "task", "dev", p.Head), []string{"src/deep/a.go"}, []string{"src/**"})
 	if r.State != "" {
 		t.Fatalf("in-scope ready delivery rejected: %+v", r)
 	}
