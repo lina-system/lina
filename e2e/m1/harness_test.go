@@ -137,6 +137,21 @@ func buildCommand(t *testing.T, name string) string {
 	return binary
 }
 
+// alphaScenarioParent is the parent for a scenario's private state root. The
+// default is the temporary directory. A long acceptance run sets
+// LINA_ALPHA_STATE so its state survives unrelated cleanup of the shared
+// temporary directory, which would otherwise remove a running Core's socket.
+func alphaScenarioParent() (string, error) {
+	parent := os.Getenv("LINA_ALPHA_STATE")
+	if parent == "" || !filepath.IsAbs(parent) {
+		return "", nil
+	}
+	if err := os.MkdirAll(parent, 0700); err != nil {
+		return "", fmt.Errorf("prepare LINA_ALPHA_STATE %s: %w", parent, err)
+	}
+	return parent, nil
+}
+
 type harness struct {
 	t      *testing.T
 	ctx    context.Context
@@ -148,7 +163,11 @@ type harness struct {
 func newHarness(t *testing.T, binary string) *harness {
 	t.Helper()
 	// Keep Unix socket paths below the platform limit even for long test names.
-	root, err := os.MkdirTemp("", "lina-e2e-")
+	parent, err := alphaScenarioParent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp(parent, "lina-e2e-")
 	if err != nil {
 		t.Fatal(err)
 	}

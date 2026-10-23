@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -141,7 +142,7 @@ func alphaRecoveredReplyVisible(request, reply, screen string) bool {
 	}
 	// Long replies scroll their beginning out of view. Require a substantial
 	// suffix of the committed answer, not a topic already present in the request.
-	runes := []rune(alphaQuestionText(reply))
+	runes := []rune(alphaRenderedText(reply))
 	if len(runes) == 0 {
 		return false
 	}
@@ -149,7 +150,62 @@ func alphaRecoveredReplyVisible(request, reply, screen string) bool {
 		runes = runes[len(runes)-64:]
 	}
 	suffix := string(runes)
-	return !strings.Contains(alphaQuestionText(request), suffix) && strings.Contains(alphaQuestionText(screen), suffix)
+	return !strings.Contains(alphaRenderedText(request), suffix) && strings.Contains(alphaRenderedText(screen), suffix)
+}
+
+var alphaMarkdownLink = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+
+// alphaRenderedText reduces Markdown source and the TUI's rendering of it to
+// the same visible text. The screen replaces emphasis, headings, list markers
+// and link targets with presentation, so comparing the source's syntax alone
+// would reject a correctly delivered result.
+func alphaRenderedText(text string) string {
+	var out strings.Builder
+	for _, line := range strings.Split(text, "\n") {
+		line = alphaMarkdownLink.ReplaceAllString(line, "$1")
+		line = strings.TrimLeft(line, " \t")
+		// Fence delimiters render as presentation, not text.
+		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+			continue
+		}
+		// Quote prefixes are presentation; an operator inside a sentence is
+		// content and stays visible.
+		for {
+			rest := strings.TrimLeft(line, " ")
+			if len(line)-len(rest) > 3 || !strings.HasPrefix(rest, ">") {
+				break
+			}
+			line = strings.TrimPrefix(strings.TrimPrefix(rest, ">"), " ")
+		}
+		for _, marker := range []string{"›", "•", "·", "-", "*", "+"} {
+			if strings.HasPrefix(line, marker+" ") || strings.HasPrefix(line, marker+"\t") {
+				line = strings.TrimLeft(line[len(marker):], " \t")
+				break
+			}
+		}
+		line = line[alphaOrderedMarker(line):]
+		out.WriteString(line)
+	}
+	plain := strings.NewReplacer("*", "", "_", "", "`", "", "#", "").Replace(out.String())
+	return strings.Join(strings.Fields(plain), "")
+}
+
+// alphaOrderedMarker returns the length of a leading "1. " or "1) " marker.
+func alphaOrderedMarker(line string) int {
+	digits := 0
+	for digits < len(line) && line[digits] >= '0' && line[digits] <= '9' {
+		digits++
+	}
+	if digits == 0 || digits+1 >= len(line) {
+		return 0
+	}
+	if line[digits] != '.' && line[digits] != ')' {
+		return 0
+	}
+	if line[digits+1] != ' ' && line[digits+1] != '\t' {
+		return 0
+	}
+	return digits + 2
 }
 
 func TestAlphaRecoveredReplyRequiresResultText(t *testing.T) {
@@ -180,6 +236,23 @@ func TestAlphaRecoveredReplyRequiresResultText(t *testing.T) {
 	long := strings.Repeat("Earlier result paragraph. ", 20) + ending
 	if !alphaRecoveredReplyVisible(request, long, ending+"\n"+live) {
 		t.Fatal("visible end of a long result was rejected")
+	}
+	// The TUI renders Markdown instead of showing its syntax. A committed
+	// result that ends with a list or a link must still be recognized.
+	bulleted := "## 정리\n\n- 물은 3일 간격\n- 수확은 8월"
+	if !alphaRecoveredReplyVisible(request, bulleted, "정리\n\n› 물은 3일 간격\n› 수확은 8월\n"+live) {
+		t.Error("a rendered bulleted result was rejected")
+	}
+	if alphaRecoveredReplyVisible(request, bulleted, request+"\n"+live) {
+		t.Error("a missing bulleted result was accepted")
+	}
+	ordered := "1. 물 주기\n2. 수확하기"
+	if !alphaRecoveredReplyVisible(request, ordered, "1. 물 주기\n2. 수확하기\n"+live) {
+		t.Error("a rendered ordered list was rejected")
+	}
+	linked := "자세한 내용은 [문서](https://example.com/water)를 보세요."
+	if !alphaRecoveredReplyVisible(request, linked, "자세한 내용은 문서를 보세요.\n"+live) {
+		t.Error("a rendered link label was rejected")
 	}
 }
 
