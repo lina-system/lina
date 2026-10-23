@@ -1452,8 +1452,11 @@ Implementation notes: [C-14 sandbox acceptance](../../kit/sandbox/REFERENCE.md#c
 Linux process ownership uses the explicit per-command `proc-supervise` helper with `PR_SET_CHILD_SUBREAPER`.
 It kills and waits for the whole descendant tree, including `setsid`/`setpgid` escapes and orphans, before returning.
 The tests cover owner shutdown, cancellation, normal leader exit and owner process death.
-macOS first kills the process group, then scans same-user processes for an inherited owner token using `KERN_PROCARGS2`.
-This macOS cleanup is best effort: a child that clears its environment can escape, and this remaining limitation is not accepted as complete unescapable supervision.
+macOS denies `setsid` and `setpgid` in the command's Seatbelt policy, applied by the owner or by the sandbox launcher, so no descendant can leave its process group; a host without the launcher fails closed.
+While the command runs, the owner watches `EVFILT_PROC` fork notifications for the leader and every recorded descendant, so a descendant is recorded even when its parent was already reaped.
+The owner then kills the group while the leader is unreaped, and sweeps kernel-recorded parent identities and the inherited owner token as defence in depth.
+The sweep keeps the identities it discovered in earlier scans, and it reads the full short BSD info record so an unreaped zombie is never signalled again.
+The native macOS tests cover a refused escape and a cleared-environment descendant that outlives its intermediate parent.
 
 Windows process ownership uses a Job Object assigned before the suspended leader runs.
 Descendants cannot break away by changing their console/process group, and cleanup waits for an empty job as well as the leader's exit.
