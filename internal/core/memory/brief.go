@@ -341,7 +341,18 @@ func writeBrief(ctx context.Context, tx *canon.Tx, record briefRecord) error {
 	}
 	task := record.Task
 	_, err = tx.ExecContext(ctx, `INSERT INTO memory_person_brief VALUES(?,?,?,?) ON CONFLICT(person,agent) DO UPDATE SET generation=excluded.generation,record=excluded.record`, task.Scope.Person, task.Scope.Agent, task.Generation, raw)
-	return err
+	if err != nil {
+		return err
+	}
+	var refs []Evidence
+	for _, sentence := range record.Sentences {
+		refs = append(refs, sentence.Citations...)
+	}
+	evidence, err := json.Marshal(refs)
+	if err != nil {
+		return err
+	}
+	return canon.WriteEvidenceCitations(ctx, tx, "person_brief", canon.BriefCitationID(task.Scope.Person, task.Scope.Agent), task.Generation, evidence)
 }
 func BriefApply(agent, person string, now func() int64, resolve ResolveEvidence) func(context.Context, *canon.Tx, jobapi.Task, json.RawMessage) error {
 	return func(ctx context.Context, tx *canon.Tx, task jobapi.Task, output json.RawMessage) error {

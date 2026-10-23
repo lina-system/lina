@@ -45,6 +45,14 @@ Failure coverage also includes:
   both stored outputs, one worker start, two worker turns and result reactions,
   and a non-live result snapshot after another restart.
 
+- `TestM2TimersInstalledCore`: the scripted provider selects the latest input
+  or tool result, skipping the following ContextPacket instructions and external
+  evidence. Installed Core creates a job result and a reminder, saves changed
+  sensor observations, makes no model call for an unchanged revision, and
+  preserves fire counts across restarts and confirms cancellation. This follows the
+  [request layout](../../docs/design/conversation-and-memory.md#request-layout)
+  and [timer contract](../../docs/design/go-core.md#timers-progress-and-waiting).
+
 - `TestM2InstalledWorkerOutcome`: the pending-at-restart case releases the
   worker only after Core emits the successful `start-worker` tool activity.
   The provider continuation waits behind that release, so it cannot supply
