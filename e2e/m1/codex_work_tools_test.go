@@ -29,6 +29,7 @@ import (
 type codexWorkScenario struct {
 	QuotaRelease                   string `json:"quota_release,omitempty"`
 	QuotaRecovery                  bool   `json:"quota_recovery,omitempty"`
+	UnknownQuotaWindow             bool   `json:"unknown_quota_window,omitempty"`
 	QuestionCount                  int    `json:"question_count,omitempty"`
 	Kind                           string `json:"kind,omitempty"`
 	Input, Result, Artifact        string
@@ -263,7 +264,11 @@ func codexWorkToolsFixture() {
 				// after the model fixture has observed the initial quota pair.
 				// A sparse update changes only primary. The adapter must retain
 				// secondary's original observation time through the next quota read.
-				notify("account/rateLimits/updated", map[string]any{"rateLimits": map[string]any{"primary": map[string]any{"usedPercent": fixture.FiveHour}}})
+				primary := map[string]any{"usedPercent": fixture.FiveHour}
+				if fixture.UnknownQuotaWindow {
+					primary["windowDurationMins"] = 300
+				}
+				notify("account/rateLimits/updated", map[string]any{"rateLimits": map[string]any{"primary": primary}})
 			}
 			status, state := "inProgress", "active"
 			if completed {
@@ -279,8 +284,12 @@ func codexWorkToolsFixture() {
 				initialFiveHour = 100
 			}
 			quotaRead = true
+			primary := map[string]any{"usedPercent": initialFiveHour}
+			if !fixture.UnknownQuotaWindow {
+				primary["windowDurationMins"] = 300
+			}
 			reply(map[string]any{"accountId": "work-tools-account", "rateLimits": map[string]any{
-				"primary":   map[string]any{"usedPercent": initialFiveHour, "windowDurationMins": 300},
+				"primary":   primary,
 				"secondary": map[string]any{"usedPercent": fixture.Weekly, "windowDurationMins": 10080},
 			}})
 		default:
@@ -303,6 +312,11 @@ func TestM2CodexDevelopmentMethod(t *testing.T) {
 }
 
 func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harness, string, []protocol.Question)) {
+	t.Helper()
+	runCodexWorkToolsWithSetup(t, scenario, kind, nil, observe)
+}
+
+func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(*harness), observe func(*harness, string, []protocol.Question)) {
 	t.Helper()
 	data, err := os.ReadFile(scenario)
 	if err != nil {
@@ -433,6 +447,9 @@ func runCodexWorkTools(t *testing.T, scenario, kind string, observe func(*harnes
 	defer func() { server.CloseClientConnections(); server.Close() }()
 	h, bootstrap := installedConversationHarness(t, server.URL)
 	seedCodingFixture(t, h, bootstrap)
+	if setup != nil {
+		setup(h)
+	}
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {
