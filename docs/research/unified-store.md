@@ -105,7 +105,7 @@ All numbers below were observed on the sample and machine in [Method](#method).
 
 ### Committed benchmark baseline
 
-Observed on schema 52, based on `33aa9346`, with the committed benchmark's default
+Observed on schema 53, based on `52383480`, with the committed benchmark's default
 seed 851 and 100 turns. Command: `go test -bench . ./internal/core/storebench`.
 One measured fresh corpus; Linux amd64, Go 1.27.3, Intel Core Ultra 7 265KF,
 20 logical CPUs, other jobs running. Times are observations, not CI budgets.
@@ -122,8 +122,8 @@ workload for comparing schema steps, not a recall-quality or full-history estima
 
 | Allocation before forget | Bytes |
 | --- | ---: |
-| Database, including free pages | 21,614,592 |
-| Search trees, including index text and postings | 14,282,752 |
+| Database, including free pages | 21,626,880 |
+| Search trees, including index text and postings | 14,286,848 |
 | Free pages | 0 |
 | Large event bodies outside the database | 884,827 |
 
@@ -150,19 +150,25 @@ every B-tree. `index_bytes` sums trees whose owning table contains `search`,
 
 | Path | Samples | p50 (ms) | p95 (ms) | max (ms) |
 | --- | ---: | ---: | ---: | ---: |
-| `ledger.AdmitBatch`, one turn | 100 | 19.922 | 51.330 | 126.104 |
-| Memory `Remember` | 100 | 3.008 | 9.927 | 23.006 |
-| Summary `Publish` | 2 | 2.277 | 2.698 | 2.698 |
-| Ledger search, limit 12 | 60 | 16.180 | 27.215 | 27.982 |
-| Memory recall, limit 12 | 60 | 6.233 | 10.316 | 12.948 |
-| `recall_person`, depth 0 | 60 | 6.397 | 29.401 | 33.726 |
-| `retract.Forget`, distinct items | 3 | 241.698 | 353.361 | 353.361 |
+| `ledger.AdmitBatch`, one turn | 100 | 24.377 | 53.480 | 74.284 |
+| Memory `Remember` | 100 | 3.911 | 9.198 | 15.543 |
+| Summary `Publish` | 2 | 2.508 | 2.870 | 2.870 |
+| Ledger search, limit 12 | 60 | 15.753 | 27.087 | 27.816 |
+| Memory recall, limit 12 | 60 | 6.325 | 10.279 | 13.536 |
+| `recall_person`, depth 0 | 60 | 6.530 | 27.369 | 37.926 |
+| `retract.Forget`, distinct items | 3 | 12.201 | 19.911 | 19.911 |
 
 Queries use 48 literal substrings and 12 Hangul pairs from generated person
 events. The three paths returned 720, 637 and 637 total hits, respectively.
 All three forgotten items became invisible. No generated or private message,
 summary or query text is retained in this note. Later steps should run the same
 command and corpus settings and report their own before/after numbers.
+
+An earlier run of the same generated corpus on schema 52 (`33aa9346`, before
+#866) measured 21,614,592 database bytes, 14,282,752 index bytes and forget
+p50/p95 of 241.698/353.361 ms. The schema-53 run above includes #866's targeted
+index refresh. These are two observed runs under shared load, not a statistical
+speedup guarantee.
 
 ### Index size
 
