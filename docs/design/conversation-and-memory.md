@@ -332,6 +332,12 @@ When it asks, Core keeps the instruction pending until the person explicitly sel
 - One tap on the chip lists the other candidates, "new" and "none". Choosing one moves the binding: Core appends a rebinding event and moves what the turn did to the right item ([work-and-delegation.md](work-and-delegation.md#messages-about-work)). The move is the label of that choice in Jev's material and in the replay set.
 - An effect that already left the person cannot be moved, which is why the agent asks first for those.
 
+**Admission and context.** Native person input and its initial system binding event commit together, before acknowledgement or turn dispatch. Retrying an input reuses that event; input admitted during a turn keeps its own event and supplies its binding at the next model round. A binding records `no-rule` and an unresolved choice when no Core rule holds, alongside a fresh-focus or none default. It does not authorize an action. Existing pending input from an earlier Core version receives a binding before preparation resumes.
+
+Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A channel may receive personal work context only when its scope permits both memory and tools. Names follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
+
+Client input may carry optional `reply_to`, `card` and `thread` references. Core resolves them within the authenticated conversation and the person's work queue. Platform reply ids are resolved within their channel address. An unresolved or foreign reference supplies no rule. General questions may explicitly mark a yes-or-no form; free text is never inferred to be that form.
+
 **Record and measurement.** The binding is a system event linked to the input event. It holds the target, the candidates offered, the rule or judge that decided, the judge's probabilities when it answered, and any later move. Every input of the person gets one, so an input that was never answered shows. Core counts moves per 100 bindings by who decided. The [intake replay](../research/message-intake.md#replay-evaluation) scores every change to the rules, the candidate ranking, a judge or the instructions before it enters use: right item, right new or existing, and asked when it should and not otherwise. A change that raises silent wrong picks on running work does not ship.
 
 The development command `lina intake-replay <cases.jsonl>` accepts an explicit
@@ -342,6 +348,8 @@ ledger context and open questions, admits the person's input through Core, and
 reads the linked system binding event back before scoring. No provider or worker
 is launched. Temporary state is removed after each pair. The replay-only
 baselines do not change ordinary conversation intake.
+
+`lina intake-replay --core <cases.jsonl>` runs the production admission binding and candidate ranking, with the fixture's persisted clock, prior focus and surface facts. It reports the same per-set and per-decider scores. The ordinary command retains the two historical baselines for comparison.
 
 The two baselines are **focus-only** (always the recorded focus, including an
 aged focus) and **rules-then-focus** (the three explicit-fact rules above, then

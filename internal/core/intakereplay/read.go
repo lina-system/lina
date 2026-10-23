@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/binding"
 	"io"
 	"os"
 	"sort"
@@ -184,13 +185,13 @@ func Validate(c Case) string {
 	questions := map[string]bool{}
 	for _, q := range s.Questions {
 		i, ok := items[q.Target]
-		if !ok || !open(i) || q.ID == "" || questions[q.ID] {
+		if !ok || !binding.Open(i) || q.ID == "" || questions[q.ID] {
 			return "invalid_question"
 		}
 		questions[q.ID] = true
 		labels := map[string]bool{}
 		for _, v := range q.Options {
-			v = fold(strings.TrimSpace(v))
+			v = binding.Fold(strings.TrimSpace(v))
 			if v == "" || labels[v] {
 				return "invalid_question"
 			}
@@ -217,7 +218,7 @@ func Validate(c Case) string {
 
 type Executor func(context.Context, Case, string) ([]Binding, error)
 
-func File(ctx context.Context, path string, execute Executor) Report {
+func File(ctx context.Context, path string, execute Executor, routers ...string) Report {
 	f, err := os.Open(path)
 	if err != nil {
 		reason := "unreadable_file"
@@ -227,12 +228,15 @@ func File(ctx context.Context, path string, execute Executor) Report {
 		return excludedReport(reason)
 	}
 	defer f.Close()
-	return Run(ctx, f, execute)
+	return Run(ctx, f, execute, routers...)
 }
 func excludedReport(reason string) Report {
 	return Report{Version: 1, Selected: 1, Excluded: 1, ExclusionReasons: map[string]int{reason: 1}, Results: []Result{{Reason: reason}}, Summaries: []Summary{}}
 }
-func Run(ctx context.Context, r io.Reader, execute Executor) Report {
+func Run(ctx context.Context, r io.Reader, execute Executor, routers ...string) Report {
+	if len(routers) == 0 {
+		routers = Routers
+	}
 	cases, rejected := read(r)
 	out := Report{Version: 1, Selected: len(cases) + len(rejected), Excluded: len(rejected), ExclusionReasons: map[string]int{}, Results: rejected, Summaries: []Summary{}}
 	for _, r := range rejected {
@@ -251,7 +255,7 @@ func Run(ctx context.Context, r io.Reader, execute Executor) Report {
 		c := entry.Case
 		results := []Result{}
 		failed := false
-		for _, router := range Routers {
+		for _, router := range routers {
 			bindings, err := execute(ctx, c, router)
 			if err != nil {
 				failed = true

@@ -53,6 +53,14 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 		ref := source.Source
 		item := assemble.ContextItem{ID: ref.ID, Revision: ref.Revision, Text: source.Text}
 		switch ref.Source {
+		case "input-binding-v1":
+			if len(ref.Evidence) != 1 {
+				return nil, replay.Exclusion("missing_assembly")
+			}
+			item.AgentID = a.AgentID
+			item.Kind = assemble.Waiting
+			item.Origin = "input-binding:" + ref.Evidence[0].ID
+			item.Evidence = []assemble.Ref{{ID: ref.Evidence[0].ID}}
 		case "clock-v1":
 			item.Kind = assemble.Clock
 		case "skill-v1":
