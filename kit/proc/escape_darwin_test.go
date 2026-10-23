@@ -75,14 +75,10 @@ func TestOwnerReapsOrphanedClearedEnvironmentDescendant(t *testing.T) {
 		t.Fatal("descendant readiness: ", err)
 	}
 	pid := 0
-	denied := false
 	for _, field := range strings.Fields(line) {
 		_, _ = fmt.Sscanf(field, "pid=%d", &pid)
-		if strings.HasPrefix(field, "setsid=") {
-			denied = field == "setsid=operation not permitted"
-		}
 	}
-	if pid == 0 || !denied {
+	if pid == 0 || !strings.Contains(line, "setsid=operation not permitted") {
 		t.Fatalf("descendant readiness = %q", line)
 	}
 	defer killEscaped(pid) // Also clean up the red run.

@@ -10,8 +10,6 @@ import (
 	"os"
 	"sync"
 	"syscall"
-
-	"golang.org/x/sys/unix"
 )
 
 // sandboxExec applies a Seatbelt policy to a process and then becomes the
@@ -26,8 +24,6 @@ const EscapeDenial = "(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid)
 
 // escapePolicy allows everything a command needs and denies only the escape
 // calls. The last matching rule wins, so the denial follows the default allow.
-// Any syscall rule makes the kernel check every syscall of this policy's
-// processes, which is the price of the denial.
 const escapePolicy = "(version 1)\n(allow default)\n" + EscapeDenial + "\n"
 
 var checkSandboxExec sync.Once
@@ -48,13 +44,18 @@ func confine(path string, args []string, confined bool) (string, []string, error
 	if missing != nil {
 		return "", nil, missing
 	}
-	// sandbox-exec would report its own failure instead of the command's, so
-	// check the command here and keep exec's error contract.
-	if err := unix.Access(path, unix.X_OK); err != nil {
-		if errors.Is(err, syscall.EISDIR) {
-			err = syscall.EACCES
+	// The launcher would report its own failure instead of the command's, so
+	// answer a missing or non-executable command here as the kernel would.
+	info, err := os.Stat(path)
+	if err != nil {
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) {
+			err = pathErr.Err
 		}
 		return "", nil, &os.PathError{Op: "fork/exec", Path: path, Err: err}
+	}
+	if info.IsDir() || info.Mode().Perm()&0o111 == 0 {
+		return "", nil, &os.PathError{Op: "fork/exec", Path: path, Err: syscall.EACCES}
 	}
 	wrapped := make([]string, 0, len(args)+3)
 	wrapped = append(wrapped, "-p", escapePolicy, path)
