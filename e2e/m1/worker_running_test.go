@@ -129,7 +129,7 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 		waitComposerReady(t, h, terminal)
 		h.keys(terminal, "\x10") // Ctrl+P
 		wait(func(s string) bool {
-			return strings.Contains(s, "Delegate a small file job.") && strings.Contains(s, "latest:")
+			return strings.Contains(s, "Delegate a small file job.") && strings.Contains(s, design.Text(design.English, "work.working"))
 		})
 	}
 	// Keep the pager open: completion must arrive as a live removal, without
@@ -139,7 +139,7 @@ func testConversationWorkerViews(t *testing.T, progress, failure bool) {
 	if progress {
 		wait(func(s string) bool {
 			if failure {
-				return strings.Contains(s, "Delegate a small file job.") && strings.Contains(s, design.Text(design.English, "running.state.failed")) && strings.Contains(s, "latest:")
+				return strings.Contains(s, "Delegate a small file job.") && strings.Contains(s, design.Text(design.English, "running.state.failed"))
 			}
 			return strings.Contains(s, design.Text(design.English, "progress.empty"))
 		})
