@@ -29,9 +29,16 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 		t.Fatal(err)
 	}
 	var scenario struct {
-		Cases      []struct{ Name, Expected, Preset string }
+		Cases []struct {
+			Name, Expected, Preset string
+			Omit                   string
+			DesignRef              string `json:"design_ref"`
+			MoveBase               bool   `json:"move_base"`
+			ToolCode               string `json:"tool_code"`
+		}
 		What, Done string
 		WorkArea   bool `json:"work_area"`
+		Definition bool `json:"definition"`
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
@@ -53,7 +60,7 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 		t.Run(test.Name, func(t *testing.T) {
 			t.Parallel()
 			workerCase := test.Name
-			if test.Preset != "" {
+			if test.Preset != "" || test.MoveBase {
 				workerCase = "success"
 			}
 			var err error
@@ -76,7 +83,7 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 				return strings.TrimSpace(string(out))
 			}
 			git("init", "-b", "dev")
-			os.WriteFile(filepath.Join(repo, "design.md"), []byte("# Result\nProduce result.txt.\n"), 0600)
+			os.WriteFile(filepath.Join(repo, "design.md"), []byte("# Result\nProduce result.txt.\n\n```md\n# Example\n```\n"), 0600)
 			git("add", "design.md")
 			git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Initial design")
 			base := git("rev-parse", "dev")
@@ -92,6 +99,9 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			}
 			var calls atomic.Int32
 			var offered atomic.Bool
+			var moved atomic.Bool
+			var sourceBase atomic.Value
+			sourceBase.Store(base)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var req struct {
 					Tools []struct{ Name string }
@@ -100,6 +110,19 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					t.Error(err)
 					return
+				}
+				// Move the branch before returning any manager response, so
+				// execution cannot race this fixture's admission boundary.
+				for _, tool := range req.Tools {
+					if tool.Name == "coding_decision" && test.MoveBase && moved.CompareAndSwap(false, true) {
+						if err := os.WriteFile(filepath.Join(repo, "design.md"), []byte("# New design\n"), 0600); err != nil {
+							t.Error(err)
+							return
+						}
+						git("add", "design.md")
+						git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Move base after validation")
+						sourceBase.Store(git("rev-parse", "dev"))
+					}
 				}
 				if scriptedCodingManager(t, w, req) {
 					return
@@ -115,9 +138,20 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 						emitResponse(w, "Unavailable.", true)
 						return
 					}
-					emitPersonaCall(w, "worker-start", "dispatch_work", map[string]any{"repository": repo, "base": "dev", "branch": "task-branch", "what": scenario.What, "why": "Prove real worker execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": scenario.Done, "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}})
+					args := map[string]any{"repository": repo, "base": "dev", "branch": "task-branch", "what": scenario.What, "why": "Prove real worker execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": scenario.Done, "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}}
+					if test.Omit != "" {
+						delete(args, test.Omit)
+					}
+					if test.DesignRef != "" {
+						args["design_refs"] = []string{test.DesignRef}
+					}
+					emitPersonaCall(w, "worker-start", "dispatch_work", args)
 				} else {
-					methodologyOutput(t, methodologyRequest{Input: req.Input}, "ok", nil)
+					code := test.ToolCode
+					if code == "" {
+						code = "ok"
+					}
+					methodologyOutput(t, methodologyRequest{Input: req.Input}, code, nil)
 					emitResponse(w, "Task accepted.", true)
 				}
 			}))
@@ -143,6 +177,12 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 				h.stopCore(core)
 				return
 			}
+			if test.ToolCode == "invalid_arguments" {
+				c.Close()
+				h.stopCore(core)
+				assertDefinitionRefused(t, h, fixture)
+				return
+			}
 			found := false
 			inspect := func(e protocol.Envelope) {
 				if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil && strings.Contains(*item.Text, "antigravity") {
@@ -165,13 +205,16 @@ func testAntigravityThroughInstalledCore(t *testing.T, scenarioPath string, pres
 			c.Close()
 			h.stopCore(core)
 			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success")
-			if git("rev-parse", "dev") != base {
+			if git("rev-parse", "dev") != sourceBase.Load().(string) {
 				t.Fatal("worker changed protected base")
 			}
 			if workerCase == "success" || workerCase == "pending" {
 				wd, err := os.ReadFile(filepath.Join(fixture, "workdir"))
 				if err != nil {
 					t.Fatal(err)
+				}
+				if scenario.Definition {
+					assertDefinitionPacket(t, h, fixture, string(wd), base)
 				}
 				if scenario.WorkArea {
 					assertDispatchedWorkArea(t, h, fixture, repo, string(wd), base)

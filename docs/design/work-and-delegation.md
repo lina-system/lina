@@ -551,6 +551,21 @@ only new admissions resolve the current catalog. The Codex `worker_start` sessio
 uses the same resolver and exposes the same packet through `read_projection`.
 The existing `dispatch_work` definition carries these fields for Antigravity.
 
+Before a new `dispatch_work` admission reaches the manager or queue, Core
+requires a nonblank done condition and write area, resolves the base to a commit,
+and checks each `path#section` against Markdown headings in that commit. A
+working-tree edit or a heading inside a code example cannot supply a section.
+Heading anchors use lowercase text, hyphens for spaces, and numbered suffixes
+for duplicate headings. Missing files, sections or base commits refuse admission
+without creating a task or starting a worker.
+
+Core persists the resolved base commit with the definition. Admission retries
+and queued execution keep that commit even if the named branch moves. The
+packet includes the assignment id, pinned base, assigned branch and complete
+definition. In the Antigravity headless path, it explains that the adapter derives
+the receipt from the final worker result and observed PR; it grants no material
+or memory projections beyond the supplied definition and method.
+
 Mechanical checks stay in Core, rather than becoming instructions in a skill:
 
 - Work-definition completeness, protected branches, design references and write
