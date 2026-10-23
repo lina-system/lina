@@ -87,11 +87,11 @@ func assertACPPromptErrorReceipt(t *testing.T, h *harness, _ string, record disp
 	// Keep the existing recovery fence until those effects are reconciled.
 	var reservations int
 	if err = db.Read(h.ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(h.ctx, "SELECT count(*) FROM work_worker_reservations WHERE task_id=?", record.ID).Scan(&reservations)
+		return tx.QueryRowContext(h.ctx, "SELECT count(*) FROM work_worker_reservations WHERE worker_id=? AND directory=?", record.ID+":worktree", filepath.Join(h.root, "work/tasks", record.ID)).Scan(&reservations)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if record.State != "unknown" || record.Snapshot.EffectsKnown || reservations == 0 {
-		t.Fatal("prompt error falsely established effect safety")
+	if record.State != "unknown" || record.Snapshot.EffectsKnown || reservations != 1 {
+		t.Fatalf("prompt error falsely established effect safety: state=%s effects_known=%v reservations=%d", record.State, record.Snapshot.EffectsKnown, reservations)
 	}
 }
