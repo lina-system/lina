@@ -1011,6 +1011,8 @@ holds completion until the initial conversation closes, checks the persona's
 file read-back and single result, and asks for the outcome after Core restart.
 It also restarts after the completion is committed but before its queued
 follow-up starts, checking one recovered reply and no worker relaunch.
+That boundary follows Core's successful worker-start tool event and committed
+completion, independently of the provider's next response or elapsed time.
 The separately opted-in installed-Codex test preserves the user's setup;
 its file-tool probe encountered a worker approval, so live approval/file execution
 is not counted as session acceptance evidence.
