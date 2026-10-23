@@ -52,7 +52,7 @@ func (b *Builder) QueuePreparation(ctx context.Context, p Pass, completed View, 
 		return false, err
 	}
 	sizes, err := p.measure(completed)
-	if err != nil || sizes.Total < sizes.Trigger {
+	if err != nil || sizes.Total < sizes.Threshold {
 		return false, err
 	}
 	completed = copyView(completed)
