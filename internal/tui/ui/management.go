@@ -172,6 +172,11 @@ func (s *managementSession) request(ctx context.Context, c shellClient, p protoc
 			}
 			s.boardPending[id] = s.model.conversation.pager.board
 		}
+	case protocol.ResultGet:
+		id, err = c.Result(ctx, p)
+		if err == nil && s.model.conversation.pager.result != nil {
+			s.model.conversation.pager.result.requestID = id
+		}
 	case protocol.RunningGet:
 		id, err = c.Running(ctx, p)
 	case protocol.RecordRequest:
@@ -218,6 +223,12 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 			return true, nil
 		}
 		p.developerBusy = false
+	}
+	if _, result := request.(protocol.ResultGet); result {
+		p := &m.conversation.pager
+		if !p.open || p.result == nil || p.result.requestID != *e.ReplyTo {
+			return true, nil
+		}
 	}
 	if e.Error != nil {
 		text := design.Text(m.styles.options.Language, string(e.Error.Code))
@@ -266,6 +277,16 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 		m.conversation.pager.lanes = m.conversation.pager.lanes.Replace(*p.Lanes)
 		m.conversation.pager.laneNext = p.NextCursor
 		m.refreshDeveloper()
+	case protocol.Result:
+		original, ok := request.(protocol.ResultGet)
+		if !ok {
+			return true, errStream
+		}
+		next, err := m.resultPageResponse(original, p)
+		if err != nil || next == nil {
+			return true, err
+		}
+		return true, s.request(ctx, c, *next)
 	case protocol.Running:
 		original, ok := request.(protocol.RunningGet)
 		if !ok || original.RunID == nil || p.RunID == nil || *p.RunID != *original.RunID {

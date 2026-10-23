@@ -20,6 +20,10 @@ func (c *Client) Running(ctx context.Context, request protocol.RunningGet) (stri
 	return c.request(ctx, protocol.KindRunningGet, request)
 }
 
+func (c *Client) Result(ctx context.Context, request protocol.ResultGet) (string, error) {
+	return c.request(ctx, protocol.KindResultGet, request)
+}
+
 // Work sends an owner operation once; Receive owns the correlated result.
 func (c *Client) Work(ctx context.Context, request protocol.WorkSwitchRequest) (string, error) {
 	return c.request(ctx, protocol.KindWorkSwitchRequest, request)
