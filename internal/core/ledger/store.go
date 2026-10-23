@@ -37,14 +37,29 @@ type Surface struct {
 	Kind     string `json:"kind"`
 	Platform string `json:"platform,omitempty"`
 	ChatID   string `json:"chat_id,omitempty"`
+	// Account names the connected messenger account of a messenger source. It
+	// is set only for surface kind "messenger".
+	Account string `json:"account,omitempty"`
+}
+
+// MessengerRef is a messenger record's unique legacy reference. It outlives the
+// record's visible text, so a later read or import of the same message adds
+// nothing.
+type MessengerRef struct {
+	Platform string `json:"platform"`
+	Account  string `json:"account"`
+	Chat     string `json:"chat"`
+	Message  string `json:"message"`
 }
 
 // Origin preserves the trusted native entry even when two entry paths share a
-// speaker kind. Import provenance is reserved for the separate importer.
+// speaker kind. Import provenance is reserved for the separate importer. A
+// messenger record keeps its platform reference here.
 type Origin struct {
-	Kind    string      `json:"kind"`
-	Entry   guard.Entry `json:"entry"`
-	Locator string      `json:"locator,omitempty"`
+	Kind      string        `json:"kind"`
+	Entry     guard.Entry   `json:"entry"`
+	Locator   string        `json:"locator,omitempty"`
+	Messenger *MessengerRef `json:"messenger,omitempty"`
 }
 
 type Relation struct {
@@ -83,7 +98,10 @@ type Input struct {
 	OccurredAt, RecordedAt       time.Time
 	TimeQuality                  string
 	Locator, ReplayOf, Body      string
-	Relations                    []Relation
+	// Messenger carries a messenger record's platform reference. It selects
+	// origin "messenger" and requires a messenger entry and surface.
+	Messenger *MessengerRef
+	Relations []Relation
 	// SecretSpans address the original input. Tags address the masked text,
 	// so no original secret offset or length can be retained in the ledger.
 	SecretSpans []secrets.Span
@@ -117,7 +135,7 @@ func (e Event) Message() (guard.Message, error) {
 	if err != nil {
 		return guard.Message{}, err
 	}
-	if e.Origin.Kind != "native" || m.SpeakerKind() != e.SpeakerKind {
+	if (e.Origin.Kind != "native" && e.Origin.Kind != "messenger") || m.SpeakerKind() != e.SpeakerKind {
 		return guard.Message{}, ErrInvalid
 	}
 	return m, nil
@@ -319,24 +337,40 @@ func prepare(entry guard.Entry, in Input) (Event, error) {
 		(m.SpeakerKind() == guard.Person && !safeID(in.PersonID)) || (m.SpeakerKind() != guard.Person && in.PersonID != "") {
 		return Event{}, ErrInvalid
 	}
-	for _, text := range []string{in.ParentID, in.ScaffoldKind, in.ScaffoldID, in.ReplayOf, in.Locator, in.Surface.Platform, in.Surface.ChatID, in.Surface.ReplyTo, in.Surface.Card, in.Surface.Thread} {
+	for _, text := range []string{in.ParentID, in.ScaffoldKind, in.ScaffoldID, in.ReplayOf, in.Locator, in.Surface.Platform, in.Surface.ChatID, in.Surface.Account, in.Surface.ReplyTo, in.Surface.Card, in.Surface.Thread} {
 		if !safeText(text) {
 			return Event{}, ErrInvalid
 		}
+	}
+	if in.Messenger != nil && (!safeID(in.Messenger.Platform) || !safeID(in.Messenger.Account) || !safeID(in.Messenger.Chat) || !safeID(in.Messenger.Message)) {
+		return Event{}, ErrInvalid
 	}
 	if in.Surface.Language != "" && in.Surface.Language != "ko" && in.Surface.Language != "en" {
 		return Event{}, ErrInvalid
 	}
 	switch in.Surface.Kind {
-	case "tui", "app", "agent_exchange", "manager", "a2a":
-		if in.Surface.Platform != "" || in.Surface.ChatID != "" {
+	case "tui", "app", "launcher", "agent_exchange", "manager", "a2a":
+		if in.Surface.Platform != "" || in.Surface.ChatID != "" || in.Surface.Account != "" {
 			return Event{}, ErrInvalid
 		}
 	case "channel":
-		if !safeID(in.Surface.Platform) || !safeID(in.Surface.ChatID) {
+		if !safeID(in.Surface.Platform) || !safeID(in.Surface.ChatID) || in.Surface.Account != "" {
+			return Event{}, ErrInvalid
+		}
+	case "messenger":
+		// A messenger record's surface names its source and chat, and its origin
+		// carries the unique platform reference.
+		ref := in.Messenger
+		if ref == nil || in.Surface.Platform != ref.Platform || in.Surface.Account != ref.Account || in.Surface.ChatID != ref.Chat {
+			return Event{}, ErrInvalid
+		}
+		if entry < guard.EntryMessengerPerson || entry > guard.EntryMessengerParticipant {
 			return Event{}, ErrInvalid
 		}
 	default:
+		return Event{}, ErrInvalid
+	}
+	if in.Surface.Kind != "messenger" && in.Messenger != nil {
 		return Event{}, ErrInvalid
 	}
 	if in.OccurredAt.IsZero() || in.RecordedAt.IsZero() || in.OccurredAt.Year() < 1 || in.OccurredAt.Year() > 9999 || in.RecordedAt.Year() < 1 || in.RecordedAt.Year() > 9999 {
@@ -369,13 +403,19 @@ func prepare(entry guard.Entry, in Input) (Event, error) {
 		return spans[i].Sensitivity < spans[j].Sensitivity
 	})
 	for _, r := range in.Relations {
-		if !safeID(r.TargetID) || r.Ordinal < 0 || (r.Kind != "view_of" && r.Kind != "supersedes" && r.Kind != "pairs_with") || (r.Kind != "view_of" && r.Ordinal != 0) {
+		if !safeID(r.TargetID) || r.Ordinal < 0 || (r.Kind != "view_of" && r.Kind != "supersedes" && r.Kind != "pairs_with" && r.Kind != "replies_to" && r.Kind != "in_thread") || (r.Kind != "view_of" && r.Ordinal != 0) {
 			return Event{}, ErrInvalid
 		}
 	}
+	origin := Origin{Kind: "native", Entry: entry, Locator: in.Locator}
+	if in.Messenger != nil {
+		origin.Kind = "messenger"
+		ref := *in.Messenger
+		origin.Messenger = &ref
+	}
 	return Event{ID: in.ID, ConversationID: in.ConversationID, ParentID: in.ParentID, PersonID: in.PersonID, AgentID: in.AgentID, SpeakerKind: m.SpeakerKind(),
 		Surface: in.Surface, ScaffoldKind: in.ScaffoldKind, ScaffoldID: in.ScaffoldID, OccurredAt: in.OccurredAt.UTC(), RecordedAt: in.RecordedAt.UTC(), TimeQuality: in.TimeQuality,
-		Origin: Origin{Kind: "native", Entry: entry, Locator: in.Locator}, ReplayOf: in.ReplayOf, Body: body, Relations: append([]Relation(nil), in.Relations...), Spans: spans}, nil
+		Origin: origin, ReplayOf: in.ReplayOf, Body: body, Relations: append([]Relation(nil), in.Relations...), Spans: spans}, nil
 }
 
 func validSpan(text string, span secrets.Span) bool {

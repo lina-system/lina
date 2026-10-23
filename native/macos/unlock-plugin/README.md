@@ -48,7 +48,7 @@ The plug-in reads two root-owned files. Nothing else persists.
 | Path | Written by | Content |
 | --- | --- | --- |
 | `/var/db/lina/locked-screen/enabled` | installer, removed when the feature is off | `socket=<broker socket path>`, `uid=<the person's uid>`, `deadline_ms=<1..500>` |
-| `/var/db/lina/locked-screen/evaluation` | the plug-in | crash marker; present while an evaluation runs |
+| `/var/db/lina/locked-screen/evaluation` | the plug-in; the guard removes a stale one | crash marker; present while an evaluation runs |
 
 The directory is root-only. The plug-in writes the marker before it connects and
 clears it before it answers. A marker left behind by a crashed evaluation makes
@@ -78,7 +78,17 @@ In order; the first failing step denies.
 Every other case denies with its own reason, and the crash marker is cleared on
 the way out. The answer is one system-log line with the ticket id and the
 reason; no credential is logged, and no context or hint value is read or
-written, because the engine exposes only `SetResult` and `WriteLog`.
+written. The decision path uses only `SetResult` and `WriteLog`.
+
+## Deactivation
+
+`MechanismInvoke` returns only after it has answered, so a later
+`MechanismDeactivate` has no evaluation left to stop. It calls `DidDeactivate`
+with the engine reference stored at creation and returns that status. The
+engine waits for the callback; returning success without it leaves the
+evaluation waiting. A missing callback returns an internal error instead of
+reporting a handshake that did not happen. `MechanismDestroy` frees the
+mechanism and does not call `DidDeactivate` again.
 
 ## Wire format
 
@@ -92,7 +102,7 @@ One fixed request and one fixed reply, both documented in `src/protocol.h`.
 ## Build and test
 
 ```sh
-# Linux foundation check: compiles the core and runs its tests.
+# Linux foundation check: compiles the core and the plug-in entry points, and runs their tests.
 node scripts/verify/check-native.mjs
 
 # macOS: builds build/LinaUnlock.bundle for arm64, signs and verifies it.
@@ -105,8 +115,44 @@ enough to compile and verify locally but is not shippable. With
 `LINA_NOTARY_PROFILE` set it also submits the bundle to notarytool and staples
 the ticket.
 
-The core's tests run in the Linux foundation check. The bundle build, the
-signature check and notarization need macOS; their result is recorded as
-evidence for the release that ships the bundle. The macOS cells of the
+The core's tests run in the Linux foundation check, which also parses
+`build.sh` with `bash -n`: the script only ever runs on macOS, so nothing else
+would catch a shell error in it.
+
+The bundle build and the signature check run on an Apple silicon hosted macOS
+runner in
+[`macos-unlock-plugin.yml`](../../../.github/workflows/macos-unlock-plugin.yml)
+as two jobs. `bundle (arm64)` runs on every push and pull request that touches
+`native/macos/**`: it builds `build.sh` ad-hoc, runs `codesign --verify --strict`,
+`codesign -dvvv` and `lipo -archs`, fails when the hardened runtime flag is
+absent, and keeps the bundle as a build artifact.
+
+`signed bundle (arm64, Developer ID)` produces the shippable signature. It runs
+on `dev`, `main` and `v*` tags, and on any other ref only when someone starts it
+by hand:
+
+```sh
+gh workflow run macos-unlock-plugin.yml --ref <branch> -f sign=true
+```
+
+The job declares the `macos-signing` environment, which requires the owner's
+approval, so the key reaches a runner only for one approved run. This is the
+rule, not a convenience: the job runs the checked-out `build.sh` next to the
+imported key, so a ref that may replace that script must never reach it
+unattended. The identity comes from four environment secrets: `MACOS_SIGNING_P12`
+(base64 of the exported certificate and key), `MACOS_SIGNING_P12_PASSWORD`,
+`MACOS_SIGN_IDENTITY` (the identity's common name) and `MACOS_TEAM_ID`. The job
+fails and names the missing ones when they are absent, and fails when the
+signature reports another team. Its step summary holds the `codesign` output for
+the head it ran on. Notarization stays optional and needs `LINA_NOTARY_PROFILE`
+on a machine where the bundle is released.
+
+The arm64 build and signature run recorded for this bundle is in
+[`evidence/macos-unlock-bundle.json`](../../../evidence/macos-unlock-bundle.json).
+It covers the ad-hoc path; it is extended once the `macos-signing` environment
+holds the certificate.
+
+The macOS cells of the
 [non-competition matrix](../../../docs/design/non-competition.md#matrix) stay
-`unverified until evidence` until the locked-Mac eval produces its record.
+`unverified until evidence` until the locked-Mac eval produces its record. A
+build and a signature check are not that record.

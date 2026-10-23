@@ -270,6 +270,7 @@ conversations.
 | Capability | What the client can do |
 | --- | --- |
 | Conversation | Start a conversation with an agent, send a message, interrupt, read history, subscribe to events, receive connect and disconnect notices |
+| Launcher | Send a one-line message to the last or a named agent's main conversation, receive its short form and a message locator ([Launcher capability](#launcher-capability)) |
 | Agent management | List the main's agents, create an agent from a preset or a description, rename, tune and delete an agent. LINA Core records each change with the person id. |
 | Work records | List, read, capture, edit, complete and reorder 목표 (goal), 일 (project), 할 일 (to-do), 계속 챙기는 것 (area) and memos; read the views (오늘 (today), 예정 (upcoming), 언제든 (anytime), 나중에 (later), the flow board) and the candidates; answer a proposal to add or split, and undo a promotion, an addition or an archive. Each is a request to LINA Core, and LINA Core computes the views. |
 | Memory | Remember, correct, forget and move an item between layers, open an item's evidence, expand a ledger event or a summary, run a memory import (rehearsal, run, report) and answer its promotion batches ([conversation-and-memory.md](conversation-and-memory.md)) |
@@ -439,6 +440,36 @@ The generated receivers exercise `conversation/` fixtures on both sides.
 `e2e/m1/tui-conversation.json` covers an installed Core and TUI with a fixture
 provider. Real model credentials and real model validation are outside these
 fixtures.
+
+### Launcher capability
+
+The `launcher` capability (1.0) adds `launcher_request`, `launcher_result` and the
+`launcher` topic's `launcher_reply` items. A request carries `request_id`, an
+opaque `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`, `text` (1–16,384 Unicode characters)
+and an optional `agent_id`. Core resolves the named agent, otherwise the person's
+last selected agent and then the default agent, and admits the line through the
+existing conversation input path into that agent's `main:<agent>` conversation.
+There is no launcher-only conversation. The line is admitted as a follow-up, never
+as steering, so a line that arrives while the agent already runs a turn keeps its
+own turn and its replies always carry its request id. The request id is the input
+id, so a repeated request returns the original admission and starts no second
+turn; Core keeps the agent that first admitted the line, even after the person
+selects another agent, and accepts the inbox source either release used, so a
+line admitted before this capability shipped stays retryable. The request id is
+reserved for the launcher, so an `input` with an id in that namespace is refused
+as malformed. The result names the request, the conversation and the agent with
+an `applied` effect.
+
+The short form streams on the `launcher` topic keyed by `request_id`. Each
+`launcher_reply` carries the request, conversation and agent, the visible short
+`text` produced by the same reply budget as the conversation, and `done`.
+`message_id` locates the conversation item that holds the reply; a client opens
+that conversation at the item. The final event is `done: true`, and Core sends it
+after a stop or failure too, so a panel never waits on a stream that ended. The
+full reply and any typed result remain in the conversation. Pending approvals are
+read through the existing `waiting` capability; the launcher capability adds no
+second approval list. The launcher topic is available only to the authenticated
+person's connection and grants no device, clipboard or model authority.
 
 ## Typed results
 
@@ -849,6 +880,31 @@ background stops retain their terminal outcome. Acknowledgement never verifies
 work completion. Empty/malformed requests are refused and no control is inferred
 from forwarded channel text.
 
+
+### Mini apps
+
+The `mini_apps` capability, version 1.0 on client 1.1, provides
+`mini_app_request` and `mini_app_result`. A request carries `operation` — `list`,
+`open`, `allow`, `deny`, `keep`, `undo`, `restore`, `remove` or `history` — and,
+except for `list`, the app id. `allow`, `deny` and `restore` also carry the
+revision they decide. Core binds the person from the connection; a request never
+names one.
+
+The result carries `operation`, `apps`, and optional `app`, `url`, `tailnet`,
+`revisions` and `code`. An app row holds its id, name, owner agent, the request
+it came from, the current and allowed revision, whether it is allowed, and its
+declared reads, requests, hosts and schedule. `open` returns the frame address
+with a one-time code and, when the tailnet is configured, the same frame on the
+tailnet; before the person allows the current revision it returns no address.
+The one-time code is exchanged for the app's own HttpOnly cookie on the app's
+origin, never on the frame origin. `list`, `open` and `history` are reads; the
+other operations are mutations and report the closed error code in `code`. Only
+this authenticated operation records the person's allow, deny, keep, undo,
+restore and remove; the agent's own tool cannot.
+
+A gateway request is not this capability. The app talks to its own origin, and
+Core admits it only with that app's token and only for its declared reads,
+requests, store and hosts.
 
 ### Direct record views and capture
 

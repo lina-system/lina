@@ -30,6 +30,7 @@ type RequestReport struct {
 	Written           *int64                            `json:"written"`
 	WrittenByLifetime map[provider.CacheLifetime]*int64 `json:"written_by_lifetime"`
 	Plain             *int64                            `json:"plain"`
+	CacheShare        *float64                          `json:"cache_share"`
 	FirstOutputMS     *float64                          `json:"first_output_ms"`
 	Failure           string                            `json:"failure,omitempty"`
 }
@@ -113,6 +114,15 @@ func (s *measuredStream) Meta() provider.Meta {
 	}
 	return s.stream.Meta()
 }
+
+// Reject fails the row a stream is measuring without discarding its tokens. A
+// caller that drives a stream itself uses it when a completed response breaks
+// the request's purpose, such as a compaction summary that calls a tool.
+func Reject(stream provider.Stream, reason string) {
+	if s, ok := stream.(*measuredStream); ok && s.row.Failure == "" {
+		s.row.Failure = reason
+	}
+}
 func (s *measuredStream) Close() error {
 	if s.closed {
 		return nil
@@ -132,7 +142,7 @@ func (s *measuredStream) Close() error {
 	// Claude reports ordinary-rate input separately. Responses includes cache
 	// reads in input, and its cache writes incur no separate input rate.
 	switch s.route {
-	case "claude":
+	case "claude", "claude_api_key":
 		s.row.Plain = u.Input
 		s.row.Input = nil
 		if u.Input != nil && u.Cached != nil && u.CacheWrite != nil && *u.Input <= math.MaxInt64-*u.Cached && *u.Input+*u.Cached <= math.MaxInt64-*u.CacheWrite {
@@ -144,6 +154,12 @@ func (s *measuredStream) Close() error {
 			v := *u.Input - *u.Cached
 			s.row.Plain = &v
 		}
+	}
+	// Cache share is the reported read tokens over all input. Unknown input or
+	// an unreported read leaves it unknown rather than zero.
+	if s.row.Input != nil && s.row.Read != nil && *s.row.Input > 0 {
+		v := float64(*s.row.Read) / float64(*s.row.Input)
+		s.row.CacheShare = &v
 	}
 	err := s.stream.Close()
 	if err != nil {

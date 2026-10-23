@@ -46,8 +46,15 @@ static OSStatus mechanism_invoke(AuthorizationMechanismRef reference) {
 }
 
 static OSStatus mechanism_deactivate(AuthorizationMechanismRef reference) {
-  (void)reference;
-  return errAuthorizationSuccess;
+  struct lina_mechanism *mechanism = (struct lina_mechanism *)reference;
+  // Invoke does its work before it returns, so deactivation has nothing left
+  // to stop. The engine waits on DidDeactivate; returning success here does
+  // not finish that handshake. Acknowledge immediately so a synchronous
+  // deactivate request cannot stall on this mechanism.
+  if (mechanism == NULL || mechanism->callbacks == NULL || mechanism->callbacks->DidDeactivate == NULL) {
+    return errAuthorizationInternal;
+  }
+  return mechanism->callbacks->DidDeactivate(mechanism->engine);
 }
 
 static OSStatus mechanism_destroy(AuthorizationMechanismRef reference) {

@@ -26,7 +26,6 @@ import (
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
-	responseconfig "github.com/thisisjun786/lina/kit/provider/responses/config"
 )
 
 type turnStep struct {
@@ -161,7 +160,7 @@ func installTurnManifest(t *testing.T, root string) {
 		Version: "0.0.1-alpha.dev", Commit: strings.Repeat("a", 40), Date: "2026-10-23",
 		Target: runtime.GOOS + "/" + runtime.GOARCH, GoToolchain: runtime.Version(), KitVersion: 1,
 		SupportedCombinations: []manifest.Combination{},
-		Providers:             map[string]responseconfig.Config{"chatgpt": {Adapter: "responses", RequestFields: provider.FieldList{"model", "input", "store", "stream"}}},
+		Providers:             map[string]json.RawMessage{"chatgpt": json.RawMessage(`{"adapter":"responses","retryCount":0,"requestFields":["model","input","store","stream"]}`)},
 		SQLite: manifest.SQLite{Module: "github.com/ncruces/go-sqlite3", Version: "v0.30.5",
 			ModuleSum: "h1:6usmTQ6khriL8oWilkAZSJM/AIpAlVL2zFrlcpDldCE=", SQLiteVersion: "3.51.2", WasmSHA256: strings.Repeat("d", 64), Execution: "wazero"},
 		Binaries: []manifest.Binary{
@@ -326,7 +325,7 @@ func assertTurnRequests(t *testing.T, p *turnProvider, count int) {
 			"record_emotion", "set_emotion_expression", "record_relationship", "ask_question", "resolve_question", "remember_name",
 			"skill_notices", "skill_maintenance", "skill_index", "read_skill", "write_skill", "undo_skill",
 			"query_records", "read_record", "write_record", "promote_memo", "undo_record", "propose_candidate", "list_candidates",
-			"present_result", "read_result", "present_surface", "calculate",
+			"present_result", "read_result", "present_surface", "mini_app", "calculate",
 			"plan_index", "read_plan", "draft_plan", "start_run", "build_mock",
 			"send_handoff", "handoff_status", "begin_artifact_change", "finish_artifact_change",
 			"load_tools", "call_tool", "create_timer", "timer_status", "cancel_timer",

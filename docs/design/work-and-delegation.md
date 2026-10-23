@@ -162,9 +162,16 @@ remain unchanged. Existing unrelated executable hooks or a custom hooks path
 refuse the allocation rather than being disabled; a guard failure is a known
 pre-dispatch failure. Core's fixed Git administration can still fetch the next
 landed base and create a dependent worktree under the shared guard.
-Scheduled workers publish to origin's URL directly: a named-remote push also
-updates local tracking refs, which remain protected. The target remote and
-assigned branch are unchanged, and publication never disables the guard.
+A worker pushes its assigned branch with an ordinary `git push`, naming either
+the remote or its URL. Any supported Git version may then update the
+remote-tracking ref that mirrors that branch, so the guard permits exactly
+`refs/remotes/<remote>/<assigned branch name>` and nothing else under
+`refs/remotes/`. Every other remote-tracking ref, the protected heads and
+`refs/lina/*` stay closed, and publication never disables the guard.
+A clone that already holds a guard written by an earlier Core keeps serving its
+worktrees: Core recognizes its own guard by its header and binding use and
+replaces it in place on the next allocation. A hook Core did not write still
+refuses the allocation.
 The installed-Core [headless work-area scenario](../../e2e/m2/work-area.json)
 allocates two real linked worktrees, rejects cross-task branch updates, deletion
 and renaming into a reserved branch, commits on each assigned branch, and retains
@@ -828,6 +835,7 @@ The work of a goal is a graph of steps inside and a numbered list outside. The p
 - **One placement pass.** The ready frontier includes steps held by area, quota or capacity, in deadline, dependency depth, goal creation time, goal id and step id order. Core reserves every compatible start in that pass, accounting for earlier reservations in the same pass. A quota hold is distinct from a host-capacity hold. Graph storage order and event delivery order do not set placement order; recovery observes existing claimed starts instead of issuing them again.
 - **Stages are display.** The stage list (see Stages) is a projection of the graph. A stage never holds work back: a step starts when it is in the frontier, even while an earlier stage still has steps running.
 - **Live sessions.** A worker session is live only while its step is in progress or its pull request is being operated on. An open pull request keeps the session so the one conflict return can use it. When the step has landed or been closed, Core ends the worker's process and releases its activity without closing its thread or session (see Control). Files, branches, receipts and the recorded thread or session id remain, and a later execution generation resumes it the way that worker's recovery does (see Codex adapter and ACP adapter). The number of live sessions therefore follows the frontier, never the history of the goal.
+- **Ending a session.** The step records the worker action that owns its session in the same transaction as the dispatch reservation, so the set of sessions that may stay live is a projection of the ledger: the steps whose worker turn is still running and the steps whose pull request is being operated on. A turn is running while its action is claimed, running or uncertain; a step is under pull-request operation from its delivery until its merge lands, within its one conflict repair and its one pending continuation. A step waiting for a person, a landed step and a step whose repair or recovery allowance is spent are closed. Core derives this set after every event it commits for a goal, ends each session outside it, and repeats the same derivation on the safety sweep, so a lost event cannot leave a process behind. Ending is not closing: the process is joined, the thread and session record stay readable, and a later generation resumes them as that worker's recovery does. A join that fails, including one canceled by the caller's context or a shutdown deadline, keeps the session for the next event or sweep and never reports it as ended. A process that exits ends only the session entry that adopted it, so a later session under the same handle stays live. A session belongs to the Core process that started it; after a restart only its recorded thread, result and receipt are read, and no control handle is claimed. A step never has two worker processes: a new attempt of the same task ends an earlier kept session before it starts.
 
 | Part | Owner | Reason |
 | --- | --- | --- |
@@ -1056,6 +1064,10 @@ worker notices. `worker_snapshot` can return the recorded terminal outcome when
 no live session remains, explicitly marked non-live; that record cannot authorize
 worker control. Unstarted completion follow-ups resume from canon after restart;
 a claimed turn is never replayed and a committed reply is not duplicated.
+A successful completion committed before the restart settles that exact turn's
+recovery record, so a restart never presents the finished session as an unknown
+live placeholder or recovers it again. Failed and transport-loss notices stay
+unknown until the thread is read.
 Channel replies follow the completion back to its original input, retaining that
 input's address and the existing outbound delivery identity across restart.
 Recovery resolves the retained channel inbox address and its current most-specific
@@ -1238,6 +1250,11 @@ The lifecycle adapter in #747 registers `claude-acp`, `cursor`, `gemini` and
 `grok` with `dispatch_work`; `claude` retains the headless adapter pending the
 worker evaluation. Each attempt records its version again after session
 initialization and reports an unverified version while continuing the task.
+Gemini CLI installation reads its version through `gemini --acp` and
+`initialize`, without opening a session or requiring sign-in. Dispatch uses the
+same profile and shared ACP adapter. A `session/new` authentication refusal
+reports Gemini as needing sign-in; a successful prompt still needs observed
+Git and PR evidence before Core derives a completion receipt.
 Synthetic protocol tests do not add vendor versions to the verified list.
 Progress is masked and recorded on the active work card as `worker_report`,
 using the existing ledger. Stream fragments retain their masking context in
@@ -1352,6 +1369,7 @@ Code-change work ends in a pull request that the worker opens, and goes through 
 - A cancel is final only when `turn/completed` reports `interrupted`, or when the ACP `session/prompt` reply reports the stop reason `cancelled`.
 - Pause stops LINA's delivery to the work thread. It does not stop execution. Paused work never resumes automatically.
 - Close keeps files, branches, worktrees and receipts and never deletes the thread. `thread/archive` is sent only on an explicit close.
+- Ending a session joins the worker's process and keeps everything the close rule keeps: the thread, branch, worktree, receipts and the recorded thread or session id stay readable. Core ends a session whose step has landed or been closed (see Step graph); ending is not closing, so no `thread/archive` is sent and no next execution generation inherits a claim on the process.
 
 ### Steering delivery and receipts
 
@@ -2126,8 +2144,11 @@ or an executable. The file contains:
   requires the criterion's `expected` record fields. Registration supplies the
   reader, never authority to perform the effect being verified.
 
-QA and outcome checks run in a disposable checkout of the observed merge commit.
-Deploy uses that same pinned revision. Core passes `LINA_GOAL_REVISION`,
+QA and a task-bound outcome check run in a disposable checkout of that task's
+current result. A repair whose QA passes replaces the failed commit for those
+checks; the merge check stays on the historical merge commit. A task with no
+repair uses its observed merge commit. Deploy uses the pinned revision of the
+service repository. Core passes `LINA_GOAL_REVISION`,
 `LINA_GOAL_TARGET` and `LINA_GOAL_ACTION` to the registered command. Its JSON output
 contains `revision`, `target`, `passed` (boolean) and a nonempty `evidence` string
 describing the observation. Core requires matching revision and target, retains
@@ -2153,7 +2174,9 @@ output and current external evidence again before closing the goal. An earlier
 merge remains valid when its recorded commit is still an ancestor of the current
 base; a base that removed the commit fails the check. A custom criterion targeting
 a repository uses that repository's observed merged revision, independently of
-the service repository. Completion
+the service repository. A custom criterion that names a task uses that task's
+current result revision, the same revision its QA check uses. Evidence recorded
+against a superseded merge cannot meet it. Completion
 returns to the originating conversation and survives restart without repeating
 effects. An uncertain worker, merge, QA or deployment is observed; it is never
 re-executed by the observation path. A deployment retains its original connection

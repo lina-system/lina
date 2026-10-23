@@ -80,6 +80,7 @@ func (c *completionDeadline) Write(ctx context.Context, fn func(*canon.Tx) error
 }
 
 func TestLargeReplyPreparationAndCompletion(t *testing.T) {
+	t.Parallel()
 	for _, reject := range []bool{false, true} {
 		t.Run(map[bool]string{false: "commit", true: "rollback"}[reject], func(t *testing.T) {
 			db, cfg := database(t)

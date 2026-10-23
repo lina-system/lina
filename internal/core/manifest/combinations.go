@@ -116,6 +116,7 @@ func ClientCombinationsFor(target string) []Combination {
 			{Name: "sign_in_relay", Version: "1.0"},
 			{Name: "lifecycle", Version: "1.0"},
 			{Name: "conversation", Version: "1.0"},
+			{Name: "launcher", Version: "1.0"},
 			{Name: "turn_activity", Version: "1.0"},
 			{Name: "replay", Version: "1.0"},
 			{Name: "growth", Version: "1.0"},
@@ -136,6 +137,7 @@ func ClientCombinationsFor(target string) []Combination {
 			"go test ./kit/protocol/conformance",
 			"go test ./e2e/m1 -run TestPlannedRestart",
 			"go test ./e2e/m1 -run TestM1TUIConversationInstalledCore",
+			"go test ./e2e/m1 -run TestM3LauncherInstalledCore",
 			"go test ./e2e/m1 -run TestM1InstalledToolActivity",
 			"go test ./e2e/m1 -run TestM1TUIAccountsInstalledCore",
 			"go test ./e2e/m1 -run TestM1TUIChannel",
@@ -149,8 +151,7 @@ func ClientCombinationsFor(target string) []Combination {
 	}}
 	modern := rows[0]
 	modern.ProtocolVersion = "1.1"
-	modern.Capabilities = append(append([]protocol.Capability{}, modern.Capabilities...), protocol.SurfaceResultsCapability(), protocol.Capability{Name: "mocks", Version: "1.0"})
-	modern.Evidence = append(append([]string{}, modern.Evidence...), "go test ./e2e/m1 -run TestGeneratedSurfaceInstalledCore", "go test ./e2e/m1 -run TestM3DrawnMocks")
+	modern.Capabilities = append(append([]protocol.Capability{}, modern.Capabilities...), protocol.SurfaceResultsCapability(), protocol.Capability{Name: "mocks", Version: "1.0"}, protocol.Capability{Name: "mini_apps", Version: "1.0"})
+	modern.Evidence = append(append([]string{}, modern.Evidence...), "go test ./e2e/m1 -run TestGeneratedSurfaceInstalledCore", "go test ./e2e/m1 -run TestM3DrawnMocks", "go test ./e2e/m4 -run TestMiniAppsThroughRunningCore")
 	return append(rows, modern)
-
 }

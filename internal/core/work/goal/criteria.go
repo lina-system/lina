@@ -85,10 +85,13 @@ func criterionRevision(g Goal, c Criterion) string {
 				if stepKind(t.Kind) != TaskStep {
 					return t.Result.Revision
 				}
-				if c.Check.Method == "qa.read" {
-					return taskResultRevision(t)
+				// merge.read keeps the historical merge. QA and any other
+				// task-bound outcome read the current result, which a passing
+				// repair advances past the failed commit.
+				if c.Check.Method == "merge.read" {
+					return t.Merge.Revision
 				}
-				return t.Merge.Revision
+				return taskResultRevision(t)
 			}
 		}
 		return ""
@@ -196,5 +199,5 @@ func taskDone(t Task) bool {
 	return t.Stage == TaskDone && t.Merge.proves(t.Merge.Revision) && t.QA.proves(taskResultRevision(t))
 }
 func freshTask(t Task) bool {
-	return t.Result == (Proof{}) && t.PRGeneration == 0 && t.Continuations == 0 && t.ThreadHandle == "" && t.Stage == TaskReady && t.Attempt == 0 && t.Head == "" && t.NodeID == "" && t.Merge == (Proof{}) && t.QA == (Proof{}) && t.PR == (PRState{}) && t.Recoveries == 0 && t.Conflicts == 0 && t.QARepairs == 0 && !t.EffectsSettled && t.RepairedBy == "" && t.ResultRevision == "" && !t.RepairAsked
+	return t.Session == "" && t.Result == (Proof{}) && t.PRGeneration == 0 && t.Continuations == 0 && t.ThreadHandle == "" && t.Stage == TaskReady && t.Attempt == 0 && t.Head == "" && t.NodeID == "" && t.Merge == (Proof{}) && t.QA == (Proof{}) && t.PR == (PRState{}) && t.Recoveries == 0 && t.Conflicts == 0 && t.QARepairs == 0 && !t.EffectsSettled && t.RepairedBy == "" && t.ResultRevision == "" && !t.RepairAsked
 }

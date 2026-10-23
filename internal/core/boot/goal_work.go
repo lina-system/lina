@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"github.com/thisisjun786/lina/internal/core/records"
+	"github.com/thisisjun786/lina/internal/core/worker"
 
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
 )
@@ -20,6 +21,9 @@ type WorkConfig struct {
 	MainHost  func(context.Context) (work.Node, error)
 	Ready     func(context.Context, *work.Engine, string, string) error
 	Changed   func(context.Context, work.State) error
+	// Sessions owns worker processes between turns. Core ends a session whose
+	// step has landed or been closed; a fixture driver may adopt its own.
+	Sessions *worker.Live
 }
 type workRuntime struct {
 	engine *work.Engine
@@ -48,7 +52,11 @@ func (r *conversationRuntime) startWork(ctx context.Context, cfg *WorkConfig) er
 	if cfg == nil || cfg.Driver == nil {
 		return work.ErrInvalid
 	}
-	e, err := work.NewEngine(work.Config{DB: r.db, Records: workDefinitions{r.records}, Epoch: r.epoch, DriverFactory: cfg.Driver, Changed: cfg.Changed,
+	sessions := cfg.Sessions
+	if sessions == nil {
+		sessions = r.liveWorkers
+	}
+	e, err := work.NewEngine(work.Config{DB: r.db, Records: workDefinitions{r.records}, Epoch: r.epoch, DriverFactory: cfg.Driver, Changed: cfg.Changed, Sessions: sessions,
 		AuthorizeGoal: func(ctx context.Context, g work.Goal) error {
 			if g.Person != r.person {
 				return work.ErrInvalid

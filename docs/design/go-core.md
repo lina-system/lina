@@ -105,7 +105,7 @@ Layers under `internal/core/`:
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
 | L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `recall` (shared derived index writer and queued fill) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
+| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `messenger`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
 | L5 | `boot`, `supervise` |
 
 The separate worker has its own downward import layers.
@@ -265,9 +265,6 @@ If the filesystem context cannot be isolated, startup refuses before binding.
 
 The root, `system/` and `system/core/` must be owned by the current user and private (0700); existing unsafe paths are refused, not chmodded.
 Control records must be regular files at 0600, owned by that user, without symbolic or hard links.
-A read validates both the opened file and its directory entry before consuming bytes.
-If an atomic replacement unlinks the opened inode or changes the entry, the reader closes it and reopens the record, with at most eight attempts and all checks repeated.
-An unsafe replacement or continuous replacement fails closed.
 Records larger than 64 KiB, malformed JSON objects and invalid epochs stop startup with exit 78.
 The epoch file contains only its canonical decimal digits, with no whitespace; overflow refuses the start and preserves the record.
 Linux filesystem validation permits ext-family, XFS, Btrfs, tmpfs, overlay, F2FS, ZFS, NILFS, ReiserFS and JFS.
@@ -332,7 +329,7 @@ The reconcile table follows [runtime.md](runtime.md#recovery) and [main-authorit
 | Model request or partial stream | Discarded; the turn is `interrupted` and not replayed; one plain line in the conversation |
 | Tool intent with no receipt | `unknown`; never run again; an irreversible one waits for the person |
 | Node effect, Node not back | `unknown` until the Node reports |
-| Worker turn cut by the restart | `unknown`; settled by reading the thread |
+| Worker turn cut by the restart | `unknown`; settled by reading the thread, or by a completion committed for that exact turn before the cut |
 | Pending approval | Stopped; a late button is answered stale |
 | Background run that was working | Resumed once from its checkpoint; a second cut lands it failed or partial |
 | Outbound channel send, outcome unknown | Not sent again |
@@ -1455,8 +1452,11 @@ Implementation notes: [C-14 sandbox acceptance](../../kit/sandbox/REFERENCE.md#c
 Linux process ownership uses the explicit per-command `proc-supervise` helper with `PR_SET_CHILD_SUBREAPER`.
 It kills and waits for the whole descendant tree, including `setsid`/`setpgid` escapes and orphans, before returning.
 The tests cover owner shutdown, cancellation, normal leader exit and owner process death.
-macOS first kills the process group, then scans same-user processes for an inherited owner token using `KERN_PROCARGS2`.
-This macOS cleanup is best effort: a child that clears its environment can escape, and this remaining limitation is not accepted as complete unescapable supervision.
+macOS denies `setsid` and `setpgid` in the command's Seatbelt policy, applied by the owner or by the sandbox launcher, so no descendant can leave its process group; a host without the launcher fails closed.
+While the command runs, the owner watches `EVFILT_PROC` fork notifications for the leader and every recorded descendant, so a descendant is recorded even when its parent was already reaped.
+The owner then kills the group while the leader is unreaped, and sweeps kernel-recorded parent identities and the inherited owner token as defence in depth.
+The sweep keeps the identities it discovered in earlier scans, and it reads the full short BSD info record so an unreaped zombie is never signalled again.
+The native macOS tests cover a refused escape and a cleared-environment descendant that outlives its intermediate parent.
 
 Windows process ownership uses a Job Object assigned before the suspended leader runs.
 Descendants cannot break away by changing their console/process group, and cleanup waits for an empty job as well as the leader's exit.
@@ -1499,6 +1499,7 @@ An observed concurrent change returns unknown and keeps the recovery information
 A completed receipt describes the final observation, not future writes through another process's open descriptor.
 Captures remain readable through file reads after reopening and participate in workspace manifest revisions.
 A recovery-like directory name is not proof of worker ownership and never hides its files from a command receipt; this also keeps later writes through captured open inodes observable.
+Worker-reserved capture slots are recorded in the private version store and accounted separately from the 10,000-entry workspace manifest limit, so retained captures cannot exhaust workspace manifest snapshots on their own.
 These live captures share the workspace's access scope, whereas the immutable before/after version store remains private to the file worker.
 Restore from a saved-version id uses its immutable bytes and the current destination revision.
 A multi-file patch is prevalidated but is not a filesystem transaction: an interrupted commit is unknown with retained recovery information.

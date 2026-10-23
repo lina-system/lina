@@ -38,6 +38,8 @@ func roundTrip(t *testing.T, value map[string]any) Envelope {
 func concretePayloads() map[string]any {
 	return map[string]any{
 		"mock_request":       map[string]any{"action": "read", "result_id": "mock", "revision": float64(1), "conversation_id": "main:agent"},
+		"mini_app_request":   map[string]any{"operation": "list"},
+		"mini_app_result":    map[string]any{"operation": "list", "apps": []any{}},
 		"stop_result":        map[string]any{"run_id": "run-1", "outcome": "cancelled"},
 		"tool_activity":      map[string]any{"call_id": "call-example", "tool_name": "Reading file", "status": "started"},
 		"restart_status":     map[string]any{"owed": false},
@@ -47,6 +49,9 @@ func concretePayloads() map[string]any {
 		"a2a_result":         map[string]any{"operation": "list", "connections": []any{}},
 		"web_request":        map[string]any{"operation": "status"},
 		"web_result":         map[string]any{"provider": "firecrawl", "configured": false},
+		"launcher_request":   map[string]any{"request_id": "launcher-request-1", "text": "Summarize the morning."},
+		"launcher_result":    map[string]any{"request_id": "launcher-request-1", "conversation_id": "main:agent", "agent_id": "agent"},
+		"launcher_reply":     map[string]any{"request_id": "launcher-request-1", "conversation_id": "main:agent", "agent_id": "agent", "text": "Short answer.", "done": true, "message_id": "turn:input:example:1:0"},
 		"export_result":      map[string]any{"directory": "staging/export/synthetic", "manifest": "{}"},
 		"conversation_start": map[string]any{"agent_id": "agent-example"},
 		"approval_request":   map[string]any{"choices": []any{"once", "deny", "always_allow"}},
@@ -112,8 +117,7 @@ func TestEveryClientKindRoundTripsWithTypedPayload(t *testing.T) {
 				value = jsonValue(t, fixture(t, kind)).(map[string]any)
 			case "error":
 				value = jsonValue(t, fixture(t, "unsupported_combination")).(map[string]any)
-			case "surface_action", "mock_request", "mock_response":
-
+			case "surface_action", "mock_request", "mock_response", "mini_app_request", "mini_app_result":
 				value["protocol"].(map[string]any)["version"] = "1.1"
 			case "result_save":
 				value["idempotency_key"] = "example-save-key"

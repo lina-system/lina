@@ -18,6 +18,9 @@ const (
 	KindConversationStart    Kind = "conversation_start"
 	KindInput                Kind = "input"
 	KindInterrupt            Kind = "interrupt"
+	KindLauncherRequest      Kind = "launcher_request"
+	KindLauncherResult       Kind = "launcher_result"
+	KindLauncherReply        Kind = "launcher_reply"
 	KindHistoryGet           Kind = "history_get"
 	KindHistory              Kind = "history"
 	KindSubscribe            Kind = "subscribe"
@@ -105,6 +108,8 @@ const (
 	KindSurfaceAction        Kind = "surface_action"
 	KindMockRequest          Kind = "mock_request"
 	KindMockResponse         Kind = "mock_response"
+	KindMiniAppRequest       Kind = "mini_app_request"
+	KindMiniAppResult        Kind = "mini_app_result"
 )
 
 type A2aCallStatus struct {
@@ -568,6 +573,25 @@ type ItemDone struct {
 	Stream   *StreamMetadata      `json:"stream,omitempty"`
 	Text     *string              `json:"text,omitempty"`
 }
+type LauncherReply struct {
+	AgentID        string          `json:"agent_id"`
+	ConversationID string          `json:"conversation_id"`
+	Done           bool            `json:"done"`
+	MessageID      *string         `json:"message_id,omitempty"`
+	RequestID      string          `json:"request_id"`
+	Stream         *StreamMetadata `json:"stream,omitempty"`
+	Text           string          `json:"text"`
+}
+type LauncherRequest struct {
+	AgentID   *string `json:"agent_id,omitempty"`
+	RequestID string  `json:"request_id"`
+	Text      string  `json:"text"`
+}
+type LauncherResult struct {
+	AgentID        string `json:"agent_id"`
+	ConversationID string `json:"conversation_id"`
+	RequestID      string `json:"request_id"`
+}
 type MemoryEvidence struct {
 	Quote     *string          `json:"quote,omitempty"`
 	Reference string           `json:"reference"`
@@ -610,6 +634,38 @@ type MemoryTombstone struct {
 	Agent  string      `json:"agent"`
 	At     json.Number `json:"at"`
 	Person string      `json:"person"`
+}
+type MiniApp struct {
+	Agent           string      `json:"agent"`
+	Allowed         bool        `json:"allowed"`
+	AllowedRevision json.Number `json:"allowed_revision"`
+	Hosts           []string    `json:"hosts"`
+	ID              string      `json:"id"`
+	Name            string      `json:"name"`
+	Reads           []string    `json:"reads"`
+	Request         string      `json:"request"`
+	Requests        []string    `json:"requests"`
+	Revision        json.Number `json:"revision"`
+	Schedule        *string     `json:"schedule,omitempty"`
+}
+type MiniAppRequest struct {
+	App       *string      `json:"app,omitempty"`
+	Operation string       `json:"operation"`
+	Revision  *json.Number `json:"revision,omitempty"`
+}
+type MiniAppResult struct {
+	App       *MiniApp           `json:"app,omitempty"`
+	Apps      []MiniApp          `json:"apps"`
+	Code      *string            `json:"code,omitempty"`
+	Operation string             `json:"operation"`
+	Revisions *[]MiniAppRevision `json:"revisions,omitempty"`
+	Tailnet   *string            `json:"tailnet,omitempty"`
+	URL       *string            `json:"url,omitempty"`
+}
+type MiniAppRevision struct {
+	Request  string      `json:"request"`
+	Revision json.Number `json:"revision"`
+	Summary  *string     `json:"summary,omitempty"`
 }
 type MockAssetRef struct {
 	AssetID  string      `json:"asset_id"`
@@ -1547,6 +1603,9 @@ func (ErrorPayload) isPayload()         {}
 func (ConversationStart) isPayload()    {}
 func (Input) isPayload()                {}
 func (Interrupt) isPayload()            {}
+func (LauncherRequest) isPayload()      {}
+func (LauncherResult) isPayload()       {}
+func (LauncherReply) isPayload()        {}
 func (HistoryGet) isPayload()           {}
 func (History) isPayload()              {}
 func (Subscribe) isPayload()            {}
@@ -1634,6 +1693,8 @@ func (A2aResult) isPayload()            {}
 func (SurfaceAction) isPayload()        {}
 func (MockRequest) isPayload()          {}
 func (MockResponse) isPayload()         {}
+func (MiniAppRequest) isPayload()       {}
+func (MiniAppResult) isPayload()        {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -1679,6 +1740,18 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		return p, err
 	case KindInterrupt:
 		var p Interrupt
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindLauncherRequest:
+		var p LauncherRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindLauncherResult:
+		var p LauncherResult
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindLauncherReply:
+		var p LauncherReply
 		err := json.Unmarshal(data, &p)
 		return p, err
 	case KindHistoryGet:
@@ -2029,6 +2102,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p MockResponse
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindMiniAppRequest:
+		var p MiniAppRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindMiniAppResult:
+		var p MiniAppResult
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -2064,7 +2145,7 @@ const clientSchemaJSON = `{
   "$comment": "SPDX-License-Identifier: Apache-2.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Client 1.0 and 1.1 envelope",
-  "description": "Client 1.0 and 1.1 envelope and payloads. Client 1.1 adds generated cards and drawn mocks behind separate capabilities.",
+  "description": "Client 1.0 and 1.1 envelope and payloads. Client 1.1 adds generated cards, drawn mocks and mini apps behind separate capabilities.",
   "type": "object",
   "properties": {
     "protocol": {
@@ -2079,6 +2160,9 @@ const clientSchemaJSON = `{
         "conversation_start",
         "input",
         "interrupt",
+        "launcher_request",
+        "launcher_result",
+        "launcher_reply",
         "history_get",
         "history",
         "subscribe",
@@ -2165,7 +2249,9 @@ const clientSchemaJSON = `{
         "a2a_result",
         "surface_action",
         "mock_request",
-        "mock_response"
+        "mock_response",
+        "mini_app_request",
+        "mini_app_result"
       ]
     },
     "message_id": {
@@ -2346,6 +2432,54 @@ const clientSchemaJSON = `{
         "properties": {
           "payload": {
             "$ref": "#/$defs/interrupt"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "launcher_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/launcher_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "launcher_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/launcher_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "launcher_reply"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/launcher_reply"
           }
         }
       }
@@ -3946,6 +4080,38 @@ const clientSchemaJSON = `{
     {
       "if": {
         "properties": {
+          "kind": {
+            "const": "mini_app_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/mini_app_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mini_app_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/mini_app_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "protocol": {
             "properties": {
               "version": {
@@ -3963,7 +4129,9 @@ const clientSchemaJSON = `{
                 "kind": {
                   "enum": [
                     "mock_request",
-                    "mock_response"
+                    "mock_response",
+                    "mini_app_request",
+                    "mini_app_result"
                   ]
                 }
               }
@@ -4403,6 +4571,92 @@ const clientSchemaJSON = `{
         }
       },
       "required": [],
+      "additionalProperties": false
+    },
+    "launcher_request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "launcher_request": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/launcher_request_id"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "request_id",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "launcher_result": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "$ref": "#/$defs/launcher_request_id"
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "request_id",
+        "conversation_id",
+        "agent_id"
+      ],
+      "additionalProperties": false
+    },
+    "launcher_reply": {
+      "type": "object",
+      "properties": {
+        "stream": {
+          "$ref": "#/$defs/stream_metadata"
+        },
+        "request_id": {
+          "$ref": "#/$defs/launcher_request_id"
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "done": {
+          "type": "boolean"
+        },
+        "message_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "request_id",
+        "conversation_id",
+        "agent_id",
+        "text",
+        "done"
+      ],
       "additionalProperties": false
     },
     "history_get": {
@@ -6546,7 +6800,7 @@ const clientSchemaJSON = `{
     },
     "stream_topic": {
       "type": "string",
-      "pattern": "^(conversation:[\\s\\S]+|results:[\\s\\S]+|running|progress|waiting|exchanges|accounts|channels|core)$"
+      "pattern": "^(conversation:[\\s\\S]+|results:[\\s\\S]+|running|progress|waiting|exchanges|accounts|channels|launcher|core)$"
     },
     "stream_cursor": {
       "type": "object",
@@ -6600,6 +6854,7 @@ const clientSchemaJSON = `{
           "type": "string",
           "enum": [
             "output_delta",
+            "launcher_reply",
             "item_done",
             "turn_state",
             "tool_activity",
@@ -6654,6 +6909,22 @@ const clientSchemaJSON = `{
             "properties": {
               "payload": {
                 "$ref": "#/$defs/output_delta"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "launcher_reply"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/launcher_reply"
               }
             }
           }
@@ -10039,6 +10310,176 @@ const clientSchemaJSON = `{
       "required": [
         "asset_id",
         "revision"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "agent": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "request": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allowed_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allowed": {
+          "type": "boolean"
+        },
+        "reads": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "requests": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "hosts": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "maxLength": 256
+          }
+        },
+        "schedule": {
+          "type": "string",
+          "maxLength": 8
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "agent",
+        "request",
+        "revision",
+        "allowed_revision",
+        "allowed",
+        "reads",
+        "requests",
+        "hosts"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app_revision": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "revision",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "open",
+            "allow",
+            "deny",
+            "keep",
+            "undo",
+            "restore",
+            "remove",
+            "history"
+          ]
+        },
+        "app": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "apps": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/mini_app"
+          }
+        },
+        "app": {
+          "$ref": "#/$defs/mini_app"
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "tailnet": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "revisions": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/mini_app_revision"
+          }
+        },
+        "code": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "operation",
+        "apps"
       ],
       "additionalProperties": false
     }

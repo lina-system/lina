@@ -67,3 +67,50 @@ updates indexed documents only when that value changes. `recall_conversation`
 indexes `(conversation, person)` for the lookup. Repeat messages from the same
 person do not rewrite documents or their scope index entries. The person value
 on a document stays the one `recall_source` already derived.
+
+### Citation retraction
+
+Migration 63 gives the shared index one retraction path. A removal walks `cite`
+from the target to the views that cite it through `cite_target`, so its cost is
+the number of documents it hides rather than the size of the store. The walk
+replaces the shadow-index bridges that reacted to the old memory and ledger
+indexes; those indexes keep their own triggers until the contract step.
+
+A memory removal hides the item and the items whose item evidence reaches it.
+An erased or excluded event hides the event and the summaries that cover it;
+memory items resting on it stay, as [the contract](../../../docs/design/conversation-and-memory.md#correction-retraction-and-deletion)
+requires. Recovery queues only the documents the source view admits again, and
+the view itself now walks citation ancestors instead of decoding record JSON.
+A document's own deletion also drops its queue entry, so a late drain cannot
+publish a hidden source.
+
+The scope check across holders (`memory.Store.RestrictedEvents`) reads protected
+event ids from `cite`, so it no longer decodes the JSON of every private or
+`never-leaves` item on each call.
+
+### Messenger store
+
+Migration 65 adds the messenger source registry, its chats with their sync,
+learn and embed switches, the cursor, the coverage of each complete read, the
+unique legacy reference of each record with its revision chain, and the writes
+LINA made in the person's name. Record text stays in `conv_event`; the new
+tables hold identity, switches and provenance only.
+
+The same migration widens `ev_rel` to the messenger relation kinds
+`replies_to` and `in_thread`. SQLite cannot change a `CHECK` constraint in
+place, so the table is rebuilt: its append-only triggers, the `retract_lineage`
+view and the three triggers that read it are dropped and recreated with their
+published text. Existing relations are copied unchanged. A published install
+keeps its events and relations; the upgrade test covers that path.
+
+Two triggers keep the one index consistent with the removal projection: hiding
+an event deletes its `recall_doc` row and pending entry in the same transaction
+as the removal, and restoring it queues the document again. The old ledger index
+keeps its own fence, which already covers memory-driven exclusions.
+
+Migration 66 adds the ledger's one rewrite. `conv_event` stays append-only
+except when the removal projection erased the event: then its text and material
+reference clear, and the `ev_span` rows that indexed that text go with them.
+Every other column is compared against its old value, so any other update aborts
+with the same `ledger_append_only` refusal. The trigger replacement is the only
+change, so an install at 65 keeps every row it has.
