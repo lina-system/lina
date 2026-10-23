@@ -107,58 +107,79 @@ func TestAlphaRecoveredReplyWaitsForExactDelivery(t *testing.T) {
 	h.stopCore(core)
 	db, close := installedAcceptanceStore(t, h)
 	defer close()
-	write := func(query string, args ...any) {
-		t.Helper()
-		if err := db.Write(h.ctx, func(tx *canon.Tx) error { _, err := tx.ExecContext(h.ctx, query, args...); return err }); err != nil {
-			t.Fatal(err)
-		}
-	}
-	event := func(id, parent, kind, scaffold, body string) {
-		t.Helper()
-		var parentID any
-		if parent != "" {
-			parentID = parent
-		}
-		write(`INSERT INTO conv_event(id,conversation_id,parent_id,agent_id,speaker_kind,surface,scaffold_kind,occurred_at,recorded_at,time_quality,origin,body)
- VALUES(?,'conversation',?,'agent',?,'{}',?,'now','now','recorded','{}',?)`, id, parentID, kind, scaffold, body)
-	}
-	attempt := recovery.Record{Input: "input", Thread: worker.Thread{ID: "session", TurnID: "turn"}}
-	event("input", "", "agent", "", "Original task.")
-	event("other", "", "agent", "", "Unrelated task.")
-	event("completion", "input", "tool", "worker_completion", `{"session":"session","turn":"turn","status":"done","output":"Worker result."}`)
-	write("INSERT INTO inbox(id,conversation,source,native_id,body) VALUES(1,'conversation','worker-finish','completion','{}')")
-	write("INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES('delivery','conversation',1,'active')")
-	event("reply", "completion", "agent", "", "Delivered result.")
-	check := func(want alphaRecoveryReply, failed bool) {
-		t.Helper()
-		got, err := alphaRecoveredReply(h.ctx, db, "conversation", attempt)
-		if got != want || (err != nil) != failed {
-			t.Fatalf("reply=%+v err=%v, want=%+v failure=%t", got, err, want, failed)
-		}
-	}
-	check(alphaRecoveryReply{}, false)
-	write("UPDATE turn_runs SET state='failed'")
-	if _, err := alphaRecoveredReply(h.ctx, db, "conversation", attempt); err == nil {
-		t.Fatal("failed delivery was accepted")
-	}
-	write("UPDATE turn_runs SET state='completed'")
-	want := alphaRecoveryReply{ID: "reply", Body: "Delivered result."}
-	check(want, false)
-	for _, tc := range []struct{ name, change, restore string }{
-		{"other-input", "UPDATE conv_event SET parent_id='other' WHERE id='completion'", "UPDATE conv_event SET parent_id='input' WHERE id='completion'"},
-		{"other-session", `UPDATE conv_event SET body=json_set(body,'$.session','other') WHERE id='completion'`, `UPDATE conv_event SET body=json_set(body,'$.session','session') WHERE id='completion'`},
-		{"other-turn", `UPDATE conv_event SET body=json_set(body,'$.turn','other') WHERE id='completion'`, `UPDATE conv_event SET body=json_set(body,'$.turn','turn') WHERE id='completion'`},
-		{"worker-failed", `UPDATE conv_event SET body=json_set(body,'$.status','failed') WHERE id='completion'`, `UPDATE conv_event SET body=json_set(body,'$.status','done') WHERE id='completion'`},
-		{"other-conversation", "UPDATE conv_event SET conversation_id='other' WHERE id='reply'", "UPDATE conv_event SET conversation_id='conversation' WHERE id='reply'"},
-		{"other-agent", "UPDATE conv_event SET agent_id='other' WHERE id='reply'", "UPDATE conv_event SET agent_id='agent' WHERE id='reply'"},
-		{"unrelated-reply", "UPDATE conv_event SET parent_id='input' WHERE id='reply'", "UPDATE conv_event SET parent_id='completion' WHERE id='reply'"},
-		{"scaffold", "UPDATE conv_event SET scaffold_kind='fixture' WHERE id='reply'", "UPDATE conv_event SET scaffold_kind='' WHERE id='reply'"},
+	for n, name := range []string{
+		"active", "failed", "aborted", "completed", "other-input", "other-session", "other-turn", "worker-failed",
+		"other-conversation", "other-agent", "unrelated-reply", "scaffold",
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			write(tc.change)
-			check(alphaRecoveryReply{}, false)
-			write(tc.restore)
-			check(want, false)
+		t.Run(name, func(t *testing.T) {
+			write := func(query string, args ...any) {
+				t.Helper()
+				if err := db.Write(h.ctx, func(tx *canon.Tx) error {
+					_, err := tx.ExecContext(h.ctx, query, args...)
+					return err
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Each case appends its own immutable ledger events. Altering an
+			// existing event would violate the same store contract as production.
+			prefix := name + ":"
+			conversation := prefix + "conversation"
+			event := func(id, parent, conv, agent, kind, scaffold, body string) {
+				t.Helper()
+				var parentID any
+				if parent != "" {
+					parentID = prefix + parent
+				}
+				write(`INSERT INTO conv_event(id,conversation_id,parent_id,agent_id,speaker_kind,surface,scaffold_kind,occurred_at,recorded_at,time_quality,origin,body)
+ VALUES(?,?,?,?,?,'{}',?,'now','now','recorded','{}',?)`, prefix+id, conv, parentID, agent, kind, scaffold, body)
+			}
+			attempt := recovery.Record{Input: prefix + "input", Thread: worker.Thread{ID: "session", TurnID: "turn"}}
+			input, session, turn, status, state := "input", "session", "turn", "done", "completed"
+			replyConversation, replyAgent, replyParent, scaffold := conversation, "agent", "completion", ""
+			switch name {
+			case "active", "failed", "aborted":
+				state = name
+			case "other-input":
+				input = "other"
+			case "other-session":
+				session = "other"
+			case "other-turn":
+				turn = "other"
+			case "worker-failed":
+				status = "failed"
+			case "other-conversation":
+				replyConversation = "other"
+			case "other-agent":
+				replyAgent = "other"
+			case "unrelated-reply":
+				replyParent = "input"
+			case "scaffold":
+				scaffold = "fixture"
+			}
+			event("input", "", conversation, "agent", "agent", "", "Original task.")
+			event("other", "", conversation, "agent", "agent", "", "Unrelated task.")
+			body := fmt.Sprintf(`{"session":%q,"turn":%q,"status":%q,"output":"Worker result."}`, session, turn, status)
+			event("completion", input, conversation, "agent", "tool", "worker_completion", body)
+			inboxID := 1000 + n
+			write("INSERT INTO inbox(id,conversation,source,native_id,body) VALUES(?,?,'worker-finish',?,'{}')", inboxID, conversation, prefix+"completion")
+			write("INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,?)", prefix+"delivery", conversation, inboxID, state)
+			event("reply", replyParent, replyConversation, replyAgent, "agent", scaffold, "Delivered result.")
+			got, err := alphaRecoveredReply(h.ctx, db, conversation, attempt)
+			failed := name == "failed" || name == "aborted"
+			if (err != nil) != failed {
+				t.Fatalf("delivery error=%v, want failure=%t", err, failed)
+			}
+			if failed {
+				return
+			}
+			want := alphaRecoveryReply{}
+			if name == "completed" {
+				want = alphaRecoveryReply{ID: prefix + "reply", Body: "Delivered result."}
+			}
+			if got != want {
+				t.Fatalf("reply=%+v, want=%+v", got, want)
+			}
 		})
 	}
 }
