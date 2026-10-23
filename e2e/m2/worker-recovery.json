@@ -1,5 +1,11 @@
 {
-  "cases": ["completed", "disconnected", "retry", "unknown"],
+  "cases": [
+    "completed",
+    "retry",
+    "unknown",
+    "disconnect",
+    "disconnect_restart"
+  ],
   "input": "Delegate a file task and keep its work across a restart.",
   "artifact": "recovery-result.txt",
   "result": "The worker preserved its work."

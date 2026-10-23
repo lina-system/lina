@@ -3,6 +3,7 @@ package e2e_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -86,8 +86,18 @@ func recoveryWorkerFixture() {
 			reply(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress"}})
 			if turns == 1 {
 				_ = os.WriteFile(filepath.Join(dir, "recovery-result.txt"), []byte("The worker preserved its work."), 0600)
-				if mode == "disconnected" {
-					return // Lose the completion notification after producing the result.
+				if mode == "disconnect_restart" {
+					return // Persisted work survives loss of both worker and Core.
+				}
+				if mode == "disconnect" {
+					go func() {
+						for {
+							if _, err := os.Stat(filepath.Join(dir, "disconnect-release")); err == nil {
+								os.Exit(0) // Completed work, but no completion notification.
+							}
+							time.Sleep(time.Millisecond)
+						}
+					}()
 				}
 			} else {
 				// The second attempt observes the retained artifact and fails explicitly.
@@ -109,7 +119,7 @@ func recoveryWorkerFixture() {
 				time.Sleep(time.Millisecond)
 			}
 			status := "failed"
-			if mode == "completed" || mode == "disconnected" {
+			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" {
 				status = "completed"
 			}
 			items := []any{map[string]any{"type": "agentMessage", "id": "message", "text": "Retained worker result."}}
@@ -123,11 +133,14 @@ func recoveryWorkerFixture() {
 	}
 }
 
-// TestM2WorkerRecovery runs m2/worker-recovery.json through installed Core.
-// A gated snapshot proves unknown state after SIGKILL, then settlement without
-// a new turn, one continuation and a durable second-failure decision. The
-// disconnected case retains the provisional notice and delivers confirmed
-// output once. Real files survive restart; worker/provider wires are synthetic.
+// TestM2WorkerRecovery runs m2/worker-recovery.json, killing installed Core
+// during a synthetic Codex task and gating the retained thread snapshot. It
+// proves unknown state before reconciliation, settlement without a new turn,
+// one continuation, a second-failure decision, retained files and no third turn
+// across restart. Its disconnect case confirms successful output after a
+// transport-loss notice without another worker turn or duplicate response.
+// disconnect_restart also kills Core after the provisional reaction commits.
+// No authenticated worker account is used.
 func TestM2WorkerRecovery(t *testing.T) {
 	var scenario struct {
 		Cases                   []string
@@ -151,6 +164,12 @@ func TestM2WorkerRecovery(t *testing.T) {
 					return
 				}
 				step := calls.Add(1)
+				if (mode == "disconnect" || mode == "disconnect_restart") && step == 4 {
+					context, err := json.Marshal(req.Input)
+					if err != nil || !bytes.Contains(context, []byte("Retained worker result.")) {
+						t.Error("confirmed worker output missing from result response context")
+					}
+				}
 				if step == 1 {
 					emitPersonaCall(w, "start", "worker_start", map[string]any{"workdir": dir, "task_packet": "Preserve this task's result."})
 				} else if step == 2 {
@@ -184,29 +203,23 @@ func TestM2WorkerRecovery(t *testing.T) {
 				raw, err := os.ReadFile(filepath.Join(dir, scenario.Artifact))
 				return err == nil && string(raw) == scenario.Result
 			})
-			completedReactions := func() int {
-				db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer closeDB()
-				var count int
-				if err := db.QueryRowContext(h.ctx, "SELECT count(*) FROM turn_runs t JOIN inbox i ON i.id=t.inbox_id WHERE i.source='worker-finish' AND t.state='completed'").Scan(&count); err != nil {
-					t.Fatal(err)
-				}
-				return count
-			}
-			priorReactions := 0
-			if mode == "disconnected" {
-				priorReactions = 1
-				// The provisional notice must commit and finish its reaction before
-				// restarting Core; otherwise this would only test a lost process.
-				waitRecovery(t, h, func() bool { return completedReactions() == priorReactions })
-			}
 			c.Close()
-			core.killAndWait() // SIGKILL: no graceful worker or Core checkpoint.
+			if mode == "disconnect" {
+				if err := os.WriteFile(filepath.Join(dir, "disconnect-release"), []byte("close transport"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				// Admit and react to the transport failure before terminal readback.
+				waitRecovery(t, h, func() bool { return workerRecoveryReactions(t, h) == 1 })
+			} else {
+				if mode == "disconnect_restart" {
+					waitRecovery(t, h, func() bool { return workerRecoveryReactions(t, h) == 1 })
+				}
+				core.killAndWait() // SIGKILL: no graceful worker or Core checkpoint.
+			}
 			before := calls.Load()
-			core = start()
+			if mode != "disconnect" {
+				core = start()
+			}
 			waitRecovery(t, h, func() bool { _, err := os.Stat(filepath.Join(dir, "snapshot-requested")); return err == nil })
 			read := func() recovery.Record {
 				db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
@@ -248,6 +261,18 @@ func TestM2WorkerRecovery(t *testing.T) {
 				}
 				return rec.State == want && rec.ObservedAt > 0
 			})
+			if mode == "disconnect" || mode == "disconnect_restart" {
+				db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var successes int
+				err = db.QueryRowContext(h.ctx, `SELECT count(*) FROM conv_event WHERE scaffold_kind='worker_completion' AND json_extract(body,'$.status')='done' AND json_extract(body,'$.output')='Retained worker result.'`).Scan(&successes)
+				closeDB()
+				if err != nil || successes != 1 {
+					t.Fatalf("recovery finished without delivering confirmed output: successes=%d err=%v", successes, err)
+				}
+			}
 			// A protocol read is the barrier after the reconciliation read, including
 			// the unknown case. Repeated reads cannot start or interrupt worker turns.
 			client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "recovery-reader", []protocol.Capability{{Name: "waiting", Version: "1.0"}})
@@ -269,29 +294,16 @@ func TestM2WorkerRecovery(t *testing.T) {
 			}
 			client.Close()
 			reactions := 0
-			if mode == "completed" || mode == "disconnected" {
+			if mode == "completed" || mode == "disconnect" || mode == "disconnect_restart" {
 				reactions = 1
 			}
-			waitRecovery(t, h, func() bool { return completedReactions() == priorReactions+reactions })
-			if mode == "disconnected" {
-				db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				var body []byte
-				err = db.QueryRowContext(h.ctx, "SELECT body FROM inbox WHERE source='worker-finish' ORDER BY id DESC LIMIT 1").Scan(&body)
-				closeDB()
-				if err != nil {
-					t.Fatal(err)
-				}
-				var outcome struct {
-					Status worker.FinishStatus
-					Output string
-				}
-				if err := json.Unmarshal(body, &outcome); err != nil || outcome.Status != worker.Done || outcome.Output != "Retained worker result." {
-					t.Fatalf("recovered result did not reach inbox: %s %v", body, err)
-				}
+			priorReactions := 0
+			if mode == "disconnect" || mode == "disconnect_restart" {
+				priorReactions = 1
 			}
+			waitRecovery(t, h, func() bool {
+				return workerRecoveryReactions(t, h) == priorReactions+reactions
+			})
 			h.stopCore(core)
 			if record := read(); record.State != want {
 				t.Fatalf("recovery state=%+v", record)
@@ -339,6 +351,20 @@ func TestM2WorkerRecovery(t *testing.T) {
 		})
 	}
 }
+func workerRecoveryReactions(t *testing.T, h *harness) int {
+	t.Helper()
+	db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDB()
+	var completed int
+	if err = db.QueryRowContext(h.ctx, "SELECT count(*) FROM turn_runs t JOIN inbox i ON i.id=t.inbox_id WHERE i.source='worker-finish' AND t.state='completed'").Scan(&completed); err != nil {
+		t.Fatal(err)
+	}
+	return completed
+}
+
 func waitRecovery(t *testing.T, h *harness, ready func() bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)

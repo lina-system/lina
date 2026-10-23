@@ -76,29 +76,25 @@ func (e *workerSession) finishOutcome(ctx context.Context, event worker.Event, o
 	// Coding ownership stays with dev; the input and result belong to the
 	// requesting conversation, including its original channel restrictions.
 	r := e.origin.workerDelivery()
-	terminalID := id
 	if prior, err := r.journal().Get(ctx, id); err == nil {
 		var recorded workerCompletion
-		if event.Finish.Status != worker.Done || prior.ScaffoldKind != "worker_completion" || json.Unmarshal([]byte(prior.Body.Text()), &recorded) != nil || recorded.Status != worker.Failed || recorded.Failure != worker.ConnectionFailure {
+		if err := json.Unmarshal([]byte(prior.Body.Text()), &recorded); err != nil {
+			return err
+		}
+		if recorded.Failure != worker.ConnectionFailure || completion.Failure == worker.ConnectionFailure {
 			return nil
 		}
-		// Earlier versions stored connection loss under the terminal key.
-		// Keep that evidence immutable and deduplicate the confirmed success.
-		id += ":reconciled"
-	} else if !errors.Is(err, ledger.ErrNotFound) {
-		return err
-	}
-	if event.Finish.Failure == worker.ConnectionFailure && event.Finish.Code == "connection_lost" {
-		// Transport loss is provisional: it must neither occupy the terminal
-		// result's identity nor replace a terminal result already recorded above.
-		id = "worker-transport-lost:" + hex.EncodeToString(digest[:])
-	}
-	if id != terminalID {
+		// Transport loss is not the turn's terminal result. Keep the notice,
+		// including those saved by older Core versions, and admit the confirmed
+		// result once under the same attempt/turn identity across rebindings.
+		id += ":terminal"
 		if _, err := r.journal().Get(ctx, id); err == nil {
 			return nil
 		} else if !errors.Is(err, ledger.ErrNotFound) {
 			return err
 		}
+	} else if !errors.Is(err, ledger.ErrNotFound) {
+		return err
 	}
 
 	// A failed recovery is delivered by its decision row. It cannot feed an

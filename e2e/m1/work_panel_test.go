@@ -219,6 +219,62 @@ func panelElapsed(d time.Duration) string {
 	return fmt.Sprintf("%dm", m)
 }
 
+func TestM3WorkPanelNavigationInstalledCore(t *testing.T) {
+	for _, width := range []int{120, 100} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			h, start := installedConversationHarness(t, "http://127.0.0.1:1")
+			core := start(true)
+			h.stopCore(core)
+			names := make([]string, 50)
+			for i := range names {
+				names[i] = fmt.Sprintf("Navigation-%02d", i)
+			}
+			seedPanelWork(t, h, len(names), names)
+			core = start(true)
+			defer h.stopCore(core)
+			expected := panelOverview(t, h)
+			if len(expected) != len(names) {
+				t.Fatalf("Core returned %d cards, want %d", len(expected), len(names))
+			}
+			terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "LANG=en_US.UTF-8", "LC_ALL=en_US.UTF-8"}, false, true, width, 34)
+			waitResizeChrome(t, h, terminal, 34, "")
+			h.keys(terminal, "keep draft")
+			waitResizeChrome(t, h, terminal, 34, "keep draft")
+			h.keys(terminal, "\x10")
+			x, panelWidth := 0, width
+			if width == 120 {
+				x, panelWidth = 80, 40
+			}
+			waitCard := func(index int, absent string) {
+				t.Helper()
+				line := expected[index].Line
+				if line.Now == nil {
+					t.Fatal("Core omitted activity")
+				}
+				ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+				defer cancel()
+				snap, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool {
+					rows := strings.Join(panelCellRows(s, x, panelWidth), "\n")
+					return s.CursorHidden && strings.Contains(rows, line.Name) && strings.Contains(rows, *line.Now) && (absent == "" || !strings.Contains(rows, absent))
+				})
+				if err != nil {
+					t.Fatalf("card %d missing: %v\n%s", index, err, screenText(snap))
+				}
+			}
+			waitCard(0, expected[len(expected)-1].Line.Name)
+			h.keys(terminal, strings.Repeat("\x1b[B", len(expected)-1))
+			waitCard(len(expected)-1, expected[0].Line.Name)
+			h.keys(terminal, strings.Repeat("\x1b[A", len(expected)-1))
+			waitCard(0, expected[len(expected)-1].Line.Name)
+			h.keys(terminal, "\x1b")
+			waitResizeChrome(t, h, terminal, 34, "keep draft")
+			h.keys(terminal, "\x04")
+			terminal.process.wait(t, 0)
+			h.expectTerminalRestored(terminal)
+		})
+	}
+}
+
 func TestM3WorkPanelLiveCodexWorker(t *testing.T) {
 	var terminal *terminal
 	var initial, activity string
