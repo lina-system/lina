@@ -1296,8 +1296,9 @@ headless process (`--print --output-format stream-json --verbose`). The matching
 `result` ends the turn before process exit; missing results, invalid messages,
 reported errors and permission denials fail. Core owns and reaps the child tree.
 `dispatch_work` accepts `worker: "claude"` through the same durable admission,
-work allocation, PR checks and manager boundary as Antigravity. Omitted worker
-selection retains Antigravity for existing requests and stored records. The
+work allocation, PR checks and manager boundary as Antigravity. An explicit
+selection keeps that adapter; omitted selection uses the quota and situation
+chooser in C-57, with Antigravity first among otherwise equal candidates. The
 artifact retains the final result alongside the independently read PR; receipt
 provenance is `adapter-derived`. No worker settings or integrations are installed.
 The headless `e2e/m2/claude-worker.json` scenario exercises installed Core, actual
