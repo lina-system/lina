@@ -46,7 +46,7 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 	visible := goals[:0]
 	ids := map[string]bool{}
 	for _, g := range goals {
-		if g.Person != "" && g.Person != person {
+		if g.Person != person {
 			continue
 		}
 		if _, ok := agents[g.Agent]; !ok {
