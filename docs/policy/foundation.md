@@ -312,6 +312,13 @@ timeouts covered about thirty seconds of that work and the post-merge run
 failed at 30.25 seconds. The scenario now has a 120-second allowance. Its
 observations, per-turn waits and Core connection bounds are unchanged.
 
+Reply-method acceptance pins eleven replies across two agents and a restart:
+three Core boots, twenty-four provider rounds and a restored snapshot. Its
+post-merge run reached the shared 30-second default while a Core boot was
+still binding and failed at 30.13 seconds. It now has a 120-second allowance
+after installation. Per-turn waits, Core connection and process-completion
+bounds are unchanged.
+
 Manual work-turn acceptance waits follow the exact client input's durable turn.
 A failed or aborted turn fails the scenario immediately with its input id, turn
 id and state; it cannot later complete. An input with no turn yet, or an active
