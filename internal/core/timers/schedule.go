@@ -233,6 +233,23 @@ func (s Schedule) parse() (calendar, error) {
 	if c.count > 0 && !c.until.IsZero() {
 		return c, ErrInvalid
 	}
+	// Next's civil-day search excludes the day 400 years ahead. Refuse
+	// intervals that cannot advance inside it even when Start itself matches.
+	// Shorter frequencies already fit under the parser's 100000 ceiling.
+	switch c.freq {
+	case "YEARLY":
+		if c.interval >= 400 {
+			return c, ErrInvalid
+		}
+	case "MONTHLY":
+		if c.interval >= 400*12 {
+			return c, ErrInvalid
+		}
+	case "WEEKLY":
+		if c.interval >= 146097/7 { // Gregorian days in 400 years.
+			return c, ErrInvalid
+		}
+	}
 	return c, nil
 }
 

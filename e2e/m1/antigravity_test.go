@@ -36,8 +36,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		What, Done             string
 		Worker, Binary, Script string
 		Recovery               bool
-		WorkArea               bool `json:"work_area"`
-		CompletionEvents       bool `json:"completion_events"`
+
+		WorkArea         bool `json:"work_area"`
+		CompletionEvents bool `json:"completion_events"`
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
@@ -132,7 +133,11 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 						emitResponse(w, "Unavailable.", true)
 						return
 					}
-					emitPersonaCall(w, "worker-start", "dispatch_work", map[string]any{"worker": scenario.Worker, "repository": repo, "base": "dev", "branch": "task-branch", "what": scenario.What, "why": "Prove real worker execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": scenario.Done, "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}})
+					args := map[string]any{"repository": repo, "base": "dev", "branch": "task-branch", "what": scenario.What, "why": "Prove real worker execution", "scope": []string{"result.txt"}, "not_touch": []string{"design.md"}, "done": scenario.Done, "design_refs": []string{"design.md#result"}, "write_area": []string{"result.txt"}}
+					if scenario.Worker == "claude" {
+						args["worker"] = scenario.Worker
+					}
+					emitPersonaCall(w, "worker-start", "dispatch_work", args)
 				} else {
 					methodologyOutput(t, methodologyRequest{Input: req.Input}, "ok", nil)
 					emitResponse(w, "Task accepted.", true)
@@ -198,6 +203,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			c.Close()
 			h.stopCore(core)
 			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success", managerTurns)
+
 			if scenario.CompletionEvents {
 				assertWorkCompletion(t, h)
 			}
@@ -209,6 +215,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				if scenario.Recovery {
 					assertHeadlessRecovery(t, h)
 				}
+
 			}
 			if git("rev-parse", "dev") != base {
 				t.Fatal("worker changed protected base")

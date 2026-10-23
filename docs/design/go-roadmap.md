@@ -344,6 +344,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-03 Timers, reminders and sensors.** Durable timers, reminders, deterministic sensors.
 - #129 connects canon-backed timers to installed Core conversation tools and the shared reaction lane. `e2e/m2/timers.json` covers a scheduled job creating a record, model-free reminders, record-revision sensors, cancellation and restart. Focused tests exercise cron/RRULE DST gaps and folds, concurrent claims, bounded read-only recovery and SIGKILL before/after the claim commit.
+- #699 bounds RRULE intervals at admission and settles failed deliveries within the running Core. `e2e/m2/timer-recovery.json` covers interval refusal, an independent reminder, and a later sensor occurrence saving a result after source restoration without a Core restart.
 - Done when: a nonexistent local time and a repeated hour each fire once; `kill -9` at claim gives one fire per instant; an unchanged sensor signature spends no model call.
 - Depends on: G1-11, G2-02. Design refs: C-26.
 
@@ -443,6 +444,9 @@ completion conditions to repository tests and installed Core scenarios.
   ambiguous-date refusal. [The to-do scenario](../../e2e/m2/todos.json) runs Core
   through capture, refused writes, views, rescheduling and index repair on
   restart. Recurrence advancement, candidates and memo promotion belong to #156.
+- #674 permits planning edits that preserve delegated completion. Its
+  [installed-Core scenario](../../e2e/m2/todo-completed-planning.json) checks
+  saved tags, priority and checklist, the completed state and restart durability.
 - Done when: the today rule passes its fixture; a recurring item advances only to a future occurrence; a dependency cycle is rejected; an ambiguous date is never saved silently; a candidate is added on its own only when the deterministic test passes.
 - Depends on: G2-22, G2-03. Design refs: C-54; [work-and-delegation.md](work-and-delegation.md#the-to-do-record).
 

@@ -71,7 +71,7 @@ A record holds no persona text, no procedure, no template, no approval checklist
 
 Core canonicalizes records before publication, so JSON whitespace and object-key order alone mint no revision. The preset stores a digest of its triple. Each immutable agent Git revision stores the record beside the four persona layers; the canon transaction publishes the preset and all affected agent pointers together. Voice and growth changes retain that record. Preparation returns its content digest, and `prepare_ack` and request evidence carry that digest alongside the persona commit.
 
-The conversation writer's `fill_work_method` takes a declared key, a typed JSON value and a quote from the current confirmed native person event. It checks the prepared persona revision and mutable state revision before committing the value and evidence reference. Repeating a fill keeps its first reference; a conflicting replacement, undeclared or retired key, invalid value or stale snapshot is refused. The settings projection exposes the effective values and retained fills with a `retired` flag. Filled values and evidence enter the existing persona-settings ContextPacket item, outside the cached persona layers. This publication increment does not implement the field-specific tool, worker, reply or completion policies in Applying the record.
+The conversation writer's `fill_work_method` takes a declared key, a typed JSON value and a quote from the current confirmed native person event. It checks the prepared persona revision and mutable state revision before committing the value and evidence reference. The receipt and authority target carry the committed state's revision, using the same canonical JSON value as storage, including decoded string escapes and exact integer counts. Repeating a fill keeps its first reference; a conflicting replacement, undeclared or retired key, invalid value or stale snapshot is refused. The settings projection exposes the effective values and retained fills with a `retired` flag. Filled values and evidence enter the existing persona-settings ContextPacket item, outside the cached persona layers. This publication increment does not implement the field-specific tool, worker, reply or completion policies in Applying the record.
 
 ## Applying the record
 
@@ -214,10 +214,10 @@ Each subsection gives the record values that differ from the defaults, the perso
 
 - Record: `tools.declare_first` `["life_records", "web_research"]`; `reply.comparison` `verdict-then-table`; `done.purchase` `["receipt"]`; `fill` `["reply.comparison"]`.
 - Core layer:
-  - Remove the rule that switches register on serious or health topics. The voice stays the same on every topic, and safety content stays explicit.
+  - The voice stays the same on every topic, and safety content stays explicit.
   - Stated dislikes and fixed choices are records, checked before recommending.
   - The person's own device facts are checked before they are quoted.
-- Default voice: unchanged.
+- Default voice: keep the address terms and historical honorific register. Remove the serious-topic register switch from whichever layer carries it (the shipped conversion placed it in default voice), and keep correction examples in that same register.
 - Evidence: 16 corrections, none for length; the only explicit tone correction was the register switch.
 - Should change: `life-001, 011, 013, 015, 022, 025, 031, 034, 041, 044, 046, 049, 050, 052, 054, 060`.
 - Must not change: `life-003` to `006`, `008, 010, 016, 020, 024`, `026` to `028`, `035, 037, 038, 040, 043, 045, 047, 048, 056` to `059`, `061` to `063`, `065`.
