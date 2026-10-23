@@ -577,6 +577,15 @@ explicit controls to running Core and inspect the durable target runs; the worke
 scenario observes its approval, question and real artifact through the digest.
 Only external provider and platform wires are scripted.
 
+`m2/worker-recovery.json`, executed by `TestM2WorkerRecovery`, kills installed
+Core during an active synthetic Codex task, gates the replacement thread's
+snapshot, and proves unknown state before reconciliation. It verifies settlement
+without a new turn, one continuation, a second-failure decision through the
+waiting protocol, retention of a real file, and no third turn across restart.
+`m2/headless-worker-recovery.json`, executed by `TestM2HeadlessWorkerRecovery`,
+checks Claude dispatch's two attempts, retained receipt artifacts and durable
+decision. These use synthetic workers and no authenticated accounts.
+
 `m2/tui-board.json`, `m2/tui-note.json` and `m2/tui-usage.json` exercise the
 installed Core and real PTY TUI. The board combines an outside-change waiting
 request with a background run, updates its groups on landing and opens the

@@ -71,11 +71,22 @@ func (s *Service) RunGoal(ctx context.Context, origin Origin, action string, d D
 	}
 	s.running[r.ID] = true
 	s.mu.Unlock()
-	defer func() { s.mu.Lock(); delete(s.running, r.ID); s.mu.Unlock() }()
+	ownsReservation := true
+	defer func() {
+		if ownsReservation {
+			s.mu.Lock()
+			delete(s.running, r.ID)
+			s.mu.Unlock()
+		}
+	}()
 	r.Goal, r.State = true, "running"
+	r.GoalAction = action
 	if err := s.save(ctx, r); err != nil {
 		return Record{}, err
 	}
+	// execute releases this reservation and can wake the next attempt. Do not
+	// remove that newer reservation after reading the first attempt's result.
+	ownsReservation = false
 	s.execute(ctx, r)
 	return s.GoalRecord(ctx, origin, action)
 }
