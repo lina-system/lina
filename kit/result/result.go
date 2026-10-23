@@ -18,6 +18,7 @@ type Provenance struct {
 	TaskID         *string `json:"task_id"`
 }
 type Result struct {
+	ReplyType  string          `json:"reply_type,omitempty"`
 	Completion *Completion     `json:"completion,omitempty"`
 	ID         string          `json:"result_id"`
 	Revision   int             `json:"revision"`
@@ -45,6 +46,7 @@ type Card struct {
 	SavedAs    *SavedRef   `json:"saved_as"`
 }
 type PresentRequest struct {
+	ReplyType    string             `json:"reply_type,omitempty"`
 	Completion   *CompletionRequest `json:"completion,omitempty"`
 	ID           string             `json:"result_id,omitempty"`
 	BaseRevision int                `json:"base_revision,omitempty"`
@@ -76,4 +78,13 @@ type SavedRef struct {
 type SaveReceipt struct {
 	State   string    `json:"effect_state"`
 	SavedAs *SavedRef `json:"saved_as"`
+}
+
+// ValidReplyType checks a structural annotation, never natural-language intent.
+func ValidReplyType(kind string) bool {
+	switch kind {
+	case "", "chat", "status", "comparison", "candidates", "third_party":
+		return true
+	}
+	return false
 }

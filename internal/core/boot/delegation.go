@@ -264,7 +264,18 @@ func (d *delegationRuntime) origin(ctx context.Context, task work.Task) (*conver
 	if input.ConversationID != delivery.Conversation || input.AgentID != delivery.Agent {
 		return nil, ledger.Event{}, work.ErrState
 	}
-	if origin.conversation != delivery.Conversation {
+	if input.Surface.Kind == "channel" {
+		// Cached conversation views do not carry a channel's tool/memory
+		// ceiling. Resolve the retained input and current specific binding,
+		// just as completion recovery does, before starting its worker.
+		origin, err = d.root.workerCompletionView(ctx, ledger.Event{ParentID: input.ID, AgentID: input.AgentID, ConversationID: input.ConversationID, Surface: input.Surface})
+		if err != nil {
+			return nil, ledger.Event{}, err
+		}
+		if !origin.channelBinding.Scope.Tools {
+			return nil, ledger.Event{}, channels.ErrDenied
+		}
+	} else if origin.conversation != delivery.Conversation {
 		// These identities come from the admitted task and its recorded input.
 		// A channel task's requests and evidence belong to that conversation.
 		origin, err = d.root.router.channelView(ctx, channels.Binding{Person: delivery.Person, Agent: delivery.Agent, Conversation: delivery.Conversation})
@@ -457,6 +468,9 @@ func (d *delegationRuntime) returnConflict(ctx context.Context, c work.Card) (wo
 	if err := d.checkScheduledPolicy(ctx, c.Task); err != nil {
 		return work.Run{}, err
 	}
+	if _, _, err := d.origin(ctx, c.Task); err != nil {
+		return work.Run{}, err
+	}
 	d.mu.Lock()
 	thread, ok := d.threads[c.Task.ID]
 	adapter := d.adapters[c.Task.ID]
@@ -551,6 +565,18 @@ func (d *delegationRuntime) events(ctx context.Context) {
 			}
 			switch event.Kind {
 			case worker.FinishEvent:
+				if entry := d.resultSession(event.Thread); entry != nil {
+					if entry.outputThread != event.Thread {
+						entry.output = ""
+					}
+					// Commit the claim before releasing work: Completed can start
+					// a conflict-return turn on this same session immediately.
+					if err := entry.finish(ctx, event); err != nil {
+						fmt.Fprintf(os.Stderr, "scheduled worker completion admission failed: %v\n", err)
+						continue
+					}
+					entry.output = ""
+				}
 				if event.Finish.Failure == worker.ConnectionFailure && event.Finish.Code == "connection_lost" {
 					_ = d.reactor.Unknown(ctx, event.Thread.TaskID, event.Thread.ID, event.Thread.TurnID)
 					continue
@@ -605,7 +631,12 @@ func (d *delegationRuntime) events(ctx context.Context) {
 				if entry != nil {
 					entry.workTool(event)
 				}
-			case worker.ProgressEvent, worker.UsageEvent:
+			case worker.ProgressEvent:
+				if entry := d.resultSession(event.Thread); entry != nil && event.Progress.Phase == "item_completed" && event.Progress.Text != "" {
+					entry.output = event.Progress.Text
+					entry.outputThread = event.Thread
+				}
+			case worker.UsageEvent:
 			}
 		case <-d.resetChanged:
 			continue
@@ -627,6 +658,22 @@ func (d *delegationRuntime) events(ctx context.Context) {
 		}
 	}
 }
+
+// Output is a claim from the currently bound execution, never a task verdict.
+// A delayed item from a previous turn or adapter must not replace its report.
+func (d *delegationRuntime) resultSession(thread worker.Thread) *workerSession {
+	d.mu.Lock()
+	bound, ok := d.threads[thread.TaskID]
+	d.mu.Unlock()
+	if !ok || bound != thread || d.root.workers == nil {
+		return nil
+	}
+	d.root.workers.mu.Lock()
+	entry := d.root.workers.sessions[thread.ID]
+	d.root.workers.mu.Unlock()
+	return entry
+}
+
 func delegatedID(turn, call, key string) string {
 	sum := sha256.Sum256([]byte(turn + "\x00" + call + "\x00" + key))
 	return "task_" + hex.EncodeToString(sum[:12])

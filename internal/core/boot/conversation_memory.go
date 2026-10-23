@@ -36,12 +36,18 @@ func (r *conversationRuntime) modelContext(ctx context.Context, through string) 
 	// A queued input may precede the prior turn's later reply in the ledger.
 	// Put that exact event in the assembler's current-input position, preserving
 	// every other visible event and the ordering recorded for replay evidence.
+	found := through == ""
 	for i, event := range visible {
 		if event.ID == through {
 			copy(visible[i:], visible[i+1:])
 			visible[len(visible)-1] = event
+			found = true
 			break
 		}
+	}
+	// Matching text from another event cannot stand in for a removed input.
+	if !found {
+		return nil, nil, 0, nil, assemble.ErrHistory
 	}
 	history, err := assemble.History(visible, r.conversation, r.agent)
 	if err != nil {
@@ -90,15 +96,4 @@ func (r *conversationRuntime) validateModelContext(ctx context.Context, epoch ui
 		return err
 	}
 	return nil
-}
-
-// topicAuthorized runs at subscription admission and before each delivery.
-func (r *conversationRuntime) topicAuthorized(ctx context.Context, topic string) bool {
-	for _, prefix := range []string{"conversation:main:", "results:main:"} {
-		if len(topic) > len(prefix) && topic[:len(prefix)] == prefix {
-			_, err := r.agents.Get(ctx, topic[len(prefix):])
-			return err == nil
-		}
-	}
-	return topic == "progress" && r.ownerViews != nil || topic == "running" && r.background != nil || topic == "core" || topic == "waiting" && r.decisions != nil
 }

@@ -20,13 +20,25 @@ import (
 // previews must have no material copy. It uses the ledger's native labels and
 // masking boundary, and its ordinary reader validates the resulting events.
 type LedgerJournal struct {
-	Surface ledger.Surface
-	Now     func() time.Time
+	Surface  ledger.Surface
+	ParentID string // Trusted originating input, when composed into a live turn.
+	Now      func() time.Time
 }
 
 func (j LedgerJournal) Append(ctx context.Context, tx *canon.Tx, s result.Scope, r result.Result) (string, error) {
 	if !validScope(s) || r.ID == "" || r.Revision <= 0 {
 		return "", result.ErrMalformed
+	}
+	var parent any
+	if j.ParentID != "" {
+		var matches int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM conv_event WHERE id=? AND agent_id=? AND conversation_id=?", j.ParentID, s.AgentID, s.ConversationID).Scan(&matches); err != nil {
+			return "", err
+		}
+		if matches != 1 {
+			return "", ErrOutOfScope
+		}
+		parent = j.ParentID
 	}
 	switch j.Surface.Kind {
 	case "app", "tui":
@@ -72,8 +84,8 @@ func (j LedgerJournal) Append(ctx context.Context, tx *canon.Tx, s result.Scope,
 	stamp := now().UTC().Format(time.RFC3339Nano)
 	id := newID()
 	_, err = tx.ExecContext(ctx, `INSERT INTO conv_event
- (id,conversation_id,agent_id,speaker_kind,surface,scaffold_kind,occurred_at,recorded_at,time_quality,origin,body)
- VALUES(?,?,?,?,?,'result',?,?,'write_time_only',?,?)`, id, s.ConversationID, s.AgentID, message.SpeakerKind(), string(surface), stamp, stamp, string(origin), string(raw))
+ (id,conversation_id,parent_id,agent_id,speaker_kind,surface,scaffold_kind,occurred_at,recorded_at,time_quality,origin,body)
+ VALUES(?,?,?,?,?,?,'result',?,?,'write_time_only',?,?)`, id, s.ConversationID, parent, s.AgentID, message.SpeakerKind(), string(surface), stamp, stamp, string(origin), string(raw))
 	return id, err
 }
 

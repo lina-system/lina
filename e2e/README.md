@@ -427,6 +427,13 @@ through a correction turn. Core returns it to the same worker exactly once,
 requires input for the remaining conflict, and retains the dependent's gate
 until the forge merge. Repeated observation and restart cannot resend work.
 
+`m3/scheduled-outcomes.json` steers active scheduled workers through the owner
+protocol. They write and commit real artifacts, then report success or failure
+through final assistant text without submitting receipts. Core delivers both
+reports to the originating persona and restores their untrusted evidence and
+recorded snapshots after restart. Neither report verifies the task nor releases
+its dependent. The synthetic worker rejects a second turn start.
+
 `m3/plan-drafting.json` exercises accepted goal discovery through model tools,
 Klotho drafting through a real Moirai worker and installed Core job socket,
 complete preview replacement, retirement of overlapping stale requests, stale confirmation refusal, one-version record
@@ -450,6 +457,10 @@ Installed-Core fixtures wait for command admission after connecting the socket.
 An empty input must be refused as malformed (or capability-not-negotiated for an
 unconfigured Core), rather than unavailable during recovery, before the scenario
 continues. This probe cannot create a conversation event or model request.
+
+The process harness keeps the spawning OS thread alive until the child is
+reaped. `TestWorkerLoadParentThread` retires the caller thread after Bubblewrap
+is ready and requires a normal child exit, with parent-death cleanup enabled.
 Restored-memory and replay startup paths use the same readiness check as installs.
 
 `go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
