@@ -279,6 +279,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startWorkerDispatch(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startWorkerRecovery(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startRuns(ctx); err != nil {
 		return nil, err
 	}

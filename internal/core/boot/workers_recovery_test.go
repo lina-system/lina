@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: Apache-2.0
+package boot
+
+import (
+	"encoding/json"
+	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/reactor"
+	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/tools"
+	"testing"
+	"time"
+)
+
+func TestWorkerRecoveryDecisionIsDurableAndDoesNotSendInput(t *testing.T) {
+	r := controlRuntime(t)
+	if r.workers.recoveryStop != nil {
+		r.workers.recoveryStop()
+		<-r.workers.recoveryDone
+		r.workers.recoveryStop = nil
+	}
+	r.ownerViews.stop()
+	<-r.ownerViews.done
+	rec := reactor.Record{ID: "thread", Person: r.person, Agent: r.agent, Input: "input", Conversation: r.conversation, Thread: worker.Thread{ID: "thread", TurnID: "second"}, State: "decision", Retries: 1, DecisionAt: time.Now().UnixNano()}
+	if err := (reactor.Recovery{DB: r.db}).Put(t.Context(), rec); err != nil {
+		t.Fatal(err)
+	}
+	e := &workerSession{origin: r, thread: rec.Thread, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, recovery: rec, questions: map[string]*workerQuestion{}}
+	r.workers = &workerRuntime{sessions: map[string]*workerSession{rec.ID: e}}
+	t.Cleanup(func() { r.workers = nil })
+	e.recoveryDecision(rec)
+	e.recoveryDecision(rec)
+	source := workerWaitingSource{r: r, names: map[string]string{r.agent: "Lina"}}
+	rows, err := source.Snapshot(t.Context(), r.person)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("decision rows=%+v %v", rows, err)
+	}
+	id, rev := "worker-request:recovery:thread", "1"
+	action := "keep_paused"
+	values := protocol.FormValues{"action": protocol.FormValue{String: &action}}
+	q := workerQuestions{runtime: r}
+	answer := protocol.QuestionAnswer{CardID: &id, Revision: &rev, Answer: protocol.QuestionAnswerActionAccept, Values: &values}
+	if outcome, err := q.AnswerQuestion(t.Context(), r.person, answer); err != nil || outcome != protocol.DecisionOutcomeResolved {
+		t.Fatalf("decision=%s %v", outcome, err)
+	}
+	records, err := (reactor.Recovery{DB: r.db}).Records(t.Context())
+	if err != nil || len(records) != 1 || records[0].State != "parked" || records[0].Retries != 1 || records[0].Decision != action {
+		t.Fatalf("answer not durable: %+v %v", records, err)
+	}
+	// No adapter exists. Passing this test proves the answer did not send input.
+}
+func TestWorkerRecoveryBlocksInputWithUnsettledEffects(t *testing.T) {
+	r, probe := runningWorkerFixture(t)
+	probe.snapshot.State = worker.Idle
+	e := r.workers.sessions["fixture"]
+	for _, state := range []string{"unknown", "retrying", "decision", "parked"} {
+		e.recovery.State = state
+		raw, _ := json.Marshal(workerArgs{Session: "fixture", Turn: "turn", Generation: 1, Binding: 1, Text: "continue"})
+		result, err := r.workerOperation(t.Context(), "worker_input", "turn", ledger.Event{}, tools.Input{Arguments: raw})
+		if err != nil || result.State != tools.Failed {
+			t.Fatalf("%s accepted input: %+v %v", state, result, err)
+		}
+		item, err := observeRunningWorker(t.Context(), e)
+		if state == "unknown" && (err != nil || item.State != "unknown") {
+			t.Fatalf("idle summary hid uncertainty: %+v %v", item, err)
+		}
+	}
+}

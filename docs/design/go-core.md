@@ -1318,6 +1318,30 @@ manager design acceptance, parallel scheduling and merge remain their own flows.
 See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-adapter)
 for the evidence boundary and account-free acceptance limits.
 
+The #135 recovery path persists worker bindings and the one continuation allowance
+in canon migration 40. Installed Core marks unfinished sessions unknown before
+admission, resumes their existing Codex thread and reads the exact turn, paging
+its history without starting another turn. Missing or incomplete items, lost
+requests, failed reads and effects without independent evidence remain unknown.
+Thread completion alone cannot settle a command's external effects. The event
+path and a five-minute safety sweep share this reconciliation. The sweep makes
+no model call. A continuation intent commits before input; an uncertain send is
+never repeated, including after restart. The same task, thread, directory and
+prior receipts are retained. A second settled failure becomes a durable decision
+in Waiting for me; keeping it paused or stopping it grants no further execution.
+A person cancellation disables automatic recovery. Restoring a backup disables captured recovery and queued dispatch authority while preserving observations and receipts. All adapters reject interrupt
+reasons outside user, budget, Node policy and the stall rule.
+
+Headless dispatch retains terminal snapshots and attempt-specific receipts. A
+complete failure with no observed tool activity can release one new attempt in
+the existing worktree, without resetting review or CI allowances. Tool activity
+or a cut stream retains unknown. Claude and Antigravity provide no read-only
+persisted-thread API: absent a committed terminal snapshot, restarting Core
+cannot manufacture one or replay their commands. Their second settled failure
+uses the same durable decision surface. `e2e/m2/worker-recovery.json` covers
+SIGKILL, read-only settlement, the once-only continuation, unknown effects and
+restart persistence; `e2e/m2/headless-worker-recovery.json` covers Claude dispatch.
+
 **C-57 Work definition, choice and splitting (new).**
 
 ```go

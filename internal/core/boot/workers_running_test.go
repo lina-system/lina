@@ -74,6 +74,11 @@ func TestConversationWorkerRunningObservesOutsideCanon(t *testing.T) {
 func runningWorkerFixture(t *testing.T) (*conversationRuntime, *runningWorkerProbe) {
 	t.Helper()
 	r := runRuntime(t)
+	if r.workers.recoveryStop != nil {
+		r.workers.recoveryStop()
+		<-r.workers.recoveryDone
+		r.workers.recoveryStop = nil
+	}
 	// Stop the periodic owner-view observer before installing mutable unit
 	// probes. Installed-Core scenarios exercise both live view producers.
 	if r.ownerViews != nil {

@@ -20,6 +20,10 @@ else {
   const prompt = fs.readFileSync(0, 'utf8');
   if (!prompt.includes('result.txt')) throw Error('task packet lost');
   console.log(JSON.stringify({type:'system',subtype:'init',session_id:'fixture',cwd:process.cwd(),permissionMode:'default'}));
+  const counter = path.join(root, 'attempt-count');
+  const attempts = fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) + 1 : 1;
+  fs.writeFileSync(counter, String(attempts));
+  if (attempts > 1 && !prompt.includes('Do not recreate or clean the worktree')) throw Error('recovery lost continuation');
   if (mode === 'exit-zero') process.exit(0);
   if (mode === 'denied') {
     console.log(JSON.stringify({type:'result',subtype:'success',session_id:'fixture',is_error:false,result:'Permission needed.',permission_denials:[{tool_name:'Bash',tool_use_id:'tool'}]}));

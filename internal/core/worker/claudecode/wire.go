@@ -83,6 +83,9 @@ func (a *Adapter) read(ctx context.Context, r io.Reader, ready chan<- error) {
 			// Hooks and status messages may precede initialization. They cannot
 			// authorize a thread or complete a turn.
 			if f.Subtype != "init" {
+				a.mu.Lock()
+				a.effectSeen = true
+				a.mu.Unlock()
 				continue
 			}
 			if initialized || f.SessionID == "" || filepath.Clean(f.CWD) != filepath.Clean(a.spec.Workdir) || a.spec.Model != "" && f.Model != string(a.spec.Model) {
@@ -103,6 +106,9 @@ func (a *Adapter) read(ctx context.Context, r io.Reader, ready chan<- error) {
 			for _, block := range message.Content {
 				text, id := block.Text, message.ID
 				if block.Type == "tool_use" {
+					a.mu.Lock()
+					a.effectSeen = true
+					a.mu.Unlock()
 					text, id = block.Name, block.ID
 				}
 				if block.Type != "text" && block.Type != "tool_use" {
@@ -143,6 +149,7 @@ func (a *Adapter) read(ctx context.Context, r io.Reader, ready chan<- error) {
 			}
 			a.mu.Lock()
 			a.result, a.state = result, worker.Idle
+			a.finish = &finish
 			a.mu.Unlock()
 			terminal = true
 			a.emit(ctx, worker.Event{Kind: worker.FinishEvent, Finish: &finish})
@@ -150,7 +157,15 @@ func (a *Adapter) read(ctx context.Context, r io.Reader, ready chan<- error) {
 			// process lease until Close has reaped all descendants.
 			_, _ = io.Copy(io.Discard, r)
 			return
+		case "user":
+			// Tool results are evidence of a prior call, even if its start was absent.
+			a.mu.Lock()
+			a.effectSeen = true
+			a.mu.Unlock()
 		default:
+			a.mu.Lock()
+			a.effectSeen = true
+			a.mu.Unlock()
 			// New informational events can coexist with the final result.
 			// They neither finish a turn nor grant an unsupported capability.
 		}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/reactor"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -53,7 +56,19 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 		return record, nil
 	}, Publish: func(ctx context.Context, record dispatch.Record) error {
 		managerVerdict := "unverified"
-		if record.Owner != "" {
+		if record.State == "decision" {
+			agent, conversation := record.Owner, record.Manager
+			if agent == "" {
+				agent, conversation = record.Origin.Agent, record.Origin.Conversation
+			}
+			id := "dispatch:" + record.ID
+			rec := reactor.Record{Worker: record.WorkerName(), ID: id, Person: record.Origin.Person, Agent: agent, Conversation: conversation, Input: strings.TrimPrefix(record.Origin.Turn, "turn:"), Workdir: filepath.Join(r.root, "work", "tasks", record.ID), State: "decision", Retries: 1, DecisionAt: record.DecisionAt, Thread: worker.Thread{ID: id, TaskID: record.ID}}
+			if err := (reactor.Recovery{DB: r.db}).Admit(ctx, rec); err != nil {
+				return err
+			}
+			r.workers.wakeRecovery()
+		}
+		if record.Owner != "" && record.State == "finished" {
 			var a codingAssignment
 			if err := r.db.Read(ctx, func(tx *canon.Tx) error { var err error; a, err = readCoding(ctx, tx, record.ID); return err }); err != nil {
 				return err
@@ -87,9 +102,13 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 			return err
 		}
 		now := time.Now()
-		event, err := view.journal().Get(ctx, "worker-result:"+record.ID)
+		noticeID := "worker-result:" + record.ID
+		if record.Attempt > 1 || record.State == "unknown" {
+			noticeID += fmt.Sprintf(":%d:%s", record.Attempt, record.State)
+		}
+		event, err := view.journal().Get(ctx, noticeID)
 		if errors.Is(err, ledger.ErrNotFound) {
-			event, err = view.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: "worker-result:" + record.ID, ConversationID: record.Origin.Conversation, ParentID: strings.TrimPrefix(record.Origin.Turn, "turn:"), AgentID: record.Origin.Agent, Surface: parent.Surface, ScaffoldKind: "worker_result", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
+			event, err = view.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: noticeID, ConversationID: record.Origin.Conversation, ParentID: strings.TrimPrefix(record.Origin.Turn, "turn:"), AgentID: record.Origin.Agent, Surface: parent.Surface, ScaffoldKind: "worker_result", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
 		}
 		if err != nil {
 			return err

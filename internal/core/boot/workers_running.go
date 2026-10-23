@@ -50,7 +50,7 @@ func (s *workerListSource) Read(ctx context.Context, tx *canon.Tx, id string) (r
 		return runs.ListItem{}, err
 	}
 	item.AgentName = strings.Join(strings.Fields(laneText(name)), " ")
-	item.Summary = item.AgentName + " · Codex · " + item.Summary
+	item.Summary = item.AgentName + " · " + item.Summary
 	return item, nil
 }
 
@@ -104,6 +104,15 @@ func observeRunningWorker(ctx context.Context, e *workerSession) (runs.ListItem,
 		default:
 		}
 	}
+	e.recoveryMu.Lock()
+	recoveryState := e.recovery.State
+	e.recoveryMu.Unlock()
+	if recoveryState == "unknown" || recoveryState == "retrying" {
+		snapshot.State = worker.Unknown
+	}
+	if recoveryState == "decision" {
+		snapshot.State = worker.Waiting
+	}
 	state := "unknown"
 	switch snapshot.State {
 	case worker.Idle:
@@ -139,7 +148,7 @@ func observeRunningWorker(ctx context.Context, e *workerSession) (runs.ListItem,
 		summary = "Delegated work"
 	}
 	return runs.ListItem{Person: e.origin.person, Agent: e.origin.agent,
-		Summary: summary, State: state, Started: e.started}, nil
+		Summary: workerLabel(snapshot.Worker) + " · " + summary, State: state, Started: e.started}, nil
 }
 
 func (r *conversationRuntime) workerRunningSummary(ctx context.Context, person, id string, offset int64) (string, error) {
@@ -171,5 +180,16 @@ func (r *conversationRuntime) workerRunningSummary(ctx context.Context, person, 
 func (r *conversationRuntime) notifyWorkerRunning() {
 	if r.background != nil {
 		r.background.notify()
+	}
+}
+
+func workerLabel(name string) string {
+	switch name {
+	case "claude":
+		return "Claude Code"
+	case "antigravity":
+		return "Antigravity"
+	default:
+		return "Codex"
 	}
 }

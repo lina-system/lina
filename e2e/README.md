@@ -465,3 +465,12 @@ scenario checks parsed terminal cells, the worker-written artifact and cleanup.
 explicit controls to running Core and inspect the durable target runs; the worker
 scenario observes its approval, question and real artifact through the digest.
 Only external provider and platform wires are scripted.
+
+`m2/worker-recovery.json`, executed by `TestM2WorkerRecovery`, kills installed
+Core during an active synthetic Codex task, gates the replacement thread's
+snapshot, and proves unknown state before reconciliation. It verifies settlement
+without a new turn, one continuation, a second-failure decision through the
+waiting protocol, retention of a real file, and no third turn across restart.
+`m2/headless-worker-recovery.json`, executed by `TestM2HeadlessWorkerRecovery`,
+checks Claude dispatch's two attempts, retained receipt artifacts and durable
+decision. These use synthetic workers and no authenticated accounts.

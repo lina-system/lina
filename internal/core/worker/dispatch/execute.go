@@ -29,10 +29,14 @@ func (s *Service) execute(r Record) {
 	// running record unknown and retains the task's active reservation.
 	ctx := s.ctx
 	admitted, settled := false, false
+	if r.Attempt == 0 {
+		r.Attempt = 1
+	}
+	defer func() { s.mu.Lock(); delete(s.running, r.ID); s.mu.Unlock() }()
 	defer func() {
 		if ctx.Err() == nil {
 			r.State = "finished"
-			if admitted && !settled {
+			if admitted && (!settled || r.Snapshot != nil && r.Snapshot.Finish != nil && r.Snapshot.Finish.Status != worker.Done) {
 				r.State = "unknown"
 			}
 			_ = s.save(ctx, r)
@@ -100,7 +104,11 @@ func (s *Service) execute(r Record) {
 	if err != nil {
 		return
 	}
-	r.BaseCommit = base
+	if r.BaseCommit != "" {
+		base = r.BaseCommit
+	} else {
+		r.BaseCommit = base
+	}
 	protectedArgs := []string{"for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/remotes", "refs/lina"}
 	protected, err := git(repo, protectedArgs...)
 	if err != nil {
@@ -167,11 +175,17 @@ func (s *Service) execute(r Record) {
 	if err != nil {
 		return
 	}
-	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: r.ID + ":1", Workdir: workdir, TaskPacket: packet})
+	// Commit the launch intent before the child can have any effect.
+	if err = s.save(ctx, r); err != nil {
+		return
+	}
+	admitted = true
+	attemptID := fmt.Sprintf("%s:%d", r.ID, r.Attempt)
+	thread, err := adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: attemptID, Workdir: workdir, TaskPacket: packet})
 	if err != nil {
 		return
 	}
-	run := work.Run{ID: r.ID + ":1", TaskID: r.ID, Generation: 1, Worker: adapter.Name(), ThreadID: thread.ID, TurnID: thread.TurnID, NodeID: s.cfg.Main}
+	run := work.Run{ID: attemptID, TaskID: r.ID, Generation: r.Attempt, Worker: adapter.Name(), ThreadID: thread.ID, TurnID: thread.TurnID, NodeID: s.cfg.Main}
 	if err = service.Start(ctx, run); err != nil {
 		return
 	}
@@ -196,6 +210,14 @@ func (s *Service) execute(r Record) {
 	// End the task process tree even if it kept stdout open after its result.
 	if err = adapter.Close(ctx); err != nil {
 		return
+	}
+	snapshot, snapshotErr := adapter.Snapshot(ctx, thread)
+	if snapshotErr == nil {
+		// Retain only typed evidence, not untrusted output or pending request bodies.
+		r.Snapshot = &worker.ThreadSnapshot{Thread: snapshot.Thread, State: snapshot.State, Finish: snapshot.Finish, EffectsKnown: snapshot.EffectsKnown && len(snapshot.Pending) == 0}
+		if err = s.save(ctx, r); err != nil {
+			return
+		}
 	}
 	r.State = "finished"
 	rawResult, denied := observation()
@@ -260,12 +282,15 @@ func (s *Service) execute(r Record) {
 	}
 	evidence = []byte(masked.Text())
 	artifact := filepath.Join(taskRoot, "result.json")
+	if r.Attempt > 1 {
+		artifact = filepath.Join(taskRoot, fmt.Sprintf("result-%d.json", r.Attempt))
+	}
 	if err = os.WriteFile(artifact, evidence, 0600); err != nil {
 		return
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256(evidence))
 	now := time.Now()
-	receipt := work.Receipt{SchemaVersion: 1, RelationshipID: r.ID, ExecutionGeneration: 1, Attempt: 1, Outcome: outcome, Producer: "child", TurnRef: work.TurnRef{ThreadID: thread.ID, TurnID: thread.TurnID, TurnStatus: status}, EmittedAt: now,
+	receipt := work.Receipt{SchemaVersion: 1, RelationshipID: r.ID, ExecutionGeneration: r.Attempt, Attempt: r.Attempt, Outcome: outcome, Producer: "child", TurnRef: work.TurnRef{ThreadID: thread.ID, TurnID: thread.TurnID, TurnStatus: status}, EmittedAt: now,
 		Manifest: []work.Artifact{{Path: artifact, SHA256: hash}}, Provenance: []work.Provenance{{ArtifactID: "adapter-derived:" + r.ID, TaskID: r.ID, NodeID: s.cfg.Main, Path: artifact, SHA256: hash, ObservedAt: now}}}
 	receipt.RevisionHash = work.ManifestHash(receipt.Manifest)
 	receipt.EventID = work.ReceiptID(receipt)
@@ -283,6 +308,9 @@ func taskPacket(r Record) (string, error) {
 	definition, err := json.MarshalIndent(r.TaskDefinition(), "", "  ")
 	if err != nil {
 		return "", err
+	}
+	if r.Attempt > 1 {
+		return skills.MethodPacket("Continue the same task from the current files, branch and receipts. Do not recreate or clean the worktree, repeat completed effects, or reset review and CI allowances.\n"+string(definition), r.Method)
 	}
 	return skills.MethodPacket("Implement this task definition in this worktree using your own setup. Create the named task branch from the detached base. Open the branch's pull request, wait for its checks and review, handle failures and report the result. Do not change protected base refs.\n"+string(definition), r.Method)
 }

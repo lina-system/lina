@@ -24,6 +24,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -49,6 +50,10 @@ type Definition struct {
 }
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
+	Restored       bool                       `json:"restored,omitempty"`
+	Attempt        int                        `json:"attempt,omitempty"`
+	Snapshot       *worker.ThreadSnapshot     `json:"snapshot,omitempty"`
+	DecisionAt     int64                      `json:"decision_at,omitempty"`
 	Result         json.RawMessage            `json:"result,omitempty"`
 	Method         *skills.Body               `json:"method,omitempty"`
 	BaseCommit     string                     `json:"base_commit,omitempty"`
@@ -349,6 +354,14 @@ func (s *Service) sync() {
 		return
 	}
 	for _, r := range records {
+		s.mu.Lock()
+		busy := s.running[r.ID]
+		s.mu.Unlock()
+		if r.State == "unknown" && r.Snapshot != nil && !busy {
+			if next, err := s.recoverRecord(s.ctx, r); err == nil {
+				r = next
+			}
+		}
 		if r.State == "queued" {
 			var committed int
 			err = s.cfg.DB.Read(s.ctx, func(tx *canon.Tx) error {
@@ -375,7 +388,7 @@ func (s *Service) sync() {
 			}
 			s.wg.Add(1)
 			go func() { defer s.wg.Done(); s.execute(r) }()
-		} else if (r.State == "finished" || r.State == "unknown") && !r.Announced {
+		} else if (r.State == "finished" || r.State == "unknown" || r.State == "decision") && !r.Announced {
 			if s.cfg.Publish != nil && s.cfg.Publish(s.ctx, r) == nil {
 				r.Announced = true
 				_ = s.save(s.ctx, r)

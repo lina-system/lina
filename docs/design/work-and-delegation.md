@@ -1008,6 +1008,25 @@ Optional: when the repository has required checks and auto-merge, LINA Core may 
 - A landing that leaves another task's pull request unmergeable sends that task back once to the same worker as a rebase request. LINA Core never resolves a conflict itself, and a second failure goes to the person.
 - None of this interrupts the person. The running list changes; surfaces.md governs the few events that notify.
 
+The installed recovery path retains the original task binding and the recovery
+allowance before it sends continuation. Core reads the exact Codex turn, with
+complete item history, after resuming its thread. A read failure, an incomplete
+history, a lost pending request or an effect without independent evidence keeps
+the task unknown and prevents input. This also applies when a turn is terminal;
+a command's exit code does not establish its external effects. A continuation
+whose send outcome is unknown is never resent. Restart preserves the allowance. Restoring a backup disables captured recovery and queued dispatch authority while preserving observations and receipts.
+A second settled failure creates one persistent decision row in the originating
+conversation. Its choices keep work paused or stop it; neither starts a third
+automatic attempt. Files, branches and earlier receipts remain intact.
+
+Claude and Antigravity dispatch can recover once from a committed terminal
+snapshot whose full observation contains no tool activity. The second attempt
+uses the same pinned base and worktree and keeps separate receipt artifacts.
+A stream without a final result, tool activity requiring readback, or an
+unobserved process after Core dies remains unknown. These headless adapters do
+not claim a persisted-thread read operation they do not provide. Reconciliation
+uses the existing events and a five-minute safety sweep; it does not call a model.
+
 ## Judgment and delivery
 
 A worker returning a completion receipt and the manager accepting the result are completions on different layers. The worker owns the pull request to green: it waits for GitHub's CI and review bots, fixes every CI failure and the P0 and P1 review findings once inside its turn, and reports done only when the resulting head is green and no P0 or P1 remains. It reports an unresolved failure honestly instead of reporting done. The manager session checks that delivery against the work definition at merge; Core records the judgment and enforces the merge preconditions. This check re-runs no test or command and starts no separate review by a worker. Core's QA run after each merge is separate from delivery acceptance.

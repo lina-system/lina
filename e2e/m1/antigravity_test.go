@@ -35,6 +35,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		}
 		What, Done             string
 		Worker, Binary, Script string
+		Recovery               bool
 		WorkArea               bool `json:"work_area"`
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
@@ -189,6 +190,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			}
 			if scenario.Worker == "claude" {
 				assertClaudeReceipt(t, h, workerCase)
+				if scenario.Recovery {
+					assertHeadlessRecovery(t, h)
+				}
 			}
 			if git("rev-parse", "dev") != base {
 				t.Fatal("worker changed protected base")
@@ -225,6 +229,12 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			}
 			c.Close()
 			h.stopCore(core)
+			if scenario.Recovery {
+				count, err := os.ReadFile(filepath.Join(fixture, "attempt-count"))
+				if err != nil || string(count) != "2" {
+					t.Fatalf("restart repeated a headless attempt: %s %v", count, err)
+				}
+			}
 			if calls.Load() != 2 {
 				t.Fatalf("restart replayed provider: %d", calls.Load())
 			}
