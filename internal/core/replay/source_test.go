@@ -433,3 +433,12 @@ func TestOldProducerWithoutRequestEvidenceIsCounted(t *testing.T) {
 		t.Fatalf("manifest=%+v err=%v", m, err)
 	}
 }
+
+func TestUnknownRequestLayoutCannotExport(t *testing.T) {
+	db, source, _ := fixture(t)
+	seedWithEvidence(t, db, "input", guard.EntryOwner, func(e *ledger.RequestEvidence) { e.Assembly.RequestLayout = "future-layout" })
+	episodes, manifest, err := source.Episodes(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, selection())
+	if err != nil || len(episodes) != 0 || manifest.Reasons["missing_assembly"] != 1 {
+		t.Fatalf("unknown layout exported: %+v %v", manifest, err)
+	}
+}

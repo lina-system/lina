@@ -193,7 +193,7 @@ Credit: Stephen Schoettler and the LCM-X contributors.
 Source: https://github.com/electricsheephq/lcm-x, supplied installation commit `709099b3a397a7893a7abae8802ebe7bf605f79e` (v0.28.0). The inspected modules and license match that revision; `tools.py` contains expand and describe at this revision.
 License: **MIT** ([upstream license](https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/LICENSE)).
 
-The staged Hermes importer in `internal/addons/importer/hermes` also derives profile-local UID/lineage and canonical-versus-version behavior from `host_uid.py` and its reference tests at this revision. It independently implements LINA transactions and reverse mapping in Go.
+The staged Hermes importer in `internal/addons/importer/hermes` also derives profile-local UID/lineage and canonical-versus-version behavior from `host_uid.py` and its reference tests at this revision. Its alias-candidate and composite-group handling also references `host_uid.py`, `identity_anchor.py` and `store.py`. It independently implements LINA transactions and reverse mapping in Go.
 
 Scope: lossless raw storage, depth-ranked summary DAGs, stub-first compaction, externalized outputs, exact-reference retrieval and session lineage. The prepared-summary implementation also references `leaf_prep.py` and its background preparation tests for source/configuration fingerprints, deferred promotion and stale-work rejection, and `dag.py` with its source traversal tests for depth-ranked provenance. The Go implementation uses Core's job receipts and revocation fences; it does not copy upstream runtime code or scheduled condensation sweeps. LINA maps these to its one ledger, derived summary tree, materials and evidence-bearing recall. No upstream source is vendored or modified.
 
@@ -1365,6 +1365,9 @@ SOFTWARE.
 
 Source: https://github.com/NousResearch/hermes-agent. License: MIT.
 Reference snapshot supplied 2026-10-21; upstream revision metadata unavailable.
+The importer separately references `gateway/delivery_ledger.py` at
+`944c3a434071f43e64b443d033f3eba30c64434c` for the delivery-obligation
+column layouts and their operational-state meaning; no implementation is copied.
 
 The Go Telegram adapter derives behavior and structure from Hermes Agent's
 Telegram adapter and gateway: protected code formatting, fence-aware message

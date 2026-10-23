@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/doing"
 	wire "github.com/thisisjun786/lina/kit/acp"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
@@ -37,6 +38,7 @@ type Config struct {
 type Result struct {
 	SessionID    string            `json:"session_id"`
 	AgentVersion string            `json:"agent_version"`
+	Handshake    *Handshake        `json:"handshake,omitempty"`
 	StopReason   string            `json:"stop_reason"`
 	Output       string            `json:"output"`
 	Unknown      []json.RawMessage `json:"unknown_updates,omitempty"`
@@ -45,6 +47,7 @@ type Result struct {
 // An adapter owns one session. The process lifetime is independent of individual
 // control-call contexts; only Interrupt requests protocol cancellation.
 type Adapter struct {
+	doing           doing.Reader
 	cfg             Config
 	control         sync.Mutex
 	mu              sync.Mutex
@@ -201,6 +204,10 @@ func (a *Adapter) Start(ctx context.Context, l lease.Lease, s worker.StartSpec) 
 	if initialized.AgentInfo != nil {
 		a.result.AgentVersion = initialized.AgentInfo.Version
 	}
+	if a.Name() == "grok" {
+		a.result.Handshake = grokHandshake(initialized)
+		a.result.AgentVersion = a.result.Handshake.Version
+	}
 	if a.version == "" {
 		a.version = a.result.AgentVersion
 	}
@@ -230,6 +237,7 @@ func (a *Adapter) beginLocked(ctx context.Context, text string) (worker.Thread, 
 	a.thread.TurnID = fmt.Sprintf("acp:%d", a.turn)
 	a.turnEnded = make(chan struct{})
 	a.state = worker.Active
+	a.doing.Busy(true, time.Now())
 	a.cancelled = false
 	a.result.Output = ""
 	a.result.StopReason = ""
@@ -303,13 +311,19 @@ func (a *Adapter) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 	if !a.matches(t) {
 		return worker.ThreadSnapshot{}, ErrThread
 	}
-	return worker.ThreadSnapshot{Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Capabilities: a.Capabilities(), Output: a.result.Output, Pending: a.pendingLocked()}, nil
+	observation := a.doing.Snapshot()
+	return worker.ThreadSnapshot{Doing: &observation, Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Capabilities: a.Capabilities(), Output: a.result.Output, Pending: a.pendingLocked()}, nil
 }
 func (a *Adapter) Result() Result {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	r := a.result
 	r.Unknown = append([]json.RawMessage(nil), r.Unknown...)
+	if r.Handshake != nil {
+		handshake := *r.Handshake
+		handshake.Capabilities = slices.Clone(handshake.Capabilities)
+		r.Handshake = &handshake
+	}
 	return r
 }
 func (a *Adapter) Close(context.Context) error {

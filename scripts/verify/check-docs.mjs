@@ -92,12 +92,18 @@ function headingText(text) {
 function headingAnchors(text) {
   const anchors = new Set();
   const lines = visibleMarkdown(text.replace(/<!--[\s\S]*?-->/g, ''), true).split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const atx = /^ {0,3}#{1,6}(?:[\t ]+(.*)|$)/.exec(lines[i]);
+  let paragraph = [];
+  for (const line of lines) {
+    const atx = /^ {0,3}#{1,6}(?:[\t ]+(.*)|$)/.exec(line);
     let title;
     if (atx) title = (atx[1] ?? '').replace(/[\t ]+#+[\t ]*$/, '').trim();
-    else if (lines[i].trim() && /^ {0,3}(?:=+|-+)[\t ]*$/.test(lines[i + 1] ?? '')) title = lines[i++].trim();
-    else continue;
+    else if (paragraph.length && /^ {0,3}(?:=+|-+)[\t ]*$/.test(line)) title = paragraph.join('\n');
+    else {
+      if (!line.trim() || /^ {0,3}(?:(?:-[\t ]*){3,}|(?:\*[\t ]*){3,}|(?:_[\t ]*){3,})$/.test(line)) paragraph = [];
+      else paragraph.push(line.trim());
+      continue;
+    }
+    paragraph = [];
     // GitHub lowercases heading text, removes punctuation and replaces spaces.
     const base = headingText(title).toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\- ]/gu, '').replace(/ /g, '-');
     let anchor = base;
