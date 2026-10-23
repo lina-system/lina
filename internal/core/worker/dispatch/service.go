@@ -496,11 +496,8 @@ func (s *Service) sync() {
 					continue
 				}
 			}
-			var committed int
-			err = s.cfg.DB.Read(s.ctx, func(tx *canon.Tx) error {
-				return tx.QueryRowContext(s.ctx, `SELECT count(*) FROM turn_calls WHERE turn_id=? AND json_extract(call,'$.Name')='dispatch_work' AND json_extract(result,'$.code')='ok' AND json_extract(result,'$.output.id')=?`, r.Origin.Turn, r.ID).Scan(&committed)
-			})
-			if err != nil || committed == 0 && !(r.Goal && r.ReturnReceipt != "") {
+			committed, err := s.admissionCommitted(s.ctx, r)
+			if err != nil || !committed && !(r.Goal && r.ReturnReceipt != "") {
 				continue
 			}
 			s.mu.Lock()

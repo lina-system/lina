@@ -57,7 +57,7 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		Output json.RawMessage
 	}, 1)
 	awaiting := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct{ Input, Tools []json.RawMessage }
 		if e := json.NewDecoder(r.Body).Decode(&request); e != nil {
 			t.Error(e)
@@ -79,14 +79,8 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		if scriptedWorkCompletion(w, request.Input) {
 			return
 		}
-		names := map[string]bool{}
-		for _, raw := range request.Tools {
-			var d struct{ Name string }
-			_ = json.Unmarshal(raw, &d)
-			names[d.Name] = true
-		}
 		for _, name := range scenario.Tools {
-			if !names[name] {
+			if !toolReachable(request.Tools, name) {
 				t.Errorf("running Core missing %s", name)
 			}
 		}
@@ -98,7 +92,7 @@ func testM2FileLanding(t *testing.T, committed bool) {
 			t.Error("unexpected provider turn")
 			emitResponse(w, "Unexpected.", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
 	// Five Core boots plus worker observation, file publication and recovery

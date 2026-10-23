@@ -63,6 +63,10 @@ func TestCoreKeepsSettledTaskAfterLateWorkerReport(t *testing.T) {
 			return work.Node{ID: "settled-main", Connected: true, ObservedAt: time.Now().Unix(), CPUCores: 2, CPULimit: 2, AvailableMemoryMB: 1024, MemoryLimitMB: 1024, AvailableDiskMB: 1024, DiskLimitMB: 1024, Workers: map[string]bool{"stub": true}}, nil
 		},
 		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+			agent, err := fixtureWorkOwner(ctx, root)
+			if err != nil {
+				return err
+			}
 			a, b := repairTask("repair"), repairTask("independent")
 			a.Area, b.Area = a.ID, b.ID
 			return e.Admit(ctx, work.Goal{ID: "runtime-repair", Person: person, Agent: agent, Summary: "produce two library artifacts", Done: "both artifacts are healthy", Scope: work.GoalScope{Repositories: []string{"fixture"}, Includes: "library artifacts"}, NoServiceReason: "library", Tasks: []work.Task{a, b}, Criteria: []work.Criterion{{ID: "artifact", Statement: "artifact is healthy", Check: work.CriterionCheck{Kind: work.ReadEvidence, Method: "artifact.read", Target: "fixture"}}}})
