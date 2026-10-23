@@ -18,20 +18,22 @@ func replayInstructions(format string, p agents.Preparation, tools []provider.To
 	if format != "persona-tui-work-method-v1" {
 		p.WorkMethod = ""
 	}
+	switch format {
+	case "agent-v1", "persona-tui-v1", "persona-tui-work-method-v1", "persona-v1":
+	default:
+		return "", replay.Exclusion("missing_assembly")
+	}
+	if format == "persona-tui-v1" || format == "persona-tui-work-method-v1" {
+		return assemble.TUIInstructions(p, tools)
+	}
 	text, err := assemble.Instructions(p, tools)
 	if err != nil {
 		return "", err
 	}
-	switch format {
-	case "agent-v1":
-		return text, nil
-	case "persona-tui-v1", "persona-tui-work-method-v1":
-		return assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting + "\n\n" + text, nil
-	case "persona-v1":
+	if format == "persona-v1" {
 		return assemble.PersonaCoreV1 + "\n\n" + text, nil
-	default:
-		return "", replay.Exclusion("missing_assembly")
 	}
+	return text, nil
 }
 func (r *conversationRuntime) replaySkill(ctx context.Context, id, commit string) (string, string, error) {
 	body, err := r.skills.ReadCommit(ctx, id, commit)

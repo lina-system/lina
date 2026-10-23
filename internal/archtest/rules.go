@@ -23,7 +23,7 @@ var layers = func() map[string]int {
 		"authority lifecycle budget manifest binding toolcatalog",
 		"ledger inbox agents memory retract skills records assets work timers plugins channels accounts",
 		"a2a lane assemble compaction turn runs replay intakereplay reply results modelpath exec exchange gateway worker reactor review ghclient progress waiting backup update recover clientsrv jobs mcphost install",
-		"boot supervise",
+		"boot supervise methodreplay",
 	} {
 		for _, name := range strings.Fields(names) {
 			result[name] = i + 1

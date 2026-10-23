@@ -11,6 +11,16 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
+// TUIInstructions is the installed conversation's instruction text: the fixed
+// persona prefix, the surface description and the prepared agent's projection.
+func TUIInstructions(persona agents.Preparation, tools []provider.ToolDecl) (string, error) {
+	text, err := Instructions(persona, tools)
+	if err != nil {
+		return "", err
+	}
+	return PersonaCoreV1 + "\n" + TUIFormatting + "\n\n" + text, nil
+}
+
 // Instructions projects the prepared agent and the actual request declarations.
 // JSON escaping keeps names and layer text inside their respective blocks.
 func Instructions(persona agents.Preparation, tools []provider.ToolDecl) (string, error) {

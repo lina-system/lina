@@ -667,6 +667,7 @@ LINA Core and the TUI are one executable, `lina`. Its subcommands cover these us
 | Diagnosis | Reports the state and readiness of each component, with the cause of each failure |
 | Replay | Re-runs a recorded turn sandboxed and without effects, optionally under candidate harness files, and writes the result as files. It is a development tool and runs only when it is called ([Replay command](#replay-command)). |
 | Intake replay | `lina intake-replay <cases.jsonl>` scores binding baselines in fresh Core runtimes using an explicit private or synthetic case file ([Record and measurement](conversation-and-memory.md#what-a-message-is-about)). |
+| Method replay | `lina method-replay <cases.jsonl> --changed <agent[,agent]>` scores the per-agent work methods before and after the tailoring with an explicit private case file and writes a text-free report ([The runner](preset-work-methods.md#the-runner)). |
 | Episode export | Writes recorded turns of the chosen conversations out of the ledger into the export staging area for use outside LINA ([conversation-and-memory.md](conversation-and-memory.md#episode-export)) |
 | Version | Prints the version, the commit and the build date of the build ([versioning.md](versioning.md)) |
 
