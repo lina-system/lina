@@ -147,5 +147,5 @@ credential-free CI.
 name from a material-backed Korean event with a secret span. The installed
 Core resolves the quote through memory management before and after restart;
 canon inspection verifies that item/revision evidence contains no quote text.
-The management renderer's synthetic [capture](../../evidence/memory-quotes.svg)
+The management renderer's synthetic [capture](../../evidence/generated-ui/memory-quotes.png)
 shows a quote and an erased-source status.
