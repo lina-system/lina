@@ -55,7 +55,7 @@ func TestQuotaHandoffWaitSurvivesCompletionOutbox(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s.execute(r)
+	s.execute(t.Context(), r)
 	records, err := s.records(t.Context())
 	if err != nil || len(records) != 1 || records[0].State != "queued" || records[0].Wait != "worker_quota" || len(records[0].Tried) != 1 || records[0].Packet == "" {
 		t.Fatalf("settled first attempt stranded handoff: %+v %v", records, err)
