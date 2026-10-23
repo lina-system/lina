@@ -609,6 +609,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   fs.writeFileSync(path.join(root,'cwd'),process.cwd());reply(m.id,{sessionId:'acp-fixture'});break;
  case 'session/prompt':
   pending=m.id;packet=m.params.prompt[0].text;progress('Working on result.txt');
+  if(process.env.LINA_ACP_CASE==='invalid-stop-exit'){reply(pending,{stopReason:'bogus'});process.exit(0)}
   if(process.env.LINA_ACP_CASE==='cancel')break;
   release(()=>{
    if(process.env.LINA_ACP_CASE==='exit')process.exit(0);

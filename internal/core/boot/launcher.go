@@ -60,7 +60,7 @@ func (s *conversationRouter) Launcher(ctx context.Context, session clientsrv.Ses
 func (r *conversationRuntime) launcherInput(ctx context.Context, s clientsrv.Session, p protocol.LauncherRequest) (protocol.ItemDone, error) {
 	thread := launcherThreadPrefix + p.RequestID
 	input := protocol.Input{ConversationID: &r.conversation, InputID: &thread, Text: &p.Text, Thread: &thread}
-	return r.admitInput(ctx, s, input, "launcher")
+	return r.admitInput(ctx, s, input, "launcher", nil)
 }
 
 // publishLauncherReply streams the visible short form, never the full reply.

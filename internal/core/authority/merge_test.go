@@ -9,6 +9,7 @@ import (
 )
 
 func TestMergeAuthorityPreservesBaselineAndUnknownReservation(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	a := authority.NewMerges(f.store, 7)
 	b := authority.MergeBinding{ID: "task", Person: "person", Agent: "agent", Repository: "o/r", Number: 140, Base: "dev", Clone: "/clone", Protected: map[string]string{"refs/heads/dev": "base"}}

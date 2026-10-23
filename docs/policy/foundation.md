@@ -306,6 +306,12 @@ history in 60 seconds. Core connection and process waits retain their existing
 Neither scenario retries failed observations or substitutes a sleep for a
 protocol or process-completion barrier.
 
+Compaction acceptance keeps forty retained turns across two Core boots to
+exercise successive summaries; the harness default of three operation
+timeouts covered about thirty seconds of that work and the post-merge run
+failed at 30.25 seconds. The scenario now has a 120-second allowance. Its
+observations, per-turn waits and Core connection bounds are unchanged.
+
 Manual work-turn acceptance waits follow the exact client input's durable turn.
 A failed or aborted turn fails the scenario immediately with its input id, turn
 id and state; it cannot later complete. An input with no turn yet, or an active
