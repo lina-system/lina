@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/reactor"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 )
 
 // recoveryRecord derives a new attempt, never a replay of an earlier command.
@@ -21,7 +21,7 @@ func recoveryRecord(r Record) Record {
 		return r
 	}
 	attempt := max(1, r.Attempt)
-	next, send := reactor.Observe(reactor.Record{State: "unknown", Thread: snap.Thread, Retries: attempt - 1}, *snap)
+	next, send := recovery.Observe(recovery.Record{State: "unknown", Thread: snap.Thread, Retries: attempt - 1}, *snap)
 	r.State = "unknown"
 	if send {
 		r.Attempt = attempt + 1

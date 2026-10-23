@@ -18,12 +18,12 @@ import (
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
-	"github.com/thisisjun786/lina/internal/core/reactor"
 	"github.com/thisisjun786/lina/internal/core/skills"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/codex"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -43,7 +43,7 @@ type workerRuntime struct {
 }
 type workerSession struct {
 	recoveryMu    sync.Mutex
-	recovery      reactor.Record
+	recovery      recovery.Record
 	ownerControl  sync.Mutex
 	ownerRequests map[string]string
 	adapter       worker.Adapter
@@ -416,7 +416,7 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		rec := entry.recovery
 		rec.Canceled = true
 		if rec.ID != "" {
-			err = (reactor.Recovery{DB: r.db}).Put(ctx, rec)
+			err = (recovery.Recovery{DB: r.db}).Put(ctx, rec)
 		}
 		if err == nil {
 			entry.recovery = rec
@@ -514,7 +514,7 @@ func (e *workerSession) observe() {
 				if delivered {
 					rec.State = "finished"
 				}
-				if (reactor.Recovery{DB: e.origin.db}).Put(e.origin.ctx, rec) == nil {
+				if (recovery.Recovery{DB: e.origin.db}).Put(e.origin.ctx, rec) == nil {
 					e.recovery = rec
 				}
 			}

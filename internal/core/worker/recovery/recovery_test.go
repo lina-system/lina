@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-package reactor
+package recovery
 
 import (
 	"github.com/thisisjun786/lina/internal/core/worker"

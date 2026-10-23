@@ -4,8 +4,8 @@ package boot
 import (
 	"encoding/json"
 	"github.com/thisisjun786/lina/internal/core/ledger"
-	"github.com/thisisjun786/lina/internal/core/reactor"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/tools"
 	"testing"
@@ -21,8 +21,8 @@ func TestWorkerRecoveryDecisionIsDurableAndDoesNotSendInput(t *testing.T) {
 	}
 	r.ownerViews.stop()
 	<-r.ownerViews.done
-	rec := reactor.Record{ID: "thread", Person: r.person, Agent: r.agent, Input: "input", Conversation: r.conversation, Thread: worker.Thread{ID: "thread", TurnID: "second"}, State: "decision", Retries: 1, DecisionAt: time.Now().UnixNano()}
-	if err := (reactor.Recovery{DB: r.db}).Put(t.Context(), rec); err != nil {
+	rec := recovery.Record{ID: "thread", Person: r.person, Agent: r.agent, Input: "input", Conversation: r.conversation, Thread: worker.Thread{ID: "thread", TurnID: "second"}, State: "decision", Retries: 1, DecisionAt: time.Now().UnixNano()}
+	if err := (recovery.Recovery{DB: r.db}).Put(t.Context(), rec); err != nil {
 		t.Fatal(err)
 	}
 	e := &workerSession{origin: r, thread: rec.Thread, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, recovery: rec, questions: map[string]*workerQuestion{}}
@@ -43,7 +43,7 @@ func TestWorkerRecoveryDecisionIsDurableAndDoesNotSendInput(t *testing.T) {
 	if outcome, err := q.AnswerQuestion(t.Context(), r.person, answer); err != nil || outcome != protocol.DecisionOutcomeResolved {
 		t.Fatalf("decision=%s %v", outcome, err)
 	}
-	records, err := (reactor.Recovery{DB: r.db}).Records(t.Context())
+	records, err := (recovery.Recovery{DB: r.db}).Records(t.Context())
 	if err != nil || len(records) != 1 || records[0].State != "parked" || records[0].Retries != 1 || records[0].Decision != action {
 		t.Fatalf("answer not durable: %+v %v", records, err)
 	}

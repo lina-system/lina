@@ -15,9 +15,9 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
-	"github.com/thisisjun786/lina/internal/core/reactor"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -62,8 +62,8 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 				agent, conversation = record.Origin.Agent, record.Origin.Conversation
 			}
 			id := "dispatch:" + record.ID
-			rec := reactor.Record{Worker: record.WorkerName(), ID: id, Person: record.Origin.Person, Agent: agent, Conversation: conversation, Input: strings.TrimPrefix(record.Origin.Turn, "turn:"), Workdir: filepath.Join(r.root, "work", "tasks", record.ID), State: "decision", Retries: 1, DecisionAt: record.DecisionAt, Thread: worker.Thread{ID: id, TaskID: record.ID}}
-			if err := (reactor.Recovery{DB: r.db}).Admit(ctx, rec); err != nil {
+			rec := recovery.Record{Worker: record.WorkerName(), ID: id, Person: record.Origin.Person, Agent: agent, Conversation: conversation, Input: strings.TrimPrefix(record.Origin.Turn, "turn:"), Workdir: filepath.Join(r.root, "work", "tasks", record.ID), State: "decision", Retries: 1, DecisionAt: record.DecisionAt, Thread: worker.Thread{ID: id, TaskID: record.ID}}
+			if err := (recovery.Recovery{DB: r.db}).Admit(ctx, rec); err != nil {
 				return err
 			}
 			r.workers.wakeRecovery()

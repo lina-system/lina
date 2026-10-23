@@ -17,7 +17,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/reactor"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -177,14 +177,14 @@ func TestM2WorkerRecovery(t *testing.T) {
 			before := calls.Load()
 			core = start()
 			waitRecovery(t, h, func() bool { _, err := os.Stat(filepath.Join(dir, "snapshot-requested")); return err == nil })
-			read := func() reactor.Record {
+			read := func() recovery.Record {
 				db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer closeDB()
 				var raw []byte
-				var record reactor.Record
+				var record recovery.Record
 				if err = db.QueryRowContext(h.ctx, "SELECT record FROM worker_recovery WHERE id='recovery-thread'").Scan(&raw); err != nil {
 					t.Fatal(err)
 				}

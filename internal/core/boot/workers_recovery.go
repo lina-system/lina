@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/codex"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -30,14 +31,14 @@ func (e *workerSession) bindRecovery(ctx context.Context, th worker.Thread) erro
 		if err != nil {
 			return err
 		}
-		rec = reactor.Record{Worker: "codex", ID: th.ID, Person: e.origin.person, Agent: e.origin.agent, Conversation: e.origin.conversation, Input: e.input.ID, Workdir: e.workdir, Packet: packet.Text(), State: "running", Epoch: e.origin.epoch}
+		rec = recovery.Record{Worker: "codex", ID: th.ID, Person: e.origin.person, Agent: e.origin.agent, Conversation: e.origin.conversation, Input: e.input.ID, Workdir: e.workdir, Packet: packet.Text(), State: "running", Epoch: e.origin.epoch}
 	}
 	priorTurn := rec.Thread.TurnID
 	rec.Thread = th
 	if th.TurnID != priorTurn || rec.RetryFrom != "" && th.TurnID != rec.RetryFrom {
 		rec.State = "running"
 	}
-	store := reactor.Recovery{DB: e.origin.db}
+	store := recovery.Recovery{DB: e.origin.db}
 	var err error
 	if fresh {
 		err = store.Bind(ctx, rec)
@@ -52,7 +53,7 @@ func (e *workerSession) bindRecovery(ctx context.Context, th worker.Thread) erro
 }
 
 func (r *conversationRuntime) startWorkerRecovery(ctx context.Context) error {
-	store := reactor.Recovery{DB: r.db}
+	store := recovery.Recovery{DB: r.db}
 	records, err := store.Records(ctx)
 	if err != nil {
 		return err
@@ -98,7 +99,7 @@ func (b *workerRuntime) wakeRecovery() {
 }
 
 func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted map[string]bool) {
-	records, err := (reactor.Recovery{DB: r.db}).Records(ctx)
+	records, err := (recovery.Recovery{DB: r.db}).Records(ctx)
 	if err != nil {
 		return
 	}
@@ -221,7 +222,7 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	next, send := reactor.Observe(rec, snap)
+	next, send := recovery.Observe(rec, snap)
 	next.ObservedAt = time.Now().UnixNano()
 	if next.State == "decision" && next.DecisionAt == 0 {
 		next.DecisionAt = time.Now().UnixNano()
@@ -248,7 +249,7 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 			return
 		}
 	}
-	if err = (reactor.Recovery{DB: e.origin.db}).Put(ctx, next); err != nil {
+	if err = (recovery.Recovery{DB: e.origin.db}).Put(ctx, next); err != nil {
 		activity.Release()
 		return
 	}
@@ -276,7 +277,7 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 	}
 	next.Thread = current.Thread
 	next.State = "running"
-	if err = (reactor.Recovery{DB: e.origin.db}).Put(ctx, next); err != nil {
+	if err = (recovery.Recovery{DB: e.origin.db}).Put(ctx, next); err != nil {
 		return
 	}
 	e.recovery = next
@@ -284,7 +285,7 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 	e.origin.notifyWorkerRunning()
 }
 
-func (e *workerSession) recoveryDecision(rec reactor.Record) {
+func (e *workerSession) recoveryDecision(rec recovery.Record) {
 	id := "worker-request:recovery:" + rec.ID
 	e.mu.Lock()
 	if e.questions[id] != nil {
@@ -316,7 +317,7 @@ func (e *workerSession) answerRecovery(ctx context.Context, answer protocol.Ques
 	rec.Decision = *v
 	rec.DecidedAt = time.Now().UnixNano()
 	rec.Canceled = *v == "Stop"
-	if err := (reactor.Recovery{DB: e.origin.db}).Put(ctx, rec); err != nil {
+	if err := (recovery.Recovery{DB: e.origin.db}).Put(ctx, rec); err != nil {
 		return protocol.DecisionOutcomeRefused, err
 	}
 	e.recovery = rec
@@ -365,7 +366,7 @@ func (e *workerSession) trackRecoveryRequest(id string, pending bool) error {
 		delete(requests, id)
 	}
 	rec.PendingRequests = requests
-	if err := (reactor.Recovery{DB: e.origin.db}).Put(e.origin.ctx, rec); err != nil {
+	if err := (recovery.Recovery{DB: e.origin.db}).Put(e.origin.ctx, rec); err != nil {
 		return err
 	}
 	e.recovery = rec

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Recovery retains worker decisions separately from the effects they observe.
-package reactor
+package recovery
 
 import (
 	"context"
