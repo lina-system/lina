@@ -140,7 +140,7 @@ func TestMemoryExtractionSourcesProgressAndRestart(t *testing.T) {
 		}
 	}
 	extractionStep(t, r, s)
-	hits, err := memory.New(r.db).Recall(t.Context(), memory.RecallScope{Agent: r.agent, Person: r.person}, memory.Query{At: time.Now().Unix()})
+	hits, err := r.memoryStore().Recall(t.Context(), memory.RecallScope{Agent: r.agent, Person: r.person}, memory.Query{At: time.Now().Unix()})
 	if err != nil || len(hits) != 1 || hits[0].Basis != memory.Stated || len(hits[0].Evidence) != 2 || hits[0].Evidence[0].Quote != "I prefer jasmine tea." {
 		t.Fatalf("memory: %+v %v", hits, err)
 	}
@@ -268,7 +268,7 @@ func TestMemoryExtractionReadsMaterialBackedStatement(t *testing.T) {
 	output, _ := json.Marshal([]memory.Item{{Kind: memory.Preference, Content: "Prefers tea", Subject: memory.Subject{Kind: memory.Person, ID: r.person}, Basis: memory.Stated, Evidence: []memory.Evidence{{Kind: memory.Event, ID: "large-source", Precision: memory.Exact}}}})
 	p.steps = []turnStep{{events: turnText(string(output))}}
 	extractionStep(t, r, s)
-	hits, err := memory.New(r.db).Recall(t.Context(), memory.RecallScope{Agent: r.agent, Person: r.person}, memory.Query{At: time.Now().Unix()})
+	hits, err := r.memoryStore().Recall(t.Context(), memory.RecallScope{Agent: r.agent, Person: r.person}, memory.Query{At: time.Now().Unix()})
 	if err != nil || len(hits) != 1 || hits[0].Evidence[0].Quote != statement {
 		t.Fatalf("material evidence lost: hits=%d err=%v", len(hits), err)
 	}
@@ -305,7 +305,7 @@ func TestMemoryExtractionApplyFailureKeepsCursorAndCachedResult(t *testing.T) {
 	if err != nil || cursor != 0 {
 		t.Fatal("failed transaction advanced source")
 	}
-	hits, err := memory.New(r.db).Recall(t.Context(), memory.RecallScope{Agent: r.agent, Person: r.person}, memory.Query{At: time.Now().Unix()})
+	hits, err := r.memoryStore().Recall(t.Context(), memory.RecallScope{Agent: r.agent, Person: r.person}, memory.Query{At: time.Now().Unix()})
 	if err != nil || len(hits) != 0 {
 		t.Fatalf("partial memory batch: %d %v", len(hits), err)
 	}
@@ -400,7 +400,7 @@ func TestMemoryExtractionRejectsModelScopeBeforeCaching(t *testing.T) {
 		t.Fatal(err)
 	}
 	extractionStep(t, r, s)
-	hits, err := memory.New(r.db).Recall(t.Context(), memory.RecallScope{Agent: r.agent, Person: r.person}, memory.Query{At: time.Now().Unix()})
+	hits, err := r.memoryStore().Recall(t.Context(), memory.RecallScope{Agent: r.agent, Person: r.person}, memory.Query{At: time.Now().Unix()})
 	if err != nil || len(hits) != 1 || hits[0].Scope != memory.Private {
 		t.Fatalf("canonical evidence scope not preserved: %+v %v", hits, err)
 	}
