@@ -181,3 +181,14 @@ func (m *shellModel) talkContent() string {
 	rows = rows[v.offset:min(len(rows), v.offset+available)]
 	return strings.Join(append(rows, text("talk.help")), "\n")
 }
+
+func (m *shellModel) talkReply(attempt uint64, e protocol.Envelope) {
+	if m.talk.open && attempt == m.talk.attempt {
+		m.talk.busy = false
+		if e.Error != nil {
+			m.talk.code = string(e.Error.Code)
+		} else if p, ok := e.Payload.(protocol.AgentTalk); ok {
+			m.talkResponse(p)
+		}
+	}
+}
