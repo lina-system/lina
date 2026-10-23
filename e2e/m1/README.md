@@ -28,10 +28,29 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 
 Failure coverage also includes:
 
+- `TestM1TurnBudgetHandoffInstalledCore` keeps the complete long task name
+  visible across wrapped rows in the 120-column terminal's running panel.
+  Its assertion reads that panel from one frame, excluding the conversation's
+  input echo, before checking result delivery and restart recovery.
+
+- `TestM2FileLanding`: repeated file reports and stale-snapshot refusals run
+  through installed Core's tools until history compacts. The synthetic model
+  answers the auxiliary summary request separately from work calls. Both partial
+  and committed copy recovery retain a published summary and its source coverage
+  through restart, then verify destination hashes and duplicate-free delivery.
+  A manual request waits for its own durable turn and reports a failed or aborted
+  turn immediately. This exercises [file delivery](../../docs/design/work-and-delegation.md#evidence-before-close)
+  alongside [conversation compaction](../../docs/design/conversation-and-memory.md#compaction-and-resume).
+
 - `TestM2ConversationWorkerRunningInstalledCore`: a fixture worker started by
   `worker_start` remains visible in Ctrl+R after the conversation turn ends,
   with its owner agent before Codex. Explicitly finishing the worker removes
   its row from the open pager without relying on a short execution duration.
+- `TestM2ConversationWorkerProgressInstalledCore`: the same installed worker
+  stays visible in the Ctrl+P [work panel](../../docs/design/tui.md#work-panel-and-stage-list-t-16)
+  after its starting conversation ends. The open panel removes its card when
+  the worker becomes idle, retains a failed card, and clears it after dismissal
+  in Ctrl+R, following the shared [progress acknowledgement](../../docs/design/surfaces.md#progress-at-a-glance).
 
 - `TestM1TurnCrashBoundaries`: acknowledged SIGKILL after claim, preparation,
   model item, tool intent, applied effect, tool receipt and completed turn;

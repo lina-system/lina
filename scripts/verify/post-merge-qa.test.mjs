@@ -96,12 +96,50 @@ test('abnormal package failure reports only started unfinished tests with bounde
   }
 });
 
+test('a package timeout leaves paused scenarios unknown instead of opening QA issues', async () => {
+  // Reduced from the #985 timeout: serial work consumes the package budget
+  // while an admission scenario waits at t.Parallel, including its child.
+  for (const nested of [false, true]) {
+    const events = [
+      { Action: 'run', Test: 'TestTwo' },
+      { Action: 'pause', Test: 'TestTwo' },
+      ...(nested ? [
+        { Action: 'cont', Test: 'TestTwo' },
+        { Action: 'run', Test: 'TestTwo/approved-before-restart' },
+        { Action: 'pause', Test: 'TestTwo/approved-before-restart' },
+      ] : []),
+      { Action: 'run', Test: 'TestOne' },
+      { Action: 'output', Test: 'TestTwo', Output: 'waiting for a parallel slot\n' },
+      { Action: 'output', Output: 'panic: test timed out\n' },
+      { Action: 'fail' },
+    ].map(event => JSON.stringify({ Package: 'example/e2e', ...event })).join('\n');
+    const input = fixture();
+    input.records[0].tests = goTestOutcomes(events);
+    assert.deepEqual(input.records[0].tests.map(({ test, result }) => [test, result]), [
+      ['TestTwo', 'unknown'], ['TestOne', 'fail'],
+    ], `nested=${nested}`);
+    const mock = github();
+    await reconcileQA({ ...options(mock), ...input });
+    assert.equal(mock.issues.length, 1);
+    assert.match(mock.issues[0].title, /TestOne/);
+    // Unknown is not recovery evidence for an already open finding either.
+    const earlier = fixture();
+    earlier.records[0].tests[1].result = 'fail';
+    await reconcileQA({ ...options(mock), ...earlier });
+    const later = fixture('fail', 2);
+    later.records[0].tests = input.records[0].tests;
+    await reconcileQA({ ...options(mock), ...later });
+    assert.equal(mock.issues[1].state, 'open');
+  }
+});
+
 test('a real Go timeout reaches QA reporting without inventing unexecuted tests', async t => {
   const sb = sandbox(t);
   sb.write(sb.dir, 'go.mod', 'module example/e2e\n\ngo 1.24\n');
   sb.write(sb.dir, 'timeout_test.go', `// SPDX-License-Identifier: Apache-2.0
 package e2e
 import "testing"
+func TestAPaused(t *testing.T) { t.Parallel(); t.Fatal("must not run") }
 func TestOne(t *testing.T) { t.Log("waiting for timeout"); select {} }
 func TestTwo(t *testing.T) { t.Fatal("must not run") }
 `);
@@ -114,12 +152,134 @@ func TestTwo(t *testing.T) { t.Fatal("must not run") }
   assert.match(run.stdout, /panic: test timed out/);
   const input = fixture();
   input.records[0].tests = goTestOutcomes(run.stdout);
-  assert.deepEqual(input.records[0].tests.map(({ test, result }) => [test, result]), [['TestOne', 'fail']]);
+  assert.deepEqual(input.records[0].tests.map(({ test, result }) => [test, result]),
+    [['TestAPaused', 'unknown'], ['TestOne', 'fail']]);
+  input.plan.tasks[0].tests.push('TestAPaused');
   const mock = github();
   await reconcileQA({ ...options(mock), ...input });
   assert.equal(mock.issues.length, 1);
   assert.match(mock.issues[0].body, /panic: test timed out/);
   assert.match(mock.issues[0].body, /timeout_test.go/);
+});
+
+test('timeout running-test diagnostics distinguish active parents from waiting parents', () => {
+  const events = [];
+  const emit = (Action, Test, Output, Package = 'example/e2e') => events.push({ Action, Package, Test, Output });
+  for (const name of ['TestParent', 'TestNested', 'TestWaiting', 'TestFinished']) {
+    emit('run', name);
+    if (name === 'TestNested') emit('run', name + '/group');
+    const child = name + (name === 'TestNested' ? '/group' : '') + '/child';
+    emit('run', child);
+    emit('pause', child);
+  }
+  emit('pass', 'TestFinished');
+  // Matching names in a different package must not inherit these diagnostics.
+  emit('run', 'TestParent', undefined, 'other/e2e');
+  emit('run', 'TestParent/child', undefined, 'other/e2e');
+  emit('pause', 'TestParent/child', undefined, 'other/e2e');
+  // test2json may attach the panic output to the last test that wrote output.
+  emit('output', 'TestWaiting', 'panic: test timed out after 1s\n\trunning tests:\n');
+  emit('output', 'TestWaiting', '\t\tTestParent (1s)\n\t\tTestNested/group (1s)\n');
+  emit('output', 'TestWaiting', '\t\tTestFinished (1s)\n\t\tTestNeverStarted (1s)\n\n');
+  // Do not match test-like lines outside the running-tests section. Keep the
+  // running identities even when the stack dump exceeds the diagnostic tail.
+  emit('output', undefined, '\t\tTestWaiting (1s)\n' + 'stack dump\n'.repeat(2000));
+  emit('fail');
+  emit('fail', undefined, undefined, 'other/e2e');
+  const outcomes = goTestOutcomes(events.map(event => JSON.stringify(event)).join('\n'));
+  assert.deepEqual(outcomes.map(({ package: pkg, test, result }) => [pkg, test, result]), [
+    ['example/e2e', 'TestParent', 'fail'], ['example/e2e', 'TestNested', 'fail'],
+    ['example/e2e', 'TestWaiting', 'unknown'], ['example/e2e', 'TestFinished', 'pass'],
+    ['other/e2e', 'TestParent', 'unknown'],
+  ]);
+  assert.ok(outcomes.every(outcome => outcome.output.length <= 16000));
+});
+
+test('real Go timeouts report a parent still executing after pausing its child', async t => {
+  const sb = sandbox(t);
+  sb.write(sb.dir, 'go.mod', 'module example/e2e\n\ngo 1.24\n');
+  for (const nested of [false, true]) {
+    const body = 't.Run("child", func(t *testing.T) { t.Parallel() }); t.Log("parent still executing"); select {}';
+    sb.write(sb.dir, 'timeout_test.go', `// SPDX-License-Identifier: Apache-2.0
+package e2e
+import "testing"
+func TestAPaused(t *testing.T) { t.Parallel(); t.Fatal("must not run") }
+func TestOne(t *testing.T) { ${nested ? 't.Run("group", func(t *testing.T) { ' + body + ' })' : body} }
+func TestTwo(t *testing.T) { t.Fatal("must not run") }
+`);
+    const run = spawnSync('go', ['test', '-json', '-count=1', '-timeout=1s', '.'], {
+      cwd: sb.dir, env: { PATH: process.env.PATH, HOME: sb.dir, GOWORK: 'off', GOENV: 'off',
+        GOCACHE: process.env.GOCACHE, GOTOOLCHAIN: 'local' }, encoding: 'utf8', timeout: 120000,
+    });
+    assert.equal(run.error, undefined);
+    assert.equal(run.status, 1, run.stderr);
+    const diagnostics = run.stdout.split('\n').flatMap(line => {
+      try { return [JSON.parse(line).Output ?? '']; } catch { return []; }
+    }).join('');
+    assert.match(diagnostics, /running tests:\n\t\tTestOne(?:\/group)? \(/);
+    const input = fixture();
+    input.records[0].tests = goTestOutcomes(run.stdout);
+    assert.deepEqual(input.records[0].tests.map(({ test, result }) => [test, result]),
+      [['TestAPaused', 'unknown'], ['TestOne', 'fail']], `nested=${nested}`);
+    input.plan.tasks[0].tests.push('TestAPaused');
+    const mock = github();
+    await reconcileQA({ ...options(mock), ...input });
+    assert.equal(mock.issues.length, 1);
+    assert.match(mock.issues[0].title, /TestOne/);
+    assert.match(mock.issues[0].body, /panic: test timed out/);
+  }
+});
+
+test('package timeout leaves paused parallel scenarios unknown, including nested quota work', async () => {
+  const events = [];
+  const emit = (Action, Test, Output) => events.push({ Action, Package: 'example/e2e', Test, Output });
+  emit('run', 'TestPaused');
+  emit('pause', 'TestPaused');
+  emit('run', 'TestQuota');
+  emit('pause', 'TestQuota');
+  emit('cont', 'TestQuota');
+  emit('run', 'TestQuota/success');
+  emit('pause', 'TestQuota/success');
+  emit('run', 'TestActive');
+  emit('pause', 'TestActive');
+  emit('cont', 'TestActive');
+  emit('run', 'TestNested');
+  emit('run', 'TestNested/group');
+  emit('run', 'TestNested/group/waiting');
+  emit('pause', 'TestNested/group/waiting');
+  emit('run', 'TestNested/group/active');
+  emit('pause', 'TestNested/group/active');
+  emit('cont', 'TestNested/group/active');
+  emit('run', 'TestFailed');
+  emit('run', 'TestFailed/failed');
+  emit('fail', 'TestFailed/failed');
+  emit('run', 'TestFailed/waiting');
+  emit('pause', 'TestFailed/waiting');
+  emit('run', 'TestFinished');
+  emit('pass', 'TestFinished');
+  emit('run', 'TestCleanup');
+  emit('run', 'TestCleanup/finished');
+  emit('pass', 'TestCleanup/finished');
+  emit('run', 'TestPartial');
+  emit('run', 'TestPartial/finished');
+  emit('pass', 'TestPartial/finished');
+  emit('run', 'TestPartial/waiting');
+  emit('pause', 'TestPartial/waiting');
+  emit('output', undefined, 'panic: test timed out\n');
+  emit('fail');
+  const outcomes = goTestOutcomes(events.map(event => JSON.stringify(event)).join('\n'));
+  assert.deepEqual(outcomes.map(({ test, result }) => [test, result]), [
+    ['TestPaused', 'unknown'], ['TestQuota', 'unknown'], ['TestActive', 'fail'],
+    ['TestNested', 'fail'], ['TestFailed', 'fail'], ['TestFinished', 'pass'],
+    ['TestCleanup', 'fail'], ['TestPartial', 'unknown'],
+  ]);
+  const input = fixture();
+  input.plan.tasks[0].tests = outcomes.map(outcome => outcome.test);
+  input.records[0].tests = outcomes;
+  const mock = github();
+  await reconcileQA({ ...options(mock), ...input });
+  assert.deepEqual(mock.issues.map(issue => JSON.parse(issue.body.match(/foundation-qa:(\{[^\n]+\})/)[1]).test),
+    ['TestActive', 'TestNested', 'TestFailed', 'TestCleanup']);
 });
 
 test('failure opens one QA issue, repeats update it, and a later passing head closes it', async () => {
@@ -150,6 +310,9 @@ test('missing, skipped or untrusted results do not close QA issues', async () =>
   const opts = options(mock);
   await reconcileQA({ ...opts, ...fixture() });
   await reconcileQA({ ...opts, ...fixture('skip', 2) });
+  const interrupted = fixture('unknown', 2);
+  interrupted.records[0].result = 'failure';
+  await reconcileQA({ ...opts, ...interrupted });
   await reconcileQA({ ...opts, ...fixture('pass', 2), records: [] });
   assert.equal(mock.issues[0].state, 'open');
   const invalid = fixture('pass', 2);

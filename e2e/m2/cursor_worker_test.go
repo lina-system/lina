@@ -181,6 +181,22 @@ func TestCursorReadinessThroughRunningCore(t *testing.T) {
 						return
 					}
 				}
+				// Work tools are deferred behind load_tools (tool groups, #758).
+				// Load dispatch_work first, as the ACP worker scenario does.
+				if requestCount.Load() == 0 {
+					declared := func(name string) bool {
+						for _, tool := range req.Tools {
+							if tool.Name == name {
+								return true
+							}
+						}
+						return false
+					}
+					if !declared("dispatch_work") && declared("load_tools") {
+						emitPersonaCall(w, "load-dispatch_work", "load_tools", map[string]any{"tools": []string{"dispatch_work"}})
+						return
+					}
+				}
 				if requestCount.Add(1) == 1 {
 					available := false
 					for _, tool := range req.Tools {
@@ -430,7 +446,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   if(m.params.protocolVersion!==1||m.params.clientCapabilities.fs||m.params.clientCapabilities.terminal)throw Error('unexpected capabilities');
   reply(m.id,{protocolVersion:1,agentCapabilities:{loadSession:true},...(name==='cursor-agent'?{}:{agentInfo:{name:'gemini',version:'gemini-fixture-210'}})});break;
  case 'session/new':
-  if(m.params.cwd!==process.cwd()||m.params.mcpServers.length!==0)throw Error('unexpected session setup');
+  if(m.params.cwd!==process.cwd()||m.params.mcpServers.length!==1||m.params.mcpServers[0].name!=='lina'||m.params.mcpServers[0].args[0]!=='worker-tools')throw Error('unexpected session setup');
   if(name==='cursor-agent'&&process.env.LINA_ACP_CASE==='needs-sign-in') {
    send({id:m.id,error:{code:-32000,message:'Authentication required',data:{private:'account-detail-must-stay-private'}}});break;
   }

@@ -592,6 +592,13 @@ Contract: [surfaces.md](surfaces.md#progress-at-a-glance), [work-and-delegation.
 
 The work panel is the primary way to see work in the TUI: a sidebar at the right of the conversation with one card per 일. The person reads the 일, not the workers. Every string follows the wording rule of [surfaces.md](surfaces.md#default-view). The TUI computes no stage, order, state or text of work; it draws Core's progress lines and counts only the cards it folds.
 
+Core's `card_order` selects the flat card sequence. The shared overview remains
+in goal-child order for indented text views; projecting cards never mutates it.
+Without `card_order`, cards retain the received row order.
+`TestM3ProgressHierarchyInstalledCore` (`e2e/m3/progress-hierarchy.json`) checks
+both orders through installed Core, restart, and the 120x34 sidebar and 100x34
+overlay in Korean and English with Unicode and ASCII glyphs.
+
 **Place.** In the wide tier the panel is always shown while the `progress` capability is granted. It is a column from below the header to above the composer rule, 40 columns wide, or a third of the terminal width up to 56 columns (P), separated from the conversation by one blank column. With no cards it shows only its one-word title. While it is shown, the At a glance card row and the running strip take no rows, and their counts stay in the status line. The Waiting for me card row stays under the conversation, where decisions are answered. In the medium and narrow tiers the same panel is an overlay over the conversation region, opened by Ctrl+P and closed by Esc. It replaces the full-screen progress view.
 
 **Cards.** Below the title, each 일 is a card of exactly two rows, and nothing else by default:
@@ -612,7 +619,17 @@ The work panel is the primary way to see work in the TUI: a sidebar at the right
 - The second row, indented two cells, is Core's Now: what the 일 is doing right now, in a few words ([work-and-delegation.md](work-and-delegation.md#progress-line)). It is truncated the same way and never wraps.
 - A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too.
 - Cards keep Core's order: waiting on the person, running, waiting on something outside, done. Done cards fold into one row. When the cards do not fit, the last row (`…`, or `...` in ASCII) gives the number of hidden cards and, when any of them waits on the person, how many. Cards that wait on the person are hidden last. The numbers always equal the hidden cards.
-- The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time.
+- The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time. Its timer uses the next elapsed-minute boundary and the existing Core clock offset. An absent start stays unknown. Snapshot replacement and live updates share the same typed card projection; neither changes conversation focus or the reading anchor.
+
+The alpha card path is exercised by `TestM3WorkPanelInstalledCoreMatrix` and
+`TestM3WorkPanelLiveCodexWorker`, using `e2e/m3/work-panel.json`. The former reads
+replayed work through installed Core in both languages and glyph modes at 120x34
+and 100x34, including 1, 5, 20 and 50 cards. The latter launches the Codex protocol
+fixture through Core, observes the same start and changing person-request activity
+in a real 120x34 PTY, and checks the resulting artifact and restart. The deterministic
+TUI matrix checks two-row clipping, folded/overflow counts and 50 streamed changes
+with a retained draft, focus and reading anchor. Stage-list and scheduling-control
+evaluations remain with their corresponding implementation issues.
 
 **Views.** Ctrl+P on the focused panel switches between cards and a compact view of one row per 일: the name, then Now, then the elapsed time right-aligned; Now shrinks first. Left and Right change the state filter: all, needs you, running, waiting, done. The title shows the filter when it is not all, and fold and count rows then count only that state.
 
@@ -637,7 +654,14 @@ The work panel is the primary way to see work in the TUI: a sidebar at the right
 - When the entries do not fit, the leading done entries fold into one row that keeps the last done entry visible, and the entries after the first next one fold into a count. The current stage never folds. Expanded steps fold like cards: waiting on the person first, then working, waiting and done, then a count row.
 - Ctrl+O opens the Details of the selected card, entry or step in the pager. Esc goes back one level: from the steps to the stage list, from the stage list to the cards, and from the cards to the composer with its draft.
 
-**Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place.
+**Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place. In the focused card view, the selected name starts with the action mark (`›`, or `>` in ASCII); its width comes from the name budget so elapsed time stays intact.
+
+In both the sidebar and overlay, card navigation scrolls just enough to keep
+both rows of the selected card visible, including after a resize or progress
+update. Folded done cards are skipped. The overflow row counts all cards outside
+the visible window, before and after it, including those waiting on the person.
+The initial window starts at the top of Core's order; scrolling never changes
+that order, the conversation's reading position or the draft.
 
 **Updates.** Topic updates replace cards in place. They never move focus, scroll the conversation, change the draft or close an opened 일 view. From Core's commit of a work event to the PTY frame that shows the changed card, the 95th percentile is at most 500 ms and the maximum at most 1 s with 50 일 running (P).
 
@@ -836,6 +860,14 @@ renamed since startup. Agent IDs remain routing data. The installed-Core test
 accepts its approval, answers its question and checks the resulting artifact.
 It distinguishes the worker's owning coding agent from the conversation agent
 and covers renaming that owner after Core starts.
+
+After answering a question and sending Esc, alpha acceptance waits for a complete
+connected conversation frame with the composer cursor and footer. The installed-Core
+question journey uses the same barrier. An idle worker may have no card while its
+continuation starts or after it finishes; the owner journey still requires a
+delivered result and an independently verified artifact. Card checks hold the worker
+at an unanswered request and wait for its name, documented elapsed time and current
+activity. Recorder regressions cover the overlay, split redraw and delayed progress.
 
 **Sign-in.** The TUI is the client side of one relay for plugin and model-provider sign-in. It opens a loopback listener and reports its port, opens the system browser when it runs locally, and relays `code`, `state` and `iss`, or the `error` fields, exactly as received. Over SSH it takes a pasted URL instead. A secret the person types, such as an API key, is a masked field with no undo and no history, and travels once to Core.
 
@@ -1271,7 +1303,7 @@ The reducer, render, layout and `clientapi` packages are Charm-free, so a fallba
 - Terminal probes are skipped over SSH and in Apple Terminal. LINA sends its own DECRQM probe with a deadline, so a late reply cannot leak to the shell.
 - Tab stops are reset on start, paste buffering has no cap, and the flush ticker runs when idle.
 
-**The spike gate** runs on real terminals: at least one on macOS, the default terminal of LINA OS, and one reached over SSH. The owner confirms the list. The bounds below are LINA's proposals (P), derived from perception limits (one 60 Hz frame, key echo, first paint). They are written into the spike issue before the run. A miss selects a fallback and never loosens a bound.
+**The spike gate** runs on real terminals: at least one on macOS, one on Linux (Omarchy), and one reached over SSH. The owner confirms the list. The bounds below are LINA's proposals (P), derived from perception limits (one 60 Hz frame, key echo, first paint). They are written into the spike issue before the run. A miss selects a fallback and never loosens a bound.
 
 | Id | Question | Proposed bound (P) |
 | --- | --- | --- |
@@ -1493,7 +1525,7 @@ rendering checks; they do not replace the physical terminal and IME spike.
 - Contrast checks require at least 4.5:1 for text, muted text and accent on canvas and surface, in light, dark and high contrast. The source also specifies tested 256-colour and 16-colour mappings. Dark ANSI16 uses bright white for the accent where standard blue cannot pass; user-redefined ANSI palettes can change physical contrast. Hairlines are decorative, never the only state indicator.
 - No state is shown by colour alone: each has a mark and a word. Glyph sets are tokens, in plain Unicode and ASCII, and none needs a private-use glyph.
 - Connection-screen display overrides are `LINA_THEME=light|dark|high-contrast` and `LINA_GLYPHS=ascii`. Otherwise `COLORFGBG` selects a light or dark background (dark by default); terminal capability selects RGB, 256 or 16 colours. Nonempty `NO_COLOR` preserves the layout, marks, labels and actions without escapes; subsequent states append compact lines. These overrides persist no preferences.
-- On LINA OS the complete TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)); theme-file discovery remains part of platform preferences work.
+- On Linux (Omarchy) the complete TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)); theme-file discovery remains part of platform preferences work.
 - Every code in the closed lists has an entry in both the Korean and English catalogs, checked by id and never by wording.
 
 Core's TUI turn instructions describe the surface's rendered Markdown: paragraphs, headings, bold, italic, inline code, links, ordered and unordered lists, block quotes and fenced code. They request simple formatting, short lists, prose or code for wide tables, and no HTML or terminal escapes. The `persona-tui-v1` instruction format records this prefix for exact replay; older `persona-v1` turns retain their original prefix.
@@ -1543,7 +1575,7 @@ removed and requires connection-only startup.
 
 Withdrawn without an id: the hand-off pane, which the agent talk log replaces, and the work-panel worker mirror, which no contract defines.
 
-Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; locales beyond Korean and English; and non-competition evidence for the TUI on a device-OS install ([non-competition.md](non-competition.md)).
+Open points, each decided by its owner or by measurement: the side-pane width (S11); Korean table rendering (S10); the terminal list of the spike gate; image paste over SSH; how the shared list of slash commands travels (a schema matter); whether a copy by OSC 52 on an explicit key fits the clipboard rule of [surfaces.md](surfaces.md#launcher) and [non-competition.md](non-competition.md), which S5 measures for support; locales beyond Korean and English; and non-competition evidence for the TUI on a Linux main install ([non-competition.md](non-competition.md)).
 
 ### Memory and agent command requests
 
@@ -1562,8 +1594,11 @@ operation is shown locally and never becomes a model prompt.
   supersedes that item with a newly sourced statement, retaining its scope and
   holder. `/memory forget <id>` uses Core's recoverable removal flow; the next
   recall and next model request exclude it. Results acknowledge committed ids.
-- `/agents` lists ids and names. `/agents create <name>` uses the LINA preset;
-  `/agents choose <id>` changes this client's conversation and memory focus;
+- `/agents` lists ids and names. Each entry shows the name, role and source
+  preset, then a labelled agent id and its `main:<agent_id>` conversation.
+  `/agents create <name>` uses the LINA preset;
+  `/agents choose <id>` takes either the agent id or that conversation id and
+  changes this client's conversation and memory focus;
   `/agents rename <id> <name>` keeps the id; `/agents delete <id>` uses the
   existing agent trash transition and ends its bindings. Selecting another
   agent drops the old conversation display and subscriptions, while Core keeps

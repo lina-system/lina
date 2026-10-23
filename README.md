@@ -24,6 +24,6 @@ LINA takes responsibility for the work and proves the result, without making you
 
 LINA is licensed under the Apache License, Version 2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)). Third-party components keep their own licenses ([THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)). Contributions are accepted under the same license ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
-This repository holds LINA Core, the terminal UI, Node and the published protocol between the app and LINA Core, all under Apache-2.0. The LINA app for desktop and mobile is closed source: it lives in a separate private repository and ships as a binary.
+This repository holds LINA Core, the terminal UI, Node and the published protocol between the app and LINA Core, all under Apache-2.0. The LINA app for desktop and mobile is open source under the same license and is developed in its own repository, [lina-app](https://github.com/thisisjun786/lina-app). LINA OS is a separate, optional project in [lina-os](https://github.com/thisisjun786/lina-os).
 
-Report a problem or an idea for any part of LINA, the app included, in this repository: problems as Issues (app problems with the `app` label), ideas in Discussions. The app can also draft a report for you; it posts only after you confirm.
+Report a problem or an idea for Core, the terminal UI or Node in this repository: problems as Issues, ideas in Discussions. App problems go to the [lina-app Issues](https://github.com/thisisjun786/lina-app/issues). The app can also draft a report for you; it posts only after you confirm.

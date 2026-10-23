@@ -85,6 +85,13 @@ The process harness keeps the spawning OS thread alive until the child is
 reaped. Restored-memory and replay startup paths use the same readiness check
 as installs.
 
+Installed goal-worker recovery scenarios use the Linux worker-load fixture on
+every Core start. The registered goal monitor controls initial assignment;
+the recovery queue separately samples OS load. A private Bubblewrap mount of
+`/proc/loadavg` keeps both recovery outcomes independent of unrelated host load,
+while preserving the installed binary and its normal capacity checks. Failures
+report the dispatch state, wait reason and observed worker launches.
+
 `scripts/verify/scope.mjs` registers `e2e/` and `./e2e/...` with the `lina`
 component. Foundation builds, vets, analyzes and runs selected tests uncached.
 Its scenario planner follows subprocess command dependencies as well as Go
@@ -123,3 +130,59 @@ endpoint or a broken stream fails the journey. Ordinary fixture tests still run.
 Builds and ordinary product subprocesses retain their isolated environment;
 only the opted-in probe and the headless journey's Core receive the explicit
 provider configuration.
+
+## Alpha owner-use acceptance
+
+`TestAlphaOwnerKoreanRecallAndSecrets`, `TestAlphaOwnerCodingAndQuestion` and
+`TestAlphaOwnerTodoAndMissingCodex` install Core into fresh private state and
+operate the real TUI through a 120x34 PTY. They require explicit
+`LINA_QA_REAL_MODEL=1`, the owner's Responses environment, and the selected
+`claude-opus-5-5` model. The coding case also uses the installed Codex's own setup.
+No scripted provider response is used by these owner cases. `TestM1TUIChatPasteInstalledCore`
+provides the separate account-free paste regression; `TestAlphaWorkerCrashInstalledCore`
+checks that killing Core does not erase an acknowledged worker from its public
+lane snapshot.
+
+The coding journey checks the delivered answer, result file, executable function
+and original worker session after either a form answer or a spoken continuation.
+It does not require a card during that transition: the worker may still be idle
+or already finished. `TestM3WorkPanelLiveCodexWorker` checks the card while Core's
+worker is held at an unanswered approval or question, then verifies its artifact
+and restart. `TestAlphaWorkCardWaitsForProgress` holds back the card and its activity
+in separate recorder frames, without relying on execution speed.
+
+Set `LINA_ALPHA_CAPTURES` to a private absolute output directory to retain
+rendered text, ANSI output and terminal cells at each observed transition.
+Use synthetic conversation facts and a generated canary for secret checks,
+never an actual credential. Route credentials must remain in the test's
+process environment, outside logs, captures and version control.
+
+For a live coding run, `LINA_ALPHA_APPROVALS` names a separate private operator
+inbox. A worker approval is saved under its card-specific digest. The test waits
+for the operator to inspect that exact request and write `once` to its matching
+`.answer` file, then uses the TUI's normal selection and confirmation controls.
+It never automatically approves generated commands or changes worker settings.
+
+```sh
+go test -count=1 -v -timeout=12m ./e2e/m1 -run '^TestAlphaOwner'
+```
+
+On Linux, the residency collector samples the installed Core's RSS and
+high-water mark once per second and checks its public protocol every minute.
+It rejects a process/epoch change, an exit, a missing counter, a sample gap over
+two seconds, or a peak above the predeclared 256 MiB budget. It records the source
+commit, source cleanliness and installed binary digest. The full run requires a
+clean source commit, the real model opt-in and 86,400 measured seconds; its TUI
+stays attached. The 65-second collector probe exercises a periodic health request and is always recorded as incomplete
+acceptance, even when the probe test succeeds. These are Linux Core measurements,
+not the separate two-platform V2 service-manager qualification.
+
+```sh
+LINA_ALPHA_RESIDENCY=probe go test -count=1 -v -timeout=12m ./e2e/m1 -run '^TestAlphaResidencyProbe$'
+LINA_ALPHA_RESIDENCY=24h go test -count=1 -v -timeout=25h ./e2e/m1 -run '^TestAlphaResidency24Hours$'
+```
+
+Run these commands through the environment's heavy-test scheduler when required.
+Every required scenario must pass on the same final dev commit. A live-provider
+skip, a short residency probe or a passing account-free test is not alpha
+acceptance evidence.

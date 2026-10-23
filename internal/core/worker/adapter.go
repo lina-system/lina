@@ -127,6 +127,10 @@ const (
 )
 
 type ThreadSnapshot struct {
+	// Finish belongs to the exact requested turn. EffectsKnown is true only when
+	// a complete read establishes that no effect is awaiting reconciliation.
+	Finish       *Finish
+	EffectsKnown bool
 	// Output is the latest completed assistant message in the current turn.
 	Output                     string
 	Thread                     Thread

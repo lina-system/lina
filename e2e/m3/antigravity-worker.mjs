@@ -22,6 +22,16 @@ else {
   fs.writeFileSync(path.join(root, 'packet'), prompt);
   if (!prompt.includes('result.txt')) throw Error('task packet lost');
   console.log(JSON.stringify({event:'init',conversation_id:'fixture',init:{cwd:process.cwd(),permission_mode:'request-review'}}));
+  if (process.env.LINA_GOAL_MODE?.startsWith('worker-recovery')) {
+    const launches = fs.readFileSync(path.join(root, 'launches'), 'utf8').trim().split('\n').length;
+    const retained = path.join(root, 'recovery-workdir');
+    if (launches === 1) fs.writeFileSync(retained, process.cwd());
+    else if (launches !== 2 || fs.readFileSync(retained, 'utf8') !== process.cwd() || !prompt.includes('Do not recreate or clean the worktree')) throw Error('invalid recovery attempt');
+    if (launches === 1 || process.env.LINA_GOAL_MODE === 'worker-recovery-failed') {
+      console.log(JSON.stringify({event:'result',result:{conversation_id:'fixture',status:'ERROR',error:'worker failed before tool activity'}}));
+      process.exit(0);
+    }
+  }
   if (mode === 'quota-fallback' || mode === 'double-quota') {
     fs.appendFileSync(path.join(root,'attempts'),'antigravity\n');
     fs.writeFileSync(path.join(root,'first-packet'),prompt);

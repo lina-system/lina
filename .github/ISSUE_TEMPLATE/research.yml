@@ -1,0 +1,26 @@
+name: Research
+description: Find out before building; ends in a note and filed issues.
+labels: [research]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What must be decided, and why now.
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: Sources and method
+      description: What to read or measure. Record versions and dates.
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      value: |
+        - [ ] Note with sources and numbers.
+        - [ ] Decision recorded in the design docs.
+        - [ ] Implementation issues filed with Depends on.
+    validations:
+      required: true

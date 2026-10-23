@@ -163,12 +163,12 @@ A row is keyed by these columns and names no product version: compatibility is d
 Rules:
 
 - The table of every build lists the components built together with it from the same commit, with that commit's conformance fixture runs as their evidence. So the TUI and LINA Core of one build find their row, and a development build can run the acceptance of a platform or app that is not accepted yet.
-- A release build contains only the platforms and apps that have passed their acceptance ([runtime.md](runtime.md), [surfaces.md](surfaces.md)). Others are built only as development builds, so a release table never lists an unaccepted platform or app. Rows for the LINA app, Node and LINA Core inside LINA OS also need the failure injections below before they enter a release.
+- A release build contains only the platforms and apps that have passed their acceptance ([runtime.md](runtime.md), [surfaces.md](surfaces.md)). Others are built only as development builds, so a release table never lists an unaccepted platform or app. Rows for the LINA app, Node and LINA Core also need the failure injections below before they enter a release.
 - Any other row is added only after its combination is tested and accepted. Nothing is listed by assumption.
 - Every listed combination has a passing test. Every unlisted combination is refused cleanly, and the refusal is reported to the user.
 - A row never widens to cover another protocol version. Another protocol version needs its own row and its own evidence.
 
-In a release manifest, a row for a LINA component (the LINA app, Node, or LINA Core inside LINA OS) is accepted only after the failure injections of [runtime.md](runtime.md) pass for that composition.
+In a release manifest, a row for a LINA component (the LINA app, Node or LINA Core) is accepted only after the failure injections of [runtime.md](runtime.md) pass for that composition.
 
 ## Conformance fixtures
 
@@ -473,6 +473,8 @@ The closed list of types for version 1.0:
 
 One more type, `app`, is reserved for a later view that a plugin supplies ([integrations.md](integrations.md)). It is not part of version 1.0, no party sends or accepts it, and its fallback is the tool's text result.
 
+Two types for generated UI, `surface` (an A2UI v0.9 card from LINA's catalog) and `mock` (a drawn mock whose body references its page bundle and PNG as assets), and the client kind `surface_action` are reserved for a later minor version. Their rules are in [surfaces.md](surfaces.md#generated-ui). Until that version no party sends or accepts them; a client that does not render them gets their `text`. A `surface` body is data under the rules below: it names catalog widgets and data, never code or a URL to fetch.
+
 Rules:
 
 - Bodies are data only. No type holds HTML, script, an expression, or a URL that a renderer would fetch. A chart and a diagram are LINA's own closed specs, never the source text of another tool's language, because a spec language that can evaluate an expression or load a URL is not data. An image in a document is a reference to a material by asset id and revision, never a URL. A link in text is text and opens only when the person chooses, through the system.
@@ -665,6 +667,23 @@ never means zero. Stage and unknown are codes localized by the client. An option
 `state` uses the `running_state` display codes for an observed conversation-worker
 execution state; it does not supply a plan stage or completion verdict. Older
 clients may omit this additional presentation field.
+
+The optional `started_at` and `finished_at` fields are RFC 3339 instants recorded
+by Core; `now` is Core's short current-activity line. The TUI applies its snapshot
+clock offset when displaying elapsed minutes. Missing timestamps remain unknown,
+including work recorded before Core began retaining them. Clients never substitute
+a connection time or a local countdown. A finish is supplied only for a completed
+work verdict, not merely an idle worker. Work cards, live conversation workers and
+independent background runs contribute rows without duplicating the same task.
+Core orders cards needing the person first, then running, then other waiting or
+unobserved work, then done. The optional `card_order` array in `progress` and
+`progress_update` carries the opaque refs of all non-goal rows in that order,
+with ties retaining overview order. The shared `rows` keep goals immediately
+before their children with their original depth. Clients use `card_order` only
+for flat cards and count only the cards they fold or omit. Without it, cards
+follow row order; unknown or repeated refs are ignored, and any unlisted cards
+follow in row order. These fields are additive in client 1.0; old clients ignore
+them and new clients accept their absence.
 
 A `progress_update` replaces the overview atomically, retaining the normal topic
 cursor and snapshot/replay behavior. A changed full waiting list advances this

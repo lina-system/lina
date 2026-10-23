@@ -38,6 +38,7 @@ import (
 
 // turnState holds the inputs and mutable state shared by a conversation turn's callbacks.
 type turnState struct {
+	activity           lease.Lease
 	runtime            *conversationRuntime
 	input              ledger.Event
 	turnID             string
@@ -72,6 +73,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	releaseCredentials := r.vault.BeginTurn()
 	defer releaseCredentials()
 	s := turnState{
+		activity:  activity,
 		runtime:   r,
 		input:     input,
 		turnID:    turnID,
@@ -108,59 +110,8 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
 		Digest: assemble.Digest,
 	}
-	complete := func(ctx context.Context, db turn.Canon) error {
-		if s.promoted.ID != "" {
-			now := time.Now()
-			s.completed = append(s.completed, ledger.Admission{Entry: guard.EntrySystem, Input: ledger.Input{
-				ID: "handoff:" + turnID, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface,
-				OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", ScaffoldKind: "run_handoff",
-				Body: design.Text(eventLanguage(input), "notice.handoff"),
-			}})
-		}
-		if len(s.completed) == 0 {
-			return db.Write(ctx, func(*canon.Tx) error { return nil })
-		}
-		// Adapt the existing filter's generated draft into the same batch as all
-		// completed items. Turn completion, sources and cards commit together.
-		var batch []ledger.Admission
-		for _, item := range s.completed {
-			batch = append(batch, item)
-			masked, err := secrets.Mask(item.Input.Body)
-			if err != nil {
-				return err
-			}
-			filter, err := conversationFilter(s.replyShapes)
-			if err != nil {
-				return err
-			}
-			view, err := filter.Push(masked.Text())
-			if err != nil {
-				return err
-			}
-			if item.Entry == guard.EntryAgent {
-				batch = append(batch, filter.Check().Admission(item.Input))
-			}
-			if view.Card != nil {
-				card := r.replyCard(item.Input.ID, turnID, view, eventLanguage(input))
-				body, err := json.Marshal(card.Reference(item.Input.ID))
-				if err != nil {
-					return err
-				}
-				source := item.Input
-				batch = append(batch, ledger.Admission{Entry: guard.EntrySystem, Input: ledger.Input{
-					ID: card.ResultID, ParentID: source.ID, ConversationID: source.ConversationID, AgentID: source.AgentID,
-					Surface: source.Surface, OccurredAt: source.OccurredAt, RecordedAt: source.RecordedAt, TimeQuality: source.TimeQuality,
-					ScaffoldKind: "result", Body: string(body),
-					Relations: []ledger.Relation{{TargetID: source.ID, Kind: "view_of"}},
-				}})
-			}
-		}
-		var err error
-		s.saved, err = ledger.New(namingCanon{Canon: db, person: r.person, agent: r.agent, names: s.preparedNames, replies: batch}, r.materials).AdmitBatch(ctx, batch)
-		return err
-	}
 	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions}
-	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete,
+	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: s.complete,
 		StartFromTurn: func(ctx context.Context, h budget.Handoff) (budget.Handle, error) {
 			var err error
 			s.promoted, err = r.promoteRun(ctx, input, h)
@@ -210,75 +161,143 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}
 				return r.route.Adapter.Stream(ctx, activity, request)
 			},
-			Observe: func(ctx context.Context, e provider.Event) error {
-				key := fmt.Sprintf("%s:%d:%d", turnID, s.round, e.Index)
-				switch e.Kind {
-				case provider.Delta:
-					if err := r.setPhase(ctx, protocol.TurnPhaseStreaming); err != nil {
-						return err
-					}
-					filter := s.filters[key]
-					if filter == nil {
-						base, err := conversationFilter(s.replyShapes)
-						if err != nil {
-							return err
-						}
-						filter = &conversationReplyStream{filter: base}
-						s.filters[key] = filter
-					}
-					view, delta, err := filter.Push(e.Delta)
-					if err != nil {
-						return err
-					}
-					if delta == "" {
-						return nil
-					}
-					// Persist exactly the safe visible prefix before publishing it.
-					// Deferred loop cleanup cannot run after SIGKILL.
-					if err := turn.New(r.db).CheckpointPartial(ctx, turnID, turn.Partial{Round: s.round - 1, Index: e.Index, Text: filter.sent}); err != nil {
-						return err
-					}
-					if view.Cut {
-						// A result replaces the same stream row, retracting the unfinished
-						// sentence while retaining all subsequent text in its preview.
-						return r.publishReply(ctx, key, turnID, view, eventLanguage(input))
-					}
-					return r.publish(ctx, protocol.KindOutputDelta, key, delta)
-				case provider.ItemDone:
-					var item struct {
-						Type, Role string
-						Content    []struct{ Type, Text string }
-					}
-					if err := json.Unmarshal(e.Item, &item); err != nil {
-						return err
-					}
-					if item.Type != "message" || item.Role != "assistant" {
-						return nil
-					}
-					if err := r.setPhase(ctx, protocol.TurnPhaseStreaming); err != nil {
-						return err
-					}
-					var text strings.Builder
-					for _, part := range item.Content {
-						if part.Type == "output_text" {
-							text.WriteString(part.Text)
-						}
-					}
-					now := time.Now()
-					s.completed = append(s.completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
-					return nil
-				case provider.ToolCallReady:
-					s.questionRoundCalls++
-					return nil
-				case provider.Terminal:
-					if s.questionRoundCalls == 0 || r.route.Adapter.Class() == provider.AgentRuntime {
-						return s.questions.check(ctx)
-					}
-					return nil
-				}
-				return nil
-			},
+			Observe: s.observe,
 		}})
+	return s.publishOutcome(ctx, out, err)
+}
+
+func (s *turnState) complete(ctx context.Context, db turn.Canon) error {
+	r, input, turnID := s.runtime, s.input, s.turnID
+	if s.promoted.ID != "" {
+		now := time.Now()
+		s.completed = append(s.completed, ledger.Admission{Entry: guard.EntrySystem, Input: ledger.Input{
+			ID: "handoff:" + turnID, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface,
+			OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", ScaffoldKind: "run_handoff",
+			Body: design.Text(eventLanguage(input), "notice.handoff"),
+		}})
+	}
+	var err error
+	s.completed, err = conversationTranscript(ctx, db, turnID, input, s.completed)
+	if err != nil {
+		return err
+	}
+	if len(s.completed) == 0 {
+		return db.Write(ctx, func(*canon.Tx) error { return nil })
+	}
+	// Adapt the existing filter's generated draft into the same batch as all
+	// completed items. Turn completion, sources and cards commit together.
+	var batch []ledger.Admission
+	for _, item := range s.completed {
+		batch = append(batch, item)
+		if item.Input.ScaffoldKind == "provider_item" {
+			continue
+		}
+		masked, err := secrets.Mask(item.Input.Body)
+		if err != nil {
+			return err
+		}
+		filter, err := conversationFilter(s.replyShapes)
+		if err != nil {
+			return err
+		}
+		view, err := filter.Push(masked.Text())
+		if err != nil {
+			return err
+		}
+		if item.Entry == guard.EntryAgent {
+			batch = append(batch, filter.Check().Admission(item.Input))
+		}
+		if view.Card != nil {
+			card := r.replyCard(item.Input.ID, turnID, view, eventLanguage(input))
+			body, err := json.Marshal(card.Reference(item.Input.ID))
+			if err != nil {
+				return err
+			}
+			source := item.Input
+			batch = append(batch, ledger.Admission{Entry: guard.EntrySystem, Input: ledger.Input{
+				ID: card.ResultID, ParentID: source.ID, ConversationID: source.ConversationID, AgentID: source.AgentID,
+				Surface: source.Surface, OccurredAt: source.OccurredAt, RecordedAt: source.RecordedAt, TimeQuality: source.TimeQuality,
+				ScaffoldKind: "result", Body: string(body),
+				Relations: []ledger.Relation{{TargetID: source.ID, Kind: "view_of"}},
+			}})
+		}
+	}
+	s.saved, err = ledger.New(namingCanon{Canon: db, person: r.person, agent: r.agent, names: s.preparedNames, replies: batch}, r.materials).AdmitBatch(ctx, batch)
+	return err
+}
+
+func (s *turnState) observe(ctx context.Context, e provider.Event) error {
+	r, input, turnID := s.runtime, s.input, s.turnID
+	key := fmt.Sprintf("%s:%d:%d", turnID, s.round, e.Index)
+	switch e.Kind {
+	case provider.Delta:
+		if err := r.setPhase(ctx, protocol.TurnPhaseStreaming); err != nil {
+			return err
+		}
+		filter := s.filters[key]
+		if filter == nil {
+			base, err := conversationFilter(s.replyShapes)
+			if err != nil {
+				return err
+			}
+			filter = &conversationReplyStream{filter: base}
+			s.filters[key] = filter
+		}
+		view, delta, err := filter.Push(e.Delta)
+		if err != nil {
+			return err
+		}
+		if delta == "" {
+			return nil
+		}
+		// Persist exactly the safe visible prefix before publishing it.
+		// Deferred loop cleanup cannot run after SIGKILL.
+		if err := turn.New(r.db).CheckpointPartial(ctx, turnID, turn.Partial{Round: s.round - 1, Index: e.Index, Text: filter.sent}); err != nil {
+			return err
+		}
+		if view.Cut {
+			// A result replaces the same stream row, retracting the unfinished
+			// sentence while retaining all subsequent text in its preview.
+			return r.publishReply(ctx, key, turnID, view, eventLanguage(input))
+		}
+		return r.publish(ctx, protocol.KindOutputDelta, key, delta)
+	case provider.ItemDone:
+		var item struct {
+			Type, Role string
+			Content    []struct{ Type, Text string }
+		}
+		if err := json.Unmarshal(e.Item, &item); err != nil {
+			return err
+		}
+		if item.Type != "message" || item.Role != "assistant" {
+			return nil
+		}
+		if err := r.setPhase(ctx, protocol.TurnPhaseStreaming); err != nil {
+			return err
+		}
+		var text strings.Builder
+		for _, part := range item.Content {
+			if part.Type == "output_text" {
+				text.WriteString(part.Text)
+			}
+		}
+		now := time.Now()
+		s.completed = append(s.completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
+		return nil
+	case provider.ToolCallReady:
+		s.questionRoundCalls++
+		return nil
+	case provider.Terminal:
+		if s.questionRoundCalls == 0 || r.route.Adapter.Class() == provider.AgentRuntime {
+			return s.questions.check(ctx)
+		}
+		return nil
+	}
+	return nil
+}
+
+func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err error) error {
+	r, input, turnID := s.runtime, s.input, s.turnID
 	if s.promoted.ID != "" {
 		// The handle is durable before execution, and the run outlives this turn.
 		err = errors.Join(err, r.background.service.Release(context.WithoutCancel(ctx), s.promoted.ID))
@@ -287,7 +306,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	// commit together. Publication can be recovered from history after a crash.
 	if err == nil {
 		for _, item := range s.saved {
-			if item.ScaffoldKind == "result" || item.ScaffoldKind == "reply_check" {
+			if item.ScaffoldKind == "provider_item" || item.ScaffoldKind == "result" || item.ScaffoldKind == "reply_check" {
 				continue
 			}
 			if item.SpeakerKind == guard.System {
@@ -440,7 +459,12 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		declarations = nil
 		catalog = nil
 	}
-	if r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
+	if failedWorkerReaction(s.input) {
+		clear(s.bindings)
+		declarations = nil
+		catalog = nil
+	}
+	if !failedWorkerReaction(s.input) && r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
 		state, err := r.agents.State(ctx, r.agent)
 		if err != nil {
 			return turn.PreparedRequest{}, err
@@ -470,14 +494,27 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	if err := pinPersonaState(packet, r.agent, r.conversation); err != nil {
 		return turn.PreparedRequest{}, err
 	}
-	request, report := assemble.Assemble(assemble.Input{
+	request, report, err := r.compactConversation(ctx, assemble.Input{
 		Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
 		AgentID: r.agent, PersonaRevision: persona.Commit, Persona: persona.Layers,
 		AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,
 		Catalog: catalog, AlwaysTools: declarations,
 		History: s.items, Current: current[0], Packet: packet,
 		Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
-	}, conversationRequestSize)
+	}, s.events, func(ctx context.Context, request provider.Request) (provider.Stream, error) {
+		r.dispatchMu.RLock()
+		defer r.dispatchMu.RUnlock()
+		if err := r.validateModelContext(ctx, s.memoryEpoch, s.memoryRefs); err != nil {
+			return nil, err
+		}
+		if err := r.validateChannel(ctx); err != nil {
+			return nil, err
+		}
+		return r.route.Adapter.Stream(ctx, s.activity, request)
+	})
+	if err != nil {
+		return turn.PreparedRequest{}, err
+	}
 	if report.Failure != "" {
 		if report.Failure == assemble.TooLarge {
 			return turn.PreparedRequest{}, turn.ErrRequestTooLarge

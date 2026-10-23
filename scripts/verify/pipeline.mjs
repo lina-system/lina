@@ -117,6 +117,20 @@ async function automation(root, env) {
   return { status: suite.status, output };
 }
 
+function goTimeoutOutput(pkg, output) {
+  const lines = (pkg.pending + output).split('\n');
+  pkg.pending = lines.pop().slice(-16000);
+  for (const line of lines) {
+    if (line.startsWith('panic: test timed out after ')) pkg.timeoutSection = 'header';
+    else if (pkg.timeoutSection === 'header' && line === '\trunning tests:') pkg.timeoutSection = 'tests';
+    else if (pkg.timeoutSection === 'tests') {
+      const match = /^\t\t(.+) \([^)]+\)$/.exec(line);
+      if (match) pkg.running.add(match[1]);
+      else pkg.timeoutSection = null;
+    } else pkg.timeoutSection = null;
+  }
+}
+
 // Keep test identity and bounded diagnostic lines for post-merge QA. Nested
 // failures belong to one top-level scenario, not separate duplicate issues.
 export function goTestOutcomes(output) {
@@ -126,16 +140,29 @@ export function goTestOutcomes(output) {
     let event;
     try { event = JSON.parse(line); } catch { continue; }
     if (!event?.Package) continue;
-    if (!packages.has(event.Package)) packages.set(event.Package, { output: '', started: new Set() });
+    if (!packages.has(event.Package)) packages.set(event.Package, {
+      output: '', states: new Map(), pending: '', timeoutSection: null, running: new Set(),
+    });
     const pkg = packages.get(event.Package);
-    if (event.Output) pkg.output = (pkg.output + event.Output).slice(-16000);
+    if (event.Output) {
+      pkg.output = (pkg.output + event.Output).slice(-16000);
+      goTimeoutOutput(pkg, event.Output);
+    }
     if (!event.Test) {
       // Timeouts and panics can end a package without test-level fail events.
-      // Only tests actually started in this package can inherit that failure.
+      // A parallel test may have emitted run but still be waiting for a slot.
+      // A parent with paused children may still be executing its own body.
+      // Go's timeout running-test list supplies that evidence independently
+      // of the bounded diagnostic tail; otherwise that parent is inconclusive.
       if (event.Action === 'fail') {
-        for (const key of pkg.started) {
-          const record = tests.get(key);
+        for (const record of tests.values()) {
+          if (record.package !== event.Package) continue;
           if (record.result !== 'unknown') continue;
+          const states = [...pkg.states].filter(([name]) => name === record.test || name.startsWith(record.test + '/'));
+          const unfinished = states.filter(([, state]) => ['run', 'cont', 'pause'].includes(state));
+          const active = unfinished.some(([name, state]) => state !== 'pause'
+            && !unfinished.some(([child]) => child.startsWith(name + '/')));
+          if (!active && !states.some(([name, state]) => state === 'fail' || pkg.running.has(name))) continue;
           record.result = 'fail';
           record.output = (record.output + pkg.output).slice(-16000);
         }
@@ -146,7 +173,7 @@ export function goTestOutcomes(output) {
     const key = event.Package + ':' + name;
     if (!tests.has(key)) tests.set(key, { package: event.Package, test: name, result: 'unknown', output: '' });
     const record = tests.get(key);
-    if (event.Action === 'run') pkg.started.add(key);
+    if (['run', 'pause', 'cont', 'pass', 'fail', 'skip'].includes(event.Action)) pkg.states.set(event.Test, event.Action);
     if (event.Output) record.output = (record.output + event.Output).slice(-16000);
     if (event.Test === name && ['pass', 'fail', 'skip'].includes(event.Action)) record.result = event.Action;
   }

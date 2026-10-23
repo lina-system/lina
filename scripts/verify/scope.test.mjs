@@ -617,6 +617,12 @@ for (const path of ['.github/workflows/ci.yml', '.github/workflows/ci.yaml', '.n
   });
 }
 
+for (const path of ['.github/PULL_REQUEST_TEMPLATE.md', '.github/ISSUE_TEMPLATE/bug_report.yml', '.github/ISSUE_TEMPLATE/config.yml']) {
+  test(`${path} is a document`, () => {
+    assert.equal(kind(path), 'docs');
+  });
+}
+
 for (const path of ['.github/workflows/nested/ci.yml', '.github/workflows/script.sh', '.github/actions/example/action.yml']) {
   test(`${path} still needs its own verification registration`, t => {
     const r = repository(t);
@@ -651,6 +657,12 @@ test('brand tokens and generated data select verification while PNGs remain evid
   assert.equal(kind('internal/design/tokens_gen.go'), 'components');
   assert.equal(kind('evidence/brand/dark-connected.png'), 'docs');
   assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
+});
+
+test('generated UI captures are evidence and other evidence images stay unmapped', () => {
+  assert.equal(kind('evidence/generated-ui/c1_choice_light.png'), 'docs');
+  assert.equal(kind('evidence/generated-ui/nested/c1.png'), 'unmapped');
+  assert.equal(kind('evidence/other/capture.png'), 'unmapped');
 });
 
 test('vector rebuilds select automation and their notices remain documents', () => {

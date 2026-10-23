@@ -40,6 +40,21 @@ func TestManagementUsesOpaqueTargetsAndExplicitScope(t *testing.T) {
 	}
 }
 
+func TestAgentOperationsAcceptTheListedConversationID(t *testing.T) {
+	m := conversationShell()
+	m.content.Capabilities = append(m.content.Capabilities, protocol.Capability{Name: "agents", Version: "1.0"})
+	for _, text := range []string{"/agents choose main:opaque-agent", "/agents delete main:opaque-agent", "/agents rename main:opaque-agent New display name"} {
+		_, cmd := m.managementCommand(text)
+		if cmd == nil {
+			t.Fatalf("%s: no request", text)
+		}
+		a := cmd().(shellManagement).Request.(protocol.AgentRequest)
+		if a.AgentID == nil || *a.AgentID != "opaque-agent" {
+			t.Fatalf("%s sent %v, want the agent id", text, a.AgentID)
+		}
+	}
+}
+
 func TestMemoryNextPreservesQueryAndAgentScope(t *testing.T) {
 	m := conversationShell()
 	m.conversation.id = "main:a"

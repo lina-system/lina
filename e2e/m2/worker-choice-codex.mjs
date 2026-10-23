@@ -9,6 +9,7 @@ const root=process.env.LINA_WORKER_FIXTURE;
 const mode=process.env.LINA_WORKER_CASE;
 if(process.argv[2]==='--version') {console.log('codex-cli 99.0.0');process.exit(0);}
 let cwd;
+let status="inProgress";
 const send=v=>console.log(JSON.stringify(v));
 for await (const line of readline.createInterface({input:process.stdin})) {
  const request=JSON.parse(line), p=request.params??{};
@@ -36,20 +37,25 @@ for await (const line of readline.createInterface({input:process.stdin})) {
    // A terminal notification may precede the start reply without turn/started.
    // Keep this ordering explicit so quota handoff never depends on scheduling.
    send({method:'account/rateLimits/updated',params:{rateLimits:{primary:{usedPercent:100,windowDurationMins:300,resetsAt:Math.floor(Date.now()/1000)+3600},secondary:{usedPercent:25,windowDurationMins:10080,resetsAt:Math.floor(Date.now()/1000)+604800}}}});
+   status='failed';
    send({method:'turn/completed',params:{threadId:'choice-codex',turn:{id:'choice-turn',status:'failed',error:{message:'quota',codexErrorInfo:'usageLimitExceeded'}}}});
    reply({turn:{id:'choice-turn',status:'inProgress'}});
    break;
   }
   reply({turn:{id:'choice-turn',status:'inProgress'}});
   if(mode==='double-quota') {
-   send({method:'turn/completed',params:{threadId:'choice-codex',turn:{id:'choice-turn',status:'failed',error:{message:'quota',codexErrorInfo:'usageLimitExceeded'}}}});
+   status='failed';
+  send({method:'turn/completed',params:{threadId:'choice-codex',turn:{id:'choice-turn',status:'failed',error:{message:'quota',codexErrorInfo:'usageLimitExceeded'}}}});
    break;
   }
   // Reuse the synthetic worker's real commit/PR production with its stdout
   // captured; only the Codex envelopes below cross this adapter boundary.
   execFileSync(path.join(path.dirname(process.argv[1]),'agy'),['--output-format','stream-json'],{cwd,input:packet,env:{...process.env,LINA_WORKER_CASE:'success'},stdio:['pipe','pipe','pipe']});
+  status='completed';
   send({method:'turn/completed',params:{threadId:'choice-codex',turn:{id:'choice-turn',status:'completed'}}});break;
  }
+ case 'thread/read':reply({thread:{id:'choice-codex',cwd,status:{type:status==='inProgress'?'active':'idle'}}});break;
+ case 'thread/turns/list':reply({data:[{id:'choice-turn',status,itemsView:'full',items:[],...(status==='failed'?{error:{message:'quota',codexErrorInfo:'usageLimitExceeded'}}:{})}]});break;
  default:throw Error(`unexpected request ${request.method}`);
  }
 }

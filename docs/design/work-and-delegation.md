@@ -1100,7 +1100,7 @@ One adapter drives every worker that speaks the Agent Client Protocol, version 1
 - **Session.** `session/new` carries the worktree as `cwd` and LINA's tool server as the only entry of `mcpServers`; the worker's own MCP servers stay in its own configuration. LINA calls `session/set_config_option` only to apply a model or effort that the worker profile names, and never changes the session mode. The task packet goes out as the first `session/prompt`.
 - **Events.** Message, thought, tool-call and plan updates are progress; `usage_update` is usage; plan entries become stage summaries labelled as the worker's report. An unknown update keeps its JSON and never ends a turn. Sub-agent updates are unstable in version 1 and are not consumed; a worker's own sub-agents stay inside its turn.
 - **Questions and approvals.** `elicitation/create` in form mode takes the authenticated waiting-card answer path, and secret input is unsupported, as for Codex. `session/request_permission` follows Approvals.
-- **Work tools.** LINA's tool server is a stdio MCP server provided by the `lina` command and named in `session/new` for that session only. It holds a token for that one session and relays calls to Core over its local socket. Its tools have the names and schemas of the Codex `lina` tools. It installs nothing in the person's setup and ends with the session.
+- **Work tools.** LINA's tool server is a stdio MCP server provided by the `lina` command and named in `session/new` for that session only. It holds a token for that one session and relays calls to Core over its local socket. Its tools have the names and schemas of the Codex `lina` tools. It installs nothing in the person's setup and ends with the session. Core supplies exactly one server, named `lina`, running `lina worker-tools`. A private per-session socket authenticates its token; Core derives the thread, turn, process generation and binding epoch. Listing tools is allowed during session initialization. Calls require an active turn, and pending calls expire when that turn ends. A foreign token or a call after the turn ends is refused. Tokens are neither persisted nor included in command arguments.
 - **Completion and cancel.** As Completion signals and Control define. A turn that is still open when the process exits is a failure; a `cancelled` stop reason without a cancel from Core is reported as cancelled by the worker.
 - **Client boundary.** Request ids may be strings, integers or null; replies preserve the original id, and an omitted id denotes a notification. Closing the client waits for transport and owned-process teardown even when another failure started cleanup. The shared client marks load replay before publishing updates and clears that mark when it reads the load response. Its pending permission handles expire when the prompt replies. Cancelling a local wait leaves the operation outstanding; only an explicit `session/cancel` requests interruption. A stalled consumer that fills a client event queue fails the connection rather than dropping progress or blocking completion.
 - **Recovery.** Core records the session id. Once-only recovery starts the same command again in the same worktree and sends `session/resume` where the worker advertises it, otherwise `session/load`. The history that `session/load` replays is not reported again as new progress. A worker that offers neither is restarted with a new session.
@@ -1120,8 +1120,16 @@ Card observations are coalesced at 250 ms intervals, with a final flush before
 the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
-This lifecycle slice advertises progress and completion. Approval/question
-routing, work-tool MCP, steering, quota and recovery remain separate integrations;
+The adapter advertises progress, completion, work tools, approvals and questions. ACP
+requests use the existing worker authority and waiting-card bridge, preserving
+the originating conversation. Cards identify the ACP worker; Codex cards retain
+their existing behavior. Form fields preserve string, number, integer, boolean
+and enum values; multi-select arrays use a text field containing a JSON array.
+Core validates the requested schema before consuming an accepted form answer.
+Secret and unsupported forms are declined without requesting secret input.
+A pending native decision leaves the prompt's work tools available; prompt
+completion expires both decision and work-tool requests.
+Steering, quota and recovery remain separate integrations;
 requesting a capability that is not implemented fails before dispatch.
 
 #### Claude Code through ACP
@@ -1312,6 +1320,7 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 - When the worker asks for an approval (for Codex: a command, a file change or permissions; for an ACP worker: `session/request_permission`), the adapter routes the request to the originating conversation, and the person's answer goes back to the worker. On a remote device the Node relays both.
 - Scheduled workers use the same conversation bridge. A worker's request withdrawal stops its matching question or approval card. Later answers cannot reach the worker, and other tasks keep their pending decisions. The scheduled task returns to working only when no request remains pending; withdrawal does not release its execution capacity or write-area lease.
 - For an ACP worker, the person's once maps to the worker's `allow_once` option and deny to `reject_once`. LINA never selects `allow_always` or `reject_always`, because they change the rules the worker remembers in the person's setup. A cancel answers every pending request of the turn with `cancelled`, as the protocol requires.
+- ACP answers are bound to the active session, turn, process generation and binding epoch. Duplicate, stale and foreign answers cannot reach the worker. If an offered once option is missing or ambiguous, Core cancels the turn rather than selecting a remembered option. Approval answers use the existing durable claim before delivery; a restart stops unused approvals, and form answers are never replayed.
 - The worker's own sandbox and approval mode decide what it asks. LINA imposes no sandbox or approval policy of its own on a worker.
 - Arguments of the worker's tools are never rewritten (`updatedInput` is never used).
 - A linked worktree shares the common `.git`, so the protected-ref check is what keeps a worker's result to its own branch (see GitHub writes and merges).
@@ -1321,8 +1330,8 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 - LINA's work tools reach a worker through its adapter: for Codex, `thread/start.dynamicTools` in the namespace `lina`. LINA Core identifies the caller by thread, turn and call ids. For an ACP worker, it is one stdio MCP server that `session/new` names for that session only (see ACP adapter). For another worker, the adapter uses the per-run mechanism of that tool that installs nothing in the user's setup. Where a tool has no such channel, the adapter builds the receipt from the tool's final result and the pull request it opened, and marks it adapter-derived.
 - The tools are: submit a completion receipt; ask a question; send a coordination request (to LINA Core only, never to another worker); read the task projection, which is the LINA materials and memory projections the task may read. GitHub work and other integrations need no LINA tool; the worker uses its own setup.
 - LINA Core declares the tools and handles `item/tool/call`, or the MCP tool calls of an ACP worker's session server. The receipt and question schemas are LINA's own and are versioned with the worker adapter.
-- Scheduled `ask` calls and native worker questions retain the originating person, agent and conversation. Answers use the recorded request and thread/turn binding. Foreign and stale answers are refused; repeated answers return their recorded outcome without a second send.
-- Only the worker thread itself submits receipts.
+- Scheduled `ask` calls and native worker questions retain the originating person, agent and conversation. Their question forms name the worker that asked. Answers use the recorded request and thread/turn binding. Foreign and stale answers are refused; repeated answers return their recorded outcome without a second send.
+- Only the worker thread itself submits receipts. ACP uses the same Core handlers and schemas as Codex. Accepted receipt claims retain the session turn in the receipt and the process generation and binding epoch in their durable event identity; they never verify or complete the task.
 - A projection read returns only the scope the task allows, carries a revision, and never returns a revoked item. A write happens only on an explicit request and passes the grant check.
 
 ### Completion receipt
@@ -1395,6 +1404,47 @@ Optional: when the repository has required checks and auto-merge, LINA Core may 
 - A Node that disconnects is handled by the Node rules, not the stall rule: the effects of its running turn are unknown and are reconciled first.
 - A landing that leaves another task's pull request unmergeable sends that task back once to the same worker as a rebase request. LINA Core never resolves a conflict itself, and a second failure goes to the person.
 - None of this interrupts the person. The running list changes; surfaces.md governs the few events that notify.
+
+The installed recovery path retains the original task binding and the recovery
+allowance before it sends continuation. Core reads the exact Codex turn, with
+complete item history, after resuming its thread. A read failure, an incomplete
+history, a lost pending request or an effect without independent evidence keeps
+the task unknown and prevents input. This also applies when a turn is terminal;
+a command's exit code does not establish its external effects. A continuation
+whose send outcome is unknown is never resent. Restart preserves the allowance. Restoring a backup disables captured recovery and queued dispatch authority while preserving observations and receipts.
+A second settled failure creates one persistent decision row in the originating
+conversation. Its choices keep work paused or stop it; neither starts a third
+automatic attempt. Files, branches and earlier receipts remain intact.
+
+Goal workers use the same recovery queue. A committed recovery allowance admits
+their queued attempt without a conversation tool-call receipt, because the goal
+engine starts the original worker directly. Core revalidates the goal action
+before claiming and starting recovery; cancellation, changed scope and unknown
+effects still prevent another attempt. Goal observation only reads the dispatch.
+
+Claude and Antigravity dispatch can recover once from a committed terminal
+snapshot whose full observation contains no tool activity. The second attempt
+uses the same pinned base and worktree and keeps separate receipt artifacts.
+A stream without a final result, tool activity requiring readback, or an
+unobserved process after Core dies remains unknown. These headless adapters do
+not claim a persisted-thread read operation they do not provide. Reconciliation
+uses the existing events and a five-minute safety sweep; it does not call a model.
+A first live worker failure keeps its normal result response, with no execution tools in that response. The known failure stays visible while unknown effects retain their directory fence. The response cannot grant another worker attempt.
+Confirmed successful completion evidence uses the normal result-delivery inbox. Its separate
+conversation response neither replays worker input nor grants another attempt.
+An earlier connection-loss notice cannot suppress a later confirmed terminal
+result for the same attempt and turn. Core retains both observations and admits
+the confirmed result once, including after rebinding or restarting. Repeated
+terminal observations share one result identity; a successful live completion
+and its later reconciliation do not create separate responses.
+A terminal read does not consume the worker's completion notification: a later
+live event still reaches Core once. Input admission rechecks recovery state
+under the same control lock as reconciliation before releasing reservations
+or sending input.
+A delayed event may deliver an earlier turn's result, but only an event matching
+the current recovery thread and turn can change that recovery state.
+Core keeps reported output with its execution identity. An earlier turn's
+message or completion cannot replace or clear another turn's pending output.
 
 ## Judgment and delivery
 
@@ -1960,9 +2010,11 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 - The stage of an 일 whose work runs as a goal is the current entry of its stage list (see Stages). Otherwise it is the stage of its plan that holds its open 할 일, and an 일 with no stages of its own has four: 설계 (design) while its plan is not confirmed, 만드는 중 (building) while any of its 할 일 is open, 확인 (checking) when every 할 일 has completed and the done condition is being checked, and 끝 (done) when the done condition is met. The bar is the share of its 할 일 that are completed, each counted equally.
 - The progress of a 목표 is the share of its 일 that are done, and its stage is that of its least advanced running 일.
 - Now is, in this order: 확인 필요 (needs you) and the subject of its row while a row of "Waiting for me" belongs to it; else 일시정지 (paused) while the person has paused it; else the name of the earliest-started step in progress, followed by the number of the other steps in progress ("로그인 화면 수정 외 1"); else its queue reason and place, or 대기 (waiting) and its one reason or wait (see Order, pause and run limit); else the stage word 설계, 확인 or 끝. It changes only when a step starts or ends, a wait or row opens or closes, or the goal's pause, rank or place changes.
-- Started is when the goal was handed over, or when a run that serves no goal started. Elapsed time runs from it to now, or to the finish of a done line.
+- Started is when the goal was handed over, or when a run that serves no goal started. Elapsed time runs from it to now, or to the finish of a done line. Core records the instant in new work-ledger events and preserves it through retries and projection rebuilds. Legacy events with no timestamp stay unknown. Live conversation workers use their Core launch time; independent background runs use their recorded creation time.
+- Before a plan's stages exist, Now reflects the observed execution: in progress, running a command, editing files, preparing a reply or using a tool. A pending person request takes precedence and supplies its subject. These are Core activity classifications, not worker prose, command arguments, reasoning or completion claims. Repeated deltas in the same activity do not change Now; an activity change is retained for durable dispatched work. Plan stage and percentage remain unknown until observed.
 - A value that cannot be observed is unknown and is shown as unknown, never as zero, as the rule of Plans says. A line says done only when the done condition is met.
 - A 목표 has a line when one of its 일 runs or something waits on the person. An 일 that belongs to a 목표 is a line below it, and an 일 that stands alone is a line of its own. A goal that is a single 할 일, and a background run that serves no goal, is a line of its own whose stage list is its one step. A finished item leaves the lines once the person has seen it.
+- Shared overview rows keep each goal immediately followed by its children, even when their execution states differ. Core supplies a separate flat card order for the work panel; sorting those cards never moves the shared rows or changes their depth.
 - A line holds no issue number, pull request, check, log or id. The tasks and runs behind a line are the running list (in progress, waiting, landed) limited to that 일 or 목표, and the state words are the same in both. They open on request, from the Details of the line ([surfaces.md](surfaces.md#default-view)).
 - The digest that an external channel shows is made from the same lines ([integrations.md](integrations.md#channels)).
 

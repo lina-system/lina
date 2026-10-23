@@ -10,7 +10,7 @@ The log exists so that LINA can read its own events and find out what failed and
 
 Human-readable text logs are secondary. A component may write them, but nothing in diagnosis depends on them and no acceptance check reads them. When a text log and a structured event disagree, the structured event is the record.
 
-Every component writes the same format. Conversation, task, memory, materials, Node, LINA APP and LINA OS share one schema, so a failure that crosses components can be followed by id from the first event to the last without translating between formats.
+Every component writes the same format. Conversation, task, memory, materials, Node and LINA APP share one schema, so a failure that crosses components can be followed by id from the first event to the last without translating between formats.
 
 Each event records what happened, what caused it, what it produced and what LINA does next.
 
@@ -40,7 +40,7 @@ Rules that apply across fields:
 - `unknown` is a real result, not a placeholder. It is written when the component can't tell whether an effect happened, which is the same meaning the term has in [main-authority.md](main-authority.md).
 - `denied` means an authorization check refused the action before any effect; it is never used for an effect that started and then failed.
 - Cause codes and action codes come from closed allowlists owned by the implementation. A code outside the allowlist is never written.
-- Component names in `component` match the product boundaries in [product-families.md](product-families.md): `app` is LINA APP, `os` is LINA OS, `node` is Node, and the remaining four are LINA Core. Events of the channel gateway are written under `conversation`, because they belong to a conversation; the gateway is not a component of its own.
+- Component names in `component` match the product boundaries in [product-families.md](product-families.md): `app` is LINA APP, `node` is Node, `os` is the host/boot layer (or the optional LINA OS), and the remaining four are LINA Core. Events of the channel gateway are written under `conversation`, because they belong to a conversation; the gateway is not a component of its own.
 
 The table above is the complete field list. A check that compares an event's keys against this table must accept exactly these twelve names and reject anything else.
 

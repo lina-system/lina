@@ -6,9 +6,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/result"
 	"net/http"
@@ -211,12 +213,22 @@ func installedCodeGoal(t *testing.T, mode string) {
 		p := h.command("core", "--state-root", h.root, "--socket", h.socket)
 		h.ctx = operation
 		p.command.Env = append(p.command.Env, "PATH="+workerPath, "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE=success", "LINA_GOAL_FIXTURE_URL="+service.URL, "LINA_GOAL_MODE="+mode, "LINA_RESPONSES_BASE_URL="+model.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+		if strings.HasPrefix(mode, "worker-recovery") {
+			// Recovery uses dispatch's real capacity gate as well as the goal
+			// host report. Keep its sampled load private to this scenario.
+			newWorkerLoad(t, fixture).wrap(t, p)
+		}
 		p.start(t)
 		h.connectWithin(p, time.Minute).Close()
 		waitCoreReady(t, h)
 		return p
 	}
 	core := start()
+	t.Cleanup(func() {
+		if t.Failed() {
+			logWorkerDispatchState(t, h, fixture)
+		}
+	})
 	c, conversation := conversationClient(t, h)
 	events := admittedTurn(t, h, c, conversation, "goal", "Create the result and run it through deployment and verification.")
 	if mode == "no-antigravity" {
@@ -300,12 +312,33 @@ func installedCodeGoal(t *testing.T, mode string) {
 			c, conversation = conversationClient(t, h)
 		}
 	}
+	if strings.HasPrefix(mode, "worker-recovery") {
+		// Observe an actual recovered result before restarting. Startup reads
+		// the durable goal action without waiting for the periodic sweep.
+		lastRecovery := ""
+		waitCodeGoalState(t, h, func(tx *canon.Tx) (bool, error) {
+			var state, code, wait string
+			var attempt int
+			err := tx.QueryRowContext(h.ctx, "SELECT state, COALESCE(json_extract(record,'$.attempt'),0), COALESCE(json_extract(record,'$.code'),''), COALESCE(json_extract(record,'$.wait'),'') FROM worker_dispatch").Scan(&state, &attempt, &code, &wait)
+			observation := fmt.Sprintf("state=%s attempt=%d code=%s wait=%s err=%v", state, attempt, code, wait, err)
+			if observation != lastRecovery {
+				t.Log(observation)
+				lastRecovery = observation
+			}
+			return attempt == 2 && (state == "finished" || state == "decision"), err
+		})
+		c.Close()
+		h.stopCore(core)
+		core = start()
+		c, conversation = conversationClient(t, h)
+		events = nil
+	}
 	done := false
 	inspect := func(e protocol.Envelope) {
 		if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil {
 			done = done || strings.HasPrefix(*item.Text, "Done.")
 			if strings.HasPrefix(*item.Text, "This work needs attention.") {
-				if mode != "public" && mode != "failed-deploy" {
+				if mode != "public" && mode != "failed-deploy" && mode != "worker-recovery-failed" {
 					t.Error("goal blocked: " + *item.Text)
 				}
 				done = true
@@ -337,6 +370,37 @@ func installedCodeGoal(t *testing.T, mode string) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.HasPrefix(mode, "worker-recovery") {
+		var record dispatch.Record
+		var calls int
+		err = db.Read(t.Context(), func(tx *canon.Tx) error {
+			var raw []byte
+			if err := tx.QueryRowContext(t.Context(), "SELECT record FROM worker_dispatch").Scan(&raw); err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &record); err != nil {
+				return err
+			}
+			return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM turn_calls WHERE json_extract(call,'$.Name')='dispatch_work'").Scan(&calls)
+		})
+		launches, readErr := os.ReadFile(filepath.Join(fixture, "launches"))
+		if err != nil || readErr != nil || !record.Goal || record.Recoveries != 1 || record.Attempt != 2 || record.ReturnReceipt != "" || calls != 0 || strings.Count(string(launches), "worker\n") != 2 {
+			t.Fatalf("goal recovery did not run exactly once without a conversation dispatch: record=%+v calls=%d launches=%s err=%v read=%v", record, calls, launches, err, readErr)
+		}
+		if mode == "worker-recovery-failed" {
+			closeDB()
+			if record.State != "decision" || record.DecisionAt == 0 || g.State != goal.GoalBlocked {
+				t.Fatalf("second failure did not stop for a decision: dispatch=%+v goal=%+v", record, g)
+			}
+			core = start()
+			h.stopCore(core)
+			after, err := os.ReadFile(filepath.Join(fixture, "launches"))
+			if err != nil || string(after) != string(launches) {
+				t.Fatalf("restart launched a third attempt: %s %v", after, err)
+			}
+			return
+		}
 	}
 	if mode == "failed-deploy" {
 		closeDB()

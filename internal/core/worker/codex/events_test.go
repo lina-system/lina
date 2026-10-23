@@ -67,3 +67,23 @@ func TestCompletionBeforeStartReplyRetainsTurnBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkPanelActivityFromItemStart(t *testing.T) {
+	for _, tc := range []struct{ item, phase string }{
+		{`{"type":"commandExecution","id":"cmd","command":"private command","cwd":"/private","processId":null,"status":"inProgress","commandActions":[],"aggregatedOutput":null,"exitCode":null,"durationMs":null}`, "command"},
+		{`{"type":"fileChange","id":"file","changes":[],"status":"inProgress"}`, "file_change"},
+	} {
+		s := &Session{snapshot: worker.ThreadSnapshot{Thread: worker.Thread{ID: "thread", TurnID: "turn"}, State: worker.Active}, events: make(chan worker.Event, 257), finished: map[string]bool{}}
+		if err := s.notification([]byte(`{"method":"item/started","params":{"threadId":"thread","turnId":"turn","item":` + tc.item + `}}`)); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case event := <-s.events:
+			if event.Progress == nil || event.Progress.Phase != tc.phase || event.Progress.Text != "" {
+				t.Fatalf("missing or unsafe activity: %+v", event.Progress)
+			}
+		default:
+			t.Fatal("item activity was discarded")
+		}
+	}
+}
