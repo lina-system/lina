@@ -117,6 +117,13 @@ func TestJournalCommitReplayRollbackAndRebuild(t *testing.T) {
 	if len(before) != 1 || before[0].Version != 1 {
 		t.Fatalf("bad projection: %+v", before)
 	}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT OR REPLACE INTO work_events(seq,id,kind,at,body)
+ SELECT seq,'replacement',kind,at,body FROM work_events WHERE id='admit:g'`)
+		return err
+	}); err == nil {
+		t.Fatal("sequence collision replaced the journal's source event")
+	}
 	if err = db.Write(t.Context(), func(tx *canon.Tx) error { _, e := tx.ExecContext(t.Context(), "DELETE FROM work_records"); return e }); err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,70 @@ package canon
 
 import "testing"
 
+func TestWorkEventSequenceReplacementAfterUpgrade(t *testing.T) {
+	cfg := storeConfig(t)
+	all := Migrations()
+	cfg.Migrations = all[:38]
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_events(seq,id,kind,at,body)
+ VALUES(7,'original','goal.admitted',1,'{"preserved":true}');`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations, cfg.Epoch = all, cfg.Epoch+1
+	db = openStore(t, cfg)
+	for _, stmt := range []string{
+		`INSERT OR REPLACE INTO work_events(seq,id,kind,at,body) VALUES(7,'replacement','goal.revised',2,'{}')`,
+		`INSERT OR REPLACE INTO work_events(seq,id,kind,at,body) VALUES(8,'original','goal.revised',2,'{}')`,
+		`INSERT OR REPLACE INTO work_events(seq,id,kind,at,body) VALUES(7,'original','goal.revised',2,'{}')`,
+	} {
+		if err := db.Write(t.Context(), func(tx *Tx) error {
+			_, err := tx.ExecContext(t.Context(), stmt)
+			return err
+		}); err == nil {
+			t.Fatalf("append-only event replaced: %s", stmt)
+		}
+	}
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO work_events(id,kind,at,body) VALUES('next','goal.revised',2,'{}')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Epoch++
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var id, kind, body string
+		var at, count, seq int
+		if err := tx.QueryRowContext(t.Context(), `SELECT id,kind,at,body FROM work_events WHERE seq=7`).Scan(&id, &kind, &at, &body); err != nil {
+			return err
+		}
+		if id != "original" || kind != "goal.admitted" || at != 1 || body != `{"preserved":true}` {
+			t.Fatal("upgrade or replacement changed the original event")
+		}
+		if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM work_events`).Scan(&count); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(t.Context(), `SELECT seq FROM work_events WHERE id='next'`).Scan(&seq); err != nil {
+			return err
+		}
+		if count != 2 || seq <= 7 {
+			t.Fatalf("append after refused replacement: count=%d seq=%d", count, seq)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkLedgerUpgradePreservesPublishedSchemas(t *testing.T) {
 	cfg := storeConfig(t)
 	all := Migrations()

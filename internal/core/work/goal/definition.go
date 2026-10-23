@@ -232,16 +232,26 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		candidate := g
+		candidate.DefinitionPending = true
+		applyDefinition(&candidate, d)
+		invalid := validateGoalState(candidate, true) != nil
 		e.definitions.Store(definitionKey{g.RecordID, rev}, savedDefinition{d, rev, string(r.Data)})
-		if rev == g.RecordRevision {
+		if rev == g.RecordRevision && (!invalid || g.State == GoalStopped || g.DefinitionPending && g.AssessedFailure == "definition:"+rev) {
 			continue
 		}
-		err = e.journal.Update(ctx, Transition{ID: "goal.record:" + g.ID + ":" + rev, Kind: "goal.revised", At: e.cfg.Now().Unix()}, func(v *View) error {
+		eventID := "goal.record:" + g.ID + ":" + rev
+		if invalid {
+			// Also quarantine an invalid revision installed by an older Core.
+			// Its original revision event must remain append-only history.
+			eventID += ":invalid"
+		}
+		err = e.journal.Update(ctx, Transition{ID: eventID, Kind: "goal.revised", At: e.cfg.Now().Unix()}, func(v *View) error {
 			current, err := loadGoal(v, g.ID)
 			if err != nil {
 				return err
 			}
-			if current.RecordRevision == rev {
+			if current.RecordRevision == rev && (!invalid || current.DefinitionPending && current.AssessedFailure == "definition:"+rev) {
 				return errNoChange
 			}
 			if current.RecordRevision != g.RecordRevision {
@@ -264,6 +274,9 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 			current.AttentionID = ""
 			current.BlockedReason = ""
 			current.AssessedFailure = ""
+			if invalid {
+				blockCorrection(&current, "The goal needs a valid done condition and criteria. Correct its record to continue.")
+			}
 			current.Waits = nil
 			current.Checks = nil
 			current.CheckRound++
@@ -293,6 +306,10 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 				if retire {
 					a.State = "finished"
 					a.Superseded = true
+					if t := goalTask(&current, a.TaskID); a.Kind == PlanGoal && t != nil && t.RepairedBy == "" {
+						t.RepairAsked = false
+						a.RetirementReconciled = true
+					}
 				}
 				if err = put(v, "action", a.ID, a); err != nil {
 					return err

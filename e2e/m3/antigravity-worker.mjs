@@ -15,6 +15,7 @@ if (path.basename(process.argv[1]) === 'gh') {
   else console.log(fs.readFileSync(path.join(root, 'pr.json'), 'utf8'));
 } else if (args[0] === '--version') console.log('agy fixture-1');
 else {
+  fs.appendFileSync(path.join(root, 'launches'), 'worker\n');
   if (args.join(' ') !== '--output-format stream-json') throw Error('unexpected settings override');
   if (process.env.LINA_RESPONSES_API_KEY) throw Error('Core provider credential leaked');
   const prompt = fs.readFileSync(0, 'utf8');
