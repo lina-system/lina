@@ -1591,6 +1591,15 @@ Restore prepares a private copy before publishing any area. Removal replay and a
 Pending effects include channel deliveries: captured `queued` and `sending` rows become `unknown` in the same invalidation transaction, before reads or adapters start. Restored messages cannot be claimed for delivery or settled by an old attempt. Their parts, partial-delivery receipts and retry metadata remain available; `sent`, `unknown`, `blocked` and `refused` rows retain their outcomes. This also applies when resuming an interrupted restore.
 
 A pending publication lives under `staging/restore.pending`. Core checks for it while holding its lock, before opening services or minting an epoch, and refuses startup until the restore is completed. Publication saves the replaced areas, installs the replayed removal list and all captured areas, and installs canon last. Each rename and its parent directories are synced. Repeating restore resumes an interrupted publication, reacquires the installed source's lock and reapplies its latest removal history before retiring the marker. Both Core and the backup command refuse a pending publication. The marker is retired only after the whole generation is durable.
+
+The one-time operator's `system/crw-takeover-journal.json` is the sole captured
+file under `system/`. Backup hashes and copies its opaque bytes under the same
+Core lock as canon and records; Core never interprets its source identities.
+Restore replaces it with the captured journal, or removes later reservations
+when the generation contains none, before publishing canon. The same pending
+marker fences the importer and supports resuming journal replacement or removal.
+Other installation and control files retain their existing restore rules. No
+product API, canon schema or release artifact depends on the operator tool.
 `lina backup --state-root <path>` requires Core to be stopped, holds the stable exclusive Core lock through publication, and refuses a running Core without writing state while explaining how to stop it (`systemctl --user stop lina-core.service`, or Ctrl+C for a foreground Core).
 
 The `backup` flow requires the exclusive Core lock and quiesced writers. It reconciles the removal journal before capturing canon, uses the online SQLite backup API, verifies all recorded material revisions and copied version-space, derived and workspace files, then publishes `manifest.json` last. Its schema-1 manifest records artifact/schema versions, capture epoch and revocation watermark as well as the complete inventory. Published persona and skill commit objects are verified incrementally against their Git type, declared length and hash, without an additional content-size cap. A killed copy has no published manifest; hash, journal, cancellation and I/O failures publish no generation. Restore remains a separate whole-generation operation.
