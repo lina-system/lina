@@ -19,6 +19,9 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/backup"
+	"github.com/thisisjun786/lina/internal/core/boot"
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/tools/crw-takeover/importer"
@@ -43,6 +46,7 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 		t.Fatalf("build takeover: %s %v", out, err)
 	}
 	var imported importer.Report
+	var legacyRevisions map[string]string
 	var calls atomic.Int32
 	result := make(chan coreexec.RecordReceipt, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +72,33 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 			}
 			if err := json.Unmarshal(body.Output, into); err != nil {
 				t.Error(err)
+			}
+		}
+		checkBoard := func() {
+			var found struct{ Rows []records.Row }
+			output("ok", &found)
+			want := map[string]string{
+				imported.Rows[2].LINAID: "open",
+				imported.Rows[4].LINAID: "completed",
+				imported.Rows[5].LINAID: "open",
+				imported.Rows[6].LINAID: "completed",
+			}
+			if len(found.Rows) != len(want) {
+				t.Errorf("Core board rows: %+v", found.Rows)
+			}
+			for _, row := range found.Rows {
+				if state, ok := want[row.ID]; !ok || row.State != state || row.Todo == nil || row.Todo.State != state {
+					t.Errorf("Core planning state: %+v", row)
+				}
+				if rev, ok := legacyRevisions[row.ID]; ok {
+					if row.Revision != rev || row.Todo == nil || row.Todo.DeadlineSource == "" {
+						t.Errorf("legacy import projection changed revision or lost deadline source: %+v", row)
+					}
+				}
+				delete(want, row.ID)
+			}
+			if len(want) != 0 {
+				t.Errorf("missing imported planning states: %+v", want)
 			}
 		}
 		switch calls.Add(1) {
@@ -100,10 +131,16 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 			var got coreexec.RecordReceipt
 			output("ok", &got)
 			result <- got
-			emitResponse(w, "The workshop conclusion is saved.", true)
+			emitPersonaCall(w, "imported-board", "query_records", coreexec.RecordQuery{View: "board", Limit: 10})
 		case 6:
-			emitPersonaCall(w, "read-after-restart", "read_record", coreexec.RecordRead{ID: imported.Rows[2].LINAID})
+			checkBoard()
+			emitResponse(w, "The workshop conclusion is saved.", true)
 		case 7:
+			emitPersonaCall(w, "board-after-restart", "query_records", coreexec.RecordQuery{View: "board", Limit: 10})
+		case 8:
+			checkBoard()
+			emitPersonaCall(w, "read-after-restart", "read_record", coreexec.RecordRead{ID: imported.Rows[2].LINAID})
+		case 9:
 			var got coreexec.RecordReceipt
 			output("ok", &got)
 			if got.ID != imported.Rows[2].LINAID {
@@ -164,7 +201,7 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 		if err = json.Unmarshal(stdout.Bytes(), &report); err != nil {
 			t.Fatal(err)
 		}
-		if err = report.Validate(4); err != nil {
+		if err = report.Validate(7); err != nil {
 			t.Fatal(err)
 		}
 		return report
@@ -196,6 +233,7 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 		t.Fatal("pre-import restore retained later reservations", err)
 	}
 	imported = run(true)
+	legacyRevisions = seedLegacyTakeoverPublications(t, h, imported, records.Actor{Person: person, Agent: agent})
 	again := run(true)
 	for i, row := range imported.Rows {
 		if row.Outcome != "imported" || row.Reused || row.LINAID == prior.Rows[i].LINAID || !again.Rows[i].Reused || row.LINAID != again.Rows[i].LINAID {
@@ -249,7 +287,7 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 	admittedTurn(t, h, client, conversation, "takeover-restart", "Read the imported workshop again.")
 	client.Close()
 	h.stopCore(core)
-	if calls.Load() != 7 {
+	if calls.Load() != 9 {
 		t.Fatal("missing real tool execution", calls.Load())
 	}
 	data, err := os.ReadFile(filepath.Join(h.root, "versions/records/inbox/workshop-conclusion.md"))
@@ -259,4 +297,87 @@ func TestM3CRWTakeoverInstalledCore(t *testing.T) {
 	if string(data) != saved.Markdown {
 		t.Fatal("result receipt differs from saved bytes")
 	}
+}
+
+// Model an older importer interrupted after saving milestones but before
+// acknowledging them. Only this disposable installed Core's stopped state is used.
+func seedLegacyTakeoverPublications(t *testing.T, h *harness, report importer.Report, actor records.Actor) map[string]string {
+	t.Helper()
+	ctl, err := ctlfiles.Open(h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctl.Close()
+	if err = ctl.Acquire(); err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := ctl.Epoch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := canon.Open(h.ctx, canon.Config{Path: filepath.Join(h.root, "canon/canon.sqlite"), Epoch: epoch, Controls: ctl, Migrations: boot.ApplicationMigrations()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	repo, err := records.Open(h.root, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	revisions := map[string]string{}
+	for _, index := range []int{5, 6} {
+		r, rev, err := repo.Read(h.ctx, report.Rows[index].LINAID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		front, body, ok := strings.Cut(string(r.Data), "\n---\n")
+		if !ok {
+			t.Fatal("missing front matter")
+		}
+		front = strings.Replace(front, "\nstate: open\n", "\nstate: active\n", 1)
+		front = strings.Replace(front, "\nstate: completed\n", "\nstate: done\n", 1)
+		var lines []string
+		for _, line := range strings.Split(front, "\n") {
+			if !strings.HasPrefix(line, "deadline_source: ") {
+				lines = append(lines, line)
+			}
+		}
+		legacy := []byte(strings.Join(lines, "\n") + "\n---\n" + body)
+		rev, err = repo.Commit(h.ctx, records.Change{ID: r.ID, Base: rev, Path: r.Path, Data: legacy}, actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		revisions[r.ID] = rev
+	}
+	journalPath := filepath.Join(h.root, "system/crw-takeover-journal.json")
+	data, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journal map[string]json.RawMessage
+	if err = json.Unmarshal(data, &journal); err != nil {
+		t.Fatal(err)
+	}
+	var entries map[string]struct {
+		ID        string `json:"id"`
+		Published bool   `json:"published"`
+	}
+	if err = json.Unmarshal(journal["entries"], &entries); err != nil {
+		t.Fatal(err)
+	}
+	for key, entry := range entries {
+		if _, ok := revisions[entry.ID]; ok {
+			entry.Published = false
+			entries[key] = entry
+		}
+	}
+	journal["entries"], err = json.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = importer.SaveJSON(journalPath, journal); err != nil {
+		t.Fatal(err)
+	}
+	return revisions
 }

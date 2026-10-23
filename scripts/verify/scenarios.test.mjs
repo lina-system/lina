@@ -70,3 +70,27 @@ test('a package containing only TestMain still receives an acceptance invocation
   assert.deepEqual(result.scenarios[0].tests, []);
   assert.deepEqual(result.scenarios[0].inputs, ['e2e/main_test.go']);
 });
+
+test('Core acceptance packages must dispatch supervisor re-exec before running tests', t => {
+  const sb = sandbox(t);
+  const toolchain = 'go 1.27\ntoolchain go1.27.3\n';
+  sb.write(sb.dir, 'go.mod', 'module example.invalid/lina\n' + toolchain);
+  sb.write(sb.dir, 'kit/go.mod', 'module example.invalid/lina/kit\n' + toolchain);
+  sb.write(sb.dir, 'go.work', toolchain + 'use (\n.\n./kit\n)\n');
+  sb.write(sb.dir, 'e2e/m4/core_test.go', 'package fixture_test\nimport ("testing"; "github.com/thisisjun786/lina/internal/core/boot")\nfunc TestCore(t *testing.T) { _ = boot.Ready }\n');
+  const scan = () => scanScenarios({ cwd: sb.dir, packages: [{
+    path: 'example.invalid/lina/e2e/m4', directory: 'e2e/m4',
+    sourceFiles: ['e2e/m4/core_test.go', 'e2e/m4/harness_test.go'],
+  }] });
+  const guard = 'if len(os.Args)>1 && os.Args[1]=="proc-supervise" { os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr)) }';
+  const header = 'package fixture_test\nimport ("testing"; "os"; "github.com/thisisjun786/lina/kit/proc")\n';
+  for (const body of ['', 'func TestMain(m *testing.M) { os.Exit(m.Run()) }',
+    `func TestMain(m *testing.M) { m.Run(); ${guard} }`,
+    `func TestMain(m *testing.M) { ${guard.replace('os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))', 'proc.SuperviseMain(os.Args[2:], os.Stderr)')}; os.Exit(m.Run()) }`,
+  ]) {
+    sb.write(sb.dir, 'e2e/m4/harness_test.go', header + body);
+    assert.throws(scan, /proc-supervise.*TestMain/, 'unsafe TestMain must fail selection before any test process starts');
+  }
+  sb.write(sb.dir, 'e2e/m4/harness_test.go', header + `func TestMain(m *testing.M) { ${guard}; os.Exit(m.Run()) }`);
+  assert.deepEqual(scan().scenarios[0].tests, ['TestCore']);
+});

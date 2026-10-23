@@ -127,6 +127,7 @@ Persona storage, revisions and injection are defined in [conversation-and-memory
 Jev is an optional fast judge that only Atropos uses. Atropos uses it only for closed choices that rules can't settle:
 
 - the intent of this utterance and the response mode
+- which item the person's input is about, when the rules of [What a message is about](conversation-and-memory.md#what-a-message-is-about) leave it open
 - the ranking of context candidates
 - where a request goes when the routing rules of [work-and-delegation.md](work-and-delegation.md) leave it open: an answer in the conversation, a task for a worker, a background run for research or analysis, work for a device's Node, or a question to the person
 - which installed worker takes a task, when the choice rules of [work-and-delegation.md](work-and-delegation.md#choosing-the-worker) leave it open, among the workers whose adapters LINA supports and that have quota and capacity left
@@ -185,6 +186,41 @@ Klotho never executes. It sends requests for code work, other work, research and
 - A plan Klotho drafts is shown to the person as a `plan_view` result and becomes a plan only at the plan confirmation point defined in [work-and-delegation.md](work-and-delegation.md).
 - Splitting a confirmed item of code work into hand-off tasks, and ordering the tasks, is the work engine's method ([work-and-delegation.md](work-and-delegation.md#splitting-and-parallel-hand-off)). It is not a second plan confirmation.
 - Where a card's criteria and the observed state differ, Klotho may draft 할 일 to close the gap. Those drafts go through the same confirmation point.
+
+The planning implementation queues an immutable snapshot of an accepted goal or
+project through Core's `draft_plan` tool. `plan_index` discovers accepted roots
+and preview revisions; `read_plan` explicitly reads a complete preview. Moirai
+requests the auxiliary, tool-free Klotho model call through Core and submits its
+validated proposal through the job API. Core accepts only that call's retained
+output and commits the complete `plan_view` revision with the job watermark.
+This work produces no project or to-do records and starts no execution. A queued
+replacement that becomes obsolete because its preview changed or was confirmed
+ends with a durable rejection in the same transaction as the job watermark. It
+leaves the preview and records unchanged and releases the next queued request.
+The originating conversation receives one retained outcome line, including when
+startup recovers a rejection committed before publication.
+
+A completed model response that is not a valid plan (including invalid JSON or
+cyclic dependencies) also ends with a retained rejection. Core caches that
+outcome and settles the completed call's usage; Moirai submits it through the
+same authenticated proposal path. The rejection and watermark commit together,
+and the conversation receives one retained outcome line. Restart and duplicate
+application do not repeat the model call or the notice. Later queued drafts can
+proceed. A provider call whose completion is unknown retains its pending
+reservation and is never automatically repeated.
+
+The client `planning` capability provides the person-only acceptance and
+confirmation actions. Acceptance saves the goal or directly handed-over project
+and its done condition. Confirmation names the current preview id and revision;
+Core also checks that the accepted root has not changed. It creates the entire
+set of project/to-do records in one saved version, with their done conditions,
+parent ids, order, stages and dependencies. A replacement discards every previous draft
+entry, and a stale, foreign or already-confirmed replacement is refused. After
+confirmation the same card remains readable with no confirm action. Repeated
+confirmation returns the original receipt, including after restart. An uncertain
+publication is reconciled by reading its exact records, never by dispatching the
+write again. Work-engine hand-off records require no second plan confirmation.
+
 
 ### Progress, prediction and replanning
 

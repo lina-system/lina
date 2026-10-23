@@ -80,7 +80,7 @@ Core applies each field as data. Persona text never restates them.
 - **Tools.** The request declares Core's always-declared tools, then this agent's `tools.declare_first` groups, then on demand as today ([conversation-and-memory.md](conversation-and-memory.md#request-layout)). Availability is unchanged: every permitted tool stays reachable on demand by every agent, as [integrations.md](integrations.md#tool-classification) requires. The declared part of the request changes only with a record revision, so the cached prefix is kept.
 - **Workers.** A worker task is created only for an agent whose record sets `workers.dispatch`. Another agent's request for code work becomes an agent exchange to the agent whose record owns `code`, through the existing exchange and work mechanisms. Which worker runs a task stays the editable rule table of [work-and-delegation.md](work-and-delegation.md#choosing-the-worker).
 - **Reply shape.** The reply-type budgets remain the person's settings ([Reply shape](conversation-and-memory.md#reply-shape)). The record chooses the shape of each reply type for this agent. Core counts a breach of that shape with the budget breaches, per agent.
-- **Asking.** Core places the `ask` values in the ContextPacket's working-preference item. The question tool accepts at most `ask.per_turn` questions per turn. A question the person passes over closes at the person's next unrelated turn. The agent then proceeds with its stated recommendation and records that it did so.
+- **Asking.** Core places the `ask` values in the ContextPacket's working-preference item. The question tool accepts at most `ask.per_turn` questions per turn. A question the person passes over closes at the person's next unrelated turn. The agent then proceeds with its stated recommendation and records that it did so, except for a target question under [What a message is about](conversation-and-memory.md#what-a-message-is-about): its instruction stays pending without execution until the person explicitly selects a target or cancels it. Skipping a question never grants approval for an outward or irreversible effect ([main-authority.md](main-authority.md#approval)).
 - **Done evidence.** A completion that Core records (a 할 일 marked done, a task delivered, a repair or an apply reported in a result card) carries an evidence reference of a kind the record requires for that work kind. Without one, Core records the completion as "claimed" and the card shows "not verified". Core never rewrites the reply. The breach counter counts every claimed completion.
 - **Hand-offs.** See Hand-offs.
 
@@ -122,6 +122,30 @@ Evidence: [What counts as done](../research/m4-owner-agent-sessions.md#what-coun
 - `handoff.owns` names the preset that owns an artifact kind. While one agent's open work changes an artifact, another agent's change to it becomes a hand-off to that agent. The other agent does not open a second change.
 - Decisions and threads are per agent across channels. An agent's sessions on different channels read the same decision records ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies), LINA rule 9).
 
+Core's private conversation tools `send_handoff` and `handoff_status` expose a
+pending admission snapshot separately from the receiver's committed delivery receipt. A newly queued tool result describes its admission commit; a status read returns the current delivery state.
+`next_check` is an explicit date with a time zone; it is independent of the
+reply deadline. With check-back enabled, Core durably raises the sender's item
+on that date or on a receiver report. A report arriving after an earlier date
+notice still raises the result. Each reason has one delivery key across
+restart. The sender's conversation lane checks the end condition and reports
+at a turn boundary; it does not turn the exchange into a person message or a
+"Waiting for me" decision. A receiver report remains a labelled claim until
+the sender checks it.
+
+`begin_artifact_change` opens a durable work lease with an artifact kind,
+stable identity and end condition. Core resolves the owning agent from the
+published `handoff.owns` records, retaining an existing open owner. A missing
+or ambiguous owner refuses admission. A second agent receives a queued
+hand-off instead of another lease. If no lease exists, Core reserves it for the owning agent in the same transaction as the hand-off. `finish_artifact_change` releases only the
+calling agent's work; a reply deadline never releases ownership. Record
+identities are `record:<id>`. The installed record writer also checks these
+leases, so a second agent cannot bypass the hand-off by writing directly.
+The receiver sees the permitted artifact identity in its request and can read and revise that named record, promote its memo or undo a recorded promotion through the usual authority
+and revision checks. Other personal records and private knowledge are absent
+from the exchange request. An automatic hand-off from a shared-channel record write raises its check-back in the sender’s private main conversation; it grants no delayed channel-posting authority. These leases and sender waiting items survive Core
+restart and belong to the agent, independently of a client's lifetime.
+
 Ownership of artifact and work kinds across the eight starters:
 
 | Kind | Owner |
@@ -143,7 +167,11 @@ The person's names for devices, organisations, artifacts and places are common k
 
 Core's `remember_name` tool binds the write to the current native person event. It takes a subject, current name, exact quote and any explicitly retired aliases. A correction may identify the subject by its previous name. The subject remains stable across corrections; the existing holder and scope are preserved. Names first default to common knowledge. Corrections keep the item id, append a revision and a linked correction item, and retain previous current names as retired aliases. Repeating the same event does not create another revision. A name restored as current is removed from the retired set.
 
+An older input cannot overwrite a later correction, even when both arrive within the same second and their turns finish in reverse order. Core breaks equal evidence timestamps by the canonical source events' admission order, after resolving replay and view lineage. Retrying the current correction keeps its revision.
+
 Names in the agent's readable scope enter the mandatory correction part of every new turn's ContextPacket as untrusted, referenced data. They are independent of topic search and optional recall limits. Endpoint restrictions, validity and forgetting still apply. Follow-ups keep the prepared snapshot; the next turn sees a committed correction.
+
+Replay validates a common name's evidence across its source agents for the same person. It retains the prepared revision and all scope, validity, privacy and removal checks. Shared provenance does not expose another agent's source turn or authorize raw conversation reads. After authenticating the person, Core routes an export's selected agent and a replay's canonical turn identity to that agent's main conversation. An exported episode cannot choose a different owner or agent.
 
 Core counts one naming breach per completed assistant reply that contains any retired alias from its prepared names. Matching uses NFC and case normalization, with Latin identifier boundaries to avoid partial-word matches and support for Korean particles after a name. A current full name containing an old alias is not a breach. The masked full reply is checked, including content moved to a result card. The reply event and count commit together; repeated recording cannot add another count. Counts are per person and agent and survive restart. No name or reply text is copied into the counter.
 

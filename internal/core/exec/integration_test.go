@@ -38,7 +38,6 @@ func TestResultToolsThroughAuthorityLedgerAndRecords(t *testing.T) {
 	}
 	defer controls.Close()
 	ms := canon.Migrations()
-	ms = append(ms, canon.Migration{Version: len(ms) + 1, SQL: results.Schema})
 	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: controls, Migrations: ms})
 	if err != nil {
 		t.Fatal(err)

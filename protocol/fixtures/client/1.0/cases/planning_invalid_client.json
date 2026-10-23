@@ -1,0 +1,15 @@
+{
+  "side": "client",
+  "input": [
+    "invalid/plan_entries_null.json"
+  ],
+  "output": [],
+  "errors": [
+    "malformed"
+  ],
+  "outcome": {
+    "accepted": 0,
+    "malformed": 1,
+    "unknown_kinds": 0
+  }
+}
