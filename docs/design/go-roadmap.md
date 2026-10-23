@@ -338,10 +338,12 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G1-05, G1-11, G1-12, G2-17. Design refs: C-29, C-30, C-39; [work-and-delegation.md](work-and-delegation.md#work-area).
 
 **G2-02 Completion events, reaction path and reconcile sweep.** Event rows, idempotent claims, one reaction path, sweep.
+- #128 connects transactional work completion rows and epoch-bound claims to running Core. A commit wakeup delivers through the existing conversation inbox/lane; startup and five-minute sweeps restore missing signals without model calls. Independent handled/ignored tombstones prevent repeat reactions after loss. `e2e/m2/work-completions.json` covers worker execution, manager delivery after durable claim, and recovery, including a pending non-dispatch receipt at startup; focused work tests cover concurrent claims, stale heads/attempts and SIGKILL atomicity.
 - Done when: a completion event is a row before anything reacts; the same task, attempt and head collapse to one row; an event with a head that is not current is ignored; `kill -9` between a state change and its event leaves both or neither; a lost event is recreated once.
 - Depends on: G1-11, G2-01. Design refs: C-58; [work-and-delegation.md](work-and-delegation.md#event-driven-flow).
 
 **G2-03 Timers, reminders and sensors.** Durable timers, reminders, deterministic sensors.
+- #129 connects canon-backed timers to installed Core conversation tools and the shared reaction lane. `e2e/m2/timers.json` covers a scheduled job creating a record, model-free reminders, record-revision sensors, cancellation and restart. Focused tests exercise cron/RRULE DST gaps and folds, concurrent claims, bounded read-only recovery and SIGKILL before/after the claim commit.
 - Done when: a nonexistent local time and a repeated hour each fire once; `kill -9` at claim gives one fire per instant; an unchanged sensor signature spends no model call.
 - Depends on: G1-11, G2-02. Design refs: C-26.
 
@@ -445,6 +447,12 @@ completion conditions to repository tests and installed Core scenarios.
 - Depends on: G2-22, G2-03. Design refs: C-54; [work-and-delegation.md](work-and-delegation.md#the-to-do-record).
 
 **G2-24 TUI records, progress and agent screens.** Views, memo inbox, progress view, quick add, board, steering, usage meter.
+- #164 connects the TUI memo inbox and record lenses to Core queries through a
+  negotiated `records` capability. Lists retain Core order and internal ids stay
+  out of display rows. [The record journey](../../e2e/m2/tui-records.json) covers
+  conversation capture, restart, discovery, direct browsing, preview cancellation
+  and explicit confirmation of token-based quick add. Memo promotion
+  remains #156.
 - Done when: a quick add shows chips before it saves; every view is a Core query result drawn without client ranking; a progress view line holds no id-shaped field; the board groups Core's rows into Waiting for me, Running and Done; a follow-up note reaches a running background run at its next round trip; the usage meter reads "unknown" for an unreported quota.
 - Depends on: G1-21, G2-13, G2-23, G2-25. Design refs: T-12, T-13, T-14.
 

@@ -210,7 +210,13 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	if _, err = tx.ExecContext(ctx, "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", e.TaskID, e.Key, b); err != nil {
 		return err
 	}
-	return saveCard(ctx, tx, c)
+	if err = saveCard(ctx, tx, c); err != nil {
+		return err
+	}
+	if e.Kind == "finished" || e.Kind == "receipt" || e.Kind == "file_receipt" || e.Kind == "completion_head" {
+		return insertCompletion(ctx, tx, c)
+	}
+	return nil
 }
 func saveCard(ctx context.Context, tx *canon.Tx, c Card) error {
 	b, err := json.Marshal(c)

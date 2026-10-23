@@ -6,10 +6,21 @@ import "testing"
 func TestBackupFromPublishedSchemaUpgradesSwitchSchema(t *testing.T) {
 	cfg := storeConfig(t)
 	all := Migrations()
-	if len(all) < 39 || all[35].Version != 36 || all[35].SQL != skillMaintenanceSchema || all[36].Version != 37 || all[36].SQL != workEngineSchema || all[37].Version != 38 || all[37].SQL != recordsTodoSchema || all[38].Version != 39 || all[38].SQL != WorkSwitchSchema {
-		t.Fatal("switch migration must follow published skill maintenance 36, work engine 37 and records todo 38")
+	published := []Migration{
+		{Version: 36, SQL: skillMaintenanceSchema},
+		{Version: 37, SQL: workEngineSchema},
+		{Version: 38, SQL: recordsTodoSchema},
+		{Version: 39, SQL: workEventSequenceSchema},
+		{Version: 40, SQL: WorkCompletionsSchema},
+		{Version: 41, SQL: TimersSchema},
+		{Version: 42, SQL: WorkSwitchSchema},
 	}
-	cfg.Migrations = all[:38]
+	for _, want := range published {
+		if len(all) < want.Version || all[want.Version-1] != want {
+			t.Fatalf("published migration %d changed or switch did not follow it", want.Version)
+		}
+	}
+	cfg.Migrations = all[:41]
 	source := openStore(t, cfg)
 	if err := source.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO skill_maintenance VALUES('operation',1,'preserved','merge',0);

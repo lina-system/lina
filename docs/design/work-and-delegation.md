@@ -547,7 +547,12 @@ not a path the worker must read or a skill to install. Queued dispatch stores
 that snapshot with the work definition, so later catalog edits, removal and
 process restarts cannot substitute another body. Replayed admissions first
 match the persisted origin and complete definition, then reuse that snapshot;
-only new admissions resolve the current catalog. The Codex `worker_start` session path
+only new admissions resolve the current catalog. A saved dispatch admission has
+already passed its manager decision. An identical retry returns that admission
+without assigning or running the manager again, including admissions saved before
+task branches included the task ID. The original manager definition and ownership
+remain intact. A retry cannot reset execution state, and queued work still waits
+for its conversation tool receipt to commit. The Codex `worker_start` session path
 uses the same resolver and exposes the same packet through `read_projection`.
 The existing `dispatch_work` definition carries these fields for Antigravity.
 
@@ -693,7 +698,34 @@ adapter model selection is checked against the returned model. Per-task effort
 selection is refused until assignment verification supports it.
 
 Version notices and terminal worker output enter the originating conversation's
-canon history and restore after Core restart. Snapshot reads thread summary state and includes the latest
+canon history and restore after Core restart. A terminal conversation-started
+worker turn commits its task packet, work directory, dev owner and manager,
+session/turn identity, status
+and claimed output together with one follow-up inbox entry. The existing
+conversation lane runs that follow-up as the originating conversation's persona after the current
+turn closes. The persona reads back the promised effect with the available tools
+before reporting a checked result; a worker's completed status or report alone is
+not verification. Failed or interrupted work is reported as such, with any
+remaining uncertainty. This is an ordinary conversation continuation, not a new
+worker review loop or an automatic worker retry. Raw worker output is evidence
+for the persona, not a second system-speaker result in the conversation.
+
+`worker_read_file` reads a relative file in the owned session's work directory
+through the existing sandboxed file executor, returning its content and revision.
+It grants no writes or network access and refuses paths outside that directory.
+The same scoped read can use a recorded completion after restart. Completed
+worker records remain model context as untrusted evidence, including legacy
+worker notices. `worker_snapshot` can return the recorded terminal outcome when
+no live session remains, explicitly marked non-live; that record cannot authorize
+worker control. Unstarted completion follow-ups resume from canon after restart;
+a claimed turn is never replayed and a committed reply is not duplicated.
+Channel replies follow the completion back to its original input, retaining that
+input's address and the existing outbound delivery identity across restart.
+Recovery resolves the retained channel inbox address and its current most-specific
+binding, including thread permissions; sharing a persona or main conversation
+never substitutes another channel's memory or tool scope.
+
+Snapshot reads thread summary state and includes the latest
 completed assistant message observed on the owned session, not a delivery verdict.
 It does not request paginated turn history. An idle summary cannot reopen a
 just-accepted turn before its start/completion is observed; that state is unknown. A reported activity owns
@@ -711,13 +743,19 @@ versions still run and report both their version and the verified list. The
 adapter declares progress, usage, completion, steering, questions, approvals,
 work tools and quota. The #133 bridge below supplies the request/answer path.
 Thread recovery and automatic retry remain G2-08; a session handle from a prior
-Core process is unavailable, and its existing launch/result records remain.
+Core process is unavailable for control; its recorded terminal outcome remains readable.
 
 The credential-free installed-Core scenario is
 [`e2e/m2/codex-session.json`](../../e2e/m2/codex-session.json). It drives all four
 tools through the model loop and Unix client protocol, including an unverified
 worker, an actual fixture-worker file result, and conversation history after
-restart. The separately opted-in installed-Codex test preserves the user's setup;
+restart. `TestM2InstalledWorkerOutcome` in
+[`e2e/m1/worker_outcome_test.go`](../../e2e/m1/worker_outcome_test.go) additionally
+holds completion until the initial conversation closes, checks the persona's
+file read-back and single result, and asks for the outcome after Core restart.
+It also restarts after the completion is committed but before its queued
+follow-up starts, checking one recovered reply and no worker relaunch.
+The separately opted-in installed-Codex test preserves the user's setup;
 its file-tool probe encountered a worker approval, so live approval/file execution
 is not counted as session acceptance evidence.
 
@@ -948,7 +986,10 @@ Every task is making progress, waiting on a named thing with a deadline, or bein
 ### Completion events
 
 - A completion event is a row in LINA Core's database before anything reacts to it. Its key is task, attempt and head SHA. A claim on an event is idempotent, and an event whose head SHA is not the task's current head is ignored.
-- The same queue carries conversation messages and completion events, so one reaction path exists. Core dispatches them mechanically to the bound manager session; project judgment stays in that session.
+- State changes that produce a completion and the event row commit in one transaction. The event retains the worker receipt identity; it is a signal to read current work, never an instruction or acceptance verdict. Core's execution ID identifies the attempt. A non-Git result has no head SHA, represented by an empty head; an observed Git head is never taken from worker prose.
+- Replacing a file result in the same stopped execution keeps one row for the task/attempt/head but gives its changed receipt or directory fingerprint a new reaction identity. The ledger retains every receipt; unchanged output does not trigger another judgment.
+- Claims retain handled and ignored identities independently of event rows. Recreating a missing event therefore cannot repeat a handled reaction. An interrupted claim resumes through the same durable inbox/turn identity after restart; it does not restart the worker or replay an uncertain effect.
+- The same queue carries conversation messages and completion events, so one reaction path exists. Core dispatches them mechanically to the bound manager session; project judgment stays in that session. The receipt and current task facts are input to the manager turn, including work that has no dispatch adapter record; a notification alone is not delivery.
 - Events for one project are handled together from its current ledger state, preserving each event's receipt. The batch and busy fallback of Manager session lifecycle keep the manager from building a backlog of separate turns for them.
 - Reaction time is measured from the event to the first read of the pull request. The end of the flow is bounded by CI and review, which LINA does not control.
 
@@ -968,7 +1009,7 @@ Optional: when the repository has required checks and auto-merge, LINA Core may 
 
 - A task has failed when its worker's process or session ends without a final result, or the worker reports a typed failure. A quota or rate-limit failure parks the worker (see Parallel hand-off).
 - A dead worker is detected from the end or confirmed absence of its process or protocol session. A live worker is stalled when it makes no progress and has no named wait within its deadline for the longer of the stale floor (see Liveness) and twice the median duration of finished tasks of its size class, never more than three hours. Silence prompts a read of protocol state; screen output or a timeout reading the session never proves that it is dead. Events that repeat without progress do not reset the stall interval.
-- Every 5 minutes LINA Core re-reads, with no model call, every task marked in progress or watched, and does the same once after a restart. This catches a signal lost to a crash. It is the reconciliation of signals that integrations.md describes, and it never replaces the events.
+- Every 5 minutes LINA Core re-reads, with no model call, every task marked in progress or watched, and does the same once after a restart. This catches a signal lost to a crash. Missing completion rows are recreated from durable terminal observations and receipts, in bounded batches; a sweep never infers termination from silence. The reactor wakes on committed changes between sweeps. It is the reconciliation of signals that integrations.md describes, and it never replaces the events.
 - A failed, dead or stalled worker is reported at once in the running list while LINA Core recovers the task. LINA Core resumes its thread with a short continuation, or restarts it when the process or session is dead, once as a new attempt of the same task in the same work area, preserving its files, branch and receipts. When the cause is quota, the task goes to the next worker by the same choice instead. Recovery comes before escalation to the person; a second failure or stall goes to the person as a decision. There is no third automatic attempt.
 - A settled quota interruption does not consume a continuation, recovery or conflict-repair allowance, including when it interrupts that action itself. Core preserves the attempt's receipt and restores its allowance before assigning a replacement worker.
 - A dispatch again follows Effects and unknown outcomes: it happens only when the earlier attempt has no effect with an unknown outcome.
@@ -1094,6 +1135,12 @@ Retiring an obsolete task repair assessment clears its assessment marker in
 the same transaction. Once the current definition is assessed, an unchanged
 failed task receives a fresh repair assessment, including after restart.
 
+A canonical correction with an invalid done condition or criteria blocks only
+its own goal, with a row asking for a corrected record. Core retires its
+undispatched work and keeps observing dispatched effects. Other goals continue
+on every step and after restart. A valid record revision releases this fence
+through the usual manager assessment; invalid criteria never count as evidence.
+
 An action awaiting authorization before dispatch is recorded separately from an executed action whose outcome needs the person. A committed approval-change signal for that action requeues its authority check; the signal itself grants nothing. Core rechecks the exact action's current authority before executing it once, including after restart. A signal arriving during the authority check or while its dispatch is unwinding is retained as a wake, without waiting for a sweep. A revision retires an obsolete authorization wait like other undispatched work. An executed or uncertain effect is never requeued by an approval hint.
 
 Before observing an action from an earlier snapshot, Core reads its current
@@ -1206,13 +1253,14 @@ Every ready task starts at once, limited only by the person's quota and by what 
 - Ready tasks are placed in a stable order: tasks of goals with a person's deadline first, then by dependency depth, then by the age of the goal. Within that order, a task goes to the Node with the most headroom that has a suitable worker, and Nodes kept for the person's own use come last.
 - Dependency depth visits each task and its edges at most once per goal during a derivation, reusing shared ancestors across ready tasks. Depths are recomputed from each new snapshot and are never shared between goals.
 - Background runs and plugin effects run in Core and use the person's model and service accounts. They follow the run limits of Background runs and the account's own rate limits, and they never take a Node slot.
-- When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work.
+- When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work. Before claiming a queued worker action, including after restart or an authorization wait, Core rechecks the current host report, worker availability, quota and capacity against the other reservations. An ineligible unstarted award is retired and its task returns to its runnable stage in the same transaction, without spending an attempt or recovery. Derivation places it again or records a host-capacity wait; claimed effects keep their reservations until observed.
 - A ready task that cannot start has one visible reason, as Parallel hand-off says.
 
 ### Recovery
 
 - The goal definition is canon in the 일 or 목표 record in the records repository; the work ledger holds its execution state (criteria status and evidence, tasks, waits and state). A restart loses no goal: Core resolves the goal record by the id and revision referenced in the ledger and reads its execution state from the ledger, reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
 - Every derived action has an identity bound to the goal, the task, its attempt, its stage and the head or revision it acts on. Replaying an event or running two derivations at once never dispatches the same action twice.
+- Work events are append-only by both id and sequence. An insert that would replace either key is refused without changing the prior event or its projection.
 - Task-level recovery is the one recovery of Stall and failure. A goal does not add attempts on top: when a task's recovery is exhausted, the goal is `blocked` on that task while its independent tasks continue.
 - A wait survives restart with its deadline. A timer that should have fired while Core was down fires once at startup.
 - File delivery recovery runs before work tools admit new calls: first report interrupted copy intents in the work ledger, then reconcile their authority reservations as described under Evidence before close. An unrecovered copy keeps its reservation. A cancelled invocation is never replayed; a fresh authorized call preserves partial bundles or reuses a committed landing after readback.
@@ -1504,9 +1552,9 @@ new result, reject source-id lookup and retain the record after restart.
 
 ### Switch admission and recovery
 
-Migration 39 adds switch reservations and history after the published skill
-maintenance migration 36, work engine migration 37 and records to-do migration
-38, preserving their operations, membership, notices, records and events.
+Migration 42 adds switch reservations and history after the published migrations
+through 41, preserving skill maintenance, work engine events and records, to-do
+views, completion signals and timers.
 
 The one-time operator command in `tools/crw-takeover/` connects to the running
 Core's owner-only `work` capability. It is excluded from release artifacts.

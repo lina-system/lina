@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/turn"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/lease"
@@ -166,7 +167,20 @@ func (r *conversationRuntime) runCodingManager(ctx context.Context, a codingAssi
 	if err != nil {
 		return err
 	}
-	done, err := r.lanes.SubmitLoop(ctx, a.Conversation, func(ctx context.Context, inputs *loop.Inputs) error { return view.run(ctx, inputs, event, row.ID) })
+	done, err := r.queueReaction(ctx, a.Conversation, func(ctx context.Context, inputs *loop.Inputs) error {
+		if phase == "delivery" && result != nil && result.PR != nil {
+			card, err := r.work.Get(ctx, a.ID)
+			if err != nil {
+				inputs.Close()
+				return err
+			}
+			if card.Head != result.PR.Head {
+				inputs.Close()
+				return work.ErrState
+			}
+		}
+		return view.run(ctx, inputs, event, row.ID)
+	})
 	if err != nil {
 		return err
 	}
