@@ -42,8 +42,13 @@ func applyCorrectionPlan(g *Goal, o Observation) error {
 	}
 	changed := correctedTaskChanges(g.Tasks, o.Tasks)
 	for i, task := range proposed.Tasks {
-		if old := goalTask(g, task.ID); old != nil && !changed[task.ID] {
-			proposed.Tasks[i] = *old
+		if old := goalTask(g, task.ID); old != nil {
+			if !changed[task.ID] {
+				proposed.Tasks[i] = *old
+			} else {
+				// Attempts identify effects, not the definition's recovery budget.
+				proposed.Tasks[i].Attempt = old.Attempt
+			}
 		}
 	}
 	for _, task := range proposed.Tasks {
@@ -64,6 +69,25 @@ func applyCorrectionPlan(g *Goal, o Observation) error {
 	proposed.BlockedReason = ""
 	proposed.State = GoalRunning
 	*g = proposed
+	return nil
+}
+
+// The correction barrier has settled these effects. Keep their receipts, but
+// exclude them from the replacement's evidence without scheduling another read.
+func retireCorrectedTaskReceipts(v *View, goalID string, changed map[string]bool) error {
+	for _, row := range v.Records("action") {
+		var a Action
+		if err := json.Unmarshal(row.Body, &a); err != nil {
+			return err
+		}
+		if a.GoalID != goalID || !changed[a.TaskID] || a.State != "finished" {
+			continue
+		}
+		a.Superseded, a.RetirementReconciled = true, true
+		if err := put(v, "action", a.ID, a); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -63,6 +63,10 @@ func TestCorrectedPlanPreservesOnlyUnaffectedResults(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, task := range g.Tasks[:3] {
+				if task.Attempt != 2 {
+					t.Fatalf("changed task lost its attempt identity: %+v", task)
+				}
+				task.Attempt = 0
 				if !freshTask(task) {
 					t.Fatalf("changed task or transitive dependent retained obsolete result: %+v", task)
 				}
@@ -127,7 +131,11 @@ func TestCorrectedPlanSettlesRetiredClaimWithoutReplaying(t *testing.T) {
 			revisionEdit(t, e)
 			revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{replacement}})
 			current := revisionAction(t, e, replacementID, Assign)
-			if current.ID == old.ID || current.Attempt != 1 || current.ObserveActionID != "" {
+			wantAttempt := 1
+			if replacementID == old.TaskID {
+				wantAttempt = old.Attempt + 1
+			}
+			if current.ID == old.ID || current.Attempt != wantAttempt || current.ObserveActionID != "" {
 				t.Fatalf("replacement reused old claim: %+v", current)
 			}
 			// A delayed report after ID reuse is history, never a new read of

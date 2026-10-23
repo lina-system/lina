@@ -581,7 +581,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			return err
 		}
 		stale := staleInputs(g, a)
-		if stale && a.State == "finished" && !a.Superseded {
+		if stale && a.State == "finished" && (!a.Superseded || a.RetirementReconciled && len(a.Receipt) != 0) {
 			// This outcome was already accepted. Journal the late report without
 			// replacing its settlement or reopening it for another observation.
 			return nil
@@ -735,7 +735,9 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		case OutcomeSucceeded:
 			a.State = "finished"
 			correcting := a.Kind == PlanGoal && g.DefinitionPending
+			var changed map[string]bool
 			if correcting {
+				changed = correctedTaskChanges(g.Tasks, o.Tasks)
 				pending, err := correctionEffectsPending(v, g.ID)
 				if err != nil {
 					return err
@@ -749,6 +751,11 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			}
 			if err = applySuccess(&g, t, a, o, e.cfg.Now().Unix()); err != nil {
 				return err
+			}
+			if correcting && !g.DefinitionPending {
+				if err = retireCorrectedTaskReceipts(v, g.ID, changed); err != nil {
+					return err
+				}
 			}
 		default:
 			return ErrInvalid

@@ -143,7 +143,7 @@ func TestWorkRuntimeCompletesCorrectedPlanAndKeepsRetiredArtifact(t *testing.T) 
 	}()
 	select {
 	case g := <-closed:
-		if len(g.Tasks) != 1 || g.Tasks[0].Head != "revised-head" || g.Tasks[0].Attempt != 1 {
+		if len(g.Tasks) != 1 || g.Tasks[0].Head != "revised-head" || g.Tasks[0].Attempt != 2 {
 			t.Fatalf("wrong corrected result: %+v", g.Tasks)
 		}
 	case <-time.After(10 * time.Second):
