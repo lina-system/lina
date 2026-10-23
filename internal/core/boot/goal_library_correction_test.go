@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
 )
 
@@ -118,6 +119,16 @@ func TestCoreLibraryCorrectionRetiresLatestMerge(t *testing.T) {
 	cfg := Config{StateRoot: root, Socket: filepath.Join(root, "client.sock"), Work: &WorkConfig{
 		Driver: func(e *work.Engine) (work.Driver, error) { d.engine = e; return d, nil },
 		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+			reader, err := canon.OpenReader(ctx, filepath.Join(root, "canon/canon.sqlite"))
+			if err != nil {
+				return err
+			}
+			defer reader.Close(context.Background())
+			if err = reader.Read(ctx, func(tx *canon.Tx) error {
+				return tx.QueryRowContext(ctx, "SELECT agent_id FROM agent_starters WHERE preset='dev'").Scan(&agent)
+			}); err != nil {
+				return err
+			}
 			g := work.Goal{ID: "library", Person: person, Agent: agent, Summary: "Produce two results", Done: "Results pass QA", NoServiceReason: "library", Scope: work.GoalScope{Repositories: []string{"repo"}, Includes: "results"}, Tasks: []work.Task{task("a"), task("b")}, Criteria: []work.Criterion{{ID: "result", Statement: "Result exists", Check: work.CriterionCheck{Kind: work.RunEvidence, Method: "fixture.read", Target: "repo"}}}}
 			if err := e.Admit(ctx, g); err != nil {
 				return err

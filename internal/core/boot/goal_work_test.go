@@ -24,7 +24,8 @@ func (parkedWorkDriver) Observe(context.Context, work.Action) (work.Observation,
 }
 
 func TestWorkRuntimeBindsInstalledOwnerAndSurvivesRestart(t *testing.T) {
-	r, _, agent, _ := managementFixture(t)
+	r, _, _, _ := managementFixture(t)
+	agent := workAgentFixture(t, r)
 	r.agent = agent
 	repo, err := records.Open(r.root, r.db)
 	if err != nil {
@@ -47,6 +48,18 @@ func TestWorkRuntimeBindsInstalledOwnerAndSurvivesRestart(t *testing.T) {
 	goal := work.Goal{ID: "g", Person: r.person, Agent: r.agent, Summary: "complete code change", Done: "the library works", NoServiceReason: "library", Scope: work.GoalScope{Repositories: []string{"repo"}, Includes: "library"}, Criteria: []work.Criterion{{ID: "outcome", Statement: "library works", Check: work.CriterionCheck{Kind: work.RunEvidence, Method: "test", Target: "repo"}}}}
 	if err := e.Admit(t.Context(), goal); err != nil {
 		t.Fatal(err)
+	}
+	all, _ := r.agents.List(t.Context())
+	for _, a := range all {
+		if a.Preset == "lina" {
+			disabled := goal
+			disabled.ID = "disabled"
+			disabled.Agent = a.ID
+			if err := e.Admit(t.Context(), disabled); err == nil {
+				t.Fatal("engine accepted an agent without dispatch")
+			}
+			break
+		}
 	}
 	other := goal
 	other.ID = "foreign"
@@ -76,7 +89,8 @@ func TestWorkRuntimeBindsInstalledOwnerAndSurvivesRestart(t *testing.T) {
 }
 
 func TestDispatchWorkToolUsesBoundOwnerAndRejectsExecutionClaims(t *testing.T) {
-	r, _, agent, _ := managementFixture(t)
+	r, _, _, _ := managementFixture(t)
+	agent := workAgentFixture(t, r)
 	r.agent = agent
 	repo, err := records.Open(r.root, r.db)
 	if err != nil {

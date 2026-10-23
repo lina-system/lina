@@ -83,7 +83,7 @@ func saveCoding(ctx context.Context, tx *canon.Tx, a codingAssignment) error {
 }
 
 // The origin supplies an already authorized coding request, not a new grant.
-// Core chooses dev from immutable preset identity and keeps one manager per
+// Core chooses the dispatch-enabled code owner and keeps one manager per
 // work unit. A renamed/deleted manager is never silently replaced.
 func (r *conversationRuntime) assignCoding(ctx context.Context, origin dispatch.Origin, id, tool, target string, args json.RawMessage) (codingAssignment, error) {
 	a := codingAssignment{ID: id, Manager: codingID(origin.Person, target), Origin: origin, Tool: tool, Target: target, Arguments: args}
@@ -92,6 +92,10 @@ func (r *conversationRuntime) assignCoding(ctx context.Context, origin dispatch.
 		class = tools.LocalWrite
 	}
 	err := authority.CheckPreset(ctx, r.db, r.epoch, authority.PolicyRequest{Key: "preset:coding:" + id, Person: origin.Person, Agent: origin.Agent, TaskID: origin.Turn, Tool: tool, Target: target, Class: class, Arguments: args})
+	if err != nil {
+		return a, err
+	}
+	owner, err := r.codeOwner(ctx, origin.Turn, origin.Person, origin.Agent)
 	if err != nil {
 		return a, err
 	}
@@ -109,13 +113,7 @@ func (r *conversationRuntime) assignCoding(ctx context.Context, origin dispatch.
 		}
 		err = tx.QueryRowContext(ctx, "SELECT owner,conversation FROM coding_managers WHERE id=? AND person=?", a.Manager, origin.Person).Scan(&a.Owner, &a.Conversation)
 		if errors.Is(err, sql.ErrNoRows) {
-			err = tx.QueryRowContext(ctx, "SELECT a.id FROM agents a JOIN agent_revisions r ON r.agent_id=a.id AND r.revision=1 WHERE a.preset='dev' AND a.trashed_at=0 AND r.person_id=? ORDER BY a.id LIMIT 1", origin.Person).Scan(&a.Owner)
-			if errors.Is(err, sql.ErrNoRows) {
-				return errDevUnavailable
-			}
-			if err != nil {
-				return err
-			}
+			a.Owner = owner
 			a.Conversation = "manager:" + a.Manager
 			if _, err = tx.ExecContext(ctx, "INSERT INTO coding_managers(id,person,owner,unit,conversation) VALUES(?,?,?,?,?)", a.Manager, origin.Person, a.Owner, target, a.Conversation); err != nil {
 				return err
@@ -135,6 +133,16 @@ func (r *conversationRuntime) assignCoding(ctx context.Context, origin dispatch.
 		return err
 	})
 	if err != nil {
+		return a, err
+	}
+	if _, err := r.agents.Get(ctx, a.Owner); err != nil {
+		return a, errDevUnavailable
+	}
+	method, err := r.preparedMethod(ctx, codeOwnerTurn(origin.Turn, origin.Agent, a.Owner), a.Owner)
+	if err != nil || !ownsCode(method) {
+		return a, errDevUnavailable
+	}
+	if err = r.codingExchange(ctx, a); err != nil {
 		return a, err
 	}
 	if err = r.personaAuthority.BindDelegation(ctx, origin.Person, origin.Agent, origin.Turn, a.Owner, "coding:"+id); err != nil {

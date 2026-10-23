@@ -373,9 +373,9 @@ Implementation: #785 (the intake replay), #786 (the binding event, candidates an
 A request is laid out from what changes least to what changes most, so the prefix that the model provider caches stays the same from one request to the next. The order is:
 
 1. **LINA Core instructions** (developer role): the fixed rules for tools, approvals and output. They change only with a release.
-2. **Persona** (developer role): the fixed layers of the conversation's agent in order, core, default voice, user voice, growth snapshot. They change only with a new persona revision of that agent.
+2. **Persona** (developer role): the fixed layers of the conversation's agent in order, core, default voice, user voice, growth snapshot, followed by its pinned work-method record as a separate data block. They change only with a new persona revision of that agent.
 3. **Skill catalog index** (developer role): the name and description of each available skill. It changes only when skills or plugins change.
-4. **Tool declarations**: the always-declared tools first, in a stable order, then the plugin tools loaded on demand for this request ([runtime.md](runtime.md)). The always-declared part changes only when a plugin or a grant changes. The on-demand part can change from one request to the next.
+4. **Tool declarations**: Core's always-declared tools first, in a stable order, then the groups in this agent's `tools.declare_first` order, then tools loaded on demand for this request ([runtime.md](runtime.md)). The initial groups come from the prepared work-method record; group selection changes no permission. `load_tools` keeps every registered permitted tool reachable. The on-demand part can change from one request to the next without changing the initial declaration prefix.
 5. **Conversation history**: the compaction summary, if any (the root of the summary tree), and then every earlier item of the conversation from the ledger, in order: messages, reasoning items, tool calls and tool outputs, carried unchanged ([runtime.md](runtime.md)). It only grows at its end. Its earlier part changes only at compaction (see Compaction and resume) and when the person deletes conversation content (see Deleting a conversation).
 6. **The person's current input.**
 7. **ContextPacket** (input items), from the most binding to the most optional:

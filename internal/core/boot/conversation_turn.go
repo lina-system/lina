@@ -47,6 +47,7 @@ type turnState struct {
 	memoryRefs         []turn.Reference
 	preparedNames      []memory.Item
 	bindings           map[string]loop.Tool
+	toolCatalog        *turnToolCatalog
 	promoted           budget.Handle
 	round              int
 	filters            map[string]*conversationReplyStream
@@ -168,7 +169,10 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		ResultCommitted: r.background.notify, ToolActivity: r.toolActivity, Loop: loop.Config{
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        s.bindings,
-			Before:       s.questions.before,
+			Transform: func(ctx context.Context, request provider.Request) (provider.Request, error) {
+				return s.toolCatalog.transform(ctx, request)
+			},
+			Before: s.questions.before,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
 				return r.resultNotice(ctx, call, r.recordNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))))
 			},
@@ -436,6 +440,14 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		declarations = nil
 		catalog = nil
 	}
+	if r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
+		state, err := r.agents.State(ctx, r.agent)
+		if err != nil {
+			return turn.PreparedRequest{}, err
+		}
+		s.toolCatalog = prepareToolGroups(declarations, agents.ProjectWorkMethod(persona, state), s.bindings)
+		declarations = s.toolCatalog.first
+	}
 	if r.channelBinding != nil {
 		for name, tool := range s.bindings {
 			execute := tool.Execute
@@ -472,6 +484,9 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 
 		}
 		return turn.PreparedRequest{}, turn.ErrInvalid
+	}
+	if s.toolCatalog != nil {
+		s.toolCatalog.offset = len(request.Items)
 	}
 	assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-work-method-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), s.memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), s.memoryRefs...)}
 	assembly.Context, err = r.recordContextSources(ctx, packet, report)
