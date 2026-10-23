@@ -6,12 +6,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 )
 
 var ErrSnapshot = errors.New("invalid_import_snapshot")
+
+// Checks are fixed descriptions, never source values or wrapped transport
+// errors that could disclose credentials, bodies or private file names.
+func invalidSnapshot(check string) error { return fmt.Errorf("%w: %s", ErrSnapshot, check) }
 
 type contextReader struct {
 	ctx context.Context
@@ -49,7 +54,7 @@ func writeSnapshot(ctx context.Context, destination string, body io.Reader, hash
 		return err
 	}
 	if hash != "" && hex.EncodeToString(h.Sum(nil)) != hash {
-		return ErrSnapshot
+		return invalidSnapshot("snapshot SHA-256 match")
 	}
 	return f.Sync()
 }
@@ -64,7 +69,7 @@ func SnapshotSidecar(ctx context.Context, sourceRoot, relative, destination, has
 	}
 	decoded, err := hex.DecodeString(hash)
 	if err != nil || len(decoded) != sha256.Size || hex.EncodeToString(decoded) != hash || !filepath.IsLocal(relative) {
-		return ErrSnapshot
+		return invalidSnapshot("sidecar SHA-256 and local path")
 	}
 	if err := outsideSource(sourceRoot, destination); err != nil {
 		return err
@@ -79,7 +84,7 @@ func SnapshotSidecar(ctx context.Context, sourceRoot, relative, destination, has
 		return err
 	}
 	if !info.Mode().IsRegular() {
-		return ErrSnapshot
+		return invalidSnapshot("sidecar regular file")
 	}
 	f, err := root.Open(relative)
 	if err != nil {
@@ -91,7 +96,7 @@ func SnapshotSidecar(ctx context.Context, sourceRoot, relative, destination, has
 		return err
 	}
 	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
-		return ErrSnapshot
+		return invalidSnapshot("sidecar file identity")
 	}
 	return writeSnapshot(ctx, destination, f, hash)
 }

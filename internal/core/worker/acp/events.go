@@ -75,7 +75,14 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 				<-requests
 			}
 			if result.Err != nil {
-				if transportErr := c.Err(); transportErr != nil {
+				failure := worker.ConnectionFailure
+				var remote *wire.RPCError
+				if errors.As(result.Err, &remote) {
+					// A complete error reply ends the turn even if EOF follows it.
+					// Its message and data are not part of the retained result, and
+					// the reply alone does not establish effect safety.
+					failure = worker.WorkerFailure
+				} else if transportErr := c.Err(); transportErr != nil {
 					// Join the owned process and descendants before admitting a
 					// terminal snapshot. A timeout waiting for a reply is not death.
 					c.Close()
@@ -84,7 +91,7 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 					a.transportEnded = errors.Is(transportErr, io.EOF) || errors.Is(transportErr, io.ErrClosedPipe)
 					a.mu.Unlock()
 				}
-				a.finish(th, worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: "prompt_failed"})
+				a.finish(th, worker.Finish{Status: worker.Failed, Failure: failure, Code: "prompt_failed"})
 				return
 			}
 			a.mu.Lock()
