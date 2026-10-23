@@ -53,6 +53,8 @@ func TestRules(t *testing.T) {
 		{"Moirai excludes credentials", "cmd/moirai-worker/main.go", `package main; import _ "` + module + `/kit/provider"`, "Moirai"},
 		{"Moirai excludes secrets", "internal/moirai/worker.go", `package moirai; import _ "` + module + `/kit/secret"`, "Moirai"},
 		{"Moirai protocol", "internal/moirai/worker.go", `package moirai; import _ "` + module + `/internal/moirai/jobapi"`, ""},
+		{"replay uses declaration policy", "internal/core/replay/run.go", `package replay; import _ "` + module + `/internal/core/toolcatalog"`, ""},
+		{"declaration policy cannot import replay", "internal/core/toolcatalog/catalog.go", `package toolcatalog; import _ "` + module + `/internal/core/replay"`, "layer"},
 		{"Core jobs uses budget", "internal/core/jobs/service.go", `package jobs; import _ "` + module + `/internal/core/budget"`, ""},
 		{"Core jobs cannot import worker", "internal/core/jobs/service.go", `package jobs; import _ "` + module + `/internal/moirai"`, "Moirai"},
 		{"TUI excludes Core", "internal/tui/ui/file.go", `package ui; import _ "` + module + `/internal/core/boot"`, "TUI"},
