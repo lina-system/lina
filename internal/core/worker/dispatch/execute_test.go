@@ -4,6 +4,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -181,5 +182,25 @@ func TestExecuteRetainsFenceWhenParkedAdapterCleanupFails(t *testing.T) {
 	got := records[0]
 	if got.State != "queued" || got.Wait != "worker_quota" || got.Code != "cleanup_failed" || len(got.Tried) != 0 || closes != 2 || executionReservations(t, s, r.ID) != 5 {
 		t.Fatalf("quota wait lost cleanup uncertainty: %+v closes=%d", got, closes)
+	}
+}
+
+func TestExecutionCleanupPreservesDefersDuringPanic(t *testing.T) {
+	var closed []int
+	e := execution{deferred: []func(){
+		func() { closed = append(closed, 1) },
+		func() { closed = append(closed, 2); panic("fixture cleanup panic") },
+		func() { closed = append(closed, 3) },
+	}}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("cleanup panic was swallowed")
+			}
+		}()
+		e.closeDeferred()
+	}()
+	if !slices.Equal(closed, []int{3, 2, 1}) {
+		t.Fatalf("cleanup skipped an earlier defer after panic: %v", closed)
 	}
 }

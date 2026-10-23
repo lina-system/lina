@@ -96,11 +96,11 @@ type executionAttempt struct {
 }
 
 func (e *execution) closeDeferred() {
-	deferred := e.deferred
-	e.deferred = nil
-	for i := len(deferred) - 1; i >= 0; i-- {
-		deferred[i]()
+	// Native defers also finish the remaining cleanup if an adapter panics.
+	for _, cleanup := range e.deferred {
+		defer cleanup()
 	}
+	e.deferred = nil
 }
 
 func (s *Service) execute(ctx context.Context, record Record) {
@@ -623,11 +623,11 @@ func (s *Service) deliver(ctx context.Context, e *execution) {
 		r.Code = "invalid_result"
 		return
 	}
-	status, outcome := "completed", "ready_for_review"
+	status, receiptOutcome := "completed", "ready_for_review"
 	if finish.Status != worker.Done {
-		status, outcome = "failed", "failed"
+		status, receiptOutcome = "failed", "failed"
 		if finish.Status == worker.Interrupted {
-			status, outcome = "interrupted", "interrupted"
+			status, receiptOutcome = "interrupted", "interrupted"
 		}
 		r.Code = finish.Code
 	} else {
@@ -660,7 +660,7 @@ func (s *Service) deliver(ctx context.Context, e *execution) {
 			}
 		}
 		if r.PR == nil || r.Code != "ready_for_review" {
-			outcome = "blocked_needs_input"
+			receiptOutcome = "blocked_needs_input"
 		}
 	}
 	// The artifact contains source-labeled observations, never an acceptance or
@@ -692,7 +692,7 @@ func (s *Service) deliver(ctx context.Context, e *execution) {
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256(evidence))
 	now := time.Now()
-	receipt := work.Receipt{SchemaVersion: 1, RelationshipID: r.ID, ExecutionGeneration: run.Generation, Attempt: run.Generation, Outcome: outcome, Producer: "child", TurnRef: work.TurnRef{ThreadID: thread.ID, TurnID: thread.TurnID, TurnStatus: status}, EmittedAt: now,
+	receipt := work.Receipt{SchemaVersion: 1, RelationshipID: r.ID, ExecutionGeneration: run.Generation, Attempt: run.Generation, Outcome: receiptOutcome, Producer: "child", TurnRef: work.TurnRef{ThreadID: thread.ID, TurnID: thread.TurnID, TurnStatus: status}, EmittedAt: now,
 		Manifest: []work.Artifact{{Path: artifact, SHA256: hash}}, Provenance: []work.Provenance{{ArtifactID: "adapter-derived:" + r.ID, TaskID: r.ID, NodeID: s.cfg.Main, Path: artifact, SHA256: hash, ObservedAt: now}}}
 	receipt.RevisionHash = work.ManifestHash(receipt.Manifest)
 	receipt.EventID = work.ReceiptID(receipt)
