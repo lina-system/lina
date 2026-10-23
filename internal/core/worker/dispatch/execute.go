@@ -31,7 +31,7 @@ func (s *Service) execute(r Record) {
 	admitted, settled := false, false
 	queued := false
 	defer func() {
-		if ctx.Err() == nil {
+		if ctx.Err() == nil && !settled {
 			r.State = "finished"
 			if queued {
 				r.State = "queued"
@@ -323,7 +323,7 @@ func (s *Service) execute(r Record) {
 		r.Code = "receipt_failed"
 		return
 	}
-	if err = service.Finish(ctx, r.ID, run.ID, status); err != nil {
+	if err = s.finish(ctx, r, run.ID, status); err != nil {
 		r.Code = "receipt_failed"
 	} else {
 		settled = true
