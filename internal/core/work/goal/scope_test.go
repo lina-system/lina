@@ -38,7 +38,7 @@ func TestScopeCorrectionReplansAndPreservesLandedResults(t *testing.T) {
 	g.Scope.Repositories = append(g.Scope.Repositories, "kept")
 	kept := readyTask("kept")
 	kept.Repository = "kept"
-	kept.DependsOn = []string{"a"}
+	kept.DependsOn = nil
 	kept.Stage = TaskDone
 	kept.Merge = Proof{Revision: "kept-merge", Ref: "kept-merge-output", Passed: true}
 	kept.QA = Proof{Revision: "kept-merge", Ref: "kept-qa-output", Passed: true}
@@ -61,7 +61,7 @@ func TestScopeCorrectionReplansAndPreservesLandedResults(t *testing.T) {
 	a := claimOnlyAction(t, e, PlanGoal)
 	repair := readyTask("new-work")
 	repair.Repository = "kept"
-	if err = e.Report(t.Context(), a.ID, cfg.Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{repair}}); err != nil {
+	if err = e.Report(t.Context(), a.ID, cfg.Epoch, Observation{Status: OutcomeSucceeded, Tasks: []Task{func() Task { t := readyTask("kept"); t.Repository = "kept"; return t }(), repair}}); err != nil {
 		t.Fatal(err)
 	}
 	s, err := e.Snapshot(t.Context())

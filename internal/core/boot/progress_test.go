@@ -53,8 +53,7 @@ func TestWorkerLanesReadsLiveCoreWorkAndChecksPerson(t *testing.T) {
 func TestWorkerLanesIncludesInstalledSessions(t *testing.T) {
 	r := controlRuntime(t)
 	probe := &workerProbe{snapshot: worker.ThreadSnapshot{Thread: worker.Thread{ID: "session", TurnID: "turn", TaskID: "task", ProcessGeneration: 1}, State: worker.Idle, Worker: "Codex", Version: "fixture", Output: "produced result"}}
-	r.workers = &workerRuntime{sessions: map[string]*workerSession{"session": {adapter: probe, origin: r, thread: probe.snapshot.Thread}}}
-	t.Cleanup(func() { r.workers = nil })
+	addWorkerFixtureSessions(t, r, map[string]*workerSession{"session": {adapter: probe, origin: r, thread: probe.snapshot.Thread}})
 	result, err := r.identity.Operations[protocol.KindProgressGet].Handle(t.Context(), clientsrv.Session{PersonID: r.person}, protocol.Envelope{Payload: protocol.ProgressGet{}})
 	if err != nil {
 		t.Fatal(err)
@@ -67,15 +66,15 @@ func TestWorkerLanesIncludesInstalledSessions(t *testing.T) {
 
 func TestSessionLanesPageFiltersAuthorityBeforeAdapters(t *testing.T) {
 	r := controlRuntime(t)
-	r.workers = &workerRuntime{sessions: map[string]*workerSession{}}
-	t.Cleanup(func() { r.workers = nil })
+	sessions := map[string]*workerSession{}
 	for _, id := range []string{"a", "b"} {
 		snap := worker.ThreadSnapshot{Thread: worker.Thread{ID: id}, Worker: "codex", State: worker.Active}
-		r.workers.sessions[id] = &workerSession{adapter: &workerProbe{snapshot: snap}, origin: r, thread: snap.Thread}
+		sessions[id] = &workerSession{adapter: &workerProbe{snapshot: snap}, origin: r, thread: snap.Thread}
 	}
 	// A nil adapter would panic if an invisible origin were inspected.
-	r.workers.sessions["foreign"] = &workerSession{origin: &conversationRuntime{person: "other", agent: r.agent}}
-	r.workers.sessions["deleted"] = &workerSession{origin: &conversationRuntime{person: r.person, agent: "removed"}}
+	sessions["foreign"] = &workerSession{origin: &conversationRuntime{person: "other", agent: r.agent}}
+	sessions["deleted"] = &workerSession{origin: &conversationRuntime{person: r.person, agent: "removed"}}
+	addWorkerFixtureSessions(t, r, sessions)
 	names := map[string]string{r.agent: "LINA"}
 	rows, next := r.sessionLanes(t.Context(), r.person, "", names, 1)
 	if len(rows) != 1 || rows[0].ThreadID != "a" || next == nil {

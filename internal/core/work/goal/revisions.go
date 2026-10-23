@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package goal
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"slices"
+)
 
 func revisionJudgment(a Action) bool { return a.Kind == PlanGoal || a.Kind == CheckCriterion }
 
@@ -17,33 +20,74 @@ func applyCorrectionPlan(g *Goal, o Observation) error {
 		blockCorrection(g, "The service needs a repository in the goal scope.")
 		return nil
 	}
-	if len(o.Tasks) == 0 {
-		blockCorrection(g, "The corrected goal needs a revised work definition.")
-		return nil
-	}
-	// Keep the persisted correction fenced if this proposal cannot reconcile the
-	// retained tasks. Invalid planning data must not stop unrelated goals.
+	// The revision barrier has read all dispatched task effects. Reconcile the
+	// manager's complete list, retaining execution state only for unchanged inputs.
 	proposed := *g
-	proposed.Tasks = append(retainScopedTasks(g.Scope.Repositories, g.Tasks), o.Tasks...)
+	proposed.Tasks = slices.Clone(o.Tasks)
 	proposed.DefinitionPending = false
 	proposed.Revision++
 	proposed.ManagerTurns++
-	proposed.Criteria = goalCriteria(proposed)
 	for _, task := range o.Tasks {
-		if !freshTask(task) || task.Repairs != "" {
+		if !freshTask(task) {
 			blockCorrection(g, "The corrected plan needs tasks with fresh execution state.")
 			return nil
 		}
+		if task.Repairs != "" {
+			parent := goalTask(&proposed, task.Repairs)
+			if parent == nil || parent.ID == task.ID || parent.Repository != task.Repository || parent.Base != task.Base {
+				blockCorrection(g, "The corrected repair needs its original task in the plan.")
+				return nil
+			}
+		}
 	}
+	changed := correctedTaskChanges(g.Tasks, o.Tasks)
+	for i, task := range proposed.Tasks {
+		if old := goalTask(g, task.ID); old != nil {
+			if !changed[task.ID] {
+				proposed.Tasks[i] = *old
+			} else {
+				// Attempts identify effects, not the definition's recovery budget.
+				proposed.Tasks[i].Attempt = old.Attempt
+			}
+		}
+	}
+	for _, task := range proposed.Tasks {
+		if task.Repairs != "" {
+			goalTask(&proposed, task.Repairs).RepairedBy = task.ID
+		}
+	}
+	proposed.Criteria = goalCriteria(proposed)
 	if validateGoal(proposed) != nil {
 		blockCorrection(g, "The corrected plan does not reconcile retained tasks with the goal scope.")
 		return nil
 	}
+	proposed.Checks = nil
+	proposed.Deployment, proposed.Verification = Proof{}, Proof{}
+
 	proposed.AssessedFailure = ""
 	proposed.AttentionID = ""
 	proposed.BlockedReason = ""
 	proposed.State = GoalRunning
 	*g = proposed
+	return nil
+}
+
+// The correction barrier has settled these effects. Keep their receipts, but
+// exclude them from the replacement's evidence without scheduling another read.
+func retireCorrectedTaskReceipts(v *View, goalID string, changed map[string]bool) error {
+	for _, row := range v.Records("action") {
+		var a Action
+		if err := json.Unmarshal(row.Body, &a); err != nil {
+			return err
+		}
+		if a.GoalID != goalID || !changed[a.TaskID] || a.State != "finished" {
+			continue
+		}
+		a.Superseded, a.RetirementReconciled = true, true
+		if err := put(v, "action", a.ID, a); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -81,4 +125,17 @@ func restoreDeniedAssignment(t *Task, a Action) {
 		t.QARepairs = max(0, t.QARepairs-1)
 	}
 	t.EffectsSettled = a.Kind != Assign
+}
+
+func correctionEffectsPending(v *View, goalID string) (bool, error) {
+	for _, row := range v.Records("action") {
+		var a Action
+		if err := json.Unmarshal(row.Body, &a); err != nil {
+			return false, err
+		}
+		if a.GoalID == goalID && a.TaskID != "" && a.Kind != PlanGoal && a.State != "finished" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
