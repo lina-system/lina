@@ -199,6 +199,25 @@ func TestQuestionHandlerUsesSourceAndRefusesSecretForms(t *testing.T) {
 	}
 }
 
+func TestOptionalQuestionFieldMayBeOmitted(t *testing.T) {
+	d, _ := decisionFixture(t)
+	optional := true
+	source := &formSource{question: protocol.Question{ConversationID: "conversation", Card: &protocol.DecisionCard{ID: "question", Revision: "revision", Agent: "Agent", Summary: "Choose a label", Targets: []protocol.DecisionTarget{}}, Form: &protocol.QuestionForm{PluginName: "Plugin", Fields: []protocol.FormField{{Name: "label", Type: protocol.FormFieldTypeText}, {Name: "limit", Type: protocol.FormFieldTypeNumber, Optional: &optional}}}}}
+	d.Questions = source
+	id, revision, label := "question", "revision", "ok"
+	values := protocol.FormValues{"label": {String: &label}}
+	answer := protocol.QuestionAnswer{CardID: &id, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}
+	result, err := d.Operations()[protocol.KindQuestionAnswer].Handle(t.Context(), decisionSession("client"), protocol.Envelope{Kind: protocol.KindQuestionAnswer, Payload: answer})
+	if err != nil || *result.Payload.(protocol.QuestionAnswer).Outcome != protocol.DecisionOutcomeResolved || source.calls != 1 {
+		t.Fatalf("optional omission refused: %+v %v", result, err)
+	}
+	values = protocol.FormValues{}
+	answer.Values = &values
+	if _, err = d.Operations()[protocol.KindQuestionAnswer].Handle(t.Context(), decisionSession("client"), protocol.Envelope{Kind: protocol.KindQuestionAnswer, Payload: answer}); err == nil || source.calls != 1 {
+		t.Fatalf("required field omitted: %v calls=%d", err, source.calls)
+	}
+}
+
 func TestQuestionProjectionRestoresEvictedCardAndRetriesFailure(t *testing.T) {
 	d, _ := decisionFixture(t)
 	d.Topics = topicHub(t, TopicOptions{SnapshotSize: 1})

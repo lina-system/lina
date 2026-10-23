@@ -41,7 +41,7 @@ func TestRehearsalSealPromotion(t *testing.T) {
 	}
 	recall := func(want int) {
 		t.Helper()
-		hits, err := memory.New(db).Recall(t.Context(), memory.RecallScope{Agent: "agent", Person: "person"}, memory.Query{Text: "Synthetic request", At: 1000})
+		hits, err := memory.New(db).WithQuotes(ledger.New(db, nil).Citation).Recall(t.Context(), memory.RecallScope{Agent: "agent", Person: "person"}, memory.Query{Text: "Synthetic request", At: 1000})
 		if err != nil || len(hits) != want {
 			t.Fatalf("recall: %+v %v", hits, err)
 		}
@@ -226,14 +226,14 @@ func TestPromotionHistoryFiltersAndSessionEvidence(t *testing.T) {
 	if _, err = p.Promote(t.Context(), db, policy, []string{batches[0].ID}, "confirm"); err == nil {
 		t.Fatal("persona instruction promoted")
 	}
-	hits, err := memory.New(db).Recall(t.Context(), memory.RecallScope{Agent: "agent", Person: "person"}, memory.Query{Text: "preference", At: 1000})
+	hits, err := memory.New(db).WithQuotes(ledger.New(db, nil).Citation).Recall(t.Context(), memory.RecallScope{Agent: "agent", Person: "person"}, memory.Query{Text: "preference", At: 1000})
 	if err != nil || len(hits) != 0 {
 		t.Fatal("unpromoted history reached recall", hits, err)
 	}
 	if _, err = p.Promote(t.Context(), db, policy, []string{batches[1].ID}, "confirm"); err != nil {
 		t.Fatal(err)
 	}
-	hits, err = memory.New(db).Recall(t.Context(), memory.RecallScope{Agent: "agent", Person: "person"}, memory.Query{Text: "preference", At: 1000})
+	hits, err = memory.New(db).WithQuotes(ledger.New(db, nil).Citation).Recall(t.Context(), memory.RecallScope{Agent: "agent", Person: "person"}, memory.Query{Text: "preference", At: 1000})
 	if err != nil || len(hits) != 1 {
 		t.Fatal(hits, err)
 	}

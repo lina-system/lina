@@ -737,8 +737,9 @@ priority. Without rules, otherwise equal candidates retain the installed
 Antigravity-then-Codex order. These rules grant no worker permissions.
 
 Dispatch keeps worker eligibility in one factory registry. Explicit selections
-are Antigravity, headless Claude and the built-in ACP profiles; automatic
-selection uses Antigravity, Codex and installed ACP profiles in that order.
+are Antigravity, headless Claude and the built-in and valid added ACP profiles;
+automatic selection uses Antigravity, Codex, installed built-in ACP profiles and
+valid added profiles in that order.
 Headless Claude remains explicit-only, and the provisional rules file accepts
 only Antigravity and Codex. Admission, the tool's worker enum and rule validation
 derive from those registrations. Startup converts legacy binary settings into
@@ -905,6 +906,9 @@ Every worker adapter offers the work engine the same operations:
 - LINA lists the worker versions each adapter has verified in the release manifest's `verifiedWorkerVersions` field ([runtime.md](runtime.md)). Installation compares Codex's bare version with that list, accepting the `codex-cli ` prefix in probe output and legacy lists. When the installed version is not on the list, LINA tells the user that the version is unverified, with the version it found and the verified ones, and still delegates.
 - LINA refuses delegation to the worker only when the adapter can't connect to it or the protocol handshake fails (for Codex, `initialize`), and names the cause.
 - LINA never installs, updates or pins the worker.
+- Person-added ACP workers are always unverified, including when their reported
+  version matches a verified built-in version. Their settings cannot assert
+  verification; an unknown version remains usable after a successful handshake.
 
 ### Codex adapter
 
@@ -1113,6 +1117,15 @@ no other handshake metadata, including host details, authentication descriptions
 or metadata nested inside capabilities. Advertised capabilities are observations;
 they do not enable operations the adapter has not implemented.
 
+The person adds ACP workers in `system/core/worker-profiles.json` under the Core
+state root; [C-60](go-core.md#work-engine) defines its versioned JSON format.
+Core reads it at startup and registers valid entries with the shared adapter.
+An added name cannot replace any built-in name. Invalid entries are refused with
+their cause while other workers remain available; malformed file syntax refuses
+only the added file. Settings changes require a restart. Commands and arguments
+are passed as entered without shell interpretation or worker configuration edits.
+Added workers participate in normal dispatch authority, readiness and receipts.
+
 - **Start.** Core starts the profile's command as a stdio child with the person's environment, removing only LINA's own model credential. `initialize` declares no file system or terminal capability, so the worker uses its own tools, and declares form elicitation. An answer other than protocol version 1 fails the handshake. The answered capabilities become the adapter's capability set: approvals and progress always, steering only with the steering extension, recovery only with `loadSession` or `session/resume`, quota only where a source below exists.
 - **Session.** `session/new` carries the worktree as `cwd` and LINA's tool server as the only entry of `mcpServers`; the worker's own MCP servers stay in its own configuration. LINA calls `session/set_config_option` only to apply a model or effort that the worker profile names, and never changes the session mode. The task packet goes out as the first `session/prompt`.
 - **Events.** Message, thought, tool-call and plan updates are progress; `usage_update` is usage; plan entries become stage summaries labelled as the worker's report. An unknown update keeps its JSON and never ends a turn. Sub-agent updates are unstable in version 1 and are not consumed; a worker's own sub-agents stay inside its turn.
@@ -1132,7 +1145,21 @@ they do not enable operations the adapter has not implemented.
   incomplete protocol stream or an unfinished request keeps the outcome unknown. Loading or resuming a session
   does not reconcile an unknown turn after a Core crash. A second settled death
   creates the existing decision row and cannot start a third worker.
-- **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of a request (-32000 is login expiry); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
+- **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of `session/new` (-32000 means needs sign-in) or of `session/prompt` (a worker failure with code `prompt_failed`); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
+  Core opts into only AIR v1 `sessionFailure` and accepts it only when the
+  initialize response advertises it. Its error-severity category/actions map
+  to rate limited (`limit`/`retry`), quota exhausted (`limit`/no actions),
+  sign-in required (`access`/`login`) or connection lost
+  (`connection`/`new_session`). Warnings and unknown combinations do not end
+  a turn. The prompt reply remains the terminal boundary: request errors and
+  explicit non-success stop reasons take precedence over extension reports.
+  Claude's reported bucket, utilization, status and Unix-seconds reset become
+  quota rows; context-window usage is not subscription quota. Missing values
+  remain unknown. Core saves reported rows before closing the session, and an
+  exhausted worker permits only the existing single replacement after cleanup.
+  Replacement requires no tool activity, unknown update, unfinished request or
+  earlier prompt-error uncertainty. A native tool's `completed` or `failed`
+  status does not establish its external effects, as for connection recovery.
 - **Never sent.** `authenticate` and `logout`, because the person signs in to a worker in the worker itself; `session/delete`; and `session/set_mode`. `session/close` is sent only on an explicit close.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
 
@@ -1149,20 +1176,28 @@ the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
 A JSON-RPC error reply to the prompt is an observed worker failure, including
-when the process exits immediately after replying. Core records the failed turn
+when the process exits immediately after replying. It uses code `prompt_failed`
+regardless of the remote error code. Core records the failed turn
 and an adapter-derived receipt without retaining the remote error message or
 data. The reply alone does not settle external effects: unresolved effects keep
-the existing recovery fence until reconciliation.
+the existing recovery fence until reconciliation; a later successful prompt
+does not settle that earlier uncertainty.
 The adapter advertises progress, completion, work tools, approvals and questions. ACP
 requests use the existing worker authority and waiting-card bridge, preserving
 the originating conversation. Cards identify the ACP worker; Codex cards retain
 their existing behavior. Form fields preserve string, number, integer, boolean
 and enum values; multi-select arrays use a text field containing a JSON array.
-Core validates the requested schema before consuming an accepted form answer.
-Secret and unsupported forms are declined without requesting secret input.
+The question lists each array's allowed values and labels.
+A property left out of the schema's required list is optional: a blank or
+missing answer is omitted from the accepted content, and the worker keeps its
+default. Core validates the requested schema before consuming an accepted form
+answer. A value that fails that schema does not settle the card, so the owner
+can correct it, decline, or cancel. Secret and unsupported forms are declined
+without requesting secret input. Field names the waiting-card bridge refuses
+are declined the same way and are not shown as a card.
 A pending native decision leaves the prompt's work tools available; prompt
 completion expires both decision and work-tool requests.
-Steering, quota and recovery remain separate integrations;
+Steering and recovery remain separate integrations;
 requesting a capability that is not implemented fails before dispatch.
 
 #### Claude Code through ACP
@@ -2115,7 +2150,7 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 - The progress of a 목표 is the share of its 일 that are done, and its stage is that of its least advanced running 일.
 - Now is, in this order: 확인 필요 (needs you) and the subject of its row while a row of "Waiting for me" belongs to it; else 일시정지 (paused) while the person has paused it; else the name of the earliest-started step in progress, followed by the number of the other steps in progress ("로그인 화면 수정 외 1"); else its queue reason and place, or 대기 (waiting) and its one reason or wait (see Order, pause and run limit); else the stage word 설계, 확인 or 끝. It changes only when a step starts or ends, a wait or row opens or closes, or the goal's pause, rank or place changes.
 - Started is when the goal was handed over, or when a run that serves no goal started. Elapsed time runs from it to now, or to the finish of a done line. Core records the instant in new work-ledger events and preserves it through retries and projection rebuilds. Legacy events with no timestamp stay unknown. Live conversation workers use their Core launch time; independent background runs use their recorded creation time.
-- Before a plan's stages exist, Now prefers the worker's existing session title and current to-do item: `title · current step`, either alone when only one is observed. Core reads Claude Code `ai-title`, TodoWrite and session task files; Codex thread names and `update_plan`; Gemini `write_todos`; Cursor `todo_write`; opencode titles and todos; and ACP session metadata and plan entries. Streaming readers consume each new record once, file readers retain append offsets, and rewritten task/document snapshots are read only when changed. An empty plan clears the current step. Core masks secrets, removes terminal controls and active markup, and limits the line to 120 Unicode characters before storing or publishing it. Busy/idle and the last transition time come from those observations and adapter lifecycle events; silence changes neither. No prompt asks for a progress report and no model call produces this line. The next adapter event carries the observation to the work card and sidebar, using the existing progress publication window. The line is display evidence, never a completion verdict or plan percentage. When neither title nor current step is observed, Now reflects the observed execution: in progress, running a command, editing files, preparing a reply or using a tool. A pending person request takes precedence and supplies its subject. These fallback labels are Core activity classifications, not worker prose, command arguments, reasoning or completion claims. Repeated deltas in the same activity do not change Now; an activity change is retained for durable dispatched work. Plan stage and percentage remain unknown until observed.
+- Before a plan's stages exist, Now prefers the worker's existing session title and current to-do item: `title · current step`, either alone when only one is observed. Core reads Claude Code `ai-title`, TodoWrite and session task files; Codex thread names and `update_plan`; Gemini `write_todos`; Cursor `todo_write`; opencode titles and todos; and ACP session metadata and plan entries. Streaming readers consume each new record once, file readers retain append offsets, and rewritten task/document snapshots are read only when changed. An empty plan clears the current step. Core masks secrets, removes terminal controls and active markup, and limits the line to 120 Unicode characters before storing or publishing it. Busy/idle and the last transition time come from those observations and adapter lifecycle events; silence changes neither. No prompt asks for a progress report and no model call produces this line. The next adapter event carries the observation to the work card and sidebar, using the existing progress publication window. Core keeps that line for the session's current turn. A later turn, opened by input or recovery, replaces it; an observation from another turn does not. The line is display evidence, never a completion verdict or plan percentage. When neither title nor current step is observed, Now reflects the observed execution: in progress, running a command, editing files, preparing a reply or using a tool. A pending person request takes precedence and supplies its subject. These fallback labels are Core activity classifications, not worker prose, command arguments, reasoning or completion claims. Repeated deltas in the same activity do not change Now; an activity change is retained for durable dispatched work. Plan stage and percentage remain unknown until observed.
 - A value that cannot be observed is unknown and is shown as unknown, never as zero, as the rule of Plans says. A line says done only when the done condition is met.
 - A 목표 has a line when one of its 일 runs or something waits on the person. An 일 that belongs to a 목표 is a line below it, and an 일 that stands alone is a line of its own. A goal that is a single 할 일, and a background run that serves no goal, is a line of its own whose stage list is its one step. A finished item leaves the lines once the person has seen it.
 - Shared overview rows keep each goal immediately followed by its children, even when their execution states differ. Core supplies a separate flat card order for the work panel; sorting those cards never moves the shared rows or changes their depth.
