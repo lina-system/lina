@@ -72,3 +72,16 @@ func TestClaudeDiscoveryNeedsPersonToolNotGlobalACP(t *testing.T) {
 		t.Fatal("missing Claude affected another worker or stayed supported")
 	}
 }
+
+func TestConnectionDeliveryProfiles(t *testing.T) {
+	for _, p := range BuiltinProfiles() {
+		got := New(Config{Profile: p}).DeliveryProfile()
+		if got.Tier != "turn" || !got.Available {
+			t.Fatalf("%s: %+v", p.Name, got)
+		}
+	}
+	got := New(Config{Profile: Profile{Name: "custom"}}).DeliveryProfile()
+	if got.Tier != "pull" || !got.Available {
+		t.Fatal(got)
+	}
+}
