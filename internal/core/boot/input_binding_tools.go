@@ -321,7 +321,7 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					if _, err := r.work.Get(ctx, id); err == nil {
 						id = "task:" + id
 					}
-					_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: id, ConversationID: &r.conversation, Text: a.Text}}, source)
+					_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: id, Text: a.Text}}, source)
 					if err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}

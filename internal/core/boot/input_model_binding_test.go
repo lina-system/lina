@@ -260,3 +260,32 @@ func TestModelBindingLargeInputSnapshot(t *testing.T) {
 	// externalized body under the canon writer.
 	_ = questionPersonInput(t, r, "after-large", "Continue")
 }
+
+func TestModelBindingFollowSharedWorkScope(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{{ID: "other-conversation-run", Title: "Shared work", Kind: "run", State: "waiting", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `UPDATE background_runs SET record=json_set(record,'$.Origin.Conversation','another-conversation') WHERE id='other-conversation-run'`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "shared-work", "Follow up on the shared work")
+	bindings := modelBindingTools(t, r, input)
+	if result := questionCall(t, bindings, "follow_work", "same-person", map[string]string{"id": "other-conversation-run", "text": "Keep the original scope."}); result.Code != loop.OK {
+		t.Fatalf("person's shared queue was narrowed to this conversation: %+v", result)
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `UPDATE background_runs SET record=json_set(record,'$.Origin.Person','another-person') WHERE id='other-conversation-run'`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if result := questionCall(t, bindings, "follow_work", "other-person", map[string]string{"id": "other-conversation-run", "text": "Must not deliver"}); result.Code != loop.Denied {
+		t.Fatalf("foreign work accepted: %+v", result)
+	}
+}
