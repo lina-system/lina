@@ -43,7 +43,8 @@
     "normal/restart_request.json",
     "normal/restart_get.json",
     "values/legacy_hello.json",
-    "values/stop_run.json"
+    "values/stop_run.json",
+    "normal/work_switch_request.json"
   ],
   "output": [
     "hello.json",
@@ -88,9 +89,11 @@
     "normal/restart_request.json",
     "normal/restart_get.json",
     "values/legacy_hello.json",
-    "values/stop_run.json"
+    "values/stop_run.json",
+    "normal/work_switch_request.json"
   ],
   "errors": [
+    "",
     "",
     "",
     "",
@@ -136,7 +139,7 @@
     ""
   ],
   "outcome": {
-    "accepted": 43,
+    "accepted": 44,
     "malformed": 0,
     "unknown_kinds": 0
   }

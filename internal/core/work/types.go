@@ -16,17 +16,18 @@ var (
 )
 
 type Task struct {
-	Destination    string     `json:"destination,omitempty"`
-	Workspace      *Workspace `json:"workspace,omitempty"`
-	PersonID       string     `json:"person_id,omitempty"`
-	GoalID         string     `json:"goal_id,omitempty"`
-	ID             string     `json:"id"`
-	AgentID        string     `json:"agent_id"`
-	ConversationID string     `json:"conversation_id"`
-	Title          string     `json:"title"`
-	Done           string     `json:"done"`
-	ArtifactRoots  []string   `json:"artifact_roots"`
-	RequiresApply  bool       `json:"requires_apply"`
+	Destination     string     `json:"destination,omitempty"`
+	ExternalControl bool       `json:"external_control,omitempty"`
+	Workspace       *Workspace `json:"workspace,omitempty"`
+	PersonID        string     `json:"person_id,omitempty"`
+	GoalID          string     `json:"goal_id,omitempty"`
+	ID              string     `json:"id"`
+	AgentID         string     `json:"agent_id"`
+	ConversationID  string     `json:"conversation_id"`
+	Title           string     `json:"title"`
+	Done            string     `json:"done"`
+	ArtifactRoots   []string   `json:"artifact_roots"`
+	RequiresApply   bool       `json:"requires_apply"`
 }
 
 type Run struct {
