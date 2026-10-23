@@ -15,7 +15,7 @@ This contract covers:
 - supervisor, parent and child roles, delivery and verdicts
 - the development method: the work definition, the choice of worker and the operation of the pull request
 - splitting work into tasks, the step graph of a goal and its stage list, area leases, parallel hand-off, completion events, stall handling and the running list
-- workers: the coding tools the user installed or signed in to (Codex, Claude Code, Cursor, Gemini CLI, Grok, Antigravity and any other ACP agent the person adds), the adapter boundary, the Codex and ACP adapters, compatibility, readiness, assignment, control and approvals
+- workers: the coding tools the user installed or signed in to (Codex, [CC], Cursor, Gemini CLI, Grok, Antigravity and any other ACP agent the person adds), the adapter boundary, delivery tiers, the Codex and ACP adapters, compatibility, readiness, assignment, control and approvals
 - the task packet (the work definition handed to the worker), LINA's work tools and the completion receipt of a worker, the worker's review and CI fixes, and the manager session's check of a delivery against the work definition before Core merges or closes
 - run to done: the goal above its tasks, its done condition and lifecycle, the next-action table, waits on the outside world, capacity from host load, the order, pause and run limit the person sets, recovery, evidence before close, the cases that stop and ask, and what the person sees, for code and non-code work alike
 - effects and unknown outcomes inside work
@@ -560,6 +560,17 @@ A message reaches work through its binding ([conversation-and-memory.md](convers
 - **No second copy.** Before a new item is created, Core compares it with the open items: the same normalized title, or a candidate the model marked as close. When one matches, the model binds to it or records in the binding why the new item differs. In the owner's data, 6 percent of messages read as either new or earlier work, and resuming the earlier item, such as a paused watch job, was the accepted reading.
 - **Moving a binding.** A move re-attaches what the turn did. A 할 일 the turn created changes its 일 or 목표. A field edit on the wrong item is restored to its previous revision there and applied to the right item. A steer delivered to the wrong task or run is followed by a withdrawal message to it and delivered to the right one; what the wrong run already did stays, and its card says so. An effect that left the person is not moved.
 
+### Messages to a worker
+
+A message to a worker is a message about work: it names one task and one session, and Core stores it before delivery (see Steering delivery and receipts). These rules fix what a worker may read as a message and what a message may do.
+
+- **One session.** Core delivers a message under its `<worker>:<session>` key only; it never reaches another worker, another session or a group, and a new session does not inherit another session's mail. LINA waits for the bound session instead of for a fixed day: known-unsent mail is delivered after resume, and a session that ends for good refuses its remaining mail and tells the sender.
+- **Frame.** Every textual input from Core is a `lina-message` frame carrying sender, speaker kind, work id and message id. Attributes and body are XML escaped, so content cannot close or forge a frame. Manager input is `agent`, recovery is `system`, tool results are `tool`, and only authenticated person answers are `person`. Vendor API roles do not change this provenance. Durable steering retains sender and speaker kind separately from the person who owns the task. Push and inbox delivery frame the original source; mailbox notices and tool envelopes remain `tool`. Old mailbox records without source metadata are `system` evidence, never inferred person instructions.
+- **Peer input is not authority.** Text from a worker, a manager or any other model is peer input, whatever its vendor role or wording says. It never carries a person's approval or a new grant; approvals are the signed records of Approvals, and text is never an approval.
+- **Loop guard.** Core permits twelve automatic coordination requests and follow-up inputs per task between trusted decisions. Admission survives restart and deduplicates retries. A new person input, an authenticated answer or owner control, or a recorded manager return can replenish the allowance once; replaying that decision cannot. At the cap Core refuses the exchange with an explicit explanation. Projection reads and completion receipts remain available so a capped worker can still report its result.
+
+The reference for this framing is reason-machines/reason-network at `72ca2b3` (2026-10-22, MIT OR Apache-2.0), `src/render.rs`, `src/daemon/mail.rs`, `src/mcp.rs`, `src/team.rs` and `src/hook.rs`. LINA keeps the frame and the guards and implements them independently; no reference source is copied.
+
 ## Supervisor, parent and child
 
 | Role | Held by | Owns | Never |
@@ -909,6 +920,49 @@ Every worker adapter offers the work engine the same operations:
 - signal completion: a typed finish (done, or failed with a category such as quota, rate limit, login expiry or connection) as an event; the adapter polls only for a worker that offers no event (see Completion signals)
 - declare the worker's capability set when the thread starts; LINA Core checks it, and a missing capability fails the dispatch visibly
 - report the worker's remaining quota where it exposes one; unknown is a value
+
+### Delivery tiers
+
+Every worker connection records its effective delivery tier and mechanism in
+its profile. A vendor name alone does not establish an input capability:
+
+| Tier | What Core can do |
+| --- | --- |
+| push | Input to an active turn, and waking an idle session, through the bound protocol. |
+| turn | Input at the next supported tool boundary. Core's ACP bridge uses the next LINA tool result; it does not intercept the worker's native tools. |
+| pull | An unread notice on each LINA tool result and `lina.check_inbox`. A connection without a tool or input transport reports the inbox unavailable. |
+
+| Connection | Tier | Mechanism |
+| --- | --- | --- |
+| Codex | push | `turn/steer` with the expected turn id; `turn/start` when idle |
+| [CC] through `claude-agent-acp` | turn | next LINA tool result; `session/prompt` when idle |
+| [CC] headless | pull, unavailable | no inbox transport; known-unsent mail is held, then refused when the session ends |
+| Cursor | turn | next LINA tool result; `session/prompt` when idle |
+| Gemini CLI | turn | next LINA tool result; `session/prompt` when idle |
+| Grok | turn | next LINA tool result; `session/prompt` when idle |
+| OpenCode | pull | unread notice and `lina.check_inbox`; `session/prompt` when idle |
+| omp | pull | unread notice and `lina.check_inbox`; `session/prompt` when idle |
+| Antigravity | pull, unavailable | no inbox transport; known-unsent mail is held, then refused when the session ends |
+| Another added ACP worker | pull | unread notice and `lina.check_inbox`; `session/prompt` when idle |
+
+An idle ACP session accepts `session/prompt`; starting it still requires its
+existing task owner's admission. Task-controlled steering never starts an extra
+execution. A stronger native mechanism is advertised only when that connection
+implements it, and Core installs no hook or plugin in the person's settings.
+
+This contract takes the delivery tiers and the per-agent mechanisms from
+reason-machines/reason-network at `72ca2b3` (2026-10-22, MIT OR Apache-2.0),
+`DESIGN.md` ("Getting messages into agents") and its mail, MCP and hook modules.
+LINA implements the same boundary independently in Go on its own connections;
+no reference source is copied. [Third-party
+notices](../../THIRD-PARTY-NOTICES.md#reason-network-reference) record the
+revision and license.
+
+Not adopted: workers messaging each other or broadcasting, since every worker
+talks only to Core and the manager session decides; the reference's per-machine
+daemon, peer-to-peer transport, signed roster and hosted relay, because a Node
+uses the device identity and Core's grants ([host-protocol.md](host-protocol.md))
+and LINA runs no relay; and its sign-in.
 
 ### Compatibility
 
@@ -1294,21 +1348,8 @@ Code-change work ends in a pull request that the worker opens, and goes through 
 
 ### Steering delivery and receipts
 
-Every worker connection records its effective delivery tier and mechanism in
-its profile. A vendor name alone does not establish an input capability:
-
-- **push:** active-turn input and idle wake through the bound protocol.
-- **turn:** input at the next supported tool boundary. Core's ACP bridge uses
-  the next LINA tool result; it does not intercept the worker's native tools.
-- **pull:** an unread notice on each LINA tool result and `lina.check_inbox`.
-  A connection without a tool or input transport reports the inbox unavailable.
-
-An idle ACP session accepts `session/prompt`; starting it still requires its
-existing task owner's admission. Task-controlled steering never starts an extra
-execution. Core installs no hook or plugin in the person's settings. A stronger
-native mechanism is advertised only when that connection implements it.
-
-Each message has an id, sender, task and `<worker>:<session>` address. Core stores
+Each message has an id, sender, task and `<worker>:<session>` address, and it
+uses its connection's delivery tier (see Delivery tiers). Core stores
 it before delivery and retains append-only work receipts: `stored`, `delivered`,
 `read`, `held` or `refused`. The sender can inspect these receipts in the worker
 snapshot and task ledger; changes also return to its conversation. Turn and pull
@@ -1469,32 +1510,15 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 
 ### LINA tools for workers
 
-- Every textual input from Core is a `lina-message` frame carrying sender,
-  speaker kind, work id and message id. Attributes and body are XML escaped,
-  so content cannot close or forge a frame. Manager input is `agent`, recovery
-  is `system`, tool results are `tool`, and only authenticated person answers
-  are `person`. Native typed form values remain unchanged, with the provenance frame in
-  response metadata.
-  Vendor API roles do not change this provenance.
-  Durable steering retains sender and speaker kind separately from the person
-  who owns the task. Push and inbox delivery frame the original source; mailbox
-  notices and tool envelopes remain `tool`. Old mailbox records without source
-  metadata are `system` evidence, never inferred person instructions.
-- Workers address only Core through `coordinate`; recipient, worker and group
-  arguments are refused. Core permits twelve automatic coordination requests
-  and follow-up inputs per task between trusted decisions. Admission survives
-  restart and deduplicates retries. A new person input, an authenticated answer
-  or owner control, or a recorded manager return can replenish the allowance
-  once; replaying that decision cannot. At the cap Core refuses the exchange
-  with an explicit explanation. Projection reads and completion receipts remain
-  available so a capped worker can still report its result.
+- Every textual input and tool result Core sends to a worker carries the frame of Messages to a worker. Native typed form values remain unchanged, with the provenance frame in response metadata.
+- Workers address only Core through `coordinate`; recipient, worker and group arguments are refused. The allowance and the guards on those messages are those of Messages to a worker.
 - A coordination request may include up to ten visible relative text-file
   paths from its own worktree: 256 KiB per UTF-8 file and 512 KiB total.
   Hidden components, symlinks, traversal, non-regular files, binary text and
   home configuration folders are refused. Core retains non-executable private
   copies with the request. An attachment grants no execution or approval.
 - LINA's work tools reach a worker through its adapter: for Codex, `thread/start.dynamicTools` in the namespace `lina`. LINA Core identifies the caller by thread, turn and call ids. For an ACP worker, it is one stdio MCP server that `session/new` names for that session only (see ACP adapter). For another worker, the adapter uses the per-run mechanism of that tool that installs nothing in the user's setup. Where a tool has no such channel, the adapter builds the receipt from the tool's final result and the pull request it opened, and marks it adapter-derived.
-- The tools are: submit a completion receipt; ask a question; send a coordination request (to LINA Core only, never to another worker); read the task projection, which is the LINA materials and memory projections the task may read. GitHub work and other integrations need no LINA tool; the worker uses its own setup.
+- The tools are: submit a completion receipt; ask a question; send a coordination request (to LINA Core only, never to another worker); read the task projection, which is the LINA materials and memory projections the task may read; and read steering with `check_inbox`, which acknowledges read ids and may report acted ids as a worker claim. On a pull connection, `check_inbox` is the delivery path. GitHub work and other integrations need no LINA tool; the worker uses its own setup.
 - LINA Core declares the tools and handles `item/tool/call`, or the MCP tool calls of an ACP worker's session server. The receipt and question schemas are LINA's own and are versioned with the worker adapter.
 - Scheduled `ask` calls and native worker questions retain the originating person, agent and conversation. Their question forms name the worker that asked. Answers use the recorded request and thread/turn binding. Foreign and stale answers are refused; repeated answers return their recorded outcome without a second send.
 - Only the worker thread itself submits receipts. ACP uses the same Core handlers and schemas as Codex. Accepted receipt claims retain the session turn in the receipt and the process generation and binding epoch in their durable event identity; they never verify or complete the task.
