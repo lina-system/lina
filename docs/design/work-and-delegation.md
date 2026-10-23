@@ -1974,6 +1974,7 @@ Two permissively licensed sources shaped this section; LINA keeps none of their 
 Effect states and idempotency keys are defined in [host-protocol.md](host-protocol.md), the effect ledger in [runtime.md](runtime.md), and epochs, reconciliation and the task owner's disposition of irreversible effects in [main-authority.md](main-authority.md). Work applies them as follows:
 
 - When LINA Core restarts, running worker turns are cut. Their effects are unknown. After the restart LINA Core reconciles with `thread/resume` and a `thread/read` snapshot.
+- Before sending conversation-worker input that can start a follow-up turn, Core persists an uncertain intent with its directory reservation. The prior turn's completion cannot settle that intent. Core checkpoints the accepted turn binding independently of notifications. A definitive refusal restores the prior binding and releases an unused reservation; a missing binding or failed checkpoint retains uncertainty without replay or guessing a turn on restart. Steering preserves the recovery allowance.
 - On reconnect, LINA Core reconciles with `thread/loaded/list` and `thread/read`. When a pending server request does not arrive again, the attempt is marked unknown and needing attention, and the originating conversation is told.
 - When a Node restarts or disconnects, the effects of its running turn are unknown and are reconciled. On a Node policy cancel the Node sends `turn/interrupt` and reports STOPPED or UNKNOWN.
 - A GitHub write or merge with an unknown outcome is settled by reading GitHub's state ([integrations.md](integrations.md)). It is never repeated automatically.
@@ -2058,8 +2059,12 @@ transactions read those copied observations and the canonical owner names.
 Rows are scoped to the requesting person and name the owner agent before
 the worker. An idle session leaves the list without asserting that the task is
 verified; a new active turn makes it visible again. Unknown observations stay
-unknown. Scheduled workers retain their durable task rows and do not also
-contribute session rows. These rows do not alter the task or background-run state mappings.
+unknown. A pending ACP `session/request_permission` needs the person's input,
+just like a Codex approval: both the running row and progress line show input
+needed until the request is resolved. A pending Core tool call alone does not
+claim the person's attention. Scheduled workers retain their durable task rows
+and do not also contribute session rows. These rows do not alter the task or
+background-run state mappings.
 
 - A row is one task, one background run or one conversation-started worker. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
 - The states map onto the work card states: working is in progress; waiting, paused and input needed are waiting; done is landed. A stalled or failed task shows its state word until it is dispatched again (see Stall and failure).
