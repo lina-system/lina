@@ -35,16 +35,21 @@ func TestRetiredSiblingRepairAssessmentIsDerivedAgain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	g := revisionSnapshot(t, e).Goals[0]
-	if b := g.Tasks[1]; b.Stage != TaskQAFailed || b.RepairAsked || b.RepairedBy != "" || b.QA.Ref != "failed-qa" {
-		t.Fatalf("retired assessment stranded or changed its task: %+v", b)
-	}
 	cfg := e.cfg
 	cfg.Epoch++
 	var err error
 	e, err = NewEngine(cfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Report retains the obsolete receipt. Startup reconciliation derives the
+	// retired assessment's cleanup before the corrected goal can be planned.
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	g := revisionSnapshot(t, e).Goals[0]
+	if b := g.Tasks[1]; b.Stage != TaskQAFailed || b.RepairAsked || b.RepairedBy != "" || b.QA.Ref != "failed-qa" {
+		t.Fatalf("retired assessment stranded or changed its task: %+v", b)
 	}
 	// Accept the clarification, then require a new assessment of the same b.
 	revisionReport(t, e, "", PlanGoal, Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("clarification")}})
