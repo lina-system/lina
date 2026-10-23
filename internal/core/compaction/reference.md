@@ -41,6 +41,25 @@ This specification was written before the Go implementation.
 No upstream implementation or prompt is copied. See
 [third-party notices](../../../THIRD-PARTY-NOTICES.md#lcm-x).
 
+## Successive summaries: carried values
+
+Reference: the same pinned revision, inspected before this change. The local
+Hermes installation was unavailable; these files were read from that revision.
+
+- **Seen** — `dag.py:267-325` stores each summary and its source ids atomically.
+  `compaction.py:_condense_before_leaves,_condense_after_leaves` separates leaf
+  generation from condensation of an oversized summary prefix. Earlier leaf
+  summaries are not rewritten for every new leaf.
+- **Inferred / LINA choice** — preserve the existing single-parent root and its
+  coverage transaction. Carry its specific values verbatim when adding events,
+  while the model updates the other sections and extracts new values. Bound the
+  carried section; condense it only when it exceeds that bound or an actual
+  root-only fitting pass requests compression. This avoids repeatedly rewriting
+  old exact values without introducing a second publication topology.
+- **Unknown** — this is not LCM-X's leaf condensation algorithm. Its quality and
+  request-size tradeoff must be measured on the fixed #849 replay. Neither the
+  reference nor synthetic tests prove semantic retention on that history.
+
 ## Queued inputs at a turn boundary
 
 Reference: the pinned LCM-X revision above, inspected before this fix.

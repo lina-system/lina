@@ -94,22 +94,28 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		node, err := store.Node(ctx, frontier.Root)
 		if errors.Is(err, compaction.ErrUnavailable) {
 			node, err = store.Rebuild(ctx, r.conversation, func(ctx context.Context, segment compaction.Segment) (compaction.Output, error) {
-				var sources []compaction.Record
+				// Rebuild uses only the freshly rebuilt child, never the stale
+				// node's text. Keep the child boundary so ordinary value carry
+				// also applies when new visible events remain after retraction.
+				if len(segment.Children) > 1 {
+					return compaction.Output{}, compaction.ErrCoverage
+				}
+				input := compaction.PassSegment{}
 				for _, child := range segment.Children {
 					var text compaction.Text
 					if err := json.Unmarshal([]byte(child.Output.Text), &text); err != nil {
 						return compaction.Output{}, err
 					}
-					sources = append(sources, compaction.Record{ID: "node:" + child.ID, Item: compaction.SummaryItem(text, false)})
+					input.RootID, input.Root = child.ID, compaction.SummaryItem(text, false)
 				}
 				for _, id := range segment.Events {
 					item, err := project(ctx, id)
 					if err != nil {
 						return compaction.Output{}, err
 					}
-					sources = append(sources, item)
+					input.Records = append(input.Records, item)
 				}
-				text, err := auxiliary.Summarize(ctx, compaction.PassSegment{Records: sources})
+				text, err := auxiliary.Summarize(ctx, input)
 				if err != nil {
 					return compaction.Output{}, err
 				}
