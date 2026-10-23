@@ -117,3 +117,14 @@ func (m *shellModel) webContent() string {
 	lines = append(lines, "Esc  Ctrl+D")
 	return ansi.Wrap(strings.Join(lines, "\n"), max(1, m.size.Width), "")
 }
+
+func (m *shellModel) webReply(attempt uint64, e protocol.Envelope) {
+	if m.web.open && attempt == m.web.attempt {
+		m.web.busy = false
+		if e.Error != nil {
+			m.web.code = string(e.Error.Code)
+		} else if p, ok := e.Payload.(protocol.WebResult); ok {
+			m.web.configured = p.Configured
+		}
+	}
+}

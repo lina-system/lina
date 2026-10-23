@@ -23,14 +23,15 @@ func (r *conversationRuntime) startDecisions(ctx context.Context) error {
 	d.Questions = workerQuestions{runtime: r}
 	r.decisions = d
 	r.identity.DecisionPresence = d.Presence
-	for kind, operation := range d.Operations() {
-		r.identity.Operations[kind] = operation
+	if err := addOperations(&r.identity, d.Operations()); err != nil {
+		return err
 	}
 	r.identity.Topics = r.topics
 	if r.identity.TopicCapabilities == nil {
 		r.identity.TopicCapabilities = map[string]protocol.Capability{"core": clientsrv.DecisionsCapability}
 	}
 	r.identity.TopicCapabilities["waiting"] = clientsrv.DecisionsCapability
+	// Deliberately replace earlier hooks; this preserves the existing boot order.
 	r.identity.RefreshTopic = func(ctx context.Context, topic string) error {
 		if topic == "waiting" {
 			if err := r.restoreConversationQuestions(ctx); err != nil {
