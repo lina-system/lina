@@ -32,6 +32,15 @@ func ownsCode(m agents.WorkMethodSettings) bool {
 	return dispatches(m) && slices.Contains(owns, "code")
 }
 
+// The requesting agent already has a prepared turn. Only a different receiver
+// needs a separate record pin for this handoff.
+func codeOwnerTurn(turnID, source, owner string) string {
+	if source == owner {
+		return turnID
+	}
+	return turnID + ":code-owner:" + owner
+}
+
 func (r *conversationRuntime) codeOwner(ctx context.Context, turnID, person, preferred string) (string, error) {
 	all, err := r.agents.List(ctx)
 	if err != nil {
@@ -60,7 +69,7 @@ func (r *conversationRuntime) codeOwner(ctx context.Context, turnID, person, pre
 		if a.Preset != "dev" {
 			continue
 		}
-		p, err := r.agents.Prepare(ctx, turnID+":code-owner:"+a.ID, a.ID)
+		p, err := r.agents.Prepare(ctx, codeOwnerTurn(turnID, preferred, a.ID), a.ID)
 		if err != nil {
 			return "", err
 		}

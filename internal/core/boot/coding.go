@@ -124,7 +124,7 @@ func (r *conversationRuntime) assignCoding(ctx context.Context, origin dispatch.
 	if _, err := r.agents.Get(ctx, a.Owner); err != nil {
 		return a, errDevUnavailable
 	}
-	method, err := r.preparedMethod(ctx, origin.Turn+":code-owner:"+a.Owner, a.Owner)
+	method, err := r.preparedMethod(ctx, codeOwnerTurn(origin.Turn, origin.Agent, a.Owner), a.Owner)
 	if err != nil || !ownsCode(method) {
 		return a, errDevUnavailable
 	}

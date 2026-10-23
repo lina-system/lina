@@ -92,3 +92,23 @@ func workAgentFixture(t *testing.T, r *conversationRuntime) string {
 	t.Fatal("dev fixture missing")
 	return ""
 }
+
+func TestWorkMethodDispatchUsesPreparedSourceRecord(t *testing.T) {
+	r := controlRuntime(t)
+	dev := workAgentFixture(t, r)
+	if _, err := r.agents.Prepare(t.Context(), "pinned-work", dev); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.agents.UpdatePreset(t.Context(), agents.Preset{ID: "dev", WorkMethod: `{"schema":1,"preset":"dev","workers":{"dispatch":false},"handoff":{"owns":["code"]}}`}, r.person); err != nil {
+		t.Fatal(err)
+	}
+	origin := dispatch.Origin{Person: r.person, Agent: dev, Conversation: "main:" + dev, Turn: "pinned-work"}
+	assignment, err := r.assignCoding(t.Context(), origin, "pinned-task", "worker_start", "/fixture", json.RawMessage(`{}`))
+	if err != nil || assignment.Owner != dev {
+		t.Fatalf("prepared dispatch record was replaced mid-turn: %+v %v", assignment, err)
+	}
+	origin.Turn = "next-work"
+	if _, err = r.assignCoding(t.Context(), origin, "next-task", "worker_start", "/fixture", json.RawMessage(`{}`)); !errors.Is(err, errDevUnavailable) {
+		t.Fatalf("new turn ignored disabled dispatch record: %v", err)
+	}
+}
