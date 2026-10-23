@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -507,28 +508,50 @@ func TestM2InstalledCodexLive(t *testing.T) {
 
 // Existing adapter journeys explicitly handle the additional persona turns.
 func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
-	// Discovery adds call/results after the current input. Classify the latest
-	// user input, rather than mistaking a load_tools receipt for a new request.
-	var item struct{ Role, Content string }
-	found := false
+	// ContextPacket evidence and discovery results follow the current input.
+	// Skip those, but stop at a newer person or external input so a completion
+	// retained in history cannot consume a later turn.
+	var content string
 	for i := len(inputs) - 1; i >= 0; i-- {
-		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" {
-			found = true
+		var item struct{ Role, Content string }
+		if json.Unmarshal(inputs[i], &item) == nil && item.Role == "user" && !fixtureContextEvidence(item.Content) {
+			content = item.Content
 			break
 		}
 	}
-	if !found || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+	if !strings.Contains(content, `<external_evidence origin="worker-session:`) {
 		return false
 	}
 	if result == "" {
 		emitResponse(w, "Worker finished.", true)
-	} else if strings.Contains(item.Content, result) {
+	} else if strings.Contains(content, result) {
 		emitResponse(w, "Worker outcome: "+result, true)
 	} else {
 		emitResponse(w, "Worker stopped.", true)
 	}
 	return true
 }
+
+// Core appends references to every ContextPacket item. Decode the external
+// envelope so its escaped reference array can be distinguished from input.
+func fixtureContextEvidence(content string) bool {
+	_, raw, ok := strings.Cut(content, "\n")
+	var evidence struct {
+		XMLName xml.Name `xml:"external_evidence"`
+		Text    string   `xml:",chardata"`
+	}
+	if !ok || xml.Unmarshal([]byte(raw), &evidence) != nil {
+		return false
+	}
+	const suffix = "\nReferences: "
+	index := strings.LastIndex(evidence.Text, suffix)
+	if index < 0 {
+		return false
+	}
+	var refs []struct{ ID string }
+	return json.Unmarshal([]byte(evidence.Text[index+len(suffix):]), &refs) == nil && len(refs) > 0 && refs[0].ID != ""
+}
+
 func receiveWorkerFollowups(t *testing.T, h *harness, c *clientapi.Client, count int) []protocol.Envelope {
 	t.Helper()
 	var frames []protocol.Envelope
