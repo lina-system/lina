@@ -304,3 +304,11 @@ func TestStepNamesCannotHideKnownTokensWithJoiners(t *testing.T) {
 		}
 	}
 }
+
+func TestStepNamesRejectUnicodeTechnicalReferences(t *testing.T) {
+	for _, name := range []string{"파일.go 수정", "Read PR １２", "이슈 762 처리", "풀 리퀘스트 17 확인"} {
+		if validStepName(name, nil) {
+			t.Errorf("accepted technical reference: %q", name)
+		}
+	}
+}

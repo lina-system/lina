@@ -10,7 +10,7 @@ import (
 	"github.com/rivo/uniseg"
 )
 
-var technicalStepName = regexp.MustCompile(`(?i)([#＃]\s*\p{N}+|\b(?:issue|pr|pull request)\s*[-:#]?\s*\d+|\b[a-z]+-\d+\b|\b[0-9a-f]{7,}\b|\b[\w-]+\.[a-z][\w]*\b|\b(?:branch|id)\s*[:=]|[_/\\` + "`" + `])`)
+var technicalStepName = regexp.MustCompile(`(?i)([#＃]\s*\p{N}+|(?:\b(?:issue|pr|pull request)|이슈|풀\s*리퀘스트)\s*[-:#]?\s*\p{N}+|\b[a-z]+-\p{N}+\b|\b[0-9a-f]{7,}\b|(?:^|[^\p{L}\p{N}])[\p{L}\p{N}_-]+\.[\p{L}][\p{L}\p{N}_-]*|\b(?:branch|id)\s*[:=]|[_/\\` + "`" + `])`)
 
 func validStepName(name string, forbidden []string) bool {
 	if !utf8.ValidString(name) || strings.TrimSpace(name) == "" || uniseg.StringWidth(name) > 24 {
