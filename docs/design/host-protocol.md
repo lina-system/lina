@@ -26,6 +26,10 @@ Rules:
 - The TypeScript types serve the LINA app on every platform, because the app is one React codebase ([surfaces.md](surfaces.md#app-front-end)).
 - Every generated type set parses and re-serializes every conformance fixture without loss.
 
+The Go generator embeds the canonical schema verbatim as a raw string so schema
+changes remain line-oriented in the generated source. It rejects a schema that
+contains a backtick, which would terminate the raw string.
+
 The client 1.0 codec remains strict for encoding and for Core's request boundary:
 unknown fields (including nested fields) and unknown kinds fail with `malformed`
 before dispatch. A client receive boundary validates the common envelope first.
