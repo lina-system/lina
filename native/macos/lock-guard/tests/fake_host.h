@@ -69,6 +69,8 @@ struct fake_host {
   // A database that accepts the write but normalises it: a read of the lock
   // screen rule then returns the stock rule instead of LINA's.
   bool normalise_rule;
+  // The database goes away after the lock screen rule is written.
+  bool read_fails_after_write;
 
   // Clock and session.
   uint64_t now_ms;

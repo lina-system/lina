@@ -60,6 +60,9 @@ static int write_right(void *context, const char *name, const struct lina_right 
   lina_right_set_int(&stored, "created", (long long)(fake->now_ms / 1000));
   lina_right_set_int(&stored, "modified", (long long)(fake->now_ms / 1000));
   fake_right_set(fake, name, &stored);
+  if (fake->read_fails_after_write && strcmp(name, LINA_RIGHT_SCREENSAVER) == 0) {
+    fake->read_right_status = -1;
+  }
   return 0;
 }
 

@@ -118,9 +118,10 @@ static void install_accepts_an_earlier_lina_rule(void) {
   fake_right_set(&fake, LINA_RIGHT_SCREENSAVER, &earlier);
   struct lina_outcome outcome = lina_install(&fake.host, &paths, &input);
   CHECK(outcome.code == LINA_INSTALL_OK);
+  // A rule an earlier install wrote is never the backup: a restore while that
+  // rule is current falls back to the stock rule instead.
   struct lina_backup backup;
-  CHECK(lina_backup_read(&fake.host, &paths, &backup) == 1);
-  CHECK(lina_right_equal_ignoring_timestamps(&backup.rule, &earlier));
+  CHECK(lina_backup_read(&fake.host, &paths, &backup) == 0);
 
   // A re-install over an earlier LINA install swaps the verified bundle in
   // place of the installed one and writes the rule again.
@@ -189,6 +190,117 @@ static void install_restores_when_read_back_differs(void) {
   CHECK(definitions_match(&fake, LINA_RIGHT_SCREENSAVER, &stock));
   CHECK(!fake.bundle_present);
   CHECK(fake_right_find(&fake, LINA_RIGHT_UNLOCK) == NULL);
+  CHECK(!lina_enabled_present(&fake.host, &paths));
+}
+
+static void install_uses_the_release_measured_list(void) {
+  // A first install on a measured build: the installed list does not exist
+  // yet, so the release's own list decides.
+  struct fake_host fake;
+  setup(&fake);
+  fake.measured_count = 0;
+  fake_file_set(&fake, "/release/measured-builds.txt", "# builds\n25A354\n");
+  input.measured_source = "/release/measured-builds.txt";
+  struct lina_outcome outcome = lina_install(&fake.host, &paths, &input);
+  CHECK(outcome.code == LINA_INSTALL_OK);
+  char text[128];
+  size_t length = 0;
+  CHECK(fake.host.read_file(fake.host.context, paths.measured, text, sizeof(text), &length) == 1);
+  text[length] = '\0';
+  CHECK(strstr(text, "25A354") != NULL);
+
+  // The same Mac, a build the release list does not name.
+  struct fake_host unlisted;
+  setup(&unlisted);
+  unlisted.measured_count = 0;
+  fake_file_set(&unlisted, "/release/measured-builds.txt", "26B100\n");
+  outcome = lina_install(&unlisted.host, &paths, &input);
+  CHECK(outcome.code == LINA_INSTALL_BUILD);
+  CHECK_STR(outcome.reason, "build-unmeasured");
+  CHECK(unlisted.write_count == 0);
+}
+
+static void install_keeps_the_original_backup(void) {
+  // Re-installing over LINA's own rule keeps the stock rule the first install
+  // saved, so a later uninstall returns to it rather than to LINA's rule.
+  struct fake_host fake;
+  setup(&fake);
+  CHECK(lina_install(&fake.host, &paths, &input).code == LINA_INSTALL_OK);
+  struct lina_backup backup;
+  struct lina_right stock;
+  lina_rule_stock(&stock);
+  CHECK(lina_backup_read(&fake.host, &paths, &backup) == 1);
+  CHECK(lina_right_equal_ignoring_timestamps(&backup.rule, &stock));
+
+  // A second install runs while LINA's rule is current.
+  CHECK(lina_install(&fake.host, &paths, &input).code == LINA_INSTALL_OK);
+  CHECK(lina_backup_read(&fake.host, &paths, &backup) == 1);
+  CHECK(lina_right_equal_ignoring_timestamps(&backup.rule, &stock));
+
+  // Uninstalling restores the stock rule, not LINA's.
+  struct lina_outcome outcome;
+  CHECK(lina_uninstall(&fake.host, &paths, &outcome) == LINA_UNINSTALL_OK);
+  struct fake_right *slot = fake_right_find(&fake, LINA_RIGHT_SCREENSAVER);
+  CHECK(slot != NULL && slot->present);
+  CHECK(lina_right_equal_ignoring_timestamps(&slot->definition, &stock));
+  CHECK(!fake.bundle_present);
+  CHECK(fake_right_find(&fake, LINA_RIGHT_UNLOCK) == NULL);
+}
+
+static void install_over_lina_without_a_backup_uninstalls_to_stock(void) {
+  struct fake_host fake;
+  setup(&fake);
+  struct lina_right earlier;
+  lina_rule_lina(&earlier);
+  fake_right_set(&fake, LINA_RIGHT_SCREENSAVER, &earlier);
+  CHECK(lina_install(&fake.host, &paths, &input).code == LINA_INSTALL_OK);
+  struct lina_backup backup;
+  CHECK(lina_backup_read(&fake.host, &paths, &backup) == 0);
+  struct lina_outcome outcome;
+  CHECK(lina_uninstall(&fake.host, &paths, &outcome) == LINA_UNINSTALL_OK);
+  struct lina_right stock;
+  lina_rule_stock(&stock);
+  struct fake_right *slot = fake_right_find(&fake, LINA_RIGHT_SCREENSAVER);
+  CHECK(slot != NULL && slot->present);
+  CHECK(lina_right_equal_ignoring_timestamps(&slot->definition, &stock));
+  CHECK(!fake.bundle_present);
+  CHECK(fake_right_find(&fake, LINA_RIGHT_UNLOCK) == NULL);
+}
+
+static void install_leaves_an_existing_install_alone_when_input_is_bad(void) {
+  struct fake_host fake;
+  setup(&fake);
+  CHECK(lina_install(&fake.host, &paths, &input).code == LINA_INSTALL_OK);
+  char before[128];
+  size_t length = 0;
+  CHECK(fake.host.read_file(fake.host.context, paths.enabled, before, sizeof(before), &length) == 1);
+  before[length] = '\0';
+  struct lina_install_input bad = input;
+  bad.person_uid = 0;
+  struct lina_outcome outcome = lina_install(&fake.host, &paths, &bad);
+  CHECK(outcome.code == LINA_INSTALL_STATE);
+  CHECK_STR(outcome.reason, "input");
+  char after[128];
+  CHECK(fake.host.read_file(fake.host.context, paths.enabled, after, sizeof(after), &length) == 1);
+  after[length] = '\0';
+  CHECK_STR(after, before);
+  struct lina_pending pending;
+  CHECK(lina_pending_read(&fake.host, &paths, &pending) == 1);
+  CHECK(fake.bundle_present);
+}
+
+static void install_keeps_recovery_parts_when_the_database_goes_away(void) {
+  struct fake_host fake;
+  setup(&fake);
+  fake.read_fails_after_write = true;
+  struct lina_outcome outcome = lina_install(&fake.host, &paths, &input);
+  CHECK(outcome.code == LINA_INSTALL_READBACK);
+  // The rule may still name LINA's right, so both stay, and the backup that
+  // could not be restored stays too.
+  CHECK(fake.bundle_present);
+  CHECK(fake_right_find(&fake, LINA_RIGHT_UNLOCK) != NULL);
+  struct lina_backup backup;
+  CHECK(lina_backup_read(&fake.host, &paths, &backup) == 1);
   CHECK(!lina_enabled_present(&fake.host, &paths));
 }
 
@@ -274,5 +386,10 @@ void test_install(void) {
   install_stops_on_bad_signature();
   install_keeps_an_earlier_install_working();
   install_refuses_an_unreadable_rule();
+  install_uses_the_release_measured_list();
+  install_keeps_the_original_backup();
+  install_over_lina_without_a_backup_uninstalls_to_stock();
+  install_leaves_an_existing_install_alone_when_input_is_bad();
+  install_keeps_recovery_parts_when_the_database_goes_away();
   install_restores_when_read_back_differs();
 }

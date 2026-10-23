@@ -52,7 +52,7 @@ only.
 
 | Path | Content |
 | --- | --- |
-| `/var/db/lina/locked-screen/backup` | The rule it found, the macOS build, and their SHA-256. A record whose seal does not match is never restored. |
+| `/var/db/lina/locked-screen/backup` | The stock rule it found, the macOS build, and their SHA-256. Written only from a stock rule, kept across a re-install, and never restored when its seal does not match. |
 | `/var/db/lina/locked-screen/pending` | The install's manual-unlock check: when it was written, and when the guard saw the lock. |
 | `/var/db/lina/locked-screen/enabled` | `socket=`, `uid=`, `deadline_ms=` for the plug-in. Absent means the feature is off. |
 | `/var/db/lina/locked-screen/measured-builds` | A copy of `measured-builds.txt` from the release. |
@@ -85,10 +85,17 @@ sudo build/lina-locked-screen uninstall
 ```
 
 The install runs in this order, and every failure removes what that attempt
-wrote and leaves the rule as it found it: Apple silicon; a measured macOS build;
-the rule shape; the backup; the measured list; the bundle copy and its
+wrote and leaves the rule as it found it: Apple silicon; a measured macOS build
+(the release's own list decides, so a first install does not need an installed
+one); the rule shape; the backup; the measured list; the bundle copy and its
 signature; the guard job; the two rights; the self-test deny; the rule write and
 its read-back; the enabled marker; the pending record.
+
+A failure keeps LINA's right and the bundle when the rule cannot be read or
+still names the right, because removing either would leave the lock screen
+naming something that is gone. An install over a rule an earlier LINA install
+wrote backs up nothing, so a restore falls back to the stock rule; it never
+restores a rule that names a right the uninstall is about to remove.
 
 The last step asks the person to lock the Mac and unlock it by hand once. The
 guard records the lock, and a manual unlock inside two minutes of it completes

@@ -28,21 +28,23 @@ mkdir -p "$out"
 build() {
   local name=$1
   shift
+  local output=$1
+  shift
   xcrun --sdk macosx clang \
     -arch arm64 -mmacosx-version-min=13.0 \
     -std=c11 -O2 -Wall -Wextra -Werror \
     -I "$root/src" \
     -DLINA_TEAM_ID="\"$LINA_TEAM_ID\"" \
-    -o "$out/$name" "$@"
+    -o "$out/$output" "$@"
   local sign=(--force --options runtime --sign "$identity" --identifier "com.lina.locked-screen.$name")
   if [[ "$identity" != - ]]; then
     sign+=(--timestamp)
   fi
-  codesign "${sign[@]}" "$out/$name"
-  codesign --verify --strict --verbose=2 "$out/$name"
+  codesign "${sign[@]}" "$out/$output"
+  codesign --verify --strict --verbose=2 "$out/$output"
 }
 
-build guard \
+build guard com.lina.locked-screen.guard \
   "$root/src/guard_main.c" \
   "$root/src/guard_entry.c" \
   "$root/src/guard.c" \
@@ -54,7 +56,7 @@ build guard \
   "$root/src/darwin_host.c" \
   -framework Security -framework CoreFoundation -framework CoreGraphics
 
-build lina-locked-screen \
+build installer lina-locked-screen \
   "$root/src/installer_main.c" \
   "$root/src/guard_main.c" \
   "$root/src/guard.c" \

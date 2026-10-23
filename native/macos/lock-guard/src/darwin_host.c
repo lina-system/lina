@@ -239,45 +239,67 @@ static int remove_right(void *context, const char *name) {
   return status == errAuthorizationSuccess ? 0 : 1;
 }
 
+// The self-test runs on its own thread so the install can enforce the
+// plug-in's deadline. The record is refcounted: the caller and the thread each
+// drop one reference, and the last one frees it. A timed-out evaluation
+// therefore never touches freed memory when Authorization Services finally
+// returns.
 struct evaluation {
   const char *right;
   int result;
   bool finished;
+  int refs;
   pthread_mutex_t lock;
   pthread_cond_t ready;
 };
 
+static void evaluation_release(struct evaluation *evaluation) {
+  pthread_mutex_lock(&evaluation->lock);
+  int remaining = --evaluation->refs;
+  pthread_mutex_unlock(&evaluation->lock);
+  if (remaining > 0) return;
+  pthread_mutex_destroy(&evaluation->lock);
+  pthread_cond_destroy(&evaluation->ready);
+  free(evaluation);
+}
+
 static void *evaluate_thread(void *argument) {
   struct evaluation *evaluation = argument;
   AuthorizationRef authorization = NULL;
+  int result = -1;
   if (AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment, kAuthorizationFlagDefaults,
-                          &authorization) != errAuthorizationSuccess) {
-    evaluation->result = -1;
-  } else {
+                          &authorization) == errAuthorizationSuccess) {
     AuthorizationItem item = {(char *)evaluation->right, 0, NULL, 0};
     AuthorizationRights rights = {1, &item};
     AuthorizationFlags flags = kAuthorizationFlagExtendRights | kAuthorizationFlagPreAuthorize;
     OSStatus status = AuthorizationCopyRights(authorization, &rights, kAuthorizationEmptyEnvironment,
                                               flags, NULL);
-    evaluation->result = status == errAuthorizationSuccess ? 1 : (status == errAuthorizationDenied ? 0 : -1);
+    result = status == errAuthorizationSuccess ? 1 : (status == errAuthorizationDenied ? 0 : -1);
     AuthorizationFree(authorization, kAuthorizationFlagDestroyRights);
   }
   pthread_mutex_lock(&evaluation->lock);
+  evaluation->result = result;
   evaluation->finished = true;
   pthread_cond_signal(&evaluation->ready);
   pthread_mutex_unlock(&evaluation->lock);
+  evaluation_release(evaluation);
   return NULL;
 }
 
 static int evaluate_right(void *context, const char *name, uint32_t deadline_ms) {
   (void)context;
-  struct evaluation evaluation = {.right = name, .result = -1, .finished = false};
-  pthread_mutex_init(&evaluation.lock, NULL);
-  pthread_cond_init(&evaluation.ready, NULL);
+  struct evaluation *evaluation = calloc(1, sizeof(*evaluation));
+  if (evaluation == NULL) return -1;
+  evaluation->right = name;
+  evaluation->result = -1;
+  evaluation->refs = 2;
+  pthread_mutex_init(&evaluation->lock, NULL);
+  pthread_cond_init(&evaluation->ready, NULL);
   pthread_t thread;
-  if (pthread_create(&thread, NULL, evaluate_thread, &evaluation) != 0) {
-    pthread_mutex_destroy(&evaluation.lock);
-    pthread_cond_destroy(&evaluation.ready);
+  if (pthread_create(&thread, NULL, evaluate_thread, evaluation) != 0) {
+    pthread_mutex_destroy(&evaluation->lock);
+    pthread_cond_destroy(&evaluation->ready);
+    free(evaluation);
     return -1;
   }
   struct timespec deadline;
@@ -288,24 +310,22 @@ static int evaluate_right(void *context, const char *name, uint32_t deadline_ms)
     deadline.tv_sec += 1;
     deadline.tv_nsec -= 1000000000L;
   }
-  pthread_mutex_lock(&evaluation.lock);
-  while (!evaluation.finished) {
-    if (pthread_cond_timedwait(&evaluation.ready, &evaluation.lock, &deadline) == ETIMEDOUT) break;
+  pthread_mutex_lock(&evaluation->lock);
+  while (!evaluation->finished) {
+    if (pthread_cond_timedwait(&evaluation->ready, &evaluation->lock, &deadline) == ETIMEDOUT) break;
   }
-  bool finished = evaluation.finished;
-  int result = evaluation.result;
-  pthread_mutex_unlock(&evaluation.lock);
+  bool finished = evaluation->finished;
+  int result = evaluation->result;
+  pthread_mutex_unlock(&evaluation->lock);
   if (!finished) {
-    // The evaluation is stuck inside the plug-in; the install treats a missing
-    // answer as a failed self-test.
-    pthread_detach(thread);
-    pthread_mutex_destroy(&evaluation.lock);
-    pthread_cond_destroy(&evaluation.ready);
+    // The evaluation is stuck inside the plug-in. The thread keeps its
+    // reference and frees the record when it returns; the install treats a
+    // missing answer as a failed self-test.
+    evaluation_release(evaluation);
     return -1;
   }
   pthread_join(thread, NULL);
-  pthread_mutex_destroy(&evaluation.lock);
-  pthread_cond_destroy(&evaluation.ready);
+  evaluation_release(evaluation);
   return result;
 }
 

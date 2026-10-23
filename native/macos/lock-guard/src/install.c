@@ -13,6 +13,9 @@ struct attempt {
   bool guard;
   bool rights;
   bool rule;
+  bool enabled;
+  bool pending;
+  bool measured;
 };
 
 // The staged bundle lives beside the installed one; swapping it in is a rename,
@@ -36,30 +39,34 @@ static void log_linef(const struct lina_host *host, const char *format, const ch
 static void cleanup(const struct lina_host *host, const struct lina_paths *paths, struct attempt *attempt) {
   char staged[LINA_PATH_MAX];
   if (staged_bundle(paths, staged, sizeof(staged))) host->remove_bundle(host->context, staged);
-  struct lina_right current;
-  bool names_lina = false;
+  bool restored = true;
   if (attempt->rule) {
     // Restore while the bundle still exists, so no moment leaves the rule
     // naming a plug-in that is already gone.
-    lina_restore_backup(host, paths, "install-aborted", NULL);
+    restored = lina_restore_backup(host, paths, "install-aborted", NULL) == 0;
   }
-  if (host->read_right(host->context, LINA_RIGHT_SCREENSAVER, &current) == 0) {
-    names_lina = lina_rule_names_lina(&current);
-  }
-  // A rule an earlier install wrote, or one this attempt restored, still needs
-  // the right and the bundle; removing them would break the person's unlock.
-  if (attempt->rights && !names_lina) {
+  // The right and the bundle go only when the rule is readable and no longer
+  // names LINA's right. An unreadable database could still have the rule
+  // naming it, and an earlier install's rule still needs both.
+  struct lina_right current;
+  bool keep = host->read_right(host->context, LINA_RIGHT_SCREENSAVER, &current) != 0
+      || lina_rule_names_lina(&current);
+  if (attempt->rights && !keep) {
     host->remove_right(host->context, LINA_RIGHT_UNLOCK);
     host->remove_right(host->context, LINA_RIGHT_SELFTEST);
   }
-  if (attempt->bundle && !names_lina) host->remove_bundle(host->context, paths->bundle);
+  if (attempt->bundle && !keep) host->remove_bundle(host->context, paths->bundle);
   if (attempt->guard) host->remove_guard(host->context, paths->guard, paths->guard_plist);
-  host->remove_file(host->context, paths->enabled);
-  host->remove_file(host->context, paths->pending);
-  host->remove_file(host->context, paths->measured);
-  if (attempt->backup) host->remove_file(host->context, paths->backup);
-  host->log_line(host->context, names_lina
-      ? "an earlier LINA rule is in place; its right and plug-in stay"
+  if (attempt->enabled) host->remove_file(host->context, paths->enabled);
+  if (attempt->pending) host->remove_file(host->context, paths->pending);
+  if (attempt->measured) host->remove_file(host->context, paths->measured);
+  // A backup that could not be restored is the only copy of the earlier rule;
+  // it stays for the guard or a later attempt.
+  if (attempt->backup && (!attempt->rule || restored)) {
+    host->remove_file(host->context, paths->backup);
+  }
+  host->log_line(host->context, keep
+      ? "the rule still needs LINA's right and plug-in, so they stay"
       : "nothing of this attempt is left");
 }
 
@@ -80,6 +87,17 @@ static bool socket_is_valid(const char *socket) {
   return true;
 }
 
+static bool measured_contains(const struct lina_host *host, const char *path, const char *build) {
+  static char text[4096];
+  size_t length = 0;
+  if (host->read_file(host->context, path, text, sizeof(text), &length) != 1) return false;
+  text[length] = '\0';
+  for (char *line = strtok(text, "\n"); line != NULL; line = strtok(NULL, "\n")) {
+    if (strcmp(line, build) == 0) return true;
+  }
+  return false;
+}
+
 static int copy_measured(const struct lina_host *host, const struct lina_paths *paths, const char *source) {
   static char text[4096];
   size_t length = 0;
@@ -91,9 +109,11 @@ struct lina_outcome lina_install(const struct lina_host *host, const struct lina
                                  const struct lina_install_input *input) {
   struct attempt attempt;
   memset(&attempt, 0, sizeof(attempt));
+  // Nothing is touched before the input is known good: a rejected invocation
+  // must not change an install that is already there.
   if (!socket_is_valid(input->broker_socket) || input->person_uid == 0
       || input->deadline_ms < 1 || input->deadline_ms > 500) {
-    return fail(host, paths, &attempt, LINA_INSTALL_STATE, "input");
+    return (struct lina_outcome){LINA_INSTALL_STATE, "input"};
   }
   if (!host->is_apple_silicon(host->context)) {
     return fail(host, paths, &attempt, LINA_INSTALL_DEVICE, "not-apple-silicon");
@@ -102,7 +122,12 @@ struct lina_outcome lina_install(const struct lina_host *host, const struct lina
   if (host->measure_build(host->context, build, sizeof(build)) != 1) {
     return fail(host, paths, &attempt, LINA_INSTALL_BUILD, "build-unknown");
   }
-  if (!host->eval_test_mac(host->context) && !host->build_is_measured(host->context, build)) {
+  // The release's own list counts for this install, so a first install on a
+  // measured build does not depend on a list written by an earlier one.
+  bool measured = input->measured_source != NULL
+      ? measured_contains(host, input->measured_source, build)
+      : host->build_is_measured(host->context, build);
+  if (!host->eval_test_mac(host->context) && !measured) {
     return fail(host, paths, &attempt, LINA_INSTALL_BUILD, "build-unmeasured");
   }
   struct lina_right rule;
@@ -115,12 +140,22 @@ struct lina_outcome lina_install(const struct lina_host *host, const struct lina
   if (host->make_dir(host->context, paths->state_dir) != 0) {
     return fail(host, paths, &attempt, LINA_INSTALL_STATE, "state-dir");
   }
-  if (lina_backup_write(host, paths, &rule, build) != 0) {
-    return fail(host, paths, &attempt, LINA_INSTALL_BACKUP, "backup");
+  // The backup records the rule that was there before any LINA install, so only
+  // a stock rule is written into it. A re-install over LINA's own rule keeps the
+  // earlier backup; when there is none, a restore falls back to the stock rule.
+  // Either way a later uninstall never restores a rule that names a right it is
+  // about to remove.
+  if (lina_rule_is_stock(&rule)) {
+    if (lina_backup_write(host, paths, &rule, build) != 0) {
+      return fail(host, paths, &attempt, LINA_INSTALL_BACKUP, "backup");
+    }
+    attempt.backup = true;
   }
-  attempt.backup = true;
-  if (input->measured_source != NULL && copy_measured(host, paths, input->measured_source) != 0) {
-    return fail(host, paths, &attempt, LINA_INSTALL_STATE, "measured-list");
+  if (input->measured_source != NULL) {
+    if (copy_measured(host, paths, input->measured_source) != 0) {
+      return fail(host, paths, &attempt, LINA_INSTALL_STATE, "measured-list");
+    }
+    attempt.measured = true;
   }
   // The new bundle is staged beside the installed one and only swapped in once
   // its signature checks, so a failed install never leaves a half-copied
@@ -181,10 +216,12 @@ struct lina_outcome lina_install(const struct lina_host *host, const struct lina
   if (lina_enabled_write(host, paths, input->broker_socket, input->person_uid, input->deadline_ms) != 0) {
     return fail(host, paths, &attempt, LINA_INSTALL_STATE, "enabled");
   }
+  attempt.enabled = true;
   struct lina_pending pending = {host->monotonic_ms(host->context), 0};
   if (lina_pending_write(host, paths, &pending) != 0) {
     return fail(host, paths, &attempt, LINA_INSTALL_STATE, "pending");
   }
+  attempt.pending = true;
   host->log_line(host->context, "installed; waiting for one manual lock and unlock");
   return (struct lina_outcome){LINA_INSTALL_OK, NULL};
 }
