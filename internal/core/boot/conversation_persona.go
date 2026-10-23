@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reply"
+	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -190,18 +191,38 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 		State agents.EmotionSnapshot `json:"state"`
 	}{"persona_emotion", emotion})
 	packet = append(packet, assemble.ContextItem{ID: "persona-emotion:" + r.agent + ":" + r.conversation, Revision: scope.StateRevision, AgentID: r.agent, Kind: assemble.Clock, Text: string(emotionData)})
+	// Use the same scoped visibility rules as history and recall. Dispatch's
+	// epoch check fences any removal that races preparation; stored state and
+	// the grant's CAS revision remain unchanged by this projection.
+	visible, err := r.removals.Snapshot(ctx, r.person, r.agent)
+	if err != nil {
+		return nil, nil, err
+	}
+	values := make(map[string]string, len(settings.Settings))
+	var sourceIDs []string
+	for name, value := range settings.Settings {
+		if value == "" {
+			values[name] = value
+			continue
+		}
+		id := settings.SettingSources[name]
+		if visible.Visible(retract.Ref{Kind: retract.Event, ID: id}) {
+			values[name] = value
+			sourceIDs = append(sourceIDs, id)
+		}
+	}
+	methodState := agents.State{WorkMethodFills: map[string]agents.WorkMethodFill{}}
+	for key, fill := range settings.WorkMethodFills {
+		if visible.Visible(retract.Ref{Kind: retract.Event, ID: fill.Source}) {
+			methodState.WorkMethodFills[key] = fill
+			sourceIDs = append(sourceIDs, fill.Source)
+		}
+	}
 	settingData, _ := json.Marshal(struct {
 		Kind       string                    `json:"kind"`
 		Values     map[string]string         `json:"values"`
 		WorkMethod agents.WorkMethodSettings `json:"work_method"`
-	}{"persona_settings", settings.Settings, agents.ProjectWorkMethod(persona, settings)})
-	var sourceIDs []string
-	for _, id := range settings.SettingSources {
-		sourceIDs = append(sourceIDs, id)
-	}
-	for _, fill := range settings.WorkMethodFills {
-		sourceIDs = append(sourceIDs, fill.Source)
-	}
+	}{"persona_settings", values, agents.ProjectWorkMethod(persona, methodState)})
 	slices.Sort(sourceIDs)
 	var refs []assemble.Ref
 	for _, id := range slices.Compact(sourceIDs) {
