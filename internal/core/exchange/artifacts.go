@@ -50,8 +50,13 @@ func (s *Store) BeginChange(ctx context.Context, c Change, request Request, at t
 	if len(encode(request.HandOff)) > ledger.InlineBytes {
 		return ChangeResult{}, ErrInvalid
 	}
+	var err error
+	c.Done, err = clean(c.Done)
+	if err != nil {
+		return ChangeResult{}, ErrInvalid
+	}
 	var out ChangeResult
-	err := s.db.Write(ctx, func(tx *canon.Tx) error {
+	err = s.db.Write(ctx, func(tx *canon.Tx) error {
 		current, err := change(ctx, tx, c.Person, c.Artifact.ID)
 		if err == nil {
 			if current.Artifact.Kind != c.Artifact.Kind {

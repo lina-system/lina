@@ -92,6 +92,14 @@ func TestArtifactOwnerRoutesSecondRecordWrite(t *testing.T) {
 	if got.Code != loop.OK || json.Unmarshal(got.Output, &lease) != nil || lease.Change == nil {
 		t.Fatalf("lease: %+v", got)
 	}
+	// A later duplicate preset must not displace an already open owner.
+	if _, err := r.agents.Create(t.Context(), agents.Create{Name: "Second coordinator", Preset: "lina", PersonID: r.person}); err != nil {
+		t.Fatal(err)
+	}
+	same := bindings["begin_artifact_change"].Execute(t.Context(), provider.ToolCall{ID: "same-artifact", Arguments: string(args)})
+	if same.Code != loop.OK {
+		t.Fatalf("existing owner lost to preset ambiguity: %+v", same)
+	}
 	owner, err := r.artifactOwner(t.Context(), "wiki")
 	if err != nil {
 		t.Fatal(err)

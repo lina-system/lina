@@ -139,7 +139,7 @@ func (r *conversationRuntime) prepareExchangeTools(turnID string, bindings map[s
 		if err != nil {
 			return exchangeResult(c.ID, nil, err)
 		}
-		status, err := store.Status(ctx, receipt.ID, r.person, r.agent)
+		status, err := r.handoffAdmission(ctx, receipt)
 		return exchangeResult(c.ID, status, err)
 	}}
 	bindings["handoff_status"] = loop.Tool{Validate: func(c provider.ToolCall) (string, error) { var a timerRef; return "", timerDecode(c.Arguments, &a) }, Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
@@ -161,7 +161,14 @@ func (r *conversationRuntime) prepareExchangeTools(turnID string, bindings map[s
 		}
 		r.artifactMutex().Lock()
 		defer r.artifactMutex().Unlock()
-		owner, err := r.artifactOwner(ctx, a.Artifact.Kind)
+		owned, err := store.Change(ctx, r.person, a.Artifact.ID)
+		owner := owned.Owner
+		if errors.Is(err, sql.ErrNoRows) {
+			owner, err = r.artifactOwner(ctx, a.Artifact.Kind)
+		}
+		if err == nil {
+			err = r.exchangeAgent(ctx, owner)
+		}
 		if err != nil {
 			return exchangeResult(c.ID, nil, err)
 		}
@@ -215,7 +222,7 @@ func (r *conversationRuntime) routeArtifactWrite(ctx context.Context, turnID str
 	if err != nil {
 		return nil, err
 	}
-	status, err := r.exchangeStore().Status(ctx, receipt.ID, r.person, r.agent)
+	status, err := r.handoffAdmission(ctx, receipt)
 	result := exchangeResult(c.ID, map[string]any{"handoff": status, "changed": false}, err)
 	return &result, nil
 }
@@ -231,4 +238,19 @@ func (r *conversationRuntime) artifactMutex() *sync.Mutex {
 		}
 	})
 	return root.artifactMu
+}
+
+// A new tool receipt describes the queued admission at its commit, independent
+// of scheduler speed. handoff_status reads the later delivery receipt.
+func (r *conversationRuntime) handoffAdmission(ctx context.Context, receipt exchange.Receipt) (exchange.Status, error) {
+	status, err := r.exchangeStore().Status(ctx, receipt.ID, r.person, r.agent)
+	if err == nil && receipt.Inserted {
+		status.Delivery = "pending"
+		status.Outcome = exchange.Pending
+		status.Report = nil
+		if status.Waiting != "off" {
+			status.Waiting = "waiting"
+		}
+	}
+	return status, err
 }
