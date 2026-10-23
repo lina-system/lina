@@ -568,6 +568,28 @@ commits. Listing and choosing use `none`. Every reply is correlated to its
 request; neither client reconnect nor navigation repeats a mutation. Management
 requests retain conservative mutation admission during Core recovery.
 
+### Planning capability
+
+`planning` version `1.0` adds `plan_request` and `plan_response` to client 1.0.
+Requests name an installed `agent_id`. `accept_goal` and `accept_project` take
+`title` and `done` and return a `record_id` and saved `revision`. They are the
+person's acceptance of a goal or directly handed-over project, not confirmation
+of any proposed children. `get` takes a `result_id` and returns the current typed
+plan. `confirm` takes `result_id` and `revision` and returns the effect state,
+created record ids, saved revision and current plan. Mutating actions require
+an authenticated deciding client; model tools and Moirai cannot invoke them.
+Irrelevant fields, foreign targets and stale confirmations are refused.
+
+Plan result bodies have `entries` and nullable `confirm`. Entries retain the
+existing id/kind/title/state/parent fields and may include `done`, `stage` and
+`depends_on`. Klotho produces only project and to-do children beneath an accepted
+goal or project. Core validates parent order, complete done conditions and
+acyclic dependencies. The result stream replaces the whole card on update;
+`get` and conversation snapshots retain it after restart. A confirmed card has
+`confirm: null`; its original approved revision remains the confirmation key.
+An `unknown` confirmation effect is not success. It is settled only by observing
+the exact saved records, never by automatically repeating publication.
+
 ## Operational work control
 
 The negotiated `work` capability, version `1.0`, installs `work_switch_request` and

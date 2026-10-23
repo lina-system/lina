@@ -60,7 +60,8 @@ func Migrations() []Migration {
 		{Version: 46, SQL: WorkSwitchSchema},
 		{Version: 47, SQL: handoffsSchema},
 		{Version: 48, SQL: workReviewsSchema},
-		{Version: 49, SQL: doneEvidenceSchema + ResultSchema},
+		{Version: 49, SQL: ResultsSchema + PlanningSchema},
+		{Version: 50, SQL: doneEvidenceSchema},
 	}
 }
 
@@ -98,6 +99,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 		{34, "waiting_decisions"},
 		{46, "work_worker_reservations"}, {46, "work_switches"}, {46, "work_switch_tasks"}, {46, "work_switch_events"},
+		{49, "result_heads"}, {49, "plan_drafts"}, {49, "plan_confirmations"}, {49, "plan_rejections"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{38, "records_todo"},
 		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
@@ -109,7 +111,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{37, "work_events"}, {37, "work_records"},
 		{44, "naming_breaches"},
 		{47, "exch_origins"}, {47, "exch_notices"}, {47, "artifact_changes"},
-		{49, "done_completions"}, {49, "result_heads"}, {49, "result_saves"},
+		{50, "done_completions"}, {49, "result_saves"},
 		{42, "agent_starters"}, {42, "agent_selection"},
 		{45, "record_operations"}, {45, "record_candidates"},
 	} {

@@ -146,7 +146,7 @@ supplied for its assigned receipt and head: PR checks and reviews, diff and base
 design. It reads no other task or conversation and reruns no command. The manager
 still judges whether those observations establish the required evidence kind;
 a green PR alone does not establish an owner-path run.
-Core resolves it under the prepared manager policy and retains the assessment
+Core resolves the completion references under the prepared manager policy and retains the assessment
 with the accepted receipt and head. Git application of that same delivery uses
 the retained assessment, including after restart; it does not require a live
 manager turn. A changed head or an older acceptance without an assessment

@@ -34,11 +34,14 @@ defines the messages and their ProtoJSON representation.
   `AUTH_REQUIRED`. A terminal task cannot accept another message.
   `SubscribeToTask` starts with a current task snapshot; a broken stream
   does not mean the task stopped.
-- Section 3.2.2 and the proto's `returnImmediately` default require waiting
-  for a terminal or interrupted task when false. Section 3.1.1 also says
-  send returns immediately. The explicit configuration semantics are the
-  implementable rule; a client can send `returnImmediately: true` to avoid
-  relying on that prose inconsistency.
+- [Section 3.2.2](https://github.com/a2aproject/A2A/blob/v1.0.1/docs/specification.md#322-sendmessageconfiguration)
+  requires non-streaming `SendMessage` to wait for a terminal or interrupted
+  task when `returnImmediately` is false or absent. The field has no effect
+  on streaming operations, which always deliver updates in real time, or on
+  direct `Message` responses. Section 3.1.1 also says send returns immediately.
+  The explicit configuration semantics are the implementable rule; a client
+  can send `returnImmediately: true` on `SendMessage` to avoid relying on that
+  prose inconsistency.
 - Section 13.1 requires authorization on every task operation, including
   unfiltered lists. Inaccessible and nonexistent task ids are indistinguishable.
   Authentication mechanisms describe how to identify a caller, not the work
