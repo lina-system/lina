@@ -74,6 +74,7 @@ func Migrations() []Migration {
 
 		{Version: 60, SQL: recallScopeSchema},
 		{Version: 61, SQL: workerMessagesSchema},
+		{Version: 62, SQL: MiniAppsSchema},
 	}
 }
 
@@ -118,6 +119,7 @@ var publishedMigrationTables = []struct {
 	{58, "recall_doc"}, {58, "recall_text"}, {58, "recall_pair"}, {58, "recall_pending"},
 	{60, "recall_conversation_scope"},
 	{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
+	{62, "mini_app"}, {62, "mini_app_revision"}, {62, "mini_app_change"}, {62, "mini_app_event"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is
