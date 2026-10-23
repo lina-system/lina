@@ -49,7 +49,7 @@ func TestM2InstalledCodeGoalTool(t *testing.T) {
 
 func TestM2InstalledCodeGoalDriver(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"private", "public", "failed-deploy", "restart-deploy"} {
+	for _, mode := range []string{"private", "public", "failed-deploy", "restart-deploy", "restart-unhealthy-probe"} {
 		t.Run(mode, func(t *testing.T) { t.Parallel(); installedCodeGoal(t, mode) })
 	}
 }
@@ -99,9 +99,11 @@ func installedCodeGoal(t *testing.T, mode string) {
 	}
 	var mu sync.Mutex
 	deployed := map[string]string{}
+	restarting := strings.HasPrefix(mode, "restart-")
+	var failedProbes atomic.Int32
 	deployedSignal := make(chan struct{}, 1)
 	releaseProbe := make(chan struct{})
-	if mode != "restart-deploy" {
+	if !restarting {
 		close(releaseProbe)
 	}
 	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +111,12 @@ func installedCodeGoal(t *testing.T, mode string) {
 			select {
 			case <-releaseProbe:
 			case <-r.Context().Done():
+				return
+			}
+			if mode == "restart-unhealthy-probe" && failedProbes.CompareAndSwap(0, 1) {
+				// A valid negative probe does not settle the interrupted deploy.
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"body":"starting"}`))
 				return
 			}
 		}
@@ -187,7 +195,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 	core := start()
 	c, conversation := conversationClient(t, h)
 	events := admittedTurn(t, h, c, conversation, "goal", "Create the result and run it through deployment and verification.")
-	if mode == "restart-deploy" {
+	if restarting {
 		select {
 		case <-deployedSignal:
 		case <-h.ctx.Done():
@@ -199,6 +207,13 @@ func installedCodeGoal(t *testing.T, mode string) {
 		c, conversation = conversationClient(t, h)
 		close(releaseProbe)
 		events = nil
+		if mode == "restart-unhealthy-probe" {
+			waitUnconfirmedCodeDeployment(t, h)
+			c.Close()
+			h.stopCore(core)
+			core = start()
+			c, conversation = conversationClient(t, h)
+		}
 	}
 	done := false
 	inspect := func(e protocol.Envelope) {
@@ -286,7 +301,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		})
 		t.Fatalf("goal not closed with evidence: %+v\nactions: %v\ncore: %s", g, debug, core.stderr.String())
 	}
-	if mode == "restart-deploy" {
+	if restarting {
 		var state, active string
 		err = db.Read(t.Context(), func(tx *canon.Tx) error {
 			if err := tx.QueryRowContext(t.Context(), "SELECT json_extract(record,'$.State') FROM authority_effects WHERE json_extract(record,'$.Tool')='deploy_code_goal'").Scan(&state); err != nil {
@@ -318,6 +333,12 @@ func installedCodeGoal(t *testing.T, mode string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if restarting && strings.Count(string(before), "deploy\n") != 1 {
+		t.Fatalf("reconciliation repeated deployment: %s", before)
+	}
+	if mode == "restart-unhealthy-probe" && (failedProbes.Load() != 1 || strings.Count(string(before), "probe\n") < 2) {
+		t.Fatalf("failed probe was not followed by a successful observation: %s", before)
+	}
 	for _, name := range []string{"worker-pr", "merge", "qa", "deploy", "probe", "acceptance"} {
 		if !strings.Contains(string(before), name+"\n") {
 			t.Fatalf("stage %s never ran: %s", name, before)
@@ -331,5 +352,53 @@ func installedCodeGoal(t *testing.T, mode string) {
 	}
 	if string(before) != string(after) || calls.Load() != 2 {
 		t.Fatalf("restart replayed work: %s -> %s; calls=%d", before, after, calls.Load())
+	}
+}
+
+// Wait for the negative observation to commit before restarting again. This
+// exercises durable recovery without waiting for the five-minute safety sweep.
+func waitUnconfirmedCodeDeployment(t *testing.T, h *harness) {
+	t.Helper()
+	reader, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close(context.Background())
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var action goal.Action
+		var effect, active string
+		err = reader.Read(h.ctx, func(tx *canon.Tx) error {
+			var raw []byte
+			if err := tx.QueryRowContext(h.ctx, "SELECT body FROM work_records WHERE kind='action' AND json_extract(body,'$.kind')='deploy'").Scan(&raw); err != nil {
+				return err
+			}
+			if err := json.Unmarshal(raw, &action); err != nil {
+				return err
+			}
+			if err := tx.QueryRowContext(h.ctx, "SELECT json_extract(record,'$.State') FROM authority_effects WHERE json_extract(record,'$.Tool')='deploy_code_goal'").Scan(&effect); err != nil {
+				return err
+			}
+			return tx.QueryRowContext(h.ctx, "SELECT active_key FROM authority_targets WHERE target='code-deploy:fixture-service'").Scan(&active)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if action.ObserverEpoch != 0 {
+			var observation goal.Observation
+			if err := json.Unmarshal(action.Receipt, &observation); err != nil {
+				t.Fatal(err)
+			}
+			if action.State != "unknown" || observation.Status != goal.OutcomeUnknown || observation.EffectsSettled || observation.Proof.Passed || observation.Proof.Ref == "" || effect != "unknown" || active != action.ID {
+				t.Fatalf("negative deployment probe lost reconciliation: action=%s observation=%+v effect=%s active=%s", action.State, observation, effect, active)
+			}
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-h.ctx.Done():
+			t.Fatal("negative deployment probe was not recorded: ", h.ctx.Err())
+		}
 	}
 }

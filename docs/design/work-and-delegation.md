@@ -1471,6 +1471,10 @@ returns to the originating conversation and survives restart without repeating
 effects. An uncertain worker, merge, QA or deployment is observed; it is never
 re-executed by the observation path. A deployment retains its original connection
 before dispatch so a changed setting cannot settle it against another service.
+An unsuccessful read-only probe of an uncertain deployment keeps the action
+unknown and its authority reservation held. Core retains valid negative evidence
+and probes again on restart or the safety sweep; an unhealthy service alone
+cannot settle the deployment or turn it into a terminal failure.
 When a probe confirms an uncertain deployment, Core records the applied authority
 receipt and releases that effect's target reservation in one transaction. It
 checks the original actor, target and action binding, refuses a live invocation,
@@ -1482,6 +1486,9 @@ Git commits, registered check commands and a local HTTP service. It proves one
 code goal through worker execution, manager judgment, merge, QA, deploy, probe,
 criterion readback and closure, then restarts Core and requires no repeated
 effects. A public service without approval must remain undeployed.
+An interrupted deployment whose first recovery probe fails must remain eligible
+for reconciliation, release its reservation after a successful probe, and close
+without issuing the deployment again.
 
 ### Acceptance
 

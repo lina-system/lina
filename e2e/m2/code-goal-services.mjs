@@ -54,7 +54,7 @@ if(name==='host-report') {
   if(git('rev-parse','HEAD')!==revision || revision!==merged()) throw Error('wrong deploy checkout');
   event('deploy');
   const response=await fetch(process.env.LINA_GOAL_FIXTURE_URL,{method:'POST',body:JSON.stringify({revision,body:fs.readFileSync('result.txt','utf8')})});
-  if(process.env.LINA_GOAL_MODE==='restart-deploy'){setInterval(()=>{},1000);await new Promise(()=>{});}
+  if(process.env.LINA_GOAL_MODE?.startsWith('restart-')){setInterval(()=>{},1000);await new Promise(()=>{});}
   passed=response.ok && process.env.LINA_GOAL_MODE!=='failed-deploy';evidence='Service accepted the merged artifact';
  } else if(name==='probe') {
   const response=await fetch(process.env.LINA_GOAL_FIXTURE_URL);

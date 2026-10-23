@@ -198,6 +198,10 @@ func (d *codeGoalDriver) Observe(ctx context.Context, a goal.Action) (goal.Obser
 		}
 		observation, err := d.runCheck(ctx, g, a, repo, repo.Service.Probe, repo.Service.Target, false)
 		if err != nil || observation.Status != goal.OutcomeSucceeded || !observation.Proof.Passed {
+			// An unhealthy service does not establish the deployment's outcome.
+			// Retain its evidence and reservation for a later read-only probe.
+			observation.Status = goal.OutcomeUnknown
+			observation.EffectsSettled = false
 			return observation, err
 		}
 		body, _ := json.Marshal(map[string]any{"source": "probe", "proof": observation.Proof})
