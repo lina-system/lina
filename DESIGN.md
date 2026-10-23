@@ -46,10 +46,17 @@ keep their command diagnostics.
 ## Tokens and terminal profiles
 
 The three DTCG files in [design/tokens](design/tokens/) are the source of truth.
-`node scripts/tokens.mjs` generates the Go data, CSS custom properties, SVG mark and the
-following tables. `node scripts/tokens.mjs --check` compares without writing,
+`node scripts/tokens.mjs` generates the Go data, CSS custom properties, the
+launcher panel's Swift constants, SVG mark and the following tables.
+`node scripts/tokens.mjs --check` compares without writing,
 checks text contrast, and rejects raw presentation colours and glyphs in TUI
 production source. Foundation runs the same check.
+
+The launcher's Swift file holds the six colors as dynamic `NSColor` values that
+pick light, dark or high contrast from the panel's appearance, plus spacing,
+radius and motion constants. Glass, materials and corner shape stay the
+system's. The high-contrast set is dark, reaches 7:1 against canvas and surface,
+and applies in either appearance while Increase Contrast is on.
 
 All text roles (text, muted and accent) must reach 4.5:1 on both canvas and
 surface, including the standard 16-colour and 256-colour fallback palettes.
