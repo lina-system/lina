@@ -62,8 +62,7 @@ func TestManagerStepGraphTool(t *testing.T) {
 	if got.Code != loop.OK || string(got.Output) != saved {
 		t.Fatalf("refusal changed graph: %+v", got)
 	}
-	foreign := *r
-	foreign.agent = "foreign"
+	foreign := &conversationRuntime{db: r.db, person: r.person, agent: "foreign", conversation: r.conversation, workEngine: r.workEngine}
 	outside := map[string]loop.Tool{}
 	foreign.prepareGoalWorkTools("foreign-turn", nil, outside)
 	if got := outside["read_step_graph"].Execute(t.Context(), provider.ToolCall{Arguments: `{"goal_id":"turn:goal"}`}); got.Code == loop.OK {
