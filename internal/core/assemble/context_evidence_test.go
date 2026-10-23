@@ -21,7 +21,7 @@ func TestRetrievedContextCannotGrantInstructionAuthority(t *testing.T) {
 					t.Fatal(report)
 				}
 				var item struct{ Role, Content string }
-				if err := json.Unmarshal(request.Items[len(request.Items)-2], &item); err != nil {
+				if err := json.Unmarshal(request.Items[len(request.Items)-1], &item); err != nil {
 					t.Fatal(err)
 				}
 				if item.Role != "user" {
@@ -44,7 +44,7 @@ func TestExplicitSourceCannotBePromotedByContextKind(t *testing.T) {
 				t.Fatal(report)
 			}
 			var item struct{ Role, Content string }
-			if err := json.Unmarshal(request.Items[len(request.Items)-2], &item); err != nil {
+			if err := json.Unmarshal(request.Items[len(request.Items)-1], &item); err != nil {
 				t.Fatal(err)
 			}
 			if item.Role != "user" || strings.Contains(item.Content, "<developer>") {

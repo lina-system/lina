@@ -308,7 +308,7 @@ A capability is used only under all of these rules:
 
 The rules for each capability:
 
-- **Request order.** Requests follow the [request layout](conversation-and-memory.md#request-layout): fixed parts first, history, the person's input, then the ContextPacket. Within a conversation the tools and tool choice stay unchanged.
+- **Request order.** Requests follow the [request layout](conversation-and-memory.md#request-layout): fixed parts first, history, the person's input, then the ContextPacket. Within a conversation the tools and tool choice stay unchanged, apart from tools loaded on demand. A failed-worker notice retains those declarations while Core disables its tool execution; declaration presence grants no permission. Compaction preserves the input-before-packet order; its summary request excludes both the current input and packet, including the standing profile.
 - **Cache identity.** Core derives one identity per conversation: a digest of the main id, the agent id and the conversation id. A background run uses its run id. The identity holds no name or text, and it stays for the life of the conversation, across compactions.
 - **Cache marks.** Core marks four boundaries of every request:
   - after the fixed part (items 1 to 4 of the request layout, without plugin tools loaded on demand);
@@ -408,6 +408,11 @@ The ChatGPT rows for LINA's own calls and for a Codex worker are two rows, becau
 ### Request regression
 
 A regression test compares LINA's requests with a baseline for each model-API provider: for ChatGPT, the request surface that the issuer documents for Sign in with ChatGPT and the requests recorded from the accepted turns of V1; for Gemini, the shape the Gemini API documents. It compares fields, `include`, the provider-state resend, the cache identity and marks, and the built-in tool declarations. The parts that differ by design are listed with the baseline and left out of the match: Codex's base instructions for coding work, which a LINA request never carries, LINA's developer-role persona and context items, and LINA's own tools ([conversation-and-memory.md](conversation-and-memory.md)). It runs again whenever a provider SDK pin, the request field list or a baseline moves.
+Layout changes move the request-order baseline in the same change. A scripted
+wire through the running Core must compare consecutive turns through the earlier
+person input, keep tools and tool choice stable, and show that a tool follow-up
+appends to its prepared request. Replay and episode export must preserve each
+recorded layout and its digest, including records made before the change.
 
 ## Accounts and sign-in
 

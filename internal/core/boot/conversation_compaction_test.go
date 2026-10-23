@@ -148,6 +148,18 @@ func TestConversationCompactionPreservesStandingProfile(t *testing.T) {
 					count++
 				}
 			}
+			inputAt, profileAt := -1, -1
+			for i, item := range request.Items {
+				if bytes.Equal(item, in.Current) {
+					inputAt = i
+				}
+				if bytes.Equal(item, profile) {
+					profileAt = i
+				}
+			}
+			if inputAt < 0 || profileAt <= inputAt {
+				t.Errorf("standing profile must follow current input: input=%d profile=%d", inputAt, profileAt)
+			}
 			if count != 1 {
 				t.Fatalf("standing-profile projection occurs %d times, want 1", count)
 			}
