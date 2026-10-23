@@ -17,6 +17,13 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
+// TestM2WorkerQuotaWindows (m2/worker-quota-windows.json) drives a Codex quota
+// stop with an exhausted five-hour window and a healthy weekly window through
+// installed Core. The replacement worker commits a real result. Persisted quota
+// keeps the windows independent before and after restart, and selection at the
+// reported short-window reset does not wait for the healthy weekly window.
+// Reset-boundary assertions use explicit times rather than waiting for a
+// provider window.
 func TestM2WorkerQuotaWindows(t *testing.T) {
 	t.Parallel()
 	testHeadlessWorkerThroughInstalledCore(t, "../m2/worker-quota-windows.json", false)

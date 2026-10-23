@@ -15,6 +15,9 @@ import (
 	"github.com/thisisjun786/lina/internal/core/manifest"
 )
 
+// TestM2OldCorePreservesNewerStore checks normal old-Core refusal of a newer
+// store before control-file writes, preserving installed file bytes and
+// metadata, including the WAL index.
 func TestM2OldCorePreservesNewerStore(t *testing.T) {
 	t.Parallel()
 
@@ -42,6 +45,11 @@ func TestM2OldCorePreservesNewerStore(t *testing.T) {
 	}
 }
 
+// TestM2UpdatePreflight (m2/update-preflight.json) checks separate core
+// --preflight processes against compatible, older, newer, corrupt and
+// WAL-backed stores while another owner holds the Core lock. It compares every
+// installed file's bytes and metadata, including the WAL index, and checks
+// normal old-Core refusal before control-file writes.
 func TestM2UpdatePreflight(t *testing.T) {
 	t.Parallel()
 

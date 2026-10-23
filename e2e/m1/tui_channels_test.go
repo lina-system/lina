@@ -33,11 +33,21 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
+// TestM1TUIChannelsInstalledCore (m1/tui-channels.json) opens the installed
+// channel controls and drives token entry, private-chat pairing, binding and
+// disconnect through the real TUI and boot composition. A separate Core test
+// process retains the production peer ancestry checks; only Telegram HTTP
+// replies are scripted. Boot package tests also reopen the poller against
+// durable connection and secret state.
 func TestM1TUIChannelsInstalledCore(t *testing.T) {
 	t.Parallel()
 
 	testTUIControlInstalledCore(t, "tui-channels.json", protocol.KindChannelResult)
 }
+
+// TestM1TUITalkLogInstalledCore (m1/tui-talk-log.json) seeds a durable
+// exchange, restarts installed Core, and checks one summary row and its
+// explicit ledger expansion without a model call.
 func TestM1TUITalkLogInstalledCore(t *testing.T) {
 	t.Parallel()
 

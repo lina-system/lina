@@ -21,10 +21,35 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM3DependencyReleaseInstalledCore (m3/dependency-release.json) runs the
+// installed Core with a synthetic App Server and forge. Conversation tools
+// admit a graph, Core creates actual Git worktrees, and worker processes write
+// and commit results after a real client answers a worker question and
+// approval. Independent work starts while a dependent waits; only a merge in a
+// separate forge clone followed by Core's observation releases the dependent
+// onto the fetched remote base. The parent clone's checked-out base branch
+// stays unchanged. Restart retains the merge without turning it into a delivery
+// verdict. The fixture has no provider credential or external GitHub effect.
+// m3/dependency-area-overlap.json first submits unordered areas for a
+// wildcard-matched directory and a nested file. Core must reject the graph
+// before the ordered directory/child graph in the release scenario can execute.
+// Ordinary Git commands in the scheduled worktree must refuse base and
+// tracking-ref writes, another task's branch update, and deletion of its own
+// assigned branch. The same checks run after restart, while real worker
+// commits, pushes, and Core's dependent allocation continue through the
+// protected parent clone.
+//
+// The worker also calls all four LINA work tools, receives both work-tool and
+// native question answers, and submits a receipt for its committed artifact.
 func TestM3DependencyReleaseInstalledCore(t *testing.T) {
 	testM3DependencyRelease(t, nil, nil, "", "")
 }
 
+// TestM3DelegationManagerAdmission (m3/dependency-manager.json) exercises graph
+// admission from a non-dev persona, durable dev ownership and assignment before
+// dispatch, and missing-dev refusal without work cards or worker effects.
+// Questions, approvals, refresh, stop controls, and restart retain the original
+// conversation.
 func TestM3DelegationManagerAdmission(t *testing.T) {
 	raw, err := os.ReadFile("../m3/dependency-manager.json")
 	if err != nil {
@@ -46,6 +71,10 @@ func TestM3DelegationManagerAdmission(t *testing.T) {
 	}
 }
 
+// TestM3DelegationPresetLimits (m3/delegation-preset-limits.json) calls the
+// configured graph tool through the installed Core as investing and legal
+// presets. Both must receive a policy refusal before task admission, with no
+// queued work appearing after restart.
 func TestM3DelegationPresetLimits(t *testing.T) {
 	data, err := os.ReadFile("../m3/delegation-preset-limits.json")
 	if err != nil {
@@ -65,6 +94,11 @@ type delegationConflict struct {
 	Returns   int    `json:"returns"`
 }
 
+// TestM3DependencyConflictReturnsOnce (m3/dependency-conflict.json) keeps the
+// predecessor pull request unmergeable through a correction turn. Core returns
+// it to the same worker exactly once, requires input for the remaining
+// conflict, and retains the dependent's gate until the forge merge. Repeated
+// observation and restart cannot resend work.
 func TestM3DependencyConflictReturnsOnce(t *testing.T) {
 	raw, err := os.ReadFile("../m3/dependency-conflict.json")
 	if err != nil {
@@ -83,10 +117,24 @@ type delegationStartFailure struct {
 	Restart bool   `json:"restart"`
 }
 
+// TestM3DelegationStartFailureReleasesCapacity
+// (m3/dependency-start-failure.json) injects a failed initial Git fetch with
+// one host slot: another task must finish and submit its receipt, while restart
+// must retain the failed attempt without its reservations or a duplicate
+// dispatch.
 func TestM3DelegationStartFailureReleasesCapacity(t *testing.T) {
 	testM3DelegationStartFailure(t, "dependency-start-failure.json")
 }
 
+// TestM3DelegationRecoveredFailureKeepsRuntime
+// (m3/dependency-recovery-failure.json) persists a graph with no capacity, then
+// restarts Core with one slot and a single failing Git fetch. It requires graph
+// tools to remain available, the independent worker to commit and submit its
+// receipt, and the settled failure to survive another restart without replay.
+// The conversation client correlates each readiness probe's reply by request
+// id; worker notices and late replies cannot satisfy or reject that probe. A
+// scripted regression interleaves those frames without depending on scheduler
+// timing.
 func TestM3DelegationRecoveredFailureKeepsRuntime(t *testing.T) {
 	testM3DelegationStartFailure(t, "dependency-recovery-failure.json")
 }

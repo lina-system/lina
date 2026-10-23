@@ -21,6 +21,12 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM3PlanInvalidResponseReleasesQueue (m3/plan-invalid-response.json)
+// exercises completed invalid JSON and cyclic planning responses through
+// installed Core and Moirai. It restarts Core between Aux completion and Apply,
+// verifies cached results, rejects a forged proposal, checks durable rejection
+// and usage counts under duplicate application, and observes the next valid
+// preview without publishing unconfirmed plan records.
 func TestM3PlanInvalidResponseReleasesQueue(t *testing.T) {
 	raw, err := os.ReadFile("../m3/plan-invalid-response.json")
 	if err != nil {

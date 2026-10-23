@@ -20,6 +20,15 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// TestM3PlanDrafting (m3/plan-drafting.json) exercises accepted goal discovery
+// through model tools, Klotho drafting through a real Moirai worker and
+// installed Core job socket, complete preview replacement, retirement of
+// overlapping stale requests, stale confirmation refusal, one-version record
+// creation, and idempotent confirmation across Core restarts. A loopback
+// provider supplies only model output; all tool, job, result, protocol and
+// records paths are production paths. No external credentials or services are
+// used.
+//
 // Real installed Core, real Moirai process, real protocol and Git; only model
 // output is scripted. No source-tree or test-only Core service composition.
 func TestM3PlanDrafting(t *testing.T) {

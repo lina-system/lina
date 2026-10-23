@@ -17,6 +17,11 @@ import (
 	"github.com/thisisjun786/lina/internal/core/update"
 )
 
+// TestM2UpdatePrepare hashes and unpacks a real command bundle, runs its
+// candidate preflight alongside a live Core, checks the durable preparation
+// result, rejects digest/artifact/peer failures and starts the prepared Core
+// through the public socket. Preparation keeps the idle and backup gate cells
+// unknown.
 func TestM2UpdatePrepare(t *testing.T) {
 	t.Parallel()
 

@@ -24,6 +24,15 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
+// TestM2PersonaGrowth (m2/persona-growth.json) uses a real Moirai worker
+// process against Core's job socket with a synthetic precomputed growth
+// candidate. It checks forged proposal refusal, next-turn persona application,
+// a committed learning notice and one-action undo through the authorized Core
+// tool registry, and suppression of an undone snapshot after reopening canon.
+// The service harness uses the same private state, process deadlines and
+// cleanup as the M1 worker scenario; it needs no model or personal persona
+// text.
+//
 // #34's harness owns the private state, credential-free real worker process,
 // socket readiness, deadlines and cleanup. The Core job and tool services are
 // production services hosted here with synthetic, precomputed Lachesis input.
