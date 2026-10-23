@@ -11,6 +11,7 @@ This contract covers:
 - background runs: LINA's own sub-agents, how a conversation starts them, what they may touch, their limits, states, results and durability
 - the CRW contract schemas and fixtures as fixed input, and the start gate they set
 - the user-facing frame of work and knowledge (목표, 일, 할 일, 계속 챙기는 것, 자료 (resource), 보관 (archive), 메모), the 할 일 record with its personal and flow views, how these records are stored, and the intent-card data model
+- what a message of the person does to the work it is bound to, and how a moved binding moves its effects
 - supervisor, parent and child roles, delivery and verdicts
 - the development method: the work definition, the choice of worker and the operation of the pull request
 - splitting work into tasks, area leases, parallel hand-off, completion events, stall handling and the running list
@@ -522,6 +523,23 @@ Card rules:
 - Every change that LINA or tidying makes to a card appears in the card's history.
 - A card's execution state is one of none, planned, in progress, delivered or verified, derived from observation of its 할 일. When observation is missing or stale the state is unknown, never none or verified.
 - From gaps between cards and work, Klotho drafts 할 일 only. Plan confirmation stays at the one confirmation point.
+
+## Messages about work
+
+A message reaches work through its binding ([conversation-and-memory.md](conversation-and-memory.md#what-a-message-is-about)). The binding names the target. This section fixes what the message does to it.
+
+| Target | What the message does |
+| --- | --- |
+| A running task or background run | A follow-up to that task or run alone, delivered as steering at its next round trip (see Background runs and Control). It never cancels the work. A stop is a stop of that task or run only. |
+| An existing 목표 or 일 | A change to its outcome, done condition, scope or dates is a new revision of its record (see Revision under Run to done). While its goal runs, the manager session receives the revision as a project event. A new step becomes a 할 일 in it. |
+| An existing 할 일 | An edit of its fields. When it has work in flight, the edit is also a follow-up to its task. |
+| A question about progress | Answered from the item's progress line and work cards (see Progress display), never from the model's memory of the work. What cannot be observed stays unknown. |
+| A new item | Captured under Plans. A new item may name the 일 or 목표 it belongs to. |
+| None | Answered in the conversation only, including a memory write. |
+
+- **Candidates.** Core ranks the candidates from work state as [What a message is about](conversation-and-memory.md#what-a-message-is-about) lists them. The person's items are candidates whichever agent manages them, because every agent shares the work queue. A binding to an item managed by another agent's manager session reaches that manager as a project event, and the requesting conversation keeps the reply.
+- **No second copy.** Before a new item is created, Core compares it with the open items: the same normalized title, or a candidate the model marked as close. When one matches, the model binds to it or records in the binding why the new item differs. In the owner's data, 6 percent of messages read as either new or earlier work, and resuming the earlier item, such as a paused watch job, was the accepted reading.
+- **Moving a binding.** A move re-attaches what the turn did. A 할 일 the turn created changes its 일 or 목표. A field edit on the wrong item is restored to its previous revision there and applied to the right item. A steer delivered to the wrong task or run is followed by a withdrawal message to it and delivered to the right one; what the wrong run already did stays, and its card says so. An effect that left the person is not moved.
 
 ## Supervisor, parent and child
 
