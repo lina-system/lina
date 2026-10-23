@@ -61,6 +61,8 @@ type Record struct {
 	Protected      map[string]string          `json:"protected_refs,omitempty"`
 	Method         *skills.Body               `json:"method,omitempty"`
 	BaseCommit     string                     `json:"base_commit,omitempty"`
+	ChangedFiles   []string                   `json:"changed_files,omitempty"`
+	DesignText     map[string]string          `json:"design_at_base,omitempty"`
 	ChangeEvidence string                     `json:"change_evidence,omitempty"`
 	Owner          string                     `json:"owner,omitempty"`
 	Manager        string                     `json:"manager,omitempty"`

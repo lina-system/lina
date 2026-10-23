@@ -101,13 +101,16 @@ func (r *conversationRuntime) inspectGoalPR(ctx context.Context, record dispatch
 	if err = r.db.Read(ctx, func(tx *canon.Tx) error { var err error; assignment, err = readCoding(ctx, tx, record.ID); return err }); err != nil {
 		return goal.Observation{}, err
 	}
-	if err = r.runCodingManager(ctx, assignment, "delivery", &record); err != nil {
-		return goal.Observation{}, err
+	record.PR = &p
+	if !r.conformanceVerified(ctx, assignment, record) {
+		if err = r.runCodingManager(ctx, assignment, "delivery", &record); err != nil {
+			return goal.Observation{}, err
+		}
 	}
 	if err = r.db.Read(ctx, func(tx *canon.Tx) error { var err error; assignment, err = readCoding(ctx, tx, record.ID); return err }); err != nil {
 		return goal.Observation{}, err
 	}
-	if assignment.Verdict != "verified" {
+	if !r.conformanceVerified(ctx, assignment, record) {
 		return goal.Observation{}, goal.ErrNeedsPerson
 	}
 	proof := goal.Proof{Revision: p.Head, Ref: p.URL, Passed: true}
