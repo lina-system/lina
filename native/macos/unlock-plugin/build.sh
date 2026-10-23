@@ -37,7 +37,7 @@ xcrun --sdk macosx clang \
   "$root/src/engine_from_callbacks.c" \
   "$root/src/darwin_host.c" \
   "$root/src/plugin_darwin.c" \
-  -framework Security -framework CoreFoundation
+  -framework Security -framework CoreFoundation -lbsm
 
 sign=(--force --options runtime --sign "$identity" --identifier com.lina.locked-screen.unlock)
 if [[ "$identity" != - ]]; then
