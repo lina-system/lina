@@ -116,11 +116,9 @@ func (s *Session) startTurn(ctx context.Context, text string, thread worker.Thre
 		if s.snapshot.Thread.TurnID != response.Turn.ID {
 			s.clearRequests("")
 		}
+		s.snapshot.Thread.TurnID = response.Turn.ID
 		s.snapshot.State = worker.Active
 	}
-	// Even an already completed turn needs its identity for work admission
-	// and correlation with the terminal event queued before this reply.
-	s.snapshot.Thread.TurnID = response.Turn.ID
 	return nil
 }
 
