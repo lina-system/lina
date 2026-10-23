@@ -79,12 +79,59 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	}
 	defer l.Release()
 	owner := proc.NewOwner()
-	defer owner.Close(context.Background())
+	service := s.cfg.Work
+	var reservations []string
+	defer func() {
+		// The adapter's later defer joins its process tree first. Join Git's
+		// process owner too before releasing any directory reservation.
+		if err := owner.Close(context.Background()); err != nil {
+			admitted, settled = true, false
+			queued, deliverySaved = false, false
+			r.Code = "cleanup_failed"
+			return
+		}
+		if len(reservations) > 0 && (!admitted || settled) {
+			if err := service.ReleaseWorker(context.Background(), reservations...); err != nil {
+				admitted, settled = true, false
+				queued, deliverySaved = false, false
+				r.Code = "reservation_unreleased"
+			}
+		}
+	}()
 	git := func(dir string, args ...string) (string, error) { return s.command(ctx, l, owner, dir, args...) }
 	d := r.TaskDefinition()
 	repo, err := filepath.EvalSymlinks(d.Repository)
 	if err != nil {
 		return
+	}
+	common, err := git(repo, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(repo, common)
+	}
+	workdir := filepath.Join(s.cfg.Root, "work", "tasks", r.ID)
+	// Keep adapter evidence outside the worker checkout. Both destinations are
+	// reserved before shared allocation creates any workspace or artifacts.
+	taskRoot := filepath.Join(s.cfg.Root, "work", "runs", r.ID)
+	repositoryID := fmt.Sprintf("%x", sha256.Sum256([]byte(repo)))
+	directories := []work.WorkerDirectory{
+		{ID: r.ID + ":repository", Path: repo},
+		{ID: r.ID + ":git", Path: common},
+		{ID: r.ID + ":clone", Path: filepath.Join(s.cfg.Root, "work", "clones", repositoryID)},
+		{ID: r.ID + ":worktree", Path: workdir},
+		{ID: r.ID + ":artifacts", Path: taskRoot},
+	}
+	if err = service.ReserveWorkerDirectories(ctx, directories); err != nil {
+		r.Code = "admission_refused"
+		if errors.Is(err, work.ErrControlHeld) {
+			r.Code = "control_held"
+		}
+		return
+	}
+	for _, directory := range directories {
+		reservations = append(reservations, directory.ID)
 	}
 	remote, err := git(repo, "remote", "get-url", "origin")
 	if err != nil {
@@ -138,14 +185,9 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			return
 		}
 	}
-	workdir := filepath.Join(s.cfg.Root, "work", "tasks", r.ID)
-	// Keep adapter evidence outside the worker's checkout so observing a result
-	// neither dirties its commit nor overwrites a file it produced.
-	taskRoot := filepath.Join(s.cfg.Root, "work", "runs", r.ID)
 	workspace := work.Workspace{TaskID: r.ID, Path: workdir, Spec: work.WorkspaceSpec{
-		RepositoryID: fmt.Sprintf("%x", sha256.Sum256([]byte(repo))), Source: repo, Base: base, Branch: d.Branch,
+		RepositoryID: repositoryID, Source: repo, Base: base, Branch: d.Branch,
 	}}
-	service := s.cfg.Work
 	ownerAgent, manager := r.Owner, r.Manager
 	if ownerAgent == "" {
 		ownerAgent = r.Origin.Agent
@@ -188,6 +230,12 @@ func (s *Service) execute(ctx context.Context, r Record) {
 	var finish worker.Finish
 	var observation observation
 	for len(r.Tried) < 2 {
+		for _, directory := range directories {
+			if err = service.CheckWorker(ctx, directory.ID); err != nil {
+				r.Code = "control_held"
+				return
+			}
+		}
 		adapter, closeAdapter, selectErr := s.selectWorker(ctx, l, r)
 		if selectErr != nil {
 			return
@@ -197,6 +245,17 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			queued = true
 			return
 		}
+		closeWorker := closeAdapter
+		closeAdapter = func(closeCtx context.Context) error {
+			closeErr := closeWorker(closeCtx)
+			if closeErr != nil {
+				admitted, settled = true, false
+				queued, deliverySaved = false, false
+				r.Code = "cleanup_failed"
+			}
+			return closeErr
+		}
+		defer closeAdapter(context.Background())
 		observation = observeAdapter(adapter)
 		r.Version, err = adapter.Version(ctx)
 		if err != nil {
@@ -214,6 +273,14 @@ func (s *Service) execute(ctx context.Context, r Record) {
 		run = work.Run{ID: fmt.Sprintf("%s:%d", r.ID, generation), TaskID: r.ID, Generation: generation, Worker: r.Worker, NodeID: s.cfg.Main}
 		// reserveWorker persisted this attempt before any launch. A crash is
 		// uncertain, never permission to consume another replacement.
+		for _, directory := range directories {
+			if err = service.CheckWorker(ctx, directory.ID); err != nil {
+				r.Code = "control_held"
+				return
+			}
+		}
+		// A replacement launch can have effects before returning an error too.
+		admitted, settled = true, false
 		thread, err = adapter.Start(ctx, l, worker.StartSpec{TaskID: r.ID, AttemptID: run.ID, Workdir: workdir, TaskPacket: r.Packet})
 		if err != nil {
 			admitted = true
@@ -270,6 +337,10 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			continue
 		}
 		break
+	}
+	if finish.Failure == worker.ConnectionFailure && finish.Code == "missing_result" {
+		r.Code = finish.Code
+		return
 	}
 	r.State = "finished"
 	rawResult, denied := observation()

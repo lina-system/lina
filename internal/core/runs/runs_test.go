@@ -140,9 +140,10 @@ func TestStartReturnsBeforeFirstCallAndScopeIsNotDeclared(t *testing.T) {
 	}
 }
 func TestSecondInterruptionLandsAndCancelledNeverResumes(t *testing.T) {
-	s, _, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
+	var cfg runs.Config
+	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		return nil, errors.New("interrupted")
-	})
+	}, func(c *runs.Config) { cfg = *c })
 	id := start(t, s)
 	if err := s.Recover(t.Context()); err != nil {
 		t.Fatal(err)
@@ -165,10 +166,21 @@ func TestSecondInterruptionLandsAndCancelledNeverResumes(t *testing.T) {
 	if err := s.Stop(t.Context(), stopped); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Recover(t.Context()); err != nil {
+	// Recovery is a startup operation. Join the previous service before opening
+	// a new epoch; a durable result alone does not join its finishing goroutine.
+	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r, _ = s.Get(t.Context(), stopped)
+	cfg.Epoch++
+	resumed, err := runs.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close()
+	if err := resumed.Recover(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = resumed.Get(t.Context(), stopped)
 	if r.Outcome != runs.Cancelled {
 		t.Fatalf("cancelled=%+v", r)
 	}

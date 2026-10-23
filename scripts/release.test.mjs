@@ -21,6 +21,8 @@ test('source archives exclude the one-time takeover tool', t => {
     'tools/crw-takeover/testdata/snapshot.json': '{}\n',
     'e2e/m1/crw_takeover_test.go': 'package e2e_test\n',
     'e2e/m3/crw-takeover.json': '{}\n',
+    'e2e/m1/operational_switch_test.go': 'package e2e_test\n',
+    'e2e/m3/operational-switch.json': '{}\n',
     'cmd/lina/main.go': 'package main\nfunc main() {}\n',
   });
   const archive = join(sb.dir, 'source.tar');
@@ -31,6 +33,8 @@ test('source archives exclude the one-time takeover tool', t => {
   assert.equal(contents.stdout.includes('tools/crw-takeover'), false, contents.stdout);
   assert.equal(contents.stdout.includes('crw_takeover_test.go'), false, contents.stdout);
   assert.equal(contents.stdout.includes('crw-takeover.json'), false, contents.stdout);
+  assert.equal(contents.stdout.includes('operational_switch_test.go'), false, contents.stdout);
+  assert.equal(contents.stdout.includes('operational-switch.json'), false, contents.stdout);
 });
 
 // The release functions read HOME, PATH and the gh fixture variables from the environment.

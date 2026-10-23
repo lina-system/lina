@@ -30,7 +30,7 @@ func TestRoutedWorkerQuotaRefreshesDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	root.workerDispatch = s
-	if err := s.ObserveQuota(t.Context(), "codex", []provider.QuotaRow{{State: provider.QuotaBlocked, Observed: time.Now().Add(-time.Minute)}}); err != nil {
+	if err := s.ObserveQuota(t.Context(), "codex", []provider.QuotaRow{{Window: provider.UnknownWindow, State: provider.QuotaBlocked, Source: provider.ErrorCode, Observed: time.Now().Add(-time.Minute)}}); err != nil {
 		t.Fatal(err)
 	}
 	r := newConversationView(root, root.agent, root.conversation)

@@ -914,10 +914,78 @@ there is no separate client endpoint.
   to-do through Core and retaining its fields and completion after restart.
   `e2e/m2/todo-timestamps.json` covers timestamp refusals in all date fields,
   an invalid edit, and valid timed tasks in board/list and dated views.
-  Recurrence advancement, candidates and memo promotion remain #156.
-- Recurrence is Core's own parser for the subset (daily, weekly, monthly, yearly; interval; by-day; by-month-day; count; until) plus the from-completion flag. `Next(rule, from, zone)` advances only to a future occurrence. A table-driven corpus covers month ends and zone gaps.
+  `e2e/m2/record-recurrence-promotion.json` exercises same-record recurrence
+  completion, model-free advancement at Core restart, memo promotion and undo.
+- Recurrence uses the native timer parser's daily, weekly, monthly and yearly
+  subset with interval, by-day, by-month-day, count and until. The public package
+  helper is `timers.Next(rule, from, zone)`, backed by the pure shared
+  `kit/calendar` calculator so the two store families do not import each other.
+  Existing series retain their start
+  anchor; a completion-relative series anchors at completion. `repeat.zone`
+  is an optional IANA name, defaulting to UTC for existing records. Core owns
+  the stored start, completed count and exhausted flag; tool arguments cannot
+  set them. Exhaustion stops scheduling without treating absence as completion.
+  Completion commits the future occurrence in the same file and clears its
+  dependencies, waiting state, planned start and checklist ticks. The same
+  publication checkpoint appends a `record_occurrence` event to the work ledger,
+  including the prior occurrence, next occurrence, time and completion/advance
+  reason. These events create no delegated work card. Core runs
+  overdue advancement at startup and each minute without a model or worker.
+  Date-only occurrences remain due throughout their civil day. Timed
+  to-dos preserve seconds and fractional seconds (up to Go time precision);
+  the ordinary timer schedule remains minute-based. The shared calendar resolves
+  DST gaps and folds as C-26 specifies. Tests cover month ends, leap years and zone gaps.
+
 - Reminders and pre-warnings are timer rows (C-26).
-- Candidates are rows with a source, confidence and numbered handle. An automatic addition writes an undo handle to the undo log.
+- Candidates are durable rows with a ledger source, exact quotation, confidence
+  and numbered handle. Installed `propose_candidate` and `list_candidates`
+  tools share the existing person/agent authority, leases and effect receipts.
+  An empty source resolves to the authenticated turn's retained input event.
+  Models and clients cannot supply source facts, owner, speaker or source hash.
+  At the fenced publication-intent write, Core resolves native provenance,
+  owner, agent, speaker, replay/view lineage, visibility and the exact retained
+  utterance again. Large immutable bodies are verified outside the transaction;
+  their metadata is re-read inside it. Missing, foreign, retracted, secret-bearing
+  or mismatched evidence remains pending without a record or undo operation.
+- The deterministic language subset recognizes direct owner commitments
+  (`I will`, `I'll`, `I promise to`, `내가 …할게`, `나는 …하겠다`) and owner-directed
+  requests (`Remind me to`, `I need to`). The full utterance must match the quote,
+  and the proposed title must match its action after whitespace/case normalization.
+  Other wording and sources stay candidates. This does not treat a model's
+  interpretation or confidence as a source fact. Existing open titles and source
+  links prevent duplicate additions. For the same person and normalized action,
+  an adopted or rejected source hash cannot be reintroduced through a replay or
+  view alias, even after completion or cancellation without undo and after restart.
+  An independent source remains eligible when no open equivalent exists.
+  Three rejected additions in one recognized class is
+  the initial fallback threshold; further items remain candidates. Numbered
+  pages retain unanswered proposals and define an explicit scope for presenting
+  a group, without automatically accepting it.
+- Automatic additions commit their numbered candidate, record and undo receipt
+  through the existing publication journal. A committed intent is the recovery
+  decision; restart finishes that exact decision without dispatching a tool or
+  reclassifying source text. The headless `e2e/m2/record-candidates.json` scenario
+  covers verified admission, forged and missing evidence, duplicate refusal,
+  notices, undo, and pending/rejected persistence after restart.
+  `e2e/m2/record-candidate-replay.json` covers replay/view suppression after
+  completion and cancellation through installed Core tools and a restart,
+  preserving the saved version without another record, notice or undo operation.
+
+`promote_memo` and `undo_record` use the existing authenticated record-tool
+registry. Promotion preserves the memo's id, path, title and note, sets its kind
+to `todo` and records the memo source. Its receipt includes a one-action undo
+handle. Undo restores the prior bytes as a new revision, or cancels a newly
+added candidate to-do; it refuses a subsequent edit. Both check the requesting
+person and record revision. An undo is idempotent and never reactivates a
+rejected candidate.
+
+Migration 45 adds the canonical `record_operations` and `record_candidates`
+machine-state tables, without modifying existing files. Operation membership,
+undo handles and candidate admission results travel in the records publication
+intent and commit with its index checkpoint. Recovery therefore cannot publish
+a promotion or automatic addition without its undo receipt. Durable operation
+notices are projected into the owning agent's conversation independently of a
+model reply and recovered on startup; existing notices are not republished.
 
 **C-18 Compaction and the summary tree (changed).** `compaction.Policy` is data with the values of [conversation-and-memory.md](conversation-and-memory.md#compaction-and-resume); the in-turn pass and the continuation turn follow the same section. The summary comes from an auxiliary request to the conversation model.
 
@@ -1344,7 +1412,7 @@ type Definition struct {
 }
 ```
 
-- The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves to a Markdown section in the repository at the base commit before admission. It pins that commit for queued execution and retries, and renders the task packet with the assignment id, base commit and complete definition. Code examples are not design sections.
+- The agent drafts a definition with the `dispatch_work` tool. Core validates required fields, glob syntax and that the design reference resolves to a Markdown section in the repository at the base commit before admission. Before invoking the manager, it persists the pinned commit and definition snapshot in a non-runnable `admitting` record. Retries resume that snapshot; only manager success moves it to `queued`. Core renders the task packet with the assignment id, base commit and complete definition. Code examples are not design sections.
 - Core does not split work itself. The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)). Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
 - `Chooser` ranks installed workers by quota, situation rules and measured host capacity. OK quota precedes warning and unknown; absent quota is unknown and usable. Any blocked window excludes the worker until its explicit reset. A quota, rate-limit or login stop parks the worker and permits one replacement with the identical persisted packet, task branch and workspace, after the previous process tree is reaped. Each attempt has a separate ledger generation; restart never repeats an uncertain attempt.
 - #138 connects the chooser to `dispatch_work` with Antigravity and Codex. The optional `system/core/worker-choice.json` table has `provisional: true` and `rules` of `{worker, tags, priority}`; all tags must match the definition's kind or repository. Quota and capacity cannot be overridden. Equal candidates retain installation order (Antigravity, then Codex). Core reads the table at startup and rejects malformed rules. The initial resource estimate is one CPU, 512 MiB memory and 1024 MiB disk per active reservation, deducted from the measured main-host resources. Canon migration 43 replaces the repository-wide unique index with fenced area claims and durable worker quota. A late quota snapshot cannot erase a newer observed stop; admission rechecks quota before reserving the attempt.
