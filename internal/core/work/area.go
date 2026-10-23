@@ -183,6 +183,9 @@ func (a *Area) Prepare(ctx context.Context, l lease.Lease, id string, s Workspac
 		if _, err = a.command(ctx, l, a.path, "clone", "--bare", "--no-local", "--", s.Source, temp); err != nil {
 			return Workspace{}, err
 		}
+		if _, err = a.command(ctx, l, temp, "config", "lina.source", s.Source); err != nil {
+			return Workspace{}, err
+		}
 		if err = os.Chmod(filepath.Join(temp, "hooks"), 0700); err != nil {
 			return Workspace{}, err
 		}
@@ -194,8 +197,16 @@ func (a *Area) Prepare(ctx context.Context, l lease.Lease, id string, s Workspac
 	} else if !info.IsDir() || info.Mode().Perm() != 0700 {
 		return Workspace{}, ErrInvalid
 	}
-	origin, err := a.command(ctx, l, clone, "config", "--get", "remote.origin.url")
-	if err != nil || origin != s.Source {
+	source, err := a.command(ctx, l, clone, "config", "--get", "lina.source")
+	if err != nil {
+		// Older allocations stored their local source only as origin. Preserve
+		// that identity before a dispatch configures its GitHub publishing remote.
+		source, err = a.command(ctx, l, clone, "config", "--get", "remote.origin.url")
+		if err == nil && source == s.Source {
+			_, err = a.command(ctx, l, clone, "config", "lina.source", source)
+		}
+	}
+	if err != nil || source != s.Source {
 		return Workspace{}, ErrState
 	}
 	base, err := a.command(ctx, l, clone, "rev-parse", "--verify", s.Base+"^{commit}")

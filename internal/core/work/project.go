@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package work
 
-import "reflect"
+import (
+	"reflect"
+	"strings"
+	"time"
+)
 
 // Project replays facts without clocks, database reads or worker calls.
 func Project(events []Event) (Card, error) {
@@ -17,6 +21,16 @@ func Project(events []Event) (Card, error) {
 	return c, nil
 }
 func advance(c *Card, e Event) error {
+	if e.Kind == "record_occurrence" {
+		v := e.Occurrence
+		if v == nil || v.Record == "" || e.TaskID != "record:"+v.Record || !strings.HasPrefix(e.Key, "record-occurrence:") || (v.Reason != "completed" && v.Reason != "advanced") || v.From == "" || v.Next == "" {
+			return ErrInvalid
+		}
+		if _, err := time.Parse(time.RFC3339Nano, v.At); err != nil {
+			return ErrInvalid
+		}
+		return nil
+	}
 	if e.Kind != "created" && (c.Task.ID == "" || e.TaskID != c.Task.ID) {
 		return ErrState
 	}
@@ -75,16 +89,21 @@ func advance(c *Card, e Event) error {
 		if e.Run.Generation != generation {
 			return ErrState
 		}
+		c.Head, c.CompletionHead = "", ""
 		c.Run = e.Run
 		c.Active = true
 		c.State = "working"
 		c.Receipt = nil
+		c.FileSnapshot = nil
+		c.FileEvidence = nil
 		c.Materials = nil
 		c.ResultHead = ""
 		c.Verdict = ""
 		c.Applied = false
 		c.TurnStatus = ""
 		c.Stages = []Stage{{Name: "worker", Source: "unknown"}, {Name: "review", Source: "unknown"}, {Name: "apply", Source: "unknown"}}
+	case "file_receipt", "copy_started", "copy_failed", "files_landed", "files_invalidated":
+		return advanceFiles(c, e)
 	case "receipt":
 		if c.Run == nil || c.Run.ID != e.RunID || e.Receipt == nil {
 			return ErrState
@@ -115,6 +134,16 @@ func advance(c *Card, e Event) error {
 		c.Materials = e.Materials
 		c.ResultHead = e.Value
 
+	case "completion_head":
+		if c.Run == nil || c.Run.ID != e.RunID || c.Active || c.TurnStatus == "" || c.Receipt == nil || c.Head != "" || c.CompletionHead != "" {
+			return ErrState
+		}
+		c.Head, c.CompletionHead = e.Head, e.Head
+	case "head_observed":
+		if c.Run == nil || c.Run.ID != e.RunID {
+			return ErrState
+		}
+		c.Head = e.Head
 	case "finished":
 		if c.Run == nil || c.Run.ID != e.RunID {
 			return ErrState
@@ -128,6 +157,7 @@ func advance(c *Card, e Event) error {
 		if c.Receipt != nil && c.Receipt.TurnRef.TurnStatus != e.Value {
 			return ErrState
 		}
+		c.Head, c.CompletionHead = e.Head, e.Head
 		c.Active = false
 		c.TurnStatus = e.Value
 		setOutcome(c)
@@ -158,7 +188,7 @@ func advance(c *Card, e Event) error {
 			c.State = "working"
 		}
 	case "applied":
-		if c.Active || c.Receipt == nil || c.Receipt.EventID != e.ReceiptID || c.Verdict != "verified" || e.Evidence == "" || !c.Task.RequiresApply {
+		if c.Active || c.Receipt == nil || c.Receipt.EventID != e.ReceiptID || c.Verdict != "verified" || e.Evidence == "" || !c.Task.RequiresApply || c.Task.Destination != "" {
 			return ErrState
 		}
 		c.Applied = true

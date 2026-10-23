@@ -3,6 +3,7 @@ package e2e_test
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,7 +13,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -91,6 +95,10 @@ func codexSessionFixture() {
 				os.Exit(98)
 			}
 			reply(map[string]any{"turnId": turn})
+			if strings.Contains(string(r.Params["input"]), "finish running-list fixture") {
+				state = "idle"
+				notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turn, "status": "completed"}})
+			}
 		case "turn/interrupt":
 			var expected string
 			json.Unmarshal(r.Params["turnId"], &expected)
@@ -106,6 +114,19 @@ func codexSessionFixture() {
 				status = "inProgress"
 			}
 			reply(map[string]any{"thread": map[string]any{"id": "fixture-thread", "cwd": cwd, "status": map[string]any{"type": state}, "turns": []any{map[string]any{"id": turn, "status": status}}}})
+			if gate := os.Getenv("LINA_WORKER_FINISH_GATE"); gate != "" && count == 1 && state == "active" {
+				response, err := http.Get(gate)
+				if err != nil {
+					os.Exit(101)
+				}
+				response.Body.Close()
+				if err := os.WriteFile(filepath.Join(cwd, "result.txt"), []byte("LINA_WORKER_RESULT"), 0600); err != nil {
+					os.Exit(97)
+				}
+				notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turn, "item": map[string]any{"type": "agentMessage", "id": "result", "text": "Created result.txt: LINA_WORKER_RESULT"}})
+				state = "idle"
+				notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turn, "status": "completed"}})
+			}
 		default:
 			os.Exit(100)
 		}
@@ -114,6 +135,15 @@ func codexSessionFixture() {
 
 func TestM2InstalledCodexSession(t *testing.T) {
 	t.Parallel()
+	testInstalledCodexSession(t, false)
+}
+
+func TestM2InstalledCodexSlowManager(t *testing.T) {
+	t.Parallel()
+	testInstalledCodexSession(t, true)
+}
+
+func testInstalledCodexSession(t *testing.T, slowManager bool) {
 
 	var fixture struct {
 		Input                     string
@@ -129,11 +159,39 @@ func TestM2InstalledCodexSession(t *testing.T) {
 	}
 	workdir := t.TempDir()
 	var calls atomic.Int32
+	var delayed atomic.Bool
 	var control map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
+			return
+		}
+		// Hold the final manager response beyond the worker's 30-second start
+		// deadline. A committed decision alone must not start that timer while
+		// the manager's conversation turn is still in flight.
+		if slowManager {
+			manager := false
+			for _, raw := range req.Tools {
+				var tool struct{ Name string }
+				_ = json.Unmarshal(raw, &tool)
+				manager = manager || tool.Name == "coding_decision"
+			}
+			var last struct{ Type string }
+			if len(req.Input) > 0 {
+				_ = json.Unmarshal(req.Input[len(req.Input)-1], &last)
+			}
+			if manager && last.Type == "function_call_output" && delayed.CompareAndSwap(false, true) {
+				timer := time.NewTimer(31 * time.Second)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}
+		if scriptedCodingManager(t, w, req) {
 			return
 		}
 		names := map[string]bool{}
@@ -149,8 +207,15 @@ func TestM2InstalledCodexSession(t *testing.T) {
 				return
 			}
 		}
+		if respondWorkerCompletion(w, req.Input, fixture.Result) {
+			return
+		}
 		n := calls.Add(1)
-		if n > 1 {
+		resuming := slowManager && n == 3
+		if slowManager && n > 2 {
+			n--
+		}
+		if n > 1 && !resuming {
 			var item struct{ Output string }
 			json.Unmarshal(req.Input[len(req.Input)-1], &item)
 			var output struct {
@@ -180,6 +245,12 @@ func TestM2InstalledCodexSession(t *testing.T) {
 				t.Errorf("worker result missing: %+v", result)
 			}
 		}
+		if slowManager && n == 2 && !resuming {
+			// Admission used this conversation turn's time budget. Continue
+			// control in the next person turn without widening that budget.
+			emitResponse(w, "Worker session started.", true)
+			return
+		}
 		emit := func(name string, args map[string]any) {
 			emitPersonaCall(w, fmt.Sprintf("worker-call-%d", n), name, args)
 		}
@@ -204,7 +275,13 @@ func TestM2InstalledCodexSession(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	if slowManager {
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+		t.Cleanup(cancel)
+		h.ctx = ctx
+	}
+	seedCodingFixture(t, h, bootstrap)
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {
@@ -223,7 +300,16 @@ func TestM2InstalledCodexSession(t *testing.T) {
 	core := start()
 	c, conversation := conversationClient(t, h)
 	frames := admittedTurn(t, h, c, conversation, "worker-journey", fixture.Input)
-	if calls.Load() != 7 {
+	wantCalls := int32(7)
+	if slowManager {
+		frames = append(frames, admittedTurn(t, h, c, conversation, "worker-followup", fixture.Input)...)
+		wantCalls++
+	}
+	if slowManager && !delayed.Load() {
+		t.Fatal("manager response was not held")
+	}
+	frames = append(frames, receiveWorkerFollowups(t, h, c, 2)...)
+	if calls.Load() != wantCalls {
 		t.Fatalf("provider steps=%d", calls.Load())
 	}
 	foundVersion, foundResult := false, false
@@ -242,6 +328,16 @@ func TestM2InstalledCodexSession(t *testing.T) {
 	}
 	c.Close()
 	h.stopCore(core)
+	db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var starts, applied int
+	err = db.QueryRowContext(h.ctx, "SELECT count(*), count(CASE WHEN json_extract(record,'$.State')='applied' THEN 1 END) FROM authority_effects WHERE json_extract(record,'$.Tool')='worker_start'").Scan(&starts, &applied)
+	closeDB()
+	if err != nil || starts != 1 || applied != 1 {
+		t.Fatalf("start effects=%d applied=%d err=%v", starts, applied, err)
+	}
 	core = start()
 	c, conversation = conversationClient(t, h)
 	topic := "conversation:" + conversation
@@ -265,17 +361,19 @@ func TestM2InstalledCodexLive(t *testing.T) {
 		t.Skip("explicit installed-worker acceptance only")
 	}
 	workdir := t.TempDir()
-	finished := make(chan struct{})
 	var calls atomic.Int32
 	var session string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Input []json.RawMessage }
+		var req struct{ Input, Tools []json.RawMessage }
 		if json.NewDecoder(r.Body).Decode(&req) != nil {
 			t.Error("invalid model request")
 			return
 		}
+		if scriptedCodingManager(t, w, req) {
+			return
+		}
 		n := calls.Add(1)
-		if n > 1 {
+		if n == 2 || n == 4 {
 			var item struct{ Output string }
 			json.Unmarshal(req.Input[len(req.Input)-1], &item)
 			var result struct {
@@ -294,7 +392,7 @@ func TestM2InstalledCodexLive(t *testing.T) {
 			if n == 2 {
 				t.Logf("Core launched installed Codex %s verified=%t", result.Output.Version, result.Output.Verified)
 			}
-			if n == 3 && (result.Output.State != "idle" || result.Output.Output != "LINA_CODEX_OK") {
+			if n == 4 && (result.Output.State != "idle" || result.Output.Output != "LINA_CODEX_OK") {
 				t.Errorf("worker result state=%s output=%q", result.Output.State, result.Output.Output)
 			}
 		}
@@ -302,18 +400,16 @@ func TestM2InstalledCodexLive(t *testing.T) {
 		case 1:
 			emitPersonaCall(w, "live-start", "worker_start", map[string]any{"workdir": workdir, "task_packet": "Reply with exactly LINA_CODEX_OK. Do not use any tools."})
 		case 2:
-			select {
-			case <-finished:
-			case <-r.Context().Done():
-				return
-			}
+			emitResponse(w, "Worker delegated.", true)
+		case 3:
 			emitPersonaCall(w, "live-snapshot", "worker_snapshot", map[string]any{"session": session})
 		default:
-			emitResponse(w, "live worker result received", true)
+			emitResponse(w, "live worker result received: LINA_CODEX_OK", true)
 		}
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	core := h.command("core", "--state-root", h.root, "--socket", h.socket)
 	// This opt-in preserves the actual installed worker's home, PATH and setup.
 	// Core still uses its private state and a synthetic local conversation route.
@@ -334,17 +430,50 @@ func TestM2InstalledCodexLive(t *testing.T) {
 		if frame.Error != nil {
 			t.Fatalf("Core refused: %s", frame.Error.Code)
 		}
-		if item, ok := frame.Payload.(protocol.ItemDone); ok && item.Text != nil && item.Speaker != nil && *item.Speaker == protocol.ConversationSpeakerSystem && strings.Contains(*item.Text, "LINA_CODEX_OK") && !observed {
+		if item, ok := frame.Payload.(protocol.ItemDone); ok && item.Text != nil && item.Speaker != nil && *item.Speaker == protocol.ConversationSpeakerAgent && strings.Contains(*item.Text, "LINA_CODEX_OK") && !observed {
 			observed = true
-			close(finished)
 		}
-		if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active {
+		if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active && observed {
 			break
 		}
 	}
-	if !observed || calls.Load() != 3 {
+	if !observed || calls.Load() != 4 {
 		t.Fatalf("live result=%t provider calls=%d", observed, calls.Load())
 	}
 	c.Close()
 	h.stopCore(core)
+}
+
+// Existing adapter journeys explicitly handle the additional persona turns.
+func respondWorkerCompletion(w http.ResponseWriter, inputs []json.RawMessage, result string) bool {
+	if len(inputs) == 0 {
+		return false
+	}
+	var item struct{ Content string }
+	if json.Unmarshal(inputs[len(inputs)-1], &item) != nil || !strings.Contains(item.Content, `<external_evidence origin="worker-session:`) {
+		return false
+	}
+	if result == "" {
+		emitResponse(w, "Worker finished.", true)
+	} else if strings.Contains(item.Content, result) {
+		emitResponse(w, "Worker outcome: "+result, true)
+	} else {
+		emitResponse(w, "Worker stopped.", true)
+	}
+	return true
+}
+func receiveWorkerFollowups(t *testing.T, h *harness, c *clientapi.Client, count int) []protocol.Envelope {
+	t.Helper()
+	var frames []protocol.Envelope
+	for count > 0 {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		frames = append(frames, frame)
+		if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active {
+			count--
+		}
+	}
+	return frames
 }

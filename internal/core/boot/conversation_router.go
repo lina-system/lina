@@ -4,9 +4,11 @@ package boot
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
@@ -41,7 +43,23 @@ func (s *conversationRouter) view(ctx context.Context, session clientsrv.Session
 	return view, nil
 }
 func (s *conversationRouter) History(ctx context.Context, session clientsrv.Session, p protocol.HistoryGet) (protocol.History, error) {
+	if err := s.root.authorize(session, nil); err != nil {
+		return protocol.History{}, err
+	}
 	agent := s.root.agent
+	if p.AgentID == nil && p.ConversationID == nil {
+		selected, err := s.root.agents.Selected(ctx, session.PersonID)
+		if errors.Is(err, agents.ErrNotFound) {
+			selected, err = s.root.agents.Default(ctx)
+		}
+		if err == nil {
+			agent = selected.ID
+		} else if !errors.Is(err, agents.ErrNotFound) {
+			return protocol.History{}, managementError(err)
+		} else {
+			agent = ""
+		}
+	}
 	if p.AgentID != nil {
 		agent = *p.AgentID
 	} else if p.ConversationID != nil {
@@ -90,7 +108,7 @@ func newConversationView(source *conversationRuntime, agent, conversation string
 	r := source
 	materials := *r.materials
 	materials.actor.AgentID = agent
-	view := &conversationRuntime{workers: r.workers, workArea: r.workArea, webTransport: r.webTransport, work: r.work, background: r.background, router: r.router, skills: r.skills, records: r.records, persona: coreexec.NewPersona(r.db, r.agents, &materials), personaAuthority: r.personaAuthority, personaGrants: r.personaGrants, personaMu: r.personaMu, main: r.main, epoch: r.epoch, dispatchMu: r.dispatchMu, controls: r.controls, materials: &materials, assets: r.assets, root: r.root, steering: map[string][]acceptedSteering{}, ctx: r.ctx, db: r.db, accounts: r.accounts, vault: r.vault, agents: r.agents, lanes: r.lanes, topics: r.topics, route: r.route, activities: r.activities, person: r.person, agent: agent, conversation: conversation, removals: r.removals}
+	view := &conversationRuntime{workers: r.workers, workArea: r.workArea, webTransport: r.webTransport, work: r.work, background: r.background, router: r.router, skills: r.skills, records: r.records, persona: coreexec.NewPersona(r.db, r.agents, &materials), personaAuthority: r.personaAuthority, personaGrants: r.personaGrants, personaMu: r.personaMu, main: r.main, epoch: r.epoch, dispatchMu: r.dispatchMu, controls: r.controls, presets: r.presets, materials: &materials, assets: r.assets, root: r.root, steering: map[string][]acceptedSteering{}, ctx: r.ctx, db: r.db, accounts: r.accounts, vault: r.vault, agents: r.agents, lanes: r.lanes, topics: r.topics, route: r.route, activities: r.activities, person: r.person, agent: agent, conversation: conversation, removals: r.removals}
 	return view
 }
 

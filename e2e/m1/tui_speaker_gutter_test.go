@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -81,16 +82,9 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 	terminal := h.startTerminalSize(environment, false, true, scenario.Width, scenario.Height)
 	h.socket = socket
 	if plain {
-		// NO_COLOR never enters the alternate screen required by waitScreen's
-		// color-mode readiness check. Still require the connected composer.
-		if snapshot, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
-			content := screenText(s)
-			return !s.AltScreen && strings.Contains(content, design.Text(design.English, "live")+"  ") && strings.Contains(content, "Ctrl+D")
-		}); err != nil {
-			t.Fatalf("plain composer not ready: %v; cells=%s", err, screenText(snapshot))
-		}
+		waitPlainComposerReady(t, h, terminal)
 	} else {
-		waitScreen(t, h, terminal, "Ctrl+D")
+		waitComposerReady(t, h, terminal)
 	}
 	// The composer is visible before its conversation destination is known.
 	// The subscription proves History was consumed; do not race initial discovery.
@@ -102,9 +96,13 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 	}
 	for _, exchange := range scenario.Exchanges {
 		h.keys(terminal, exchange.Input+"\r")
+		seenReply := false
 		for {
 			frame := tap.next(t, h)
-			if state, ok := frame.Payload.(protocol.TurnState); ok && state.Active != nil && !*state.Active {
+			if item, ok := frame.Payload.(protocol.ItemDone); ok && item.Text != nil && *item.Text == exchange.Reply {
+				seenReply = true
+			}
+			if state, ok := frame.Payload.(protocol.TurnState); ok && seenReply && state.Active != nil && !*state.Active {
 				break
 			}
 		}
@@ -113,6 +111,17 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 	// Editing the composer is a visible redraw barrier after both replies.
 	h.keys(terminal, "capture-ready")
 	snapshot := waitScreen(t, h, terminal, "capture-ready")
+	if !plain {
+		// The tap sees Core's event before the TUI necessarily renders it.
+		// Capture only after every reply's completion metadata is on screen.
+		worked := strings.TrimSuffix(design.Text(design.English, "activity.worked_for"), "%s")
+		snapshot, err = terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+			return strings.Contains(screenText(s), "capture-ready") && strings.Count(screenText(s), worked) == len(scenario.Exchanges)
+		})
+		if err != nil {
+			t.Fatalf("completion metadata did not render: %v; cells=%s", err, screenText(snapshot))
+		}
+	}
 	var rows []string
 	for _, row := range snapshot.Cells {
 		var line strings.Builder
@@ -128,7 +137,7 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 			t.Error("NO_COLOR emitted terminal escapes")
 		}
 		for _, exchange := range scenario.Exchanges {
-			for _, row := range []string{"> You: " + exchange.Input, "* LINA: " + exchange.Reply} {
+			for _, row := range []string{"> You: " + exchange.Input, "* Lina: " + exchange.Reply} {
 				if !strings.Contains(raw, row) {
 					t.Errorf("plain speaker missing: %q", row)
 				}
@@ -159,7 +168,7 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 				if ascii {
 					prefix = "> You: "
 					if i == 1 {
-						prefix = "* LINA: "
+						prefix = "* Lina: "
 					}
 				}
 				if rows[found] != prefix+text {
@@ -169,6 +178,15 @@ func speakerGutterInstalledCore(t *testing.T, ascii, plain bool) {
 					t.Errorf("turn rows %d -> %d do not have exactly one empty separator", previous, found)
 				}
 				previous = found
+				if i == 1 {
+					// The completion duration belongs to this turn. Preserve the single
+					// empty separator after its last row, and require the new row itself.
+					duration := strings.ReplaceAll(regexp.QuoteMeta(design.Text(design.English, "activity.worked_for")), "%s", `[0-9]+(?:s|m [0-9]{2}s|h [0-9]{2}m [0-9]{2}s)`)
+					if found+1 >= len(rows) || !regexp.MustCompile("^"+duration+"$").MatchString(rows[found+1]) {
+						t.Fatalf("assistant turn has no valid completion duration after row %d", found)
+					}
+					previous++
+				}
 				glyph, body := snapshot.Cells[found][0], snapshot.Cells[found][utf8.RuneCountInString(prefix)]
 				if glyph.Foreground == nil || body.Foreground == nil || reflect.DeepEqual(glyph.Foreground, body.Foreground) {
 					t.Errorf("speaker/body foreground not distinct: %v / %v", glyph.Foreground, body.Foreground)

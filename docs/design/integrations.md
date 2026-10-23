@@ -138,6 +138,8 @@ The first-party plugins carry profiles. LINA also ships profiles for major messa
 
 LINA Core marks a plugin tool or command as an outward or irreversible effect from one source: the plugin's service profile. A permitted call to a marked tool asks every time, with the choices once and deny ([main-authority.md](main-authority.md#plugin-tools)). Core first applies the [preset effect limits](main-authority.md#preset-effect-limits): profiles distinguish research and private drafts from investment orders and external or binding execution, and an unclassified operation cannot bypass advise-only or draft-only limits. Every other permitted tool of a plugin that is on is available to every agent, in the same way, and runs without asking. There are no tiers, plugin scopes or per-tool settings.
 
+Before that approval policy, Core applies [preset effect limits](main-authority.md#preset-effect-limits). A trusted service profile supplies an operation classifier over already validated arguments: a multipurpose service tool can classify its quote operation as research and its order operation as an investment order. Core-owned tools supply the same classification in their registered definitions. Schema validation runs first. Caller-supplied effect labels, server descriptions and annotations are never classification authority. Newly added or unprofiled operations remain unclassified and fail closed for advice-only and draft-only origins. Their availability to ordinary agents keeps the existing policy.
+
 - Annotations that a server sends are untrusted and never mark a tool. `destructiveHint` is a display hint only.
 - The shipped messaging profiles mark every send tool.
 - A plugin without a profile has no marked tool. The card says so; restricted presets cannot dispatch an operation whose permitted effect Core cannot establish. For other agents, the agent rules still make an agent ask before it sends, pays, publishes or permanently deletes ([work-and-delegation.md](work-and-delegation.md#default-posture)).
@@ -227,6 +229,8 @@ A channel is an external messaging platform through which the person talks with 
 
 - The platform rights LINA asks for are the smallest that the scope needs. It never asks for an administrator right on either platform, and it never asks for a group administrator right on Telegram. The connect step explains once what `all_messages` costs on the platform, because it needs the platform's wider message-reading right.
 - Slash commands and buttons are a convenience. The gate is always LINA Core's check of the paired owner's id and of the binding, never the platform's role system.
+- Work completion turns retain the channel binding and exact originating thread address recorded at task admission, including private chats sharing the app conversation. They revalidate that binding before model dispatch and tools, and keep its memory restriction. A legacy task without a provable origin cannot obtain authority from a current channel binding.
+- Accepted steering retains its originating channel scope. If it becomes a deferred follow-up, Core uses that scope and rechecks the current binding before each model dispatch and tool execution, including after an app-started turn.
 
 ### Identity and pairing
 
@@ -326,7 +330,9 @@ restart. Adapter tests independently cover owner-only approval decisions,
 presentation matching, token-free inboxes and REST error classification.
 The separate `e2e/m2/discord-recovery.json` scenario injects both non-resumable
 close codes into the running Core, checks fresh Identify and duplicate receipt
-handling, then completes tool/background work and delivers its results.
+handling for both commands and approval buttons, then completes tool/background
+work and delivers its results. After restarting Core it requires Resume with
+the replacement session ID and its last committed sequence (#547).
 
 Telegram's initial adapter uses `github.com/PaulSonOfLars/gotgbot/v2` at
 `v2.0.0-rc.37`, with no transitive modules. It advertises text, edits,
@@ -406,6 +412,7 @@ GitHub cannot call in to LINA, which has no inbound endpoint, so LINA Core reads
 - A worker's completion event starts the reads. The first is one view of the pull request: its state, head SHA, review threads and the check results at that head.
 - While the checks of a task's pull request are unfinished, LINA Core watches that pull request only: one watcher per pull request, never two at once, using conditional requests and the interval that GitHub's responses ask for. The watch starts with the completion event and ends with the checks' conclusion, or with the pull request closing or merging. A rate-limit response backs the watch off and shows as "CI pending" with its cause.
 - The read implementation uses fixed `gh api` arguments. One observation reads PR identity/state, paginated review threads and comments, and check runs plus legacy statuses pinned to that head. REST reads retain each response's ETag and send `If-None-Match`; a 304 reuses only that endpoint's cached body. Review threads use fixed GraphQL queries and are fetched once per observed head, or for an explicit fresh read. A changed head invalidates its checks and reviews. Unknown conclusions, missing checks, incomplete pages and malformed or oversized evidence stay pending with a cause; they never establish green.
+- Core's `gh` children return plain HTTP headers and JSON even when Core inherits a color-capable terminal. Their environment removes `GH_FORCE_TTY`, `CLICOLOR_FORCE` and `FORCE_COLOR`, sets `NO_COLOR=1` and `CLICOLOR=0`, and disables prompts, paging and debug output. `GH_FORCE_TTY=0` is not a disabling value. These child-only settings preserve the user's GitHub credentials and tool configuration; Core does not edit the parent environment or stored login.
 - The watcher uses `X-Poll-Interval`, `Retry-After` and exhausted-quota reset times, with a 30-second default poll interval and a one-minute fallback for a rate limit without a retry time. It shares one live watcher across callers, stops after all observed checks conclude or the PR closes/merges, and cancels and joins its children on Core shutdown. Terminal snapshots remain readable without another GitHub call; an explicit read starts a fresh observation need. The cache retains at most 256 PRs, evicting terminal entries first. Reads are observations only: success describes the fetched checks, not a merge authorization or verification verdict. Required-check policy and merge safety belong to the work engine's merge gate.
 - Core exposes these observations through the negotiated `github` client capability and the `github_read` / `github_watch` operations of `work_request`. A watch request returns its current snapshot, including CI pending and the rate-limit cause/deadline; repeated requests share that watcher. No model account is required. Work-ledger event/reconcile callers can use the same service; this increment does not create task records or dispatch workers.
 - LINA Core uses neither the repository events feed nor a webhook-forwarding tool. The feed's delay is too long, and a forwarder needs administrator rights on the repository and covers one repository at a time.
@@ -457,6 +464,10 @@ The Core implementation exposes merge control separately from read/watch as the
 replace those hashes. Head acceptance and merge admission both compare the
 captured refs. Before writing, Core rereads PR identity after reading checks and
 reviews; a changed head/base blocks the call, and a changed head is read again.
+If review reads detect a different head from the initial PR read, Core also
+refreshes the observation once and returns it with the merge blocked. It never
+continues to admission from that refresh, even if the original head returns.
+Another head change or read failure ends that attempt without a write.
 The fixed command is `gh pr merge <number> --repo github.com/<repository> --merge
 --match-head-commit <head>`; Core supplies neither admin bypass nor auto-merge.
 An unresolved P0/P1 marker blocks admission, including an outdated unresolved

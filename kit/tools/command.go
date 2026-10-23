@@ -55,7 +55,7 @@ func CommandSpec(policy CommandPolicy) (Spec, error) {
 	}
 	prefix, _ := json.Marshal(policy.Prefix)
 	hash := sha256.Sum256(prefix)
-	return Spec{Name: policy.Name, Outward: policy.Outward, Conc: 1, Deadline: 15 * time.Second, Placement: Core, Schema: func(raw json.RawMessage) (Input, error) {
+	return Spec{Classify: Class(CommandEffect), Name: policy.Name, Outward: policy.Outward, Conc: 1, Deadline: 15 * time.Second, Placement: Core, Schema: func(raw json.RawMessage) (Input, error) {
 		var req CommandRequest
 		if err := decodeStrict(raw, &req); err != nil {
 			return Input{}, err

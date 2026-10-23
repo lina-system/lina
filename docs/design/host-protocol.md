@@ -218,7 +218,19 @@ reads the run's pinned material revision through its integrity check, and return
 `next` only when another page remains. Dismiss only accepts landed rows. Neither
 operation deletes the run or material or changes its claimed outcome.
 
-A `running_update` optionally carries `run_id` and `removed`; a removal uses the
+A `running_update` optionally carries a typed presentation: `state`, `summary`
+and `reason`. When any presentation field is present, `state` and `summary` are
+required together. The closed states are `in_progress`, `waiting`, `needs_input`,
+`ready_for_review`, `failed`, `stopped`, `done` and `unknown`. The optional closed
+waiting reasons are `dependency`, `area`, `quota`, `host_capacity`, `ci_pending`,
+`run_limit`, `person` and `budget`. Core publishes these fields for background runs
+and delegated tasks; clients localize the codes and display the authored summary.
+The existing `text` retains its prior meaning for earlier clients. A client uses
+it only when the typed presentation is absent, without parsing it for status.
+These optional additions follow client 1.0's additive-field receive rule and do
+not change existing empty, text-only or removal payloads.
+
+A `running_update` also optionally carries `run_id` and `removed`; a removal uses the
 same stream key and next cursor, removes that row from retained snapshots, and
 is replayable to an existing subscriber. A background landing's `result` card
 optionally carries `run_id` as an opaque open reference. It is an agent-report
@@ -359,12 +371,13 @@ acceptance alone does not grant a capability.
 | `item_done` | Existing `text` and stream metadata, with optional `echo_key`, `speaker` (`person`, `agent`, `system`, `forwarded`), `agent_id`, and `person_id`. Forwarded channel content keeps its speaker kind and carries no person id, both live and in restored history. `echo_key` is the admitted input id, allowing replacement of one local echo. |
 | `output_delta` | Existing text delta and stream metadata, with optional `agent_id`. The same topic/key becomes the completed item. |
 | `turn_state` | Existing stream metadata and optional `active` boolean plus `agent_id`. Optional `phase` is `waiting_model`, `streaming`, `tool` or `stopping`; optional `tool_name` is a trusted display name from the tool registry's display catalog. Clients do not parse activity from display text. |
-| `tool_activity` | Core-to-client display event with optional `stream` and `agent_id`, required string `call_id`, required string `tool_name` (the registry's display catalog label), and required `status` (`started` or `finished`). `finished` requires `outcome` (`ok` or `failed`) and a nonnegative numeric `duration_ms`; `started` forbids both. No arguments or output are fields of this event. |
+| `tool_activity` | Core-to-client display event with optional `stream` and `agent_id`, required string `call_id`, required string `tool_name` (the registry's display catalog label), and required `status` (`started` or `finished`). `finished` requires `outcome` (`ok` or `failed`) and a nonnegative numeric `duration_ms`; `started` forbids both. Optional `target` (at most 160 characters) and `summary` (at most 8192 characters) contain only explicitly Core-approved display text. Arguments and raw output are never fields of this event. |
 
 Turn phase is display state. A missing phase preserves the older `active`
 behavior; a missing tool name supplies no display label. Core supplies trusted
 catalog labels, never model-provided arguments, output or a raw tool identifier
-as the label. Tools' private arguments and output remain behind Details.
+as the label. Tools' private arguments and output remain behind Details. The current publisher
+omits `target` and `summary`; clients never synthesize them from private data.
 `duration_ms` permits fractional milliseconds and retains its exact JSON number;
 zero is a valid duration. A tool outcome describes the call and does not establish
 the envelope's effect state or a verified work result.
@@ -543,3 +556,66 @@ filters deleted personas and foreign-person records before pagination. Each page
 is one canon snapshot; a refresh starts a new snapshot. This request adds no
 subscription or execution authority and does not change the existing `progress`
 status-topic capability. The TUI retains fold/selection state locally by lane id.
+
+### Owner progress and waiting reads
+
+The `progress` capability (1.0) grants `progress_get` with `view: overview`
+and the `progress` topic. An omitted view retains the `worker_lanes` request;
+`view: lanes` is equivalent. Each request is gated by its selected capability.
+Overview reads reject lane pagination. The overview has `rows`, at most five
+`waiting` rows and `waiting_more`. A progress row separates its opaque `ref`
+from its display-only `line`: name, kind, stage, optional percent, just_finished,
+next, waiting count and hierarchy depth. An absent percent means unknown; it
+never means zero. Stage and unknown are codes localized by the client.
+
+A `progress_update` replaces the overview atomically, retaining the normal topic
+cursor and snapshot/replay behavior. A changed full waiting list advances this
+cursor even when the five Home rows and remaining count are unchanged; a client
+showing the full list rereads `waiting_get`. `text` is a plain fallback; typed clients
+render the rows. An empty rows list removes previous work. Reading progress is
+not a completion verdict or an acknowledgement that the person has seen it.
+
+The existing `waiting` capability grants `waiting_get` with optional `order`
+(priority or lightest) and `limit` (zero means the full list). The response has
+`rows`, `total` before limiting and `more`. Each row separates its source/key/
+revision reference from display data: kind, sentence, context, recommendation,
+agent name, choices, free-text flag, effort and due instant. References are not
+rendered. Answers to existing approvals and questions continue through their
+original authenticated protocols; reading a waiting row grants no authority.
+
+The `progress` capability also serves `progress_digest_get` with optional `order`
+(`priority` or `lightest`). `progress_digest` returns `lines` (at most five),
+`total`, `more` and `link`; counts do not occupy display rows.
+
+The `running` capability serves `stop` (`run_id`, optional `conversation_id`),
+`follow_up` (`run_id`, `text`, optional `conversation_id`) and `multi_task_control`
+(`action: stop_all`, optional `conversation_id`). Follow-up replies with the same
+payload after queueing; stop-all replies with its affected `count`. A request
+must not supply `count`. The conversation, when supplied, restricts every target;
+all targets still require the authenticated person. A live worker uses
+`session:<thread>`; a delegated card uses the existing `task:<task>:<generation>`
+running reference. Worker stop replies use `stop_result.outcome: requested`;
+background stops retain their terminal outcome. Acknowledgement never verifies
+work completion. Empty/malformed requests are refused and no control is inferred
+from forwarded channel text.
+
+
+### Direct record views and capture
+
+The `records` 1.0 capability provides `record_request` and `record_result`.
+`query` carries an optional view, search and exclusive `after` cursor, with civil
+`day` and IANA `zone` for dated lenses. Core binds the person from the connection
+and returns up to 50 rows in index order. `read` carries a row reference and
+returns its current title, note and chips. Long notes use bounded UTF-8 pages;
+subsequent reads carry `after` and the first page's revision, and a changed
+revision refuses continuation. References and revisions are routing data.
+
+`preview` carries quick-add text and returns chips plus an opaque token without
+writing a record. `save` carries only that token and requires an authenticated
+owner connection. Core commits the exact preview through the shared record
+writer. The connection-bound token expires after fifteen minutes, is superseded
+by another preview, and returns the same receipt on repeated confirmation.
+Reconnect never replays it. An uncertain publication is not attempted again.
+Domain refusals include `ambiguous_date`, `records_changed`, `stale_revision`,
+`record_not_found`, `invalid_record` and `preview_expired`. Outside edits are
+never silently adopted. Neither request accepts a person identity or file path.

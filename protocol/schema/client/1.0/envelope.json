@@ -90,7 +90,9 @@
         "replay_request",
         "replay_result",
         "web_request",
-        "web_result"
+        "web_result",
+        "record_request",
+        "record_result"
       ]
     },
     "message_id": {
@@ -1504,6 +1506,38 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "record_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/record_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "record_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/record_result"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -2301,26 +2335,84 @@
         },
         "removed": {
           "type": "boolean"
+        },
+        "state": {
+          "$ref": "#/$defs/running_state"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/running_reason"
         }
       },
       "required": [],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "state"
+                ]
+              },
+              {
+                "required": [
+                  "summary"
+                ]
+              },
+              {
+                "required": [
+                  "reason"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "state",
+              "summary"
+            ]
+          }
+        }
+      ]
     },
     "stop": {
       "type": "object",
       "properties": {
         "run_id": {
           "type": "string"
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [],
       "additionalProperties": false
     },
     "follow_up": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
-      "required": [],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "run_id",
+        "text"
+      ],
       "additionalProperties": false
     },
     "background_notice": {
@@ -2341,6 +2433,13 @@
       "properties": {
         "after": {
           "type": "string"
+        },
+        "view": {
+          "type": "string",
+          "enum": [
+            "overview",
+            "lanes"
+          ]
         }
       },
       "required": [],
@@ -2357,6 +2456,22 @@
         },
         "next_cursor": {
           "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_row"
+          }
+        },
+        "waiting": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waiting_row"
+          }
+        },
+        "waiting_more": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [],
@@ -2370,36 +2485,107 @@
         },
         "text": {
           "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_row"
+          }
+        },
+        "waiting": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waiting_row"
+          }
+        },
+        "waiting_more": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "required": [],
       "additionalProperties": false
     },
     "progress_digest_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "order": {
+          "type": "string",
+          "enum": [
+            "priority",
+            "lightest"
+          ]
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "progress_digest": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
-      "required": [],
+      "properties": {
+        "lines": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "string"
+          }
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "more": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "link": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lines",
+        "total",
+        "more",
+        "link"
+      ],
       "additionalProperties": false
     },
     "waiting_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "order": {
+          "type": "string",
+          "enum": [
+            "priority",
+            "lightest"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
     "waiting": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waiting_row"
+          }
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "more": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -3163,10 +3349,26 @@
       "additionalProperties": false
     },
     "multi_task_control": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
-      "properties": {},
-      "required": [],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "stop_all"
+          ]
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "action"
+      ],
       "additionalProperties": false
     },
     "sign_in_listen": {
@@ -4662,7 +4864,7 @@
     },
     "tool_activity": {
       "type": "object",
-      "description": "Display-only tool lifecycle event. No arguments or output. Live/replay only; not retained in Topics snapshots or conversation/model history.",
+      "description": "Display-only tool lifecycle event. Arguments and raw output excluded. Optional Core-approved display target and summary. Live/replay only; not conversation/model history.",
       "properties": {
         "stream": {
           "$ref": "#/$defs/stream_metadata"
@@ -4687,6 +4889,16 @@
         "duration_ms": {
           "type": "number",
           "minimum": 0
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Optional Core-approved display target. Never inferred from raw arguments by clients."
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 8192,
+          "description": "Optional sanitized display summary explicitly supplied by Core, never raw tool output."
         }
       },
       "required": [
@@ -4822,7 +5034,8 @@
         "cancelled",
         "complete",
         "partial",
-        "failed"
+        "failed",
+        "requested"
       ]
     },
     "web_request": {
@@ -4922,6 +5135,328 @@
         "title",
         "generation",
         "details"
+      ],
+      "additionalProperties": false
+    },
+    "progress_line": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "just_finished": {
+          "type": "string"
+        },
+        "next": {
+          "type": "string"
+        },
+        "waiting": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "stage",
+        "just_finished",
+        "next",
+        "waiting",
+        "depth"
+      ],
+      "additionalProperties": false
+    },
+    "progress_row": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string"
+        },
+        "line": {
+          "$ref": "#/$defs/progress_line"
+        }
+      },
+      "required": [
+        "ref",
+        "line"
+      ],
+      "additionalProperties": false
+    },
+    "waiting_ref": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "key",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "waiting_line": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "sentence": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string"
+        },
+        "recommendation": {
+          "type": "string"
+        },
+        "agent_name": {
+          "type": "string"
+        },
+        "answers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "free_text": {
+          "type": "boolean"
+        },
+        "effort": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "due": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "sentence",
+        "context",
+        "recommendation",
+        "agent_name",
+        "answers",
+        "free_text",
+        "effort",
+        "due"
+      ],
+      "additionalProperties": false
+    },
+    "waiting_row": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/waiting_ref"
+        },
+        "line": {
+          "$ref": "#/$defs/waiting_line"
+        }
+      },
+      "required": [
+        "ref",
+        "line"
+      ],
+      "additionalProperties": false
+    },
+    "running_state": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "waiting",
+        "needs_input",
+        "ready_for_review",
+        "failed",
+        "stopped",
+        "done",
+        "unknown"
+      ]
+    },
+    "running_reason": {
+      "type": "string",
+      "enum": [
+        "dependency",
+        "area",
+        "quota",
+        "host_capacity",
+        "ci_pending",
+        "run_limit",
+        "person",
+        "budget"
+      ]
+    },
+    "record_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "view": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "search": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "after": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "day": {
+          "type": "string",
+          "maxLength": 10
+        },
+        "zone": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "ref": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "token": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "record_chip": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "record_row": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "kind": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 32768
+        },
+        "chips": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/record_chip"
+          }
+        },
+        "overdue": {
+          "type": "boolean"
+        },
+        "blocked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ref",
+        "revision",
+        "kind",
+        "state",
+        "title",
+        "note",
+        "chips",
+        "overdue",
+        "blocked"
+      ],
+      "additionalProperties": false
+    },
+    "record_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/record_row"
+          },
+          "maxItems": 50
+        },
+        "next": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "token": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "code": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "operation",
+        "rows"
       ],
       "additionalProperties": false
     }

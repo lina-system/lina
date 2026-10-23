@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"fixture","cwd":"WORKDIR","model":"fixture-model"}
+{"type":"assistant","session_id":"fixture","message":{"id":"message","content":[{"type":"text","text":"Working."},{"type":"tool_use","id":"tool","name":"Bash","input":{"command":"true"}}]}}
+{"type":"result","subtype":"success","session_id":"fixture","is_error":false,"result":"Work submitted.","usage":{"input_tokens":4,"output_tokens":2,"cache_read_input_tokens":0},"permission_denials":[]}

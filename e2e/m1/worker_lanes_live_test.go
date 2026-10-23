@@ -32,9 +32,15 @@ func TestM3WorkerLanesLiveSession(t *testing.T) {
 	var calls atomic.Int32
 	var control map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Input []json.RawMessage }
+		var req struct{ Input, Tools []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
+			return
+		}
+		if scriptedCodingManager(t, w, req) {
+			return
+		}
+		if respondWorkerCompletion(w, req.Input, scenario.LiveResult) {
 			return
 		}
 		n := calls.Add(1)
@@ -76,7 +82,8 @@ func TestM3WorkerLanesLiveSession(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	bin := t.TempDir()
 	exe, err := os.Executable()
 	if err != nil {
@@ -91,6 +98,7 @@ func TestM3WorkerLanesLiveSession(t *testing.T) {
 	h.connect(core).Close()
 	c, conversation := conversationClient(t, h)
 	admittedTurn(t, h, c, conversation, "lane-worker", scenario.LiveInput)
+	receiveWorkerFollowups(t, h, c, 2)
 	if calls.Load() != 6 {
 		t.Fatalf("worker rounds=%d", calls.Load())
 	}

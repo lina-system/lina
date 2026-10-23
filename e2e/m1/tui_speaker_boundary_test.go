@@ -18,9 +18,18 @@ import (
 )
 
 func TestM1TUISpeakerBoundariesInstalledCore(t *testing.T) {
+	for _, language := range []string{"", "go"} {
+		t.Run("language="+language, func(t *testing.T) {
+			testTUISpeakerBoundariesInstalledCore(t, language)
+		})
+	}
+}
+
+func testTUISpeakerBoundariesInstalledCore(t *testing.T, language string) {
+	t.Helper()
 	const input = "Show the code result"
-	const code = "한글 결과"
-	const reply = "```\n\n" + code + "\n\n```"
+	const code = "var 한글 = 42"
+	reply := "```" + language + "\n\n" + code + "\n\n```"
 	var calls atomic.Int32
 	requests := make(chan string, 1)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,9 +84,23 @@ func TestM1TUISpeakerBoundariesInstalledCore(t *testing.T) {
 			if result.Operation == nil || *result.Operation != operation || result.AgentID == nil {
 				t.Fatalf("unexpected agent response: %+v", result)
 			}
-			waitScreen(t, h, terminal, *result.AgentID)
+			// The tap receives a response before the UI consumes it. The same
+			// agent ID already appears in the previous result, so wait for this
+			// operation's completed pager frame before sending Escape.
+			resultFrame, err := terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+				return renderedFrame(terminal, s) && strings.Contains(screenText(s), design.Text(design.English, operation)+" "+*result.AgentID)
+			})
+			if err != nil {
+				t.Fatal("agent result did not render", err)
+			}
 			h.keys(terminal, "\x1b")
-			waitComposerReady(t, h, terminal)
+			if _, err = terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
+				rows := screenRows(s)
+				return s.Bytes > resultFrame.Bytes && renderedFrame(terminal, s) && s.AltScreen && !s.CursorHidden && len(rows) > 0 &&
+					strings.Contains(rows[len(rows)-1], "? "+design.Text(design.English, "shortcuts.title"))
+			}); err != nil {
+				t.Fatal("agent result did not close", err)
+			}
 			return *result.AgentID
 		}
 	}

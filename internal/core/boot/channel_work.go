@@ -124,6 +124,9 @@ func (c *channelRuntime) channelWork(ctx context.Context, bot channels.Bot, sche
 	return nil
 }
 func (c *channelRuntime) admitChannelInput(ctx context.Context, shared *conversationRuntime, event gateway.Inbound, binding channels.Binding, in channelInput) error {
+	if handled, err := c.channelControl(ctx, shared, event, binding, in); handled || err != nil {
+		return err
+	}
 	shared.mu.Lock()
 	defer shared.mu.Unlock()
 	var body struct {
@@ -199,10 +202,19 @@ func (c *channelRuntime) normalizePrivate(ctx context.Context) error {
 		return err
 	})
 }
+
+// Worker follow-ups are children of their committed completion, whose parent
+// retains the original channel input. Use the same address and outbound reply
+// IDs as ordinary replies so replay and repeated delivery scans stay idempotent.
 func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationRuntime, event gateway.Inbound, in channelInput, parent string, adapter channelAdapter) error {
 	var ids []string
 	if err := c.r.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT id FROM conv_event WHERE parent_id=? AND ((speaker_kind='agent' AND scaffold_kind IS NULL) OR (speaker_kind='system' AND scaffold_kind='background_notice' AND json_extract(origin,'$.kind')='native' AND json_extract(origin,'$.entry')=?)) ORDER BY rowid`, parent, guard.EntryBackgroundNotice)
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM conv_event WHERE conversation_id=? AND agent_id=?
+ AND (parent_id=? OR parent_id IN (
+   SELECT id FROM conv_event WHERE parent_id=? AND scaffold_kind='worker_completion'
+   AND json_extract(origin,'$.kind')='native' AND json_extract(origin,'$.entry')=?))
+ AND ((speaker_kind='agent' AND scaffold_kind IS NULL) OR (speaker_kind='system' AND scaffold_kind='background_notice' AND json_extract(origin,'$.kind')='native' AND json_extract(origin,'$.entry')=?))
+ ORDER BY rowid`, view.conversation, view.agent, parent, parent, guard.EntryTool, guard.EntryBackgroundNotice)
 		if err != nil {
 			return err
 		}

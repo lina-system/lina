@@ -269,7 +269,7 @@ export function checkDependencies({ cwd = process.cwd(), execute: run = execute 
       throw new Error('go.mod, kit/go.mod and go.work must name the same Go and toolchain releases');
     }
     // Keep the public Go proxy/checksum defaults and share only the Go download/build caches.
-    const inherited = Object.fromEntries(['PATH', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'TMPDIR', 'TMP', 'TEMP', 'GOCACHE', 'GOMODCACHE']
+    const inherited = Object.fromEntries(['PATH', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'TMPDIR', 'TMP', 'TEMP', 'GOCACHE', 'GOMODCACHE', 'GOMAXPROCS']
       .filter(name => process.env[name] !== undefined).map(name => [name, process.env[name]]));
     const [gocache, gomodcache] = invoke(['env', 'GOCACHE', 'GOMODCACHE'], cwd,
       { ...inherited, HOME: homedir(), GOENV: 'off', GOTOOLCHAIN: 'local' }).trim().split(/\r?\n/);

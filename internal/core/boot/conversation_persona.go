@@ -42,6 +42,18 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 	if !ok {
 		return grant.Grant{}, grant.Environment{}, grant.ErrGrant
 	}
+	if g.Identity.Profile == "coding-manager" || g.Identity.Profile == "code-goal" {
+		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: g.Identity.Revision}, nil
+	}
+	if g.Identity.Profile == "methodology" {
+		env := grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true}
+		if g.Scope[0].Write {
+			h, err := r.observeRecordsHealth(ctx)
+			env.Revision = h.Revision
+			return g, env, err
+		}
+		return g, env, nil
+	}
 	if g.Identity.Profile == "worker-session" {
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: strconv.FormatUint(r.epoch, 10)}, nil
 	}
@@ -60,7 +72,7 @@ func (r *conversationRuntime) resolvePersonaGrant(ctx context.Context, id string
 		revision, err := r.work.Revision(ctx, strings.TrimPrefix(g.Scope[0].Target, "work:"))
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: revision}, err
 	}
-	if g.Identity.Profile == "relationship" {
+	if g.Identity.Profile == "relationship" || g.Identity.Profile == "names" {
 		return g, grant.Environment{Epoch: r.epoch, Now: time.Now(), OSPermitted: true, Revision: g.Identity.Revision}, nil
 	}
 	if g.Identity.Profile == "persona-state" || g.Identity.Profile == "persona-expression" {
@@ -130,7 +142,7 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	stateAuth.Profile = "persona-state"
 	stateAuth.Revision = scope.StateRevision
 	stateTarget := "persona-state:" + r.agent
-	stateGrant := grant.Grant{Identity: stateAuth, Expires: g.Expires, Scope: []grant.Permission{{Tool: "fill_persona_setting", Target: stateTarget, Write: true}, {Tool: "record_emotion", Target: stateTarget, Write: true}}, Revisions: map[string]string{stateTarget: scope.StateRevision}}
+	stateGrant := grant.Grant{Identity: stateAuth, Expires: g.Expires, Scope: []grant.Permission{{Tool: "fill_persona_setting", Target: stateTarget, Write: true}, {Tool: "fill_work_method", Target: stateTarget, Write: true}, {Tool: "record_emotion", Target: stateTarget, Write: true}}, Revisions: map[string]string{stateTarget: scope.StateRevision}}
 	expressionAuth := auth
 	expressionAuth.GrantID = turnID + ":expression"
 	expressionAuth.Profile = "persona-expression"
@@ -147,6 +159,11 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 		return nil, nil, err
 	}
 	bindings[settingSpec.Name] = turn.Tool(registry, settingSpec, tools.Call{Auth: stateAuth}, turnID)
+	methodSpec, err := coreexec.RegisterWorkMethod(registry, r.persona, scope)
+	if err != nil {
+		return nil, nil, err
+	}
+	bindings[methodSpec.Name] = turn.Tool(registry, methodSpec, tools.Call{Auth: stateAuth}, turnID)
 	emotionSpecs, err := coreexec.RegisterEmotion(registry, r.persona, scope)
 	if err != nil {
 		return nil, nil, err
@@ -174,12 +191,16 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 	}{"persona_emotion", emotion})
 	packet = append(packet, assemble.ContextItem{ID: "persona-emotion:" + r.agent + ":" + r.conversation, Revision: scope.StateRevision, AgentID: r.agent, Kind: assemble.Clock, Text: string(emotionData)})
 	settingData, _ := json.Marshal(struct {
-		Kind   string            `json:"kind"`
-		Values map[string]string `json:"values"`
-	}{"persona_settings", settings.Settings})
+		Kind       string                    `json:"kind"`
+		Values     map[string]string         `json:"values"`
+		WorkMethod agents.WorkMethodSettings `json:"work_method"`
+	}{"persona_settings", settings.Settings, agents.ProjectWorkMethod(persona, settings)})
 	var sourceIDs []string
 	for _, id := range settings.SettingSources {
 		sourceIDs = append(sourceIDs, id)
+	}
+	for _, fill := range settings.WorkMethodFills {
+		sourceIDs = append(sourceIDs, fill.Source)
 	}
 	slices.Sort(sourceIDs)
 	var refs []assemble.Ref
@@ -201,6 +222,20 @@ func (r *conversationRuntime) preparePersonaTools(ctx context.Context, turnID st
 		return nil, nil, err
 	}
 	bindings[relationshipSpec.Name] = turn.Tool(registry, relationshipSpec, tools.Call{Auth: relationshipAuth}, turnID)
+	if r.channelBinding == nil || r.channelBinding.Scope.Memory {
+		nameAuth := auth
+		nameAuth.GrantID, nameAuth.Profile, nameAuth.Revision = turnID+":names", "names", "1"
+		nameTarget := "names:" + r.person
+		nameGrant := grant.Grant{Identity: nameAuth, Expires: g.Expires, Scope: []grant.Permission{{Tool: "remember_name", Target: nameTarget, Write: true}}, Revisions: map[string]string{nameTarget: "1"}}
+		r.personaMu.Lock()
+		r.personaGrants[nameAuth.GrantID] = nameGrant
+		r.personaMu.Unlock()
+		spec, err := coreexec.RegisterName(registry, r.persona, scope)
+		if err != nil {
+			return nil, nil, err
+		}
+		bindings[spec.Name] = turn.Tool(registry, spec, tools.Call{Auth: nameAuth}, turnID)
+	}
 	return catalog, packet, nil
 }
 

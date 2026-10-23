@@ -140,21 +140,38 @@ func (m *shellModel) managementCommand(text string) (bool, tea.Cmd) {
 }
 
 type managementSession struct {
-	model   *shellModel
-	pending map[string]protocol.Payload
+	model        *shellModel
+	pending      map[string]protocol.Payload
+	boardPending map[string]*boardView
 }
 
 func (s *managementSession) request(ctx context.Context, c *clientapi.Client, p protocol.Payload) error {
 	var id string
 	var err error
 	switch p := p.(type) {
+	case protocol.ProgressDigestGet, protocol.Stop, protocol.FollowUp, protocol.MultiTaskControl:
+		id, err = c.Control(ctx, p)
 	case protocol.ProgressGet:
 		id, err = c.Progress(ctx, p)
 		if err == nil {
 			s.model.conversation.pager.developerID = id
 		}
+	case protocol.WaitingGet:
+		id, err = c.Waiting(ctx, p)
+		if err == nil && s.model.conversation.pager.board != nil {
+			s.model.conversation.pager.board.requestID = id
+			if s.boardPending == nil {
+				s.boardPending = map[string]*boardView{}
+			}
+			s.boardPending[id] = s.model.conversation.pager.board
+		}
 	case protocol.RunningGet:
 		id, err = c.Running(ctx, p)
+	case protocol.RecordRequest:
+		id, err = c.Record(ctx, p)
+		if err == nil {
+			s.model.conversation.pager.recordID = id
+		}
 	case protocol.AgentRequest:
 		id, err = c.Agent(ctx, p)
 	case protocol.MemoryRequest:
@@ -175,6 +192,19 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 	}
 	delete(s.pending, *e.ReplyTo)
 	m := s.model
+	if board, tracked := s.boardPending[*e.ReplyTo]; tracked {
+		delete(s.boardPending, *e.ReplyTo)
+		if !m.conversation.pager.open || m.conversation.pager.board != board || board.requestID != *e.ReplyTo {
+			return true, nil
+		}
+	}
+	if _, records := request.(protocol.RecordRequest); records {
+		p := &m.conversation.pager
+		if !p.open || p.records == nil || p.recordID != *e.ReplyTo {
+			return true, nil
+		}
+		p.records.busy = false
+	}
 	if _, developer := request.(protocol.ProgressGet); developer {
 		p := &m.conversation.pager
 		if !p.open || !p.developer || p.developerID != *e.ReplyTo {
@@ -183,10 +213,45 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		p.developerBusy = false
 	}
 	if e.Error != nil {
-		m.openPager(design.Text(m.styles.options.Language, string(e.Error.Code)))
+		text := design.Text(m.styles.options.Language, string(e.Error.Code))
+		if _, note := request.(protocol.FollowUp); note {
+			text += "\n" + design.Text(m.styles.options.Language, "note.help")
+		}
+		m.openPager(text)
 		return true, nil
 	}
 	switch p := e.Payload.(type) {
+	case protocol.RecordResult:
+		original, ok := request.(protocol.RecordRequest)
+		if !ok {
+			return true, errStream
+		}
+		return true, m.recordResponse(original, p)
+	case protocol.ProgressDigest:
+		lines := append([]string{}, p.Lines...)
+		lines = append(lines, fmt.Sprintf(design.Text(m.styles.options.Language, "progress.digest_count"), p.Total, p.More))
+		m.openPager(strings.Join(lines, "\n"))
+	case protocol.StopResult:
+		m.openPager(design.Text(m.styles.options.Language, "control.stopped"))
+	case protocol.FollowUp:
+		m.openPager(design.Text(m.styles.options.Language, "control.note"))
+	case protocol.MultiTaskControl:
+		if p.Count == nil {
+			return true, errStream
+		}
+		m.openPager(fmt.Sprintf(design.Text(m.styles.options.Language, "control.stopped_all"), *p.Count))
+
+	case protocol.Waiting:
+		if _, ok := request.(protocol.WaitingGet); !ok || p.Rows == nil {
+			return true, errStream
+		}
+		if b := m.conversation.pager.board; m.conversation.pager.open && b != nil && b.requestID == *e.ReplyTo {
+			b.waiting = *p.Rows
+			m.refreshBoard()
+		}
+		if m.conversation.pager.open && m.conversation.pager.waiting {
+			m.conversation.pager.text = m.waitingText(*p.Rows)
+		}
 	case protocol.Progress:
 		if _, ok := request.(protocol.ProgressGet); !ok || p.Lanes == nil {
 			return true, errStream
@@ -250,7 +315,14 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		}
 		found := false
 		for _, a := range *p.Agents {
-			lines = append(lines, a.AgentID+"  "+a.Name)
+			source := design.Text(m.styles.options.Language, "agents.from_description")
+			if a.Preset != nil && *a.Preset != "" {
+				source = *a.Preset
+				if role, ok := design.Lookup(m.styles.options.Language, "agents.role."+*a.Preset); ok {
+					source = role + " (" + source + ")"
+				}
+			}
+			lines = append(lines, a.Name+"  "+source, "  main:"+a.AgentID)
 			found = found || a.AgentID == active
 		}
 		m.openPager(strings.Join(lines, "\n"))

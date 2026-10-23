@@ -21,7 +21,7 @@ func personaStateItem(item assemble.ContextItem, agent, conversation string) boo
 		return false
 	}
 	switch item.ID {
-	case "persona:" + agent + ":revision", "persona-expression:" + agent, "persona-settings:" + agent:
+	case "persona:" + agent + ":revision", "persona-expression:" + agent, "persona-settings:" + agent, "persona-methodology:" + agent:
 		return item.Kind == assemble.Commitments
 	case "persona-emotion:" + agent + ":" + conversation:
 		return item.Kind == assemble.Clock
@@ -81,6 +81,8 @@ func (r *conversationRuntime) recordContextSources(ctx context.Context, packet a
 			source.Source = "clock-v1"
 		case item.Kind == assemble.SkillBody:
 			source.Source = "skill-v1"
+		case item.Kind == assemble.Commitments && strings.HasPrefix(item.Origin, "name-memory:"):
+			source.Source = "name-v1"
 		case item.Kind == assemble.Memory && item.Origin != "":
 			source.Source = "relationship-v1"
 		default:

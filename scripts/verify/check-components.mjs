@@ -7,7 +7,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const componentsTimeoutMs = 900_000;
+export const componentsTimeoutMs = 1_200_000;
 
 export function execute(command, args, { cwd, env, timeoutMs = 120_000 }) {
   const started = performance.now();
@@ -32,7 +32,7 @@ export function createGoContext(cwd, { timeoutMs = 120_000 } = {}) {
       || versions.some(value => value.go !== go || value.toolchain !== toolchain)) {
     throw new Error('go.mod, kit/go.mod and go.work must name the same Go and toolchain releases');
   }
-  const inherited = Object.fromEntries(['PATH', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'TMPDIR', 'TMP', 'TEMP', 'GOCACHE', 'GOMODCACHE']
+  const inherited = Object.fromEntries(['PATH', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'TMPDIR', 'TMP', 'TEMP', 'GOCACHE', 'GOMODCACHE', 'GOMAXPROCS']
     .filter(name => process.env[name] !== undefined).map(name => [name, process.env[name]]));
   const cache = execute('go', ['env', 'GOCACHE', 'GOMODCACHE'], {
     cwd, timeoutMs, env: { ...inherited, HOME: homedir(), GOENV: 'off', GOTOOLCHAIN: 'local' },
@@ -54,13 +54,20 @@ export function createGoContext(cwd, { timeoutMs = 120_000 } = {}) {
 }
 
 export function checkComponents({ cwd = process.cwd(), components, execute: run = execute,
+  phase = 'all', testPattern, json = false, createContext = createGoContext,
   // Leave time for diagnostics and cleanup before foundation's outer watchdog.
   timeoutMs = componentsTimeoutMs - 5000 }) {
   if (!Array.isArray(components) || components.length === 0) throw new Error('Select at least one registered component');
+  if (!['all', 'build', 'unit', 'e2e'].includes(phase)) throw new Error('Unknown components phase');
+  if (phase === 'e2e' && (typeof testPattern !== 'string' || !testPattern.startsWith('^') || !testPattern.endsWith('$'))) {
+    throw new Error('An e2e shard needs an anchored test pattern');
+  }
+  if (phase !== 'e2e' && testPattern !== undefined) throw new Error('Only e2e shards accept a test pattern');
+  const build = phase === 'all' || phase === 'build';
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Components budget must be positive');
   const started = performance.now();
   const deadline = started + timeoutMs;
-  const context = createGoContext(cwd, { timeoutMs: Math.min(30_000, timeoutMs) });
+  const context = createContext(cwd, { timeoutMs: Math.min(30_000, timeoutMs) });
   let output = '';
   const invoke = (command, args, directory) => {
     const remaining = Math.floor(deadline - performance.now());
@@ -87,12 +94,12 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
     // Compare regenerated types without modifying the candidate. Minimal older
     // trees and verification fixtures may not contain the protocol package yet.
     const protocol = join(cwd, 'kit/protocol');
-    if (components.some(component => component.name === 'kit') && existsSync(protocol)) {
+    if (build && components.some(component => component.name === 'kit') && existsSync(protocol)) {
       if (invoke('go', ['run', './internal/generate', '-check'], protocol).status !== 0) return { status: 1, output };
     }
     // Token checks also run for component-only TUI changes, when automation
     // is not selected. The checker compares outputs without modifying them.
-    if (components.some(component => component.name === 'lina') && existsSync(join(cwd, 'design/tokens'))) {
+    if (build && components.some(component => component.name === 'lina') && existsSync(join(cwd, 'design/tokens'))) {
       if (invoke(process.execPath, [join(cwd, 'scripts/tokens.mjs'), '--check'], cwd).status !== 0) return { status: 1, output };
     }
     for (const module of new Set(components.map(component => component.module))) {
@@ -100,25 +107,27 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
       const packages = [...new Set(selected.flatMap(component => component.packages))];
       const directory = join(cwd, module);
       const binaries = join(context.directory, module === '.' ? 'root-bin' : 'kit-bin');
-      mkdirSync(binaries);
+      if (build) mkdirSync(binaries);
       const outputArgs = selected.some(component => component.binary) ? ['-o', `${binaries}/`] : [];
-      for (const args of [
+      for (const args of build ? [
         ['build', '-mod=readonly', ...outputArgs, ...packages],
         ['vet', '-mod=readonly', ...packages],
         ['tool', 'exhaustive', ...packages],
-      ]) {
+      ] : []) {
         if (invoke('go', args, directory).status !== 0) return { status: 1, output };
       }
       const testArgs = ['test', '-count=1', '-timeout=6m', '-mod=readonly'];
-      const acceptance = module === '.' && packages.includes('./e2e/...');
+      if (json) testArgs.push('-json');
+      if (phase === 'e2e') testArgs.push('-parallel=4', '-run', testPattern);
+      const acceptance = phase === 'all' && module === '.' && packages.includes('./e2e/...');
       const ordinary = acceptance ? packages.filter(name => name !== './e2e/...') : packages;
-      if (ordinary.length && invoke('go', [...testArgs, ...ordinary], directory).status !== 0) return { status: 1, output };
+      if (phase !== 'build' && ordinary.length && invoke('go', [...testArgs, ...ordinary], directory).status !== 0) return { status: 1, output };
       if (acceptance) {
         // Bound real Core/PTY subprocess fan-out even on large developer hosts.
         const acceptanceArgs = [...testArgs, '-parallel=4'];
         // The acceptance corpus grows across milestones. Enumerate each
         // package's actual tests, examples and fuzz seeds, then run disjoint
-        // halves. No test is omitted or repeated; each half retains Go's
+        // batches. No test is omitted or repeated; each batch retains Go's
         // diagnostic timeout and consumes the same outer components budget.
         const listed = invoke('go', ['list', '-mod=readonly', './e2e/...'], directory);
         if (listed.status !== 0) return { status: 1, output };
@@ -132,13 +141,14 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
             if (invoke('go', [...acceptanceArgs, pkg], directory).status !== 0) return { status: 1, output };
             continue;
           }
-          for (let batch = 0; batch < 2; batch++) {
-            const tests = names.filter((_, index) => index % 2 === batch);
+          const batchCount = 3;
+          for (let batch = 0; batch < batchCount; batch++) {
+            const tests = names.filter((_, index) => index % batchCount === batch);
             if (tests.length && invoke('go', [...acceptanceArgs, '-run', `^(${tests.join('|')})$`, pkg], directory).status !== 0) return { status: 1, output };
           }
         }
       }
-      for (const component of selected.filter(component => component.binary)) {
+      for (const component of selected.filter(component => build && component.binary)) {
         const result = invoke(join(binaries, component.binary), [], directory);
         if (result.status !== 64 || !/usage:/i.test(result.stderr) || result.stdout !== '') {
           return { status: 1, output: `${output}${component.name}: built command failed its usage smoke check\n` };

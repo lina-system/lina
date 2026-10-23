@@ -70,6 +70,9 @@ func TestM2WorkArea(t *testing.T) {
 			t.Error(err)
 			return
 		}
+		if scriptedWorkCompletion(w, request.Input) {
+			return
+		}
 		names := map[string]bool{}
 		for _, raw := range request.Tools {
 			var d struct{ Name string }
@@ -116,7 +119,8 @@ func TestM2WorkArea(t *testing.T) {
 		emitResponse(w, "Recorded.", true)
 	}))
 	defer server.Close()
-	h, _ := installedConversationHarness(t, server.URL)
+	h, bootstrap := installedConversationHarness(t, server.URL)
+	seedCodingFixture(t, h, bootstrap)
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatal(err)
@@ -246,6 +250,7 @@ func TestM2WorkArea(t *testing.T) {
 		t.Fatal(e)
 	}
 	core = start(true)
+	waitCompletionHandled(t, h)
 	c, conversation = conversationClient(t, h)
 	admittedTurn(t, h, c, conversation, "retain-area", "Preserve the completed local result without applying it.")
 	var saved []work.Material

@@ -105,7 +105,7 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 	// may also hide an ancestor event used by another context projection.
 	memories := map[string]memory.Item{}
 	for _, source := range a.Context {
-		if source.Source != "relationship-v1" {
+		if source.Source != "relationship-v1" && source.Source != "name-v1" {
 			continue
 		}
 		id, ok := strings.CutPrefix(source.ID, "memory:")
@@ -136,7 +136,7 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 			}
 		case "persona-state-v1":
 			switch source.ID {
-			case "persona:" + scope.Agent + ":revision", "persona-expression:" + scope.Agent, "persona-settings:" + scope.Agent, "persona-emotion:" + scope.Agent + ":" + ep.Conversation:
+			case "persona:" + scope.Agent + ":revision", "persona-expression:" + scope.Agent, "persona-settings:" + scope.Agent, "persona-methodology:" + scope.Agent, "persona-emotion:" + scope.Agent + ":" + ep.Conversation:
 			default:
 				return fail()
 			}
@@ -165,9 +165,9 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 			if hex.EncodeToString(hash[:]) != source.Revision {
 				return fail()
 			}
-		case "relationship-v1":
+		case "relationship-v1", "name-v1":
 			item := memories[source.ID]
-			if item.Kind != memory.Relationship {
+			if source.Source == "relationship-v1" && item.Kind != memory.Relationship || source.Source == "name-v1" && item.Kind != memory.Name {
 				return fail()
 			}
 			c.Memory = &item
@@ -189,7 +189,7 @@ func (s Source) ValidateEpisode(ctx context.Context, ep Episode) error {
 		}
 		refs := append([]ledger.Reference(nil), a.Profile...)
 		for _, c := range a.Context {
-			if c.Source == "relationship-v1" {
+			if c.Source == "relationship-v1" || c.Source == "name-v1" {
 				refs = append(refs, ledger.Reference{ID: strings.TrimPrefix(c.ID, "memory:"), Revision: c.Revision})
 			}
 		}

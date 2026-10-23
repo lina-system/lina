@@ -46,6 +46,7 @@ type shellBlock struct {
 }
 
 type shellModel struct {
+	waitingOrder  string
 	activityFrame uint64
 	cardScroll    int
 	cardRequests  map[string]state.CardAnswerRequest
@@ -63,6 +64,7 @@ type shellModel struct {
 	now           func() time.Time
 	quitDeadline  time.Time
 	blocks        map[string]shellBlock
+	resultStreams map[string]shellBlock
 	resyncPending map[string]protocol.StreamCursor
 	resyncSeen    map[resyncSignal]protocol.StreamCursor
 	conversation  conversationView
@@ -110,7 +112,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case shellBegin:
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
-			if m.conversation.pager.developer {
+			if m.conversation.pager.developer || m.conversation.pager.board != nil || m.conversation.pager.records != nil {
 				m.conversation.pager = textPager{}
 			}
 			m.talk = talkView{attempt: m.talk.attempt + 1}
@@ -168,7 +170,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.status = ConnectionStatus{State: status, Cause: envelope.Error.Code}
 				}
-				projection, err := projectStream(*envelope)
+				projection, err := projectStream(*envelope, m.styles.options.Language)
 				if err != nil {
 					m.status = ConnectionStatus{State: Failed, Cause: protocol.ErrorMalformed}
 					return m, nil
@@ -208,9 +210,12 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.content, _ = state.Reduce(m.content, state.Notice{ID: "sandbox.unavailable", Code: "sandbox.unavailable"})
 			}
 		}
-		m.refreshOpenCard()
+		m.refreshBoard()
 		m.refreshRunning()
+		m.refreshProgress()
 		m.refreshBlocks()
+		m.refreshResultStreams(msg.Message)
+		m.refreshOpenCard()
 		afterCard, _ := m.content.CurrentCard()
 		if beforeCard.ID != afterCard.ID || beforeCard.Revision != afterCard.Revision {
 			m.cardGate.CardChanged(m.now())
@@ -234,6 +239,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = ConnectionStatus{State: Resyncing}
 		}
 		var effects []tea.Cmd
+		if projected != nil && (projected.topic == "progress" || (projected.topic == "waiting" || projected.topic == "running") && m.conversation.pager.board != nil) && m.conversation.pager.open && (m.conversation.pager.waiting || m.conversation.pager.board != nil) {
+			effects = append(effects, m.waitingRequest())
+		}
 		for _, command := range commands {
 			generation := m.generation
 			effects = append(effects, func() tea.Msg {
@@ -261,6 +269,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		options.Width = max(1, msg.Width)
 		m.styles = NewStyles(options)
 		m.refreshDeveloper()
+		m.refreshBoard()
 	case tea.KeyboardEnhancementsMsg:
 		m.events = msg.SupportsEventTypes()
 		m.disambiguated = msg.SupportsKeyDisambiguation()

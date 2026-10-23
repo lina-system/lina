@@ -20,6 +20,14 @@ import (
 func TestM1TUITranscriptInstalledCore(t *testing.T) {
 	t.Parallel()
 
+	for _, language := range []design.Language{design.English, design.Korean} {
+		t.Run(string(language), func(t *testing.T) {
+			testTUITranscriptInstalledCore(t, language)
+		})
+	}
+}
+
+func testTUITranscriptInstalledCore(t *testing.T, language design.Language) {
 	var scenario struct {
 		Inputs, Replies []string
 		Draft, Search   string
@@ -52,8 +60,8 @@ func TestM1TUITranscriptInstalledCore(t *testing.T) {
 	h, start := installedConversationHarness(t, provider.URL)
 	core := start(true)
 	observer, _ := conversationClient(t, h)
-	terminal := h.startTerminalSize([]string{"TERM=xterm-256color"}, false, true, 100, 34)
-	waitScreen(t, h, terminal, design.Text(design.English, "live"))
+	terminal, _ := h.startConversationTUI(100, 34, "TERM=xterm-256color", "LC_ALL="+string(language))
+	waitScreen(t, h, terminal, design.Text(language, "live"))
 	for i, input := range scenario.Inputs {
 		h.keys(terminal, input+"\r")
 		for {
@@ -81,15 +89,19 @@ func TestM1TUITranscriptInstalledCore(t *testing.T) {
 		return snapshot
 	}
 	page := wait(func(s tuiterm.Snapshot) bool {
-		return s.CursorHidden && strings.Contains(screenRows(s)[33], "Connected  Esc Close  / Search  n Next match")
+		rows := screenRows(s)
+		return s.AltScreen && s.CursorHidden && len(rows) == 34 &&
+			strings.TrimSpace(rows[0]) == design.Text(language, "person") &&
+			strings.Contains(screenText(s), scenario.Replies[len(scenario.Replies)-1]) &&
+			!strings.Contains(screenText(s), scenario.Draft)
 	})
 	text := screenText(page)
 	position := 0
 	for i, input := range scenario.Inputs {
 		for j, message := range []string{input, scenario.Replies[i]} {
-			speaker := design.Text(design.English, "person")
+			speaker := design.Text(language, "person")
 			if j == 1 {
-				speaker = "LINA"
+				speaker = observer.Welcome.Agents[0].Name
 			}
 			// Names are words on a separate line; terminal padding is irrelevant.
 			lines := strings.Split(text, "\n")
@@ -112,22 +124,31 @@ func TestM1TUITranscriptInstalledCore(t *testing.T) {
 	// to the first message. Success depends on rendered cells, never a sleep.
 	h.resizeTerminal(terminal, 100, 12)
 	wait(func(s tuiterm.Snapshot) bool {
-		return len(s.Cells) == 12 && s.CursorHidden && strings.Contains(screenRows(s)[11], "Connected  Esc Close  / Search  n Next match")
+		rows := screenRows(s)
+		// Resize changes the emulator's dimensions before the TUI redraws.
+		// The connection label in the new status row proves that redraw arrived.
+		return len(rows) == 12 && s.AltScreen && s.CursorHidden &&
+			strings.Contains(strings.Join(rows[:11], "\n"), scenario.Inputs[0]) &&
+			strings.Contains(rows[11], design.Text(language, "live"))
 	})
 	h.keys(terminal, "\x1b[F")
 	wait(func(s tuiterm.Snapshot) bool {
 		text := screenText(s)
-		return len(s.Cells) == 12 && strings.Contains(text, scenario.Replies[2]) && !strings.Contains(text, scenario.Inputs[0])
+		return len(s.Cells) == 12 && s.AltScreen && s.CursorHidden &&
+			strings.Contains(text, scenario.Replies[2]) && !strings.Contains(text, scenario.Inputs[0])
 	})
 	h.keys(terminal, "/"+scenario.Search+"\r")
 	wait(func(s tuiterm.Snapshot) bool {
-		return s.CursorHidden && strings.Contains(screenText(s), scenario.Inputs[0]) && strings.Contains(screenRows(s)[11], "Connected  Esc Close  / Search  n Next match  "+scenario.Search)
+		rows := screenRows(s)
+		return len(rows) == 12 && s.AltScreen && s.CursorHidden &&
+			strings.Contains(strings.Join(rows[:11], "\n"), scenario.Inputs[0]) &&
+			strings.Contains(rows[11], scenario.Search)
 	})
 	h.keys(terminal, "n")
 	h.keys(terminal, "\x1b")
 	wait(func(s tuiterm.Snapshot) bool {
-		text := screenText(s)
-		return !s.CursorHidden && strings.Contains(text, scenario.Draft) && !strings.Contains(text, "Esc Close  / Search  n Next match")
+		return len(s.Cells) == 12 && s.AltScreen && !s.CursorHidden && s.CursorY == 10 &&
+			strings.Contains(screenRows(s)[s.CursorY], scenario.Draft)
 	})
 	h.keys(terminal, "\x04")
 	terminal.process.wait(t, 0)

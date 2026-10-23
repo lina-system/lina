@@ -35,7 +35,7 @@ func (m *shellModel) canSignIn() bool {
 	return m.hasCapability("accounts") && m.hasCapability("sign_in_relay")
 }
 func (m *shellModel) hasComposer() bool {
-	return m.hasCapability("web") || m.hasCapability("conversation") || m.hasCapability("accounts") || m.hasCapability("agents") || m.hasCapability("memory") || m.hasCapability("channels") || m.hasCapability("exchanges")
+	return m.hasCapability("records") || m.hasCapability("web") || m.hasCapability("conversation") || m.hasCapability("accounts") || m.hasCapability("agents") || m.hasCapability("memory") || m.hasCapability("channels") || m.hasCapability("exchanges")
 }
 
 func (m *shellModel) startSignIn(purpose string) tea.Cmd {
@@ -56,7 +56,7 @@ func (m *shellModel) accountCommand(text string) (bool, tea.Cmd) {
 	switch text {
 	case "/signin":
 		return true, m.startSignIn("login")
-	case "/accounts":
+	case "/accounts", "/usage":
 		return true, m.listAccounts()
 	}
 	return false, nil
@@ -165,11 +165,15 @@ func (m *shellModel) accountContent() string {
 			if i == m.accounts.selected {
 				marker = "> "
 			}
-			label := sanitize.Display(row.Label)
+			label := oneLaneLine(row.Label)
 			if row.Plan != nil {
-				label += " " + sanitize.Display(*row.Plan)
+				label += " " + oneLaneLine(*row.Plan)
 			}
-			lines = append(lines, marker+label+"  "+text(row.Status))
+			// AccountSummary currently reports no quota. Never infer it from
+			// account status or request counts.
+			suffix := "  " + text(row.Status) + "  " + text("usage.unknown")
+			label = ansi.Truncate(label, max(1, m.size.Width-ansi.StringWidth(marker+suffix)), "…")
+			lines = append(lines, marker+label+suffix)
 		}
 	}
 	if m.accounts.stage != "" {

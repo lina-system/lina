@@ -40,6 +40,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/manifest"
+	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/reply"
@@ -47,6 +48,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/skills"
+	"github.com/thisisjun786/lina/internal/core/timers"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -67,15 +69,25 @@ import (
 type acceptedSteering struct {
 	event   ledger.Event
 	inboxID int64
+	runner  *conversationRuntime
 }
 
 type conversationRuntime struct {
+	timers          *timers.Store
+	timerStop       context.CancelFunc
+	timerDone       chan struct{}
+	completionStop  context.CancelFunc
+	completionDone  chan struct{}
+	workEngine      *workRuntime
+	coding          *codingTurn
+	codingDelivery  *conversationRuntime
 	workerDispatch  *dispatch.Service
 	workerGitHub    *ghclient.Client
 	work            *work.Service
 	waitingStop     context.CancelFunc
 	waitingDone     chan struct{}
 	workWaiting     *waiting.Rounds
+	ownerViews      *ownerViews
 	background      *backgroundRuntime
 	workers         *workerRuntime
 	router          *conversationRouter
@@ -103,6 +115,8 @@ type conversationRuntime struct {
 	agents           *agents.Store
 	skills           *skills.Store
 	records          *records.Store
+	recordCaptureMu  sync.Mutex
+	recordCaptures   map[string]*recordCapture
 	persona          *coreexec.Persona
 	personaAuthority *authority.Service
 	personaGrants    map[string]grant.Grant
@@ -110,8 +124,9 @@ type conversationRuntime struct {
 	main             string
 	epoch            uint64
 	controls         *ctlfiles.Store
-	personaWarned    bool
+	presets          *presetPublisher
 
+	skillMaintenance            *skillMaintenanceRuntime
 	growthMu                    sync.Mutex
 	growth                      *growthRuntime
 	lanes                       *lane.Manager
@@ -156,6 +171,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
+	if err = r.agents.RegisterMethodologies(ctx); err != nil {
+		return nil, err
+	}
 	if err := r.refreshPersona(ctx); err != nil {
 		return nil, err
 	}
@@ -169,6 +187,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	if err != nil {
 		return nil, err
+	}
+	if selected, e := r.agents.Selected(ctx, r.person); e == nil {
+		first.Agent = selected
+	} else if !errors.Is(e, agents.ErrNotFound) {
+		return nil, e
 	}
 	r.removals, err = retract.Open(ctx, retract.Config{Canon: db, Root: root})
 	if err != nil {
@@ -192,6 +215,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	r.records, err = records.Open(root, db)
 	if err != nil {
 		return nil, err
+	}
+	r.records.ReadCandidateMaterial = func(ctx context.Context, id string, revision int64) (string, error) {
+		return r.materials.Read(ctx, ledger.Material{ID: id, Revision: revision})
 	}
 	r.persona = coreexec.NewPersona(db, r.agents, r.materials)
 	r.personaAuthority, err = authority.Open(ctx, db, authority.Config{Epoch: epoch, Resolve: r.resolvePersonaGrant,
@@ -242,6 +268,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	for kind, op := range clientsrv.AccountOperations(r.person, r.accounts, relay) {
 		r.identity.Operations[kind] = op
 	}
+	for kind, op := range clientsrv.RecordOperations(r) {
+		r.identity.Operations[kind] = op
+	}
 	for kind, op := range clientsrv.WebOperations(r) {
 		r.identity.Operations[kind] = op
 	}
@@ -256,15 +285,15 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r.work = work.NewWithArea(r.db, r.workArea, workMaterials{writer: writer, person: r.person})
+	r.work = work.NewWithArea(r.db, r.workArea, workMaterials{writer: writer, store: r.assets, person: r.person})
 	if err = r.work.Recover(ctx, strconv.FormatUint(r.epoch, 10)); err != nil {
+		return nil, err
+	}
+	if err = r.recoverWorkAuthority(ctx); err != nil {
 		return nil, err
 	}
 	r.startWorkerLanes()
 	if err = r.startWorkWaiting(ctx); err != nil {
-		return nil, err
-	}
-	if err = r.startWorkerDispatch(ctx); err != nil {
 		return nil, err
 	}
 	if err = r.startRuns(ctx); err != nil {
@@ -288,7 +317,27 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	for kind, op := range clientsrv.ManagementOperations(r) {
 		r.identity.Operations[kind] = op
 	}
+	if err = r.startSkillMaintenance(ctx); err != nil {
+		return nil, err
+	}
 	if err = r.startGrowth(ctx, controls); err != nil {
+		return nil, err
+	}
+	if err = r.startOwnerViews(ctx); err != nil {
+		return nil, err
+	}
+	// Producers and the reactor may schedule recovered turns immediately.
+	// Start them only after background services and the final lanes are ready.
+	if err = r.startWorkerDispatch(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startCompletions(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startTimers(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.resumeWorkerCompletions(ctx); err != nil {
 		return nil, err
 	}
 	success = true
@@ -296,22 +345,66 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.timerStop != nil {
+		r.timerStop()
+		select {
+		case <-r.timerDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if r.ownerViews != nil && r.ownerViews.stop != nil {
+		r.ownerViews.stop()
+		select {
+		case <-r.ownerViews.done:
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		}
+	}
+	if r.completionStop != nil {
+		r.completionStop()
+		select {
+		case <-r.completionDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if r.workEngine != nil {
+		waitErr := r.workEngine.close(ctx)
+		select {
+		case <-r.workEngine.done:
+			// A joined engine's failure must not skip the remaining cleanup.
+			// Check completion itself: a wait timeout leaves its stores in use.
+			err = r.workEngine.err
+		default:
+			return waitErr
+		}
+	}
 	if r.workerDispatch != nil {
-		if err = r.workerDispatch.Close(ctx); err != nil {
-			return err
+		if closeErr := r.workerDispatch.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 	}
 	if r.workerGitHub != nil {
-		if err = r.workerGitHub.Close(ctx); err != nil {
-			return err
+		if closeErr := r.workerGitHub.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
+	}
+	if m := r.skillMaintenance; m != nil && m.stop != nil {
+		m.stop()
+		select {
+		case <-m.done:
+		case <-ctx.Done():
+			return errors.Join(err, ctx.Err())
+		}
+		m.stop = nil
 	}
 	if r.waitingStop != nil {
 		r.waitingStop()
 		select {
 		case <-r.waitingDone:
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 		r.waitingStop = nil
 	}
@@ -321,7 +414,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		case result := <-r.growth.done:
 			err = errors.Join(err, result)
 		case <-ctx.Done():
-			return ctx.Err()
+			return errors.Join(err, ctx.Err())
 		}
 		r.growth.stop = nil
 	}
@@ -329,9 +422,8 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		r.channels.Close()
 	}
 	if r.lanes != nil {
-		err = r.lanes.Close(ctx)
-		if err != nil {
-			return err
+		if closeErr := r.lanes.Close(ctx); closeErr != nil {
+			return errors.Join(err, closeErr)
 		}
 	}
 	if r.workers != nil {
@@ -343,7 +435,7 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 			select {
 			case <-b.done:
 			case <-ctx.Done():
-				return ctx.Err()
+				return errors.Join(err, ctx.Err())
 			}
 		}
 		if b.service != nil {
@@ -418,7 +510,7 @@ func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p 
 	}
 	digest := sha256.Sum256([]byte(r.person + "\x00" + r.conversation + "\x00" + *p.InputID))
 	eventID := "input:" + hex.EncodeToString(digest[:])
-	admission := &conversationAdmission{db: r.db, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
+	admission := &conversationAdmission{db: r.db, person: r.person, agent: r.agent, input: inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "client", NativeID: *p.InputID}, Body: []byte(masked.Text())}}
 	language, err := r.inputLanguage(ctx, *p.Text)
 	if err != nil {
 		return protocol.ItemDone{}, err
@@ -457,10 +549,10 @@ func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, ste
 	}
 	body := items[0]
 	if steer && r.lanes.Steer(r.conversation, body) {
-		r.steering[string(body)] = append(r.steering[string(body)], acceptedSteering{event, inboxID})
+		r.steering[string(body)] = append(r.steering[string(body)], acceptedSteering{event: event, inboxID: inboxID, runner: runner})
 		return nil
 	}
-	_, err = r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error { return runner.run(ctx, inputs, event, inboxID) })
+	_, err = r.queueReaction(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error { return runner.run(ctx, inputs, event, inboxID) })
 	return err
 }
 
@@ -488,7 +580,8 @@ func (r *conversationRuntime) publish(ctx context.Context, kind protocol.Kind, k
 	// including when input admission races the provider observer.
 	r.publicationMu.Lock()
 	defer r.publicationMu.Unlock()
-	if kind == protocol.KindItemDone || kind == protocol.KindOutputDelta || kind == protocol.KindResult || kind == protocol.KindBackgroundNotice {
+	positioned := kind == protocol.KindItemDone || kind == protocol.KindOutputDelta || kind == protocol.KindResult || kind == protocol.KindBackgroundNotice
+	if positioned {
 		if !r.positioned[key] {
 			// A committed outcome still publishes after its turn is cancelled.
 			saveCtx := context.WithoutCancel(ctx)
@@ -498,10 +591,6 @@ func (r *conversationRuntime) publish(ctx context.Context, kind protocol.Kind, k
 			}); err != nil {
 				return err
 			}
-			if r.positioned == nil {
-				r.positioned = make(map[string]bool)
-			}
-			r.positioned[key] = true
 		}
 	}
 	agent := r.agent
@@ -509,7 +598,18 @@ func (r *conversationRuntime) publish(ctx context.Context, kind protocol.Kind, k
 		// Results carry attribution in provenance, not an agent_id wire field.
 		agent = ""
 	}
-	return r.topics.Publish("conversation:"+r.conversation, clientsrv.TopicEvent{Kind: kind, Key: key, Data: data, AgentID: agent})
+	if err := r.topics.Publish("conversation:"+r.conversation, clientsrv.TopicEvent{Kind: kind, Key: key, Data: data, AgentID: agent}); err != nil {
+		return err
+	}
+	if positioned {
+		if r.positioned == nil {
+			r.positioned = make(map[string]bool)
+		}
+		// A remembered position also proves successful live publication. A
+		// failed publication must remain retryable even after its SQL commit.
+		r.positioned[key] = true
+	}
+	return nil
 }
 
 // The installed conversation currently has no negotiated surface width or
@@ -620,7 +720,7 @@ func (r *conversationRuntime) publishReply(ctx context.Context, key, turnID stri
 func (r *conversationRuntime) events(ctx context.Context, through string) ([]ledger.Event, error) {
 	var ids []string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice'))`
+		query := `SELECT id FROM conv_event WHERE conversation_id=? AND (speaker_kind IN ('person','agent','forwarded') OR scaffold_kind IN ('interruption','failure','persona_change','run_handoff','background_notice','coding_handoff','work_completion','timer','timer_work','worker_session','worker_completion'))`
 		args := []any{r.conversation}
 		if through != "" {
 			query += ` AND (speaker_kind NOT IN ('person','forwarded') OR rowid <= (SELECT rowid FROM conv_event WHERE id=?))`
@@ -770,6 +870,8 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		delete(r.personaGrants, turnID+":state")
 		delete(r.personaGrants, turnID+":expression")
 		delete(r.personaGrants, turnID+":relationship")
+		delete(r.personaGrants, turnID+":names")
+		delete(r.personaGrants, turnID+":coding")
 		r.personaMu.Unlock()
 
 	}()
@@ -779,6 +881,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 	var memoryRefs []turn.Reference
 
 	evidence := turn.EvidenceWriter{Ledger: r.journal(), ConversationID: r.conversation, ParentID: input.ID, Surface: input.Surface, Now: time.Now}
+	var preparedNames []memory.Item
 	prep := &turn.Preparation{
 		VerifyBuild: r.verifyBuild,
 		Account:     func(context.Context) (provider.Credential, error) { return r.route.Request(nil).Credential, nil },
@@ -818,6 +921,17 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				return turn.PreparedRequest{}, err
 			}
 			minimum = append(minimum, personaPacket...)
+			methodology, err := r.methodologyContext(ctx)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			minimum = append(minimum, methodology...)
+			namePacket, names, err := r.namePacket(ctx, at)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			preparedNames = names
+			minimum = append(minimum, namePacket...)
 			if err := r.prepareSkillTools(turnID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
@@ -827,14 +941,26 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			if err := r.prepareWorkerTools(turnID, input, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			if err := r.prepareRecordTools(turnID, bindings); err != nil {
+			if err := r.prepareRecordTools(turnID, input.ID, bindings); err != nil {
 				return turn.PreparedRequest{}, err
 			}
-			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration())
+			workDeclarations, err := r.prepareGoalWorkTools(turnID, bindings)
+			if err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			if err := r.prepareMethodologyTools(turnID, bindings); err != nil {
+				return turn.PreparedRequest{}, err
+			}
+			declarations := append(coreexec.PersonaDeclarations(), coreexec.PersonaSettingDeclaration(), coreexec.WorkMethodDeclaration())
 			declarations = append(declarations, coreexec.EmotionDeclarations()...)
 			declarations = append(declarations, coreexec.RelationshipDeclaration())
+			if r.channelBinding == nil || r.channelBinding.Scope.Memory {
+				declarations = append(declarations, coreexec.NameDeclaration())
+			}
 			declarations = append(declarations, coreexec.SkillDeclarations()...)
 			declarations = append(declarations, coreexec.RecordDeclarations()...)
+			declarations = append(declarations, workDeclarations...)
+			declarations = append(declarations, methodologyDeclarations()...)
 			declarations = append(declarations, startRunDeclaration())
 			webProvider, err := r.selectedWebProvider()
 			if err != nil {
@@ -850,6 +976,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 			declarations = append(declarations, coreexec.WorkDeclarations()...)
 			declarations = append(declarations, workerDeclarations()...)
+			declarations = append(declarations, r.prepareTimerTools(turnID, bindings)...)
+			if r.coding != nil {
+				clear(bindings)
+				catalog = nil
+				declarations, err = r.prepareCodingDecision(turnID, bindings)
+				if err != nil {
+					return turn.PreparedRequest{}, err
+				}
+			}
 			if r.channelBinding != nil && !r.channelBinding.Scope.Tools {
 				clear(bindings)
 				declarations = nil
@@ -889,7 +1024,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				}
 				return turn.PreparedRequest{}, turn.ErrInvalid
 			}
-			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, InstructionFormat: "persona-tui-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
+			assembly := turn.Assembly{AgentID: r.agent, PersonaRevision: persona.Commit, WorkMethodRevision: persona.WorkMethodRevision, InstructionFormat: "persona-tui-v1", PreparedAt: at.Format(time.RFC3339Nano), Profile: append([]turn.Reference(nil), memoryRefs...), AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, Items: append([]turn.Reference(nil), memoryRefs...)}
 			assembly.Context, err = r.recordContextSources(ctx, packet, report)
 			if err != nil {
 				return turn.PreparedRequest{}, err
@@ -965,7 +1100,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			}
 		}
 		var err error
-		saved, err = ledger.New(db, r.materials).AdmitBatch(ctx, batch)
+		saved, err = ledger.New(namingCanon{Canon: db, person: r.person, agent: r.agent, names: preparedNames, replies: batch}, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
 	inputQueue := &conversationInputs{runtime: r, inputs: inputs}
@@ -979,7 +1114,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        bindings,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
-				return r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result))
+				return r.recordNotice(ctx, input, call, r.skillNotice(ctx, input, call, r.personaNotice(ctx, input, call, result)))
 			},
 			Inputs: inputQueue,
 			Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {
@@ -996,6 +1131,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				// fences follow-up rounds; the existing turn flow records the refusal.
 				if err := r.validateChannel(ctx); err != nil {
 					return nil, err
+				}
+				if round == 1 {
+					refs := make([]turn.Reference, 0, len(preparedNames))
+					for _, name := range preparedNames {
+						refs = append(refs, turn.Reference{ID: name.ID, Revision: strconv.FormatInt(name.Revision, 10)})
+					}
+					if err := r.validateModelContext(ctx, memoryEpoch, refs); err != nil {
+						return nil, err
+					}
 				}
 				if err := r.validateModelContext(ctx, memoryEpoch, memoryRefs); err != nil {
 					return nil, err
@@ -1104,11 +1248,12 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		}
 	}
 	// Late steering remains durable. A follow-up starts through the same lane and
-	// turn store, never by retrying a completed model request.
+	// turn store with the originating input's runner, retaining its channel scope
+	// and binding checks even when the preceding turn began in the app.
 	for _, body := range out.FollowUps {
 		if pending, ok := r.takeSteering(body); ok {
-			_, submitErr := r.lanes.SubmitLoop(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error {
-				return r.run(ctx, inputs, pending.event, pending.inboxID)
+			_, submitErr := r.queueReaction(r.ctx, r.conversation, func(ctx context.Context, inputs *loop.Inputs) error {
+				return pending.runner.run(ctx, inputs, pending.event, pending.inboxID)
 			})
 			err = errors.Join(err, submitErr)
 		}

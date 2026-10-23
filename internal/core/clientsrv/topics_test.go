@@ -442,3 +442,28 @@ func TestToolActivityReplaysWithoutEvictingConversation(t *testing.T) {
 		t.Fatalf("activity displaced history: %+v", start.Snapshot)
 	}
 }
+
+func TestTopicHasSubscribersTracksLiveObservers(t *testing.T) {
+	h := topicHub(t, TopicOptions{})
+	if h.HasSubscribers("progress") || len(h.topics) != 0 {
+		t.Fatal("empty observer check allocated or reported a subscriber")
+	}
+	_, one := subscribe(t, h, "progress", nil)
+	_, two := subscribe(t, h, "progress", nil)
+	if !h.HasSubscribers("progress") || h.HasSubscribers("waiting") {
+		t.Fatal("observer scope lost")
+	}
+	one.Close()
+	if !h.HasSubscribers("progress") {
+		t.Fatal("second observer disappeared")
+	}
+	two.Close()
+	if h.HasSubscribers("progress") {
+		t.Fatal("closed observers retained")
+	}
+	_, _ = subscribe(t, h, "progress", nil)
+	h.Close()
+	if h.HasSubscribers("progress") {
+		t.Fatal("closed hub retained observers")
+	}
+}

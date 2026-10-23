@@ -14,6 +14,7 @@ import (
 // After is an exclusive id cursor; changing the repository starts a fresh view.
 type Params struct {
 	Person, Kind, Search, After string
+	View, Day, Zone             string
 	Limit                       int
 }
 type Row struct {
@@ -23,6 +24,9 @@ type Row struct {
 	State    string `json:"state"`
 	Title    string `json:"title"`
 	Note     string `json:"note"`
+	Todo     *Todo  `json:"todo,omitempty"`
+	Overdue  bool   `json:"overdue,omitempty"`
+	Blocked  bool   `json:"blocked,omitempty"`
 }
 type Index interface {
 	Query(context.Context, Params) ([]Row, error)
@@ -30,6 +34,7 @@ type Index interface {
 type document struct {
 	person, kind, state, title, note string
 	belongs, blocked                 []string
+	todo                             *Todo
 }
 
 func parseDocument(data []byte) (document, error) {
@@ -79,6 +84,13 @@ func parseDocument(data []byte) (document, error) {
 			}
 		}
 	}
+	if d.kind == "todo" {
+		d.todo, err = parseTodo(fields)
+		if err != nil {
+			return d, err
+		}
+		d.state = d.todo.State
+	}
 	body = strings.TrimSpace(body)
 	if strings.HasPrefix(body, "# ") {
 		d.title, d.note, _ = strings.Cut(body[2:], "\n")
@@ -96,7 +108,20 @@ func putProjection(ctx context.Context, tx *canon.Tx, r indexRow) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM records_edges WHERE source=?", r.id); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM records_todo WHERE id=?", r.id); err != nil {
+		return err
+	}
 	d := r.doc
+	if d.todo != nil {
+		b, _ := json.Marshal(d.todo)
+		next := ""
+		if d.todo.Repeat != nil && !d.todo.Repeat.Exhausted {
+			next = d.todo.Repeat.Next
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO records_todo(id,fields,when_value,deadline,repeat_next) VALUES(?,?,?,?,?)", r.id, string(b), d.todo.When, d.todo.Deadline, next); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO records_text(id,person,kind,state,title,note) VALUES(?,?,?,?,?,?)", r.id, d.person, d.kind, d.state, d.title, d.note); err != nil {
 		return err
 	}
@@ -112,14 +137,14 @@ func putProjection(ctx context.Context, tx *canon.Tx, r indexRow) error {
 
 func (s *Store) ensureIndex(ctx context.Context, head string, files map[string]string) error {
 	var indexed string
-	var count, texts int
+	var count, texts, todos, projected int
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT head,(SELECT count(*) FROM records_index),(SELECT count(*) FROM records_text) FROM records_index_state WHERE singleton=1").Scan(&indexed, &count, &texts)
+		return tx.QueryRowContext(ctx, "SELECT head,(SELECT count(*) FROM records_index),(SELECT count(*) FROM records_text),(SELECT count(*) FROM records_text WHERE kind='todo'),(SELECT count(*) FROM records_todo) FROM records_index_state WHERE singleton=1").Scan(&indexed, &count, &texts, &todos, &projected)
 	})
 	if err != nil {
 		return err
 	}
-	if indexed == head && count == len(files) && texts == count {
+	if indexed == head && count == len(files) && texts == count && todos == projected {
 		return nil
 	}
 	return s.rebuild(ctx, head)
@@ -143,6 +168,10 @@ func (s *Store) Query(ctx context.Context, p Params) ([]Row, error) {
 	if p.Person == "" || p.Limit < 0 || p.Limit > 100 || len(p.Search) > 512 {
 		return nil, ErrInvalid
 	}
+	bounds, err := viewBounds(p)
+	if err != nil {
+		return nil, err
+	}
 	if p.Limit == 0 {
 		p.Limit = 50
 	}
@@ -150,9 +179,12 @@ func (s *Store) Query(ctx context.Context, p Params) ([]Row, error) {
 		return nil, err
 	}
 	rows := []Row{}
-	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		query := "SELECT i.id,i.revision,t.kind,t.state,t.title,t.note FROM records_index i JOIN records_text t ON t.id=i.id WHERE t.person=? AND i.id>?"
-		args := []any{p.Person, p.After}
+	err = s.db.Read(ctx, func(tx *canon.Tx) error {
+		query := "WITH bounds AS (SELECT ? AS day,? AS start,? AS end,? AS week_end,? AS week_day) SELECT i.id,i.revision,t.kind,t.state,t.title,t.note,COALESCE(v.fields,'')," +
+			"(t.kind='todo' AND t.state NOT IN ('completed','canceled') AND " + dateBefore("v.when_value", "b.day", "b.start") + ")," +
+			"(t.kind='todo' AND t.state NOT IN ('completed','canceled') AND EXISTS(SELECT 1 FROM records_edges e JOIN records_text blocker ON blocker.id=e.target WHERE e.source=i.id AND e.relation='blocked_by' AND blocker.person=t.person AND blocker.state NOT IN ('completed','canceled')))" +
+			" FROM records_index i JOIN records_text t ON t.id=i.id LEFT JOIN records_todo v ON v.id=i.id CROSS JOIN bounds b WHERE t.person=? AND i.id>? AND " + viewFilter(p.View)
+		args := append(bounds, p.Person, p.After)
 		if p.Kind != "" {
 			query += " AND t.kind=?"
 			args = append(args, p.Kind)
@@ -180,8 +212,17 @@ func (s *Store) Query(ctx context.Context, p Params) ([]Row, error) {
 		defer rs.Close()
 		for rs.Next() {
 			var r Row
-			if err := rs.Scan(&r.ID, &r.Revision, &r.Kind, &r.State, &r.Title, &r.Note); err != nil {
+			var todo string
+			if err := rs.Scan(&r.ID, &r.Revision, &r.Kind, &r.State, &r.Title, &r.Note, &todo, &r.Overdue, &r.Blocked); err != nil {
 				return err
+			}
+			if todo != "" {
+				if err := json.Unmarshal([]byte(todo), &r.Todo); err != nil {
+					return err
+				}
+			}
+			if p.Day == "" {
+				r.Overdue = false
 			}
 			rows = append(rows, r)
 		}

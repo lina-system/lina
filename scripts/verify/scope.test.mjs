@@ -575,7 +575,7 @@ test('a design document added directly under docs/design excludes automation', t
   assert.deepEqual(scope.changed, ['docs/design/example.md']);
 });
 
-test('a research note added directly under docs/research excludes automation', t => {
+test('a research report added directly under docs/research excludes automation', t => {
   const r = repository(t);
   mkdirSync(join(r.cwd, 'docs/research'), { recursive: true });
   writeFileSync(join(r.cwd, 'docs/research/example.md'), '# Research\n');

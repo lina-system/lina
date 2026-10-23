@@ -13,9 +13,18 @@ native Linux and macOS pseudo-terminals; it needs no window, display server,
 provider account, external network service or human input. Conversation screens
 use the pinned terminal library and a VT emulator.
 
+For the colour TUI, the PTY recorder reassembles renderer writes using the
+existing cursor-preserving scroll-margin reset at the end of each write.
+A PTY read can split or combine writes; it is not a completed screen. Plain
+and connection-only output retain their streaming path. Deterministic recorder
+tests split ANSI, UTF-8 and the write trailer, combine writes in one read, and
+reject a truncated redraw. Screen predicates still wait for the relevant UI
+state: a completed turn on an observer socket does not prove the TUI has
+rendered it. LONG-QA waits for the idle viewport before stitching PgUp pages.
+
 The suite builds each command once per test run and removes the shared binaries
 after all scenarios finish. Foundation enumerates the acceptance tests and runs
-two disjoint batches under its shared components budget. This keeps a growing
+three disjoint batches under its shared components budget. This keeps a growing
 corpus from exhausting one package watchdog while preserving every scenario,
 assertion and operation deadline. Independent scenarios call `t.Parallel()` and
 foundation limits each batch to four concurrent tests, including parallel
@@ -54,10 +63,18 @@ fixture provider in a 100x34 PTY. Parsed cells check speaker marks, foregrounds,
 header bold and exactly one empty row between messages. ASCII runs retain words;
 `NO_COLOR` runs retain ASCII speaker identity and emit no terminal escapes.
 
+`TestM1TUIStreamingCodeInstalledCore` holds a fixture provider at an open
+200-line code fence, its closing delta, and final completion through installed
+Core and a real PTY. Result Details shows one muted notice plus six trailing
+rows while open and all 200 rows on close, before completion. The test checks
+the retained result text and restores the terminal without timed sleeps.
+
 `TestM1TUISpeakerBoundariesInstalledCore` creates and selects a long-named agent
 through the real TUI, then requests a fenced Korean reply from installed Core
 in a 40x34 ASCII PTY. It checks provider routing, usable reply width, literal
 empty code boundary rows, and stable completion metadata across draft redraws.
+Both untagged and Go-tagged fences run through the same path, so syntax
+highlighting must retain the code's leading and trailing empty rows.
 
 `TestM1TUIIdentityFromAgentStore` installs a synthetic named agent with four
 distinct persona layers, types "who are you" through the real TUI, and checks
@@ -264,12 +281,22 @@ replay count is consumed by the Bubble Tea recording-writer test.
 synthetic producer data, socket discovery/decisions, and a separate-key PTY approval.
 These scenarios create no second product decision store and use no timing sleeps.
 
+`m1/tui-syntax.json` runs `TestM1TUISyntaxInstalledCore`: an installed Core and
+fixture provider stream an open Go fence, then its closing fence and final reply
+into a 100×34 PTY. Parsed cells prove that open code remains unstyled and closed
+code gains theme colours in dark/light; high-contrast and `NO_COLOR` remain
+plain. The provider is released by a channel after the open screen is observed,
+without timing-based assertions.
+
 The M2 Discord scenario is `m2/discord.json`, executed by `TestM2DiscordCore`.
 It installs the test host with a matching build manifest, runs production Core
 boot in a separate process, and controls it through the generated socket
 protocol. Synthetic outbound Gateway/REST and Responses endpoints demonstrate
 channel input, read tools, background results, deduplication, shaping, blocked
-state and restart without live credentials.
+state and restart without live credentials. `m2/discord-recovery.json` repeats
+the journey across Gateway 4007/4009 closes, including command and approval-button
+deduplication and Resume with the exact replacement session and committed sequence
+after Core restart.
 
 `m2/work-area.json`, executed by `TestM2WorkArea`, drives `prepare_work` and
 `retain_work_result` through the installed Core's conversation tools. Two real
@@ -281,6 +308,21 @@ them from backup after Core restart and loss of the work area. Worker lifecycle
 and receipt observations are seeded while Core is stopped; vendor dispatch is
 covered by the worker adapter scenarios. Run with
 `go test -count=1 ./e2e/m1 -run '^TestM2WorkArea$'`.
+
+`m2/work-dispatch.json`, executed by `TestM2DispatchedWorkArea`, drives installed
+Core's `dispatch_work` through a synthetic worker and GitHub boundary. The worker
+creates its assigned branch at the detached base, produces a real commit and
+attempts ordinary writes to protected refs. Assertions check the shared
+`work/tasks` allocation, independent parent clone, unchanged source checkout,
+clean result, artifact provenance and live-card equivalence to ledger replay.
+The shared installed-worker harness gives each Linux Core a private loadavg
+fixture through a Bubblewrap read-only bind mount. Its default is idle, so host
+load cannot park unrelated worker scenarios. The capacity case first observes
+`queued / host_capacity` with no attempt or launch, then lowers load and sends
+a new conversation input. The same work produces its result once and is not
+replayed after restart. Failures include dispatch state, wait, attempts and
+worker launch observations. Production sampling, limits and timeouts are unchanged.
+Run it with `go test -count=1 ./e2e/m1 -run '^TestM2DispatchedWorkArea$'`.
 
 `m2/tui-composer-identity.json` installs Core/TUI into a temporary root and creates
 and chooses another agent through the real TUI. It checks that the empty composer,
@@ -330,6 +372,12 @@ binding/scope replacement. A paired synthetic channel and an existing binding
 exercise the actual target-agent checks. Read-only canon snapshots prove that
 refused requests preserve agent revisions, actions, conversations and bindings.
 
+Installed-Core fixtures wait for command admission after connecting the socket.
+An empty input must be refused as malformed (or capability-not-negotiated for an
+unconfigured Core), rather than unavailable during recovery, before the scenario
+continues. This probe cannot create a conversation event or model request.
+Restored-memory and replay startup paths use the same readiness check as installs.
+
 `go test ./e2e/m1 -run '^TestM2UpdateActivation$' -count=1` runs
 `m2/update-activation.json`, which drives `lina update --activate` against
 the installed Core. A test-owned service manager launches real service processes;
@@ -359,6 +407,14 @@ source snapshot, then exercises the running Core's record tools. Imported eviden
 is found through search and read by LINA id, source-id lookup fails, a new result
 is saved, and restart keeps the imported identity. This operator-only test and
 fixture are excluded from release archives together with the takeover tool.
+
+`m2/claude-worker.json` runs `dispatch_work` with `worker=claude` through
+installed Core. A headless fixture worker writes and commits a real artifact,
+opens a synthetic PR and reports a final result while staying alive. Core must
+reap it, retain the result and PR in an adapter-derived receipt, and preserve the
+conversation result on restart. Other cases cover permission denial, exit zero
+without a result and pending PR checks. No personal account or GitHub write is
+used. Run with `go test ./e2e/m1 -run '^TestM2ClaudeWorkerThroughInstalledCore$'`.
 
 `m3/antigravity.json` dispatches through installed Core's conversation tool,
 starts its supervised headless worker in a new worktree, produces a real file
@@ -392,3 +448,58 @@ Core's read path and TUI. `TestM3WorkerLanesLiveSession` additionally starts the
 installed stdio worker fixture through Core's conversation tools, makes it write
 a real artifact, and expands its runtime lane to show the worker output without
 calling the model. Vendor transport is synthetic; no personal account is used.
+
+`m2/progress-waiting.json` uses the installed Core and synthetic stdio worker
+journey to read the owner progress capability and full waiting list during an
+approval and a question. It checks unknown plan values, display lines without
+internal identities, removal after the original authenticated answers, a real
+worker-written artifact, empty resolved sources after Core restart, and external record edits/restoration arriving on an already-open progress subscription without a new query. The
+worker and provider are fixtures; Core, tools, protocol and persistence are real.
+
+`m2/progress-seen-review.json` checks the installed Core's progress and running
+views with work-service records and content-checked fixture artifacts. Opening
+or dismissing a ready-for-review result removes its progress line and publishes
+the change. Restart preserves the acknowledgement without changing the work
+card, marking it applied or deleting the artifact.
+
+`m2/tui-home-waiting.json` adds a 120x36 TUI to that worker journey. An outside
+record change appears on Home alongside the worker's authenticated decisions.
+Resolving the sources clears the summary and preserves the typed draft. The
+scenario checks parsed terminal cells, the worker-written artifact and cleanup.
+
+`m2/progress-controls.json` is exercised by `TestM2ProgressControlsSurfaces` and
+`TestM2ProgressDigestWorker`. The built TUI and paired Telegram gateway send
+explicit controls to running Core and inspect the durable target runs; the worker
+scenario observes its approval, question and real artifact through the digest.
+Only external provider and platform wires are scripted.
+
+`m2/tui-board.json`, `m2/tui-note.json` and `m2/tui-usage.json` exercise the
+installed Core and real PTY TUI. The board combines an outside-change waiting
+request with a background run, updates its groups on landing and opens the
+result. The note journey holds a background provider response after ten
+foreground tool rounds, then checks one scoped follow-up in the next request.
+The account journey checks unknown quota independently of status and reported
+plan at 100 and 40 columns. External model wires and account data are synthetic.
+
+`m2/work-definition.json` drives `dispatch_work` through installed Core. It
+refuses missing done conditions, write areas and base-commit design sections,
+including headings inside code examples, before a worker is queued. Valid work
+receives the full packet and produces a committed file, observed PR and durable
+receipt. Moving the source base during manager admission leaves the allocated
+worktree and packet pinned to the validated commit. Worker and GitHub boundaries
+are synthetic; Core, Git and the work ledger run normally.
+
+`m2/worker-choice.json` runs installed Core through the conversation protocol.
+Synthetic Antigravity and Codex streams prove unknown quota, blocked-worker
+exclusion, one quota handoff with identical packet bytes, a second quota stop,
+repository choice rules, and overlapping-area waits across restart. The worker
+creates the real result file and Git commit; GitHub observations are synthetic.
+The first quota-stopped process deliberately remains alive until Core reaps it,
+and the replacement checks that it is gone before touching the workspace.
+
+`m2/worker-quota-windows.json` drives a Codex quota stop with an exhausted
+five-hour window and a healthy weekly window through installed Core. The
+replacement worker commits a real result. Persisted quota keeps the windows
+independent before and after restart, and selection at the reported short-window
+reset does not wait for the healthy weekly window. Reset-boundary assertions use
+explicit times rather than waiting for a provider window.

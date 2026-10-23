@@ -1,0 +1,5 @@
+{
+  "quotation": "I will send the workshop notes.",
+  "title": "send the workshop notes",
+  "states": ["completed", "canceled"]
+}

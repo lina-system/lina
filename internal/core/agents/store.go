@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/persona"
 )
 
 var (
@@ -34,18 +35,21 @@ type Layers struct {
 	GrowthSnapshot string `json:"growth_snapshot"`
 }
 type Preset struct {
+	WorkMethod    string   `json:"work_method,omitempty"`
+	Revision      string   `json:"revision,omitempty"`
 	ID            string   `json:"id"`
 	Core          string   `json:"core"`
 	DefaultVoice  string   `json:"default_voice"`
 	BlankSettings []string `json:"blank_settings,omitempty"`
 }
 type State struct {
-	Emotion          string            `json:"emotion"`
-	Settings         map[string]string `json:"settings"`
-	SettingSources   map[string]string `json:"setting_sources,omitempty"`
-	Affect           *EmotionRecord    `json:"affect,omitempty"`
-	ExpressionOff    bool              `json:"expression_off,omitempty"`
-	ExpressionSource string            `json:"expression_source,omitempty"`
+	WorkMethodFills  map[string]WorkMethodFill `json:"work_method_fills,omitempty"`
+	Emotion          string                    `json:"emotion"`
+	Settings         map[string]string         `json:"settings"`
+	SettingSources   map[string]string         `json:"setting_sources,omitempty"`
+	Affect           *EmotionRecord            `json:"affect,omitempty"`
+	ExpressionOff    bool                      `json:"expression_off,omitempty"`
+	ExpressionSource string                    `json:"expression_source,omitempty"`
 }
 type Agent struct {
 	ID, Name, Preset string
@@ -59,6 +63,8 @@ type Create struct {
 // Preparation is the durable persona part of the turn's prepare acknowledgement.
 // The flow must complete its context/account steps before sending a model call.
 type Preparation struct {
+	WorkMethod          string
+	WorkMethodRevision  string
 	TurnID, AgentID     string
 	Name, OwnerPersonID string
 	Revision            int64
@@ -154,7 +160,7 @@ func (s *Store) create(ctx context.Context, in Create, first bool) (Agent, error
 			state.Settings[name] = ""
 		}
 	}
-	commit, err := s.save(ctx, a.ID, "", in.Layers, in.PersonID)
+	commit, err := s.save(ctx, a.ID, "", in.Layers, in.PersonID, p.WorkMethod)
 	if err != nil {
 		return Agent{}, err
 	}
@@ -171,7 +177,7 @@ func (s *Store) create(ctx context.Context, in Create, first bool) (Agent, error
 		}
 		if first {
 			var n int
-			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM agent_first_run").Scan(&n); err != nil {
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM agent_starters WHERE preset=?", in.Preset).Scan(&n); err != nil {
 				return err
 			}
 			if n != 0 {
@@ -185,7 +191,7 @@ func (s *Store) create(ctx context.Context, in Create, first bool) (Agent, error
 			return err
 		}
 		if first {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO agent_first_run VALUES(1,?)", a.ID); err != nil {
+			if _, err := tx.ExecContext(ctx, "INSERT INTO agent_starters VALUES(?,?)", in.Preset, a.ID); err != nil {
 				return err
 			}
 		}
@@ -202,7 +208,13 @@ func (s *Store) revision(ctx context.Context, id string, rev int64) (Preparation
 		return found(tx.QueryRowContext(ctx, "SELECT commit_id FROM agent_revisions WHERE agent_id=? AND revision=?", id, rev).Scan(&p.Commit))
 	})
 	if err == nil {
-		p.Layers, err = s.load(id, p.Commit)
+		var version personaVersion
+		version, err = s.loadVersion(id, p.Commit)
+		p.Layers, p.WorkMethod = version.Layers, string(version.WorkMethod)
+		if p.WorkMethod == "" {
+			p.WorkMethod = persona.EmptyWorkMethod("")
+		}
+		p.WorkMethodRevision = persona.WorkMethodRevision(p.WorkMethod)
 	}
 	return p, err
 }
@@ -293,7 +305,7 @@ func (s *Store) SetState(ctx context.Context, id string, state State, person str
 		if err != nil {
 			return err
 		}
-		if state.Emotion != current.Emotion || !reflect.DeepEqual(state.Affect, current.Affect) || state.ExpressionOff != current.ExpressionOff || state.ExpressionSource != current.ExpressionSource {
+		if !reflect.DeepEqual(state.WorkMethodFills, current.WorkMethodFills) || state.Emotion != current.Emotion || !reflect.DeepEqual(state.Affect, current.Affect) || state.ExpressionOff != current.ExpressionOff || state.ExpressionSource != current.ExpressionSource {
 			return ErrInvalid
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE agents SET state=? WHERE id=?", raw, id); err != nil {
@@ -397,51 +409,5 @@ func (s *Store) Prepare(ctx context.Context, turn, id string) (Preparation, erro
 			return Preparation{}, err
 		}
 		return p, nil
-	}
-}
-
-type FirstRun struct {
-	Agent          Agent
-	SignInProvider string
-}
-
-func (s *Store) FirstRun(ctx context.Context, person string, usableAccount bool) (FirstRun, error) {
-	if !present(person) {
-		return FirstRun{}, ErrInvalid
-	}
-	if err := s.upgradeLinaPlaceholders(ctx, person); err != nil {
-		return FirstRun{}, err
-	}
-	for {
-		var id string
-		err := s.db.Read(ctx, func(tx *canon.Tx) error {
-			return tx.QueryRowContext(ctx, "SELECT agent_id FROM agent_first_run WHERE singleton=1").Scan(&id)
-		})
-		var a Agent
-		if errors.Is(err, sql.ErrNoRows) {
-			p := Preset{ID: "lina"}
-			raw, _ := json.Marshal(p)
-			err = s.db.Write(ctx, func(tx *canon.Tx) error {
-				_, err := tx.ExecContext(ctx, "INSERT INTO agent_presets VALUES(?,?) ON CONFLICT(id) DO NOTHING", p.ID, raw)
-				return err
-			})
-			if err != nil {
-				return FirstRun{}, err
-			}
-			a, err = s.create(ctx, Create{Name: "LINA", PersonID: person, Preset: "lina"}, true)
-			if errors.Is(err, ErrConflict) {
-				continue
-			}
-		} else if err == nil {
-			a, err = s.Get(ctx, id)
-		}
-		if err != nil {
-			return FirstRun{}, err
-		}
-		result := FirstRun{Agent: a}
-		if !usableAccount {
-			result.SignInProvider = "chatgpt"
-		}
-		return result, nil
 	}
 }

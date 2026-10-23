@@ -39,6 +39,44 @@ func TestMergeMovedHeadIsReadAndNeverWritten(t *testing.T) {
 		}
 	}
 }
+func TestMergeHeadMovesDuringReviewRead(t *testing.T) {
+	for _, kind := range []string{"new_head", "original_head", "moves_again", "read_failure"} {
+		t.Run(kind, func(t *testing.T) {
+			// REST saw the accepted head, but the review read saw a newer one.
+			replies := []fakeResponse{mergeBundle(sha)[0], mergeBundle(nextSHA)[1]}
+			wantHead, wantCI, wantError := nextSHA, "success", false
+			fresh := mergeBundle(nextSHA)
+			switch kind {
+			case "original_head":
+				wantHead = sha
+				fresh = mergeBundle(sha)
+			case "moves_again":
+				wantCI, wantError = "pending", true
+				fresh = []fakeResponse{fresh[0], mergeBundle(mergedSHA)[1]}
+			case "read_failure":
+				wantCI, wantError = "pending", true
+				fresh = []fakeResponse{fresh[0], {503, "", `{}`}}
+			}
+			f := &fakeRunner{replies: append(replies, fresh...)}
+			c := testClient(t, f)
+			r, err := c.Merge(t.Context(), Ref{"o/r", 140}, "dev", sha, func(context.Context) error {
+				t.Fatal("changed head admitted for merge")
+				return nil
+			})
+			if (err != nil) != wantError || r.State != "blocked" || r.Cause != "head_changed" || r.Head != wantHead || r.CI != wantCI {
+				t.Fatalf("result=%+v err=%v", r, err)
+			}
+			if len(f.replies) != 0 || len(f.args) != 2+len(fresh) {
+				t.Fatalf("refresh calls=%d unread=%d", len(f.args), len(f.replies))
+			}
+			for _, args := range f.args {
+				if args[0] != "api" {
+					t.Fatalf("wrote after moved head: %v", args)
+				}
+			}
+		})
+	}
+}
 func TestMergeProtectedMismatchPreventsWrite(t *testing.T) {
 	replies := mergeBundle(sha)
 	replies = append(replies, replies[0])
@@ -169,5 +207,39 @@ func TestObserveMergeMissingCommitAndFailedChecks(t *testing.T) {
 				t.Fatalf("%+v %v", r, err)
 			}
 		})
+	}
+}
+
+func TestHistoricalMergeRemainsVerifiedAfterBaseAdvances(t *testing.T) {
+	replies := mergedBundle(nextSHA)
+	replies = append(replies, fakeResponse{200, "", `{"status":"ahead","merge_base_commit":{"sha":"` + mergedSHA + `"}}`})
+	f := &fakeRunner{replies: replies}
+	c := testClient(t, f)
+	r, err := c.ReadLanded(t.Context(), Ref{"o/r", 140}, "dev", sha, mergedSHA)
+	if err != nil || r.State != "merged" || r.Commit != mergedSHA {
+		t.Fatalf("historical merge lost: %+v %v", r, err)
+	}
+	for _, args := range f.args {
+		if args[0] != "api" {
+			t.Fatal("observation wrote to GitHub")
+		}
+	}
+}
+func TestHistoricalMergeRejectsRemovedCommit(t *testing.T) {
+	replies := mergedBundle(nextSHA)
+	replies = append(replies, fakeResponse{200, "", `{"status":"diverged","merge_base_commit":{"sha":"` + nextSHA + `"}}`})
+	c := testClient(t, &fakeRunner{replies: replies})
+	if r, err := c.ReadLanded(t.Context(), Ref{"o/r", 140}, "dev", sha, mergedSHA); err == nil || r.State == "merged" {
+		t.Fatalf("removed merge accepted: %+v %v", r, err)
+	}
+}
+
+func TestHistoricalMergeReconcilesAnUnreceiptedWrite(t *testing.T) {
+	replies := mergedBundle(nextSHA)
+	replies = append(replies, fakeResponse{200, "", `{"status":"ahead","merge_base_commit":{"sha":"` + mergedSHA + `"}}`})
+	c := testClient(t, &fakeRunner{replies: replies})
+	r, err := c.ReadLanded(t.Context(), Ref{"o/r", 140}, "dev", sha, "")
+	if err != nil || r.Commit != mergedSHA || r.State != "merged" {
+		t.Fatalf("uncertain merge did not settle from ancestry: %+v %v", r, err)
 	}
 }

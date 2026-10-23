@@ -54,10 +54,13 @@ func (s *Service) Recover(ctx context.Context, epoch string) error {
 			return err
 		}
 	}
-	return nil
+	return s.recoverFileCopies(ctx)
 }
 func (s *Service) Create(ctx context.Context, t Task) error {
 	if t.ID == "" || t.AgentID == "" || t.ConversationID == "" || strings.TrimSpace(t.Title) == "" || strings.TrimSpace(t.Done) == "" {
+		return ErrInvalid
+	}
+	if t.Destination != "" && (!absolute(t.Destination) || !t.RequiresApply || t.Workspace == nil || t.Workspace.Spec.RepositoryID != "") {
 		return ErrInvalid
 	}
 	for _, root := range t.ArtifactRoots {
@@ -68,24 +71,44 @@ func (s *Service) Create(ctx context.Context, t Task) error {
 	return s.append(ctx, Event{Key: "task:" + t.ID, TaskID: t.ID, Kind: "created", Task: &t})
 }
 func (s *Service) Start(ctx context.Context, r Run) error {
+	s.workspaceMu.Lock()
+	defer s.workspaceMu.Unlock()
 	if r.ID == "" || r.TaskID == "" || r.Worker == "" || r.ThreadID == "" || r.TurnID == "" || r.NodeID == "" || r.Generation < 1 {
 		return ErrInvalid
 	}
 	return s.append(ctx, Event{Key: "run:" + r.ID, TaskID: r.TaskID, Kind: "started", Run: &r})
 }
 func (s *Service) Submit(ctx context.Context, runID string, r Receipt) error {
+	s.workspaceMu.Lock()
+	defer s.workspaceMu.Unlock()
+	c, err := s.Get(ctx, r.RelationshipID)
+	if err != nil {
+		return err
+	}
+	if c.Task.Destination != "" && r.Outcome == "ready_for_review" {
+		return s.snapshotFiles(ctx, c, runID, r)
+	}
 	return s.append(ctx, Event{Key: "receipt:" + r.EventID, TaskID: r.RelationshipID, Kind: "receipt", RunID: runID, Receipt: &r})
 }
+
+// Finish records a trusted worker termination observation. Model and worker
+// receipt handlers must not call it using a receipt's claimed turn status.
 func (s *Service) Finish(ctx context.Context, taskID, runID, status string) error {
+	s.workspaceMu.Lock()
+	defer s.workspaceMu.Unlock()
 	return s.append(ctx, Event{Key: "finish:" + runID, TaskID: taskID, Kind: "finished", RunID: runID, Value: status})
 }
 
 // Judge and Apply are Core-only APIs. The worker-facing transport must never
 // install handlers for them or accept an arbitrary Event.
 func (s *Service) Judge(ctx context.Context, taskID, receiptID, verdict, evidence string) error {
+	s.workspaceMu.Lock()
+	defer s.workspaceMu.Unlock()
 	return s.append(ctx, Event{Key: "judge:" + receiptID, TaskID: taskID, Kind: "judged", ReceiptID: receiptID, Value: verdict, Evidence: evidence})
 }
 func (s *Service) Apply(ctx context.Context, taskID, receiptID, evidence string) error {
+	s.workspaceMu.Lock()
+	defer s.workspaceMu.Unlock()
 	return s.append(ctx, Event{Key: "apply:" + receiptID, TaskID: taskID, Kind: "applied", ReceiptID: receiptID, Evidence: evidence})
 }
 
@@ -167,7 +190,13 @@ func appendEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 	if _, err = tx.ExecContext(ctx, "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", e.TaskID, e.Key, b); err != nil {
 		return err
 	}
-	return saveCard(ctx, tx, c)
+	if err = saveCard(ctx, tx, c); err != nil {
+		return err
+	}
+	if e.Kind == "finished" || e.Kind == "receipt" || e.Kind == "file_receipt" || e.Kind == "completion_head" {
+		return insertCompletion(ctx, tx, c)
+	}
+	return nil
 }
 func saveCard(ctx context.Context, tx *canon.Tx, c Card) error {
 	b, err := json.Marshal(c)
@@ -222,6 +251,9 @@ func (s *Service) Rebuild(ctx context.Context) error {
 			c := cards[id]
 			if err = advance(&c, e); err != nil {
 				break
+			}
+			if e.Kind == "record_occurrence" {
+				continue
 			}
 			cards[id] = c
 		}

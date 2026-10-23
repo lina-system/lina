@@ -18,7 +18,7 @@ func TestVersionSpaceDerivedAndEmptyDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	first, err := store.FirstRun(t.Context(), "person-test", true)
+	_, err = store.FirstRun(t.Context(), "person-test", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,8 +37,21 @@ func TestVersionSpaceDerivedAndEmptyDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m.Repositories) != 1 || m.Repositories[0].Path != "versions/agents/"+first.Agent.ID || m.Repositories[0].Head == "" {
+	starters, err := store.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Repositories) != 8 || len(starters) != 8 {
 		t.Fatalf("repositories: %+v", m.Repositories)
+	}
+	for _, a := range starters {
+		found := false
+		for _, repo := range m.Repositories {
+			found = found || repo.Path == "versions/agents/"+a.ID && repo.Head != ""
+		}
+		if !found {
+			t.Fatalf("starter repository missing: %s", a.ID)
+		}
 	}
 	if len(m.Derived) != 1 || m.Derived[0].SourceRevision != "7" {
 		t.Fatalf("derived: %+v", m.Derived)

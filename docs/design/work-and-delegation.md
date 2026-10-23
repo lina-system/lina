@@ -120,7 +120,7 @@ The work area is `work/` under the state root ([filesystem.md](filesystem.md)). 
 | --- | --- | --- |
 | `clones/<repository-id>/` | The parent clone of each repository that delegated work uses | LINA Core |
 | `tasks/<task-id>/` | The task's worktree, or its non-git work directory | LINA Core creates it; the task's worker writes inside it under its grant |
-| `runs/<run-id>/` | The scratch directory and transcript of a background run | LINA Core creates it; the run writes inside it under its run scope |
+| `runs/<run-id>/` | Run scratch and transcripts, including Core's worker observations outside the checkout | LINA Core creates it; a background run writes inside it under its run scope |
 
 - The work area is not part of the backup generation. Everything needed to recover work is canon and LINA materials: the work ledger, receipts and artifacts.
 - When a task without a pull request has a result ready, LINA Core keeps the output files as LINA materials of the task, so an unapplied result survives a lost disk. A code-change result with a GitHub remote needs no copy: its branch and pull request are on GitHub, which is canonical for code ([integrations.md](integrations.md)). For a repository without a remote, LINA Core keeps a Git bundle of the branch, made by LINA Core itself as a backup copy; it is never pushed or merged from. The result artifact of a background run is kept as LINA materials of the run when it lands, so a lost work area loses only a run's transcript and scratch files.
@@ -395,6 +395,95 @@ A 할 일 is one record with two views. The personal view follows fast-capture l
 - **Priority and tags.** Everyone has an `important` flag. An optional four-level priority (none, normal, high, urgent) is a power setting. Tags are free-form with no hierarchy, and the agent suggests an existing tag before it creates a new one. Estimates are opt-in.
 - **Code work.** A 할 일 in a connected repository maps to one pull request: opening the pull request moves it to `started`, and it completes under Judgment and delivery, never by a merge or a model's sentence alone.
 
+The installed record tools accept `kind: todo`. Capture needs only a title;
+its planning state starts at `open`. `write_record` optionally takes a `todo`
+object with the fields above. On an edit, omitting that object preserves the
+planning fields; supplying it replaces them as a whole. The title and note
+remain Markdown, and the typed fields remain in the same versioned front matter.
+A deadline also requires `deadline_source`. `waiting_on` carries `who`, `since`
+and `next_check`; an assignee carries `kind` and `id`. Checklist items carry only
+`text` and `checked`. A repeat retains `rule`, the original `text`,
+`from_completion`, an optional IANA `zone` (UTC when omitted) and its current
+`next` occurrence. Core retains the original start, completed count and
+exhaustion state internally; these are not model arguments. Completion advances
+the same record strictly beyond the current time and clears dependencies and
+checklist ticks for the next occurrence. Core also advances overdue records at
+startup and each minute, without calling a model. Date-only occurrences become
+overdue after their local day. An exhausted rule stops scheduling; an absence
+alone does not complete the task. Supported rules are daily, weekly, monthly or
+yearly with interval, by-day, by-month-day, count or until. Invalid rules are
+refused before publication. Timed recurrences preserve seconds and fractional seconds (up to Go time
+precision) and use the native timer's daylight-saving rules.
+
+The installed `propose_candidate` tool takes a source event id, exact quotation,
+title, note and confidence. An empty source refers to the current authenticated
+utterance. Core checks provenance and wording inside the fenced publication
+intent; source booleans and identities are not accepted as arguments. Direct
+owner commitments and self-directed requests with an exact matching action can
+pass the deterministic subset described in C-54. Unknown wording, unavailable
+sources, quotation mismatches and retracted evidence remain pending. The
+`list_candidates` tool returns durable numbered pages; confidence alone never
+adds a task. An automatic addition produces its saved record and undo handle,
+and undo cancels the new task without deleting its history. Replays do not
+repeat adoption, including after the original task is completed or canceled
+without undo. Replay and view aliases of an already adopted source/action
+remain pending without another record, undo handle or notice, across restart.
+A new independent commitment may add the same action once no open equivalent
+remains. Three rejected additions in a recognized class retains later items of
+that class as candidates.
+
+Recurring completion and advancement append one `record_occurrence` work-ledger
+event in the same checkpoint as the saved version. The event names the old and
+new occurrences and the reason; it creates neither a new task nor a worker card.
+Editing only the current next occurrence preserves the original recurrence
+anchor. Changing the recurrence rule starts the future series at its new next
+occurrence. Core's counters remain inaccessible to tool arguments.
+
+`promote_memo` takes a memo id and current revision and changes only its record
+kind and planning fields. Its title, note, id and path survive promotion. The
+committed receipt and conversation notice carry an undo handle; `undo_record`
+restores the prior memo as a new revision and refuses to overwrite a later edit.
+The durable publication intent includes the undo operation, so restart recovery
+retains both the change and the means to undo it.
+The record tool cannot write execution observations or complete delegated work.
+It may replace planning fields while preserving an already `completed` state,
+including on a to-do with an agent or worker assignee or a pull-request link.
+The completion guard applies to transitions into `completed`; preserving that
+state does not permit changing an execution observation.
+
+The current conversation path accepts exact ISO dates and offset-bearing
+RFC 3339 times with two-digit time components and an optional dot-separated
+fraction. Numeric offsets have hours from 00 to 14 and minutes from 00 to 59,
+and the resulting UTC instant must fit SQLite's date range. These checks apply
+to `when`, `deadline`, `repeat.next`, `waiting_on.since` and
+`waiting_on.next_check`; accepted text is preserved. Noncanonical or unsupported
+timestamps, natural-language dates, ambiguous numeric dates, nonexistent
+calendar dates and times without an offset return `ambiguous_date` before any
+saved version. The agent asks the person to resolve the date and then supplies
+the exact value; it must not invent a resolution. Natural-language parsing and
+date chips are not supplied by this record API. The quick-add chip surface is
+owned by G2-24.
+
+`query_records` accepts `view: today|upcoming|anytime|later|memos|board|list|week`.
+Dated lenses require an explicit civil `day` and IANA `zone`. Timed values are
+compared with that day's local midnight boundaries, including daylight saving
+changes. Today returns active tasks under the rule above and marks overdue
+starts with `overdue` for their separate block. Completed and canceled tasks are
+excluded from personal active lenses. Upcoming selects any future start,
+deadline or current recurrence; anytime retains all undated active tasks,
+including backlog; later selects backlog. The week lens covers seven calendar
+days beginning at `day`. Board and list include all five planning states and
+return the fields needed to group by project, assignee, priority or tag. Pages
+remain ordered by id with an exclusive `after` cursor, matching record search.
+
+Core checks dependency targets and cycles under the same writer lock as
+publication. Targets must be the person's existing to-dos; belonging targets
+must be that person's projects or areas. A self-edge or transitive cycle returns
+`dependency_cycle` without changing the file, index or saved revision. The
+`blocked` overlay is queried from direct nonterminal blockers, never stored;
+completed or canceled predecessors no longer block. Human completion remains a
+soft dependency signal. Releasing delegated work remains the work engine's gate.
+
 How an agent manages 할 일 (capture, briefing, review) is the methodology of the LINA preset ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)).
 
 ### Development mode
@@ -460,7 +549,24 @@ Rules:
 
 ## Development method
 
-LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Cursor are used as the user installed them. LINA's development role is a method, which the dev preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). The dev preset agent owns coding work and its manager sessions, including requests handed over by Lina or another starter. How to implement, split, join or interpret work is the judgment of the worker and that owning persona. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
+Coding belongs to the dev preset, Sion, regardless of which persona received the request. Core selects a live dev identity from canon and durably binds one manager conversation per person and work unit. The binding preserves renamed agents and does not silently replace a deleted owner. If dev is unavailable, Core reports that fact before starting a worker; starter creation is a separate operation.
+
+The manager is a prepared dev turn in the existing conversation engine. It receives the scoped definition and source identity, with its own persona and methodology, and records its assignment judgment before dispatch. The original persona's private conversation is not copied. Core carries the original effect ceiling into the manager and worker scope. A role grants no extra access. System and creative retain their health question or creative brief while handing off coding ownership.
+
+For `worker_start`, manager admission runs before the worker execution registry, under the calling turn's cancellation lifecycle. Waiting for the shared manager lane and completing the manager turn do not consume the worker's 30-second start deadline. Core issues the start grant and records the worker effect only after admission succeeds, then rechecks the durable delegation before launch. Admission failure or cancellation creates no worker-start effect, so it cannot leave an unlaunched worker with an unknown outcome that blocks an identical retry. Once worker execution begins, the existing receipt and unknown-outcome rules still apply.
+
+`dispatch_work` retains the asking conversation as the delivery destination and records dev as the work owner with the manager conversation. The installed worker owns code and its PR; Core observes the current PR head, checks, review and produced artifact receipts. The same manager conversation judges delivery against its retained definition. A manager's verified verdict is separate from merge or deployment. Missing evidence stays unverified. `worker_start` sessions also run under dev ownership and return questions, approvals and results through the originating conversation; their completion alone remains an unverified claim.
+
+Git work allocated with `prepare_work` has the same dev owner and manager binding; non-coding work keeps its original owner. The requesting conversation can retain its own delegated result through that recorded binding. For PR delivery, Core retains the exact observed base/head, sanitized change evidence and review metadata. A bounded or unavailable change observation cannot become a verified manager verdict. The return notice distinguishes the worker/PR observation from the manager's verdict and from a merge.
+
+Manager inputs have the native `manager` ledger surface and retain system-generated provenance. They are never person turns. Results use the existing system/work-notice path to the asking conversation, with the worker as a source, and never make a worker or an absent persona a new speaker there.
+
+LINA ships no coding harness. It runs no review loop of its own around a worker, installs no hook, skill or plugin into one, and keeps no stage workflow. Codex, Claude Code, Antigravity and Cursor are used as the user installed them. LINA's development role is a method, which the dev preset carries ([conversation-and-memory.md](conversation-and-memory.md#preset-methodologies)). Its work settings, such as worker dispatch, the evidence required before a delivery is reported done and the shape of status reports, are data in the dev preset's work-method record ([preset-work-methods.md](preset-work-methods.md)), not a harness around a worker. The dev preset agent owns coding work and its manager sessions, including requests handed over by Lina or another starter. How to implement, split, join or interpret work is the judgment of the worker and that owning persona. The worker writes the code, the branch and the pull request body, opens the pull request and owns it to green. The manager checks the work definition and decides merge or close. LINA Core keeps the flow moving: start, reliable delivery with receipts, true state, recovery, merge on green, QA after each merge and report.
+
+The development methods are ordinary built-in catalog skills, adapted from
+MIT-licensed oh-my-hermes methods ([credits](../../skills/NOTICE.md)). The manager
+reads a method with the existing skill tools and can name it for a task. They
+add no worker installation, review coordinator or stage machine.
 
 ### Work definition
 
@@ -473,14 +579,105 @@ Before it hands a task off, the manager session writes the work definition. It s
 - the done condition: one condition that CI or a reviewer can establish, such as named checks passing and the behavior the design describes
 - the design reference: the contract and section the work must conform to
 - the write area: the path globs the task may change (see Splitting and parallel hand-off)
+- optionally, `kind`: a development work kind from the dev methodology table
+- optionally, `skill`: one catalog ID; it overrides the kind's default method
 
 Two things are part of every done condition for code-change work. First, a change that alters behavior updates the sections of its design reference in the same pull request, so the design and the code stay in step. That update is part of done, not a later task. Second, automated checks prove the behavior. These are unit tests, plus headless end-to-end tests where the change can be seen from outside the program. Such a test drives the project's interfaces by script and needs no window and no person. The checks run in CI. The person checks only the user interface and the experience. The design reference is written before the code, and the person's language applies to the summaries they see ([conversation-and-memory.md](conversation-and-memory.md)). LINA's own development applies this rule in the [roadmap](go-roadmap.md#phase-rules).
 
 The work definition contains no review procedure and no request for a verification report. The task packet is the work definition with the assignment id, the way to return the completion receipt (the submit tool of LINA's work tools), the branch name to use, and the references to the projections the task may read. The worker writes the commits and the body of the pull request, and opens it. LINA writes none of them.
 
+Core resolves the optional method from the current catalog before admitting a
+worker. Unknown kinds, unknown skill IDs and multiple references are refused.
+With neither field, the existing task packet stays unchanged. A kind without a
+skill selects the default from Core's dev methodology data. An explicit skill
+can select another catalog procedure; it does not widen the work's authority.
+
+The packet carries the resolved version handle and its instruction files inline,
+not a path the worker must read or a skill to install. Queued dispatch stores
+that snapshot with the work definition, so later catalog edits, removal and
+process restarts cannot substitute another body. Replayed admissions first
+match the persisted origin and complete definition, then reuse that snapshot;
+only new admissions resolve the current catalog. A saved dispatch admission has
+already passed its manager decision. An identical retry returns that admission
+without assigning or running the manager again, including admissions saved before
+task branches included the task ID. The original manager definition and ownership
+remain intact. A retry cannot reset execution state, and queued work still waits
+for its conversation tool receipt to commit. The Codex `worker_start` session path
+uses the same resolver and exposes the same packet through `read_projection`.
+The existing `dispatch_work` definition carries these fields for Antigravity.
+
+Before a new `dispatch_work` admission reaches the manager or queue, Core
+requires a nonblank done condition and write area, resolves the base to a commit,
+and checks each `path#section` against Markdown headings in that commit. A
+working-tree edit or a heading inside a code example cannot supply a section.
+Heading anchors use lowercase text, hyphens for spaces, and numbered suffixes
+for duplicate headings. Missing files, sections or base commits refuse admission
+without creating a task or starting a worker.
+
+Core persists the resolved base commit with the definition. Admission retries
+and queued execution keep that commit even if the named branch moves. The
+packet includes the assignment id, pinned base, assigned branch and complete
+definition. In the Antigravity headless path, it explains that the adapter derives
+the receipt from the final worker result and observed PR; it grants no material
+or memory projections beyond the supplied definition and method.
+
+Mechanical checks stay in Core, rather than becoming instructions in a skill:
+
+- Work-definition completeness, protected branches, design references and write
+  areas remain dispatch checks. Method selection, single-reference validation
+  and immutable catalog resolution are also Core checks.
+- Observed PR head and check status, missing or incomplete checks, stale reviews
+  and blocking review findings remain the existing PR observation checks. A
+  skill cannot waive them or make a failed check green.
+- Worker completion is an unverified claim. Receipt identity, outcome, artifact
+  hashes and provenance remain work-ledger checks; a completed turn or a method
+  report cannot produce a verified verdict. Background run checks that require
+  a tool call use recorded calls, not a model's assertion that it ran one.
+- Authority, leases, cancellation, recovery and merge execution remain their
+  existing Core mechanisms. No method grants those operations.
+
+The skills retain judgments that these checks cannot make: whether evidence
+covers the requirement, which rival cause to investigate, which workload is
+representative and which failure scenario matters. No prose keyword scanner
+turns words such as “verified” into acceptance evidence.
+
 ### Choosing the worker
 
 LINA chooses the worker for a task from the situation, the person's subscription quota and the host's capacity, and hands the task off. The situation is the kind of work and the repository. Quota is what each worker reports about its remaining quota; an unknown quota is a value, and for a worker that reports none LINA Core uses its own usage accounting ([runtime.md](runtime.md)). The choice follows an editable table of rules, marked provisional, which the power settings show ([surfaces.md](surfaces.md)). A worker whose quota row is ok is preferred, an unknown row is usable but unmeasured, a blocked row is unavailable until the stated reset (or until the next successful call when no reset is given), and a reset time is never inferred ([runtime.md](runtime.md#usage-and-cost)). If a worker stops on quota, rate limit, login expiry or repeated connection failure, LINA hands the same task packet to the next suitable worker without asking the person. Two workers never share a worktree.
+
+The installed `dispatch_work` path preserves the admitted packet, pinned base,
+method and assigned branch across one automatic replacement. The quota-stopped
+process tree is reaped before the replacement receives the workspace; partial
+work remains there. Each attempt gets its own execution generation. A second
+quota stop is retained as a terminal failed observation and cannot start a third
+worker. A restart preserves quota blocks, area claims and uncertain attempts.
+An explicit reset makes a blocked row eligible as unmeasured, without inventing
+a fresh quota measurement or reset time.
+Parking preserves independently reported healthy, warning and unknown windows;
+their later resets cannot extend an exhausted window's block. If no exhausted
+window is reported or cached, the stop is recorded separately with an unknown
+window and reset. `e2e/m2/worker-quota-windows.json` covers the installed Core
+handoff and durable per-window state across restart.
+A successful `worker_quota` read from a routed conversation refreshes the shared
+dispatch service and wakes its chooser, including after a stop without a reset.
+The chooser merges observations per provider, account and window. A partial
+recovery remains usable when a healthy sibling retains its earlier observation
+time; older or absent measurements preserve the corresponding saved window.
+`e2e/m2/codex-quota-recovery.json` proves a sparse Codex recovery reaches the
+installed Core's dispatch cache and remains eligible after restart.
+
+The provisional worker rule table is read at startup from
+`system/core/worker-choice.json`. Its `rules` contain `worker`, `tags` and integer
+`priority`; the top-level `provisional` must be true. Tags match the work kind
+and local repository path. Quota eligibility and host capacity always win over
+priority. Without rules, otherwise equal candidates retain the installed
+Antigravity-then-Codex order. These rules grant no worker permissions.
+
+Queued tasks may share a repository. Core claims their declared areas in the
+same fenced transaction as handoff, and only free areas can start. The claim
+continues through delivery and manager judgment until trusted application;
+missing evidence and interrupted execution retain it. Receipt replay never
+resets the reservation or the number of attempted workers.
 
 ### Operating the pull request
 
@@ -511,6 +708,7 @@ The manager session splits work into tasks that one worker can finish as one pul
 ### Write areas
 
 - Every task declares a write area in its work definition. Two tasks whose write areas overlap are dependent: LINA Core orders them and never runs them together.
+- Goal dispatch compares repository-relative paths and glob intersections across all goals in the same repository. A matched directory includes its descendants, and `**` can cross directory boundaries. Different spellings of an overlapping area do not create separate leases; disjoint areas remain eligible in parallel.
 - LINA Core holds an area lease for each task from hand-off until the task has landed, is closed or is abandoned. The lease follows the liveness of the task's worker (see Liveness): a task judged abandoned frees its lease, and nothing else frees it earlier.
 - Hotspot files are shared resources: dependency manifests and lockfiles, generated code, registries and index files, changelogs, and any file that recent history shows many tasks changing. A task that needs a hotspot file takes the whole hotspot area, or the change moves into one dedicated task that the others depend on.
 - A worker cannot be trusted to stay inside its area. The design-conformance review reads the pull request's diff against the declared write area. A change outside it misses the work definition's scope and goes back to the worker as `needs_changes`. This is part of the check at merge, not a separate review.
@@ -580,7 +778,7 @@ Every worker adapter offers the work engine the same operations:
 ### Compatibility
 
 - The adapter records the installed worker's version with every attempt.
-- LINA lists the worker versions each adapter has verified in the release manifest ([runtime.md](runtime.md)). When the installed version is not on the list, LINA tells the user that the version is unverified, with the version it found and the verified ones, and still delegates.
+- LINA lists the worker versions each adapter has verified in the release manifest's `verifiedWorkerVersions` field ([runtime.md](runtime.md)). Installation compares Codex's bare version with that list, accepting the `codex-cli ` prefix in probe output and legacy lists. When the installed version is not on the list, LINA tells the user that the version is unverified, with the version it found and the verified ones, and still delegates.
 - LINA refuses delegation to the worker only when the adapter can't connect to it or the protocol handshake fails (for Codex, `initialize`), and names the cause.
 - LINA never installs, updates or pins the worker.
 
@@ -595,6 +793,9 @@ Every worker adapter offers the work engine the same operations:
 - Methods used: `thread/start`, `thread/resume`, `thread/read`, `thread/list`, `thread/loaded/list`, `thread/archive` (explicit close only), `turn/start`, `turn/steer` (`expectedTurnId` required), `turn/interrupt`, `skills/list`, `account/rateLimits/read`.
 - Server requests handled: `item/tool/call`, `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval`, `item/tool/requestUserInput`, `mcpServer/elicitation/request`.
 - Notifications consumed: `turn/*`, `item/*`, `thread/tokenUsage/updated`, `account/rateLimits/updated`, `serverRequest/resolved`, `error`, `hook/*`.
+- A completion may arrive before the `turn/start` reply without a preceding
+  `turn/started` notification. The returned handle retains that completed turn's
+  id and terminal status so Core can record its outcome, including quota stops.
 - The adapter calls no other method. LINA never changes the user's Codex settings or plugins.
 - The same JSON-RPC shape never implies the same capability. `turn/completed` is never evidence of a product effect.
 - LINA Core starts the installed Codex as `codex app-server --listen stdio://`, a stdio child with LINA Core's environment and the user's own Codex home. On a remote device the registered Node starts it. When its standard input closes, the child exits normally. The only client is LINA Core, or on a remote device that device's registered Node.
@@ -618,7 +819,34 @@ adapter model selection is checked against the returned model. Per-task effort
 selection is refused until assignment verification supports it.
 
 Version notices and terminal worker output enter the originating conversation's
-canon history and restore after Core restart. Snapshot reads thread summary state and includes the latest
+canon history and restore after Core restart. A terminal conversation-started
+worker turn commits its task packet, work directory, dev owner and manager,
+session/turn identity, status
+and claimed output together with one follow-up inbox entry. The existing
+conversation lane runs that follow-up as the originating conversation's persona after the current
+turn closes. The persona reads back the promised effect with the available tools
+before reporting a checked result; a worker's completed status or report alone is
+not verification. Failed or interrupted work is reported as such, with any
+remaining uncertainty. This is an ordinary conversation continuation, not a new
+worker review loop or an automatic worker retry. Raw worker output is evidence
+for the persona, not a second system-speaker result in the conversation.
+
+`worker_read_file` reads a relative file in the owned session's work directory
+through the existing sandboxed file executor, returning its content and revision.
+It grants no writes or network access and refuses paths outside that directory.
+The same scoped read can use a recorded completion after restart. Completed
+worker records remain model context as untrusted evidence, including legacy
+worker notices. `worker_snapshot` can return the recorded terminal outcome when
+no live session remains, explicitly marked non-live; that record cannot authorize
+worker control. Unstarted completion follow-ups resume from canon after restart;
+a claimed turn is never replayed and a committed reply is not duplicated.
+Channel replies follow the completion back to its original input, retaining that
+input's address and the existing outbound delivery identity across restart.
+Recovery resolves the retained channel inbox address and its current most-specific
+binding, including thread permissions; sharing a persona or main conversation
+never substitutes another channel's memory or tool scope.
+
+Snapshot reads thread summary state and includes the latest
 completed assistant message observed on the owned session, not a delivery verdict.
 It does not request paginated turn history. An idle summary cannot reopen a
 just-accepted turn before its start/completion is observed; that state is unknown. A reported activity owns
@@ -636,13 +864,19 @@ versions still run and report both their version and the verified list. The
 adapter declares progress, usage, completion, steering, questions, approvals,
 work tools and quota. The #133 bridge below supplies the request/answer path.
 Thread recovery and automatic retry remain G2-08; a session handle from a prior
-Core process is unavailable, and its existing launch/result records remain.
+Core process is unavailable for control; its recorded terminal outcome remains readable.
 
 The credential-free installed-Core scenario is
 [`e2e/m2/codex-session.json`](../../e2e/m2/codex-session.json). It drives all four
 tools through the model loop and Unix client protocol, including an unverified
 worker, an actual fixture-worker file result, and conversation history after
-restart. The separately opted-in installed-Codex test preserves the user's setup;
+restart. `TestM2InstalledWorkerOutcome` in
+[`e2e/m1/worker_outcome_test.go`](../../e2e/m1/worker_outcome_test.go) additionally
+holds completion until the initial conversation closes, checks the persona's
+file read-back and single result, and asks for the outcome after Core restart.
+It also restarts after the completion is committed but before its queued
+follow-up starts, checking one recovered reply and no worker relaunch.
+The separately opted-in installed-Codex test preserves the user's setup;
 its file-tool probe encountered a worker approval, so live approval/file execution
 is not counted as session acceptance evidence.
 
@@ -663,6 +897,9 @@ requests are retained in the originating conversation as requests to Core.
 Questions use the authenticated waiting-card answer path and return the person's
 answer to the same worker call. Secret input is unsupported. The pinned MCP
 elicitation request has no form; that case offers only decline or cancel.
+The conversation records a short acknowledgement of the person's response;
+serialized worker response envelopes remain on the adapter transport. The same
+acknowledgement restores from conversation history after Core restarts.
 
 `submit_receipt` accepts the existing version-1 work receipt shape, checked
 against the session assignment, generation, thread, turn and artifact root. It
@@ -691,8 +928,28 @@ times stay unknown; Core never invents a reset.
 [`e2e/m2/codex-work-tools.json`](../../e2e/m2/codex-work-tools.json) drives the
 built Core over its Unix protocol and a separate synthetic stdio worker. It
 proves an owner approval returning to the worker, dynamic tool result delivery,
-quota rows and an actual worker-written artifact. This is protocol integration
+quota rows and an actual worker-written artifact. It also checks that the live
+and restored question-answer notices contain no transport fields. This is protocol integration
 evidence; it does not measure live account quota or certify new Codex versions.
+
+#### Parent acceptance (#130)
+
+The parent uses the implemented sub-issue paths above. All three sub-issues
+(#131, #132 and #133) must be closed, and the following evidence must hold:
+
+| Condition | Evidence |
+| --- | --- |
+| Installed-worker round trip and version | `TestInstalledCodex` exercises initialize, start, interrupt, idle input and snapshot. `TestM2InstalledCodexLive` starts the installed worker through Core's conversation tool path and returns its model output. Both require `LINA_CODEX_LIVE=1` and report the installed version. |
+| Unverified version reported and used | `TestM2InstalledCodexSession` uses a synthetic unlisted version, checks its launch result and conversation notice, and reads the file it produces. The notice and result survive Core restart. |
+| Approval reaches its conversation and the answer returns | `TestM2CodexWorkTools` checks the originating conversation on the approval card, answers through the authenticated client protocol, and requires the worker to receive that answer before it can write its artifact. It also exercises questions, all four dynamic work tools and quota. |
+| No worker sandbox, credential or setting imposed | Both synthetic Core scenarios reject extra launch arguments and thread/turn settings, retain the worker's Codex home, and reject Core's dedicated model credential. The live tests inherit the installed worker's setup. |
+
+The headless scenarios use the [shared acceptance harness](../../e2e/README.md).
+Their worker-written files and restored conversation results establish the Core
+integration. Live session evidence and synthetic approval/tool evidence are
+recorded separately: a passing synthetic worker does not verify an installed
+Codex version, and a live text response does not prove live approval or file
+execution. Session completion remains distinct from verified task delivery.
 
 ### Readiness
 
@@ -739,6 +996,43 @@ LINA Core, or the Node on a remote device, starts every worker as a child proces
 - LINA installs no hook, plugin or setting in a worker to obtain a signal.
 - A worker that reports a typed failure (an error code, an authentication or billing category, a rate-limit category) produces a failure event with that type.
 
+### Claude Code headless adapter
+
+Core resolves the person's installed `claude` and launches it in the task
+worktree with `--print --output-format stream-json --verbose`, sending the task
+packet on stdin. Its login, provider, permissions, instructions and integrations
+remain its own. Core adds no hook, plugin, skill, permission bypass or settings
+file. The installed version is recorded and reported as unverified until an
+account-backed round trip establishes compatibility.
+
+A `system/init` message binds the session and must match the requested cwd and
+any explicit model. Assistant messages supply progress; the final `result`
+supplies usage and ends the turn immediately, even while the process remains
+alive. Core then reaps the process tree before releasing its activity. EOF
+without a result, malformed messages, mismatched sessions, error results and
+permission denials are failures. Other informational messages cannot complete a
+turn. Interactive approvals, work tools, resume and steering are not advertised
+by this one-attempt headless adapter.
+
+With `claude`, `git` and `gh` installed, `dispatch_work` can select `worker:
+"claude"`. Existing omitted selections remain Antigravity. The same authorized,
+committed admission and assigned worktree rules apply. No schema migration is
+needed: the optional worker selection stays in the durable task definition.
+An unavailable selected executable yields `worker_unavailable` without a
+substitute worker. A final success is only a worker report. Core reads the
+assigned branch's PR, current head, checks and review before recording readiness;
+pending or missing evidence cannot become delivery. The artifact preserves the
+final result and PR observations, masks secrets, omits denial tool inputs and
+marks receipt provenance `adapter-derived`. Acceptance and merge remain separate.
+Results return to the originating conversation and survive restart without
+replaying execution.
+
+`e2e/m2/claude-worker.json` covers result-before-exit, real file and commit
+creation, the derived receipt, denied permissions, missing results, pending PR
+checks and restart. The installed Core and Git work are real; the Claude and
+GitHub boundaries are synthetic. This establishes the integration contract,
+not authenticated worker execution or a verified Claude version.
+
 ### Antigravity headless adapter
 
 Core resolves the installed `agy` executable and runs it as a supervised child
@@ -763,7 +1057,18 @@ When `agy`, `git` and `gh` are installed, the running Core exposes `dispatch_wor
 for a complete code-change definition and an existing local GitHub clone. The
 receipt returns immediately. Only its committed conversation tool result releases
 the dispatch. Core validates design references at the chosen base commit and
-creates a distinct branch and worktree. This single-worker increment reserves
+uses the shared work-area allocator to create a detached worktree under
+`work/tasks/<task-id>`, with its allocation recorded on the task. The worker
+creates its assigned branch; the allocator's ref guard applies throughout.
+The `dispatch_work` input is unchanged. Core appends `.<task-id>` to the
+requested branch unless that ID is already present, and returns the actual
+branch in the tool result and task packet. The requesting definition is retained
+for idempotency; the manager receives the assigned branch before delegation.
+The independent parent clone keeps the source repository's GitHub origin for
+publishing, while `lina.source` records its local allocation source. Neither
+allocation nor worker execution changes the person's source checkout.
+Adapter observations are written under `work/runs/` and included in the task's
+artifact roots, keeping the worker's committed checkout clean. This single-worker increment reserves
 the repository while queued, running or uncertain. It preserves the worktree and
 branch after completion. It does not provide the parallel chooser or merge flow.
 
@@ -829,7 +1134,10 @@ Every task is making progress, waiting on a named thing with a deadline, or bein
 ### Completion events
 
 - A completion event is a row in LINA Core's database before anything reacts to it. Its key is task, attempt and head SHA. A claim on an event is idempotent, and an event whose head SHA is not the task's current head is ignored.
-- The same queue carries conversation messages and completion events, so one reaction path exists. Core dispatches them mechanically to the bound manager session; project judgment stays in that session.
+- State changes that produce a completion and the event row commit in one transaction. The event retains the worker receipt identity; it is a signal to read current work, never an instruction or acceptance verdict. Core's execution ID identifies the attempt. A non-Git result has no head SHA, represented by an empty head; an observed Git head is never taken from worker prose.
+- Replacing a file result in the same stopped execution keeps one row for the task/attempt/head but gives its changed receipt or directory fingerprint a new reaction identity. The ledger retains every receipt; unchanged output does not trigger another judgment.
+- Claims retain handled and ignored identities independently of event rows. Recreating a missing event therefore cannot repeat a handled reaction. An interrupted claim resumes through the same durable inbox/turn identity after restart; it does not restart the worker or replay an uncertain effect.
+- The same queue carries conversation messages and completion events, so one reaction path exists. Core dispatches them mechanically to the bound manager session; project judgment stays in that session. The receipt and current task facts are input to the manager turn, including work that has no dispatch adapter record; a notification alone is not delivery.
 - Events for one project are handled together from its current ledger state, preserving each event's receipt. The batch and busy fallback of Manager session lifecycle keep the manager from building a backlog of separate turns for them.
 - Reaction time is measured from the event to the first read of the pull request. The end of the flow is bounded by CI and review, which LINA does not control.
 
@@ -849,8 +1157,9 @@ Optional: when the repository has required checks and auto-merge, LINA Core may 
 
 - A task has failed when its worker's process or session ends without a final result, or the worker reports a typed failure. A quota or rate-limit failure parks the worker (see Parallel hand-off).
 - A dead worker is detected from the end or confirmed absence of its process or protocol session. A live worker is stalled when it makes no progress and has no named wait within its deadline for the longer of the stale floor (see Liveness) and twice the median duration of finished tasks of its size class, never more than three hours. Silence prompts a read of protocol state; screen output or a timeout reading the session never proves that it is dead. Events that repeat without progress do not reset the stall interval.
-- Every 5 minutes LINA Core re-reads, with no model call, every task marked in progress or watched, and does the same once after a restart. This catches a signal lost to a crash. It is the reconciliation of signals that integrations.md describes, and it never replaces the events.
+- Every 5 minutes LINA Core re-reads, with no model call, every task marked in progress or watched, and does the same once after a restart. This catches a signal lost to a crash. Missing completion rows are recreated from durable terminal observations and receipts, in bounded batches; a sweep never infers termination from silence. The reactor wakes on committed changes between sweeps. It is the reconciliation of signals that integrations.md describes, and it never replaces the events.
 - A failed, dead or stalled worker is reported at once in the running list while LINA Core recovers the task. LINA Core resumes its thread with a short continuation, or restarts it when the process or session is dead, once as a new attempt of the same task in the same work area, preserving its files, branch and receipts. When the cause is quota, the task goes to the next worker by the same choice instead. Recovery comes before escalation to the person; a second failure or stall goes to the person as a decision. There is no third automatic attempt.
+- A settled quota interruption does not consume a continuation, recovery or conflict-repair allowance, including when it interrupts that action itself. Core preserves the attempt's receipt and restores its allowance before assigning a replacement worker.
 - A dispatch again follows Effects and unknown outcomes: it happens only when the earlier attempt has no effect with an unknown outcome.
 - A Node that disconnects is handled by the Node rules, not the stall rule: the effects of its running turn are unknown and are reconciled first.
 - A landing that leaves another task's pull request unmergeable sends that task back once to the same worker as a rebase request. LINA Core never resolves a conflict itself, and a second failure goes to the person.
@@ -866,7 +1175,7 @@ A worker returning a completion receipt and the manager accepting the result are
 Delivery of every task:
 
 1. LINA Core registers the assignment before the worker's first output.
-2. For each execution generation the worker submits a completion receipt for the actual output path. It is held until the end of the turn is observed.
+2. For each execution generation the worker submits a completion receipt for the actual output path. It is held until the end of the turn is observed. Receipt fields, including `turnStatus`, are claims and cannot create that observation or release the active-run reservation.
 3. LINA Core records the receipt in the ledger and acknowledges it.
 4. **Read.** For code-change work LINA Core reads the pull request the receipt names, once: its state, its head SHA, its review records and the conclusions of the required checks at that head. It checks that the head matches the receipt and that the protected refs did not move. A pending check or review stays a named wait with a deadline in the worker's turn (see Event-driven flow); it never becomes a findings round trip through the manager. For work without a pull request the manager reads the artifacts against the done condition once and judges `verified` or `needs_changes`, and Core records the verdict.
 
@@ -917,6 +1226,19 @@ Done is the end of the whole lifecycle of the work, never a stage of it:
 | Files | The files are where they belong and nothing else changed | Each file is at its destination with the expected content hash (read); no file outside the scope changed (comparison of the scope before and after). |
 | Composite | Every part is done | The union of the criteria of its parts. Most real goals are composite. |
 
+A code goal with a service binds `service_target` to one `service_repository`
+within `scope.repositories`. The repository is required when the scope contains
+multiple repositories; a single-repository scope supplies the default, including
+for saved records that predate this additive field. Core retains the latest
+observed merged revision per repository. After every task has passed QA, it
+deploys and probes only the revision belonging to the service repository. A later
+merge in another repository cannot retarget the service. Task merge and QA checks
+remain bound to each task's repository. Changing the service repository invalidates
+its deployment and probe evidence, even when the repositories share a commit; a
+late deployment receipt remains history and cannot verify the corrected target.
+A goal without a service keeps its
+post-merge verification flow; this does not add support for multiple services.
+
 Two examples show the shape for non-code work.
 
 "다음 주 출장 준비해 줘" becomes one goal. LINA first reads the calendar and mail for the trip: dates, city, the meeting that is its reason, bookings already made. Its tasks are: a background run that gathers the facts and drafts the itinerary; calendar blocks on the person's own calendar for travel and meetings (no other attendees, so no approval); the bookings that are still missing, which need payment and become one decision row with a recommendation; a message to the host to confirm the meeting time, which goes out in the person's name and therefore needs approval; and the person's own 할 일 for what only they can do, such as packing or a document to sign, placed on `when` days before departure. The waits are the booking confirmation mail and the host's reply, each with a deadline set before departure. The goal is done when the itinerary is in the person's materials, the calendar blocks read back correctly, every booking is confirmed by a confirmation mail or has been declined by the person, the host's reply is in or the person decided what to do without it, and the person's own 할 일 exist.
@@ -943,15 +1265,74 @@ A goal is in one of these states. The person sees them only through the progress
 
 **Revision.** A correction by the person, a decision, or a late answer to a question whose deadline passed, is a new revision of the goal. Tasks whose inputs did not change keep their results. Tasks whose inputs changed, and the tasks that depend on them, are derived again. A criterion that was met stays met only while its evidence still refers to the current target.
 
+The conversation can correct an admitted goal through `revise_code_goal`, using
+its goal id and the latest canonical record revision. Admission returns the
+record id and revision so the agent can read it before a later correction.
+Core checks the bound person and agent, refuses a stale revision, and commits
+the corrected definition to the same record. It reloads the revision fence for
+the manager to interpret; it does not admit another goal. Corrections cannot
+supply execution state, effect authority or person-decision receipts.
+An omitted service repository preserves the current binding; an explicit
+replacement must belong to the corrected scope.
+
+When a revision invalidates queued actions, Core retires them and releases their reservations in the same ledger transaction. A worker action that was never dispatched restores its task's runnable stage and does not spend an attempt, continuation or recovery. A cancelled manager action likewise does not consume the task's repair turn. Adding a repair task also revises the goal: obsolete queued sibling actions are retired and derived again, so independent work remains runnable. Actions already claimed keep their reservations until Core reads their outcome; revision never dispatches their effects again.
+
+A task signal or revision cannot reopen an action whose outcome Core already
+accepted as terminal. A different late report against its obsolete inputs stays
+in the event history without replacing the accepted receipt or changing the
+task's later stage, including after restart. Only superseded effects whose
+outcomes still need reconciliation receive replacement observations; those
+reads retain the original effect identity and never dispatch it again.
+
+A completed criterion check for an obsolete goal revision, checking round or target is retained as a receipt without applying its evidence or stopping Core. A manager response assesses only the canonical record revision it was given; an older response cannot clear the corrected definition's fence, add its old tasks, or mark the correction blocked. Independent sibling repair plans remain valid across execution revisions while the canonical definition is unchanged.
+
+Retiring an obsolete task repair assessment clears its assessment marker in
+the same transaction that retains its obsolete receipt. Later reconciliation
+or another obsolete response must not clear a replacement assessment.
+Reconciliation completes the pending retirement before deriving replacement
+work, including when Core restarts between the receipt and reconciliation.
+Once the current definition is assessed, an unchanged
+failed task receives a fresh repair assessment, including after restart.
+
+A canonical correction with an invalid done condition or criteria blocks only
+its own goal, with a row asking for a corrected record. Core retires its
+undispatched work and keeps observing dispatched effects. Other goals continue
+on every step and after restart. A valid record revision releases this fence
+through the usual manager assessment; invalid criteria never count as evidence.
+
+An action awaiting authorization before dispatch is recorded separately from an executed action whose outcome needs the person. A committed approval-change signal for that action requeues its authority check; the signal itself grants nothing. Core rechecks the exact action's current authority before executing it once, including after restart. A signal arriving during the authority check or while its dispatch is unwinding is retained as a wake, without waiting for a sweep. A revision retires an obsolete authorization wait like other undispatched work. An executed or uncertain effect is never requeued by an approval hint.
+
+Before observing an action from an earlier snapshot, Core reads its current
+state after reserving the observation. An action that has since finished,
+parked for authorization or requeued for an authority check is not observed as
+an executed effect.
+
+While a correction is pending, retained tasks may refer to repositories removed
+from the new scope. They do not prevent the manager assessment or unrelated
+goals from progressing. Undispatched reservations return to their runnable
+state without spending a recovery; dispatched effects are reconciled before
+applying the revised plan. That plan retires work outside the new scope and
+dependents whose inputs never landed, preserving the journal and result
+evidence. Unchanged work in the retained scope keeps its landed results.
+
 ### Next action
 
 After every event Core commits for a goal, Core derives the goal's next actions from the current ledger and the goal record. The event itself carries no instruction: it only says that something changed, and Core reads the current state before it acts (see Event-driven flow). The same derivation runs for every goal that is not final once at startup and in each reconcile sweep, so a lost event costs at most one sweep. Mechanics run in Core without a model call. A model turn happens only where judgment is needed: splitting work, writing a work definition or brief, checking a result against the done condition, or drafting text for the person or for someone else. The table lists who acts.
+
+A task's pull-request change signal invalidates its cached head, check, review and manager proofs, including while it waits for another task's merge slot. Core reads the pull request again before deriving a merge from those proofs.
+
+An inspection that confirms a base conflict for the current head uses the same
+one-rebase allowance as a conflict found at merge. Unknown mergeability keeps
+the task waiting for another inspection; it does not request a rebase. The
+repaired head needs fresh CI, review and manager proofs before merging.
 
 | Event | Goal or task state | Next action | By |
 | --- | --- | --- | --- |
 | Goal handed over | `defining`, done condition written | Split into tasks with dependencies and write areas, say the start line, move to `running` and fill capacity. | Manager, then Core |
 | Slot released, a host's load changed, or a task became ready | Any goal with ready tasks | Fill every compatible slot across the main host and Nodes with ready tasks (see Capacity). | Core |
 | Worker turn ended with a completion receipt | Task in progress | Read the receipt and, for code, the pull request once; continue as Judgment and delivery says. | Core, then manager |
+| Pull request changed | Code task delivered or waiting for a merge slot | Invalidate cached head, CI, review and manager proofs and read the pull request again before deriving a merge, even when no merge is queued. | Core |
+| File result reported before worker termination is observed | Task in progress or unknown after recovery | Refuse `report_work_result` without changing the receipt, snapshot or active-run reservation; admit a fresh report only after the matching terminal observation. | Core |
 | Worker turn ended without a receipt | Task in progress | One continuation that asks the worker to finish or report the blocker; a second ending without a receipt is a failure under Stall and failure. | Core |
 | Code task's head is green with no open P0 or P1, and the manager judged it `verified` | Task ready to merge | Merge that head through the merge slot. | Core |
 | Merge observed | Code task landed | Release its dependents, start QA on the merged commit once, and fill capacity. | Core |
@@ -960,7 +1341,7 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | Deploy observed | Code goal | Probe the running service at the deployed revision against the done condition; an exit code is not a probe. | Core |
 | Background run landed complete | Research or document task | Check citations, store the result, re-evaluate the criteria it serves. | Core, then manager |
 | Background run landed partial | Research or document task | Start one follow-up run on what is missing, or mark it open in the result when the sources cannot answer it. | Manager |
-| Draft or file result ready | Document or file task | Check it against the done condition. Land a new artifact at its destination without merging or overwriting existing files. When the goal updates an existing document, use the revision-checked [in-place edit](materials-and-knowledge.md#editing-a-persons-files-in-place), keeping the old version and rejecting a stale revision. | Manager, then Core |
+| Draft or file result ready | Document or file task | Check the fingerprinted done snapshot against the done condition and land a verified copy at its recorded destination. Changed output or report requires a new done; an interrupted copy is reported and retained. New artifacts never merge into or overwrite existing files. When the goal updates an existing document, use the revision-checked [in-place edit](materials-and-knowledge.md#editing-a-persons-files-in-place), keeping the old version and rejecting a stale revision. | Manager, then Core |
 | Effect performed through a plugin (calendar event, sent message, file move) | Effect task | Read back the external record; only the read sets the criterion. | Core |
 | Reply arrived in a waited thread, a record changed, or a date was reached | Wait open | Close the wait and re-evaluate the criteria behind it. | Core |
 | A wait's deadline passed | Wait open | Read the source once more; if still open, apply the wait's expiry action (see Waits on the outside). | Core |
@@ -975,6 +1356,15 @@ After every event Core commits for a goal, Core derives the goal's next actions 
 | A criterion's evidence failed | `checking` | File the repair task within scope and return to `running`; with no repair inside the scope, `blocked` with a row. | Manager |
 | A met criterion's target changed afterwards (the document was edited, the event moved) | Goal not final | Mark the criterion open again and derive. | Core |
 | No task, wait, recovery or row | Goal not final | The liveness rule. | Core, then manager |
+
+A failed post-merge or post-deployment runtime probe records its output and
+the revision it checked, finishes the probe action, and gives the manager one
+repair assessment for that failure. It does not create a person row before
+that assessment. A repair stays within the goal's scope and goes through its
+own merge, QA, deployment where applicable, and fresh runtime and criterion
+checks. The original failure remains in the evidence history. If the manager
+finds no repair within scope, the goal becomes `blocked` with a row; restart
+or repeated delivery does not repeat that assessment.
 
 ### Waits on the outside
 
@@ -1019,17 +1409,21 @@ Every ready task starts at once, limited only by the person's quota and by what 
 
 - The main host and each connected Node report what they can take; on an installation without Node, the main host alone reports, through the same report that Core makes for itself. A report holds its cores, its load, its available memory and disk, its declared resource caps ([non-competition.md](non-competition.md)), the workers ready on it and their quota rows, and its current reservations. Core computes the free slots of each host from these, and does not use a fixed count per host, per repository or per fleet. A report that is stale or unknown counts as no free capacity, and a Node that is disconnected or yielding gets nothing new.
 - A slot is reserved in the same transaction that claims the task, so two derivations never place the same task or overfill a Node. An award to a Node carries a token and a deadline; an award whose outcome is unknown is resolved by reading that Node's receipt before the task can go anywhere else.
+- A replacement observation keeps the original dispatched effect's identity for matching the Node's measured work. That reservation still counts against resource caps, but is not subtracted again from measured CPU, available memory or disk. Unobserved reservations remain deducted until the Node reports them.
 - Ready tasks are placed in a stable order: tasks of goals with a person's deadline first, then by dependency depth, then by the age of the goal. Within that order, a task goes to the Node with the most headroom that has a suitable worker, and Nodes kept for the person's own use come last.
+- Dependency depth visits each task and its edges at most once per goal during a derivation, reusing shared ancestors across ready tasks. Depths are recomputed from each new snapshot and are never shared between goals.
 - Background runs and plugin effects run in Core and use the person's model and service accounts. They follow the run limits of Background runs and the account's own rate limits, and they never take a Node slot.
-- When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work.
+- When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work. Before claiming a queued worker action, including after restart or an authorization wait, Core rechecks the current host report, worker availability, quota and capacity against the other reservations. An ineligible unstarted award is retired and its task returns to its runnable stage in the same transaction, without spending an attempt or recovery. Derivation places it again or records a host-capacity wait; claimed effects keep their reservations until observed.
 - A ready task that cannot start has one visible reason, as Parallel hand-off says.
 
 ### Recovery
 
 - The goal definition is canon in the 일 or 목표 record in the records repository; the work ledger holds its execution state (criteria status and evidence, tasks, waits and state). A restart loses no goal: Core resolves the goal record by the id and revision referenced in the ledger and reads its execution state from the ledger, reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
 - Every derived action has an identity bound to the goal, the task, its attempt, its stage and the head or revision it acts on. Replaying an event or running two derivations at once never dispatches the same action twice.
+- Work events are append-only by both id and sequence. An insert that would replace either key is refused without changing the prior event or its projection.
 - Task-level recovery is the one recovery of Stall and failure. A goal does not add attempts on top: when a task's recovery is exhausted, the goal is `blocked` on that task while its independent tasks continue.
 - A wait survives restart with its deadline. A timer that should have fired while Core was down fires once at startup.
+- File delivery recovery runs before work tools admit new calls: first report interrupted copy intents in the work ledger, then reconcile their authority reservations as described under Evidence before close. An unrecovered copy keeps its reservation. A cancelled invocation is never replayed; a fresh authorized call preserves partial bundles or reuses a committed landing after readback.
 
 ### Evidence before close
 
@@ -1041,6 +1435,60 @@ A goal closes as `done` only when every criterion has evidence that Core collect
 - the manager's judgment against the criterion's written rubric, recorded with what it read.
 
 A worker's receipt, a model's sentence, a completed turn, a command's exit code alone, a pending check and an effect with an unknown outcome are never evidence. At `checking`, Core reads every piece of evidence again rather than trusting what it stored, so a document edited or an event moved after it was checked reopens its criterion. One check per criterion is enough; no panel of verifiers is used.
+
+For a non-code file task, its work definition records an absolute destination
+folder. The worker writes deliverables under `out/` and its report at
+`report.md`. At done, Core reads every file and directory name and the report,
+records a SHA-256 fingerprint, and keeps independent material revisions in the
+same canon transaction as the receipt. These materials survive backup and loss
+of the work area. A worker-supplied hash alone is not a snapshot. A new done
+replaces the current snapshot and clears its earlier judgment; earlier material
+revisions remain retained. Adding, removing or renaming an empty directory also
+creates a new snapshot revision, even when the file-based receipt ID is unchanged.
+Repeating a done with the same receipt ID and the same full tree fingerprint
+reuses the current snapshot.
+
+The manager's judgment names that exact fingerprint. Before landing, Core reads
+the entire live output and report again. Missing or changed files, an added file
+or directory, or a changed report refuses landing and asks for a new done. Core
+copies only the retained snapshot into a newly claimed bundle named for the
+task; collisions, including symlinks, use `-v2`, `-v3`, and so on. It never merges
+into an existing bundle. Bundles preserve `out/` and `report.md`; symlinks and
+special files are refused. The destination must be outside Core's state and work
+area.
+
+Core records the copy intent and path before creating the bundle. It syncs the
+copy, rechecks the live result, and reads the destination back. Only matching
+readback hashes atomically record a landed result and satisfy the file criterion;
+the manager's content judgment alone cannot do so. A mismatch leaves the
+criterion open. An interrupted or failed copy has no landed evidence, retains
+its partial files, and appears with its path in the work result details. Startup
+reports interrupted intents without deleting or silently accepting their files.
+A retry uses a fresh bundle. Repeating a completed landing reads its evidence
+again and reuses the bundle only if it still matches.
+Before exposing work tools after restart, Core also reconciles the authority
+reservation of an interrupted local `land_work_result` invocation against that
+recovered work ledger. Only an invocation from an earlier Core epoch, bound to
+the same person and task agent, can be cancelled and have its reservation
+released. This cancels the invocation, not its files: it neither replays the old
+call nor asserts a successful or absent copy. The effect receipt and reservation
+update commit together with the recovered task revision. A fresh authorized call
+rechecks the current result, using a new bundle for a partial copy and the existing
+verified bundle for an already committed landing. Unrelated effects and calls
+from the current epoch keep their reservations.
+
+`prepare_work` binds the destination to the conversation-owned task.
+`report_work_result` requires a previously recorded terminal observation for the
+same run, with a status matching the receipt, before admitting the receipt and
+capturing the snapshot. It never records worker termination from model-supplied
+fields. A still-active or recovered unknown run retains its reservation and has
+no new receipt or snapshot after a refused report. The refusal returns the typed
+retryable `worker_termination_unobserved` error and asks the caller to wait for
+worker termination before reporting again with a fresh tool call. A fresh report
+can retry once Core records the worker's actual terminal observation; a stale run or a completed
+claim for a failed or interrupted turn remains refused. `land_work_result` binds
+the manager's judgment to its receipt and fingerprint and performs the copy and readback in Core. Worker dispatch and
+whole-goal scheduling are separate from these file-delivery operations.
 
 ### Stop and ask
 
@@ -1085,6 +1533,101 @@ cannot prevent other goals from expiring or Core from restarting.
 - **At the start, one line.** What LINA will do, what done means, any assumption it made, and what it will need from the person if that is already known. For example: "출장 준비 시작할게요. 일정·숙소·이동을 캘린더에 넣고 일정표를 만들어 둘게요. 숙소 결제만 확인받을게요."
 - **While it runs, nothing new.** The goal is a progress line and its tasks are rows of the running list. A landing of one task is a row change, not a notice. Only a row of "Waiting for me" can notify, under the notification rules of [surfaces.md](surfaces.md).
 - **At the end, one summary.** It begins with the outcome word (done, or stopped, or blocked with the reason), says in a line what changed for the person, and gives one clause of evidence per criterion in the person's words ("일정표는 자료에 있고, 캘린더 세 건 확인했고, 호텔 확인 메일 받았어요"). It lists what was handed to the person as their own 할 일. It names no issue, pull request, branch, check, path or id; those are in the Details of the goal's card.
+
+### Installed code-goal execution
+
+The installed `lina core` supplies the code-goal Driver. Conversation admission
+binds the goal to the authenticated person, agent, conversation and turn; a model
+cannot supply execution state, receipts, authority or a Driver. The installed
+Antigravity worker runs through the existing dispatch service, with its own
+credentials, a separate worktree and the dev manager's assignment and delivery
+judgments. An adapter without resume support preserves interrupted work and asks
+for attention; it never starts a duplicate execution to imitate a resume.
+The host reports Antigravity ready only when that adapter is registered; a
+dispatcher serving another worker is insufficient. An unavailable worker leaves
+the task waiting without allocating a workspace. Dispatch pins the task's
+selected worker.
+
+The owner registers repository connections in `system/code-work.json` under the
+installed state root. This is a private regular file with mode `0600`, outside
+the repository; a symlink, unknown field or invalid command is refused. Core
+loads it at startup. A missing file grants no repository or deployment target.
+The model selects registered repository and check names, never command arguments
+or an executable. The file contains:
+
+- `limits`: positive `cpu`, `memory_mb` and `disk_mb` capacity ceilings, combined
+  with the main host's measured load and installed worker availability.
+- Optional `host_report`: a registered read-only monitor command for environments
+  where Core cannot read the host's counters directly. Without it, Core reads
+  the OS counters. The monitor emits `cpu_cores`, `load_cpu`,
+  `available_memory_mb` and `available_disk_mb`; Core supplies the identity,
+  observation time, installed worker readiness and capacity ceilings. Reported
+  cores are capped by Core's available CPUs. Invalid or failed reports supply no
+  capacity. The installed acceptance uses a fixture monitor so an unrelated CI
+  workload cannot determine whether its fixture worker starts.
+- `repositories`: a map from GitHub `owner/repository` names to `clone` (an
+  absolute local clone), `base`, `design_refs`, `qa` and `checks`. Each command
+  has an absolute `path` and optional literal `args`. `checks` maps criterion
+  methods to commands. Task write areas are comma-separated path globs.
+- An optional repository `service`: `target`, `public`, `deploy` and `probe`.
+  The target is an installed connection name. The probe is a read-only command.
+  A goal cannot omit deployment for a registered service. Public deployment
+  uses the existing argument-bound approval path; registration grants no public
+  deployment approval. A private deployment remains subject to preset limits
+  and the current goal's scope.
+
+QA and outcome checks run in a disposable checkout of the observed merge commit.
+Deploy uses that same pinned revision. Core passes `LINA_GOAL_REVISION`,
+`LINA_GOAL_TARGET` and `LINA_GOAL_ACTION` to the registered command. Its JSON output
+contains `revision`, `target`, `passed` (boolean) and a nonempty `evidence` string
+describing the observation. Core requires matching revision and target, retains
+the output and command identity, and treats a nonzero exit as failure. An exit
+code without this evidence cannot complete a stage. An explicit deployment failure remains failed even if that revision is serving;
+it is not retried automatically. A deployment also requires
+an independent probe of the running service; the deploy command's output alone
+does not prove it is running.
+
+Core captures protected refs before starting the worker, re-reads the PR's current
+head, checks and review, requires the dev manager's verified verdict, and merges
+through the existing durable merge authority and shared-base slot. Only a
+confirming GitHub read releases QA. Criterion checks read their retained QA
+output and current external evidence again before closing the goal. An earlier
+merge remains valid when its recorded commit is still an ancestor of the current
+base; a base that removed the commit fails the check. A custom criterion targeting
+a repository uses that repository's observed merged revision, independently of
+the service repository. Completion
+returns to the originating conversation and survives restart without repeating
+effects. An uncertain worker, merge, QA or deployment is observed; it is never
+re-executed by the observation path. A deployment retains its original connection
+before dispatch so a changed setting cannot settle it against another service.
+An unsuccessful read-only probe of an uncertain deployment keeps the action
+unknown and its authority reservation held. Core retains valid negative evidence
+and probes again on restart or the safety sweep; an unhealthy service alone
+cannot settle the deployment or turn it into a terminal failure.
+When a probe confirms an uncertain deployment, Core records the applied authority
+receipt and releases that effect's target reservation in one transaction. It
+checks the original actor, target and action binding, refuses a live invocation,
+and cannot release a subsequent writer's reservation. The deployment is not
+issued again.
+
+If another actor merges after inspection and before Core creates its merge
+binding, observation restores that binding from the retained dispatch and
+confirms the exact PR head and landed commit. It issues no merge command or new
+merge authorization. A scope correction does not prevent observation of an
+already dispatched worker: Core reads its original person, agent, conversation,
+turn and action receipt even when the repository has left the scope or its
+connection is no longer installed. New execution still requires the current
+scope. Settling the old receipt releases its reservation so the corrected plan
+can proceed.
+
+The installed-binary acceptance uses fixture worker and GitHub executables, real
+Git commits, registered check commands and a local HTTP service. It proves one
+code goal through worker execution, manager judgment, merge, QA, deploy, probe,
+criterion readback and closure, then restarts Core and requires no repeated
+effects. A public service without approval must remain undeployed.
+An interrupted deployment whose first recovery probe fails must remain eligible
+for reconciliation, release its reservation after a successful probe, and close
+without issuing the deployment again.
 
 ### Acceptance
 
@@ -1182,7 +1725,16 @@ The stage list is how the person sees the steps of a goal: a short numbered list
 
 The running list is the person's view of the flow: a short list of what is in progress, waiting and landed, not a stream of notices. LINA Core owns it, and it is shown on Home and in the sidebar ([surfaces.md](surfaces.md)); the TUI shows it as a list and a count in its status line. It lists the tasks and background runs one by one; the progress lines summarize the same work for each 일 and 목표 (see Progress line).
 
-- A row is one task or one background run. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
+Conversation-started worker sessions without a durable task card contribute
+their own rows from the live worker registry and the owning adapter's observed
+state. Core gathers adapter observations outside canon transactions; list
+transactions read those copied observations and the canonical owner names.
+Rows are scoped to the requesting person and name the owner agent before
+the worker. An idle session leaves the list without asserting that the task is
+verified; a new active turn makes it visible again. Unknown observations stay
+unknown. These rows do not alter the task or background-run state mappings.
+
+- A row is one task, one background run or one conversation-started worker. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
 - The states map onto the work card states: working is in progress; waiting, paused and input needed are waiting; done is landed. A stalled or failed task shows its state word until it is dispatched again (see Stall and failure).
 - A row is one line in the person's words about the outcome, not about the pull request. Rows that need the person come first, then the rest in the order they started. Opening a row opens the task's card.
 - A running count, such as "2 running, 1 waiting for you", shows in the conversation header or composer. It counts progress lines other than 목표 lines (see Progress line), by their state, so it grows with the 일 the person reads and not with the number of workers; the rows of this list are counted in the list itself.
@@ -1238,7 +1790,10 @@ existing agent and person and writes through Core's versioned records repository
 Planning records carry LINA kinds and bindings, including native `belongs_to`
 index edges: initiatives remain goal drafts, projects retain
 their done condition, issues become to-dos, and milestones become to-dos with a
-deadline and done condition. Intent cards retain their intent text. CRW records
+deadline and done condition. Imported to-dos use `open` or `completed`; their
+verified snapshot provenance supplies `deadline_source`. Existing imports with
+`active`/`done` and that provenance project to the same planning fields on
+upgrade, preserving their files and saved revisions. Intent cards retain their intent text. CRW records
 are historical observations in reference documents; importing an assignment,
 receipt, verdict, branch or worktree starts no work and grants no authority.
 Complete source records are preserved as data, including unknown fields.

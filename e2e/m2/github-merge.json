@@ -5,6 +5,7 @@
   "base": "dev",
   "head": "0123456789012345678901234567890123456789",
   "moved_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "review_race_phase": "review_race",
   "merge_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "moved_cause": "head_changed",
   "protected_cause": "protected_ref_changed",

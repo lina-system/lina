@@ -23,7 +23,7 @@ import (
 
 // Offer only rendered families; the conversation discovers and maintains its
 // concrete conversation/results subscriptions after welcome.
-var shellCapabilities = []protocol.Capability{{Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+var shellCapabilities = []protocol.Capability{{Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
 
 type clientPeer struct{ client *clientapi.Client }
 
@@ -203,7 +203,10 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 				// Nonterminal input only reads quit after the handshake; it has
 				// no draft destination to discover before reporting live.
 				if client, ok := peer.(clientPeer); ok && terminal {
-					if model.conversation.agentPending && model.hasCapability("agents") {
+					// Initial history can restore an agent absent from Welcome,
+					// just as reconnect history can. Refresh names before either.
+					if model.hasCapability("agents") && (model.conversation.agentPending || model.hasCapability("conversation")) {
+						model.conversation.agentPending = true
 						reconnectAgent = model.activeAgent()
 						agentListID, err = client.client.Agent(ctx, protocol.AgentRequest{Operation: stringPointer("list")})
 					} else if history := model.discoveryHistory(); history != nil && model.hasCapability("conversation") {
@@ -337,6 +340,7 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 							}
 							if history := model.reconnectHistory(model.content.Agents); history != nil {
 								if client, ok := peer.(clientPeer); ok && model.hasCapability("conversation") {
+									reconnectAgent = model.activeAgent()
 									historyID, err = client.client.History(ctx, *history)
 									if err != nil {
 										return err
@@ -530,6 +534,13 @@ func runClientShell(parent context.Context, socket, version string, input io.Rea
 			return err
 		case event := <-events:
 			err := handle(event.message)
+			// A request write can notice a disconnect before Receive does.
+			// clientapi has closed that peer; acknowledge this event so the
+			// connection owner can publish its retry generation and restore
+			// the view. Never replay the request or hide display/protocol errors.
+			if ctx.Err() == nil && errors.Is(err, clientapi.ErrDisconnected) {
+				err = nil
+			}
 			event.acknowledged <- err
 			if err != nil {
 				return err

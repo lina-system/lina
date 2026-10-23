@@ -45,6 +45,18 @@ func Migrations() []Migration {
 		{Version: 31, SQL: WorkerDispatchSchema},
 		{Version: 32, SQL: DiscordSchema},
 		{Version: 33, SQL: recordsKoreanSearchSchema},
+		{Version: 34, SQL: WaitingDecisionsSchema},
+		{Version: 35, SQL: presetEffectsSchema},
+		{Version: 36, SQL: skillMaintenanceSchema},
+		{Version: 37, SQL: workEngineSchema},
+		{Version: 38, SQL: recordsTodoSchema},
+		{Version: 39, SQL: workEventSequenceSchema},
+		{Version: 40, SQL: WorkCompletionsSchema},
+		{Version: 41, SQL: TimersSchema},
+		{Version: 42, SQL: startersSchema},
+		{Version: 43, SQL: WorkerChoiceSchema},
+		{Version: 44, SQL: namingSchema},
+		{Version: 45, SQL: recordOperationsSchema},
 	}
 }
 
@@ -79,10 +91,19 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
 		{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
 		{31, "worker_dispatch"},
+		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
+		{34, "waiting_decisions"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
+		{38, "records_todo"},
+		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
 		{26, "work_ledger"}, {26, "work_cards"}, {26, "work_active_runs"},
 		{30, "authority_merges"},
 		{32, "discord_presentations"}, {32, "discord_buttons"}, {32, "channel_steering"},
+		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
+		{37, "work_events"}, {37, "work_records"},
+		{44, "naming_breaches"},
+		{42, "agent_starters"}, {42, "agent_selection"},
+		{45, "record_operations"}, {45, "record_candidates"},
 	} {
 		var count int
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {

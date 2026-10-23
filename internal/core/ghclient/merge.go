@@ -128,6 +128,14 @@ func (c *Client) Merge(ctx context.Context, ref Ref, base, head string, admit fu
 	s, err := c.Read(ctx, ref)
 	r := MergeResult{State: "blocked", Head: s.Head, Base: base, CI: s.CI, Checks: s.Checks, Cause: s.Cause}
 	if err != nil {
+		var readErr *readError
+		if errors.As(err, &readErr) && readErr.cause == "head_changed" {
+			// Review pagination can discover a push after the initial PR read.
+			// Refresh evidence once, but never resume admission from this read.
+			fresh, e := c.Read(ctx, ref)
+			r.Head, r.CI, r.Checks = fresh.Head, fresh.CI, fresh.Checks
+			return r, e
+		}
 		return r, err
 	}
 	// A merged PR is an observation, including when another actor won the race.
@@ -246,6 +254,32 @@ func (c *Client) observeMerge(ctx context.Context, ref Ref, base string) (MergeR
 	return c.verifyMerge(ctx, ref, base, p)
 }
 func (c *Client) verifyMerge(ctx context.Context, ref Ref, base string, p pull) (MergeResult, error) {
+	return c.verifyMergeAt(ctx, ref, base, p, false)
+}
+
+// ReadLanded verifies a retained merge after later commits advanced the base.
+// The PR head stays pinned. A retained merge commit must also match; an empty
+// commit lets reconciliation establish it from GitHub's first confirming read.
+func (c *Client) ReadLanded(ctx context.Context, ref Ref, base, head, commit string) (MergeResult, error) {
+	ref, err := normalize(ref)
+	if err != nil || !validBranch(base) || !shaPattern.MatchString(head) || commit != "" && !shaPattern.MatchString(commit) {
+		return MergeResult{}, errors.New("invalid_merge_evidence")
+	}
+	ctx, done, err := c.operation(ctx)
+	if err != nil {
+		return MergeResult{}, err
+	}
+	defer done()
+	p, err := c.pull(ctx, ref)
+	if err != nil {
+		return MergeResult{}, err
+	}
+	if p.Head.SHA != head || commit != "" && p.MergeCommit != commit {
+		return MergeResult{}, errors.New("merge_commit_mismatch")
+	}
+	return c.verifyMergeAt(ctx, ref, base, p, true)
+}
+func (c *Client) verifyMergeAt(ctx context.Context, ref Ref, base string, p pull, historical bool) (MergeResult, error) {
 	r := MergeResult{State: "unconfirmed", Head: p.Head.SHA, Base: base, CI: "pending"}
 	if p.Base.Ref != base {
 		return r, errors.New("base_changed")
@@ -280,12 +314,28 @@ func (c *Client) verifyMerge(ctx context.Context, ref Ref, base string, p pull) 
 	if err = decode(body, &target); err != nil {
 		return r, err
 	}
-	if target.Ref != "refs/heads/"+base || target.Object.Type != "commit" || target.Object.SHA != p.MergeCommit {
+	if target.Ref != "refs/heads/"+base || target.Object.Type != "commit" || (!historical && target.Object.SHA != p.MergeCommit) || !shaPattern.MatchString(target.Object.SHA) {
 		return r, errors.New("target_ref_mismatch")
 	}
 	r.Checks, _, err = c.checks(ctx, ref, p.MergeCommit, cache)
 	if err != nil {
 		return r, err
+	}
+	if historical && target.Object.SHA != p.MergeCommit {
+		body, _, err := c.request(ctx, fmt.Sprintf("repos/%s/compare/%s...%s", ref.Repository, p.MergeCommit, target.Object.SHA), "", cache)
+		if err != nil {
+			return r, err
+		}
+		var comparison struct {
+			Status    string
+			MergeBase struct{ SHA string } `json:"merge_base_commit"`
+		}
+		if err = decode(body, &comparison); err != nil {
+			return r, err
+		}
+		if comparison.Status != "ahead" && comparison.Status != "identical" || comparison.MergeBase.SHA != p.MergeCommit {
+			return r, errors.New("merge_not_in_base")
+		}
 	}
 	r.CI = checkConclusion(r.Checks)
 	r.State = "merged"

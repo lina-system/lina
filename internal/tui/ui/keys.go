@@ -42,16 +42,20 @@ var keyBindings = []keyBinding{
 	{"shortcuts.search", []string{"/"}, 2, "shortcuts.search", "pager"},
 	{"shortcuts.next", []string{"n"}, 3, "shortcuts.next", "pager"},
 	{"shortcuts.scroll", []string{"Up/Down", "PgUp/PgDn", "Home/End"}, 4, "", "pager"},
-	{"account.heading", []string{"/accounts"}, 1, "", "commands"},
+	{"board.heading", []string{"/board"}, 1, "", "commands"},
+	{"account.heading", []string{"/accounts", "/usage"}, 1, "", "commands"},
 	{"sign_in_open", []string{"/signin"}, 2, "", "commands"},
 	{"memory.heading", []string{"/memory"}, 3, "", "commands"},
 	{"agents.heading", []string{"/agents"}, 4, "", "commands"},
 	{"channel.heading", []string{"/channels"}, 5, "", "commands"},
 	{"developer.heading", []string{"/developer"}, 6, "", "commands"},
 	{"talk.heading", []string{"/talk"}, 6, "", "commands"},
-	{"interrupt", []string{"/stop"}, 7, "", "commands"},
+	{"progress", []string{"/progress", "/waiting priority|lightest"}, 7, "", "commands"},
+	{"interrupt", []string{"/stop", "/stop <run>", "/stop all", "/note <text>", "/note <run> <text>"}, 7, "", "commands"},
 	{"shortcuts.queue", []string{"/queue <text>"}, 8, "", "commands"},
 	{"web.heading", []string{"/web"}, 9, "", "commands"},
+	{"records.heading", []string{"/records", "/memos"}, 10, "", "commands"},
+	{"records.add", []string{"/add <text>"}, 11, "", "commands"},
 }
 
 func bindingsFor(section string) []keyBinding {
