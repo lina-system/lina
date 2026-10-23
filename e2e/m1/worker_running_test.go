@@ -33,6 +33,9 @@ func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 		if scriptedCodingManager(t, w, req) {
 			return
 		}
+		if respondWorkerCompletion(w, req.Input, "") {
+			return
+		}
 		switch calls.Add(1) {
 		case 1:
 			emitPersonaCall(w, "start-worker", "worker_start", map[string]any{"workdir": workdir, "task_packet": "hold for input"})
@@ -107,6 +110,7 @@ func TestM2ConversationWorkerRunningInstalledCore(t *testing.T) {
 	wait(func(s string) bool {
 		return strings.Contains(s, design.Text(design.English, "running.keys")) && !strings.Contains(s, "Codex")
 	})
+	receiveWorkerFollowups(t, h, c, 1)
 	if calls.Load() != 4 {
 		t.Fatalf("worker rounds=%d", calls.Load())
 	}
