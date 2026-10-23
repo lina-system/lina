@@ -64,6 +64,7 @@ export function kind(path) {
   if (documents.has(path) || /^docs\/(?:policy|design|research)\/[^/]+\.md$/.test(path)
       || /^evidence\/.+\.(?:json|md)$/.test(path)) return 'docs';
   if (/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path)) return 'automation';
+  if (path === '.github/PULL_REQUEST_TEMPLATE.md' || /^\.github\/ISSUE_TEMPLATE\/[^/]+\.ya?ml$/.test(path)) return 'docs';
   if (configuration.has(path) || /^scripts\/(?:verify\/)?[^/]+\.(?:mjs|sh|go)$/.test(path)) return 'automation';
   return 'unmapped';
 }
