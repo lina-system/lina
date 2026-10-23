@@ -169,7 +169,7 @@ func (e *Engine) prepareDefinition(ctx context.Context, g *Goal) error {
 	g.RecordID = "goal:" + g.ID
 	r, rev, err := e.cfg.Records.Read(ctx, g.RecordID)
 	if errors.Is(err, ErrDefinitionMissing) {
-		rev, err = e.cfg.Records.Commit(ctx, DefinitionChange{ID: g.RecordID, Path: "projects/" + actionID(Action{GoalID: g.ID}) + ".md", Data: definitionBytes(*g)}, g.Person, g.Agent)
+		_, err = e.cfg.Records.Commit(ctx, DefinitionChange{ID: g.RecordID, Path: "projects/" + actionID(Action{GoalID: g.ID}) + ".md", Data: definitionBytes(*g)}, g.Person, g.Agent)
 		if err != nil {
 			return err
 		}
