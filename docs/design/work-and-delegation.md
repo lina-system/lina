@@ -885,11 +885,18 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
   dispatch, and a recovered task's setup failure cannot disable delegation or
   terminate another task that was started in the same release event.
 - A quota or rate-limit finish is recorded before queued graph tasks are
-  reconsidered. When that finish has no exhausted window, the worker stays
-  blocked until its reset or a later measurement shows the limit below the cap.
-  The snapshot that missed the failure, and any older or unknown snapshot, does
-  not clear the stop. Rows from concurrent sessions merge per reported bucket
-  and window; a newer row in one window does not replace another window.
+  reconsidered. Measured exhausted windows are the stopped limits. When none
+  are exhausted, the stop follows every cached limit tied for the highest
+  reported usage; a snapshot that reports no usage follows every row it
+  contains, so one reported window is that limit. Each stopped limit keeps the
+  reset its own row reported, including when usage is still under the cap.
+  The worker stays blocked until every stopped limit reaches its own reset or
+  a later measurement shows that same limit below the cap. A newer row for
+  another window or limit does not clear the stop, and a healthy window's
+  reset cannot extend an exhausted one. The snapshot that missed the failure,
+  and any older or unknown snapshot, does not clear the stop. Rows from
+  concurrent sessions merge per reported bucket and window; a newer row in
+  one window does not replace another window.
 - When slots are free, the manager may start a dependent task as a stacked pull request on an open predecessor. It records the predecessor and its head as the task's base, and Core checks capacity and disjoint write-area leases before dispatch. The dependency remains: the dependent cannot land before the predecessor. The worker brings the stack onto the landed base and owns its resulting checks to green before the manager checks the delivery.
 
 ## Workers
