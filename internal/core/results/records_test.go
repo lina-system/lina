@@ -17,6 +17,7 @@ import (
 )
 
 func TestSaveCreatesOneVersionedRecord(t *testing.T) {
+	t.Parallel()
 	_, db, _, _ := setup(t)
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
@@ -75,6 +76,7 @@ func TestSaveCreatesOneVersionedRecord(t *testing.T) {
 }
 
 func TestRecordsDetectExternalChangeAndRejectPathEscape(t *testing.T) {
+	t.Parallel()
 	_, db, _, _ := setup(t)
 	root := t.TempDir()
 	os.Chmod(root, 0700)
@@ -107,6 +109,7 @@ func TestRecordsDetectExternalChangeAndRejectPathEscape(t *testing.T) {
 }
 
 func TestSavedFileOwnsBytesAfterPreviewAssetIsTrashed(t *testing.T) {
+	t.Parallel()
 	_, db, _, _ := setup(t)
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
@@ -173,6 +176,7 @@ func TestSavedFileOwnsBytesAfterPreviewAssetIsTrashed(t *testing.T) {
 }
 
 func TestRecordsRefuseCommittedOutsideChange(t *testing.T) {
+	t.Parallel()
 	_, db, _, _ := setup(t)
 	root := t.TempDir()
 	os.Chmod(root, 0700)
