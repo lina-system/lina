@@ -619,6 +619,11 @@ window and reset. `e2e/m2/worker-quota-windows.json` covers the installed Core
 handoff and durable per-window state across restart.
 A successful `worker_quota` read from a routed conversation refreshes the shared
 dispatch service and wakes its chooser, including after a stop without a reset.
+The chooser merges observations per provider, account and window. A partial
+recovery remains usable when a healthy sibling retains its earlier observation
+time; older or absent measurements preserve the corresponding saved window.
+`e2e/m2/codex-quota-recovery.json` proves a sparse Codex recovery reaches the
+installed Core's dispatch cache and remains eligible after restart.
 
 The provisional worker rule table is read at startup from
 `system/core/worker-choice.json`. Its `rules` contain `worker`, `tags` and integer
