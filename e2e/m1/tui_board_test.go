@@ -2,6 +2,7 @@
 package e2e_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
@@ -60,9 +62,32 @@ func TestM2TUIBoardInstalledCore(t *testing.T) {
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	defer func() { unblock(); h.stopCore(core) }()
-	tap := newAccountTap(t, h, h.socket)
+	socket := h.socket
+	tap := newAccountTap(t, h, socket)
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		for _, line := range bytes.Split(tap.bytes(), []byte{'\n'}) {
+			var rpc struct{ Params, Result json.RawMessage }
+			if json.Unmarshal(line, &rpc) != nil {
+				continue
+			}
+			for _, raw := range []json.RawMessage{rpc.Params, rpc.Result} {
+				var e struct {
+					Kind    string
+					ReplyTo string `json:"reply_to"`
+					Payload json.RawMessage
+				}
+				if json.Unmarshal(raw, &e) == nil && (e.Kind == "progress_update" || e.Kind == "waiting" || e.Kind == "waiting_get" || e.Kind == "welcome") {
+					t.Logf("board wire %s %s %s", e.Kind, e.ReplyTo, e.Payload)
+				}
+			}
+		}
+	})
 	h.socket = tap.socket
 	terminal := h.startTerminalSize([]string{"TERM=xterm-256color", "LC_ALL=C"}, false, true, 100, 36)
+	h.socket = socket
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, fixture.Input+"\r")
 	select {
@@ -105,6 +130,31 @@ func TestM2TUIBoardInstalledCore(t *testing.T) {
 		last = pos
 	}
 	if err = os.Remove(outside); err != nil {
+		t.Fatal(err)
+	}
+	// Read Core's resolved source and refresh the publisher through a separate
+	// protocol observer. This is an event barrier, not a timer or a TUI refresh.
+	observer, err := clientapi.DialWithCapabilities(h.ctx, socket, "board-observer", []protocol.Capability{{Name: "waiting", Version: "1.0"}, {Name: "progress", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer observer.Close()
+	if _, err = observer.Waiting(h.ctx, protocol.WaitingGet{}); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := observer.Receive(h.ctx)
+	if err != nil || frame.Error != nil {
+		t.Fatalf("waiting source read: %v %+v", err, frame.Error)
+	}
+	resolved, ok := frame.Payload.(protocol.Waiting)
+	if !ok || resolved.Rows == nil || len(*resolved.Rows) != 0 {
+		t.Fatalf("Core retained the resolved source: %+v", frame.Payload)
+	}
+	topic := "progress"
+	if _, err = observer.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = observer.Receive(h.ctx); err != nil {
 		t.Fatal(err)
 	}
 	unblock()

@@ -68,9 +68,11 @@ func TestM2TUINoteNextRoundInstalledCore(t *testing.T) {
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	defer func() { unblock(); h.stopCore(core) }()
-	tap := newAccountTap(t, h, h.socket)
+	socket := h.socket
+	tap := newAccountTap(t, h, socket)
 	h.socket = tap.socket
 	terminal := h.startScreenTUI("TERM=xterm-256color", "LC_ALL=C")
+	h.socket = socket
 	waitComposerReady(t, h, terminal)
 	h.keys(terminal, fixture.Input+"\r")
 	select {

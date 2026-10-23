@@ -45,10 +45,12 @@ func TestM2TUIUsageUnknownInstalledCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = vault.Close() })
 	store, err := accounts.Open(h.ctx, db, vault, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(store.Close)
 	for i, label := range fixture.Labels {
 		id := provider.AccountID(fmt.Sprintf("hidden-fixture-%d", i))
 		a := accounts.Account{ID: id, Person: "person:" + main.ID, Provider: provider.ChatGPT, Label: label, Auth: provider.APIKey}
