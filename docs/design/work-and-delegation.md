@@ -1135,6 +1135,11 @@ Card observations are coalesced at 250 ms intervals, with a final flush before
 the receipt. They neither submit a receipt nor end the run.
 A cancelled prompt records an interrupted turn and receipt; an open prompt lost
 with its process remains an uncertain failed execution without a receipt.
+A JSON-RPC error reply to the prompt is an observed worker failure, including
+when the process exits immediately after replying. Core records the failed turn
+and an adapter-derived receipt without retaining the remote error message or
+data. The reply alone does not settle external effects: unresolved effects keep
+the existing recovery fence until reconciliation.
 The adapter advertises progress, completion, work tools, approvals and questions. ACP
 requests use the existing worker authority and waiting-card bridge, preserving
 the originating conversation. Cards identify the ACP worker; Codex cards retain

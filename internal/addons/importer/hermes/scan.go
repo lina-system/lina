@@ -75,7 +75,7 @@ func Project(body []byte, spans []Span, derived bool) ([]byte, error) {
 	start := 0
 	for _, span := range spans {
 		if span.Kind != "secret" || span.Start < start || span.End <= span.Start || span.End > len(body) {
-			return nil, ErrSnapshot
+			return nil, invalidSnapshot("secret span bounds and order")
 		}
 		out.Write(body[start:span.Start])
 		if derived {
