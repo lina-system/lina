@@ -17,7 +17,7 @@ test checks both outputs in CI.
 
 Structs, string enums and tagged unions come from the schema. Optional fields
 use pointers and `omitempty`. Tagged unions emit exactly one branch and retain
-unknown variants as raw JSON. Untagged unions, including string/integer request
+unknown variants as raw JSON. Untagged unions, including string/integer/null request
 IDs and compound elicitation scopes, remain raw JSON; their object alternatives
 also have generated structs. Arbitrary JSON is never converted through float64.
 These are wire types, not JSON Schema validators. The client checks the fields
