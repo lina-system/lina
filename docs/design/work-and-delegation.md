@@ -1238,6 +1238,7 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 ### Approvals
 
 - When the worker asks for an approval (for Codex: a command, a file change or permissions; for an ACP worker: `session/request_permission`), the adapter routes the request to the originating conversation, and the person's answer goes back to the worker. On a remote device the Node relays both.
+- Scheduled workers use the same conversation bridge. A worker's request withdrawal stops its matching question or approval card. Later answers cannot reach the worker, and other tasks keep their pending decisions. The scheduled task returns to working only when no request remains pending; withdrawal does not release its execution capacity or write-area lease.
 - For an ACP worker, the person's once maps to the worker's `allow_once` option and deny to `reject_once`. LINA never selects `allow_always` or `reject_always`, because they change the rules the worker remembers in the person's setup. A cancel answers every pending request of the turn with `cancelled`, as the protocol requires.
 - The worker's own sandbox and approval mode decide what it asks. LINA imposes no sandbox or approval policy of its own on a worker.
 - Arguments of the worker's tools are never rewritten (`updatedInput` is never used).
@@ -1248,6 +1249,7 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
 - LINA's work tools reach a worker through its adapter: for Codex, `thread/start.dynamicTools` in the namespace `lina`. LINA Core identifies the caller by thread, turn and call ids. For an ACP worker, it is one stdio MCP server that `session/new` names for that session only (see ACP adapter). For another worker, the adapter uses the per-run mechanism of that tool that installs nothing in the user's setup. Where a tool has no such channel, the adapter builds the receipt from the tool's final result and the pull request it opened, and marks it adapter-derived.
 - The tools are: submit a completion receipt; ask a question; send a coordination request (to LINA Core only, never to another worker); read the task projection, which is the LINA materials and memory projections the task may read. GitHub work and other integrations need no LINA tool; the worker uses its own setup.
 - LINA Core declares the tools and handles `item/tool/call`, or the MCP tool calls of an ACP worker's session server. The receipt and question schemas are LINA's own and are versioned with the worker adapter.
+- Scheduled `ask` calls and native worker questions retain the originating person, agent and conversation. Answers use the recorded request and thread/turn binding. Foreign and stale answers are refused; repeated answers return their recorded outcome without a second send.
 - Only the worker thread itself submits receipts.
 - A projection read returns only the scope the task allows, carries a revision, and never returns a revoked item. A write happens only on an explicit request and passes the grant check.
 

@@ -50,7 +50,12 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
         if(kind==='read_projection') {
           if(result.assignment_id!==thread.id||!result.task_packet.includes('Work definition:'))throw new Error('foreign projection');
           thread.projection=result;
-          if(cfg.requests&&thread.definition.key==='a')callTool(thread,'ask',{question:'Confirm the work-tool result.'});
+          if(cfg.requests&&thread.definition.key==='a') {
+            send({id:`${thread.id}:withdrawn-question`,method:'item/tool/requestUserInput',params:{threadId:thread.id,turnId:thread.turn.id,itemId:'withdrawn',questions:[{id:'withdrawn',header:'Fixture',question:'Withdraw this request.'}]}});
+            send({id:`${thread.id}:withdrawn-approval`,method:'item/commandExecution/requestApproval',params:{threadId:thread.id,turnId:thread.turn.id,itemId:'withdrawn',startedAtMs:1800000000000,command:'withdrawn',cwd:thread.cwd,availableDecisions:['accept','decline']}});
+            for(const kind of ['question','approval'])send({method:'serverRequest/resolved',params:{threadId:thread.id,requestId:`${thread.id}:withdrawn-${kind}`}});
+            callTool(thread,'ask',{question:'Confirm the work-tool result.'});
+          }
           else callTool(thread,'coordinate',{request:'Record this scheduled result.'});
         } else if(kind==='ask') {
           if(result.answer!=='confirmed')throw new Error('work-tool answer not delivered');

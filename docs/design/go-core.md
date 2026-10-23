@@ -1564,6 +1564,12 @@ type Definition struct {
   instead of moving replies or evidence into the agent's main conversation.
   Replies are bound to their worker thread/turn;
   all pending requests must be answered before the task returns to working.
+  A `server_request_resolved` observation withdraws only its matching turn and
+  request from that session's question/approval bridge. It publishes the stopped
+  decision and clears input-needed state only after all requests are answered or
+  withdrawn, retaining execution and area reservations. The installed-Core
+  dependency-release scenario checks both withdrawals and rejected late replies
+  before completing the scheduled worker's real Git artifacts.
   Ordinary `worker_input` cannot start a scheduled session outside scheduler
   admission. Task ids are stable opaque identifiers that remain valid unmasked
   metadata; their spelling carries no authority.

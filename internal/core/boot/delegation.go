@@ -605,7 +605,18 @@ func (d *delegationRuntime) events(ctx context.Context) {
 				if entry != nil {
 					entry.workTool(event)
 				}
-			case worker.ProgressEvent, worker.UsageEvent:
+			case worker.ProgressEvent:
+				if event.Progress.Phase == "server_request_resolved" {
+					d.root.workers.mu.Lock()
+					entry := d.root.workers.sessions[event.Thread.ID]
+					d.root.workers.mu.Unlock()
+					if entry != nil {
+						entry.stopMatching(event.Thread.TurnID, event.Progress.ItemID)
+						entry.answerDelivered(ctx, event.Thread)
+						entry.origin.notifyOwnerViews()
+					}
+				}
+			case worker.UsageEvent:
 			}
 		case <-d.resetChanged:
 			continue
