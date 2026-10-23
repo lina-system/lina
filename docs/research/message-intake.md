@@ -151,6 +151,59 @@ A question is warranted only when two targets still tie after everything Core an
 
 **Use.** The replay runs before any change to the rules, the candidate ranking, a judge, its threshold or the instructions enters use. A change ships only when the pass rate holds on both sets, silent wrong picks on running work do not rise, and the reply-to and offered-option rules stay exact. The first implementation must at least match the current agents on both sets. The case set stays private and grows as the standing analysis adds the owner's new messages. Bindings the person moves in LINA become new cases.
 
+### Replay file format
+
+Run `lina intake-replay /path/to/cases.jsonl`. The file is UTF-8 JSON Lines,
+one version 1 case per line, up to 1 MiB per case. A malformed or oversized line
+is counted and later lines still run. Empty, missing and unreadable files are
+counted too. Unknown fields, invalid targets, duplicate case/item ids and dangling
+question or surface references are rejected. The shared Go types in
+[`internal/core/intakereplay/types.go`](../../internal/core/intakereplay/types.go)
+define the format. The [synthetic set](../../internal/core/intakereplay/testdata/synthetic.jsonl)
+is a complete public example. Keep private cases and output outside the repository.
+
+Each case contains:
+
+- `version: 1`, an `id`, and `set: random` or `hard`.
+- `state`: a fixed RFC3339 `clock`, `focus` and `focus_age_seconds`, `items`,
+  `questions` and `surfaces`. Items have id, title, kind, state, last activity,
+  optional names and links. Kinds are initiative, project, todo, task or run.
+  Todo states follow the records store: backlog, open, started, completed and
+  canceled. Work snapshots include running, waiting and needs-input states. Questions
+  identify their target and offered labels, optionally `yes_no`. Surface keys
+  identify a reply message, card or thread and map to an item id.
+- `input`: text, optional reply/card/thread surface keys, the gap in seconds
+  since the previous turn, and recent person/agent turns.
+- `gold`: one target and ask decision per request, in message order. Targets
+  have class `existing`, `new` or `none`; existing targets carry id and kind,
+  new targets carry kind and optionally their parent item id.
+- Optional `observed` bindings retain what the original agent did for later
+  comparisons. Optional `expected` scores pin the two public baselines in CI;
+  neither field is given to a router.
+
+Output contains selected, scored and excluded case counts, exclusion reasons,
+per-case bindings and scores, and summaries keyed by set, router and decider.
+It omits input and recent-turn text. Each rate includes its numerator and
+denominator; a zero denominator produces null, never a claimed success.
+
+The `all` row's pass rate is per message: every request must have a binding,
+no extras, an ask exactly when warranted, and otherwise the exact gold target
+(including kind and new-item parent). Right-item and new/existing rates use
+unquestioned picks as their denominator. Questions report warranted, correctly
+asked and needless counts. Silent wrong picks include a class confusion table
+and a separate count when either the gold or picked target is running or
+waiting work. A missed warranted question fails the case even if the pick
+happens to equal the labelled target. Missing bindings fail the case and are
+counted separately; they cannot become correct `none` picks.
+
+Decider rows score individual requests: coverage is decisions over labelled
+requests, and pass rate is that decider's precision under the same scoring
+rule. `missing` identifies requests with no decision. Random and hard sets are
+never pooled. A runtime failure excludes the whole case from both baselines,
+so a partially completed pair cannot change one baseline's denominator.
+Ordinary baseline mistakes are measured results and do not make the command
+fail; exclusions exit 1, usage errors 64 and output errors 74.
+
 ## What this means for the design
 
 - **Rules only for explicit facts.** A platform reply, a card or thread, an exact name or id, and an offered option chosen by number or label bind by rule, as products do. Word lists, timing and arrival during a run do not. A rule decides the item and not what the message does to it, because three of the four rule misses here were new work under the item it found. A name binds only an open item.

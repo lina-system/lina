@@ -4,6 +4,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,6 +47,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		CompletionEvents       bool `json:"completion_events"`
 		Definition             bool `json:"definition"`
 		Conformance            bool `json:"conformance"`
+		Delivery               bool `json:"delivery"`
 	}
 	if err = json.Unmarshal(raw, &scenario); err != nil {
 		t.Fatal(err)
@@ -104,7 +106,14 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				t.Fatal(err)
 			}
 			for _, name := range []string{scenario.Binary, "gh"} {
-				if err = os.WriteFile(filepath.Join(bin, name), script, 0700); err != nil {
+				body := script
+				if name == "gh" {
+					body, err = os.ReadFile("../m2/delivery-github.mjs")
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err = os.WriteFile(filepath.Join(bin, name), body, 0700); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -115,7 +124,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			if err = os.WriteFile(filepath.Join(bin, "codex"), codexScript, 0700); err != nil {
 				t.Fatal(err)
 			}
-			var calls, providerCalls atomic.Int32
+			var calls, providerCalls, deliveryCalls atomic.Int32
 			var completionHarness *harness
 			var offered atomic.Bool
 			var moved atomic.Bool
@@ -158,7 +167,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 						assertClaimBeforeManager(t, completionHarness)
 					}
 				}
-				if scenario.Conformance {
+				if scenario.Conformance || scenario.Delivery {
 					encoded, _ := json.Marshal(req.Input)
 					manager := toolReachable(req.Tools, "coding_decision")
 					var last struct{ Type string }
@@ -166,6 +175,15 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 						_ = json.Unmarshal(req.Input[len(req.Input)-1], &last)
 					}
 					if manager && strings.Contains(string(encoded), "coding_delivery") && last.Type != "function_call_output" {
+						generation := deliveryCalls.Add(1)
+						if scenario.Delivery && (test.Name == "residual" || test.Name == "unchanged" || test.Name == "corrected" && generation == 1) {
+							emitPersonaCall(w, fmt.Sprintf("delivery-%d", generation), "coding_decision", map[string]any{"decision": "needs_changes", "evidence": "The result misses the done condition.", "findings": []map[string]string{
+								{"id": "major", "severity": "P1", "file": "result.txt", "claim": "Missing required behavior."},
+								{"id": "minor", "severity": "P2", "file": "result.txt", "claim": "Optional improvement."},
+								{"id": "nit", "severity": "P3", "file": "result.txt", "claim": "Optional naming."},
+							}})
+							return
+						}
 						if test.Name == "prose" {
 							emitResponse(w, "The result looks correct.", true)
 							return
@@ -332,12 +350,19 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 				inspect(e)
 			}
+			if test.Choice == "overlap" {
+				waitForAreaRelease(t, h)
+				managerTurns++
+			}
 			if scenario.CompletionEvents {
 				waitCompletionHandled(t, h)
 			}
 			c.Close()
 			h.stopCore(core)
 			assertCodingOwnership(t, h, ids["dev"], conversation, workerCase == "success", managerTurns)
+			if scenario.Delivery {
+				assertDelivery(t, h, fixture, test.Name)
+			}
 			if scenario.Conformance {
 				assertConformance(t, h, test.Name)
 			}
@@ -404,7 +429,13 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 			if scenario.CompletionEvents {
 				assertWorkCompletion(t, h)
 			}
-			if (scenario.CompletionEvents || test.HostCapacity) && providerCalls.Load() != beforeRestart {
+			if scenario.Delivery {
+				assertDelivery(t, h, fixture, test.Name)
+			}
+			if scenario.Conformance {
+				assertConformance(t, h, test.Name)
+			}
+			if (scenario.CompletionEvents || scenario.Conformance || scenario.Delivery || test.HostCapacity) && providerCalls.Load() != beforeRestart {
 				t.Fatal("restart replayed a manager or conversation model call")
 			}
 			expectedCalls := int32(2)

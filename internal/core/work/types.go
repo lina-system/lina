@@ -17,6 +17,7 @@ var (
 )
 
 type Task struct {
+	Schedule        *Schedule  `json:"schedule,omitempty"`
 	WorkKind        string     `json:"work_kind,omitempty"`
 	Destination     string     `json:"destination,omitempty"`
 	ExternalControl bool       `json:"external_control,omitempty"`
@@ -93,6 +94,8 @@ type GoalDecision struct {
 	Decision QuestionDecision
 }
 type Card struct {
+	Scheduling     Scheduling         `json:"scheduling,omitempty"`
+	WaitReason     *ScheduleWait      `json:"wait_reason,omitempty"`
 	Completion     *result.Completion `json:"completion,omitempty"`
 	Head           string             `json:"head,omitempty"`
 	CompletionHead string             `json:"completion_head,omitempty"`
@@ -124,6 +127,8 @@ type AcceptedCompletion struct {
 // Event has one payload selected by Kind. Events are admitted by Service only;
 // clients and workers never append arbitrary events or acceptance judgments.
 type Event struct {
+	Scheduling     *Scheduling               `json:"scheduling,omitempty"`
+	WaitReason     *ScheduleWait             `json:"wait_reason,omitempty"`
 	Occurrence     *canon.RecordOccurrence   `json:"occurrence,omitempty"`
 	DoneRequest    *result.CompletionRequest `json:"done_request,omitempty"`
 	DoneAcceptance *AcceptedCompletion       `json:"done_acceptance,omitempty"`

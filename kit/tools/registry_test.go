@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -118,5 +119,33 @@ func TestUnresolvedClaimReturnsUnknownEffectState(t *testing.T) {
 		if !errors.Is(err, denial) || result.State != Unknown {
 			t.Fatalf("unresolved claim: %+v %v", result, err)
 		}
+	}
+}
+
+// Exercise the acceptance boundary directly: both the adapter outcome and
+// cancellation are already observable. No select scheduling or sleeps decide
+// whether this regression fails.
+func TestOutcomeAfterCancellationIsUnknown(t *testing.T) {
+	for _, deadline := range []bool{false, true} {
+		t.Run(fmt.Sprint(deadline), func(t *testing.T) {
+			var ctx context.Context
+			var cancel context.CancelFunc
+			want := context.Canceled
+			if deadline {
+				ctx, cancel = context.WithDeadline(t.Context(), time.Unix(1, 0))
+				want = context.DeadlineExceeded
+			} else {
+				ctx, cancel = context.WithCancel(t.Context())
+				cancel()
+			}
+			defer cancel()
+			<-ctx.Done()
+			for _, state := range []State{Applied, Failed, Cancelled} {
+				result, err := acceptOutcome(ctx, Input{Write: true}, Result{State: state, Revision: "r2", Body: json.RawMessage(`{"saved":true}`)}, nil)
+				if result.State != Unknown || result.Revision != "" || len(result.Body) != 0 || !errors.Is(err, want) || !errors.Is(err, ErrUnknown) {
+					t.Errorf("accepted late %s: %+v %v", state, result, err)
+				}
+			}
+		})
 	}
 }

@@ -216,6 +216,7 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 		e.bridgeFailure(err)
 		return stopped, nil
 	}
+	e.answerDelivered(ctx, event.Thread)
 	return outcome, nil
 }
 func (r *conversationRuntime) restoreWorkerQuestions(ctx context.Context) error {

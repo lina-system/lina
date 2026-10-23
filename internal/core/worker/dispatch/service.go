@@ -50,6 +50,9 @@ type Definition struct {
 }
 type Origin struct{ Person, Agent, Conversation, Turn string }
 type Record struct {
+	ReturnReceipt  string                     `json:"return_receipt,omitempty"`
+	GenerationBase int                        `json:"generation_base,omitempty"`
+	FailureReason  string                     `json:"failure_reason,omitempty"`
 	RepositoryKey  string                     `json:"repository_key,omitempty"`
 	Worker         string                     `json:"worker,omitempty"`
 	Tried          []string                   `json:"tried,omitempty"`
@@ -423,7 +426,7 @@ func (s *Service) sync() {
 	for _, r := range records {
 		if r.State == "queued" {
 			committed, err := s.admissionCommitted(s.ctx, r)
-			if err != nil || !committed {
+			if err != nil || !committed && !(r.Goal && r.ReturnReceipt != "") {
 				continue
 			}
 			s.mu.Lock()
