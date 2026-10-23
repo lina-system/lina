@@ -209,6 +209,18 @@ export function buildReleaseArtifacts(root, { commit, tag, evidence, evidenceSou
           fail(`Binary manifest digest mismatch for ${target}/${name}`);
         }
       }
+      const adapterFiles = ['adapters/claude-acp/package.json', 'adapters/claude-acp/package-lock.json'];
+      for (const directory of ['adapters', 'adapters/claude-acp']) {
+        if (!lstatSync(join(output, directory)).isDirectory()) fail('Adapter output must use real directories');
+      }
+      if (metadata.installFiles?.length !== adapterFiles.length) fail('Release lacks pinned Claude ACP inputs');
+      for (const name of adapterFiles) {
+        regular(join(output, name), 1 << 20);
+        const artifact = metadata.installFiles.find(file => file.name === name);
+        if (!artifact || artifact.size !== statSync(join(output, name)).size || artifact.sha256 !== sha256(join(output, name))) {
+          fail(`Adapter manifest digest mismatch for ${target}/${name}`);
+        }
+      }
       for (const [source, name] of [['LICENSE', 'LICENSE'], ['THIRD-PARTY-NOTICES.md', 'THIRD-PARTY-NOTICES.md'],
         ['packaging/sqlite-vec/NOTICE.md', 'sqlite-vec-NOTICE.md']]) {
         regular(join(candidate, source), 1 << 20);
@@ -218,7 +230,7 @@ export function buildReleaseArtifacts(root, { commit, tag, evidence, evidenceSou
       }
       const path = join(out, `lina-${version}-${target.replace('/', '-')}.tar.gz`);
       const packed = spawnSync('tar', ['-czf', path, '-C', output, 'lina', 'lina-node', 'manifest.json',
-        'LICENSE', 'THIRD-PARTY-NOTICES.md', 'sqlite-vec-NOTICE.md'], { env, encoding: 'utf8' });
+        'LICENSE', 'THIRD-PARTY-NOTICES.md', 'sqlite-vec-NOTICE.md', ...adapterFiles], { env, encoding: 'utf8' });
       if (packed.status !== 0) fail(`Cannot package ${target}: ${packed.stderr || packed.error?.message}`);
       files.push(path);
       artifacts.push({ ...describe(path), target });
