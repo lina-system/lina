@@ -178,6 +178,9 @@ func (r *conversationRuntime) typedChannelText(ctx context.Context, source ledge
 	if err != nil {
 		return "", err
 	}
+	if value.Type == result.MockType {
+		return value.Title + "\n" + value.Text + "\n" + mockExportActions(value), nil
+	}
 	if view.Inline {
 		return view.Text, nil
 	}

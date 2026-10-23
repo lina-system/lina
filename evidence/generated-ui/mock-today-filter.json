@@ -1,0 +1,38 @@
+{
+  "case_id": "today-filter",
+  "checks": [
+    {
+      "id": "elements",
+      "passed": true
+    },
+    {
+      "id": "controls",
+      "passed": true
+    },
+    {
+      "id": "tokens",
+      "passed": true
+    },
+    {
+      "id": "network",
+      "passed": true
+    },
+    {
+      "id": "errors",
+      "passed": true
+    },
+    {
+      "id": "layout_390",
+      "passed": true
+    },
+    {
+      "id": "layout_1280",
+      "passed": true
+    }
+  ],
+  "judge": "unqualified",
+  "owner_labels": 0,
+  "request": "위에 '오늘만' 필터 넣어 줘",
+  "text": true,
+  "version": 1
+}

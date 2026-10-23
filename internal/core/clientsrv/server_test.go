@@ -17,7 +17,7 @@ import (
 )
 
 func TestUnsupportedEnvelopeVersion(t *testing.T) {
-	for _, version := range []string{"2.0", "1.1", "0.9"} {
+	for _, version := range []string{"2.0", "1.2", "0.9"} {
 		t.Run(version, func(t *testing.T) {
 			data, err := os.ReadFile("../../../protocol/fixtures/client/1.0/hello.json")
 			if err != nil {
