@@ -131,8 +131,7 @@ func TestOwnerControlsReachLiveWorker(t *testing.T) {
 	if err := r.work.ReserveWorker(t.Context(), entry.reservation, entry.workdir); err != nil {
 		t.Fatal(err)
 	}
-	r.workers = &workerRuntime{sessions: map[string]*workerSession{"live": entry}}
-	t.Cleanup(func() { r.workers = nil })
+	addWorkerFixtureSessions(t, r, map[string]*workerSession{"live": entry})
 	s := clientsrv.Session{PersonID: r.person}
 	id := "session:live"
 	if _, err := r.followRun(t.Context(), s, protocol.Envelope{Payload: protocol.FollowUp{RunID: id, Text: "Read appendix", ConversationID: &r.conversation}}); err != nil {
