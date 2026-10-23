@@ -149,9 +149,7 @@ func Stages(revisions []Revision, state goal.GoalState, language design.Language
 			continue
 		}
 		for _, blocker := range blockers[id] {
-			switch states[blocker] {
-			case StepDone, StepSuperseded:
-			default:
+			if landed := states[blocker]; landed != StepDone && landed != StepSuperseded {
 				states[id] = StepNext
 			}
 		}
@@ -234,8 +232,12 @@ func urgency(state StepState) int {
 		return 5
 	case StepDone:
 		return 6
-	default:
+	case StepNext:
 		return 7
+	case StepSuperseded:
+		return 8
+	default:
+		return 9
 	}
 }
 
