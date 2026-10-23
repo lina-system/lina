@@ -23,6 +23,9 @@ type acceptedSteering struct {
 // submitInput runs under the shared conversation's admission mutex. Channel
 // adapters reuse this coordinator, including steering during a live turn.
 func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, steer bool, runner *conversationRuntime) error {
+	if r.router != nil {
+		r.router.root.notifyExtraction()
+	}
 	items, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
 	if err != nil {
 		return err
