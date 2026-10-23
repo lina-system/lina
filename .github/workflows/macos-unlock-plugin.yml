@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+# Build the arm64 unlock plug-in bundle on a hosted Apple silicon Mac and check
+# the signature there. The Linux foundation check compiles and runs the portable
+# decision core; this workflow is the only place the Darwin files and the bundle
+# layout are built.
+name: macOS unlock plug-in
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'native/macos/**'
+      - '.github/workflows/macos-unlock-plugin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-unlock-plugin-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    name: bundle (arm64)
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      # Signing is optional: the repository carries the Developer ID identity
+      # only when its secrets are set, and the ad-hoc build check runs otherwise.
+      LINA_SIGNING: ${{ secrets.MACOS_SIGNING_P12 != '' }}
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Record the machine
+        run: |
+          sw_vers
+          uname -m
+          xcrun --sdk macosx clang --version
+      - name: Import the Developer ID identity
+        if: env.LINA_SIGNING == 'true'
+        env:
+          SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          SIGNING_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/lina-signing.keychain-db"
+          printf '%s' "$SIGNING_P12" | base64 --decode > "$RUNNER_TEMP/lina-signing.p12"
+          security create-keychain -p lina "$keychain"
+          security set-keychain-settings -lut 900 "$keychain"
+          security unlock-keychain -p lina "$keychain"
+          security import "$RUNNER_TEMP/lina-signing.p12" -k "$keychain" -P "$SIGNING_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -k lina "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain"
+          rm -f "$RUNNER_TEMP/lina-signing.p12"
+      - name: Build, sign and verify the bundle
+        working-directory: native/macos/unlock-plugin
+        env:
+          # The team identifier is embedded in the plug-in's signing requirement.
+          # A release build passes LINA's real team; the ad-hoc build check uses a
+          # placeholder and never ships.
+          LINA_TEAM_ID: ${{ secrets.MACOS_TEAM_ID || '0000000000' }}
+          LINA_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          set -o pipefail
+          ./build.sh 2>&1 | tee "$RUNNER_TEMP/build.log"
+          {
+            echo '## Build, sign and verify'
+            echo '```'
+            cat "$RUNNER_TEMP/build.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Record the architecture and the signature
+        working-directory: native/macos/unlock-plugin
+        run: |
+          set -o pipefail
+          bundle=build/LinaUnlock.bundle
+          lipo -archs "$bundle/Contents/MacOS/LinaUnlock" 2>&1 | tee "$RUNNER_TEMP/signature.log"
+          codesign --verify --strict --verbose=2 "$bundle" 2>&1 | tee -a "$RUNNER_TEMP/signature.log"
+          codesign -dvvv "$bundle" 2>&1 | tee -a "$RUNNER_TEMP/signature.log"
+          {
+            echo '## Architecture and signature'
+            echo '```'
+            cat "$RUNNER_TEMP/signature.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: LinaUnlock-bundle
+          path: native/macos/unlock-plugin/build/LinaUnlock.bundle
+          if-no-files-found: error
+          retention-days: 5
+      - name: Remove the signing identity
+        if: always() && env.LINA_SIGNING == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/lina-signing.keychain-db" || true
