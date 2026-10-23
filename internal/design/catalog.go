@@ -233,7 +233,7 @@ var catalog = map[string]translation{
 	"stale_group":            {"Changed; review and select again", "변경됨; 다시 확인하고 선택하세요"},
 	"card.stopped":           {"Stopped by Core restart", "Core 재시작으로 중지됨"},
 	"card.confirm":           {"Select a number, then Enter to confirm", "번호로 선택한 뒤 Enter로 확인"},
-	"card.targets_cut":       {"Targets do not fit; enlarge the terminal to confirm", "대상이 잘립니다; 터미널을 넓혀야 확인할 수 있습니다"},
+	"card.targets_cut":       {"Read all targets: PgUp/PgDn", "PgUp/PgDn으로 대상을 모두 읽어 주세요"},
 	"card.question_keys":     {"Tab: next field  Enter: send  Ctrl+D: decline  Ctrl+X: cancel", "Tab: 다음 항목  Enter: 전송  Ctrl+D: 거절  Ctrl+X: 취소"},
 	"card.escape":            {"Esc: close without deciding", "Esc: 결정하지 않고 닫기"},
 	"card.open":              {"F6: waiting for me", "F6: 내 결정 대기"},

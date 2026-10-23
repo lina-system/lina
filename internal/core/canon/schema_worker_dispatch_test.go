@@ -9,7 +9,7 @@ func TestWorkerDispatchAppendsAfterMergeAuthority(t *testing.T) {
 		t.Fatal("worker dispatch must append at version 31 after unchanged merge authority version 30")
 	}
 	cfg := storeConfig(t)
-	cfg.Migrations = migrations[:30]
+	cfg.Migrations = migrationsBefore(t, WorkerDispatchSchema)
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO authority_merges(id,person,repository,base,state,record) VALUES('kept','owner','fixture/project','dev','queued',X'7b7d')`)

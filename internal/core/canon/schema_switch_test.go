@@ -24,7 +24,7 @@ func TestBackupFromPublishedSchemaUpgradesSwitchSchema(t *testing.T) {
 			t.Fatalf("published migration %d changed or switch did not follow it", want.Version)
 		}
 	}
-	cfg.Migrations = all[:45]
+	cfg.Migrations = migrationsBefore(t, WorkSwitchSchema)
 	source := openStore(t, cfg)
 	if err := source.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO skill_maintenance VALUES('operation',1,'preserved','merge',0);
