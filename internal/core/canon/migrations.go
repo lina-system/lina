@@ -70,6 +70,7 @@ func Migrations() []Migration {
 		{Version: 56, SQL: MemoryExtractionSchema},
 		{Version: 57, SQL: A2ASchema},
 		{Version: 58, SQL: recallSchema},
+		{Version: 59, SQL: retractCiteSchema},
 	}
 }
 

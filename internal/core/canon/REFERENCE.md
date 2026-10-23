@@ -58,3 +58,23 @@ table plus its four indexes occupied 364,544 bytes by `dbstat`. The source
 benchmark commit was `469337d78c8dbc1b1dce9355a9fec34e4647a704`; its three forgets
 had already run, retaining the old pointers. These are observed measurements,
 not performance thresholds or recall-quality evidence.
+
+### Citation retraction
+
+Migration 59 gives the shared index one retraction path. A removal walks `cite`
+from the target to the views that cite it through `cite_target`, so its cost is
+the number of documents it hides rather than the size of the store. The walk
+replaces the shadow-index bridges that reacted to the old memory and ledger
+indexes; those indexes keep their own triggers until the contract step.
+
+A memory removal hides the item and the items whose item evidence reaches it.
+An erased or excluded event hides the event and the summaries that cover it;
+memory items resting on it stay, as [the contract](../../../docs/design/conversation-and-memory.md#correction-retraction-and-deletion)
+requires. Recovery queues only the documents the source view admits again, and
+the view itself now walks citation ancestors instead of decoding record JSON.
+A document's own deletion also drops its queue entry, so a late drain cannot
+publish a hidden source.
+
+The scope check across holders (`memory.Store.RestrictedEvents`) reads protected
+event ids from `cite`, so it no longer decodes the JSON of every private or
+`never-leaves` item on each call.
