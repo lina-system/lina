@@ -52,3 +52,17 @@ Completed worker processes are restarted with the retained packet; Core does not
 Each generation retains its own result artifact.
 A stale completion cannot overwrite the queued correction.
 An unchanged corrected head retains its previous failed check and closes against the new receipt without a second review.
+
+### C-59 live goal sessions
+
+#766 keeps a goal step's worker process past its turn while the step is in
+progress or its pull request is operated on.
+`dispatch` adopts a delivered goal worker into `worker.Live` under the action id
+that dispatched it; every other outcome joins the process as before.
+An attempt joins its process at most once: the deferred cleanup is a no-op for
+an adopted session, and the registry ends it when the step leaves the frontier.
+A failed join stays retryable and keeps the session.
+A new attempt of the same task ends an earlier kept session before it starts, so
+one worktree never has two workers.
+The registry is per Core process; after a restart only the recorded thread and
+receipt are read.

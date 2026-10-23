@@ -295,7 +295,11 @@ func writeManifest(t *testing.T, root string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := manifest.Manifest{Version: "0.0.1-alpha.dev", Commit: strings.Repeat("a", 40), Date: "2026-10-23", Target: runtime.GOOS + "/" + runtime.GOARCH, GoToolchain: runtime.Version(), KitVersion: 1, SupportedCombinations: []manifest.Combination{}, Providers: map[string]responses.Config{"chatgpt": policy}, Binaries: []manifest.Binary{{Name: "lina", Size: size, SHA256: digest}, {Name: "lina-node", Size: 1, SHA256: strings.Repeat("b", 64)}}, SQLite: manifest.SQLite{Module: "github.com/ncruces/go-sqlite3", Version: "v0.30.5", ModuleSum: "h1:6usmTQ6khriL8oWilkAZSJM/AIpAlVL2zFrlcpDldCE=", SQLiteVersion: "3.51.2", WasmSHA256: strings.Repeat("d", 64), Execution: "wazero"}}
+	policyJSON, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := manifest.Manifest{Version: "0.0.1-alpha.dev", Commit: strings.Repeat("a", 40), Date: "2026-10-23", Target: runtime.GOOS + "/" + runtime.GOARCH, GoToolchain: runtime.Version(), KitVersion: 1, SupportedCombinations: []manifest.Combination{}, Providers: map[string]json.RawMessage{"chatgpt": policyJSON}, Binaries: []manifest.Binary{{Name: "lina", Size: size, SHA256: digest}, {Name: "lina-node", Size: 1, SHA256: strings.Repeat("b", 64)}}, SQLite: manifest.SQLite{Module: "github.com/ncruces/go-sqlite3", Version: "v0.30.5", ModuleSum: "h1:6usmTQ6khriL8oWilkAZSJM/AIpAlVL2zFrlcpDldCE=", SQLiteVersion: "3.51.2", WasmSHA256: strings.Repeat("d", 64), Execution: "wazero"}}
 	if err = m.Validate(); err != nil {
 		t.Fatal(err)
 	}
