@@ -47,7 +47,7 @@ A change that lets an internal term into the default view is a defect.
 **C-01 One main (changed).**
 One `lina core` runs per state root, as a user service under the person's OS user ([runtime.md](runtime.md#processes)).
 Inside it run these goroutine families: one lane per conversation, the background-run supervisor, the gateway adapters, the scheduler, the completion-event reactor, the client hub and the job API for `moirai-worker`.
-Children are created through `kit/proc` with owned process lifetimes and process groups (inheriting a cgroup where the service manager has one): the Claude adapter (started on first use, stopped after idle), the `grok` command, workers, plugin servers and sandboxed commands.
+Children are created through `kit/proc` with owned process lifetimes — a subreaper helper on Linux, a launchd job coalition on macOS, a Job Object on Windows — inheriting a cgroup where the service manager has one: the Claude adapter (started on first use, stopped after idle), the `grok` command, workers, plugin servers and sandboxed commands.
 There is no process per agent and no model proxy.
 A foreground `lina core` for development runs only where install created the main id file.
 
@@ -82,9 +82,9 @@ Doctor never mints an epoch, creates a lock or socket, migrates canon, repairs c
 Layout: `cmd/lina`, `cmd/lina-node`, `cmd/moirai-worker`, `protocol/schema`, `protocol/fixtures`, `persona/<preset>/`, `skills/` (built-in, embedded), `catalog/` (plan and plugin catalog sources), `adapters/claude/` (TypeScript, lockfile), and `internal/` with `core`, `node`, `tui`, `clientapi`, `buildinfo` (shared binary metadata), `design` (generated from the token source) and `fakecore`.
 Builds are static; cgo follows the SQLite binding chosen by [V2](runtime.md#runtime-acceptance).
 The kit wrapper starts bubblewrap through the explicit process supervisor ([runtime.md](runtime.md#sandbox)).
-Listed helper subcommands such as `file-tool` and `proc-supervise` are allowed; hidden re-exec modes and initialization hooks are not.
-Both `lina` and `lina-node` register `proc.SuperviseMain` and list `proc-supervise` in usage.
-The supervisor needs no additional binary or cgroup delegation.
+Listed helper subcommands such as `file-tool`, `proc-supervise` and `proc-job` are allowed; hidden re-exec modes and initialization hooks are not.
+Both `lina` and `lina-node` register `proc.SuperviseMain` and `proc.JobMain` and list `proc-supervise` and `proc-job` in usage.
+The helpers need no additional binary or cgroup delegation.
 
 Kit seams, following [runtime.md](runtime.md#lina-kit):
 
@@ -1452,8 +1452,9 @@ Implementation notes: [C-14 sandbox acceptance](../../kit/sandbox/REFERENCE.md#c
 Linux process ownership uses the explicit per-command `proc-supervise` helper with `PR_SET_CHILD_SUBREAPER`.
 It kills and waits for the whole descendant tree, including `setsid`/`setpgid` escapes and orphans, before returning.
 The tests cover owner shutdown, cancellation, normal leader exit and owner process death.
-macOS first kills the process group, then scans same-user processes for an inherited owner token using `KERN_PROCARGS2`.
-This macOS cleanup is best effort: a child that clears its environment can escape, and this remaining limitation is not accepted as complete unescapable supervision.
+macOS runs each command as its own launchd job through the explicit per-command `proc-job` helper, and owns it through the resource coalition launchd creates for that job.
+Coalition membership is fixed at process creation and inherited by every descendant, so teardown reaches a child that changes session, outlives its parent and clears its environment.
+Streams and the exit status cross the job boundary over a private Unix socket; teardown kills the coalition and boots the job out.
 
 Windows process ownership uses a Job Object assigned before the suspended leader runs.
 Descendants cannot break away by changing their console/process group, and cleanup waits for an empty job as well as the leader's exit.
