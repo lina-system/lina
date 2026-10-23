@@ -118,7 +118,7 @@ func putProjection(ctx context.Context, tx *canon.Tx, r indexRow) error {
 		}
 		b, _ := json.Marshal(d.todo)
 		next := ""
-		if d.todo.Repeat != nil {
+		if d.todo.Repeat != nil && !d.todo.Repeat.Exhausted {
 			next = d.todo.Repeat.Next
 		}
 		if _, err := tx.ExecContext(ctx, "INSERT INTO records_todo(id,fields,when_value,deadline,repeat_next) VALUES(?,?,?,?,?)", r.id, string(b), d.todo.When, d.todo.Deadline, next); err != nil {

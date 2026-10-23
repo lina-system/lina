@@ -75,6 +75,9 @@ func recordInput(raw json.RawMessage, name string) (tools.Input, error) {
 		if a.Todo != nil && a.Todo.Completion != nil || a.Completion != nil && (a.Kind != "todo" || a.Todo == nil || a.Todo.State != "completed") {
 			return tools.Input{}, tools.ErrInvalid
 		}
+		if a.Todo != nil && a.Todo.Repeat != nil && (a.Todo.Repeat.Start != "" || a.Todo.Repeat.Completed != 0 || a.Todo.Repeat.Exhausted) {
+			return tools.Input{}, tools.ErrInvalid
+		}
 		id = a.ID
 		args = a
 	}
@@ -161,6 +164,13 @@ func RegisterRecords(registry *tools.Registry, repo records.Repo, actor records.
 		}
 		specs = append(specs, spec)
 	}
+	if store, ok := repo.(*records.Store); ok {
+		extra, err := registerRecordActions(registry, store, actor)
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, extra...)
+	}
 	return specs, nil
 }
 
@@ -212,6 +222,19 @@ func WriteRecord(ctx context.Context, repo records.Repo, actor records.Actor, a 
 			a.Todo = &records.Todo{}
 		}
 		if a.Todo != nil {
+			if old := records.RepeatFromFront(front); old != nil && a.Todo.Repeat != nil && old.Rule == a.Todo.Repeat.Rule && old.FromCompletion == a.Todo.Repeat.FromCompletion && old.Zone == a.Todo.Repeat.Zone {
+				copy := *a.Todo.Repeat
+				copy.Start, copy.Completed, copy.Exhausted = old.Start, old.Completed, old.Exhausted
+				if copy.Start == "" {
+					copy.Start = old.Next
+				}
+				a.Todo.Repeat = &copy
+			}
+			if a.Todo.Repeat != nil && a.Todo.Repeat.Start == "" {
+				copy := *a.Todo.Repeat
+				copy.Start = copy.Next
+				a.Todo.Repeat = &copy
+			}
 			if a.Todo.State == "claimed" && field(front, "state") != "claimed" {
 				return RecordReceipt{}, records.ErrInvalid
 			}
@@ -269,6 +292,18 @@ func WriteRecord(ctx context.Context, repo records.Repo, actor records.Actor, a 
 	if err != nil {
 		return RecordReceipt{}, err
 	}
+	// Core may advance a recurrence while committing completion. Return the
+	// saved bytes, not the model's pre-advance request.
+	if a.Kind == "todo" && a.Todo != nil && a.Todo.State == "completed" && a.Todo.Repeat != nil {
+		r, current, readErr := repo.Read(ctx, c.ID)
+		if readErr != nil {
+			return RecordReceipt{}, errors.Join(records.ErrUncertain, readErr)
+		}
+		if current != rev {
+			return RecordReceipt{}, records.ErrUncertain
+		}
+		c.Data = r.Data
+	}
 	return RecordReceipt{ID: c.ID, Revision: rev, Markdown: string(c.Data)}, nil
 }
 
@@ -317,5 +352,6 @@ func RecordDeclarations() []provider.ToolDecl {
 		json.RawMessage(`{"type":"function","name":"write_record","description":"Save or revise a memo or knowledge document. For a new record use empty id and revision; Core allocates its id. For an edit use the id and latest revision from read_record and keep its kind. Supply the complete title and Markdown note. A stale revision or outside change is refused; read again before editing. Each saved change returns its id, revision and Markdown.","parameters":{"type":"object","properties":{"id":{"type":"string"},"revision":{"type":"string"},"kind":{"type":"string","enum":["memo","document"]},"title":{"type":"string"},"note":{"type":"string"}},"required":["id","revision","kind","title","note"],"additionalProperties":false}}`),
 	}
 	extendTodoDeclarations(declarations)
-	return declarations
+	declarations = append(declarations, recordActionDeclarations()...)
+	return append(declarations, candidateDeclarations()...)
 }

@@ -62,6 +62,13 @@ func TestM2TodoTimestampsInstalledCore(t *testing.T) {
 				}
 				saved[title] = receipt
 				todo.State = "open"
+				if todo.Repeat != nil {
+					// Capture preserves the supplied date and records the series
+					// anchor for later occurrence-only rescheduling.
+					repeat := *todo.Repeat
+					repeat.Start = repeat.Next
+					todo.Repeat = &repeat
+				}
 				want[receipt.ID] = todo
 			},
 		})

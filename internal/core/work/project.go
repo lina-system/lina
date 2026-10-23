@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package work
 
-import "reflect"
+import (
+	"reflect"
+	"strings"
+	"time"
+)
 
 // Project replays facts without clocks, database reads or worker calls.
 func Project(events []Event) (Card, error) {
@@ -17,6 +21,16 @@ func Project(events []Event) (Card, error) {
 	return c, nil
 }
 func advance(c *Card, e Event) error {
+	if e.Kind == "record_occurrence" {
+		v := e.Occurrence
+		if v == nil || v.Record == "" || e.TaskID != "record:"+v.Record || !strings.HasPrefix(e.Key, "record-occurrence:") || (v.Reason != "completed" && v.Reason != "advanced") || v.From == "" || v.Next == "" {
+			return ErrInvalid
+		}
+		if _, err := time.Parse(time.RFC3339Nano, v.At); err != nil {
+			return ErrInvalid
+		}
+		return nil
+	}
 	if e.Kind != "created" && (c.Task.ID == "" || e.TaskID != c.Task.ID) {
 		return ErrState
 	}

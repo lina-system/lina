@@ -333,6 +333,11 @@ window does not block a healthy weekly window; only exhausted windows determine
 when the worker becomes eligible again. A stop without an identified exhausted
 window adds an unknown-window block with no reset, preserving the reported
 measurements rather than assigning the stop to a healthy window.
+Quota freshness is checked for each provider, account and window independently.
+A newer observation replaces only its matching window; an unchanged, older or
+missing sibling cannot discard that update or clear another window's block.
+An unknown-window stop inferred from an error clears on a newer observation
+for that account, without requiring every reported window to be refreshed.
 
 | Path | What the provider reports | Source of the rows |
 | --- | --- | --- |

@@ -4,6 +4,7 @@ package work
 
 import (
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/result"
 	"time"
 )
@@ -116,6 +117,7 @@ type Card struct {
 // Event has one payload selected by Kind. Events are admitted by Service only;
 // clients and workers never append arbitrary events or acceptance judgments.
 type Event struct {
+	Occurrence   *canon.RecordOccurrence   `json:"occurrence,omitempty"`
 	DoneRequest  *result.CompletionRequest `json:"done_request,omitempty"`
 	Completion   *result.Completion        `json:"completion,omitempty"`
 	Head         string                    `json:"head,omitempty"`
