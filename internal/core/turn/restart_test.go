@@ -50,6 +50,7 @@ func inputEvent(t *testing.T, db *canon.Store) string {
 // The parent waits for a committed output item, then sends SIGKILL. No cleanup
 // from Store.Run or a graceful process exit can manufacture the recovery proof.
 func TestKillDuringTurnRecordsOneLineWithoutReplay(t *testing.T) {
+	t.Parallel()
 	if root := os.Getenv("LINA_STEERING_KILL_ROOT"); root != "" {
 		db := restartDB(t, root, 1)
 		event := inputEvent(t, db)
@@ -157,6 +158,7 @@ func TestKillDuringTurnRecordsOneLineWithoutReplay(t *testing.T) {
 }
 
 func TestRecoveryNoticeAndTerminalStateCommitTogether(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	eventID := inputEvent(t, db)
 	store := turn.New(db)

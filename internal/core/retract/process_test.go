@@ -12,6 +12,7 @@ import (
 )
 
 func TestRemovalCrashProcess(t *testing.T) {
+	t.Parallel()
 	if root := os.Getenv("LINA_RETRACT_CRASH_ROOT"); root != "" {
 		db, _ := openGeneration(t, root)
 		seedProtocol(t, db)
@@ -29,6 +30,7 @@ func TestRemovalCrashProcess(t *testing.T) {
 	}
 	for _, stage := range []string{"after_sync", "after_apply"} {
 		t.Run(stage, func(t *testing.T) {
+			t.Parallel()
 			root := filepath.Join(t.TempDir(), "state")
 			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestRemovalCrashProcess$")
 			cmd.Env = append(os.Environ(), "LINA_RETRACT_CRASH_ROOT="+root, "LINA_RETRACT_CRASH_STAGE="+stage)

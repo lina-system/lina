@@ -31,8 +31,9 @@ import (
 var v1Owner = flag.Bool("v1-owner-signin", false, "run the real owner-assisted ChatGPT acceptance check")
 var v1State = flag.String("v1-state-root", "", "private absolute state directory outside the checkout")
 var v1Output = flag.String("v1-report", "", "new private observation JSON file outside the checkout")
-var v1Mode = flag.String("v1-mode", "local", "local loopback listener or pasted redirect")
+var v1Mode = flag.String("v1-mode", "local", "local loopback listener, pasted redirect, or request-surface")
 var v1Model = flag.String("v1-model", "", "model slug from the signed-in account catalog; empty selects the first listed model")
+var v1BaseURL = flag.String("v1-base-url", "", "request-surface mode: explicit Responses-compatible endpoint, read from LINA_RESPONSES_API_KEY")
 
 type v1Leaser struct{}
 
@@ -46,8 +47,8 @@ func TestV1OwnerSignIn(t *testing.T) {
 	if !*v1Owner {
 		t.Skip("requires owner ChatGPT sign-in")
 	}
-	if *v1Mode != "local" && *v1Mode != "pasted" {
-		t.Fatal("v1-mode must be local or pasted")
+	if *v1Mode != "local" && *v1Mode != "pasted" && *v1Mode != "request-surface" {
+		t.Fatal("v1-mode must be local, pasted or request-surface")
 	}
 	if !filepath.IsAbs(*v1State) || !filepath.IsAbs(*v1Output) {
 		t.Fatal("state and observation paths must be absolute")
@@ -72,6 +73,10 @@ func TestV1OwnerSignIn(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
+	if *v1Mode == "request-surface" {
+		v1RequestSurface(ctx, t)
+		return
+	}
 	controls, err := ctlfiles.Open(*v1State)
 	if err != nil {
 		t.Fatal("cannot open acceptance controls")
@@ -227,11 +232,11 @@ func TestV1OwnerSignIn(t *testing.T) {
 		t.Fatal("persisted rotated credential unavailable")
 	}
 	signin["refresh_rotation"] = true
-	model, err := v1SelectModel(ctx, credential, *v1Model)
+	model, err := v1SelectModel(ctx, credential, *v1Model, "")
 	if err != nil {
 		t.Fatal("account model catalog unavailable or selected model not listed")
 	}
-	observed, err := probeV1Responses(ctx, credential, model, nil)
+	observed, err := probeV1Responses(ctx, credential, model, v1Endpoint{})
 	report["responses"] = observed
 	report["model"] = model
 	if err != nil {
@@ -278,8 +283,50 @@ func (c *v1Client) call(kind protocol.Kind, payload protocol.Payload) protocol.E
 	c.epoch = answer.Result.Epoch
 	return answer.Result
 }
-func v1SelectModel(ctx context.Context, c provider.Credential, selected string) (provider.ModelRef, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.openai.com/v1/models", nil)
+
+// v1RequestSurface observes a Responses request surface without LINA's sign-in
+// route. It reads the credential from LINA_RESPONSES_API_KEY, never records it,
+// and states in the observation that the endpoint is not LINA's own route.
+func v1RequestSurface(ctx context.Context, t *testing.T) {
+	baseURL := strings.TrimRight(*v1BaseURL, "/")
+	key := os.Getenv("LINA_RESPONSES_API_KEY")
+	if *v1BaseURL == "" || key == "" {
+		t.Fatal("request-surface mode needs -v1-base-url and LINA_RESPONSES_API_KEY")
+	}
+	report := map[string]any{"check": "V1 ChatGPT Responses request surface", "status": "partial_live_observation", "mode": "request-surface", "observed_at": time.Now().UTC().Format(time.RFC3339), "lina_sign_in_route": false, "route": baseURL, "sign_in": map[string]any{"dynamic_registration": nil, "loopback_redirect": nil, "pasted_redirect": nil, "granted_scope_check": nil, "id_token_verification": nil, "refresh_rotation": nil}, "responses": nil}
+	output, err := os.OpenFile(*v1Output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal("observation file must be new and writable")
+	}
+	defer func() {
+		defer output.Close()
+		encoder := json.NewEncoder(output)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(report); err != nil {
+			t.Error("cannot write observation")
+		}
+		output.Sync()
+	}()
+	credential := provider.NewCredential(provider.AccountID("v1-request-surface"), provider.APIKey, key)
+	model, err := v1SelectModel(ctx, credential, *v1Model, baseURL)
+	if err != nil {
+		t.Fatal("endpoint model catalog unavailable or selected model not listed")
+	}
+	report["model"] = model
+	observed, err := probeV1Responses(ctx, credential, model, v1Endpoint{baseURL: baseURL})
+	report["responses"] = observed
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("Request-surface observation written. The sign-in flow, LINA's own route and the remote client still require their own evidence; do not infer them from this run.")
+}
+
+func v1SelectModel(ctx context.Context, c provider.Credential, selected, baseURL string) (provider.ModelRef, error) {
+	modelsURL := "https://api.openai.com/v1/models"
+	if baseURL != "" {
+		modelsURL = strings.TrimRight(baseURL, "/") + "/models"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
 	if err != nil {
 		return "", errV1Unavailable
 	}
@@ -295,8 +342,11 @@ func v1SelectModel(ctx context.Context, c provider.Credential, selected string) 
 	if response.StatusCode != 200 {
 		return "", errV1Rejected
 	}
+	// The account catalog lists slugs with a visibility; an explicit
+	// Responses-compatible endpoint lists ids.
 	var catalog struct {
 		Models []struct{ Slug, Visibility string } `json:"models"`
+		Data   []struct{ ID string }               `json:"data"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(nil, response.Body, 1<<20)).Decode(&catalog) != nil {
 		return "", errV1Unavailable
@@ -304,6 +354,11 @@ func v1SelectModel(ctx context.Context, c provider.Credential, selected string) 
 	for _, model := range catalog.Models {
 		if model.Visibility == "list" && model.Slug != "" && (selected == "" || selected == model.Slug) {
 			return provider.ModelRef(model.Slug), nil
+		}
+	}
+	for _, model := range catalog.Data {
+		if model.ID != "" && (selected == "" || selected == model.ID) {
+			return provider.ModelRef(model.ID), nil
 		}
 	}
 	return "", errV1Incomplete

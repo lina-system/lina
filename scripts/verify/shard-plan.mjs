@@ -139,7 +139,7 @@ export function distinctScenarios(scenarios) {
 }
 
 export function planComponents({ cwd, scope, inventory = readInventory, unitCount = 4,
-  e2eCounts = { m1: 6, m2: 2, m3: 1 }, timings }) {
+  e2eCounts = { m1: 6, m2: 2, m3: 2 }, timings }) {
   if (!scope.components) return { tasks: [], selectedComponents: [], scenarios: [], e2eReason: 'no-components' };
   const data = inventory(cwd);
   const byPath = new Map(data.packages.map(pkg => [pkg.path, pkg]));

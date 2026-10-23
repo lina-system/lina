@@ -93,6 +93,7 @@ type conversationRuntime struct {
 	coordinator     *conversationRuntime
 
 	materials        *conversationMaterials
+	miniApps         *miniAppRuntime
 	recallStop       context.CancelFunc
 	recallDone       chan struct{}
 	assets           *assets.Store
@@ -148,7 +149,7 @@ type conversationRuntime struct {
 
 func conversationPath(root string) string { return filepath.Join(root, "canon", "canon.sqlite") }
 
-func startConversation(ctx context.Context, root, main string, epoch uint64, controls *ctlfiles.Store, route *modelpath.ResponsesConfig, activities *lifecycle.ActivityRegistry, person string, transport, channelTransport http.RoundTripper) (*conversationRuntime, error) {
+func startConversation(ctx context.Context, root, main string, epoch uint64, controls *ctlfiles.Store, route *modelpath.ResponsesConfig, activities *lifecycle.ActivityRegistry, person string, transport, channelTransport http.RoundTripper, tailnetIP string) (*conversationRuntime, error) {
 	if err := os.MkdirAll(filepath.Dir(conversationPath(root)), 0700); err != nil {
 		return nil, err
 	}
@@ -279,6 +280,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err := addOperations(&r.identity, clientsrv.RecordOperations(r)); err != nil {
 		return nil, err
 	}
+	if err := addOperations(&r.identity, clientsrv.MiniAppOperations(r)); err != nil {
+		return nil, err
+	}
 	if err := addOperations(&r.identity, clientsrv.WebOperations(r)); err != nil {
 		return nil, err
 	}
@@ -388,6 +392,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startTimers(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.startMiniApps(ctx, tailnetIP); err != nil {
+		return nil, err
+	}
 	if err = r.resumeWorkerCompletions(ctx); err != nil {
 		return nil, err
 	}
@@ -397,6 +404,10 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.miniApps != nil {
+		r.miniApps.host.Close()
+		r.miniApps = nil
+	}
 	if r.publications != nil && r.publications.stop != nil {
 		r.publications.stop()
 		select {

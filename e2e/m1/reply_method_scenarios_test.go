@@ -159,6 +159,13 @@ func TestReplyMethodsAgentIsolationAndRestart(t *testing.T) {
 	}))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
+	// Eleven reply scenarios over three Core boots and twenty-four provider
+	// rounds exceed the shared 30-second default under foundation's parallel
+	// shards; size this scenario to its work. Each process and connection
+	// keeps its operationTimeout bound.
+	ctx, cancel := context.WithTimeout(t.Context(), 12*operationTimeout)
+	t.Cleanup(cancel)
+	h.ctx = ctx
 	core := start(true)
 	c, _ := conversationClient(t, h)
 	person := c.Welcome.PersonID
