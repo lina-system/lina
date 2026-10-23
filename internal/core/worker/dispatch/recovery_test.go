@@ -150,10 +150,12 @@ func TestSuccessfulRecoveredDispatchKeepsUnknownEffects(t *testing.T) {
 		effectsKnown bool
 		pending      map[string]bool
 		wantState    string
+		live         bool
 	}{
 		{name: "unconfirmed tool effects", wantState: "unknown"},
 		{name: "retained request", effectsKnown: true, pending: map[string]bool{"request": true}, wantState: "unknown"},
 		{name: "settled", effectsKnown: true, wantState: "finished"},
+		{name: "live delivery retains normal validation", live: true, wantState: "finished"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := store(t)
@@ -168,6 +170,9 @@ func TestSuccessfulRecoveredDispatchKeepsUnknownEffects(t *testing.T) {
 				t.Fatal(err)
 			}
 			r := Record{ID: "task", Attempt: 1, State: "unknown", Thread: &thread, PendingRequests: tc.pending, Announced: true}
+			if !tc.live {
+				r.ObserveEpoch = 2 // The restart observer persists this before reading.
+			}
 			if err := db.Write(ctx, func(tx *canon.Tx) error {
 				_, err := tx.ExecContext(ctx, "INSERT INTO worker_dispatch VALUES('task','origin','repo','unknown',?)", mustJSON(r))
 				return err

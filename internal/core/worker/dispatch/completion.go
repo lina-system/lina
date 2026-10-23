@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
 )
 
@@ -35,7 +36,9 @@ func (s *Service) finish(ctx context.Context, r Record, runID, status string, re
 				return err
 			}
 		}
-		if r.Snapshot != nil {
+		// Restart observation must settle effects even when the turn succeeded.
+		// Live successful delivery retains its process/result validation path.
+		if r.Snapshot != nil && r.Snapshot.Finish != nil && (r.ObserveEpoch != 0 || r.Snapshot.Finish.Status != worker.Done) {
 			var raw []byte
 			var card work.Card
 			if err := tx.QueryRowContext(ctx, "SELECT record FROM work_cards WHERE task_id=?", r.ID).Scan(&raw); err != nil {
