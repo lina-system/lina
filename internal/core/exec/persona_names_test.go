@@ -3,6 +3,8 @@ package exec
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -12,6 +14,63 @@ import (
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/retract"
 )
+
+func TestNameWriterPreservesCanonicalInputOrder(t *testing.T) {
+	for _, nanos := range []int64{0, 100} {
+		t.Run(time.Duration(nanos).String(), func(t *testing.T) {
+			db := memoryDB(t)
+			store, err := agents.Open(t.TempDir(), db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			flow := NewPersona(db, store, nil)
+			var scopes []PersonaScope
+			for _, name := range []string{"First", "Second"} {
+				a, err := store.Create(t.Context(), agents.Create{Name: name, PersonID: "person"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				scopes = append(scopes, PersonaScope{Agent: a.ID, Person: "person", Conversation: "chat:" + a.ID, Revision: a.Revision})
+			}
+			// Admit both corrections before either finishes. IDs deliberately sort
+			// opposite to input order; the zero case has identical timestamps.
+			names := []string{"Cedar", "Maple", "Birch"}
+			ids := []string{"z-first", "y-older", "a-later"}
+			for i, name := range names {
+				scope := scopes[i%2]
+				at := time.Unix(10, int64(i)*nanos)
+				_, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: ids[i], ConversationID: scope.Conversation, AgentID: scope.Agent, PersonID: scope.Person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Body: "The computer is " + name + "."})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			write := func(i int) (RememberReceipt, error) {
+				scope := scopes[i%2]
+				scope.Input = ids[i]
+				return flow.RememberName(t.Context(), scope, NameChange{Subject: "computer", Current: names[i], Quote: "The computer is " + names[i] + "."})
+			}
+			first, err := write(0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			latest, err := write(2)
+			if err != nil || latest.ID != first.ID || latest.Revision != 2 {
+				t.Fatalf("later correction: %+v %v", latest, err)
+			}
+			if receipt, err := write(1); !errors.Is(err, memory.ErrEvidence) || receipt.Remembered() {
+				t.Fatalf("older same-second input overwrote later correction: %+v %v", receipt, err)
+			}
+			if repeated, err := write(2); err != nil || repeated.ID != latest.ID || repeated.Revision != latest.Revision {
+				t.Fatalf("retry changed revision: %+v %v", repeated, err)
+			}
+			hits, err := memory.New(db).Names(t.Context(), memory.RecallScope{Agent: scopes[1].Agent, Person: "person"}, 100)
+			if err != nil || len(hits) != 1 || hits[0].Revision != latest.Revision || hits[0].Name.Current != "Birch" || !slices.Equal(hits[0].Name.RetiredAliases, []string{"Cedar"}) || len(hits[0].Evidence) != 2 {
+				t.Fatalf("stale write changed stored name: %+v %v", hits, err)
+			}
+		})
+	}
+}
 
 func TestNameWriterUsesConfirmedPersonAndPreservesCorrection(t *testing.T) {
 	db := memoryDB(t)

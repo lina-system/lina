@@ -637,3 +637,41 @@ func TestPlanningUpgradePreservesPublishedWorkSwitch(t *testing.T) {
 		t.Fatal("published switch history guard lost", err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedHandoffs(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:46]...), Migration{Version: 47, SQL: handoffsSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO artifact_changes(person,kind,artifact,owner,work_id,done) VALUES('person','record','published','agent','work','accepted');`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var owner, work, done string
+		if err := tx.QueryRowContext(t.Context(), "SELECT owner,work_id,done FROM artifact_changes WHERE person='person' AND artifact='published'").Scan(&owner, &work, &done); err != nil {
+			return err
+		}
+		if owner != "agent" || work != "work" || done != "accepted" {
+			t.Fatal("published artifact ownership changed")
+		}
+		for _, table := range []string{"exch_origins", "exch_notices", "plan_drafts"} {
+			var n int
+			if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
+				return err
+			}
+			if n != 0 {
+				t.Fatal("upgrade created rows", table, n)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

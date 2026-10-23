@@ -58,7 +58,8 @@ func Migrations() []Migration {
 		{Version: 44, SQL: namingSchema},
 		{Version: 45, SQL: recordOperationsSchema},
 		{Version: 46, SQL: WorkSwitchSchema},
-		{Version: 47, SQL: ResultsSchema + PlanningSchema},
+		{Version: 47, SQL: handoffsSchema},
+		{Version: 48, SQL: ResultsSchema + PlanningSchema},
 	}
 }
 
@@ -96,7 +97,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 		{34, "waiting_decisions"},
 		{46, "work_worker_reservations"}, {46, "work_switches"}, {46, "work_switch_tasks"}, {46, "work_switch_events"},
-		{47, "result_heads"}, {47, "plan_drafts"}, {47, "plan_confirmations"}, {47, "plan_rejections"},
+		{48, "result_heads"}, {48, "plan_drafts"}, {48, "plan_confirmations"}, {48, "plan_rejections"},
 		{28, "work_waiting_rounds"}, {28, "work_waiting_decisions"},
 		{38, "records_todo"},
 		{36, "skill_maintenance"}, {36, "skill_maintenance_members"}, {36, "skill_maintenance_notices"},
@@ -106,6 +107,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 		{35, "authority_delegations"}, {35, "coding_managers"}, {35, "coding_assignments"},
 		{37, "work_events"}, {37, "work_records"},
 		{44, "naming_breaches"},
+		{47, "exch_origins"}, {47, "exch_notices"}, {47, "artifact_changes"},
 		{42, "agent_starters"}, {42, "agent_selection"},
 		{45, "record_operations"}, {45, "record_candidates"},
 	} {
