@@ -90,7 +90,16 @@ func (c *Client) Permissions() <-chan *Permission { return c.permissions }
 func (c *Client) Requests() <-chan *Request { return c.incoming }
 func (c *Client) Done() <-chan struct{}     { return c.done }
 func (c *Client) Err() error                { c.mu.Lock(); defer c.mu.Unlock(); return c.failure }
-func (c *Client) Close() error              { c.fail(io.ErrClosedPipe); <-c.readDone; c.stop(); return nil }
+
+// Close waits for the read loop and transport teardown, including when another
+// goroutine has already failed the connection and started closing the transport.
+func (c *Client) Close() error {
+	c.fail(io.ErrClosedPipe)
+	<-c.readDone
+	<-c.transportDone
+	c.stop()
+	return nil
+}
 func (c *Client) fail(err error) {
 	c.mu.Lock()
 	if c.failure != nil {
@@ -275,6 +284,9 @@ func (c *Client) SetConfigOption(ctx context.Context, p SetSessionConfigOptionRe
 	return out, err
 }
 func idKey(raw json.RawMessage) (string, error) {
+	if bytes.Equal(raw, []byte("null")) {
+		return "null", nil
+	}
 	var s string
 	if len(raw) > 0 && raw[0] == '"' {
 		if err := json.Unmarshal(raw, &s); err != nil {
