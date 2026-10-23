@@ -161,7 +161,7 @@ func scriptedCodingManager(t *testing.T, w http.ResponseWriter, request any) boo
 	return true
 }
 
-func assertCodingOwnership(t *testing.T, h *harness, owner, origin string, verified bool) {
+func assertCodingOwnership(t *testing.T, h *harness, owner, origin string, verified bool, managerTurns int) {
 	t.Helper()
 	db, close, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
@@ -199,7 +199,7 @@ func assertCodingOwnership(t *testing.T, h *harness, owner, origin string, verif
 			t.Fatalf("coding work lacks dev judgment or falsely merged: %+v", card)
 		}
 		var completed int
-		if err = db.QueryRow("SELECT count(*) FROM turn_runs WHERE conversation=? AND state='completed'", dispatched.Manager).Scan(&completed); err != nil || completed != 2 {
+		if err = db.QueryRow("SELECT count(*) FROM turn_runs WHERE conversation=? AND state='completed'", dispatched.Manager).Scan(&completed); err != nil || completed != managerTurns {
 			t.Fatalf("manager assignment/delivery turns=%d %v", completed, err)
 		}
 	}

@@ -547,7 +547,12 @@ not a path the worker must read or a skill to install. Queued dispatch stores
 that snapshot with the work definition, so later catalog edits, removal and
 process restarts cannot substitute another body. Replayed admissions first
 match the persisted origin and complete definition, then reuse that snapshot;
-only new admissions resolve the current catalog. The Codex `worker_start` session path
+only new admissions resolve the current catalog. A saved dispatch admission has
+already passed its manager decision. An identical retry returns that admission
+without assigning or running the manager again, including admissions saved before
+task branches included the task ID. The original manager definition and ownership
+remain intact. A retry cannot reset execution state, and queued work still waits
+for its conversation tool receipt to commit. The Codex `worker_start` session path
 uses the same resolver and exposes the same packet through `read_projection`.
 The existing `dispatch_work` definition carries these fields for Antigravity.
 
@@ -1084,6 +1089,12 @@ Retiring an obsolete task repair assessment clears its assessment marker in
 the same transaction. Once the current definition is assessed, an unchanged
 failed task receives a fresh repair assessment, including after restart.
 
+A canonical correction with an invalid done condition or criteria blocks only
+its own goal, with a row asking for a corrected record. Core retires its
+undispatched work and keeps observing dispatched effects. Other goals continue
+on every step and after restart. A valid record revision releases this fence
+through the usual manager assessment; invalid criteria never count as evidence.
+
 An action awaiting authorization before dispatch is recorded separately from an executed action whose outcome needs the person. A committed approval-change signal for that action requeues its authority check; the signal itself grants nothing. Core rechecks the exact action's current authority before executing it once, including after restart. A signal arriving during the authority check or while its dispatch is unwinding is retained as a wake, without waiting for a sweep. A revision retires an obsolete authorization wait like other undispatched work. An executed or uncertain effect is never requeued by an approval hint.
 
 Before observing an action from an earlier snapshot, Core reads its current
@@ -1197,13 +1208,14 @@ Every ready task starts at once, limited only by the person's quota and by what 
 - Ready tasks are placed in a stable order: tasks of goals with a person's deadline first, then by dependency depth, then by the age of the goal. Within that order, a task goes to the Node with the most headroom that has a suitable worker, and Nodes kept for the person's own use come last.
 - Dependency depth visits each task and its edges at most once per goal during a derivation, reusing shared ancestors across ready tasks. Depths are recomputed from each new snapshot and are never shared between goals.
 - Background runs and plugin effects run in Core and use the person's model and service accounts. They follow the run limits of Background runs and the account's own rate limits, and they never take a Node slot.
-- When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work.
+- When capacity shrinks, Core starts nothing new on that Node and does not stop healthy work. Before claiming a queued worker action, including after restart or an authorization wait, Core rechecks the current host report, worker availability, quota and capacity against the other reservations. An ineligible unstarted award is retired and its task returns to its runnable stage in the same transaction, without spending an attempt or recovery. Derivation places it again or records a host-capacity wait; claimed effects keep their reservations until observed.
 - A ready task that cannot start has one visible reason, as Parallel hand-off says.
 
 ### Recovery
 
 - The goal definition is canon in the 일 or 목표 record in the records repository; the work ledger holds its execution state (criteria status and evidence, tasks, waits and state). A restart loses no goal: Core resolves the goal record by the id and revision referenced in the ledger and reads its execution state from the ledger, reconciles effects whose outcome is unknown, then derives the next actions of every goal that is not final.
 - Every derived action has an identity bound to the goal, the task, its attempt, its stage and the head or revision it acts on. Replaying an event or running two derivations at once never dispatches the same action twice.
+- Work events are append-only by both id and sequence. An insert that would replace either key is refused without changing the prior event or its projection.
 - Task-level recovery is the one recovery of Stall and failure. A goal does not add attempts on top: when a task's recovery is exhausted, the goal is `blocked` on that task while its independent tasks continue.
 - A wait survives restart with its deadline. A timer that should have fired while Core was down fires once at startup.
 - File delivery recovery runs before work tools admit new calls: first report interrupted copy intents in the work ledger, then reconcile their authority reservations as described under Evidence before close. An unrecovered copy keeps its reservation. A cancelled invocation is never replayed; a fresh authorized call preserves partial bundles or reuses a committed landing after readback.
