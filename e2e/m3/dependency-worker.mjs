@@ -87,7 +87,7 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
           send({method:'turn/completed',params:{threadId:thread.id,turn:thread.turn}});
         }
       } else if(kind==='question') {
-        if(message.result?.answers?.answer?.answers?.[0]!=='confirmed')throw new Error('question answer did not reach worker');
+        if(messageText(message.result?.answers?.answer?.answers?.[0]??'')!=='confirmed')throw new Error('question answer did not reach worker');
         send({id:`${thread.id}:approval`,method:'item/commandExecution/requestApproval',params:{threadId:thread.id,turnId:thread.turn.id,itemId:'write',startedAtMs:1800000000000,command:'write scheduled artifact',cwd:thread.cwd,availableDecisions:['accept','decline']}});
       } else if(kind==='approval') {
         if(message.result?.decision!=='accept')throw new Error('approval did not reach worker');
@@ -123,8 +123,8 @@ if (mode === '--version') { process.stdout.write('codex-cli 99.0.0\n'); } else i
       }
       case 'turn/steer': {
         const thread=threads.get(p.threadId);
-        // Core labels push steering with its message id; the owner text is last.
-        if(!cfg.outcomes || thread.turn.id!==p.expectedTurnId || thread.turn.status!=='inProgress' || p.input[0].text.split('\n\n').pop()!=='Report the outcome.')throw new Error('invalid owner follow-up');
+        // Core frames push steering with its sender and message identity.
+        if(!cfg.outcomes || thread.turn.id!==p.expectedTurnId || thread.turn.status!=='inProgress' || messageText(p.input[0].text)!=='Report the outcome.')throw new Error('invalid owner follow-up');
         send({id,result:{turnId:thread.turn.id}});
         callTool(thread,'read_projection',{});
         return;

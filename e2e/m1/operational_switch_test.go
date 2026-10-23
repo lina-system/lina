@@ -31,7 +31,7 @@ import (
 // switch on the real Core socket: missing approval, a failed transfer with
 // explicit service restoration, a held external task, successful transfer, and
 // a real Core-launched fixture worker output and receipt. It covers locally
-// refused worker input, a confirmed terminal provider connection failure,
+// held worker input, a confirmed terminal provider connection failure,
 // restart with an outstanding execution, rollback refusal until drain, and
 // preservation of originals, Git branches, worktree registrations, receipts and
 // journals after explicit rollback. The external coordinator is synthetic; its
@@ -172,13 +172,25 @@ func testOperationalSwitch(t *testing.T, outcome string) {
 				return
 			}
 			expected := "ok"
-			if n == 2 || n == 5 {
+			if n == 2 {
 				expected = "failed"
 			}
 			if result.Code != expected {
 				t.Errorf("worker step %d: %s", n, item.Output)
 				emitResponse(w, "failed", true)
 				return
+			}
+			if n == 5 {
+				steering, ok := result.Output["steering"].([]any)
+				if !ok || len(steering) != 1 {
+					t.Error("missing held input", result.Output)
+					emitResponse(w, "failed", true)
+					return
+				}
+				message, ok := steering[0].(map[string]any)
+				if !ok || message["state"] != "held" || message["reason"] != "waiting_for_answer" {
+					t.Error("input bypassed waiting worker", steering)
+				}
 			}
 			if n >= 4 && n != 5 {
 				control = map[string]any{"session": result.Output["session"], "turn": result.Output["turn"], "generation": result.Output["generation"], "binding": result.Output["binding"]}

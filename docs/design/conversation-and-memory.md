@@ -765,6 +765,7 @@ Core's `observe_health` currently observes records-index head and row-count cons
 Core mechanisms it relies on: the to-do record and the candidate objects of [work-and-delegation.md](work-and-delegation.md#the-to-do-record), the undo log, reconciliation of the 오늘 (today) view against linked threads, a cross-channel thread ledger, a decision store and per-class rejection counters.
 
 1. Candidates come from what the person says and from sources the person does not tick off (chat, mail, calendar), not only from "add" commands.
+   A proposal equivalent to an open to-do remains a pending candidate under the records admission checks. The input-binding duplicate guard does not discard that proposal or create a new work binding for it.
 2. A 할 일 (to-do) is a named object plus an action. An unknown state becomes "check the status of X".
 3. Areas come from the person's own classification statements, stored as rules and applied by default. What the person says must never be mixed stays separate.
 4. Reversible writes (add, edit, complete, re-date, label, note) are done at once and reported in one line with an undo handle. Sending in the person's name, calendar changes, deletion, money, publishing and sharing a file link show the full content and wait for a yes.

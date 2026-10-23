@@ -4,6 +4,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,7 +154,10 @@ func coordinateBeforeACPDeath(t *testing.T, h *harness, fixture string) {
 		Accepted bool
 		EventID  string `json:"event_id"`
 	}
-	if json.Unmarshal([]byte(mcp.Content[0].Text), &ack) != nil || !ack.Accepted || ack.EventID == "" {
+	var frame struct {
+		Text string `xml:"text"`
+	}
+	if xml.Unmarshal([]byte(mcp.Content[0].Text), &frame) != nil || json.Unmarshal([]byte(frame.Text), &ack) != nil || !ack.Accepted || ack.EventID == "" {
 		t.Fatal("coordination not acknowledged")
 	}
 	// The real Core acknowledged the call, committed its request and cleared

@@ -258,6 +258,15 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 			matches = append(matches, binding.Duplicates(state, taskTitle, choice.Close)...)
 		}
 		if len(matches) > 0 && strings.TrimSpace(choice.Difference) == "" {
+			if c.Name == "propose_candidate" {
+				for _, match := range matches {
+					if match.Kind == "todo" && strings.ToLower(strings.Join(strings.Fields(match.Title), " ")) == strings.ToLower(strings.Join(strings.Fields(title), " ")) {
+						// Records retains an equivalent proposal as pending and
+						// checks duplication again before any automatic adoption.
+						return nil
+					}
+				}
+			}
 			raw, _ := json.Marshal(map[string]any{"code": "open_item_matches", "matches": matches, "next": "Bind to an existing match, or use bind_input to record why the new item differs."})
 			result := loop.Result{ID: c.ID, Code: loop.Invalid, Output: raw}
 			return &result

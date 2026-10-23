@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -85,7 +86,15 @@ func codexSessionFixture() {
 			if count == 1 {
 				var inputs []struct{ Text string }
 				_ = json.Unmarshal(r.Params["input"], &inputs)
-				switchFailures = len(inputs) == 1 && inputs[0].Text == "switch refusal and terminal connection failure"
+				if len(inputs) == 1 {
+					var frame struct {
+						Text string `xml:"text"`
+					}
+					if xml.Unmarshal([]byte(inputs[0].Text), &frame) != nil {
+						os.Exit(96)
+					}
+					switchFailures = frame.Text == "switch refusal and terminal connection failure"
+				}
 			}
 			turn = fmt.Sprintf("turn-%d", count)
 			state = "active"
