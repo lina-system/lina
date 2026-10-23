@@ -929,7 +929,7 @@ Core exposes `worker_start`, `worker_input`, `worker_interrupt` and
 receipts. These operate installed Codex sessions in an explicitly supplied work
 directory. They do not implement the scheduler or the `dispatch_work` definition
 flow. Each session belongs to its originating person, agent and conversation;
-control requires the current turn, process generation and binding epoch.
+For a delegated code goal, the durable coding assignment keeps the original requester separate from the manager that owns the task. Both bound conversations can inspect its worker, read its files and control it; unrelated conversations cannot. Owner follow-ups steer an active dispatched turn without starting another, and cancellation stays with its dispatcher rather than the scheduled-card path. Core checks the assignment’s person, owner and manager conversation before recovering the requester, including after restart. Control requires the current turn, process generation and binding epoch.
 User cancellation additionally quotes the current user input. Starting a session
 is recorded as a launch receipt, never as verified delivery.
 
@@ -1166,6 +1166,16 @@ requesting a capability that is not implemented fails before dispatch.
 #### Claude Code through ACP
 
 Claude Code has no ACP mode of its own. The `claude-agent-acp` program (Apache-2.0, from the ACP project) wraps it. The LINA release pins it with its own lockfile, like the Claude adapter, and Core installs it on first use of the Claude Code worker with lifecycle scripts disabled and optional packages omitted, so the Claude Code binary that its package can carry is never installed ([runtime.md](runtime.md#installed-tools)). It runs on the person's Node.js. It always runs the person's installed `claude`, never the copy of Claude Code that its package can carry, so the person's version, login, settings, plugins and permission mode stay in use. It starts Claude Code with its permission prompts routed over ACP and with the person's user, project and local settings, and writes nothing into the person's setup. Because it always loads those settings, it can serve only as a worker, never as the Claude conversation provider ([runtime.md](runtime.md#providers)).
+
+Core discovers this worker from the person's `claude` and `node`, without
+requiring a global ACP program. After selection, Core installs the release's
+program in its private state from the shipped manifest and lockfile. Failed
+installs are discarded; complete installs are checked before reuse. Readiness
+records `claude --version`; the result separately records `agentInfo.version`.
+A missing Claude or Node returns an unsupported cause for this worker through
+`dispatch_work`, while other installed workers remain available. The `claude`
+headless worker remains a separate selection pending evaluation. A separately
+opted-in live test records the person's Claude version and the program version.
 
 ### Readiness
 

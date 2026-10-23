@@ -115,6 +115,22 @@ Terminal snapshots retain a copy of the finish and conservatively keep effects
 unknown after tool activity, unknown update types or unfinished requests. Core
 MCP admission latches tool activity even when an answered call is no longer pending.
 
+## Pinned Claude ACP program (#752)
+
+- **Seen:** `@agentclientprotocol/claude-agent-acp` 0.94.0's published
+  `dist/acp-agent.js` selects `CLAUDE_CODE_EXECUTABLE` before its bundled CLI,
+  uses `settingSources: ["user", "project", "local"]`, and starts the SDK query
+  during session creation. Its own version is returned by ACP initialize.
+  Installing its lockfile with scripts disabled and optional packages omitted
+  installs 107 packages, with no optional Claude binary. The release's SDK is
+  0.3.303 and the ACP SDK is 2.0.0 (which negotiates ACP v1).
+- **Inferred:** Discovery should require the person's Claude and Node, not a
+  globally installed ACP wrapper. Installation belongs at session start, after
+  selection, and the existing worker version probe must keep using Claude.
+- **Unknown:** A synthetic Claude stream establishes integration, not a verified
+  live vendor version. The live test is separately opted in. This is a native
+  ACP integration, not a Hermes, Honcho, LCM-X or CRW port.
+
 ## Grok handshake (#759)
 
 - **Seen:** The protocol measurements and issue #759 record Grok Build 1.0.68
