@@ -405,6 +405,10 @@ and `next_check`; an assignee carries `kind` and `id`. Checklist items carry onl
 `text` and `checked`. A repeat retains `rule`, the original `text`,
 `from_completion` and its current `next` occurrence; advancing it is #156.
 The record tool cannot write execution observations or complete delegated work.
+It may replace planning fields while preserving an already `completed` state,
+including on a to-do with an agent or worker assignee or a pull-request link.
+The completion guard applies to transitions into `completed`; preserving that
+state does not permit changing an execution observation.
 
 The current conversation path accepts exact ISO dates and offset-bearing
 RFC 3339 times. Natural-language dates, ambiguous numeric dates, nonexistent
@@ -875,6 +879,43 @@ LINA Core, or the Node on a remote device, starts every worker as a child proces
 - LINA installs no hook, plugin or setting in a worker to obtain a signal.
 - A worker that reports a typed failure (an error code, an authentication or billing category, a rate-limit category) produces a failure event with that type.
 
+### Claude Code headless adapter
+
+Core resolves the person's installed `claude` and launches it in the task
+worktree with `--print --output-format stream-json --verbose`, sending the task
+packet on stdin. Its login, provider, permissions, instructions and integrations
+remain its own. Core adds no hook, plugin, skill, permission bypass or settings
+file. The installed version is recorded and reported as unverified until an
+account-backed round trip establishes compatibility.
+
+A `system/init` message binds the session and must match the requested cwd and
+any explicit model. Assistant messages supply progress; the final `result`
+supplies usage and ends the turn immediately, even while the process remains
+alive. Core then reaps the process tree before releasing its activity. EOF
+without a result, malformed messages, mismatched sessions, error results and
+permission denials are failures. Other informational messages cannot complete a
+turn. Interactive approvals, work tools, resume and steering are not advertised
+by this one-attempt headless adapter.
+
+With `claude`, `git` and `gh` installed, `dispatch_work` can select `worker:
+"claude"`. Existing omitted selections remain Antigravity. The same authorized,
+committed admission and assigned worktree rules apply. No schema migration is
+needed: the optional worker selection stays in the durable task definition.
+An unavailable selected executable yields `worker_unavailable` without a
+substitute worker. A final success is only a worker report. Core reads the
+assigned branch's PR, current head, checks and review before recording readiness;
+pending or missing evidence cannot become delivery. The artifact preserves the
+final result and PR observations, masks secrets, omits denial tool inputs and
+marks receipt provenance `adapter-derived`. Acceptance and merge remain separate.
+Results return to the originating conversation and survive restart without
+replaying execution.
+
+`e2e/m2/claude-worker.json` covers result-before-exit, real file and commit
+creation, the derived receipt, denied permissions, missing results, pending PR
+checks and restart. The installed Core and Git work are real; the Claude and
+GitHub boundaries are synthetic. This establishes the integration contract,
+not authenticated worker execution or a verified Claude version.
+
 ### Antigravity headless adapter
 
 Core resolves the installed `agy` executable and runs it as a supervised child
@@ -1132,7 +1173,11 @@ When a revision invalidates queued actions, Core retires them and releases their
 A completed criterion check for an obsolete goal revision, checking round or target is retained as a receipt without applying its evidence or stopping Core. A manager response assesses only the canonical record revision it was given; an older response cannot clear the corrected definition's fence, add its old tasks, or mark the correction blocked. Independent sibling repair plans remain valid across execution revisions while the canonical definition is unchanged.
 
 Retiring an obsolete task repair assessment clears its assessment marker in
-the same transaction. Once the current definition is assessed, an unchanged
+the same transaction that retains its obsolete receipt. Later reconciliation
+or another obsolete response must not clear a replacement assessment.
+Reconciliation completes the pending retirement before deriving replacement
+work, including when Core restarts between the receipt and reconciliation.
+Once the current definition is assessed, an unchanged
 failed task receives a fresh repair assessment, including after restart.
 
 A canonical correction with an invalid done condition or criteria blocks only
