@@ -116,7 +116,9 @@ Recorded completions carry a structured `completion` request with `work_kind`
 and `evidence` references (`kind`, `turn_id`, `call_id`). An empty `turn_id`
 selects the current prepared turn; storage retains its full identity. Core
 resolves each reference to a committed successful tool result in the same
-agent's conversation, excluding retracted inputs. A missing or failed call,
+agent's conversation, excluding retracted inputs. Only completion-writing tools
+resolve evidence, and only the referenced turn/call pairs are read before the
+write transaction. Ordinary tools do not scan past results. A missing or failed call,
 another conversation's call, a wrong evidence kind, or a missing work kind
 cannot satisfy the requirement. The agent is responsible for choosing the
 observation that checks the work; this reference check does not replace the
@@ -138,7 +140,19 @@ agent's reply, title, summary or body to enforce this policy.
 Task cards retain completion evidence separately from worker execution,
 manager acceptance and application. An applied result may still be claimed;
 the work display says "not verified" and does not count that claim as verified
-completion. Retrying an already recorded task acceptance preserves its first
+completion. `coding_decision` accepts the same optional `completion` request.
+The manager's `read_coding_delivery` reopens only the Core observations already
+supplied for its assigned receipt and head: PR checks and reviews, diff and base
+design. It reads no other task or conversation and reruns no command. The manager
+still judges whether those observations establish the required evidence kind;
+a green PR alone does not establish an owner-path run.
+Core resolves the completion references under the prepared manager policy and retains the assessment
+with the accepted receipt and head. Git application of that same delivery uses
+the retained assessment, including after restart; it does not require a live
+manager turn. A changed head or an older acceptance without an assessment
+cannot supply verified completion evidence. Acceptance alone does not mark the
+task done or increment a completion breach.
+Retrying an already recorded task acceptance preserves its first
 policy decision. A new completion has its own identity. Claimed completions
 increment the agent's durable counter once per identity; replays, record-index
 rebuilds and restart do not increment it again. When a delivered file changes, its current completion is invalidated with the

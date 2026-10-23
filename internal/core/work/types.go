@@ -115,27 +115,34 @@ type Card struct {
 	Stages         []Stage            `json:"stages"`
 }
 
+// AcceptedCompletion retains Core's prepared assessment until Git application.
+type AcceptedCompletion struct {
+	Head       string            `json:"head"`
+	Assessment result.Completion `json:"assessment"`
+}
+
 // Event has one payload selected by Kind. Events are admitted by Service only;
 // clients and workers never append arbitrary events or acceptance judgments.
 type Event struct {
-	Occurrence   *canon.RecordOccurrence   `json:"occurrence,omitempty"`
-	DoneRequest  *result.CompletionRequest `json:"done_request,omitempty"`
-	Completion   *result.Completion        `json:"completion,omitempty"`
-	Head         string                    `json:"head,omitempty"`
-	FileSnapshot *FileSnapshot             `json:"file_snapshot,omitempty"`
-	FileEvidence *FileEvidence             `json:"file_evidence,omitempty"`
-	FileCopy     *FileCopy                 `json:"file_copy,omitempty"`
-	Materials    []Material                `json:"materials,omitempty"`
-	Wait         *Wait                     `json:"wait,omitempty"`
-	Decision     *GoalDecision             `json:"decision,omitempty"`
-	Key          string                    `json:"key"`
-	TaskID       string                    `json:"task_id"`
-	Kind         string                    `json:"kind"`
-	Task         *Task                     `json:"task,omitempty"`
-	Run          *Run                      `json:"run,omitempty"`
-	Receipt      *Receipt                  `json:"receipt,omitempty"`
-	RunID        string                    `json:"run_id,omitempty"`
-	Value        string                    `json:"value,omitempty"`
-	ReceiptID    string                    `json:"receipt_id,omitempty"`
-	Evidence     string                    `json:"evidence,omitempty"`
+	Occurrence     *canon.RecordOccurrence   `json:"occurrence,omitempty"`
+	DoneRequest    *result.CompletionRequest `json:"done_request,omitempty"`
+	DoneAcceptance *AcceptedCompletion       `json:"done_acceptance,omitempty"`
+	Completion     *result.Completion        `json:"completion,omitempty"`
+	Head           string                    `json:"head,omitempty"`
+	FileSnapshot   *FileSnapshot             `json:"file_snapshot,omitempty"`
+	FileEvidence   *FileEvidence             `json:"file_evidence,omitempty"`
+	FileCopy       *FileCopy                 `json:"file_copy,omitempty"`
+	Materials      []Material                `json:"materials,omitempty"`
+	Wait           *Wait                     `json:"wait,omitempty"`
+	Decision       *GoalDecision             `json:"decision,omitempty"`
+	Key            string                    `json:"key"`
+	TaskID         string                    `json:"task_id"`
+	Kind           string                    `json:"kind"`
+	Task           *Task                     `json:"task,omitempty"`
+	Run            *Run                      `json:"run,omitempty"`
+	Receipt        *Receipt                  `json:"receipt,omitempty"`
+	RunID          string                    `json:"run_id,omitempty"`
+	Value          string                    `json:"value,omitempty"`
+	ReceiptID      string                    `json:"receipt_id,omitempty"`
+	Evidence       string                    `json:"evidence,omitempty"`
 }

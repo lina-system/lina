@@ -25,6 +25,7 @@ import (
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/result"
 	"github.com/thisisjun786/lina/kit/tools"
 	"slices"
 )
@@ -46,6 +47,13 @@ type codingTurn struct {
 	Phase      string
 	Result     *dispatch.Record
 	Review     *review.Record
+}
+
+type codingDecision struct {
+	Decision   string                   `json:"decision"`
+	Evidence   string                   `json:"evidence"`
+	Findings   json.RawMessage          `json:"findings,omitempty"`
+	Completion result.CompletionRequest `json:"completion,omitempty"`
 }
 
 func codingID(parts ...string) string {
@@ -236,11 +244,7 @@ func (r *conversationRuntime) runCodingManager(ctx context.Context, a codingAssi
 func (r *conversationRuntime) prepareCodingDecision(turnID string, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
 	c := r.coding
 	spec := tools.Spec{Name: "coding_decision", Classify: tools.Class(tools.LocalWrite), Conc: 1, Deadline: time.Minute, Placement: tools.Core, Schema: func(raw json.RawMessage) (tools.Input, error) {
-		var a struct {
-			Decision string          `json:"decision"`
-			Evidence string          `json:"evidence"`
-			Findings json.RawMessage `json:"findings,omitempty"`
-		}
+		var a codingDecision
 		if decodeWorkerArgs(raw, &a) != nil || strings.TrimSpace(a.Evidence) == "" || len(a.Evidence) > 8192 {
 			return tools.Input{}, tools.ErrInvalid
 		}
@@ -269,11 +273,7 @@ func (r *conversationRuntime) prepareCodingDecision(turnID string, bindings map[
 	}}
 	registry := tools.NewRegistry(r.personaAuthority, r.activities)
 	if err := registry.Register(spec, func(ctx context.Context, _ lease.Lease, in tools.Input) (tools.Result, error) {
-		var decision struct {
-			Decision string          `json:"decision"`
-			Evidence string          `json:"evidence"`
-			Findings json.RawMessage `json:"findings,omitempty"`
-		}
+		var decision codingDecision
 		masked, err := secrets.Mask(string(in.Arguments))
 		if err != nil {
 			return tools.Result{State: tools.Failed}, err
@@ -297,7 +297,9 @@ func (r *conversationRuntime) prepareCodingDecision(turnID string, bindings map[
 				rr.Verdict = ""
 				rr.Findings = nil
 			}
-			err = r.finishConformance(ctx, c.Assignment, rr)
+			// Code cannot select a weaker work kind through model arguments.
+			decision.Completion.WorkKind = "code"
+			err = r.finishConformance(ctx, c.Assignment, rr, decision.Completion)
 		} else {
 			err = r.db.Write(ctx, func(tx *canon.Tx) error {
 				a, err := readCoding(ctx, tx, c.Assignment.ID)
@@ -325,5 +327,28 @@ func (r *conversationRuntime) prepareCodingDecision(turnID string, bindings map[
 	r.personaGrants[auth.GrantID] = grant.Grant{Identity: auth, Expires: time.Now().Add(time.Hour), Scope: []grant.Permission{{Tool: spec.Name, Target: target, Write: true}}, Revisions: map[string]string{target: auth.Revision}}
 	r.personaMu.Unlock()
 	bindings[spec.Name] = turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID)
-	return []provider.ToolDecl{provider.ToolDecl(`{"type":"function","name":"coding_decision","description":"Record the owning dev manager's scoped assignment or delivery judgment. Use delegate only for a sufficient work definition; delivery verdicts are verified, needs_changes or unverified, with evidence. This does not merge or deploy.","parameters":{"type":"object","properties":{"decision":{"type":"string","enum":["delegate","verified","needs_changes","unverified"]},"evidence":{"type":"string"},"findings":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"severity":{"type":"string","enum":["P0","P1","P2","P3"]},"file":{"type":"string"},"claim":{"type":"string"}},"required":["id","severity","file","claim"],"additionalProperties":false}}},"required":["decision","evidence"],"additionalProperties":false}}`)}, nil
+	decl, err := json.Marshal(map[string]any{
+		"type": "function", "name": spec.Name,
+		"description": "Record the dev manager's assignment or delivery judgment. Include completion references for checked owner-path evidence. This does not merge or deploy.",
+		"parameters": map[string]any{"type": "object", "properties": map[string]any{
+			"decision": map[string]any{"type": "string", "enum": []string{"delegate", "verified", "needs_changes", "unverified"}},
+			"evidence": map[string]any{"type": "string"}, "completion": result.CompletionSchema(),
+			"findings": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
+				"id": map[string]any{"type": "string"}, "severity": map[string]any{"type": "string", "enum": []string{"P0", "P1", "P2", "P3"}},
+				"file": map[string]any{"type": "string"}, "claim": map[string]any{"type": "string"},
+			}, "required": []string{"id", "severity", "file", "claim"}, "additionalProperties": false}},
+		}, "required": []string{"decision", "evidence"}, "additionalProperties": false},
+	})
+	if err != nil {
+		return nil, err
+	}
+	declarations := []provider.ToolDecl{decl}
+	if c.Phase == "delivery" {
+		read, err := r.prepareCodingEvidence(turnID, bindings)
+		if err != nil {
+			return nil, err
+		}
+		declarations = append(declarations, read)
+	}
+	return declarations, nil
 }

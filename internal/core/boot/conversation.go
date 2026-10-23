@@ -811,16 +811,15 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			return err
 		}
 		text := e.Body.Text()
-		if e.ScaffoldKind == "result" && e.SpeakerKind == guard.Agent {
+		if e.ScaffoldKind == "result" {
 			var value result.Result
 			if err := json.Unmarshal([]byte(text), &value); err != nil {
 				return err
 			}
-			// Managed plans retain their typed body and existing stream key.
-			// Ordinary results retain their completion assessment and stable key.
-			if item.key == value.ID {
+			var err error
+			if value.Type == result.PlanType {
 				err = r.publish(ctx, protocol.KindResult, value.ID, planWire(value))
-			} else {
+			} else if e.SpeakerKind == guard.Agent {
 				err = r.publishResult(ctx, value)
 			}
 			if err != nil {
