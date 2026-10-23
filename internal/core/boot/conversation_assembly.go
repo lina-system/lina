@@ -18,13 +18,7 @@ import (
 // Keep the configured route's conservative byte budget while counting all
 // assembled instructions, context, history and tool declarations.
 func conversationRequestSize(request provider.Request) int {
-	n := len(request.Instructions)
-	for _, items := range [][]provider.Item{request.Items, request.Tools} {
-		for _, item := range items {
-			n += len(item)
-		}
-	}
-	return n
+	return provider.RequestBytes(request)
 }
 
 // This whitelist is intentionally narrower than ContextPacket: personal memory
@@ -109,6 +103,15 @@ func (r *conversationRuntime) recordContextSources(ctx context.Context, packet a
 		out = append(out, source)
 	}
 	return out, nil
+}
+
+func (r *conversationRuntime) conversationBudget() (int, func(provider.Request) int) {
+	if r.route != nil {
+		if adapter, ok := r.route.Adapter.(provider.RequestSizer); ok {
+			return adapter.RequestBudget(r.route.Model)
+		}
+	}
+	return 128000, conversationRequestSize
 }
 
 // Selection lives in Core composition; route configuration and run flows do not

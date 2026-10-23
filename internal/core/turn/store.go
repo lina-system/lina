@@ -288,7 +288,10 @@ type Options struct {
 	// reply material preparation. The callback must use that adapter for exactly
 	// one write and return only after commit. Nil writes completion alone.
 	// Failed or interrupted turns never invoke Complete.
-	Complete      func(context.Context, Canon) error
+	Complete func(context.Context, Canon) error
+	// Finish adds terminal audit metadata in the same transaction as the ended
+	// turn, its outcome and notice. It must not dispatch external effects.
+	Finish        func(context.Context, *canon.Tx, error) error
 	Loop          loop.Config
 	Budget        *budget.Gauge // carry into a continuation; nil starts a new budget
 	ReceivedAt    time.Time     // original receipt time, excluding preparation from tool time
@@ -398,7 +401,12 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 				}
 			}
 			if state == Failed {
-				if e := failureNotice(save, tx, o.ID); e != nil {
+				if e := failureNotice(save, tx, o.ID, err); e != nil {
+					return e
+				}
+			}
+			if o.Finish != nil {
+				if e := o.Finish(save, tx, err); e != nil {
 					return e
 				}
 			}

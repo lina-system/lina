@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"reflect"
 	"slices"
 	"strings"
@@ -341,7 +342,7 @@ func check(b Body, l Limits) error {
 			seen[e.ID] = true
 		}
 	case *File:
-		if !asset(&v.Asset) || !nonempty(v.Name) || !one(v.MediaType, "application/pdf", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.oasis.opendocument.presentation") || v.Size < 0 {
+		if !asset(&v.Asset) || !nonempty(v.Name) || !fileMediaType(v.MediaType) || v.Size < 0 {
 			return bad()
 		}
 	default:
@@ -542,4 +543,11 @@ func blockShapes(raw []byte) error {
 		}
 	}
 	return nil
+}
+
+// A file result is an opaque material reference. MIME metadata selects a viewer
+// or download; it never authorizes execution or remote URL loading.
+func fileMediaType(value string) bool {
+	media, params, err := mime.ParseMediaType(value)
+	return err == nil && len(params) == 0 && strings.Contains(media, "/") && media == value
 }
