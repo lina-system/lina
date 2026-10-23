@@ -30,6 +30,8 @@ import (
 
 const conversationQuestionPrefix = "conversation-question:"
 
+var errQuestionWithdrawn = errors.New("question_withdrawn")
+
 func (r *conversationRuntime) questionDecisions() *clientsrv.Decisions {
 	if r.router != nil {
 		return r.router.root.decisions
@@ -166,6 +168,15 @@ func (r *conversationRuntime) conversationQuestionCard(ctx context.Context, pers
 		return protocol.Question{}, waiting.ErrPerson
 	}
 	card := &protocol.DecisionCard{ID: q.ID, Revision: "1", Agent: r.questionDecisions().AgentName(q.Agent), Summary: q.Question, Recommendation: &q.Recommendation, Targets: []protocol.DecisionTarget{{Name: "Default", Value: q.Default}}}
+	visible, err := r.questionVisible(ctx, q)
+	if err != nil {
+		return protocol.Question{}, err
+	}
+	if !visible {
+		outcome := protocol.DecisionOutcomeWithdrawn
+		card.Outcome = &outcome
+		return protocol.Question{ConversationID: q.Conversation, Card: card}, nil
+	}
 	field := protocol.FormField{Name: "answer", Type: protocol.FormFieldTypeText}
 	if len(q.Choices) > 0 {
 		field.Type = protocol.FormFieldTypeChoice
@@ -198,6 +209,13 @@ func (r *conversationRuntime) answerConversationQuestion(ctx context.Context, pe
 	if _, err = r.agents.Get(ctx, q.Agent); err != nil {
 		return protocol.DecisionOutcomeWithdrawn, nil
 	}
+	visible, err := r.questionVisible(ctx, q)
+	if err != nil {
+		return "", err
+	}
+	if !visible {
+		return protocol.DecisionOutcomeWithdrawn, nil
+	}
 	if q.Resolution != nil {
 		return protocol.DecisionOutcomeResolved, nil
 	}
@@ -226,6 +244,13 @@ func (r *conversationRuntime) answerConversationQuestion(ctx context.Context, pe
 	var answerEvent ledger.Event
 	var receipt inbox.Receipt
 	if err = s.ResolveWith(ctx, person, q.Agent, q.ID, d, func(ctx context.Context, tx *canon.Tx, q waiting.ConversationQuestion, d waiting.QuestionResolution) error {
+		visible, err := waiting.ConversationQuestionVisible(ctx, tx, q)
+		if err != nil {
+			return err
+		}
+		if !visible {
+			return errQuestionWithdrawn
+		}
 		value := d.Value
 		if d.Kind == "declined" {
 			value = design.Text(eventLanguage(input), "decline")
@@ -242,9 +267,12 @@ func (r *conversationRuntime) answerConversationQuestion(ctx context.Context, pe
 		if err != nil {
 			return err
 		}
-		answerEvent, err = ledger.New(questionTransaction{tx}, nil).Admit(ctx, guard.EntrySystem, ledger.Input{ID: q.ID + ":answer", ConversationID: q.Conversation, ParentID: q.Input, AgentID: q.Agent, Surface: input.Surface, ScaffoldKind: "question_answer", OccurredAt: d.At, RecordedAt: d.At, TimeQuality: "observed", Body: body})
+		answerEvent, err = ledger.New(questionTransaction{tx}, nil).Admit(ctx, guard.EntrySystem, ledger.Input{ID: q.ID + ":answer", ConversationID: q.Conversation, ParentID: q.Input, AgentID: q.Agent, Surface: input.Surface, ScaffoldKind: "question_answer", OccurredAt: d.At, RecordedAt: d.At, TimeQuality: "observed", Body: body, Relations: []ledger.Relation{{TargetID: q.Input, Kind: "view_of"}}})
 		return err
 	}); err != nil {
+		if errors.Is(err, errQuestionWithdrawn) {
+			return protocol.DecisionOutcomeWithdrawn, nil
+		}
 		if errors.Is(err, waiting.ErrInvalid) || errors.Is(err, waiting.ErrAnswered) {
 			return protocol.DecisionOutcomeRefused, nil
 		}
@@ -375,16 +403,30 @@ func (g *questionTurn) tool() loop.Tool {
 			if err != nil {
 				return loop.Result{ID: c.ID, Code: loop.Failed}
 			}
+			visible, err := r.questionVisible(ctx, q)
+			if err != nil {
+				return loop.Result{ID: c.ID, Code: loop.Failed}
+			}
+			if !visible {
+				return loop.Result{ID: c.ID, Code: loop.Invalid, Output: json.RawMessage(`{"code":"question_withdrawn"}`)}
+			}
 			if q.Resolution == nil && in.Kind != "related" {
 				d := waiting.QuestionResolution{Kind: in.Kind, Input: g.input.ID, Value: in.Value, At: time.Now().UTC()}
 				if in.Kind == "default_applied" {
 					d.Value = q.Default
 				}
 				if err = s.ResolveWith(ctx, r.person, r.agent, q.ID, d, func(ctx context.Context, tx *canon.Tx, q waiting.ConversationQuestion, d waiting.QuestionResolution) error {
+					visible, err := waiting.ConversationQuestionVisible(ctx, tx, q)
+					if err != nil {
+						return err
+					}
+					if !visible {
+						return errQuestionWithdrawn
+					}
 					if d.Kind != "default_applied" {
 						return nil
 					}
-					_, err := ledger.New(questionTransaction{tx}, nil).Admit(ctx, guard.EntrySystem, r.questionDefaultInput(g.input, q, d))
+					_, err = ledger.New(questionTransaction{tx}, nil).Admit(ctx, guard.EntrySystem, r.questionDefaultInput(g.input, q, d))
 					return err
 				}); err != nil {
 					return loop.Result{ID: c.ID, Code: loop.Invalid}
@@ -417,7 +459,7 @@ type questionTransaction struct{ tx *canon.Tx }
 func (t questionTransaction) Write(_ context.Context, f func(*canon.Tx) error) error { return f(t.tx) }
 func (t questionTransaction) Read(_ context.Context, f func(*canon.Tx) error) error  { return f(t.tx) }
 func (r *conversationRuntime) questionDefaultInput(input ledger.Event, q waiting.ConversationQuestion, d waiting.QuestionResolution) ledger.Input {
-	return ledger.Input{ID: q.ID + ":default:" + input.ID, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, ScaffoldKind: "question_default", OccurredAt: d.At, RecordedAt: d.At, TimeQuality: "observed", Body: design.Text(eventLanguage(input), "notice.question_default") + q.Default}
+	return ledger.Input{ID: q.ID + ":default:" + input.ID, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, ScaffoldKind: "question_default", OccurredAt: d.At, RecordedAt: d.At, TimeQuality: "observed", Body: design.Text(eventLanguage(input), "notice.question_default") + q.Default, Relations: []ledger.Relation{{TargetID: q.Input, Kind: "view_of"}}}
 }
 func (r *conversationRuntime) questionDefaultNotice(ctx context.Context, input ledger.Event, q waiting.ConversationQuestion) error {
 	event, err := r.journal().Get(ctx, q.ID+":default:"+input.ID)
@@ -426,4 +468,9 @@ func (r *conversationRuntime) questionDefaultNotice(ctx context.Context, input l
 	}
 	text, speaker := event.Body.Text(), protocol.ConversationSpeakerSystem
 	return r.publish(ctx, protocol.KindItemDone, event.ID, protocol.ItemDone{Text: &text, Speaker: &speaker})
+}
+
+func (r *conversationRuntime) questionVisible(ctx context.Context, q waiting.ConversationQuestion) (visible bool, err error) {
+	err = r.db.Read(ctx, func(tx *canon.Tx) error { visible, err = waiting.ConversationQuestionVisible(ctx, tx, q); return err })
+	return
 }

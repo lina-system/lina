@@ -118,7 +118,7 @@ func (r *conversationRuntime) resumeWorkerCompletions(ctx context.Context) error
 		inbox int64
 	}
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT e.id,i.id FROM inbox i JOIN conv_event e ON e.id=i.native_id LEFT JOIN turn_runs t ON t.inbox_id=i.id WHERE ((i.source='worker-finish' AND e.scaffold_kind='worker_completion') OR (i.source='question-answer' AND e.scaffold_kind='question_answer')) AND t.id IS NULL ORDER BY i.id`)
+		rows, err := tx.QueryContext(ctx, `SELECT e.id,i.id FROM inbox i JOIN conv_event e ON e.id=i.native_id LEFT JOIN turn_runs t ON t.inbox_id=i.id WHERE ((i.source='worker-finish' AND e.scaffold_kind='worker_completion') OR (i.source='question-answer' AND e.scaffold_kind='question_answer' AND EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=e.id))) AND t.id IS NULL ORDER BY i.id`)
 		if err != nil {
 			return err
 		}

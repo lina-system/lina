@@ -229,3 +229,94 @@ func TestQuestionForgottenInput(t *testing.T) {
 		t.Fatal("forgotten question returned to the model")
 	}
 }
+
+func forgetQuestionInput(t *testing.T, r *conversationRuntime, input ledger.Event) {
+	t.Helper()
+	remembered, err := coreexec.NewMemory(r.db, r.materials, nil).Remember(t.Context(), memory.Write{Agent: r.agent, Person: r.person, Item: memory.Item{Kind: memory.Preference, Content: input.Body.Text(), Subject: memory.Subject{Kind: memory.Person, ID: r.person}, Basis: memory.Stated, Standing: true, Evidence: []memory.Evidence{{Kind: memory.Event, ID: input.ID, Precision: memory.Exact}}}})
+	if err != nil || !remembered.Remembered() {
+		t.Fatalf("remember: %+v %v", remembered, err)
+	}
+	if err = r.removals.Forget(t.Context(), retract.Request{Person: r.person, Targets: []retract.Ref{{Kind: retract.Memory, ID: remembered.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestQuestionForgottenCard(t *testing.T) {
+	for _, action := range []protocol.QuestionAnswerAction{protocol.QuestionAnswerActionAccept, protocol.QuestionAnswerActionDecline, protocol.QuestionAnswerActionCancel} {
+		t.Run(string(action), func(t *testing.T) {
+			r := controlRuntime(t)
+			input := questionPersonInput(t, r, "private", "Private preference")
+			b, _ := questionBindings(t, r, input, agents.ProjectWorkMethod(agents.Preparation{}, agents.State{}))
+			result := questionCall(t, b, "ask_question", "private", waiting.QuestionDraft{Question: "private-card-content", Recommendation: "default", Default: "default"})
+			var q waiting.ConversationQuestion
+			if result.Code != loop.OK || json.Unmarshal(result.Output, &q) != nil {
+				t.Fatal(result)
+			}
+			forgetQuestionInput(t, r, input)
+			card, err := (workerQuestions{r}).Question(t.Context(), r.person, q.ID)
+			if err != nil || card.Card.Outcome == nil || *card.Card.Outcome != protocol.DecisionOutcomeWithdrawn || card.Form != nil {
+				t.Errorf("forgotten card still actionable: %+v %v", card, err)
+			}
+			snapshot := workQuestionSnapshot(t, r)
+			published := false
+			for _, item := range snapshot.Items {
+				var projected protocol.Question
+				if item.Kind == protocol.KindQuestion && json.Unmarshal(item.Data, &projected) == nil && projected.Card != nil && projected.Card.ID == q.ID {
+					published = projected.Card.Outcome != nil && *projected.Card.Outcome == protocol.DecisionOutcomeWithdrawn && projected.Form == nil
+				}
+			}
+			if !published {
+				t.Error("waiting snapshot did not withdraw the card")
+			}
+			names, err := r.ownerAgentNames(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := r.ownerWaiting(t.Context(), names, waiting.Options{Now: time.Now()})
+			if err != nil || rows.Total != 0 {
+				t.Errorf("forgotten question remains actionable in waiting: %+v %v", rows, err)
+			}
+			version, value := "1", "chosen"
+			values := protocol.FormValues{"answer": {String: &value}}
+			outcome, err := (workerQuestions{r}).AnswerQuestionMessage(t.Context(), r.person, protocol.QuestionAnswer{CardID: &q.ID, Revision: &version, Answer: action, Values: &values}, "transport-id")
+			if err != nil || outcome != protocol.DecisionOutcomeWithdrawn {
+				t.Errorf("forgotten answer admitted: %s %v", outcome, err)
+			}
+			stored, err := waiting.NewConversationQuestions(r.db).Get(t.Context(), q.ID)
+			if err != nil || stored.Resolution != nil {
+				t.Errorf("forgotten question resolved: %+v %v", stored, err)
+			}
+			var deliveries int
+			if err = r.db.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM inbox WHERE source='question-answer'").Scan(&deliveries)
+			}); err != nil || deliveries != 0 {
+				t.Errorf("forgotten answer queued: %d %v", deliveries, err)
+			}
+		})
+	}
+}
+func TestQuestionAnswerForgetLineage(t *testing.T) {
+	r := controlRuntime(t)
+	input := questionPersonInput(t, r, "private", "Private preference")
+	b, _ := questionBindings(t, r, input, agents.ProjectWorkMethod(agents.Preparation{}, agents.State{}))
+	result := questionCall(t, b, "ask_question", "private", waiting.QuestionDraft{Question: "private-card-content", Recommendation: "default", Default: "default"})
+	var q waiting.ConversationQuestion
+	if result.Code != loop.OK || json.Unmarshal(result.Output, &q) != nil {
+		t.Fatal(result)
+	}
+	version, value := "1", "chosen"
+	values := protocol.FormValues{"answer": {String: &value}}
+	if outcome, err := (workerQuestions{r}).AnswerQuestionMessage(t.Context(), r.person, protocol.QuestionAnswer{CardID: &q.ID, Revision: &version, Answer: protocol.QuestionAnswerActionAccept, Values: &values}, "transport-id"); err != nil || outcome != protocol.DecisionOutcomeResolved {
+		t.Fatal(outcome, err)
+	}
+	forgetQuestionInput(t, r, input)
+	next := questionPersonInput(t, r, "next", "New topic")
+	items, _, _, _, err := r.modelContext(t.Context(), next.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if strings.Contains(string(item), "private-card-content") {
+			t.Fatal("answer revived the forgotten question")
+		}
+	}
+}
