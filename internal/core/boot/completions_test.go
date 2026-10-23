@@ -114,7 +114,7 @@ func TestCompletionPreservesChannelScope(t *testing.T) {
 			reaction, err := r.completionRunner(ctx, card)
 			if kind == "unchanged" || kind == "private" {
 				must(err)
-				if reaction.channelBinding == nil || reaction.channelBinding.Scope.Memory || !reaction.channelBinding.Scope.Tools || reaction.channelAddress != address {
+				if reaction.agent != binding.Agent || reaction.conversation != binding.Conversation || reaction.channelBinding == nil || reaction.channelBinding.Scope.Memory || !reaction.channelBinding.Scope.Tools || reaction.channelAddress != address {
 					t.Fatal("completion lost its originating channel scope")
 				}
 				must(reaction.validateChannel(ctx))
@@ -159,5 +159,36 @@ func TestCompletionRejectsMissingOrigin(t *testing.T) {
 	// this task: its binding may already have been removed.
 	if _, err = r.completionRunner(ctx, card); !errors.Is(err, channels.ErrDenied) {
 		t.Fatalf("missing origin acquired personal authority: %v", err)
+	}
+}
+
+func TestDelegatedFileCompletionReturnsToRequester(t *testing.T) {
+	r := controlRuntime(t)
+	first, err := r.agents.FirstRun(t.Context(), r.person, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester := newConversationView(r, first.Agent.ID, "main:"+first.Agent.ID)
+	bindings := map[string]loop.Tool{}
+	if err = requester.prepareWorkTools("turn:delegated-file", bindings); err != nil {
+		t.Fatal(err)
+	}
+	result := bindings["prepare_work"].Execute(t.Context(), provider.ToolCall{ID: "prepare", Name: "prepare_work", Arguments: `{"task_id":"delegated-file","title":"Create a report","done":"Report exists","workspace":{}}`})
+	if result.Code != loop.OK {
+		t.Fatal(result)
+	}
+	card, err := r.work.Get(t.Context(), "delegated-file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.Task.AgentID == requester.agent {
+		t.Fatal("fixture did not delegate file work")
+	}
+	reaction, err := r.completionRunner(t.Context(), card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reaction.agent != requester.agent || reaction.conversation != requester.conversation {
+		t.Fatalf("file completion returned to %s/%s instead of requester %s/%s", reaction.agent, reaction.conversation, requester.agent, requester.conversation)
 	}
 }
