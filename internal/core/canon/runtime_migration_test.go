@@ -557,3 +557,40 @@ func TestPlanningUpgradePreservesPublishedNaming(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanningUpgradePreservesPublishedRecordOperations(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = append(append([]Migration{}, Migrations()[:44]...), Migration{Version: 45, SQL: recordOperationsSchema})
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO record_candidates(number,person,source,source_revision,class,equivalence,proposal) VALUES(7,'person','event','r1','task','same',X'01'); INSERT INTO record_operations(handle,person,agent,record_id,before_blob,revision,notice,candidate) VALUES('undo','person','agent','record','blob','revision','Saved',7);`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var blob, revision, status string
+		var proposal []byte
+		if err := tx.QueryRowContext(t.Context(), "SELECT o.before_blob,o.revision,c.status,c.proposal FROM record_operations o JOIN record_candidates c ON c.number=o.candidate WHERE o.handle='undo' AND c.number=7").Scan(&blob, &revision, &status, &proposal); err != nil {
+			return err
+		}
+		if blob != "blob" || revision != "revision" || status != "pending" || !bytes.Equal(proposal, []byte{1}) {
+			t.Fatal("published operation/candidate changed")
+		}
+		var n int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM plan_drafts").Scan(&n); err != nil {
+			return err
+		}
+		if n != 0 {
+			t.Fatal("upgrade created a plan")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

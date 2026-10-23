@@ -15,17 +15,22 @@ import (
 
 // A publication is journaled before changing any tracked file, index or ref.
 // It names immutable Git objects, not a second copy of the document bytes.
-type fileChange struct{ Path, Blob, OldPath, OldBlob string }
+type fileChange struct {
+	Path, Blob, OldPath, OldBlob string
+	Occurrence                   *canon.RecordOccurrence `json:"occurrence,omitempty"`
+}
 type publication struct {
 	Parent, Commit, Path, Blob, OldPath, OldBlob string
-	Changes                                      []fileChange `json:",omitempty"`
+	Changes                                      []fileChange            `json:",omitempty"`
+	Operation                                    *recordOperation        `json:"operation,omitempty"`
+	Occurrence                                   *canon.RecordOccurrence `json:"occurrence,omitempty"`
 }
 
 func (p publication) edits() []fileChange {
 	if len(p.Changes) > 0 {
 		return p.Changes
 	}
-	return []fileChange{{Path: p.Path, Blob: p.Blob, OldPath: p.OldPath, OldBlob: p.OldBlob}}
+	return []fileChange{{Path: p.Path, Blob: p.Blob, OldPath: p.OldPath, OldBlob: p.OldBlob, Occurrence: p.Occurrence}}
 }
 
 type recordState struct {
@@ -106,6 +111,11 @@ func (r *Store) release(ctx context.Context, token string) error {
 func (r *Store) remember(ctx context.Context, token string, p publication) error {
 	raw, _ := json.Marshal(p)
 	return r.db.Write(ctx, func(tx *canon.Tx) error {
+		if p.Operation != nil && p.Operation.Validate != nil {
+			if err := p.Operation.Validate(ctx, tx); err != nil {
+				return err
+			}
+		}
 		changed, err := tx.ExecContext(ctx, "UPDATE records_state SET pending=? WHERE singleton=1 AND head=? AND lock_token=? AND pending IS NULL", raw, p.Parent, token)
 		if err != nil {
 			return err
@@ -156,6 +166,27 @@ func (r *Store) checkpoint(ctx context.Context, p publication) error {
 				return err
 			}
 			if err = putProjection(ctx, tx, indexRow{id: ids[i], path: c.Path, blob: c.Blob, revision: p.Commit, doc: docs[i]}); err != nil {
+				return err
+			}
+		}
+		if p.Operation != nil {
+			if len(edits) != 1 {
+				return ErrRecordsChanged
+			}
+			if err = checkpointOperation(ctx, tx, p, ids[0]); err != nil {
+				return err
+			}
+		}
+		for i, c := range edits {
+			if c.Occurrence == nil {
+				continue
+			}
+			key := "record-occurrence:" + p.Commit
+			if len(edits) > 1 {
+				key += ":" + ids[i]
+			}
+			data, _ := json.Marshal(map[string]any{"key": key, "task_id": "record:" + ids[i], "kind": "record_occurrence", "occurrence": c.Occurrence})
+			if _, err = tx.ExecContext(ctx, "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", "record:"+ids[i], key, data); err != nil {
 				return err
 			}
 		}

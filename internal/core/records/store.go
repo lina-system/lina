@@ -14,6 +14,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
@@ -57,7 +58,9 @@ type Store struct {
 	db   Canon
 	// PublicationHook is a fault-injection seam for deterministic crash tests.
 	// Production leaves it nil. An error after the intent is durably recoverable.
-	PublicationHook func(string) error
+	PublicationHook       func(string) error
+	Now                   func() time.Time
+	ReadCandidateMaterial func(context.Context, string, int64) (string, error)
 }
 
 var recordsMu sync.Mutex // Includes every handle, including the result saver.
@@ -228,20 +231,29 @@ func (s *Store) Head(ctx context.Context) (CommitID, error) {
 	return head, err
 }
 func (s *Store) Commit(ctx context.Context, c Change, a Actor) (Rev, error) {
-	return s.CommitBatch(ctx, []Change{c}, a)
+	recordsMu.Lock()
+	defer recordsMu.Unlock()
+	return s.commitLocked(ctx, c, a, nil)
+}
+func (s *Store) commitLocked(ctx context.Context, c Change, a Actor, operation *recordOperation) (Rev, error) {
+	return s.commitBatchLocked(ctx, []Change{c}, a, operation)
 }
 
 // CommitBatch publishes a complete set in one Git revision. Validation precedes
 // the publication intent; recovery completes precisely that intent after a cut.
-func (s *Store) CommitBatch(ctx context.Context, changes []Change, a Actor) (rev Rev, err error) {
+func (s *Store) CommitBatch(ctx context.Context, changes []Change, a Actor) (Rev, error) {
+	recordsMu.Lock()
+	defer recordsMu.Unlock()
+	return s.commitBatchLocked(ctx, changes, a, nil)
+}
+
+func (s *Store) commitBatchLocked(ctx context.Context, changes []Change, a Actor, operation *recordOperation) (rev Rev, err error) {
 	intent := false
 	defer func() {
 		if err != nil && intent {
 			err = errors.Join(ErrUncertain, err)
 		}
 	}()
-	recordsMu.Lock()
-	defer recordsMu.Unlock()
 	if a.Person == "" || a.Agent == "" || len(changes) == 0 || len(changes) > 1000 {
 		return "", ErrInvalid
 	}
@@ -263,6 +275,8 @@ func (s *Store) CommitBatch(ctx context.Context, changes []Change, a Actor) (rev
 		}
 		seenIDs[c.ID], seenPaths[c.Path] = true, true
 		candidates[c.ID] = candidate
+		var occurrence *canon.RecordOccurrence
+		requestedCompletion := candidate.state == "completed"
 		old, e := s.find(files, c.ID)
 		if e != nil && !errors.Is(e, ErrNotFound) {
 			return "", e
@@ -279,6 +293,33 @@ func (s *Store) CommitBatch(ctx context.Context, changes []Change, a Actor) (rev
 			if c.Base == "" || c.Base != rev {
 				return "", ErrStaleRevision
 			}
+			previous, parseErr := parseDocument(old.Data)
+			if parseErr != nil {
+				return "", parseErr
+			}
+			now := time.Now()
+			if s.Now != nil {
+				now = s.Now()
+			}
+			c.Data, err = transformCompletion(c.Data, previous, now)
+			if err != nil {
+				return "", err
+			}
+			candidate, err = parseDocument(c.Data)
+			if err != nil {
+				return "", err
+			}
+			if previous.todo != nil && previous.todo.Repeat != nil && candidate.todo != nil && candidate.todo.Repeat != nil {
+				before, after := previous.todo.Repeat, candidate.todo.Repeat
+				if before.Next != after.Next || before.Completed != after.Completed || before.Exhausted != after.Exhausted {
+					reason := "advanced"
+					if requestedCompletion && previous.state != "completed" {
+						reason = "completed"
+					}
+					occurrence = &canon.RecordOccurrence{Record: c.ID, At: now.UTC().Format(time.RFC3339Nano), From: before.Next, Next: after.Next, Reason: reason, Exhausted: after.Exhausted}
+				}
+			}
+			candidates[c.ID] = candidate
 			if old.Path == c.Path && bytes.Equal(old.Data, c.Data) {
 				continue
 			}
@@ -290,7 +331,7 @@ func (s *Store) CommitBatch(ctx context.Context, changes []Change, a Actor) (rev
 		if e != nil {
 			return "", e
 		}
-		edits = append(edits, fileChange{Path: c.Path, Blob: blob, OldPath: old.Path, OldBlob: files[old.Path]})
+		edits = append(edits, fileChange{Path: c.Path, Blob: blob, OldPath: old.Path, OldBlob: files[old.Path], Occurrence: occurrence})
 	}
 	if len(edits) == 0 {
 		return rev, nil
@@ -317,9 +358,20 @@ func (s *Store) CommitBatch(ctx context.Context, changes []Change, a Actor) (rev
 	if err != nil {
 		return "", err
 	}
-	p := publication{Parent: parent, Commit: commit, Changes: edits}
+	p := publication{Parent: parent, Commit: commit, Changes: edits, Operation: operation}
+	if len(changes) == 1 {
+		c := edits[0]
+		p.Path, p.Blob, p.OldPath, p.OldBlob = c.Path, c.Blob, c.OldPath, c.OldBlob
+		p.Occurrence, p.Changes = c.Occurrence, nil
+	}
 	intent = true
 	if err = s.remember(ctx, token, p); err != nil {
+		if errors.Is(err, errCandidatePending) {
+			intent = false
+			if releaseErr := s.release(ctx, token); releaseErr != nil {
+				return "", errors.Join(ErrUncertain, releaseErr)
+			}
+		}
 		return "", err
 	}
 	if err = s.publicationStep("intent"); err != nil {

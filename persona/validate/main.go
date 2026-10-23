@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Command validate gates release packaging on all eight shipped source pairs.
+// Command validate gates release packaging on all eight shipped source pairs
+// and their designed work-method values.
 package main
 
 import (
