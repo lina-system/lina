@@ -426,8 +426,12 @@ sources, quotation mismatches and retracted evidence remain pending. The
 `list_candidates` tool returns durable numbered pages; confidence alone never
 adds a task. An automatic addition produces its saved record and undo handle,
 and undo cancels the new task without deleting its history. Replays do not
-repeat adoption. Three rejected additions in a recognized class retains later
-items of that class as candidates.
+repeat adoption, including after the original task is completed or canceled
+without undo. Replay and view aliases of an already adopted source/action
+remain pending without another record, undo handle or notice, across restart.
+A new independent commitment may add the same action once no open equivalent
+remains. Three rejected additions in a recognized class retains later items of
+that class as candidates.
 
 Recurring completion and advancement append one `record_occurrence` work-ledger
 event in the same checkpoint as the saved version. The event names the old and
@@ -594,8 +598,8 @@ not a path the worker must read or a skill to install. Queued dispatch stores
 that snapshot with the work definition, so later catalog edits, removal and
 process restarts cannot substitute another body. Replayed admissions first
 match the persisted origin and complete definition, then reuse that snapshot;
-only new admissions resolve the current catalog. A saved dispatch admission has
-already passed its manager decision. An identical retry returns that admission
+only new admissions resolve the current catalog. A queued or later dispatch
+admission has already passed its manager decision. An identical retry returns it
 without assigning or running the manager again, including admissions saved before
 task branches included the task ID. The original manager definition and ownership
 remain intact. A retry cannot reset execution state, and queued work still waits
@@ -611,8 +615,17 @@ Heading anchors use lowercase text, hyphens for spaces, and numbered suffixes
 for duplicate headings. Missing files, sections or base commits refuse admission
 without creating a task or starting a worker.
 
-Core persists the resolved base commit with the definition. Admission retries
-and queued execution keep that commit even if the named branch moves. The
+Before invoking the manager, Core persists the resolved base commit, repository
+identity, assigned branch and method snapshot with the definition in an
+`admitting` record. This record cannot start a worker, allocate a worktree or
+reserve execution capacity. An identical retry resumes manager admission from
+that snapshot, including after restart; a different origin or definition is
+refused. A manager decision committed before interruption is reused. Only a
+successful manager return advances the record to `queued`, and conversation
+dispatch still waits for its tool receipt to commit. Concurrent retries use the
+first persisted snapshot and cannot reset later execution state.
+
+Admission retries and queued execution keep that commit even if the named branch moves. The
 packet includes the assignment id, pinned base, assigned branch and complete
 definition. In the Antigravity headless path, it explains that the adapter derives
 the receipt from the final worker result and observed PR; it grants no material

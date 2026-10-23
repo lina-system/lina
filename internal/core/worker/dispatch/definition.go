@@ -34,7 +34,7 @@ func (s *Service) baseForAdmission(ctx context.Context, origin Origin, callID st
 		if err = json.Unmarshal(raw, &saved); err != nil {
 			return "", "", err
 		}
-		// methodForAdmission already matched the complete definition and origin.
+		// recordForAdmission already matched the complete definition and origin.
 		if saved.BaseCommit != "" {
 			return saved.BaseCommit, saved.RepositoryKey, nil
 		}

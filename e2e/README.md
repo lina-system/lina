@@ -486,6 +486,14 @@ explicit controls to running Core and inspect the durable target runs; the worke
 scenario observes its approval, question and real artifact through the digest.
 Only external provider and platform wires are scripted.
 
+`m2/tui-board.json`, `m2/tui-note.json` and `m2/tui-usage.json` exercise the
+installed Core and real PTY TUI. The board combines an outside-change waiting
+request with a background run, updates its groups on landing and opens the
+result. The note journey holds a background provider response after ten
+foreground tool rounds, then checks one scoped follow-up in the next request.
+The account journey checks unknown quota independently of status and reported
+plan at 100 and 40 columns. External model wires and account data are synthetic.
+
 `m2/work-definition.json` drives `dispatch_work` through installed Core. It
 refuses missing done conditions, write areas and base-commit design sections,
 including headings inside code examples, before a worker is queued. Valid work

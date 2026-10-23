@@ -368,7 +368,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-18 Work definition and worker choice.** `dispatch_work`, task packet, chooser, quota fallback.
 - #138 wires quota-aware Antigravity/Codex choice, fenced write-area claims and one durable packet-preserving handoff into installed Core. `e2e/m2/worker-choice.json` covers quota, overlap, editable situation rules and restart with real task artifacts.
-- Definition validation (#137): invalid definitions and unresolved base-commit sections are refused before admission. Valid packets retain the assignment and pinned base through queueing and retries. `e2e/m2/work-definition.json` covers refusal and a real worker result through running Core.
+- Definition validation (#137): invalid definitions and unresolved base-commit sections are refused before admission. Valid packets retain the assignment and pinned base through queueing and retries. `e2e/m2/work-definition.json` covers refusal and a real worker result through running Core. Admission recovery (#728) persists that snapshot before the manager runs; `e2e/m2/work-admission.json` covers a restart between manager approval and queueing, a moved base branch and the resulting worker artifact.
 - Done when: a definition without a done condition or write area is refused; two tasks with overlapping write areas are never in flight together; a worker whose quota row is blocked is not chosen before its reset; unknown quota is usable; a quota stop hands the same packet once to the next worker.
 - Depends on: G2-01, G2-04. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#work-definition).
 
@@ -455,6 +455,10 @@ completion conditions to repository tests and installed Core scenarios.
   refusal, undo notices and restart retention. Source facts are re-resolved by
   Core inside its fenced publication intent; no source-registration endpoint is
   added.
+- #732 prevents replay and view aliases from adding a finished task again.
+  [The replay scenario](../../e2e/m2/record-candidate-replay.json) verifies
+  completion and cancellation through Core tools, then restart and replay
+  refusal without another record, notice or undo operation.
 - #674 permits planning edits that preserve delegated completion. Its
   [installed-Core scenario](../../e2e/m2/todo-completed-planning.json) checks
   saved tags, priority and checklist, the completed state and restart durability.
@@ -469,6 +473,7 @@ completion conditions to repository tests and installed Core scenarios.
   and explicit confirmation of token-based quick add. #156 exposes memo
   promotion and undo through the installed conversation record tools.
 - Done when: a quick add shows chips before it saves; every view is a Core query result drawn without client ranking; a progress view line holds no id-shaped field; the board groups Core's rows into Waiting for me, Running and Done; a follow-up note reaches a running background run at its next round trip; the usage meter reads "unknown" for an unreported quota.
+- #165 adds the three-group board over Core's waiting and running rows, run follow-ups and an account usage view. Account quota metadata is not present before #160; the view explicitly renders unknown instead of estimating it. Installed-Core TUI scenarios live in `e2e/m2/tui-board.json`, `tui-note.json` and `tui-usage.json`.
 - Depends on: G1-21, G2-13, G2-23, G2-25. Design refs: T-12, T-13, T-14.
 
 ### 2.G Accounts and routing
