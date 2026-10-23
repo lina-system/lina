@@ -126,11 +126,22 @@ func TestOwnerReapsEscapedDescendants(t *testing.T) {
 }
 
 func TestEscapingProcess(t *testing.T) {
-	if os.Getenv("LINA_PROC_ESCAPE_TEST") != "1" {
+	if len(os.Args) < 3 {
 		return
 	}
 	args := os.Args[len(os.Args)-2:]
 	mode, escape := args[0], args[1]
+	switch mode {
+	case "leaf":
+		// A leaf may run with a cleared environment, which is the point of the
+		// Darwin identity test.
+	case "root", "fork":
+		if os.Getenv("LINA_PROC_ESCAPE_TEST") != "1" {
+			return
+		}
+	default:
+		return
+	}
 	if mode == "leaf" {
 		fmt.Printf("pid=%s\n", strconv.Itoa(os.Getpid()))
 		time.Sleep(time.Hour)

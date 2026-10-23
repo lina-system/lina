@@ -59,7 +59,8 @@ type Owner struct {
 
 // NewOwner owns commands independently of their process groups. Linux hosts
 // must register SuperviseMain as the explicit proc-supervise subcommand of the
-// current executable. macOS token tracking is best effort (see runtime.md).
+// current executable. macOS keeps the leader unreaped and sweeps the kernel's
+// recorded parent identity and an inherited owner token (see runtime.md).
 func NewOwner() *Owner { return &Owner{children: make(map[*child]struct{})} }
 
 // Run retains the supplied lease until the command has been reaped. Cancellation
