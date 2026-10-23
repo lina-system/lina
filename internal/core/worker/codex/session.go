@@ -112,12 +112,16 @@ func (s *Session) startTurn(ctx context.Context, text string, thread worker.Thre
 		return errors.New("Codex omitted turn id")
 	}
 	// Notifications can arrive before the reply, including questions/completion.
+	if s.snapshot.Thread.TurnID != response.Turn.ID {
+		s.clearRequests("")
+	}
+	s.snapshot.Thread.TurnID = response.Turn.ID
 	if !s.finished[response.Turn.ID] {
-		if s.snapshot.Thread.TurnID != response.Turn.ID {
-			s.clearRequests("")
-		}
-		s.snapshot.Thread.TurnID = response.Turn.ID
 		s.snapshot.State = worker.Active
+	} else {
+		// A terminal event may be the first notification for this turn. Keep
+		// its binding in the returned handle without reviving completed work.
+		s.snapshot.State = worker.Idle
 	}
 	return nil
 }

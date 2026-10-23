@@ -201,8 +201,30 @@ export function aggregate(plan, records, upstream = 'success') {
 
 export function readResults(directory) {
   if (!existsSync(directory)) return [];
-  return readdirSync(directory).filter(name => name.endsWith('.json')).sort()
-    .map(name => JSON.parse(readFileSync(join(directory, name), 'utf8')));
+  const read = path => JSON.parse(readFileSync(path, 'utf8'));
+  const records = sourceFiles(directory, /\.json$/).map(read);
+  const latest = new Map();
+  // download-artifact keeps each attempt in its own directory. Select by
+  // numeric attempt per shard, retaining jobs that did not need a rerun.
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const match = /^foundation-result-([a-z][a-z0-9-]*)-attempt-([1-9][0-9]*)$/.exec(entry.name);
+    if (!match || !Number.isSafeInteger(Number(match[2]))) throw new Error('Invalid shard artifact: ' + entry.name);
+    const [, id, number] = match;
+    const attempt = Number(number);
+    if (!latest.has(id) || attempt > latest.get(id).attempt) latest.set(id, { attempt, name: entry.name });
+  }
+  for (const [id, { name }] of latest) {
+    const path = join(directory, name);
+    const files = sourceFiles(path, /\.json$/);
+    if (files.length !== 1 || files[0] !== join(path, id + '.json')) {
+      throw new Error('Missing or duplicate shard result in artifact: ' + name);
+    }
+    const record = read(files[0]);
+    if (record?.id !== id) throw new Error('Shard result does not match artifact: ' + name);
+    records.push(record);
+  }
+  return records;
 }
 
 export async function runPipeline(root, plan, { jobs = Math.min(4, availableParallelism()), log = console.error, run = runAsync } = {}) {

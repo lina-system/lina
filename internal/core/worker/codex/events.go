@@ -64,6 +64,11 @@ func (s *Session) notification(raw []byte) error {
 		default:
 			return errors.New("unknown Codex turn completion status")
 		}
+		// Completion can precede the start reply without a turn/started event.
+		// Retain its binding so Start returns the same turn as the queued finish.
+		if s.startingTurn && (s.snapshot.Thread.TurnID == "" || s.finished[s.snapshot.Thread.TurnID]) {
+			s.snapshot.Thread.TurnID = turn
+		}
 		s.finished[turn] = true
 		s.clearRequests(turn)
 		if s.snapshot.Thread.TurnID == turn {
