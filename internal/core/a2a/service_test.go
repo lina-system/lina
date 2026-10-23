@@ -34,6 +34,7 @@ type peerFixture struct {
 	changed    atomic.Bool
 	revoked    atomic.Bool
 	cardLeak   atomic.Bool
+	cardGets   atomic.Int32
 }
 
 func peer(t *testing.T, mode string) *peerFixture {
@@ -67,6 +68,7 @@ func peer(t *testing.T, mode string) *peerFixture {
 			t.Error("missing wire version")
 		}
 		if r.URL.Path == "/card" {
+			f.cardGets.Add(1)
 			name := "controlled"
 			if f.cardLeak.Load() {
 				name = f.token
@@ -511,5 +513,22 @@ func TestCardCannotReflectStoredCredentials(t *testing.T) {
 	raw, _ := json.Marshal(connection)
 	if strings.Contains(string(raw), f.token) {
 		t.Fatal("credential persisted in connection metadata")
+	}
+}
+
+func TestDiscoveryURLCannotCarryEncodedCredential(t *testing.T) {
+	f := peer(t, "task")
+	connection := f.connection
+	encoded := ""
+	for _, b := range []byte(f.token) {
+		encoded += fmt.Sprintf("%%%02X", b)
+	}
+	connection.CardURL += "?key=" + encoded
+	before := f.cardGets.Load()
+	if _, err := f.service.Configure(t.Context(), connection, nil); err == nil {
+		t.Fatal("encoded credential in discovery URL admitted")
+	}
+	if f.cardGets.Load() != before {
+		t.Fatal("credential-bearing discovery URL was transmitted")
 	}
 }

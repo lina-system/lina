@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -278,6 +279,9 @@ func (s *Service) connectionContainsCredential(c Connection, newCredential []byt
 		}
 		switch value := v.(type) {
 		case string:
+			if decoded, err := url.QueryUnescape(value); err == nil && decoded != value && visit(decoded, depth+1) {
+				return true
+			}
 			if len(newCredential) > 0 && bytes.Contains([]byte(value), newCredential) {
 				return true
 			}
