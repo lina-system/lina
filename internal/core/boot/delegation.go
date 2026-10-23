@@ -70,7 +70,21 @@ type delegationRuntime struct {
 var gitObject = regexp.MustCompile(`^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`)
 var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-func (r *conversationRuntime) startDelegation(ctx context.Context) error {
+type delegationReadinessError struct {
+	step string
+	err  error
+}
+
+func (e *delegationReadinessError) Error() string { return e.step }
+func (e *delegationReadinessError) Unwrap() error { return e.err }
+
+func (r *conversationRuntime) startDelegation(ctx context.Context) (result error) {
+	step := "delegation.configuration"
+	defer func() {
+		if result != nil {
+			result = &delegationReadinessError{step: step, err: result}
+		}
+	}()
 	file, err := os.Open(filepath.Join(r.root, "system", "core", "delegation.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -93,6 +107,7 @@ func (r *conversationRuntime) startDelegation(ctx context.Context) error {
 			return errors.New("invalid delegated repository")
 		}
 	}
+	step = "delegation.worker"
 	runctx, cancel := context.WithCancel(ctx)
 	d := &delegationRuntime{root: r, config: cfg, processes: proc.NewOwner(), cancel: cancel, done: make(chan struct{}), threads: map[string]worker.Thread{}, leases: map[string]lease.Lease{}, resetChanged: make(chan struct{}, 1), quotaChanged: make(chan struct{}, 1), adapters: map[string]*codex.Session{}, workerEvents: make(chan worker.Event, 256), ctx: runctx}
 	d.connection, err = r.activities.Acquire(runctx, lease.Activity{Class: lease.Reported, Reason: "delegated worker connection"})
@@ -109,6 +124,7 @@ func (r *conversationRuntime) startDelegation(ctx context.Context) error {
 	// Establish optional installation readiness before releasing persisted work.
 	// Once dispatch begins, errors belong to individual attempts; closing the
 	// runtime could kill other workers that the same wake successfully started.
+	step = "delegation.quota"
 	readiness, stopReadiness := context.WithTimeout(ctx, 15*time.Second)
 	_, err = d.availability(readiness)
 	stopReadiness()
@@ -632,6 +648,16 @@ func (d *delegationRuntime) events(ctx context.Context) {
 					entry.workTool(event)
 				}
 			case worker.ProgressEvent:
+				if event.Progress.Phase == "server_request_resolved" {
+					d.root.workers.mu.Lock()
+					entry := d.root.workers.sessions[event.Thread.ID]
+					d.root.workers.mu.Unlock()
+					if entry != nil {
+						entry.stopMatching(event.Thread.TurnID, event.Progress.ItemID)
+						entry.answerDelivered(ctx, event.Thread)
+						entry.origin.notifyOwnerViews()
+					}
+				}
 				if entry := d.resultSession(event.Thread); entry != nil && event.Progress.Phase == "item_completed" && event.Progress.Text != "" {
 					entry.output = event.Progress.Text
 					entry.outputThread = event.Thread
