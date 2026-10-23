@@ -74,7 +74,7 @@ func TestOwnerRunsCommandsAsLaunchdJobs(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- owner.Run(ctx, l, proc.Command{Path: exe, Args: []string{"-test.run=^TestLaunchdJobProcess$", "--", "root"}, Env: []string{"LINA_PROC_JOB_TEST=1"}, Stdin: input, Stdout: writer, Stderr: os.Stderr})
+		done <- owner.Run(ctx, l, proc.Command{Path: exe, Args: []string{"-test.run=^TestLaunchdJobProcess$", "--", "root"}, Env: []string{}, Stdin: input, Stdout: writer, Stderr: os.Stderr})
 		writer.Close()
 	}()
 	reader := bufio.NewReader(output)
