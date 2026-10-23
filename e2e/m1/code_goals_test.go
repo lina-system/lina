@@ -210,7 +210,13 @@ func installedCodeGoal(t *testing.T, mode string) {
 	if err = os.WriteFile(filepath.Join(h.root, "system", "code-work.json"), raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	deadline := 2 * time.Minute
+	if strings.HasPrefix(mode, "worker-recovery") {
+		// RunGoal returns while its recovery runs asynchronously. The goal
+		// engine observes that result on its existing safety sweep.
+		deadline += goal.SafetySweep
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), deadline)
 	defer cancel()
 	h.ctx = ctx
 	start := func() *process {
