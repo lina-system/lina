@@ -16,6 +16,7 @@ const sources = [
   'src/mechanism.c',
   'src/engine_from_callbacks.c',
   'tests/fake_host.c',
+  'tests/fake_log.c',
   'tests/test_decide.c',
   'tests/test_deadline.c',
   'tests/test_mechanism.c',
