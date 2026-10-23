@@ -41,6 +41,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 		Cases []struct {
 			Name, Expected, Preset, Choice string
 			Bridge                         bool `json:"bridge"`
+			SoftBudget                     bool `json:"soft_budget"`
 			LegacyAdmission                bool `json:"legacy_admission"`
 			PendingAdmission               bool `json:"pending_admission"`
 			HostCapacity                   bool `json:"host_capacity"`
@@ -219,6 +220,16 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 					return
 				}
 				callNumber := calls.Add(1)
+				if test.SoftBudget {
+					if callNumber > 1 {
+						methodologyOutput(t, methodologyRequest{Input: req.Input}, "ok", nil)
+					}
+					if callNumber <= 6 {
+						emitPersonaCall(w, fmt.Sprintf("budget-%d", callNumber), "calculate", map[string]string{"expression": "6*7"})
+						return
+					}
+					callNumber -= 6
+				}
 				if callNumber == 1 || test.Choice == "overlap" && callNumber == 3 {
 					offered.Store(toolReachable(req.Tools, "dispatch_work"))
 					if !offered.Load() {
@@ -512,6 +523,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				t.Fatal("restart replayed a manager or conversation model call")
 			}
 			expectedCalls := int32(2)
+			if test.SoftBudget {
+				expectedCalls += 6
+			}
 			if test.HostCapacity {
 				expectedCalls++
 				assertCapacityWorkOnce(t, h, fixture, capacityID)
