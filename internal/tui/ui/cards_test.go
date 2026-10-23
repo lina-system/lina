@@ -27,6 +27,7 @@ func cardModel(t *testing.T) *shellModel {
 	c := state.Card{ID: "approval", Epoch: "1", Revision: 1, Token: "revision", Kind: protocol.KindApprovalRequest, Agent: "Agent", Summary: "Send", Targets: []state.CardField{{Name: "recipient", Value: "recipient@example.invalid"}}, Choices: []protocol.ApprovalChoice{protocol.ApprovalChoiceOnce, protocol.ApprovalChoiceDeny}}
 	m.content, _ = state.Reduce(m.content, state.PutCard{Card: c})
 	m.content, _ = state.Reduce(m.content, state.OpenCard{ID: c.ID})
+	m.View()
 	return m
 }
 func TestCardPressOnlySeparateConfirmAndEscape(t *testing.T) {

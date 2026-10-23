@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -282,5 +283,165 @@ func TestRunClientShellReplyRouting(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestReplyTrackerConsumesOnceAndResets(t *testing.T) {
+	tracker := make(replyTracker)
+	var calls []uint64
+	reply := func(attempt uint64, e protocol.Envelope) { calls = append(calls, attempt) }
+	tracker.track("talk", 1, reply)
+	tracker.track("web", 2, reply)
+	tracker.track("channel", 3, reply)
+	if tracker.response(protocol.Envelope{}) || tracker.response(protocol.Envelope{ReplyTo: stringPointer("unknown")}) {
+		t.Fatal("untracked frame consumed")
+	}
+	for _, id := range []string{"channel", "talk", "web"} {
+		e := protocol.Envelope{ReplyTo: &id}
+		if !tracker.response(e) || tracker.response(e) {
+			t.Fatalf("reply %s must be consumed exactly once", id)
+		}
+	}
+	if !reflect.DeepEqual(calls, []uint64{3, 1, 2}) {
+		t.Fatalf("reply attempts = %v", calls)
+	}
+	tracker.track("old", 4, reply)
+	clear(tracker)
+	if tracker.response(protocol.Envelope{ReplyTo: stringPointer("old")}) || len(calls) != 3 {
+		t.Fatal("reset retained a pending reply")
+	}
+}
+
+func TestViewRepliesIgnoreClosedAndReplacedAttempts(t *testing.T) {
+	for _, family := range []string{"talk", "web", "channel"} {
+		for _, status := range []string{"closed", "replaced", "current", "refused"} {
+			t.Run(family+"/"+status, func(t *testing.T) {
+				m := conversationShell()
+				open := status != "closed"
+				m.talk = talkView{open: open, busy: true, attempt: 2}
+				m.web = webView{open: open, busy: true, attempt: 2}
+				m.channels = channelView{open: open, busy: true, attempt: 2}
+				attempt := uint64(2)
+				if status == "replaced" {
+					attempt = 1
+				}
+				var reply func(uint64, protocol.Envelope)
+				var payload protocol.Payload
+				switch family {
+				case "talk":
+					reply = m.talkReply
+					rows := []protocol.AgentTalkLine{{ExchangeID: "exchange-test", Subject: "Result"}}
+					payload = protocol.AgentTalk{Entries: &rows}
+				case "web":
+					reply = m.webReply
+					payload = protocol.WebResult{Configured: true}
+				case "channel":
+					reply = m.channelReply
+					rows := []protocol.ChannelConnection{{Account: "account-test"}}
+					payload = protocol.ChannelResult{Connections: &rows}
+				}
+				beforeTalk, beforeWeb, beforeChannels := m.talk, m.web, m.channels
+				e := protocol.Envelope{ReplyTo: stringPointer("request"), Payload: payload}
+				if status == "refused" {
+					e.Error = &protocol.Error{Code: protocol.ErrorUnavailable}
+				}
+				tracker := make(replyTracker)
+				tracker.track("request", attempt, reply)
+				if !tracker.response(e) || tracker.response(e) {
+					t.Fatal("reply not consumed exactly once")
+				}
+				if status == "closed" || status == "replaced" {
+					if !reflect.DeepEqual(m.talk, beforeTalk) || m.web != beforeWeb || !reflect.DeepEqual(m.channels, beforeChannels) {
+						t.Fatal("stale reply changed a view")
+					}
+					return
+				}
+				var busy, applied bool
+				var code string
+				switch family {
+				case "talk":
+					busy, code, applied = m.talk.busy, m.talk.code, len(m.talk.rows) == 1
+				case "web":
+					busy, code, applied = m.web.busy, m.web.code, m.web.configured
+				case "channel":
+					busy, code, applied = m.channels.busy, m.channels.code, len(m.channels.rows) == 1
+				}
+				if busy || status == "current" && (!applied || code != "") || status == "refused" && (applied || code != "unavailable") {
+					t.Fatalf("busy=%t applied=%t code=%q", busy, applied, code)
+				}
+			})
+		}
+	}
+}
+
+func TestDiscoverySessionReplyLifecycle(t *testing.T) {
+	for _, outcome := range []string{"history", "stale", "missing", "unavailable", "malformed"} {
+		t.Run(outcome, func(t *testing.T) {
+			m := conversationShell()
+			m.content.Capabilities = append(m.content.Capabilities, protocol.Capability{Name: "agents", Version: "1.0"})
+			m.content.Agents = []protocol.Agent{{AgentID: "chosen", Name: "Chosen"}}
+			m.conversation.id = "main:chosen"
+			p := &fakeShellPeer{requests: make(chan shellCall, 4), stopped: make(chan struct{})}
+			s := &discoverySession{model: m}
+			if err := s.start(t.Context(), p); err != nil {
+				t.Fatal(err)
+			}
+			call := nextShellCall(t, t.Context(), p)
+			if _, ok := call.payload.(protocol.AgentRequest); !ok {
+				t.Fatalf("discovery request = %+v", call)
+			}
+			rows := []protocol.Agent{{AgentID: "chosen", Name: "\x1b[31mChosen\x1b[0m"}}
+			e := protocol.Envelope{ReplyTo: &call.id, Payload: protocol.AgentResult{Operation: stringPointer("list"), Agents: &rows}}
+			switch outcome {
+			case "stale":
+				m.conversation.id = "main:other"
+			case "missing":
+				rows = nil
+			case "unavailable":
+				e.Error = &protocol.Error{Code: protocol.ErrorUnavailable}
+			case "malformed":
+				e.Payload = protocol.AgentResult{}
+			}
+			consumed, redraw, err := s.response(t.Context(), p, p, e)
+			if !consumed || s.agentListID != "" {
+				t.Fatal("discovery reply not consumed")
+			}
+			if outcome == "malformed" {
+				if !errors.Is(err, errStream) {
+					t.Fatalf("malformed response error = %v", err)
+				}
+				return
+			}
+			if err != nil || redraw != (outcome != "stale") {
+				t.Fatalf("redraw=%t err=%v", redraw, err)
+			}
+			switch outcome {
+			case "history":
+				history := nextShellCall(t, t.Context(), p)
+				req, ok := history.payload.(protocol.HistoryGet)
+				if !ok || req.AgentID == nil || *req.AgentID != "chosen" || m.content.Agents[0].Name != "Chosen" {
+					t.Fatalf("history request=%+v agents=%+v", history, m.content.Agents)
+				}
+				consumed, _, err := s.response(t.Context(), p, p, protocol.Envelope{ReplyTo: &history.id, Payload: protocol.History{ConversationID: stringPointer("main:chosen")}})
+				if consumed || err != nil || s.historyID != "" {
+					t.Fatal("successful history must continue to normal history routing")
+				}
+			case "missing":
+				if !m.conversation.agentMissing || m.conversation.agentPending {
+					t.Fatal("missing selection was not held")
+				}
+			case "unavailable":
+				if p.closed.Load() != 1 || m.status.State != Recovering || !m.conversation.agentPending {
+					t.Fatal("unavailable discovery must reconnect without losing selection")
+				}
+			}
+			if len(p.requests) != 0 {
+				t.Fatal("unexpected discovery request")
+			}
+			s.reset()
+			if s.agentListID != "" || s.historyID != "" || s.reconnectAgent != "" || s.model != m {
+				t.Fatal("reset did not retain only the model")
+			}
+		})
 	}
 }
