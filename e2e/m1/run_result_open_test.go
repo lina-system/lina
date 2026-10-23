@@ -98,6 +98,10 @@ func runResultOpenLocalized(t *testing.T, language design.Language) {
 		}
 	}
 	assertLocalizedRun("running strip", screenText(strip))
+	// A running snapshot may arrive before the remaining startup subscriptions.
+	// Opening a row is gated on Live; wait for that state instead of racing the
+	// startup handshake with an Enter that the TUI must ignore while resyncing.
+	waitScreen(t, h, terminal, design.Text(language, "live"))
 	h.keys(terminal, "\x12") // Running: the owner opens a landed row.
 	list := waitScreen(t, h, terminal, design.Text(language, "running.keys"))
 	assertLocalizedRun("running list", screenText(list))
