@@ -555,7 +555,7 @@ A message reaches work through its binding ([conversation-and-memory.md](convers
 | A new item | Captured under Plans. A new item may name the 일 or 목표 it belongs to. |
 | None | Answered in the conversation only, including a memory write. |
 
-- **Candidates.** Core ranks the candidates from work state as [What a message is about](conversation-and-memory.md#what-a-message-is-about) lists them. The person's items are candidates whichever agent manages them, because every agent shares the work queue. A binding to an item managed by another agent's manager session reaches that manager as a project event, and the requesting conversation keeps the reply.
+- **Candidates.** The binding snapshot reads current record, task and background-run state, plus unresolved conversation and work questions. Question state is captured before the input can resolve or skip it. Core ranks the candidates from work state as [What a message is about](conversation-and-memory.md#what-a-message-is-about) lists them. The person's items are candidates whichever agent manages them, because every agent shares the work queue. A binding to an item managed by another agent's manager session reaches that manager as a project event, and the requesting conversation keeps the reply.
 - **Pending target.** An instruction awaiting the person's target choice has no executable binding. Skipping its question or sending an unrelated message does not deliver a follow-up, start work or perform an effect for that instruction. It stays pending until the person selects a target or cancels it; unrelated work continues. A target choice still passes the usual state and authorization checks before execution.
 - **No second copy.** Before a new item is created, Core compares it with the open items: the same normalized title, or a candidate the model marked as close. When one matches, the model binds to it or records in the binding why the new item differs. In the owner's data, 6 percent of messages read as either new or earlier work, and resuming the earlier item, such as a paused watch job, was the accepted reading.
 - **Moving a binding.** A move re-attaches what the turn did. A 할 일 the turn created changes its 일 or 목표. A field edit on the wrong item is restored to its previous revision there and applied to the right item. A steer delivered to the wrong task or run is followed by a withdrawal message to it and delivered to the right one; what the wrong run already did stays, and its card says so. An effect that left the person is not moved.
@@ -1155,6 +1155,16 @@ requesting a capability that is not implemented fails before dispatch.
 #### Claude Code through ACP
 
 Claude Code has no ACP mode of its own. The `claude-agent-acp` program (Apache-2.0, from the ACP project) wraps it. The LINA release pins it with its own lockfile, like the Claude adapter, and Core installs it on first use of the Claude Code worker with lifecycle scripts disabled and optional packages omitted, so the Claude Code binary that its package can carry is never installed ([runtime.md](runtime.md#installed-tools)). It runs on the person's Node.js. It always runs the person's installed `claude`, never the copy of Claude Code that its package can carry, so the person's version, login, settings, plugins and permission mode stay in use. It starts Claude Code with its permission prompts routed over ACP and with the person's user, project and local settings, and writes nothing into the person's setup. Because it always loads those settings, it can serve only as a worker, never as the Claude conversation provider ([runtime.md](runtime.md#providers)).
+
+Core discovers this worker from the person's `claude` and `node`, without
+requiring a global ACP program. After selection, Core installs the release's
+program in its private state from the shipped manifest and lockfile. Failed
+installs are discarded; complete installs are checked before reuse. Readiness
+records `claude --version`; the result separately records `agentInfo.version`.
+A missing Claude or Node returns an unsupported cause for this worker through
+`dispatch_work`, while other installed workers remain available. The `claude`
+headless worker remains a separate selection pending evaluation. A separately
+opted-in live test records the person's Claude version and the program version.
 
 ### Readiness
 
