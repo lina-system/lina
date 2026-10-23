@@ -1125,7 +1125,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		saved, err = ledger.New(namingCanon{Canon: db, person: r.person, agent: r.agent, names: preparedNames, replies: batch}, r.materials).AdmitBatch(ctx, batch)
 		return err
 	}
-	inputQueue := &conversationInputs{runtime: r, inputs: inputs}
+	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: questions}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: complete,
 		StartFromTurn: func(ctx context.Context, h budget.Handoff) (budget.Handle, error) {
 			var err error
@@ -1316,19 +1316,29 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 // Drained steering belongs to this turn; only the queue's final undrained
 // items are resubmitted as follow-ups, with their original durable identity.
 type conversationInputs struct {
-	runtime *conversationRuntime
-	inputs  *loop.Inputs
-	failure error
+	runtime   *conversationRuntime
+	inputs    *loop.Inputs
+	failure   error
+	questions *questionTurn
 }
 
 func (q *conversationInputs) Drain() []provider.Item {
 	items := q.inputs.Drain()
 	for _, body := range items {
-		if accepted, ok := q.runtime.takeSteering(body); ok && accepted.event.Surface.Kind == "channel" {
+		accepted, ok := q.runtime.takeSteering(body)
+		if !ok {
+			continue
+		}
+		if accepted.event.Surface.Kind == "channel" {
 			if err := q.runtime.db.Write(q.runtime.ctx, func(tx *canon.Tx) error {
 				_, err := tx.ExecContext(q.runtime.ctx, "INSERT INTO channel_steering(inbox_id) VALUES(?) ON CONFLICT DO NOTHING", accepted.inboxID)
 				return err
 			}); err != nil {
+				q.failure = err
+			}
+		}
+		if q.questions != nil {
+			if err := q.questions.consume(q.runtime.ctx, accepted); err != nil {
 				q.failure = err
 			}
 		}
