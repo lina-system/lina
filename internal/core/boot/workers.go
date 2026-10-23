@@ -34,6 +34,7 @@ type workerRuntime struct {
 	mu       sync.Mutex
 	closed   bool
 	sessions map[string]*workerSession
+	starting sync.WaitGroup
 }
 type workerSession struct {
 	ownerControl  sync.Mutex
@@ -48,6 +49,7 @@ type workerSession struct {
 	workdir       string
 	scheduled     bool
 	answered      func(context.Context, worker.Thread)
+	started       time.Time
 	approvals     map[string]worker.Event
 	questions     map[string]*workerQuestion
 	output        string
@@ -244,6 +246,9 @@ func (r *conversationRuntime) workerStartAssignment(ctx context.Context, turnID 
 }
 
 func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input) (tools.Result, error) {
+	if name == "worker_start" || name == "worker_input" || name == "worker_interrupt" {
+		defer r.notifyWorkerRunning()
+	}
 	var a workerArgs
 	_ = json.Unmarshal(in.Arguments, &a)
 	if name == "worker_start" {
@@ -264,10 +269,13 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 	b := r.workers
 	if name == "worker_start" {
 		b.mu.Lock()
-		defer b.mu.Unlock()
 		if b.closed {
+			b.mu.Unlock()
 			return tools.Result{State: tools.Failed}, errors.New("worker runtime closed")
 		}
+		b.starting.Add(1)
+		b.mu.Unlock()
+		defer b.starting.Done()
 		process, err := r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Reported, Reason: "Codex session"})
 		if err != nil {
 			return tools.Result{State: tools.Failed}, err
@@ -277,7 +285,7 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 			process.Release()
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
-		entry := &workerSession{adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
+		entry := &workerSession{adapter: adapter, close: adapter.Close, compatibility: adapter.Compatibility(), origin: r, input: input, process: process, done: make(chan struct{}), active: map[string]lease.Lease{}, packet: a.TaskPacket, workdir: a.Workdir, started: time.Now(), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
 		activity, err := r.activities.Acquire(r.ctx, lease.Activity{Class: lease.Hard, Reason: "Codex turn"})
 		if err != nil {
 			adapter.Close()
@@ -293,13 +301,23 @@ func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID 
 		}
 		entry.thread = thread
 		entry.active[thread.TurnID] = activity
-		if b.sessions[thread.ID] != nil {
+		// Registry access is brief and never encloses adapter I/O or canon
+		// writes: running-list actions also read it from the canon writer.
+		b.mu.Lock()
+		if b.closed {
+			err = errors.New("worker runtime closed")
+		} else if b.sessions[thread.ID] != nil {
+			err = errors.New("duplicate worker session identity")
+		} else {
+			b.sessions[thread.ID] = entry
+		}
+		b.mu.Unlock()
+		if err != nil {
 			activity.Release()
 			adapter.Close()
 			process.Release()
-			return tools.Result{State: tools.Unknown}, errors.New("duplicate worker session identity")
+			return tools.Result{State: tools.Unknown}, err
 		}
-		b.sessions[thread.ID] = entry
 		// This notice commits the installed version independently of a model summary.
 		notice := fmt.Sprintf("Codex %s session started.", entry.compatibility.Version)
 		if !entry.compatibility.Verified {
@@ -396,8 +414,11 @@ func (e *workerSession) encode(s worker.ThreadSnapshot) tools.Result {
 	return tools.Result{State: tools.Applied, Body: raw, Revision: s.Thread.ID + ":" + s.Thread.TurnID}
 }
 func (e *workerSession) observe() {
-	defer e.origin.notifyOwnerViews()
-	defer close(e.done)
+	defer func() {
+		close(e.done)
+		e.origin.notifyWorkerRunning()
+		e.origin.notifyOwnerViews()
+	}()
 	for event := range e.adapter.Events() {
 		switch event.Kind {
 		case worker.ProgressEvent:
@@ -429,6 +450,9 @@ func (e *workerSession) observe() {
 			e.requestQuestion(event)
 		case worker.ToolCallEvent:
 			e.workTool(event)
+		}
+		if event.Kind != worker.UsageEvent && (event.Kind != worker.ProgressEvent || event.Progress.Phase == "started" || event.Progress.Phase == "server_request_resolved") {
+			e.origin.notifyWorkerRunning()
 		}
 		e.origin.notifyOwnerViews()
 	}
@@ -471,6 +495,9 @@ func (b *workerRuntime) close() {
 		entries = append(entries, e)
 	}
 	b.mu.Unlock()
+	// Starts registered before shutdown finish or clean up their unregistered
+	// processes before Close returns. Waiting never holds the registry mutex.
+	b.starting.Wait()
 	for _, e := range entries {
 		e.close()
 		<-e.done
