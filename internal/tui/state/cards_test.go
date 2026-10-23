@@ -195,6 +195,19 @@ func TestQuestionNumberPromptRejectsNonNumbers(t *testing.T) {
 	}
 }
 
+func TestOptionalQuestionFieldMayBeBlank(t *testing.T) {
+	optional := true
+	form := &protocol.QuestionForm{PluginName: "Plugin", Fields: []protocol.FormField{{Name: "label", Type: protocol.FormFieldTypeText}, {Name: "limit", Type: protocol.FormFieldTypeNumber, Optional: &optional}}}
+	got, ok := QuestionValues(form, map[string]string{"label": "ok", "limit": ""})
+	_, present := got["limit"]
+	if !ok || got["label"].String == nil || *got["label"].String != "ok" || present {
+		t.Fatalf("blank optional was submitted: %+v %v", got, ok)
+	}
+	if _, ok = QuestionValues(form, map[string]string{"limit": "1"}); ok {
+		t.Fatal("blank required field accepted")
+	}
+}
+
 func TestResolvedPublicationKeepsTheCorrelatedRaceOutcome(t *testing.T) {
 	card := approvalCard()
 	card.Token = "group"

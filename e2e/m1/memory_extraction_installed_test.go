@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	readcanon "github.com/thisisjun786/lina/internal/moirai/canon"
 )
@@ -138,7 +139,7 @@ func TestM2InstalledMemoryExtraction(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			hits, err := memory.New(db).Recall(h.ctx, memory.RecallScope{Agent: strings.TrimPrefix(conversation, "main:"), Person: person}, memory.Query{At: time.Now().Unix(), Text: "jasmine"})
+			hits, err := memory.New(db).WithQuotes(ledger.New(db, nil).Citation).Recall(h.ctx, memory.RecallScope{Agent: strings.TrimPrefix(conversation, "main:"), Person: person}, memory.Query{At: time.Now().Unix(), Text: "jasmine"})
 			if err != nil || len(hits) != 1 {
 				t.Fatalf("learned memory: %+v %v", hits, err)
 			}
