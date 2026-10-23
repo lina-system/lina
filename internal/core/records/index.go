@@ -33,9 +33,9 @@ type Index interface {
 	Query(context.Context, Params) ([]Row, error)
 }
 type document struct {
-	person, kind, state, title, note string
-	belongs, blocked                 []string
-	todo                             *Todo
+	person, kind, state, title, note, source string
+	belongs, blocked                         []string
+	todo                                     *Todo
 }
 
 func parseDocument(data []byte) (document, error) {
@@ -67,7 +67,7 @@ func parseDocument(data []byte) (document, error) {
 		return value, nil
 	}
 	var err error
-	for key, dest := range map[string]*string{"person_id": &d.person, "kind": &d.kind, "state": &d.state} {
+	for key, dest := range map[string]*string{"person_id": &d.person, "kind": &d.kind, "state": &d.state, "source": &d.source} {
 		*dest, err = scalar(key)
 		if err != nil {
 			return d, err
@@ -103,6 +103,10 @@ func parseDocument(data []byte) (document, error) {
 }
 
 func putProjection(ctx context.Context, tx *canon.Tx, r indexRow) error {
+	// Record citations are a disposable projection of the current file revision.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM cite WHERE view_kind='record' AND view_id=?", r.id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM records_text WHERE id=?", r.id); err != nil {
 		return err
 	}
@@ -116,6 +120,19 @@ func putProjection(ctx context.Context, tx *canon.Tx, r indexRow) error {
 		return err
 	}
 	d := r.doc
+	if d.source != "" {
+		ref := canon.Citation{TargetKind: "external", TargetID: d.source, TargetRevision: "0", Precision: "none", Role: "cites"}
+		var event int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM conv_event WHERE id=?", d.source).Scan(&event); err != nil {
+			return err
+		}
+		if event == 1 {
+			ref.TargetKind, ref.Precision = "event", "event"
+		}
+		if err := canon.ReplaceCitations(ctx, tx, "record", r.id, r.revision, []canon.Citation{ref}); err != nil {
+			return err
+		}
+	}
 	if d.todo != nil {
 		if err := canon.RecordDoneCompletion(ctx, tx, d.todo.Completion); err != nil {
 			return err

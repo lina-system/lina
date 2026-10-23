@@ -653,7 +653,7 @@ Tables: `conv_event` (append-only), `ev_rel` (`view_of` with ordinal, `supersede
 Fields are exactly those of [conversation-and-memory.md](conversation-and-memory.md#event-fields).
 The admit call takes the trusted entry path (a `guard.Entry` enum), from which `guard.Admit` fixes `speaker_kind`; it is never parsed from text.
 The shared `secrets.Mask` runs before append: a secret-shaped value or key block keeps the flag, not the value.
-A body above the inline size (P: 16 KiB) goes to `materials/lina/` and the event refers to it; missing bytes mark `bytes_unavailable`.
+A conversation message body above the inline size (P: 16 KiB) goes to `materials/lina/` and the event refers to it; missing bytes mark `bytes_unavailable`. Transaction-local structured binding snapshots stay inline so they commit with the exact input state without truncation or filesystem I/O under the writer.
 Only the Moirai write path and the ledger package write these tables.
 Provider-item JSON is masked at decoded string boundaries and serialized safely; both the persisted body and its derived history projection retain valid JSON, including nested JSON strings with quoted credentials.
 
@@ -1232,6 +1232,10 @@ The protocol is one JSON message per line on stdio.
 - Core to adapter: `start` (system text, items, tool declarations, model, effort), `tool_result`, `cancel`, `ping`.
 - Adapter to Core: `init` (tools, MCP servers and plugins the runtime loaded), `delta`, `item_done`, `tool_call`, `usage`, `limit`, `terminal` (reason, session id, cost estimate), `error`.
 - Core refuses the turn if `init` lists anything LINA did not put there.
+- Ending the stream context or a pending `Next` context terminates the request,
+  unblocks its stdio reads and writes, and makes `Next` return the context error
+  even if the runtime is silent. The runtime and its supervisor are reaped
+  without requiring a separate `Close`; `Close` remains an idempotent join.
 - First use installs the SDK from the release lockfile ([runtime.md](runtime.md#provider-adapters)); it is never shipped in LINA artifacts.
 
 Implementation notes: [C-45 runtime increment](../../adapters/claude/REFERENCE.md#c-45-runtime-increment).

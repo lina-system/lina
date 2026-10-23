@@ -158,6 +158,24 @@ func (s *Store) Admit(ctx context.Context, entry guard.Entry, in Input) (Event, 
 	return events[0], nil
 }
 
+// AppendSystemSnapshot stores computed structured metadata inside an existing
+// canon transaction. Unlike conversation text, a snapshot must describe the
+// very state observed under that transaction, so it stays inline: no filesystem
+// preparation or truncation is permitted. The entry is always Core system data.
+func AppendSystemSnapshot(ctx context.Context, tx *canon.Tx, in Input) (Event, error) {
+	if in.ScaffoldKind == "" || !json.Valid([]byte(in.Body)) {
+		return Event{}, ErrInvalid
+	}
+	event, err := prepare(guard.EntrySystem, in)
+	if err != nil {
+		return Event{}, err
+	}
+	if err = writeEvent(ctx, tx, event); err != nil {
+		return Event{}, err
+	}
+	return event, nil
+}
+
 // AdmitBatch commits an ordered group of related events in one transaction.
 // Later events may reference earlier events in the batch. Input validation,
 // masking and durable byte preparation finish before the canon transaction.

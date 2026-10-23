@@ -241,7 +241,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if route == nil {
 		r.identity.Topics = nil
 		r.identity.TopicCapabilities = nil
-	} else if err := addOperations(&r.identity, clientsrv.ConversationOperations(r.router)); err != nil {
+	} else if err := addOperations(&r.identity, clientsrv.ConversationOperations(r.router), r.resultOperations()); err != nil {
 		return nil, err
 	}
 	r.vault, err = secrets.OpenFiles(root)

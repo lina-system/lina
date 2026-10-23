@@ -80,15 +80,15 @@ func (e ClassifiedEvent) PersonEvidence() (PersonEvidence, bool) {
 // the ordered import stage retains these decisions with its events and report.
 func ClassifySpeakers(ctx context.Context, in SpeakerProfile) (SpeakerReport, error) {
 	if in.Profile == "" || in.PersonID == "" {
-		return SpeakerReport{}, ErrSnapshot
+		return SpeakerReport{}, invalidSnapshot("speaker profile and person required")
 	}
 	owners := map[string]OwnerChannel{}
 	for _, o := range in.OwnerChannels {
 		if o.SessionID == "" || !interactiveSource(o.Source) {
-			return SpeakerReport{}, ErrSnapshot
+			return SpeakerReport{}, invalidSnapshot("owner channel session and interactive source")
 		}
 		if _, exists := owners[o.SessionID]; exists {
-			return SpeakerReport{}, ErrSnapshot
+			return SpeakerReport{}, invalidSnapshot("unique owner channel session")
 		}
 		owners[o.SessionID] = o
 	}
@@ -110,7 +110,7 @@ func ClassifySpeakers(ctx context.Context, in SpeakerProfile) (SpeakerReport, er
 	seen := map[string]bool{}
 	for _, event := range in.Events {
 		if event.ID == "" || seen["event:"+event.ID] {
-			return SpeakerReport{}, ErrSnapshot
+			return SpeakerReport{}, invalidSnapshot("unique nonempty event id")
 		}
 		seen["event:"+event.ID] = true
 		var decisions []speakerDecision
@@ -123,7 +123,7 @@ func ClassifySpeakers(ctx context.Context, in SpeakerProfile) (SpeakerReport, er
 			for _, id := range source.ids {
 				key := fmt.Sprintf("%s:%d", source.name, id)
 				if source.db == nil || id <= 0 || seen[key] {
-					return SpeakerReport{}, ErrSnapshot
+					return SpeakerReport{}, invalidSnapshot("speaker source present and row id positive and unique")
 				}
 				seen[key] = true
 				d, err := readSpeaker(ctx, source.db, state, id, source.host, owners)
@@ -156,7 +156,7 @@ func openSpeakerSource(ctx context.Context, path string, kind SQLiteSource) (*sq
 	if err != nil {
 		return nil, err
 	}
-	if err = checkSQLite(ctx, db, registeredSQLiteSchemas[kind]); err != nil {
+	if _, err = registeredSchema(ctx, db, kind); err != nil {
 		db.Close()
 		return nil, err
 	}
