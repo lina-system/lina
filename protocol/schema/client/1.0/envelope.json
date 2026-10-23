@@ -4612,6 +4612,12 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "evidence_details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/memory_evidence"
+          }
         }
       },
       "additionalProperties": false,
@@ -5986,6 +5992,48 @@
         "label"
       ],
       "additionalProperties": false
+    },
+    "memory_evidence": {
+      "type": "object",
+      "properties": {
+        "reference": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quote": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tombstone": {
+          "$ref": "#/$defs/memory_tombstone"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "reference"
+      ]
+    },
+    "memory_tombstone": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "person": {
+          "type": "string"
+        },
+        "at": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "person",
+        "at"
+      ]
     },
     "a2a_profile": {
       "type": "object",
