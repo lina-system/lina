@@ -21,6 +21,7 @@ type Line struct {
 	Next         string    `json:"next"`
 	Waiting      int       `json:"waiting"`
 	Depth        int       `json:"depth"`
+	Stages       []Stage   `json:"stages,omitempty"`
 }
 type Entry struct {
 	Ref  string
@@ -38,8 +39,11 @@ type Unit struct {
 	Done                   *bool
 	Active, Seen, Landed   bool
 	JustFinished           string
+	Next                   string
 	Waiting                int
 	Updated                int64
+	Percent                *int
+	Stages                 []Stage
 }
 
 func Compute(units []Unit) []Entry {
@@ -50,22 +54,29 @@ func Compute(units []Unit) []Entry {
 	}
 	rows := make(map[string]*row, len(units))
 	for _, u := range units {
-		line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting}
+		line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
 		if u.JustFinished != "" {
 			line.JustFinished = u.JustFinished
+		}
+		if u.Next != "" {
+			line.Next = u.Next
+		}
+		// The line's stage word is its current stage entry: the lowest-numbered
+		// entry that is not done.
+		if current, ok := currentStage(u.Stages); ok {
+			line.Stage = current.Label
 		}
 		landed := u.Landed || u.Done != nil && *u.Done
 		rows[u.ID] = &row{u, line, (u.Active || u.Waiting > 0 || landed && !u.Seen) && !(landed && u.Seen)}
 	}
-	// A goal is visible only through live children or a pending decision. Plan
-	// stage and denominators remain unknown until the to-do record work lands.
+	// A goal is visible through its own work, live children or a pending decision.
 	for _, u := range units {
 		if u.Kind != "goal" {
 			continue
 		}
 		r := rows[u.ID]
 
-		r.visible = u.Waiting > 0
+		r.visible = r.visible || u.Waiting > 0
 		for _, child := range units {
 			if child.Parent != u.ID || child.Kind != "project" {
 				continue
@@ -119,4 +130,15 @@ func Compute(units []Unit) []Entry {
 		}
 	}
 	return out
+}
+
+// currentStage is the line's stage word: the lowest-numbered entry that is not
+// done. A list always ends with the 확인 entry, so a started goal has one.
+func currentStage(stages []Stage) (Stage, bool) {
+	for _, entry := range stages {
+		if entry.State != StepDone {
+			return entry, true
+		}
+	}
+	return Stage{}, false
 }

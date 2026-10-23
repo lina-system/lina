@@ -106,6 +106,7 @@ func (f *fixture) register(t *testing.T, marked bool, handler tools.Handler) {
 }
 
 func TestUnmarkedPluginRunsWithoutApprovalAndRecordsEffect(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, false, nil)
 	result, err := f.registry.Dispatch(t.Context(), f.call)
@@ -121,6 +122,7 @@ func TestUnmarkedPluginRunsWithoutApprovalAndRecordsEffect(t *testing.T) {
 	}
 }
 func TestIdempotencySurvivesConcurrencyAndRestart(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	started, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -163,6 +165,7 @@ func TestIdempotencySurvivesConcurrencyAndRestart(t *testing.T) {
 	}
 }
 func TestStaleRevisionRefusedBeforeHandler(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, false, nil)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); err != nil {
@@ -183,6 +186,7 @@ func TestStaleRevisionRefusedBeforeHandler(t *testing.T) {
 	}
 }
 func TestMarkedPluginRequiresApprovalAndInvalidArgsNeverRun(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, true, nil)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -198,6 +202,7 @@ func TestMarkedPluginRequiresApprovalAndInvalidArgsNeverRun(t *testing.T) {
 	}
 }
 func TestUnknownEffectIsNeverRetried(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, false, func(context.Context, lease.Lease, tools.Input) (tools.Result, error) {
 		f.runs.Add(1)
@@ -216,6 +221,7 @@ func TestUnknownEffectIsNeverRetried(t *testing.T) {
 }
 
 func TestReplayReturnsReceiptAfterObservedRevisionChanges(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, false, nil)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); err != nil {
@@ -229,6 +235,7 @@ func TestReplayReturnsReceiptAfterObservedRevisionChanges(t *testing.T) {
 }
 
 func TestDispatchReconcilesIdleTargetAfterExternalEdit(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, false, func(context.Context, lease.Lease, tools.Input) (tools.Result, error) {
 		revision := "r2"
@@ -258,6 +265,7 @@ func TestDispatchReconcilesIdleTargetAfterExternalEdit(t *testing.T) {
 }
 
 func TestStaleRequestAfterExternalEditIsRefused(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, false, nil)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); err != nil {

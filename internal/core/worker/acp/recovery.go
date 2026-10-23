@@ -9,7 +9,10 @@ import (
 	wire "github.com/thisisjun786/lina/kit/acp"
 )
 
-func restoreSession(ctx context.Context, c *wire.Client, dir string, server wire.McpServer, caps *wire.AgentCapabilities, prior *worker.Thread) (wire.SessionID, error) {
+// restoreHoldLimit bounds live updates kept across a session restore.
+const restoreHoldLimit = 256
+
+func restoreSession(ctx context.Context, c *wire.Client, dir string, server wire.McpServer, caps *wire.AgentCapabilities, prior *worker.Thread) (wire.SessionID, []wire.Update, error) {
 	resume, load := false, false
 	if caps != nil {
 		resume = caps.SessionCapabilities != nil && caps.SessionCapabilities.Resume != nil
@@ -17,7 +20,7 @@ func restoreSession(ctx context.Context, c *wire.Client, dir string, server wire
 	}
 	if prior == nil || !resume && !load {
 		session, err := c.NewSession(ctx, wire.NewSessionRequest{Cwd: dir, McpServers: []wire.McpServer{server}})
-		return session.SessionID, err
+		return session.SessionID, nil, err
 	}
 	id := wire.SessionID(prior.ID)
 	result := make(chan error, 1)
@@ -32,30 +35,40 @@ func restoreSession(ctx context.Context, c *wire.Client, dir string, server wire
 		result <- err
 	}()
 	updates, permissions, requests := c.Updates(), c.Permissions(), c.Requests()
+	// Live updates received after the restore response belong to the next turn.
+	// The hold is bounded like the client's own queue: losing one is not allowed.
+	var held []wire.Update
 	for {
 		select {
 		case err := <-result:
-			return id, err
-		case _, ok := <-updates:
+			return id, held, err
+		case u, ok := <-updates:
 			if !ok {
 				updates = nil
+				continue
 			}
-			// The load response follows its replay. Drain while waiting, without
-			// assigning old activity to the replacement turn or filling the queue.
+			// Replay stays out of progress, output and effect evidence; a live
+			// update after the response is kept for the adapter instead of lost.
+			if !u.Replay {
+				if len(held) >= restoreHoldLimit {
+					return "", nil, wire.ErrOverflow
+				}
+				held = append(held, u)
+			}
 		case _, ok := <-permissions:
 			if !ok {
 				permissions = nil
 				continue
 			}
-			return "", errors.New("ACP restore requested permission before a turn")
+			return "", nil, errors.New("ACP restore requested permission before a turn")
 		case _, ok := <-requests:
 			if !ok {
 				requests = nil
 				continue
 			}
-			return "", errors.New("ACP restore requested input before a turn")
+			return "", nil, errors.New("ACP restore requested input before a turn")
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return "", nil, ctx.Err()
 		}
 	}
 }

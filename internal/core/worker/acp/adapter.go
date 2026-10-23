@@ -78,6 +78,7 @@ type Adapter struct {
 	terminal          *worker.Finish
 	effectSeen        bool
 	transportEnded    bool
+	held              []wire.Update
 }
 
 var _ worker.Adapter = (*Adapter)(nil)
@@ -231,7 +232,7 @@ func (a *Adapter) start(ctx context.Context, l lease.Lease, s worker.StartSpec, 
 			a.tools.close()
 		}
 	}()
-	sessionID, err := restoreSession(handshake, c, s.Workdir, server, initialized.AgentCapabilities, prior)
+	sessionID, held, err := restoreSession(handshake, c, s.Workdir, server, initialized.AgentCapabilities, prior)
 	if err != nil {
 		c.Close()
 		var remote *wire.RPCError
@@ -241,6 +242,7 @@ func (a *Adapter) start(ctx context.Context, l lease.Lease, s worker.StartSpec, 
 		return worker.Thread{}, err
 	}
 	a.mu.Lock()
+	a.held = held
 	a.thread = worker.Thread{ID: string(sessionID), TaskID: s.TaskID, AttemptID: s.AttemptID, ProcessGeneration: generations.Add(1), BindingEpoch: a.cfg.Epoch}
 	a.result.SessionID = a.thread.ID
 	if initialized.AgentInfo != nil {

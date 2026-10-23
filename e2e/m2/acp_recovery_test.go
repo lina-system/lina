@@ -4,6 +4,7 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,10 +106,17 @@ func TestACPRecoveryThroughRunningCore(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				live := false
 				for _, event := range ledger {
 					if strings.Contains(event.Value, "REPLAY_ONLY") {
 						t.Fatal("loaded history was published as new progress")
 					}
+					if strings.Contains(event.Value, "LIVE_AFTER_RESTORE") {
+						live = true
+					}
+				}
+				if mode != "fresh" && mode != "unknown-effect" && mode != "completed-tool" && !live {
+					t.Fatal("live update after the restore response was lost")
 				}
 				if strings.Contains(string(record.Result), "REPLAY_ONLY") {
 					t.Fatal("loaded history leaked into the new result")
@@ -142,11 +150,19 @@ func coordinateBeforeACPDeath(t *testing.T, h *harness, fixture string) {
 	if err != nil || response.Error != "" || json.Unmarshal(response.Result, &mcp) != nil || mcp.IsError || len(mcp.Content) != 1 {
 		t.Fatal("coordination failed", err)
 	}
+	var frame struct {
+		Kind string `xml:"speaker_kind,attr"`
+		Work string `xml:"work_id,attr"`
+		Text string `xml:"text"`
+	}
 	var ack struct {
 		Accepted bool
 		EventID  string `json:"event_id"`
 	}
-	if json.Unmarshal([]byte(mcp.Content[0].Text), &ack) != nil || !ack.Accepted || ack.EventID == "" {
+	if xml.Unmarshal([]byte(mcp.Content[0].Text), &frame) != nil || frame.Kind != "tool" || frame.Work == "" {
+		t.Fatal("coordination result is not a tool frame")
+	}
+	if json.Unmarshal([]byte(frame.Text), &ack) != nil || !ack.Accepted || ack.EventID == "" {
 		t.Fatal("coordination not acknowledged")
 	}
 	// The real Core acknowledged the call, committed its request and cleared
@@ -307,7 +323,9 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
    if(mode==='fresh')session='fresh-session';
    if(m.method==='session/load')for(let i=0;i<1024;i++)progress('REPLAY_ONLY '+i);
   }
-  reply(m.id,m.method==='session/new'?{sessionId:session}:{});break;
+  reply(m.id,m.method==='session/new'?{sessionId:session}:{});
+  if(m.method!=='session/new')progress('LIVE_AFTER_RESTORE');
+  break;
  case 'session/prompt':
   if(m.params.sessionId!==session)throw Error('wrong prompt session');
   pending=m.id;packet=m.params.prompt[0].text;

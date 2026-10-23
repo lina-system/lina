@@ -13,8 +13,10 @@ import (
 )
 
 func TestWorkerAnswerClaimIsAtomicAndRetainsChoice(t *testing.T) {
+	t.Parallel()
 	for _, choice := range []authority.Choice{authority.Once, authority.Deny} {
 		t.Run(string(choice), func(t *testing.T) {
+			t.Parallel()
 			f := setup(t)
 			a := requestWorker(t, f)
 			if err := f.service.Answer(t.Context(), a.ID, owner(f), authority.Decision{Choice: choice}); err != nil {
@@ -60,8 +62,10 @@ func TestWorkerAnswerClaimIsAtomicAndRetainsChoice(t *testing.T) {
 }
 
 func TestWorkerApprovalStopClosesUnclaimedStates(t *testing.T) {
+	t.Parallel()
 	for _, choice := range []authority.Choice{"", authority.Once, authority.Deny} {
 		t.Run("choice="+string(choice), func(t *testing.T) {
+			t.Parallel()
 			f := setup(t)
 			a := requestWorker(t, f)
 			if choice != "" {
@@ -92,6 +96,7 @@ func TestWorkerApprovalStopClosesUnclaimedStates(t *testing.T) {
 }
 
 func TestWorkerApprovalRejectsNonRelayAndMissingRecords(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	f.register(t, true, nil)
 	if _, err := f.registry.Dispatch(t.Context(), f.call); !errors.Is(err, tools.ErrApprovalRequired) {
@@ -121,8 +126,10 @@ func TestWorkerApprovalRejectsNonRelayAndMissingRecords(t *testing.T) {
 }
 
 func TestWorkerApprovalRestartStopsUnusedAnswers(t *testing.T) {
+	t.Parallel()
 	for _, choice := range []authority.Choice{"", authority.Once, authority.Deny} {
 		t.Run("choice="+string(choice), func(t *testing.T) {
+			t.Parallel()
 			f := setup(t)
 			a := requestWorker(t, f)
 			if choice != "" {
@@ -159,6 +166,7 @@ func TestWorkerApprovalRestartStopsUnusedAnswers(t *testing.T) {
 }
 
 func TestWorkerApprovalCallbacksObserveCommitsAndClaimDoesNotReenter(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	var changes int
 	var id string
