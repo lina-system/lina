@@ -1336,6 +1336,13 @@ A goal is in one of these states. The person sees them only through the progress
 
 **Corrected-plan reconciliation.** The manager response to a corrected definition contains the complete task list for that canonical record revision, without add/update/remove patch fields. Core reconciles by task ID: the same ID with unchanged instructions, repository, base, write area and dependencies keeps its state and results; a changed definition replaces that task and re-derives it and its transitive dependents. New IDs are added. IDs absent from the complete list are retired and never re-run. Undispatched actions retire without spending attempts; already-claimed actions retain their reservations until Core reads their outcome and are never dispatched again. Their outcomes remain receipted against the old definition and cannot advance a replacement task with the same ID. No correction deletes branches, files or artifacts. The existing effect barrier is also checked when a manager response arrives, so a newly scheduled receipt read cannot be overtaken by a plan. The existing terminal-outcome fence preserves accepted task results; delayed reports cannot bind old effects to a reused task ID. Worker attempt numbers remain monotonic for each goal/task ID across replacement and removal followed by reintroduction; undispatched cancellations spend no attempt. Changed tasks retire their settled receipts through the existing supersession fence. PR inspection, merge and merge-evidence checks select only an accepted, non-superseded worker receipt for the current attempt, following an accepted observation back to its original effect. Unchanged tasks retain their accepted receipt across definition revisions.
 
+For a goal without a service, corrected-plan reconciliation keeps its verification
+revision only while a retained task supplies that result. Otherwise it selects a
+retained task's result, or clears the target when none remains. Verification reads
+all retained tasks' QA evidence again without rerunning unchanged work. Retiring a
+task preserves its artifacts and observed repository merge history; it does not
+roll back a service's deployment target.
+
 The conversation can correct an admitted goal through `revise_code_goal`, using
 its goal id and the latest canonical record revision. Admission returns the
 record id and revision so the agent can read it before a later correction.
