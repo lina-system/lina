@@ -665,6 +665,9 @@ func (e *workerSession) observe() {
 			e.recoveryMu.Lock()
 			rec := e.recovery
 			settled := rec.ID == ""
+			if event.Thread == rec.Thread {
+				rec.Finish = event.Finish
+			}
 			deliver := event.Finish.Status == worker.Done || rec.Canceled || rec.ID == ""
 			delivered := false
 			if deliver {

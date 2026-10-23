@@ -15,6 +15,7 @@ import (
 type Recovery struct{ DB *canon.Store }
 
 type Record struct {
+	Finish                                                  *worker.Finish
 	Reservation                                             string
 	PendingRequests                                         map[string]bool
 	Worker                                                  string
@@ -97,6 +98,9 @@ func (s Recovery) Records(ctx context.Context) ([]Record, error) {
 func Observe(r Record, snap worker.ThreadSnapshot) (Record, bool) {
 	if r.State == "decision" || r.State == "finished" || r.State == "parked" || snap.Thread != r.Thread {
 		return r, false
+	}
+	if snap.Finish != nil {
+		r.Finish = snap.Finish
 	}
 	if snap.Finish == nil || !snap.EffectsKnown || len(snap.Pending) > 0 || len(r.PendingRequests) > 0 || r.RetryFrom == r.Thread.TurnID {
 		if r.State != "running" || snap.State != worker.Active && snap.State != worker.Waiting {

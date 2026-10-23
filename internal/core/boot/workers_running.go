@@ -106,9 +106,16 @@ func observeRunningWorker(ctx context.Context, e *workerSession) (runs.ListItem,
 	}
 	e.recoveryMu.Lock()
 	recoveryState := e.recovery.State
+	finish := e.recovery.Finish
 	e.recoveryMu.Unlock()
 	if recoveryState == "unknown" || recoveryState == "retrying" {
-		snapshot.State = worker.Unknown
+		// Execution failure is independent of whether its effects have settled.
+		// A failed read alone still cannot establish a failed worker turn.
+		if finish != nil && finish.Status == worker.Failed && !(finish.Failure == worker.ConnectionFailure && finish.Code == "connection_lost") {
+			snapshot.State = worker.Dead
+		} else if snapshot.State != worker.Dead || err != nil {
+			snapshot.State = worker.Unknown
+		}
 	}
 	if recoveryState == "decision" {
 		snapshot.State = worker.Waiting

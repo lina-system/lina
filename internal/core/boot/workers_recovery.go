@@ -41,6 +41,7 @@ func (e *workerSession) bindRecovery(ctx context.Context, th worker.Thread) erro
 	e.mu.Unlock()
 	if th.TurnID != priorTurn || rec.RetryFrom != "" && th.TurnID != rec.RetryFrom {
 		rec.State = "running"
+		rec.Finish = nil
 	}
 	store := recovery.Recovery{DB: e.origin.db}
 	var err error

@@ -146,8 +146,13 @@ func TestWorkerRecoveryFailureRetainsUnknownDirectoryReservation(t *testing.T) {
 	if err := r.work.CheckWorker(t.Context(), reservation); err != nil {
 		t.Fatalf("unknown effects released directory reservation: %v", err)
 	}
+	item, err := observeRunningWorker(t.Context(), e)
+	if err != nil || item.State != "failed" {
+		t.Fatalf("known failure hidden by unknown effects: %+v %v", item, err)
+	}
+
 	records, err := (recovery.Recovery{DB: r.db}).Records(t.Context())
-	if err != nil || len(records) != 1 || records[0].State != "unknown" || records[0].Reservation != reservation {
+	if err != nil || len(records) != 1 || records[0].State != "unknown" || records[0].Reservation != reservation || records[0].Finish == nil || records[0].Finish.Status != worker.Failed {
 		t.Fatalf("unknown reservation not durable: %+v %v", records, err)
 	}
 }

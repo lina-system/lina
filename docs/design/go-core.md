@@ -1408,11 +1408,11 @@ See [Antigravity headless adapter](work-and-delegation.md#antigravity-headless-a
 for the evidence boundary and account-free acceptance limits.
 
 The #135 recovery path persists worker bindings and the one continuation allowance
-in canon migration 47. Installed Core marks unfinished sessions unknown before
+in canon migration 48. Installed Core marks unfinished sessions unknown before
 admission, resumes their existing Codex thread and reads the exact turn, paging
 its history without starting another turn. Missing or incomplete items, lost
 requests, failed reads and effects without independent evidence remain unknown.
-Thread completion alone cannot settle a command's external effects. The event
+Thread completion alone cannot settle a command's external effects. A confirmed worker failure stays visible as Failed in running and progress views while its effects remain unknown; this observation does not release its directory reservation or authorize input. The event
 path and a five-minute safety sweep share this reconciliation. The sweep makes
 no model call. Confirmed successful completion evidence enters the normal result inbox;
 its conversation response is a separate reaction and never starts a worker turn. A continuation intent commits before input; an uncertain send is

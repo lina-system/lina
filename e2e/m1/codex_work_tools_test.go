@@ -27,6 +27,7 @@ import (
 )
 
 type codexWorkScenario struct {
+	QuotaRelease                   string `json:"quota_release,omitempty"`
 	QuotaRecovery                  bool   `json:"quota_recovery,omitempty"`
 	UnknownQuotaWindow             bool   `json:"unknown_quota_window,omitempty"`
 	QuestionCount                  int    `json:"question_count,omitempty"`
@@ -257,10 +258,10 @@ func codexWorkToolsFixture() {
 				fail("Core changed server request id: " + string(r.ID))
 			}
 		case "thread/read":
-			// Background snapshots may run before the model receives its first
-			// quota result. Only the test's acknowledgement enables recovery.
-			_, observedErr := os.Stat(os.Getenv("LINA_WORKER_QUOTA_OBSERVED"))
-			if fixture.QuotaRecovery && quotaRead && observedErr == nil {
+			_, releaseErr := os.Stat(fixture.QuotaRelease)
+			if fixture.QuotaRecovery && quotaRead && releaseErr == nil {
+				// Core may poll thread/read independently. Release recovery only
+				// after the model fixture has observed the initial quota pair.
 				// A sparse update changes only primary. The adapter must retain
 				// secondary's original observation time through the next quota read.
 				primary := map[string]any{"usedPercent": fixture.FiveHour}
@@ -326,12 +327,14 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 		t.Fatal(err)
 	}
 	fixture.Kind = kind
+	workdir := t.TempDir()
+	if fixture.QuotaRecovery {
+		fixture.QuotaRelease = filepath.Join(workdir, "quota-observed")
+	}
 	data, err = json.Marshal(fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	workdir := t.TempDir()
-	quotaObserved := filepath.Join(t.TempDir(), "quota-observed")
 	finished := make(chan struct{})
 	var calls atomic.Int32
 	var quotaChecked atomic.Bool
@@ -417,9 +420,9 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 				return
 			}
 			weeklyObserved.Store(quota.Rows[1].Observed)
-			if err := os.WriteFile(quotaObserved, []byte("observed"), 0600); err != nil {
+			if err := os.WriteFile(fixture.QuotaRelease, nil, 0600); err != nil {
 				t.Error(err)
-				emitResponse(w, "Worker quota unavailable.", true)
+				emitResponse(w, "Quota fixture failed.", true)
 				return
 			}
 			emitPersonaCall(w, "refresh-worker", "worker_snapshot", map[string]any{"session": sessionID.Load().(string)})
@@ -471,7 +474,7 @@ func runCodexWorkToolsWithSetup(t *testing.T, scenario, kind string, setup func(
 	}
 	start := func() *process {
 		p := h.command("core", "--state-root", h.root, "--socket", h.socket)
-		p.command.Env = append(p.command.Env, "PATH="+bin, "LINA_WORKER_FIXTURE=2", "CODEX_HOME=/fixture/codex-home", "LINA_WORK_TOOLS_SCENARIO="+string(data), "LINA_WORKER_BARRIER_URL="+server.URL+"/worker-finished", "LINA_WORKER_QUOTA_OBSERVED="+quotaObserved, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
+		p.command.Env = append(p.command.Env, "PATH="+bin, "LINA_WORKER_FIXTURE=2", "CODEX_HOME=/fixture/codex-home", "LINA_WORK_TOOLS_SCENARIO="+string(data), "LINA_WORKER_BARRIER_URL="+server.URL+"/worker-finished", "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 		p.start(t)
 		h.connect(p).Close()
 		waitCoreReady(t, h)
