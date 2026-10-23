@@ -1494,6 +1494,23 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## Reason Network reference
+
+Source: https://github.com/reason-machines/reason-network, commit
+`72ca2b3fb36d6e3cbfa44aa82c68d27aafe5e690` (2026-10-22). License: **MIT OR
+Apache-2.0**.
+
+Scope: behavioral reference for the delivery tiers (push, turn, pull), the
+per-agent mechanism table, the `<worker>:<session>` address, the framed peer
+input and the loop guard described in [Work and
+delegation](docs/design/work-and-delegation.md#delivery-tiers) and [Messages to
+a worker](docs/design/work-and-delegation.md#messages-to-a-worker). LINA's
+worker boundary is independently implemented in Go; no upstream source or text
+is copied, translated, vendored or linked, and no hook or plugin is installed in
+a worker. The seen, inferred and unknown records are
+`internal/core/worker/STEERING.md` and
+`internal/core/worker/MESSAGES-REFERENCE.md`.
+
 ## Codex Relay Workflow GitHub observation reference
 
 Source: https://github.com/thisisjun786/codex-relay-workflow, commit

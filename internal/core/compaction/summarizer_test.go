@@ -38,6 +38,7 @@ func summaryItem(t *testing.T) provider.Item {
 	return item
 }
 func TestAuxiliarySummaryUsesOnlySegmentAndRejectsIncompleteStream(t *testing.T) {
+	t.Parallel()
 	for _, terminal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "incomplete", true: "complete"}[terminal], func(t *testing.T) {
 			stream := &summaryStream{events: []provider.Event{{Kind: provider.ItemDone, Item: summaryItem(t)}}}

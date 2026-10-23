@@ -48,6 +48,7 @@ func enqueuePreparation(t *testing.T, b *Builder, v View, s *jobs.Service, j job
 	return PassSegment{Records: v.History, Protected: []Record{v.Input}}
 }
 func TestWorkerPreparationCommitsWithoutPublishingAndRestartFallsBack(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	calls := 0
 	generate := b.Generate
@@ -103,6 +104,7 @@ func TestWorkerPreparationCommitsWithoutPublishingAndRestartFallsBack(t *testing
 	}
 }
 func TestWorkerPreparationRejectsRacesAndForgedOutput(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"epoch", "append", "competing root", "forged", "rollback"} {
 		t.Run(kind, func(t *testing.T) {
 			b, v, db := builderFixture(t)
@@ -163,6 +165,7 @@ func TestWorkerPreparationRejectsRacesAndForgedOutput(t *testing.T) {
 	}
 }
 func TestWorkerPreparedReceiptRejectsChangedSourcesEpochAndConfiguration(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"source selection", "epoch", "model", "generation revision", "root revision"} {
 		t.Run(kind, func(t *testing.T) {
 			b, v, db := builderFixture(t)
@@ -214,6 +217,7 @@ func TestWorkerPreparedReceiptRejectsChangedSourcesEpochAndConfiguration(t *test
 	}
 }
 func TestAfterDeliveryPreparationUsesForegroundSelectionAndNoPeriodicRollup(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	b.PreparationJob = "prepare"
 	p := Pass{Policy: Policy{ContextWindow: 1500, KeepUserTokens: 100}, Count: countBytes, Summarize: b.Summarize, Prepared: b.Prepared, Publish: b.Publish}
@@ -238,6 +242,7 @@ func TestAfterDeliveryPreparationUsesForegroundSelectionAndNoPeriodicRollup(t *t
 	}
 }
 func TestInFlightWorkerNeverHoldsForeground(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	service, job := preparationService(t, b, db)
 	segment := enqueuePreparation(t, b, v, service, job)
@@ -268,6 +273,7 @@ func TestInFlightWorkerNeverHoldsForeground(t *testing.T) {
 }
 
 func TestObsoletePreparationDoesNotBlockNextTask(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	service, job := preparationService(t, b, db)
 	segment := enqueuePreparation(t, b, v, service, job)
