@@ -11,6 +11,7 @@ import (
 )
 
 func TestWorkerApprovalCardCarriesOriginConversation(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	a := requestWorker(t, f)
 	d := clientsrv.Decisions{Authority: f.service, Person: a.Person}
@@ -35,6 +36,7 @@ func TestWorkerApprovalCardCarriesOriginConversation(t *testing.T) {
 }
 
 func TestWorkerApprovalConversationProtocolCompatibility(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("../../../protocol/fixtures/client/1.0/normal/approval_request.json")
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +53,7 @@ func TestWorkerApprovalConversationProtocolCompatibility(t *testing.T) {
 		{name: "wrong type", conversation: 7, present: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			var wire map[string]any
 			if err := json.Unmarshal(data, &wire); err != nil {
 				t.Fatal(err)
