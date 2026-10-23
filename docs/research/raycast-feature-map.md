@@ -6,7 +6,7 @@ The decisions are copied into the Launcher section of [surfaces.md](../design/su
 
 ## Findings
 
-1. The map has 984 atomic rows: 452 keep, 215 replace, 221 later and 96 drop. What a feature does rests on a current primary source in 901 rows and is inferred in 83. How often it is used is inferred in most rows, because Raycast keeps usage data on each Mac and publishes no per-command numbers; Store and Homebrew installs and GitHub config counts are the hard evidence.
+1. The map has 984 atomic rows: 464 keep, 215 replace, 209 later and 96 drop. What a feature does rests on a current primary source in 901 rows and is inferred in 83. How often it is used is inferred in most rows, because Raycast keeps usage data on each Mac and publishes no per-command numbers; Store and Homebrew installs and GitHub config counts are the hard evidence.
 2. The most installed Store extensions are local system tools, not AI: Kill Process (787,441 installs), Color Picker (625,764) and Google Chrome (578,453) are the top three of 3,454. The top 40 hold 52% of 16.7M installs.
 3. Raycast 2 renders its launcher in a web view: a Swift/AppKit host, one React interface in WKWebView, a Node process and a Rust core. Its memory rose from about 200–300 MB (v1) to 350–450 MB, and releases 2.5 to 2.7 fixed a blank launcher and keys lost right after the hotkey.
 4. macOS 15 to 27 tile windows natively: halves, fill, center and restore (Fn-⌃ keys), quarters by menu or drag. It has no thirds, almost-maximize, keyed move to the next display, adjustable gaps or layouts that open apps. Those are what people bind in Raycast after the halves.
@@ -14,7 +14,7 @@ The decisions are copied into the Launcher section of [surfaces.md](../design/su
 6. macOS 27 made ⌘Space "Search or Ask": Return sends the line to Siri. That is the launcher's own model (a sentence goes to the agent), so the agent conversation is the default fallback.
 7. Spotlight's clipboard history (macOS 26 and 27) is off until allowed, keeps text only, at most 7 days, with no pins or ignored apps. LINA keeps its own history. Apple Passwords marks none of its copies as concealed, so the history also needs a default list of ignored apps.
 8. Only system-drawn glass (NSGlassEffectView) follows the Liquid Glass setting, Reduce Transparency and Increase Contrast. Flutter passes only light or dark to its apps and has an open priority-1 bug that drops the first composing key on macOS 27. A web view needs private settings for glass and extra work for Korean input.
-9. The owner kept the rule that every device action, even one the person picks, goes Core → Mac Node grant → receipt. That makes launching apps, finding files and moving windows depend on Core, which Spotlight does not. This is recorded as an [open question](#open-questions).
+9. The owner kept the rule that every device action, even one the person picks, goes Core → Mac Node grant → receipt. That makes launching apps, finding files and moving windows depend on Core, which Spotlight does not. This is recorded as an [open question](#open-questions). Pasting into the front app and snippet expansion follow the same rule with a seat lease (decided 10-23), so they also stop when Core is down.
 
 ## Decisions
 
@@ -24,7 +24,7 @@ The decisions are copied into the Launcher section of [surfaces.md](../design/su
 - **Quick answers.** Calculator, units (with 평, 근, 돈 and 만, 억, 조), currency with its rate date, time zones, dates, definitions (Dictionary Services), translation (Apple Translation, on the Mac), emoji and quick links answer in the app with no Core call. Currency rates are fetched and cached by the app. The calculator engine is open source with a compatible licence (fend or math.js).
 - **Agent.** Raycast AI is replaced by the agent conversation. A sentence goes to the main conversation of the last or named agent; the short reply shows in the panel with "open in conversation". The launcher adds one key to send the selection, the Finder selection or a dropped file, read through Accessibility, never through the clipboard.
 - **Device actions.** Opening apps and files, file search, Quick Look, reveal, windows, system commands, menu items, contacts, calendar, Shortcuts, scripts and selection reads run on the Mac Node under a grant from Core with a receipt, and are refused with a reason when Core or the grant is missing (owner, 10-23). What still works without Core is shown to the person (app#56).
-- **Copy only.** The launcher puts items on the clipboard and the person pastes. Pasting into the front app, snippet auto-expansion and `{cursor}` inject input, which non-competition.md allows only under a seat lease, so they are `later` (owner, 10-23).
+- **Input into the front app.** Copying is done by the app. Pasting the picked item into the front app (clipboard history, snippets, emoji, answers), snippet auto-expansion and `{cursor}` inject input, so they are device actions: Core → Mac Node grant → receipt, under a seat lease ([non-competition.md](../design/non-competition.md#seat-lease)). The person's pick or typed keyword starts a lease for that one action, and it ends when the text is in or at the person's next input. The Node posts ⌘V or types the snippet and never touches the clipboard. Without Core, a grant or a lease nothing is typed: the item stays copied and the keyword stays as typed (decided 10-23; app#85, app#86, #1066, #1067).
 - **Clipboard history.** Off until the person turns it on, in the app (a background daemon cannot reach the person's clipboard), encrypted on that Mac, never synced and never sent to Core. It skips concealed, transient and auto-generated items and a default list of ignored apps (Passwords, Keychain Access, password managers).
 - **Launcher items.** Quick links, snippets, aliases, hotkeys and favorites are the person's data, so Core stores them (#1025) and the app uses its last copy when Core is down. Raycast's quicklinks and snippets JSON exports import directly. Ranking by the person's picks and the calculator history are local display state on that Mac.
 - **Windows.** macOS keeps what it already does with a shortcut (halves, fill, center, quarters, full screen, Spaces). LINA adds thirds, almost maximize, center half, restore, next display, gaps and layouts (app#67–app#69). Moving a window to another Space has no public API and is `later`.
@@ -36,10 +36,10 @@ The decisions are copied into the Launcher section of [surfaces.md](../design/su
 
 | Runs | Keep rows | What runs there |
 | --- | --- | --- |
-| app | 257 | Panel, keys, ranking, quick answers, clipboard history, copy actions |
+| app | 253 | Panel, keys, ranking, quick answers, clipboard history, copy actions |
 | Node | 73 | Opening, finding, windows, system commands, contacts, calendar, Shortcuts, scripts |
 | app+Core | 68 | Launcher items stored in Core and used in the app; sending a line to an agent |
-| app+Node | 47 | Results drawn by the app, effects or reads done by the Node |
+| app+Node | 63 | Results drawn by the app, effects or reads done by the Node |
 | Core+Node | 5 | Selection and Finder reads that go into an agent message |
 | macOS | 1 | macOS behavior LINA relies on |
 | Core | 1 | Agent work, plugins, mini app hosting |
@@ -113,6 +113,8 @@ Each issue is one pull request with one acceptance check and lists the rows it c
 | [#1027](https://github.com/thisisjun786/lina/issues/1027) | app#28 | Plugin catalog entries for official remote MCP servers: Linear, Notion, Todoist, Zoom and Jira |
 | [#1028](https://github.com/thisisjun786/lina/issues/1028) | app#28 | Slack plugin with the person's own Slack app |
 | [#1029](https://github.com/thisisjun786/lina/issues/1029) | app#28 | Spotify plugin with the person's own Spotify developer app |
+| [#1066](https://github.com/thisisjun786/lina/issues/1066) | #954 | macOS Node: paste the picked launcher item into the front app under a seat lease, with a receipt |
+| [#1067](https://github.com/thisisjun786/lina/issues/1067) | #954 | macOS Node: expand snippet keywords in the front app under a seat lease, with a receipt |
 | [app#31](https://github.com/thisisjun786/lina-app/issues/31) | app#7 | 런처 패널이 네이티브 NSPanel로 떠서 쓰던 앱의 포커스를 빼앗지 않는다 |
 | [app#32](https://github.com/thisisjun786/lina-app/issues/32) | app#7 | 런처 패널이 시스템 Liquid Glass와 손쉬운 사용 설정을 그대로 따른다 |
 | [app#33](https://github.com/thisisjun786/lina-app/issues/33) | app#7 | 단축키 직후 첫 키부터 한글이 조합되고 친 글자가 빠지지 않는다 |
@@ -156,7 +158,7 @@ Each issue is one pull request with one acceptance check and lists the rows it c
 | [app#71](https://github.com/thisisjun786/lina-app/issues/71) | app#8 | 앞 앱의 메뉴 항목과 창을 런처에서 찾아 실행한다 |
 | [app#72](https://github.com/thisisjun786/lina-app/issues/72) | app#8 | 클립보드 기록을 켜면 그 맥에만 암호화해 저장하고 숨김 항목은 저장하지 않는다 |
 | [app#73](https://github.com/thisisjun786/lina-app/issues/73) | app#8 | 클립보드 기록을 찾고 미리 보고 복사·고정·삭제하며 보존 기간을 정한다 |
-| [app#74](https://github.com/thisisjun786/lina-app/issues/74) | app#8 | 스니펫을 키워드로 찾아 자리표시자를 채워 복사한다 (자동 확장은 나중) |
+| [app#74](https://github.com/thisisjun786/lina-app/issues/74) | app#8 | 스니펫을 키워드로 찾아 자리표시자를 채워 복사한다 |
 | [app#75](https://github.com/thisisjun786/lina-app/issues/75) | app#8 | 스크립트 명령과 셸 한 줄을 런처에서 실행하고 결과를 본다 |
 | [app#76](https://github.com/thisisjun786/lina-app/issues/76) | app#28 | 프로세스를 CPU·메모리 순으로 보고 끝낸다 |
 | [app#77](https://github.com/thisisjun786/lina-app/issues/77) | app#28 | 화면에서 색을 집어 값을 복사한다 |
@@ -166,11 +168,12 @@ Each issue is one pull request with one acceptance check and lists the rows it c
 | [app#81](https://github.com/thisisjun786/lina-app/issues/81) | app#28 | 편집기의 최근 프로젝트를 런처에서 연다 |
 | [app#82](https://github.com/thisisjun786/lina-app/issues/82) | app#28 | 음악 앱 재생을 런처에서 제어한다 |
 | [app#83](https://github.com/thisisjun786/lina-app/issues/83) | app#8 | Raycast와 Spotlight를 끄고 런처로 지낸 기록을 남긴다 |
+| [app#85](https://github.com/thisisjun786/lina-app/issues/85) | app#8 | 고른 항목을 앞 앱에 바로 붙여 넣는다 (맥 Node·seat lease) |
+| [app#86](https://github.com/thisisjun786/lina-app/issues/86) | app#8 | 스니펫 키워드를 치면 앞 앱에서 바로 펼친다 (맥 Node·seat lease) |
 
 ## Open questions
 
 - **Spotlight parity without Core.** Under the current rule, opening an app, finding a file or moving a window needs Core and a grant, and adds a round trip; Spotlight does these offline. Candidate: split by effect. Opening, revealing, previewing and "open with" run in the app as the person's own act; actions that change the system (windows, quitting apps, lock, Trash, scripts) stay Core → Node with a receipt. The owner decides.
-- **Input the person triggers.** Paste into the front app, snippet auto-expansion and `{cursor}` need a non-competition clause for input the person starts from the launcher. Until then they are `later`.
 - **App stack names.** surfaces.md says the app is React on Wails v3; lina-app #1, #2 and #6 still name Flutter. The panel decision above holds for either, and the app issues name no stack for anything outside the panel.
 - **macOS 27 details to check on the Mac.** Whether the Accessibility pane is renamed "Device Control and Data Access"; whether every app now gets the paste privacy alert; whether `x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Shortcuts` opens the shortcuts sheet; whether a menu shortcut can be bound to the Window > Move & Resize items.
 - **Permissions per process.** Whether the Mac Node, as a separate process, needs its own Accessibility, Full Disk Access and Automation grants, and how the app shows that.
@@ -589,7 +592,7 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 
 ### Clipboard history
 
-62 rows: 36 keep, 3 replace, 17 later, 6 drop.
+62 rows: 37 keep, 3 replace, 16 later, 6 drop.
 
 | ID | Feature | Use | Decision | Runs | Permission | Acceptance check | Source | Issue |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -607,14 +610,14 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 | CLIP-12 | clipboard: preview pane | high: I default view | keep | app | none | Select a long text entry; full text, source app and time shown | C: manual/v1-core (Raycast v1) (I) | app#73 |
 | CLIP-13 | clipboard: source app | mid: I | keep: use org.nspasteboard.source, else front app | app | none | Copy in Notes; entry shows Notes as source | C: manual/new-in-v2 (Raycast 2.0); nspasteboard.org (O) | app#72 |
 | CLIP-14 | clipboard: max item size | low: I | keep: set a limit (v2 limit unknown) | app | none | Copy 5 MB of text; app stays responsive; entry follows the limit | C: manual/v1-core (Raycast v1: 32,768 chars); alfred/clipboard (I) | app#72 |
-| CLIP-15 | clipboard: paste to active app | high: default primary action | later: copy only for now (owner 10-23) | app | Accessibility (27: Device Control and Data Access) | In TextEdit pick an older item, ↵; text at cursor, TextEdit still focused | C: manual/clipboard-history (Raycast 2.9); maccy/readme (O) |  |
+| CLIP-15 | clipboard: paste to active app | high: default primary action | keep: paste through the Node under a seat lease (10-23) | app+Node | Accessibility (27: Device Control and Data Access) | In TextEdit pick an older item, ↵; text at cursor, TextEdit still focused | C: manual/clipboard-history (Raycast 2.9); maccy/readme (O) | app#85 · #1066 |
 | CLIP-16 | clipboard: copy to clipboard | high: I | keep | app | none | ⌘↵ an item; ⌘V in TextEdit pastes it | C: manual/clipboard-history (Raycast 2.9) (O) | app#73 |
 | CLIP-17 | clipboard: primary action setting | mid: I | keep | app | none | Set to Copy; ↵ leaves front app unchanged, ⌘V pastes item | C: manual/clipboard-history (Raycast 2.9) (O) | app#73 |
-| CLIP-18 | clipboard: paste as plain text | high: store ext "Paste as Plain Text" 27,400 installs | keep: copy as plain text; paste later | app | Accessibility (27: Device Control and Data Access) | Copy bold text; "copy as plain text" on the entry, then ⌘V in Pages gives no bold | C: manual/clipboard-history (Raycast 2.9) (O) | app#73 |
+| CLIP-18 | clipboard: paste as plain text | high: store ext "Paste as Plain Text" 27,400 installs | keep: copy as plain text; paste through the Node under a seat lease (10-23) | app+Node | Accessibility (27: Device Control and Data Access) | Copy bold text; "copy as plain text" on the entry, then ⌘V in Pages gives no bold | C: manual/clipboard-history (Raycast 2.9) (O) | app#73 · app#85 · #1066 |
 | CLIP-19 | clipboard: prefer plain text setting | mid: I | keep | app | Accessibility (27: Device Control and Data Access) | Turn on; ↵ on a bold entry copies it without bold | C: manual/clipboard-history (Raycast 2.9) (O) | app#73 |
 | CLIP-20 | clipboard: paste as format | low: I | later: low use | app | Accessibility (27: Device Control and Data Access) | Paste an HTML entry as RTF into TextEdit; styles kept | C: manual/clipboard-history (Raycast 2.9) (O) |  |
 | CLIP-21 | clipboard: paste as PNG | low: I | later: low use | app | Accessibility (27: Device Control and Data Access) | Paste a TIFF entry into a PNG-only web upload; accepted | C: raycast/changelog (Raycast 2.6) (O) |  |
-| CLIP-22 | clipboard: paste nth item ⌘1–9 | mid: I Maccy and Alfred users rely on it | keep: ⌘1–9 copies item N; paste later | app | Accessibility (27: Device Control and Data Access) | Open history; ⌘3 copies the third item, and ⌘V in TextEdit pastes it | C: maccy/readme (Maccy 2.7.1); not in manual/keyboard-shortcuts (Raycast 2.9) (O) | app#73 |
+| CLIP-22 | clipboard: paste nth item ⌘1–9 | mid: I Maccy and Alfred users rely on it | keep: ⌘1–9 copies item N; paste through the Node under a seat lease (10-23) | app+Node | Accessibility (27: Device Control and Data Access) | Open history; ⌘3 copies the third item, and ⌘V in TextEdit pastes it | C: maccy/readme (Maccy 2.7.1); not in manual/keyboard-shortcuts (Raycast 2.9) (O) | app#73 · app#85 · #1066 |
 | CLIP-23 | clipboard: pin/unpin | mid: I | keep | app | none | Pin item; copy 30 new items; pinned item still on top | C: manual/clipboard-history (Raycast 2.9); manual/v1-core (O) | app#73 |
 | CLIP-24 | clipboard: rename entry | low: I new in v2 | later: low use | app | none | Rename entry "invoice"; search "invoice" finds it | C: manual/clipboard-history (Raycast 2.9) (O) |  |
 | CLIP-25 | clipboard: edit content | low: I | later: low use | app | none | Edit entry text; paste gives the edited text | C: manual/clipboard-history (Raycast 2.9) (O) |  |
@@ -658,7 +661,7 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 
 ### Snippets
 
-57 rows: 34 keep, 1 replace, 18 later, 4 drop.
+57 rows: 41 keep, 1 replace, 11 later, 4 drop.
 
 | ID | Feature | Use | Decision | Runs | Permission | Acceptance check | Source | Issue |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -670,7 +673,7 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 | SNIP-06 | snippet: rich text | low: I | later: plain first | app | none | Bold snippet pastes bold in Pages | C: manual/snippets (Raycast 2.9) (O) |  |
 | SNIP-07 | snippet: search | high: I | keep | app+Core | none | Search body word; snippet found | C: manual/snippets (Raycast 2.9) (O) | app#74 · #1025 |
 | SNIP-08 | snippet: filter by tag | low: I | later: with tags | app | none | Filter "work"; only tagged shown | C: manual/snippets (Raycast 2.9) (O) |  |
-| SNIP-09 | snippet: paste into active app | high: I | later: copy only for now (owner 10-23) | app | Accessibility (27: Device Control and Data Access) | In TextEdit pick snippet, ↵; text at cursor | C: manual/snippets (Raycast 2.9) (O) |  |
+| SNIP-09 | snippet: paste into active app | high: I | keep: paste through the Node under a seat lease (10-23) | app+Node | Accessibility (27: Device Control and Data Access) | In TextEdit pick snippet, ↵; text at cursor | C: manual/snippets (Raycast 2.9) (O) | app#85 · #1066 |
 | SNIP-10 | snippet: copy to clipboard | mid: I | keep | app+Core | none | Copy; ⌘V pastes it | C: manual/snippets (Raycast 2.9) (O) | app#74 · #1025 |
 | SNIP-11 | snippet: primary action setting | low: I | later: only copy for now | app | none | Set Copy; ↵ leaves front app unchanged | C: manual/snippets (Raycast 2.9) (O) |  |
 | SNIP-12 | snippet: pin | low: I | keep | app+Core | none | Pin; it is first in empty search | C: manual/snippets (Raycast 2.9) (O) | app#74 · #1025 |
@@ -678,16 +681,16 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 | SNIP-14 | snippet: duplicate | low: I | keep | app+Core | none | Duplicate; two entries, keyword not duplicated | C: manual/snippets (Raycast 2.9) (O) | app#74 · #1025 |
 | SNIP-15 | snippet: delete | mid: I | keep | app+Core | none | Delete; keyword no longer expands | C: manual/snippets (Raycast 2.9) (O) | app#74 · #1025 |
 | SNIP-16 | snippet: warn before delete | low: I | keep | app+Core | none | Delete asks to confirm | C: manual/snippets (Raycast 2.9) (O) | app#74 · #1025 |
-| SNIP-17 | snippet: auto-expansion | high: I flagship; espanso 10,705 brew installs/yr | later: copy only for now (owner 10-23) | app | Accessibility (27: Device Control and Data Access) | In TextEdit type "!sig "; replaced by the signature | C: manual/snippets (Raycast 2.9) (O) |  |
-| SNIP-18 | snippet: expansion on/off | mid: I | later: copy only for now (owner 10-23) | app | none | Off: typing "!sig" stays as typed | C: manual/snippets (Raycast 2.9) (O) |  |
-| SNIP-19 | snippet: expansion mode | mid: I | later: copy only for now (owner 10-23) | app | Accessibility (27: Device Control and Data Access) | Discard mode: "!sig " gives text with no trailing space | C: manual/snippets (Raycast 2.9) (O) |  |
-| SNIP-20 | snippet: expand within words | low: I | later: copy only for now (owner 10-23) | app | Accessibility (27: Device Control and Data Access) | Off: "x!sig" does not expand | C: manual/snippets (Raycast 2.9) (O) |  |
+| SNIP-17 | snippet: auto-expansion | high: I flagship; espanso 10,705 brew installs/yr | keep: expansion runs on the Node under a seat lease (10-23) | app+Node | Accessibility (27: Device Control and Data Access) | In TextEdit type "!sig "; replaced by the signature | C: manual/snippets (Raycast 2.9) (O) | app#86 · #1067 |
+| SNIP-18 | snippet: expansion on/off | mid: I | keep: expansion runs on the Node under a seat lease (10-23) | app+Node | none | Off: typing "!sig" stays as typed | C: manual/snippets (Raycast 2.9) (O) | app#86 · #1067 |
+| SNIP-19 | snippet: expansion mode | mid: I | keep: expansion runs on the Node under a seat lease (10-23) | app+Node | Accessibility (27: Device Control and Data Access) | Discard mode: "!sig " gives text with no trailing space | C: manual/snippets (Raycast 2.9) (O) | app#86 · #1067 |
+| SNIP-20 | snippet: expand within words | low: I | later: low use | app | Accessibility (27: Device Control and Data Access) | Off: "x!sig" does not expand | C: manual/snippets (Raycast 2.9) (O) |  |
 | SNIP-21 | snippet: override system snippets | low: I | later: skip conflicts first | app | Accessibility (27: Device Control and Data Access) | Same keyword in macOS and LINA inserts text once | C: manual/snippets (Raycast 2.9, experimental) (O) |  |
-| SNIP-22 | snippet: injection delay | low: I | later: copy only for now (owner 10-23) | app | Accessibility (27: Device Control and Data Access) | Expansion in Chrome and Slack has no lost chars | C: manual/snippets (Raycast 2.9) (O) |  |
+| SNIP-22 | snippet: injection delay | low: I | later: low use | app | Accessibility (27: Device Control and Data Access) | Expansion in Chrome and Slack has no lost chars | C: manual/snippets (Raycast 2.9) (O) |  |
 | SNIP-23 | snippet: response time | low: I | later: tune by measurement | app | Accessibility (27: Device Control and Data Access) | n/a | C: manual/snippets (Raycast 2.9) (O) |  |
 | SNIP-24 | snippet: completion sound | low: I | later: low use | app | none | Sound plays once per expansion | C: manual/snippets (Raycast 2.9) (O) |  |
-| SNIP-25 | snippet: ignored apps | mid: I | later: copy only for now (owner 10-23) | app | none | Type keyword in 1Password field; nothing happens | C: manual/snippets (Raycast 2.9) (O) |  |
-| SNIP-26 | snippet: Secure Input notice | low: I | later: copy only for now (owner 10-23) | app | none | Focus a Safari password field; LINA shows Secure Input notice | C: manual/snippets (Raycast 2.9); raycast/changelog (2.5) (O) |  |
+| SNIP-25 | snippet: ignored apps | mid: I | keep: expansion runs on the Node under a seat lease (10-23) | app+Node | none | Type keyword in 1Password field; nothing happens | C: manual/snippets (Raycast 2.9) (O) | app#86 · #1067 |
+| SNIP-26 | snippet: Secure Input notice | low: I | keep: says why nothing expanded | app+Node | none | Focus a Safari password field; LINA shows Secure Input notice | C: manual/snippets (Raycast 2.9); raycast/changelog (2.5) (O) | app#86 · #1067 |
 | SNIP-27 | snippet: import JSON | mid: I migration from Raycast | keep: Raycast export import | app+Core | none | Import 3-snippet JSON; all 3 appear with keywords | C: manual/snippets (Raycast 2.9) (O) | app#74 · #1025 |
 | SNIP-28 | snippet: import other tools | low: textexpander 490, typinator 329 brew installs/yr | later: low use | app | none | n/a | C: manual/snippets (Raycast 2.9) (O) |  |
 | SNIP-29 | snippet: export | low: I | keep | app+Core | none | Export, delete all, import; same snippets back | C: manual/snippets (Raycast 2.9) (O) | app#74 · #1025 |
@@ -704,7 +707,7 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 | SNIP-40 | snippet: date format | mid: I | keep | app+Core | none | format="yyyy-MM-dd" gives ISO date | C: manual/dynamic-placeholders (Raycast 2.9) (O) | app#74 · #1025 |
 | SNIP-41 | snippet: date offset | low: I | keep | app+Core | none | offset="+1d" gives tomorrow | C: manual/dynamic-placeholders (Raycast 2.9) (O) | app#74 · #1025 |
 | SNIP-42 | snippet: date locale | low: I | keep | app+Core | none | locale="ko-KR" gives Korean date | C: manual/dynamic-placeholders (Raycast 2.9) (O) | app#74 · #1025 |
-| SNIP-43 | snippet: {cursor} | mid: manual examples use it | later: copy only for now (owner 10-23) | app | Accessibility (27: Device Control and Data Access) | "log({cursor})" leaves caret inside parentheses | C: manual/dynamic-placeholders (Raycast 2.9) (O) |  |
+| SNIP-43 | snippet: {cursor} | mid: manual examples use it | keep: expansion runs on the Node under a seat lease (10-23) | app+Node | Accessibility (27: Device Control and Data Access) | "log({cursor})" leaves caret inside parentheses | C: manual/dynamic-placeholders (Raycast 2.9) (O) | app#86 · #1067 |
 | SNIP-44 | snippet: {argument name} | low: I | keep: launcher fields | app+Core | none | Snippet with {argument name="who"} asks once, fills twice | C: manual/dynamic-placeholders (Raycast 2.9) (O) | app#74 · #1025 |
 | SNIP-45 | snippet: argument default | low: I | keep | app+Core | none | Empty field gives default | C: manual/dynamic-placeholders (Raycast 2.9) (O) | app#74 · #1025 |
 | SNIP-46 | snippet: argument options | low: I | keep | app+Core | none | Field shows a, b, c picker | C: manual/dynamic-placeholders (Raycast 2.9) (O) | app#74 · #1025 |
@@ -770,7 +773,7 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 
 ### Calculator, conversions and time
 
-56 rows: 43 keep, 1 replace, 12 later, 0 drop.
+56 rows: 44 keep, 1 replace, 11 later, 0 drop.
 
 | ID | Feature | Use | Decision | Runs | Permission | Acceptance check | Source | Issue |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -788,7 +791,7 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 | CALC-12 | calc: plain number shows nothing | high: I, avoids noise | keep | app | none | `2026` shows no calculator row, and `2026+1` shows 2,027. | F: rc-cl 2.3 (O) | app#40 |
 | CALC-13 | calc: syntax highlighting | low: I | later | app | none | `10 usd in krw` shows number, unit and operator in distinct colors. | F: rc-calc (Raycast 2.9); rc-clb 0.51 (O) |  |
 | CALC-14 | calc: copy answer (↵) | high: primary action | keep | app | none | `12*3` ↵ leaves `36` on the clipboard and closes the panel. | F: rc-calc (Raycast 2.9) (O) | app#40 |
-| CALC-15 | calc: paste answer into app (⌘↵) | mid: I | later: copy only for now (owner 10-23) | app | Accessibility (I) | In TextEdit, `12*3` ⌘↵ types `36` at the caret. | F: rc-calc (Raycast 2.9) (O) |  |
+| CALC-15 | calc: paste answer into app (⌘↵) | mid: I | keep: ⌘↵ pastes the answer through the Node under a seat lease (10-23) | app+Node | Accessibility (I) | In TextEdit, `12*3` ⌘↵ types `36` at the caret. | F: rc-calc (Raycast 2.9) (O) | app#85 · #1066 |
 | CALC-16 | calc: copy unformatted (⌥⌘C) | mid: I | keep | app | none | `2^10` ⌥⌘C puts `1024` on the clipboard. | F: rc-calc (Raycast 2.9) (O) | app#40 |
 | CALC-17 | calc: copy question and answer (⌥⇧⌘C) | low: I | later | app | none | Clipboard holds `12*3 = 36`. | F: rc-calc (Raycast 2.9) (O) |  |
 | CALC-18 | calc: swap question with answer | low: I | later: an `ans` token | app | none | `12*3` ⌘⇧↵ makes the field read `36`. | F: rc-cfcalc (I) |  |
@@ -833,7 +836,7 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 
 ### Dictionary and translation
 
-13 rows: 9 keep, 1 replace, 3 later, 0 drop.
+13 rows: 10 keep, 1 replace, 2 later, 0 drop.
 
 | ID | Feature | Use | Decision | Runs | Permission | Acceptance check | Source | Issue |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -843,8 +846,8 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 | DICT-04 | translate: default languages | mid: I | keep | app | none | Default ko→en applies on open | B: M-translate (Raycast 2.9) (O) | app#45 |
 | DICT-05 | translate: custom pair commands | mid: I | keep | app | none | "to Japanese" command translates without picker | B: M-translate (Raycast 2.9) (O) | app#45 |
 | DICT-06 | translate: selected text as source | mid: I | later: reads front app | app | Accessibility (I) | Select a sentence, press hotkey; it is translated | B: M-translate (Raycast 2.9) (O) |  |
-| DICT-07 | translate: paste to active app | mid: I | later: copy only for now (LINA-963) | app | Accessibility (I) | n/a until input injection is decided | B: M-translate (Raycast 2.9) (O) |  |
-| DICT-08 | translate: replace selection | low: I | later | app | Accessibility (I) | n/a until input injection is decided | B: CL-beta (O) |  |
+| DICT-07 | translate: paste to active app | mid: I | keep: paste through the Node under a seat lease (10-23) | app+Node | Accessibility (I) | In TextEdit, translate a word and ↵; the translation is at the caret and TextEdit keeps focus | B: M-translate (Raycast 2.9) (O) | app#85 · #1066 |
+| DICT-08 | translate: replace selection | low: I | later: low use | app | Accessibility (I) | Select a word in TextEdit, translate, ⌘↵; the translation replaces it | B: CL-beta (O) |  |
 | DICT-09 | translate: continue in chat | low: I | replace: put into agent message | Core | none | Action opens the agent conversation with both texts | B: M-translate (Raycast 2.9) (O) |  |
 | DICT-10 | dict: dictionary filter | low: I | keep | app | none | Pick only English; Korean entries hidden | B: CL-beta (0.61) (I) | app#44 |
 | DICT-11 | lookup: dictionary definition | mid: Easy Dictionary 40,709 installs | keep: DCSCopyTextDefinition, offline | app | none | Type `serendipity`: a definition row from the system dictionary appears, and ↵ opens Dictionary. | F: ap-find (macOS 27); rc-store (O) | app#44 |
@@ -853,7 +856,7 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 
 ### Emoji and symbols
 
-18 rows: 10 keep, 0 replace, 6 later, 2 drop.
+18 rows: 11 keep, 0 replace, 5 later, 2 drop.
 
 | ID | Feature | Use | Decision | Runs | Permission | Acceptance check | Source | Issue |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -866,8 +869,8 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 | EMO-07 | emoji: pin | mid: M tip | keep | app | none | Pin 🙏; it is first with empty query | B: M-emoji (Raycast 2.9) (O) | app#46 |
 | EMO-08 | emoji: recent first | high: I | keep | app | none | Use 🔥 3 times; it is near top next open | B: M-emoji (Raycast 2.9) (O) | app#46 |
 | EMO-09 | emoji: default skin tone | mid: I | keep | app | none | Set medium tone; 👍 copies as 👍🏽 | B: M-emoji (Raycast 2.9) (O) | app#46 |
-| EMO-10 | emoji: per-pick skin tone | low: I | keep: copy only | app | none | ⌥⌘C shows 6 tones; pick one; copied | B: M-emoji (Raycast 2.9) (O) | app#46 |
-| EMO-11 | emoji: paste into front app | high: I | later: copy only for now (LINA-963) | app | Accessibility (I) | n/a until input injection is decided | B: M-emoji (Raycast 2.9) (O) |  |
+| EMO-10 | emoji: per-pick skin tone | low: I | keep | app | none | ⌥⌘C shows 6 tones; pick one; copied | B: M-emoji (Raycast 2.9) (O) | app#46 |
+| EMO-11 | emoji: paste into front app | high: I | keep: paste through the Node under a seat lease (10-23) | app+Node | Accessibility (I) | In TextEdit pick 👍, ↵; it is at the caret and TextEdit keeps focus | B: M-emoji (Raycast 2.9) (O) | app#85 · #1066 |
 | EMO-12 | emoji: copy | high: I | keep: default action | app | none | ↵ on 😀, then ⌘V in Notes pastes 😀 | B: M-emoji (Raycast 2.9) (O) | app#46 |
 | EMO-13 | emoji: paste and keep open | low: I | later | app | Accessibility (I) | Two emoji inserted without reopening | B: M-emoji (Raycast 2.9) (O) |  |
 | EMO-14 | emoji: copy unicode | low: I | keep | app | none | On 😀, copies U+1F600 | B: M-emoji (Raycast 2.9) (O) | app#46 |
@@ -976,7 +979,7 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 | MISC-23 | focus: Ask Raycast Focus | low: I | replace: agent conversation | Core | none | "focus 30 min on report" starts a session after approval | B: M-focus (Raycast 2.9) (O) |  |
 | MISC-24 | shots: search screenshots | mid: WR 100/yr | later: file search plus OCR index | Node | Files and Folders (Desktop) or Full Disk Access | Take a screenshot; it is first in the grid | B: M-screenshots (Raycast 2.9) (O) |  |
 | MISC-25 | shots: text search (OCR) | mid: PED | later | Node | Files and Folders (I) | "text:invoice" finds a screenshot of an invoice | B: M-screenshots (Raycast 2.9) (O) |  |
-| MISC-26 | shots: paste latest screenshot | mid: I | later: copy only for now | Node | Accessibility (I) | n/a until input injection is decided | B: M-screenshots (Raycast 2.9) (O) |  |
+| MISC-26 | shots: paste latest screenshot | mid: I | later: with screenshot search; the paste goes through the Node (10-23) | Node | Accessibility (I) | Newest screenshot pasted into Slack | B: M-screenshots (Raycast 2.9) (O) |  |
 | MISC-27 | shots: scopes and retention | low: I | later | Node | Files and Folders | Set 1 week; older ones leave the index | B: M-screenshots (Raycast 2.9) (O) |  |
 | MISC-28 | camera: open camera | low: I | drop: Photo Booth or call apps | Node | Camera | n/a (dropped) | B: CL-1.63, CL-2.x (2.7, 2.8) (O) |  |
 | MISC-29 | store: coin flip and dice | low: STORE 2,563 | replace: agent conversation | Core | none | Ask "flip a coin"; agent answers | B: STORE (O) |  |
@@ -984,12 +987,12 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 
 ### AI
 
-135 rows: 8 keep, 67 replace, 30 later, 30 drop.
+135 rows: 9 keep, 67 replace, 29 later, 30 drop.
 
 | ID | Feature | Use | Decision | Runs | Permission | Acceptance check | Source | Issue |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | AI-01 | ai: Quick AI empty start | low (I) | drop: the launcher line is the prompt | — | none | n/a (dropped) | A: m/quick-ai (Raycast 2.9) (O) |  |
-| AI-02 | ai: reply ↵ pastes into previous app | mid (I: default primary action) | keep: copy reply; later: paste (key injection) | app | Accessibility (paste only) | ⌘C on a panel reply copies plain text; no keystroke reaches another app | A: m/quick-ai (Raycast 2.9) (O) | app#36 · #1011 |
+| AI-02 | ai: reply ↵ pastes into previous app | mid (I: default primary action) | keep: copy reply; paste through the Node under a seat lease (10-23) | app+Node | Accessibility (paste only) | ⌘C on a panel reply copies plain text; no keystroke reaches another app | A: m/quick-ai (Raycast 2.9) (O) | app#36 · #1011 · app#85 · #1066 |
 | AI-03 | ai: Quick AI follow-ups | mid (I) | replace: agent conversation | app+Core | none | A second launcher line lands as the next turn of the same main conversation | A: m/quick-ai (Raycast 2.9) (O) |  |
 | AI-04 | ai: regenerate (⌘R, ⇧⌘R other model) | low (I) | later: action in app conversation | Core | none | Regenerate in the app replaces the last reply; the ledger keeps both requests | A: m/quick-ai, m/ai-chat (Raycast 2.9) (O) |  |
 | AI-05 | ai: Quick AI new chat, history (⌘N, ⌘[ ⌘]) | low (I) | drop: one main conversation per agent | — | none | n/a (dropped) | A: m/quick-ai (Raycast 2.9) (O) |  |
@@ -1073,7 +1076,7 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 | AI-83 | ai-cmd: {clipboard} placeholder, offset | low (I) | replace: the person picks a history item into the message | app | none | A picked clipboard item appears as a chip in the message | A: m/placeholders (Raycast 2.9) (O) |  |
 | AI-84 | ai-cmd: {browser-tab} placeholder | mid (I) | later: browser tab read | app+Core | Automation (browser) (I) | — | A: m/placeholders, browser-ext (Raycast 2.9) (O) |  |
 | AI-85 | ai-cmd: {argument} placeholder | low (I) | drop: the launcher line carries the input | — | none | n/a (dropped) | A: m/placeholders (Raycast 2.9) (O) |  |
-| AI-86 | ai-cmd: Replace Selection output | mid (I) | later: paste back only on ⌘↵ | app | Accessibility | ⌘↵ on a reply replaces the selection; without it nothing changes | A: m/ai-commands, cl 2.7 (O) |  |
+| AI-86 | ai-cmd: Replace Selection output | mid (I) | keep: ⌘↵ replaces the selection through the Node under a seat lease (10-23) | app+Node | Accessibility | ⌘↵ on a reply replaces the selection; without it nothing changes | A: m/ai-commands, cl 2.7 (O) | app#85 · #1066 |
 | AI-87 | ai-cmd: highlight edits | low (I) | later: diff view in the reply | app | none | The reply marks inserted and removed words | A: m/ai-commands (Raycast 2.9) (O) |  |
 | AI-88 | ai-cmd: per-command model, creativity, effort | low (I) | drop: Core policy | — | none | n/a (dropped) | A: m/ai-commands, cl 2.9 (O) |  |
 | AI-89 | ai-cmd: share, import, duplicate, tags | low (I) | drop: no command library | — | none | n/a (dropped) | A: m/ai-commands (Raycast 2.9) (O) |  |
@@ -1145,7 +1148,7 @@ macOS 15 to 27 already tile with Fn-⌃ keys: halves (←, →, ↑, ↓), fill 
 | API-13 | api: Form | high (O: 1,375 extensions; 50.1% of downloads) | replace: mini app form or agent question | app+Core | none | A mini app form submits with ⌘↵ and the write runs as an agent effect | A: dev/ui-form (API 2.x) (O) | app#25 |
 | API-14 | api: Form drafts | low (O: 93 extensions; 10.6% of downloads) | replace: mini app store | Core | none | Closing the panel mid-form and reopening restores the values | A: dev/ui-form, dev/lifecycle (API 2.x) (O) | app#25 |
 | API-15 | api: Action Panel (⌘K) | high (I: every List and Grid item) | keep: launcher action panel; mini app template action menu | app | none | ⌘K on a result lists its actions and each shortcut works | A: dev/ui-action-panel (API 2.x) (O) | app#34 |
-| API-16 | api: Action.CopyToClipboard and Paste | high (O: 2,208 extensions; 80.0% of downloads) | keep: launcher copy; mini apps only through a person-clicked bridge copy; later: paste | app | none (Accessibility for paste) | Copy from a mini app item puts the text on the pasteboard; the mini app script cannot read it | A: dev/ui-actions, dev/clipboard (API 2.x) (O) | app#73 |
+| API-16 | api: Action.CopyToClipboard and Paste | high (O: 2,208 extensions; 80.0% of downloads) | keep: launcher copy, and launcher paste through the Node under a seat lease; mini apps only through a person-clicked bridge copy, never paste (10-23) | app+Node | none (Accessibility for paste) | Copy from a mini app item puts the text on the pasteboard; the mini app script cannot read it | A: dev/ui-actions, dev/clipboard (API 2.x) (O) | app#73 · app#85 · #1066 |
 | API-17 | api: Action.Open, OpenInBrowser, OpenWith | high (O: 976 extensions call open(); 55.8% of downloads) | keep: URL to system browser; replace: Node for open-with-app | app+Node | none | A link in a mini app opens in the default browser; opening a file with an app leaves a receipt | A: dev/ui-actions, dev/utilities (API 2.x) (O) | app#47 |
 | API-18 | api: Action.Push navigation | high (O: 1,581 extensions; 57.1% of downloads) | replace: mini app internal routes | app+Core | none | Esc goes back one view in a mini app, then closes the panel | A: dev/ui-actions, dev/ui-navigation (API 2.x) (O) | app#25 |
 | API-19 | api: Action.ShowInFinder and showInFinder | mid (O: 321 extensions; 21.5% of downloads) | keep: launcher reveal (⌘↩) for its own results; Node for agent results | app+Node | none | ⌘↩ on a file result reveals it in Finder | A: dev/ui-actions, dev/utilities (API 2.x) (O) | app#62 · #1015 |
