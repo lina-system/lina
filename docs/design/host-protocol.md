@@ -488,7 +488,35 @@ The closed list of types for version 1.0:
 
 One more type, `app`, is reserved for a later view that a plugin supplies ([integrations.md](integrations.md)). It is not part of version 1.0, no party sends or accepts it, and its fallback is the tool's text result.
 
-Two types for generated UI, `surface` (an A2UI v0.9 card from LINA's catalog) and `mock` (a drawn mock whose body references its page bundle and PNG as assets), and the client kind `surface_action` are reserved for a later minor version. Their rules are in [surfaces.md](surfaces.md#generated-ui). Until that version no party sends or accepts them; a client that does not render them gets their `text`. A `surface` body is data under the rules below: it names catalog widgets and data, never code or a URL to fetch.
+Client 1.1 adds `mock`. Its closed body contains `request`, `checklist` (id,
+description, local action and target), `page` and `png` asset references,
+`previous` (null or a result id/revision), `stop_reason: "all_passed"` and seven
+passing executable `checks`. No HTML is in the body. Earlier candidates and
+stop reasons belong to the private run state. Only Core's checked renderer may
+publish a mock; ordinary `present_result` cannot create or replace one.
+
+The `mocks` capability, version 1.0 on client 1.1, adds `mock_request` and
+`mock_response`. Requests bind `conversation_id`, `result_id` and `revision`.
+`read` returns that retained revision. `asset` names `page` or `png`, with an
+optional byte `offset`; the response carries a pinned asset reference, MIME type,
+base64 `data` (at most 48 KiB decoded) and optional `next` byte offset. It never
+accepts a path or arbitrary asset id. `build` also needs `target` (`screen` or
+`mini_app`), `repositories` and the envelope's stable `idempotency_key`; it returns
+`goal_id`. Builds require the current revision and use normal work authority.
+Reads authorize the connected person and the named agent/conversation before
+looking up immutable history. Invalid or foreign references are refused without
+revealing their contents.
+
+Client 1.0 never receives the new kinds or result type: mock cards become ordinary
+text output items, including in history snapshots. Client 1.1 without `mocks`
+receives the mock's text without its body. The canonical client schema family
+currently retains its `client/1.0/envelope.json` path and explicitly validates
+both envelope versions; 1.1 fixtures live separately.
+
+`surface` (an A2UI v0.9 card from LINA's catalog) and `surface_action` remain
+reserved for a later minor version. Their rules are in
+[surfaces.md](surfaces.md#generated-ui). A surface body will name catalog widgets
+and data, never code or a URL to fetch.
 
 Rules:
 

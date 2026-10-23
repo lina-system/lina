@@ -88,17 +88,21 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string, capabi
 			<-interrupted
 		}
 	}()
+	version := "1.0"
+	if slices.Contains(capabilities, protocol.Capability{Name: "mocks", Version: "1.0"}) {
+		version = "1.1"
+	}
 	clientID := rand.Text()
 	peer, platform := "lina-tui", runtime.GOOS+"/"+runtime.GOARCH
 	hello := protocol.Envelope{
-		Protocol: protocol.Protocol{Name: "client", Version: "1.0"},
+		Protocol: protocol.Protocol{Name: "client", Version: version},
 		Kind:     protocol.KindHello, MessageID: rand.Text(), AttemptID: rand.Text(),
 		Sender: protocol.Sender{Party: protocol.PartyClient, ID: clientID}, Epoch: "0",
 		SentAt: time.Now().UTC().Format(time.RFC3339Nano), EffectState: protocol.EffectNone,
 		SourceRefs: []protocol.SourceRef{},
 		Payload: protocol.Hello{
 			Party: protocol.PartyClient, ID: clientID, ProductVersion: productVersion, Peer: &peer, Platform: &platform,
-			ProtocolVersions: []string{"1.0"}, Capabilities: append([]protocol.Capability{}, capabilities...),
+			ProtocolVersions: []string{version}, Capabilities: append([]protocol.Capability{}, capabilities...),
 		},
 	}
 	request := struct {
@@ -135,7 +139,7 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string, capabi
 	}
 	welcome, ok := envelope.Payload.(protocol.Welcome)
 	if !ok || envelope.Kind != protocol.KindWelcome || envelope.Error != nil || envelope.EffectState != protocol.EffectNone ||
-		welcome.ProtocolVersion != "1.0" || welcome.MainID != envelope.Sender.ID || welcome.Epoch != envelope.Epoch {
+		welcome.ProtocolVersion != version || welcome.MainID != envelope.Sender.ID || welcome.Epoch != envelope.Epoch {
 		return nil, errors.New("invalid welcome")
 	}
 	seen := make(map[protocol.Capability]bool)

@@ -115,7 +115,10 @@ function cssValue(token) {
   const v = token.$value;
   if (token.$type === 'color') return v.hex;
   if (token.$type === 'dimension' || token.$type === 'duration') return `${v.value}${v.unit}`;
-  if (token.$type === 'fontFamily') return v.map(JSON.stringify).join(', ');
+  if (token.$type === 'fontFamily') {
+    const generic = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong']);
+    return v.map(family => generic.has(family) ? family : JSON.stringify(family)).join(', ');
+  }
   return JSON.stringify(v);
 }
 function outputs(root) {
