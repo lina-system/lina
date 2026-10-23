@@ -8,6 +8,7 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net"
 	"net/http"
@@ -556,9 +557,53 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				Outcome struct{ Outcome, OptionID string }
 				Action  string
 				Content map[string]json.RawMessage
+				Meta    map[string]json.RawMessage `json:"_meta"`
 			}
 			if json.Unmarshal(raw, &answer) != nil {
 				t.Fatalf("invalid answer: %s", raw)
+			}
+			if mode == "once" || mode == "deny" {
+				var proof authority.WorkerApprovalProof
+				if err := json.Unmarshal(answer.Meta["lina/approval"], &proof); err != nil {
+					t.Fatal("worker did not receive signed approval", err)
+				}
+				var saved authority.Approval
+				if err := db.Read(ctx, func(tx *canon.Tx) error {
+					var raw []byte
+					if err := tx.QueryRowContext(ctx, "SELECT record FROM authority_approvals WHERE approval_id=?", approval.Card.ID).Scan(&raw); err != nil {
+						return err
+					}
+					return json.Unmarshal(raw, &saved)
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if saved.WorkerProof == nil || saved.State != authority.Consumed {
+					t.Fatal("approval not durably consumed with proof")
+				}
+				if err := authority.VerifyWorkerApproval(saved.WorkerProof.PublicKey, &proof); err != nil {
+					t.Fatal(err)
+				}
+				if proof.Decision.ApprovalID != approval.Card.ID || proof.Decision.Binding == nil || proof.Decision.Binding.ThreadID != card.Run.ThreadID || proof.Decision.Binding.TurnID != card.Run.TurnID || string(proof.Decision.Request) != string(saved.Arguments) {
+					t.Fatal("signed response lost request or execution binding")
+				}
+				proof.Decision.Choice = authority.Always
+				if err := authority.VerifyWorkerApproval(saved.WorkerProof.PublicKey, &proof); err == nil {
+					t.Fatal("tampered approval verified")
+				}
+			}
+			if mode == "form" {
+				var framed string
+				if err := json.Unmarshal(answer.Meta["lina/message"], &framed); err != nil {
+					t.Fatal("form provenance missing", err)
+				}
+				var frame struct {
+					Kind string `xml:"speaker_kind,attr"`
+					Work string `xml:"work_id,attr"`
+					Text string `xml:"text"`
+				}
+				if err := xml.Unmarshal([]byte(framed), &frame); err != nil || frame.Kind != "person" || frame.Work != card.Task.ID || !json.Valid([]byte(frame.Text)) {
+					t.Fatal("form provenance invalid", err)
+				}
 			}
 			switch mode {
 			case "once":
