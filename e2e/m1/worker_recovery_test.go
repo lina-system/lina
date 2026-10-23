@@ -208,7 +208,15 @@ func TestM2WorkerRecovery(t *testing.T) {
 			if mode == "unknown" {
 				want = "unknown"
 			}
-			waitRecovery(t, h, func() bool { rec := read(); return rec.State == want && rec.ObservedAt > 0 })
+			lastState := ""
+			waitRecovery(t, h, func() bool {
+				rec := read()
+				if rec.State != lastState {
+					t.Logf("recovery state=%s retries=%d turn=%s", rec.State, rec.Retries, rec.Thread.TurnID)
+					lastState = rec.State
+				}
+				return rec.State == want && rec.ObservedAt > 0
+			})
 			// A protocol read is the barrier after the reconciliation read, including
 			// the unknown case. Repeated reads cannot start or interrupt worker turns.
 			client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "recovery-reader", []protocol.Capability{{Name: "waiting", Version: "1.0"}})

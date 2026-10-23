@@ -456,6 +456,7 @@ func (e *workerSession) observe() {
 		switch event.Kind {
 		case worker.ProgressEvent:
 			if event.Progress.Phase == "started" {
+				e.transferRecoveryLease(event.Thread.TurnID)
 				_ = e.bindRecovery(e.origin.ctx, event.Thread)
 			}
 			if event.Progress.Phase == "server_request_resolved" {

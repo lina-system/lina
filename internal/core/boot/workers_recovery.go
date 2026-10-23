@@ -3,7 +3,9 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
@@ -225,7 +227,24 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 			return
 		}
 	}
+	var activity lease.Lease
+	if send {
+		arguments, _ := json.Marshal(workerArgs{Session: next.ID, Turn: next.Thread.TurnID, Generation: next.Thread.ProcessGeneration, Binding: next.Thread.BindingEpoch, Text: recoveryContinuation})
+		// Recovery inherits the same preset and ownership; a stored role grants no
+		// additional effect authority and an unavailable owner cannot execute.
+		if _, err = e.origin.agents.Get(ctx, next.Agent); err != nil {
+			return
+		}
+		if err = authority.CheckPreset(ctx, e.origin.db, e.origin.epoch, authority.PolicyRequest{Key: "worker-recovery:" + next.ID, Person: next.Person, Agent: next.Agent, TaskID: next.Thread.TaskID, Tool: "worker_input", Target: next.Workdir, Class: tools.WorkerEffect, Arguments: arguments}); err != nil {
+			return
+		}
+		activity, err = e.origin.activities.Acquire(ctx, lease.Activity{Class: lease.Hard, Reason: "worker recovery turn"})
+		if err != nil {
+			return
+		}
+	}
 	if err = (reactor.Recovery{DB: e.origin.db}).Put(ctx, next); err != nil {
+		activity.Release()
 		return
 	}
 	e.recovery = next
@@ -235,46 +254,28 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 	if !send {
 		return
 	}
-	// Recovery inherits the same preset and ownership; a stored role grants no
-	// additional effect authority and an unavailable owner cannot execute.
-	if _, err = e.origin.agents.Get(ctx, next.Agent); err != nil {
-		return
-	}
-	if err = authority.CheckPreset(ctx, e.origin.db, e.origin.epoch, authority.PolicyRequest{Key: "worker-recovery:" + next.ID, Person: next.Person, Agent: next.Agent, TaskID: next.Thread.TaskID, Tool: "worker_input", Target: next.Workdir, Class: tools.WorkerEffect}); err != nil {
-		return
-	}
-	activity, err := e.origin.activities.Acquire(ctx, lease.Activity{Class: lease.Hard, Reason: "worker recovery turn"})
-	if err != nil {
-		return
-	}
+	e.mu.Lock()
+	e.active["recovery:"+next.RetryFrom] = activity
+	e.mu.Unlock()
 	sendCtx, stop := context.WithTimeout(ctx, 30*time.Second)
-	err = e.adapter.Input(sendCtx, snap.Thread, worker.Input{Text: "Continue the same task from the current thread and work area. Preserve existing work and receipts. Do not repeat completed effects or reset review and CI allowances."})
+	err = e.adapter.Input(sendCtx, snap.Thread, worker.Input{Text: recoveryContinuation})
 	stop()
 	if err != nil {
-		activity.Release()
 		return
 	}
 	// The started event also checkpoints the new identity. Here we retain the
 	// activity until its finish even when the notification precedes the reply.
 	current, err := e.adapter.Snapshot(ctx, snap.Thread)
 	if err != nil {
-		activity.Release()
 		return
 	}
 	next.Thread = current.Thread
 	next.State = "running"
 	if err = (reactor.Recovery{DB: e.origin.db}).Put(ctx, next); err != nil {
-		activity.Release()
 		return
 	}
 	e.recovery = next
-	e.mu.Lock()
-	if current.State == worker.Active || current.State == worker.Waiting {
-		e.active[current.Thread.TurnID] = activity
-	} else {
-		activity.Release()
-	}
-	e.mu.Unlock()
+	e.transferRecoveryLease(current.Thread.TurnID)
 	e.origin.notifyWorkerRunning()
 }
 
@@ -364,4 +365,17 @@ func (e *workerSession) trackRecoveryRequest(id string, pending bool) error {
 	}
 	e.recovery = rec
 	return nil
+}
+
+const recoveryContinuation = "Continue the same task from the current thread and work area. Preserve existing work and receipts. Do not repeat completed effects or reset review and CI allowances."
+
+func (e *workerSession) transferRecoveryLease(turn string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for key, activity := range e.active {
+		if strings.HasPrefix(key, "recovery:") && strings.TrimPrefix(key, "recovery:") != turn {
+			e.active[turn] = activity
+			delete(e.active, key)
+		}
+	}
 }
