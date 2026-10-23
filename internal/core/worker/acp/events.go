@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/worker"
 	wire "github.com/thisisjun786/lina/kit/acp"
@@ -111,6 +112,10 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 		return true
 	}
 	v := u.Notification.Update
+	a.mu.Lock()
+	raw, _ := json.Marshal(v)
+	a.doing.Record("acp", raw, time.Now())
+	a.mu.Unlock()
 	p := worker.Progress{}
 	switch {
 	case v.AgentMessageChunk != nil:
@@ -141,6 +146,9 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 		if p.Text == "" && v.ToolCallUpdate.Status != nil {
 			p.Text = string(*v.ToolCallUpdate.Status)
 		}
+	case v.SessionInfoUpdate != nil:
+		a.sessionFailure(v.SessionInfoUpdate.Meta)
+		p.Phase = "doing"
 	case v.Plan != nil:
 		p.Phase = "plan"
 		var entries []string
@@ -148,9 +156,6 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 			entries = append(entries, fmt.Sprintf("%s: %s", e.Status, e.Content))
 		}
 		p.Text = strings.Join(entries, "; ")
-	case v.SessionInfoUpdate != nil:
-		a.sessionFailure(v.SessionInfoUpdate.Meta)
-		return true
 	case v.UsageUpdate != nil:
 		a.vendorQuota(v.UsageUpdate.Meta)
 		return true
@@ -179,6 +184,15 @@ func (a *Adapter) finish(th worker.Thread, f worker.Finish) {
 	a.emit(worker.Event{Thread: th, Kind: worker.FinishEvent, Finish: &f})
 }
 func (a *Adapter) emit(e worker.Event) bool {
+	a.mu.Lock()
+	if a.state == worker.Active || a.state == worker.Idle || e.Finish != nil {
+		a.doing.Busy(a.state == worker.Active && e.Finish == nil, time.Now())
+	}
+	observation := a.doing.Snapshot()
+	if !observation.Since.IsZero() {
+		e.Doing = &observation
+	}
+	a.mu.Unlock()
 	select {
 	case a.events <- e:
 		return true

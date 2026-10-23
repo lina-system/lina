@@ -418,7 +418,7 @@ func TestACPTypedFailuresThroughRunningCore(t *testing.T) {
 			if err := db.Read(ctx, func(tx *canon.Tx) error {
 				var raw []byte
 				err := tx.QueryRowContext(ctx, "SELECT rows FROM worker_quota WHERE worker=?", "claude-acp").Scan(&raw)
-				if mode == "silent" {
+				if mode == "silent" || mode == "needs-sign-in" {
 					return nil
 				}
 				if err != nil {
@@ -428,14 +428,14 @@ func TestACPTypedFailuresThroughRunningCore(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if mode == "silent" {
+			if mode == "silent" || mode == "needs-sign-in" {
 				var count int
 				if err := db.Read(ctx, func(tx *canon.Tx) error {
 					return tx.QueryRowContext(ctx, "SELECT count(*) FROM worker_quota WHERE worker=?", "claude-acp").Scan(&count)
 				}); err != nil || count != 0 {
 					t.Fatalf("silent worker quota rows: %d %v", count, err)
 				}
-				if record.Worker != "claude-acp" {
+				if mode == "silent" && record.Worker != "claude-acp" {
 					t.Fatal("unknown worker excluded")
 				}
 			} else {

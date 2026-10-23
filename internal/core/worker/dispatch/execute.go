@@ -20,6 +20,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/antigravity"
+	"github.com/thisisjun786/lina/internal/core/worker/doing"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/tools"
@@ -371,7 +372,7 @@ func (s *Service) execute(ctx context.Context, r Record) {
 						return
 					}
 					admitted, settled = false, true
-					if err = s.needsSignIn(ctx, &r, adapter); err != nil {
+					if err = s.needsSignIn(ctx, &r); err != nil {
 						return
 					}
 					continue
@@ -421,6 +422,8 @@ func (s *Service) execute(ctx context.Context, r Record) {
 			var progress progressBuffer
 			var activity string
 			var activitySequence uint64
+			var lastDoing doing.Snapshot
+			var doingSequence uint64
 			progressTick := time.NewTicker(progressInterval)
 			defer progressTick.Stop()
 			recordProgress := func(summary string, progressErr error) error {
@@ -443,6 +446,13 @@ func (s *Service) execute(ctx context.Context, r Record) {
 						err = recordProgress(progress.Observe(*event.Progress, time.Now()))
 					} else if event.Finish != nil {
 						err = recordProgress(progress.Flush(time.Now(), true))
+					}
+					if event.Doing != nil && err == nil && *event.Doing != lastDoing {
+						doingSequence++
+						err = service.ReportDoing(ctx, r.ID, run.ID, doingSequence, *event.Doing)
+						if err == nil {
+							lastDoing = *event.Doing
+						}
 					}
 					if next := worker.Activity(event); err == nil && next != "" && next != activity {
 						activitySequence++

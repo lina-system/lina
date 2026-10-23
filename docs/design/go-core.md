@@ -2395,6 +2395,11 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
 - A definitive authentication refusal during `session/new` returns `worker.ErrNeedsSignIn` only after child cleanup, before any prompt.
   Dispatch retains the worker/version/code as readiness evidence and lets the existing chooser try another eligible worker.
   It creates no run for a refused session; the next opened session uses the next actual run generation.
+  A refused session excludes that worker only from the current task's attempts;
+  new tasks recheck readiness without a persistent quota block. Startup clears
+  a legacy unmeasured worker-wide stop only when dispatch history contains
+  readiness refusals and no potentially executed attempt for that worker.
+  Measured or ambiguous quota blocks remain intact.
   Other start errors retain their uncertain outcome.
   The Cursor installed-Core scenario in `e2e/m2/cursor_worker_test.go` exercises this path.
 - ACP approval and form events use the existing `boot` worker bridge. The
@@ -2477,6 +2482,11 @@ type Definition struct {
 - Core does not split work itself.
   The dev preset carries the splitting criteria as guidance ([work-and-delegation.md](work-and-delegation.md#splitting-into-tasks)).
   Core checks mechanically that each task has one done condition and a write area, that overlapping areas are ordered by a dependency, that dependencies have no cycle, and that hotspot files are taken whole or moved to one task.
+  Shared dependency paths must not multiply graph traversal: reachability is
+  bounded by the graph's vertices and edges, including negative queries.
+  Missing dependencies, cycles and unordered overlaps still reject the whole
+  admission before any task is created.
+  Implementation notes: [C-57 graph validation](../../internal/core/work/REFERENCE.md#c-57-graph-validation).
 - `Chooser` ranks installed workers by quota, situation rules and measured host capacity.
   OK quota precedes warning and unknown; absent quota is unknown and usable.
   Any blocked window excludes the worker until its explicit reset.
@@ -2711,6 +2721,7 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
 - `progress.Compute` builds one line per running 일 and 목표 per [work-and-delegation.md](work-and-delegation.md#progress-line): name, stage word and bar, just finished (the outcome line of the latest landing, built from structured fields and the title), next, and a waiting mark.
   Unobserved values are unknown, never zero.
   State words are codes; clients own the Korean and English catalogs.
+- Worker title/current-step observations are carried on the existing adapter event, fenced to its execution, and retained in the work ledger only when changed. Progress Now uses the same defanged observation in durable and conversation-started work. The optional observation adds no endpoint or required client field; old records retain the activity fallback.
 - Conversation-worker progress consumes the same `workerListSource` observations and `runs.RunningList` projection as the running list.
   Adapter snapshots are collected outside canonical transactions; idle sessions are absent, unavailable snapshots remain unknown, and failed sessions use the same `running_seen` acknowledgement.
   The optional execution-state code is distinct from the unobserved plan stage, percent, last task and next task.

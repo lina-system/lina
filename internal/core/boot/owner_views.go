@@ -421,6 +421,9 @@ func (r *conversationRuntime) liveProgress(ctx context.Context, names map[string
 		if !exists && session.activity != "" && observation.View.State == "in_progress" {
 			u.Now = design.Text(eventLanguage(session.input), session.activity)
 		}
+		if !exists && session.doing != "" && observation.View.State == "in_progress" {
+			u.Now = session.doing
+		}
 		owned := map[string]bool{}
 		for id := range session.questions {
 			owned[id] = true

@@ -63,6 +63,7 @@ type workerSession struct {
 	answered            func(context.Context, worker.Thread)
 	started             time.Time
 	activity            string
+	doing               string
 	approvals           map[string]worker.Event
 	questions           map[string]*workerQuestion
 	output              string
