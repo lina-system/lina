@@ -176,3 +176,11 @@ func TestWorkerMailboxOfflineAddressAndUncertainDelivery(t *testing.T) {
 		t.Fatal("uncertain message resent", p.inputs)
 	}
 }
+
+func TestOfflineMailboxUsesConnectionTier(t *testing.T) {
+	for name, tier := range map[string]string{"codex": "push", "gemini": "turn", "grok": "turn", "cursor": "turn", "claude-acp": "turn", "custom": "pull"} {
+		if profile := offlineDelivery(name); profile.Tier != tier {
+			t.Errorf("%s: %+v", name, profile)
+		}
+	}
+}

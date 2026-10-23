@@ -12,6 +12,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	workeracp "github.com/thisisjun786/lina/internal/core/worker/acp"
+	"github.com/thisisjun786/lina/internal/core/worker/codex"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/tools"
@@ -256,7 +258,7 @@ func (r *conversationRuntime) offlineSteering(ctx context.Context, person, sessi
 		if card.Task.PersonID != person || conversation != nil && *conversation != card.Task.ConversationID {
 			return outsideManagement()
 		}
-		message = work.SteeringMessage{Session: card.Run.Worker + ":" + session, TaskID: card.Task.ID, Person: person, Agent: card.Task.AgentID, Conversation: card.Task.ConversationID, Tier: "pull", Mechanism: "waiting for session binding"}
+		message = work.SteeringMessage{Session: card.Run.Worker + ":" + session, TaskID: card.Task.ID, Person: person, Agent: card.Task.AgentID, Conversation: card.Task.ConversationID, Tier: offlineDelivery(card.Run.Worker).Tier, Mechanism: offlineDelivery(card.Run.Worker).Mechanism}
 		if card.State == "stopped" || card.State == "done" || !card.Active && card.Receipt != nil && (card.TurnStatus == "completed" || card.TurnStatus == "interrupted") {
 			reason = "session_gone"
 		}
@@ -273,7 +275,7 @@ func (r *conversationRuntime) offlineSteering(ctx context.Context, person, sessi
 			if name == "" {
 				name = "codex"
 			}
-			message = work.SteeringMessage{Session: name + ":" + session, TaskID: rec.Thread.TaskID, Person: person, Agent: rec.Agent, Conversation: rec.Conversation, Tier: "push", Mechanism: "waiting for session binding"}
+			message = work.SteeringMessage{Session: name + ":" + session, TaskID: rec.Thread.TaskID, Person: person, Agent: rec.Agent, Conversation: rec.Conversation, Tier: offlineDelivery(name).Tier, Mechanism: offlineDelivery(name).Mechanism}
 			if rec.Canceled {
 				reason = "session_gone"
 			}
@@ -331,4 +333,16 @@ func (r *conversationRuntime) mailboxNotice(ctx context.Context, parent ledger.E
 		return err
 	}
 	return r.workerNotice(ctx, parent, id, text)
+}
+
+func offlineDelivery(name string) worker.DeliveryProfile {
+	if name == "codex" {
+		return (*codex.Session)(nil).DeliveryProfile()
+	}
+	for _, profile := range workeracp.BuiltinProfiles() {
+		if profile.Name == name {
+			return profile.Delivery
+		}
+	}
+	return worker.DeliveryProfile{Tier: "pull", Mechanism: "waiting for session binding"}
 }
