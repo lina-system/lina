@@ -14,12 +14,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/compaction"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
@@ -57,10 +59,32 @@ func testM2FileLanding(t *testing.T, committed bool) {
 		Output json.RawMessage
 	}, 1)
 	awaiting := false
+	var summaries atomic.Int32
 	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct{ Input, Tools []json.RawMessage }
 		if e := json.NewDecoder(r.Body).Decode(&request); e != nil {
 			t.Error(e)
+			return
+		}
+		var last struct{ Role, Content string }
+		if len(request.Input) > 0 {
+			_ = json.Unmarshal(request.Input[len(request.Input)-1], &last)
+		}
+		// Repeated snapshots fill the conversation and trigger Core's real
+		// compaction path. Its auxiliary request must not consume a scripted
+		// tool call or mistake an earlier completion for the active input.
+		if last.Role == "developer" && strings.Contains(last.Content, "unanswered_requests") && strings.Contains(last.Content, "omitted_detail") {
+			summary, e := json.Marshal(compaction.Text{
+				Requests: "Continue the file task.", Topics: scenario.Title,
+				Actions: "Earlier file reports and refused landings were recorded; inspect current work before delivery.",
+				Values:  scenario.TaskID, Omitted: "Earlier receipt and snapshot details remain in the work ledger.",
+			})
+			if e != nil {
+				t.Error(e)
+				return
+			}
+			summaries.Add(1)
+			emitResponse(w, string(summary), true)
 			return
 		}
 		if awaiting {
@@ -410,10 +434,17 @@ func testM2FileLanding(t *testing.T, committed bool) {
 	}
 	var breaches int
 	readErr = reader.QueryRowContext(h.ctx, "SELECT count(*) FROM done_completions WHERE agent_id=? AND state='claimed'", c.Task.AgentID).Scan(&breaches)
-	reader.Close()
 	if readErr != nil || breaches != wantBreaches {
+		reader.Close()
 		t.Fatalf("restart/retry duplicated task claim: %d %v", breaches, readErr)
 	}
+	var nodes, sources int
+	readErr = reader.QueryRowContext(h.ctx, `SELECT (SELECT count(*) FROM sum_node WHERE conversation_id=? AND status='ready'),(SELECT count(*) FROM sum_cover c JOIN sum_node n ON n.id=c.node_id WHERE n.conversation_id=? AND c.reason='')`, conversation, conversation).Scan(&nodes, &sources)
+	reader.Close()
+	if readErr != nil || summaries.Load() == 0 || nodes == 0 || sources == 0 {
+		t.Fatalf("file landing did not retain compaction through restart: requests=%d nodes=%d sources=%d error=%v", summaries.Load(), nodes, sources, readErr)
+	}
+	t.Logf("file landing verified after compaction and restart: summary requests=%d nodes=%d sources=%d", summaries.Load(), nodes, sources)
 	entries, err = os.ReadDir(destination)
 	if err != nil || len(entries) != wantBundles {
 		t.Fatal("restart duplicated bundle")
