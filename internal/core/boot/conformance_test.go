@@ -18,6 +18,11 @@ import (
 
 func conformanceFixture(t *testing.T) (*conversationRuntime, codingAssignment, dispatch.Record) {
 	t.Helper()
+	return conformanceFixtureWithOutcome(t, "ready_for_review")
+}
+
+func conformanceFixtureWithOutcome(t *testing.T, outcome string) (*conversationRuntime, codingAssignment, dispatch.Record) {
+	t.Helper()
 	r, _, origin, _ := managementFixture(t)
 	owner, err := r.agents.Create(t.Context(), agents.Create{Name: "developer", PersonID: r.person, Preset: "dev"})
 	if err != nil {
@@ -51,6 +56,7 @@ func conformanceFixture(t *testing.T) (*conversationRuntime, codingAssignment, d
 	now := time.Now()
 	receipt := work.Receipt{SchemaVersion: 1, RelationshipID: a.ID, ExecutionGeneration: 1, Attempt: 1, Outcome: "ready_for_review", Producer: "child", TurnRef: work.TurnRef{ThreadID: run.ThreadID, TurnID: run.TurnID, TurnStatus: "completed"}, EmittedAt: now, Manifest: []work.Artifact{{Path: "/work/task/result", SHA256: strings.Repeat("a", 64)}}, Provenance: []work.Provenance{{ArtifactID: "artifact", TaskID: a.ID, NodeID: run.NodeID, Path: "/work/task/result", SHA256: strings.Repeat("a", 64), ObservedAt: now}}}
 	receipt.RevisionHash = work.ManifestHash(receipt.Manifest)
+	receipt.Outcome = outcome
 	receipt.EventID = work.ReceiptID(receipt)
 	if err := r.work.Submit(t.Context(), run.ID, receipt); err != nil {
 		t.Fatal(err)
@@ -60,6 +66,55 @@ func conformanceFixture(t *testing.T) (*conversationRuntime, codingAssignment, d
 	}
 	return r, a, d
 }
+
+func TestConformanceUnavailableEvidenceBlocksBeforeScopeVerdict(t *testing.T) {
+	for _, kind := range []string{"code", "base", "diff", "design", "paths", "pr_unverified", "checks"} {
+		t.Run(kind, func(t *testing.T) {
+			r, a, d := conformanceFixtureWithOutcome(t, "blocked_needs_input")
+			d.ChangedFiles = []string{"outside.txt"}
+			cause := "change_evidence_unavailable"
+			switch kind {
+			case "code":
+				d.Code = "change_evidence_unavailable"
+			case "base":
+				d.BaseCommit = ""
+			case "diff":
+				d.ChangeEvidence = ""
+			case "design":
+				d.DesignText = nil
+			case "paths":
+				d.ChangedFiles = nil
+			case "pr_unverified":
+				d.Code = "pr_unverified"
+				cause = "merge_precondition"
+			case "checks":
+				d.PR.Checks[0].Conclusion = "FAILURE"
+				d.ChangeEvidence = ""
+				cause = "merge_precondition"
+			}
+			// A mechanical block must finish even without a provider or router.
+			callErr := r.runCodingManager(t.Context(), a, "delivery", &d)
+			got, err := review.New(r.db).Get(t.Context(), review.Key{Repository: "owner/repo", Number: 7, Head: d.PR.Head})
+			if callErr != nil || err != nil || got.State != "blocked" || got.Cause != cause || got.Verdict != "" || len(got.Findings) != 0 || got.Evidence == "" {
+				t.Fatalf("delivery error=%v stored review=%+v read error=%v", callErr, got, err)
+			}
+			card, err := r.work.Get(t.Context(), a.ID)
+			if err != nil || card.State != "input_needed" || card.Verdict != "" || card.Applied || got.Receipt != card.Receipt.EventID || got.Generation != card.Run.Generation {
+				t.Fatalf("blocked delivery lost: card=%+v review=%+v error=%v", card, got, err)
+			}
+			if err = r.db.Read(t.Context(), func(tx *canon.Tx) error { a, err = readCoding(t.Context(), tx, a.ID); return err }); err != nil {
+				t.Fatal(err)
+			}
+			if a.Verdict != "" || a.VerdictHead != got.Head || a.VerdictReceipt != got.Receipt || r.conformanceVerified(t.Context(), a, d) {
+				t.Fatalf("assignment did not retain the blocked head: %+v", a)
+			}
+			if err = r.runCodingManager(t.Context(), a, "delivery", &d); !errors.Is(err, review.ErrDuplicate) {
+				t.Fatalf("duplicate check=%v", err)
+			}
+		})
+	}
+}
+
 func TestConformanceMechanicalDecisionsSkipManagerAndRejectDuplicate(t *testing.T) {
 	for _, kind := range []string{"scope", "checks"} {
 		t.Run(kind, func(t *testing.T) {
