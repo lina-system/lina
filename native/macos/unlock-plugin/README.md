@@ -48,7 +48,7 @@ The plug-in reads two root-owned files. Nothing else persists.
 | Path | Written by | Content |
 | --- | --- | --- |
 | `/var/db/lina/locked-screen/enabled` | installer, removed when the feature is off | `socket=<broker socket path>`, `uid=<the person's uid>`, `deadline_ms=<1..500>` |
-| `/var/db/lina/locked-screen/evaluation` | the plug-in | crash marker; present while an evaluation runs |
+| `/var/db/lina/locked-screen/evaluation` | the plug-in; the guard removes a stale one | crash marker; present while an evaluation runs |
 
 The directory is root-only. The plug-in writes the marker before it connects and
 clears it before it answers. A marker left behind by a crashed evaluation makes

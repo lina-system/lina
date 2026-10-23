@@ -82,33 +82,85 @@ static int evaluate_right(void *context, const char *name, uint32_t deadline_ms)
   return fake->evaluate_result;
 }
 
+struct bundle_slot {
+  bool *present;
+  char *text;
+  char *path;
+};
+
+static struct bundle_slot slot_at(struct fake_host *fake, int index) {
+  if (index == 0) return (struct bundle_slot){&fake->bundle_present, fake->bundle_text, fake->bundle_path};
+  return (struct bundle_slot){&fake->staged_present, fake->staged_text, fake->staged_path};
+}
+
+static bool find_bundle(struct fake_host *fake, const char *path, struct bundle_slot *out) {
+  for (int i = 0; i < 2; i++) {
+    struct bundle_slot slot = slot_at(fake, i);
+    if (*slot.present && strcmp(slot.path, path) == 0) {
+      *out = slot;
+      return true;
+    }
+  }
+  return false;
+}
+
 static int copy_bundle(void *context, const char *source, const char *destination) {
   struct fake_host *fake = self(context);
-  (void)source;
   if (fake->copy_status != 0) return fake->copy_status;
-  snprintf(fake->bundle_text, sizeof(fake->bundle_text), "%s", destination);
-  snprintf(fake->bundle_path, sizeof(fake->bundle_path), "%s", destination);
-  fake->bundle_present = true;
+  struct bundle_slot slot;
+  if (find_bundle(fake, destination, &slot)) return -1;
+  slot = slot_at(fake, fake->bundle_present ? 1 : 0);
+  if (*slot.present) return -1;
+  snprintf(slot.text, 128, "%s", source);
+  snprintf(slot.path, LINA_PATH_MAX, "%s", destination);
+  *slot.present = true;
   return 0;
 }
 
 static int rename_path(void *context, const char *from, const char *to) {
   struct fake_host *fake = self(context);
-  if (!fake->bundle_present || strcmp(from, fake->bundle_path) != 0) return -1;
-  snprintf(fake->bundle_path, sizeof(fake->bundle_path), "%s", to);
+  if (fake->move_status != 0) return fake->move_status;
+  struct bundle_slot slot;
+  struct bundle_slot taken;
+  if (!find_bundle(fake, from, &slot) || find_bundle(fake, to, &taken)) return -1;
+  snprintf(slot.path, LINA_PATH_MAX, "%s", to);
+  return 0;
+}
+
+// The two paths keep their names and exchange what they hold, as
+// `renamex_np(RENAME_SWAP)` does.
+static int swap_paths(void *context, const char *first, const char *second) {
+  struct fake_host *fake = self(context);
+  if (fake->move_status != 0) return fake->move_status;
+  struct bundle_slot a;
+  struct bundle_slot b;
+  if (!find_bundle(fake, first, &a) || !find_bundle(fake, second, &b)) return -1;
+  char text[128];
+  snprintf(text, sizeof(text), "%s", a.text);
+  snprintf(a.text, 128, "%s", b.text);
+  snprintf(b.text, 128, "%s", text);
   return 0;
 }
 
 static int verify_code(void *context, const char *path) {
   struct fake_host *fake = self(context);
-  if (!fake->bundle_present || strcmp(path, fake->bundle_path) != 0) return 0;
+  struct bundle_slot slot;
+  if (!find_bundle(fake, path, &slot)) return 0;
   return fake->verify_result;
 }
 
 static int remove_bundle(void *context, const char *path) {
   struct fake_host *fake = self(context);
-  if (!fake->bundle_present || strcmp(path, fake->bundle_path) != 0) return 1;
-  fake->bundle_present = false;
+  struct bundle_slot slot;
+  if (!find_bundle(fake, path, &slot)) return 1;
+  *slot.present = false;
+  // A lone bundle always sits in the first slot, where the tests look.
+  if (!fake->bundle_present && fake->staged_present) {
+    fake->bundle_present = true;
+    snprintf(fake->bundle_text, sizeof(fake->bundle_text), "%s", fake->staged_text);
+    snprintf(fake->bundle_path, sizeof(fake->bundle_path), "%s", fake->staged_path);
+    fake->staged_present = false;
+  }
   return 0;
 }
 
@@ -157,6 +209,7 @@ static int write_file(void *context, const char *path, const void *data, size_t 
   snprintf(file->path, sizeof(file->path), "%s", path);
   memcpy(file->content, data, length);
   file->length = length;
+  file->written_ms = fake->now_ms;
   return 0;
 }
 
@@ -171,9 +224,18 @@ static int remove_file(void *context, const char *path) {
 static int exists(void *context, const char *path) {
   struct fake_host *fake = self(context);
   if (strstr(path, "LinaUnlock.bundle") != NULL) {
-    return fake->bundle_present && strcmp(path, fake->bundle_path) == 0 ? 1 : 0;
+    struct bundle_slot slot;
+    return find_bundle(fake, path, &slot) ? 1 : 0;
   }
   return find_file(fake, path) != NULL ? 1 : 0;
+}
+
+static int file_age_ms(void *context, const char *path, uint64_t *age_ms) {
+  struct fake_host *fake = self(context);
+  struct fake_file *file = find_file(fake, path);
+  if (file == NULL) return 0;
+  *age_ms = fake->now_ms >= file->written_ms ? fake->now_ms - file->written_ms : UINT64_MAX;
+  return 1;
 }
 
 static int make_dir(void *context, const char *path) {
@@ -232,12 +294,14 @@ void fake_host_init(struct fake_host *fake) {
   fake->host.verify_code = verify_code;
   fake->host.remove_bundle = remove_bundle;
   fake->host.rename_path = rename_path;
+  fake->host.swap_paths = swap_paths;
   fake->host.install_guard = install_guard;
   fake->host.remove_guard = remove_guard;
   fake->host.read_file = read_file;
   fake->host.write_file = write_file;
   fake->host.remove_file = remove_file;
   fake->host.exists = exists;
+  fake->host.file_age_ms = file_age_ms;
   fake->host.make_dir = make_dir;
   fake->host.measure_build = measure_build;
   fake->host.is_apple_silicon = is_apple_silicon;

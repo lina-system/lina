@@ -130,11 +130,35 @@ static void install_accepts_an_earlier_lina_rule(void) {
   fake_right_set(&again, LINA_RIGHT_SCREENSAVER, &earlier);
   again.bundle_present = true;
   snprintf(again.bundle_path, sizeof(again.bundle_path), "%s", paths.bundle);
+  snprintf(again.bundle_text, sizeof(again.bundle_text), "earlier");
   again.write_count = 0;
   CHECK(lina_install(&again.host, &paths, &input).code == LINA_INSTALL_OK);
   CHECK(again.write_count == 3);
   CHECK(again.bundle_present);
   CHECK_STR(again.bundle_path, paths.bundle);
+  CHECK_STR(again.bundle_text, input.bundle_source);
+  CHECK(!again.staged_present);
+}
+
+static void install_keeps_the_installed_bundle_when_the_swap_fails(void) {
+  // The rule of an earlier install names the installed bundle, so it stays in
+  // place until the verified one has replaced it.
+  struct fake_host fake;
+  setup(&fake);
+  struct lina_right earlier;
+  lina_rule_lina(&earlier);
+  fake_right_set(&fake, LINA_RIGHT_SCREENSAVER, &earlier);
+  fake.bundle_present = true;
+  snprintf(fake.bundle_path, sizeof(fake.bundle_path), "%s", paths.bundle);
+  snprintf(fake.bundle_text, sizeof(fake.bundle_text), "earlier");
+  fake.move_status = -1;
+  struct lina_outcome outcome = lina_install(&fake.host, &paths, &input);
+  CHECK(outcome.code == LINA_INSTALL_BUNDLE);
+  CHECK(definitions_match(&fake, LINA_RIGHT_SCREENSAVER, &earlier));
+  CHECK(fake.bundle_present);
+  CHECK_STR(fake.bundle_path, paths.bundle);
+  CHECK_STR(fake.bundle_text, "earlier");
+  CHECK(!fake.staged_present);
 }
 
 static void install_refuses_unmeasured_build(void) {
@@ -381,6 +405,7 @@ void test_install(void) {
   install_refuses_platform_sso();
   install_refuses_any_other_rule();
   install_accepts_an_earlier_lina_rule();
+  install_keeps_the_installed_bundle_when_the_swap_fails();
   install_refuses_unmeasured_build();
   install_cleans_up_after_failed_self_test();
   install_stops_on_bad_signature();

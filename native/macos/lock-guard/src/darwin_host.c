@@ -389,6 +389,11 @@ static int rename_path(void *context, const char *from, const char *to) {
   return rename(from, to) == 0 ? 0 : -1;
 }
 
+static int swap_paths(void *context, const char *first, const char *second) {
+  (void)context;
+  return renamex_np(first, second, RENAME_SWAP) == 0 ? 0 : -1;
+}
+
 static int run_tool(const char *const *arguments) {
   pid_t child = 0;
   int status = posix_spawn(&child, arguments[0], NULL, NULL, (char *const *)arguments, environ);
@@ -523,6 +528,20 @@ static int exists(void *context, const char *path) {
   return errno == ENOENT ? 0 : -1;
 }
 
+// The plug-in creates its marker and never writes to it, so the modification
+// time is when the evaluation started.
+static int file_age_ms(void *context, const char *path, uint64_t *age_ms) {
+  (void)context;
+  struct stat info;
+  if (lstat(path, &info) != 0) return errno == ENOENT ? 0 : -1;
+  struct timespec now;
+  if (clock_gettime(CLOCK_REALTIME, &now) != 0) return -1;
+  int64_t now_ms = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+  int64_t written_ms = (int64_t)info.st_mtimespec.tv_sec * 1000 + info.st_mtimespec.tv_nsec / 1000000;
+  *age_ms = now_ms >= written_ms ? (uint64_t)(now_ms - written_ms) : UINT64_MAX;
+  return 1;
+}
+
 static int make_dir(void *context, const char *path) {
   (void)context;
   char buffer[LINA_PATH_MAX];
@@ -641,12 +660,14 @@ bool lina_darwin_host_init(struct lina_darwin *darwin, const struct lina_paths *
   darwin->host.verify_code = verify_code;
   darwin->host.remove_bundle = remove_bundle;
   darwin->host.rename_path = rename_path;
+  darwin->host.swap_paths = swap_paths;
   darwin->host.install_guard = install_guard;
   darwin->host.remove_guard = remove_guard;
   darwin->host.read_file = read_file;
   darwin->host.write_file = write_file;
   darwin->host.remove_file = remove_file;
   darwin->host.exists = exists;
+  darwin->host.file_age_ms = file_age_ms;
   darwin->host.make_dir = make_dir;
   darwin->host.measure_build = measure_build;
   darwin->host.is_apple_silicon = is_apple_silicon;
