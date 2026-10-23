@@ -143,76 +143,11 @@ func RegisterRecords(registry *tools.Registry, repo records.Repo, actor records.
 			} else {
 				var a RecordWrite
 				_ = json.Unmarshal(in.Arguments, &a)
-				c := records.Change{ID: a.ID, Base: a.Revision}
-				front := ""
-				if a.ID != "" {
-					r, rev, err := repo.Read(ctx, a.ID)
-					if err != nil {
-						return RecordFailure(err), nil
-					}
-					if !recordOwner(r.Data, actor.Person) {
-						return RecordFailure(errNotAuthorized), nil
-					}
-					if rev != a.Revision {
-						return RecordFailure(records.ErrStaleRevision), nil
-					}
-					// Preserve the fixed folder and every existing structured field.
-					c.Path = r.Path
-					raw, _, ok := strings.Cut(string(r.Data), "\n---\n")
-					if !ok {
-						return RecordFailure(records.ErrInvalid), nil
-					}
-					front = raw
-					if field(front, "kind") != a.Kind {
-						return RecordFailure(records.ErrInvalid), nil
-					}
-				} else {
-					c.ID = records.NewID()
-					id, _ := json.Marshal(c.ID)
-					person, _ := json.Marshal(actor.Person)
-					agent, _ := json.Marshal(actor.Agent)
-					front = fmt.Sprintf("---\nid: %s\nkind: %s\nstate: active\nperson_id: %s\nagent_id: %s", id, a.Kind, person, agent)
-				}
-				if a.Kind == "todo" {
-					if a.Todo == nil && a.ID == "" {
-						a.Todo = &records.Todo{}
-					}
-					if a.Todo != nil {
-						next, err := records.WithTodo(front, *a.Todo)
-						if err != nil {
-							return RecordFailure(err), nil
-						}
-						if err = validateTodoEdit(front, next, *a.Todo); err != nil {
-							return RecordFailure(err), nil
-						}
-						front = next
-					}
-				}
-				c.Data = []byte(front + "\n---\n\n# " + a.Title + "\n\n" + a.Note + "\n")
-				var rev records.Rev
 				var err error
-				folder := "resources"
-				if a.Kind == "memo" || a.Kind == "todo" {
-					folder = "inbox"
-				}
-				for n := 1; ; n++ {
-					if a.ID == "" {
-						stem := recordSlug(a.Title)
-						if n > 1 {
-							stem += "-" + strconv.Itoa(n)
-						}
-						c.Path = path.Join(folder, stem+".md")
-					}
-					rev, err = repo.Commit(ctx, c, actor)
-					if a.ID == "" && errors.Is(err, records.ErrPathExists) {
-						continue
-					}
-					break
-				}
+				receipt, err = WriteRecord(ctx, repo, actor, a)
 				if err != nil {
 					return RecordFailure(err), nil
 				}
-				receipt = RecordReceipt{ID: c.ID, Revision: rev, Markdown: string(c.Data)}
 			}
 			return tools.Result{State: tools.Applied, Body: output(receipt), Revision: receipt.Revision}, nil
 		}
@@ -223,6 +158,91 @@ func RegisterRecords(registry *tools.Registry, repo records.Repo, actor records.
 	}
 	return specs, nil
 }
+
+// WriteRecord is the shared writer for model tools and explicit client capture.
+// Both paths use the same field checks, ownership, revision CAS and repository.
+func WriteRecord(ctx context.Context, repo records.Repo, actor records.Actor, a RecordWrite) (RecordReceipt, error) {
+	raw, err := json.Marshal(a)
+	if err != nil {
+		return RecordReceipt{}, records.ErrInvalid
+	}
+	if _, err = recordInput(raw, "write_record"); err != nil {
+		return RecordReceipt{}, records.ErrInvalid
+	}
+	if actor.Person == "" || actor.Agent == "" {
+		return RecordReceipt{}, records.ErrInvalid
+	}
+	c := records.Change{ID: a.ID, Base: a.Revision}
+	front := ""
+	if a.ID != "" {
+		r, rev, err := repo.Read(ctx, a.ID)
+		if err != nil {
+			return RecordReceipt{}, err
+		}
+		if !recordOwner(r.Data, actor.Person) {
+			return RecordReceipt{}, errNotAuthorized
+		}
+		if rev != a.Revision {
+			return RecordReceipt{}, records.ErrStaleRevision
+		}
+		// Preserve the fixed folder and every existing structured field.
+		c.Path = r.Path
+		raw, _, ok := strings.Cut(string(r.Data), "\n---\n")
+		if !ok {
+			return RecordReceipt{}, records.ErrInvalid
+		}
+		front = raw
+		if field(front, "kind") != a.Kind {
+			return RecordReceipt{}, records.ErrInvalid
+		}
+	} else {
+		c.ID = records.NewID()
+		id, _ := json.Marshal(c.ID)
+		person, _ := json.Marshal(actor.Person)
+		agent, _ := json.Marshal(actor.Agent)
+		front = fmt.Sprintf("---\nid: %s\nkind: %s\nstate: active\nperson_id: %s\nagent_id: %s", id, a.Kind, person, agent)
+	}
+	if a.Kind == "todo" {
+		if a.Todo == nil && a.ID == "" {
+			a.Todo = &records.Todo{}
+		}
+		if a.Todo != nil {
+			next, err := records.WithTodo(front, *a.Todo)
+			if err != nil {
+				return RecordReceipt{}, err
+			}
+			if err = validateTodoEdit(front, next, *a.Todo); err != nil {
+				return RecordReceipt{}, err
+			}
+			front = next
+		}
+	}
+	c.Data = []byte(front + "\n---\n\n# " + a.Title + "\n\n" + a.Note + "\n")
+	var rev records.Rev
+	folder := "resources"
+	if a.Kind == "memo" || a.Kind == "todo" {
+		folder = "inbox"
+	}
+	for n := 1; ; n++ {
+		if a.ID == "" {
+			stem := recordSlug(a.Title)
+			if n > 1 {
+				stem += "-" + strconv.Itoa(n)
+			}
+			c.Path = path.Join(folder, stem+".md")
+		}
+		rev, err = repo.Commit(ctx, c, actor)
+		if a.ID == "" && errors.Is(err, records.ErrPathExists) {
+			continue
+		}
+		break
+	}
+	if err != nil {
+		return RecordReceipt{}, err
+	}
+	return RecordReceipt{ID: c.ID, Revision: rev, Markdown: string(c.Data)}, nil
+}
+
 func field(front, key string) string {
 	for _, line := range strings.Split(front, "\n") {
 		if v, ok := strings.CutPrefix(line, key+": "); ok {
