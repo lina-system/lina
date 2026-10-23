@@ -551,3 +551,39 @@ func (s stageDefinitions) Read(ctx context.Context, id string) (goal.DefinitionR
 func (s stageDefinitions) Commit(ctx context.Context, c goal.DefinitionChange, person, agent string) (string, error) {
 	return s.repo.Commit(ctx, records.Change{ID: c.ID, Base: c.Base, Path: c.Path, Data: c.Data}, records.Actor{Person: person, Agent: agent})
 }
+
+func TestStageListClosesSupersededStepAndKeepsItsStage(t *testing.T) {
+	rev := func(steps ...Step) Revision { return Revision{Steps: steps} }
+	first := []Step{
+		{ID: "a", Name: "원인 찾기", State: StepDone},
+		{ID: "b", Name: "고치기", DependsOn: []string{"a"}, State: StepDone},
+		{ID: "c", Name: "확인하기", DependsOn: []string{"b"}, State: StepWaiting},
+	}
+	// The manager no longer needs b; c moves to depend on a.
+	second := []Step{
+		{ID: "a", Name: "원인 찾기", State: StepDone},
+		{ID: "c", Name: "확인하기", DependsOn: []string{"a"}, State: StepWaiting},
+		{ID: "d", Name: "다시 고치기", State: StepWaiting},
+	}
+	list, err := Stages([]Revision{rev(first...), rev(second...)}, goal.GoalRunning, design.Korean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 4 || list[0].Number != 1 || list[1].Number != 2 || list[2].Number != 3 || list[3].Kind != KindChecking {
+		t.Fatalf("stages = %+v", list)
+	}
+	if got := stepIDs(list[0].Steps); len(got) != 1 || got[0] != "a" {
+		t.Fatalf("stage 1 = %v", got)
+	}
+	// b keeps its stage and reads superseded; it leaves the label count.
+	if got := stepIDs(list[1].Steps); len(got) != 1 || got[0] != "b" || list[1].Steps[0].State != StepSuperseded || list[1].State != StepDone {
+		t.Fatalf("closed stage = %+v", list[1])
+	}
+	// c follows its new blocker, and the later step d stays past the done run.
+	if got := stepIDs(list[2].Steps); len(got) != 2 || got[0] != "c" || got[1] != "d" || list[2].Label != firstLabel(list[2]) {
+		t.Fatalf("open stage = %+v", list[2])
+	}
+	if list[2].Label != "확인하기 외 1" {
+		t.Fatalf("open stage label = %q", list[2].Label)
+	}
+}
