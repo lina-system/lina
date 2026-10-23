@@ -26,7 +26,7 @@ func TestACPWorkToolsThroughRunningCore(t *testing.T) {
 	peers := t.TempDir()
 	var scenarios []acpScenario
 	for _, id := range []string{"a", "b"} {
-		scenarios = append(scenarios, acpScenario{name: id, worker: "gemini", binary: "gemini", mode: "success", script: acpWorkToolsScript, parallel: true,
+		scenarios = append(scenarios, acpScenario{name: id, worker: "gemini", binary: "gemini", mode: "success", script: acpWorkToolsScript, parallel: true, answerQuestions: true,
 			environment: []string{"LINA_ACP_PEERS=" + peers, "LINA_ACP_PEER_ID=" + id},
 			setup: func(t *testing.T, root string) {
 				for file, body := range workerSettings {
@@ -79,6 +79,11 @@ func verifyACPWorkTools(t *testing.T, h *harness, fixture string, record dispatc
 		if tool.Name != want[i].Name || !reflect.DeepEqual(tool.InputSchema, schema) {
 			t.Fatal("ACP and Codex tool contracts differ")
 		}
+	}
+	var answer struct{ Answer, Action string }
+	readACPFixture(t, fixture, "answered.json", &answer)
+	if answer.Answer != "Continue." || answer.Action != "accept" {
+		t.Fatal("question did not reach its worker")
 	}
 	var receipt work.Receipt
 	var ack struct {
@@ -223,6 +228,8 @@ readline.createInterface({input:process.stdin}).on('line',async line=>{
   const denied=await foreign.call('tools/call',{name:'read_projection',arguments:{}});
   if(!denied.error)throw Error('foreign token accepted');save('foreign.json',denied);await foreign.close();
   const projection=unwrap(await bridge.call('tools/call',{name:'read_projection',arguments:{}}));
+  const answer=unwrap(await bridge.call('tools/call',{name:'ask',arguments:{question:'Continue with the result?'}}));
+  if(answer.answer!=='Continue.'||answer.action!=='accept')throw Error('question answer lost');save('answered.json',answer);
   const coord=unwrap(await bridge.call('tools/call',{name:'coordinate',arguments:{request:'Preparing the result.'}}));
   if(!coord.accepted)throw Error('coordination not recorded');
   const packet=m.params.prompt[0].text,definition=JSON.parse(packet.slice(packet.indexOf('{')));

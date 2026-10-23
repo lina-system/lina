@@ -57,6 +57,7 @@ type acpScenario struct {
 	name, worker, binary, mode string
 	script                     string
 	parallel                   bool
+	answerQuestions            bool
 	environment                []string
 	setup                      func(*testing.T, string)
 	beforeFinish, afterFinish  func(*testing.T, *harness, string, dispatch.Record)
@@ -319,9 +320,23 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 			seedMethodologyAgents(t, h, person, "")
 			stop = start()
 			defer stop()
-			c, conversation := conversationClient(t, h)
+			var caps []protocol.Capability
+			if scenario.answerQuestions {
+				caps = append(caps, protocol.Capability{Name: "waiting", Version: "1.0"})
+			}
+			c, conversation := conversationClient(t, h, caps...)
+			if scenario.answerQuestions {
+				topic := "waiting"
+				if _, err = c.Subscribe(ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = c.Receive(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
 			incoming := make(chan error, 1)
 			go func() {
+				answered := map[string]bool{}
 				for {
 					e, err := c.Receive(ctx)
 					if err != nil {
@@ -333,6 +348,21 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 						return
 					}
 
+					if question, ok := e.Payload.(protocol.Question); ok && scenario.answerQuestions {
+						if question.Card == nil || question.Form == nil || question.ConversationID != conversation || question.Form.PluginName != scenario.worker {
+							incoming <- fmt.Errorf("question lost worker attribution: %+v", question.Form)
+							return
+						}
+						if !answered[question.Card.ID] {
+							answer := "Continue."
+							values := protocol.FormValues{"answer": protocol.FormValue{String: &answer}}
+							if _, err := c.AnswerQuestion(ctx, protocol.QuestionAnswer{CardID: &question.Card.ID, Revision: &question.Card.Revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}); err != nil {
+								incoming <- err
+								return
+							}
+							answered[question.Card.ID] = true
+						}
+					}
 					if e.Error != nil {
 						incoming <- fmt.Errorf("Core refusal: %s", e.Error.Code)
 						return

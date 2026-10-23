@@ -57,3 +57,7 @@ socket and token through its per-session environment, not command arguments.
 The socket and its private temporary directory are removed on close and failed
 session startup. Persistent receipts remain unverified claims in the existing
 conversation ledger, separate from dispatch's independently derived receipt.
+
+The installed-Core work-tools scenario also answers `ask` through the authenticated
+waiting-card client. Question forms carry the actual worker name; the reply returns
+to the same pending MCP call before the worker submits its completion claim.
