@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -356,6 +357,102 @@ func testWorkerOriginChannelScope(t *testing.T, scheduled bool) {
 				t.Fatal("running follow-up retained revoked channel permission")
 			}
 			if _, err := originView(); err == nil {
+				t.Fatal("completion fell back to an unrelated channel after revocation")
+			}
+		})
+	}
+}
+
+func TestWorkerRecoveryPreservesOriginalChannelScope(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		threaded, separate bool
+	}{{"shared-main", false, false}, {"thread-scope", true, false}, {"separate-conversation", true, true}} {
+		name, threaded := tc.name, tc.threaded
+		t.Run(name, func(t *testing.T) {
+			r := controlRuntime(t)
+			ctx, now := t.Context(), time.Now()
+			store := r.channels.store
+			connect := func(platform string) channels.Binding {
+				t.Helper()
+				bot := channels.Bot{Platform: platform, Account: "fixture"}
+				if err := store.Connect(ctx, bot, r.person); err != nil {
+					t.Fatal(err)
+				}
+				code, err := store.PairingCode(ctx, bot, r.person, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.Pair(ctx, bot, code, "42", "100", now); err != nil {
+					t.Fatal(err)
+				}
+				binding := channels.Binding{Address: channels.Address{Bot: bot, Chat: "100"}, Person: r.person, Agent: r.agent, Conversation: r.conversation, Scope: channels.Scope{Reads: channels.DMOnly, Writes: channels.ReplyOnly, Tools: true, Memory: true}}
+				if err := store.Bind(ctx, binding); err != nil {
+					t.Fatal(err)
+				}
+				return binding
+			}
+			discord, telegram := connect("discord"), connect("telegram")
+			source := telegram
+			if threaded {
+				source = discord
+				source.Chat = "group"
+				source.Scope.Reads = channels.Addressed
+				if err := store.Bind(ctx, source); err != nil {
+					t.Fatal(err)
+				}
+				source.Topic = "thread"
+			}
+			if tc.separate {
+				source.Conversation = "channel:recovery"
+			}
+			source.Scope.Memory, source.Scope.Tools = false, false
+			if err := store.Bind(ctx, source); err != nil {
+				t.Fatal(err)
+			}
+			var delivery gateway.Delivery
+			inbound := gateway.Inbound{Address: source.Address, NativeID: "source", Sender: "42", Cursor: "1", Direct: !threaded, Addressed: true, Body: []byte(`{"Text":"work request"}`)}
+			if err := gateway.New(r.db, func(_ context.Context, d gateway.Delivery) error { delivery = d; return nil }).Admit(ctx, inbound); err != nil {
+				t.Fatal(err)
+			}
+			completion := ledger.Event{ParentID: "channel-input:" + strconv.FormatInt(delivery.InboxID, 10), ConversationID: source.Conversation, AgentID: r.agent, Surface: ledger.Surface{Kind: "channel"}}
+			original := completion
+			original.ID = completion.ParentID
+			original.ParentID = ""
+			original.Surface.Platform, original.Surface.ChatID = source.Platform, source.Chat
+			if _, err := r.router.channelView(ctx, source); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: original.ID, ConversationID: original.ConversationID, AgentID: original.AgentID, PersonID: r.person, Surface: original.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "work request"}); err != nil {
+				t.Fatal(err)
+			}
+			record := dispatch.Record{Origin: dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: source.Conversation, Turn: "turn:" + original.ID}}
+			if allowed, err := r.authorizeWorkerRecovery(ctx, record); err == nil && allowed {
+				t.Fatal("automatic dispatch recovery bypassed channel tool restriction")
+			}
+			recovered, err := r.workerRecoveryView(ctx, original)
+			if err != nil || recovered.channelBinding == nil || *recovered.channelBinding != source || recovered.channelAddress != source.Address {
+				t.Fatalf("worker recovery widened channel authority: %+v %v", recovered, err)
+			}
+			view, err := r.workerCompletionView(ctx, completion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.channelAddress != source.Address || view.channelBinding == nil || *view.channelBinding != source {
+				t.Fatalf("completion recovered another channel's scope: address=%+v binding=%+v, want %+v", view.channelAddress, view.channelBinding, source)
+			}
+			if err := view.validateChannel(ctx); err != nil {
+				t.Fatal(err)
+			}
+			// A revoked original route cannot fall back to the same persona on another
+			// platform, even though that other binding still has tools and memory.
+			if err := store.Disconnect(ctx, source.Bot, r.person); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.workerRecoveryView(ctx, original); err == nil {
+				t.Fatal("worker recovery bypassed revoked channel")
+			}
+			if _, err := r.workerCompletionView(ctx, completion); err == nil {
 				t.Fatal("completion fell back to an unrelated channel after revocation")
 			}
 		})

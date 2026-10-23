@@ -88,7 +88,13 @@ func (r *conversationRuntime) startWork(ctx context.Context, cfg *WorkConfig) er
 	}
 	runCtx, stop := context.WithCancel(ctx)
 	w := &workRuntime{engine: e, stop: stop, done: make(chan struct{})}
+	if r.dispatchMu != nil {
+		r.dispatchMu.Lock()
+	}
 	r.workEngine = w
+	if r.dispatchMu != nil {
+		r.dispatchMu.Unlock()
+	}
 	go func() { w.err = e.Run(runCtx); close(w.done) }()
 	return nil
 }

@@ -1,0 +1,10 @@
+{
+  "cases": [{"name": "denied", "expected": "permission_denials"}],
+  "what": "Produce result.txt in the task worktree",
+  "done": "The result file is committed and submitted",
+  "worker": "claude",
+  "binary": "claude",
+  "script": "../m2/claude-worker.mjs",
+  "work_area": true,
+  "recovery": true
+}
