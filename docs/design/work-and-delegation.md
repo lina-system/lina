@@ -2259,6 +2259,7 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 | Next | The next 할 일 or stage, in a phrase |
 | Waiting on the person | Whether a row of "Waiting for me" belongs to it, and how many |
 
+- Each goal's name is that goal's own sentence. A sentence that cannot be read leaves only that goal without its name; every other goal keeps the sentence that can still be read.
 - The stage of an 일 whose work runs as a goal is the current entry of its stage list (see Stages). Otherwise it is the stage of its plan that holds its open 할 일, and an 일 with no stages of its own has four: 설계 (design) while its plan is not confirmed, 만드는 중 (building) while any of its 할 일 is open, 확인 (checking) when every 할 일 has completed and the done condition is being checked, and 끝 (done) when the done condition is met. The bar is the share of its 할 일 that are completed, each counted equally.
 - The progress of a 목표 is the share of its 일 that are done, and its stage is that of its least advanced running 일.
 - Now is, in this order: 확인 필요 (needs you) and the subject of its row while a row of "Waiting for me" belongs to it; else 일시정지 (paused) while the person has paused it; else the name of the earliest-started step in progress, followed by the number of the other steps in progress ("로그인 화면 수정 외 1"); else its queue reason and place, or 대기 (waiting) and its one reason or wait (see Order, pause and run limit); else the stage word 설계, 확인 or 끝. It changes only when a step starts or ends, a wait or row opens or closes, or the goal's pause, rank or place changes.

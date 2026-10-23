@@ -241,6 +241,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	r.router = &conversationRouter{root: r, views: map[string]*conversationRuntime{r.agent: r}}
 	r.identity = clientsrv.Identity{PersonID: r.person, Agents: []protocol.Agent{{AgentID: r.agent, Name: first.Agent.Name}}, Topics: r.topics, AuthorizeTopic: r.topicAuthorized, TopicCapabilities: map[string]protocol.Capability{
 		"core": clientsrv.ConversationCapability, "conversation:": clientsrv.ConversationCapability, "results:": clientsrv.ConversationCapability,
+		"launcher": clientsrv.LauncherCapability,
 	}}
 	if r.agent == "" {
 		r.identity.Agents = []protocol.Agent{}
@@ -248,7 +249,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if route == nil {
 		r.identity.Topics = nil
 		r.identity.TopicCapabilities = nil
-	} else if err := addOperations(&r.identity, clientsrv.ConversationOperations(r.router), r.resultOperations()); err != nil {
+	} else if err := addOperations(&r.identity, clientsrv.ConversationOperations(r.router), clientsrv.LauncherOperations(r.router), r.resultOperations()); err != nil {
 		return nil, err
 	}
 	r.vault, err = secrets.OpenFiles(root)
