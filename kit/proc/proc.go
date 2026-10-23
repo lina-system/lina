@@ -20,11 +20,15 @@ var ErrClosed = errors.New("process owner is closed")
 
 // Command has no implicit environment or descriptors. Path must be absolute.
 // ExtraFiles are reserved for trusted launchers, such as bubblewrap's BPF FD.
+// Confined reports that the caller already starts Path under a launcher that
+// denies session and process-group escape, as kit/sandbox does on macOS. Only a
+// verified launcher sets it; the owner then does not add its own policy.
 type Command struct {
 	Path           string
 	Args           []string
 	Dir            string
 	Env            []string
+	Confined       bool
 	Stdin          io.Reader
 	Stdout, Stderr io.Writer
 	ExtraFiles     []*os.File

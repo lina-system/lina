@@ -11,11 +11,58 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
 
-// Open recovers memory removals before returning. Core must call it before
-// serving reads. Conversation-content deletion and source registry lifecycle
-// have their own owners; this coordinator accepts memory targets.
+// Open recovers removals before returning. Core must call it before serving
+// reads and keeps one store for every kind, because the removal list is a single
+// append-only file with one sequence. Memory items and messenger records are
+// accepted; a native conversation's deletion and the source registry lifecycle
+// have their own owners.
 func Open(ctx context.Context, cfg Config) (*Store, error) {
-	return openStore(ctx, cfg, projection{resolve: resolveMemory, expand: expandMemory, apply: applyMemory})
+	return openStore(ctx, cfg, projection{
+		resolve: func(ctx context.Context, tx *canon.Tx, ref Ref, person string) (Target, error) {
+			switch ref.Kind {
+			case Memory:
+				return resolveMemory(ctx, tx, ref, person)
+			case Event:
+				return resolveEvent(ctx, tx, ref, person)
+			case Source:
+				// A source disconnect is the registry's own removal; this store
+				// only journals and replays it.
+				return Target{}, ErrInvalid
+			default:
+				return Target{}, ErrInvalid
+			}
+		},
+		expand: func(ctx context.Context, tx *canon.Tx, e entry) ([]Target, error) {
+			events := make([]Target, 0, len(e.Targets))
+			for _, target := range e.Targets {
+				if target.Kind == Memory {
+					continue
+				}
+				events = append(events, target)
+			}
+			if len(events) == len(e.Targets) {
+				return expandEvents(ctx, tx, e, e.Targets)
+			}
+			memory := e
+			memory.Targets = nil
+			for _, target := range e.Targets {
+				if target.Kind == Memory {
+					memory.Targets = append(memory.Targets, target)
+				}
+			}
+			expanded, err := expandMemory(ctx, tx, memory)
+			if err != nil {
+				return nil, err
+			}
+			return append(expanded, events...), nil
+		},
+		apply: func(ctx context.Context, tx *canon.Tx, e entry, target Target) error {
+			if target.Kind == Event {
+				return applyEvent(ctx, tx, e, target)
+			}
+			return applyMemory(ctx, tx, e, target)
+		},
+	})
 }
 
 // Resolve the whole supersession chain while the writer is fenced, before the

@@ -105,7 +105,7 @@ Layers under `internal/core/`:
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
 | L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `recall` (shared derived index writer and queued fill) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
+| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `messenger`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
 | L5 | `boot`, `supervise` |
 
 The separate worker has its own downward import layers.
@@ -329,7 +329,7 @@ The reconcile table follows [runtime.md](runtime.md#recovery) and [main-authorit
 | Model request or partial stream | Discarded; the turn is `interrupted` and not replayed; one plain line in the conversation |
 | Tool intent with no receipt | `unknown`; never run again; an irreversible one waits for the person |
 | Node effect, Node not back | `unknown` until the Node reports |
-| Worker turn cut by the restart | `unknown`; settled by reading the thread |
+| Worker turn cut by the restart | `unknown`; settled by reading the thread, or by a completion committed for that exact turn before the cut |
 | Pending approval | Stopped; a late button is answered stale |
 | Background run that was working | Resumed once from its checkpoint; a second cut lands it failed or partial |
 | Outbound channel send, outcome unknown | Not sent again |
@@ -1455,6 +1455,7 @@ The tests cover owner shutdown, cancellation, normal leader exit and owner proce
 macOS runs each command as its own launchd job through the explicit per-command `proc-job` helper, and owns it through the resource coalition launchd creates for that job.
 Coalition membership is fixed at process creation and inherited by every descendant, so teardown reaches a child that changes session, outlives its parent and clears its environment.
 Streams and the exit status cross the job boundary over a private Unix socket; teardown kills the coalition and boots the job out.
+The sandbox's Seatbelt policy keeps its `setsid`/`setpgid` denial, which matches the Linux seccomp filter but is no longer what owns a command's descendants.
 
 Windows process ownership uses a Job Object assigned before the suspended leader runs.
 Descendants cannot break away by changing their console/process group, and cleanup waits for an empty job as well as the leader's exit.
@@ -1497,6 +1498,7 @@ An observed concurrent change returns unknown and keeps the recovery information
 A completed receipt describes the final observation, not future writes through another process's open descriptor.
 Captures remain readable through file reads after reopening and participate in workspace manifest revisions.
 A recovery-like directory name is not proof of worker ownership and never hides its files from a command receipt; this also keeps later writes through captured open inodes observable.
+Worker-reserved capture slots are recorded in the private version store and accounted separately from the 10,000-entry workspace manifest limit, so retained captures cannot exhaust workspace manifest snapshots on their own.
 These live captures share the workspace's access scope, whereas the immutable before/after version store remains private to the file worker.
 Restore from a saved-version id uses its immutable bytes and the current destination revision.
 A multi-file patch is prevalidated but is not a filesystem transaction: an interrupted commit is unknown with retained recovery information.

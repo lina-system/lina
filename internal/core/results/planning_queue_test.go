@@ -15,6 +15,7 @@ import (
 )
 
 func TestObsoletePlanningTasksRetireAndReleaseFollowingWork(t *testing.T) {
+	t.Parallel()
 	s, db, cfg, _ := setup(t)
 	repo, err := records.Open(t.TempDir(), db)
 	if err != nil {
