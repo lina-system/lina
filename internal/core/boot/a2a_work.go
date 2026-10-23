@@ -99,6 +99,14 @@ func (p *publicationRuntime) sweep(ctx context.Context) {
 			continue
 		}
 		if rec.Phase == "queued" {
+			allowed, approvalErr := p.approve(ctx, rec)
+			if approvalErr != nil {
+				_, _ = p.store.Update(ctx, rec.Task.ID, func(current *a2a.Record) error { a2a.SetState(current, a2a.Rejected, time.Now()); return nil })
+				continue
+			}
+			if !allowed {
+				continue
+			}
 			if p.root.route == nil {
 				continue
 			}
@@ -271,6 +279,9 @@ func (r *conversationRuntime) authorizePublishedWorker(ctx context.Context, d di
 		return false, nil
 	}
 	if a2a.Terminal(rec.Task.Status.State) {
+		return false, nil
+	}
+	if err = r.publications.approved(ctx, rec); err != nil {
 		return false, nil
 	}
 	definition := a2a.WorkDefinition(rec)

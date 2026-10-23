@@ -32,6 +32,9 @@ func (s *turnState) prepareA2A(ctx context.Context, policy turn.ModelPolicy) (tu
 	if err = r.publications.authorize(ctx, rec); err != nil {
 		return turn.PreparedRequest{}, err
 	}
+	if err = r.publications.approved(ctx, rec); err != nil {
+		return turn.PreparedRequest{}, err
+	}
 	persona, err := r.agents.Prepare(ctx, s.turnID, r.agent)
 	if err != nil {
 		return turn.PreparedRequest{}, err

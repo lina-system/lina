@@ -13,6 +13,7 @@
     "unverified",
     "denied",
     "uncertain-cancel",
-    "revoked-running"
+    "revoked-running",
+    "intake-denied"
   ]
 }

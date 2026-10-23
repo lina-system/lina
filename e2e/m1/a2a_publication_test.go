@@ -79,7 +79,7 @@ func TestA2ACoreProcess(t *testing.T) {
 }
 
 func TestM3A2APublicationInstalledCore(t *testing.T) {
-	for _, mode := range []string{"verified", "unverified", "denied", "uncertain-cancel", "revoked-running"} {
+	for _, mode := range []string{"verified", "unverified", "denied", "uncertain-cancel", "revoked-running", "intake-denied"} {
 		t.Run(mode, func(t *testing.T) { testM3A2APublication(t, mode) })
 	}
 }
@@ -238,7 +238,7 @@ func testM3A2APublication(t *testing.T, mode string) {
 	if mode == "verified" {
 		workerMode = "overlap"
 	}
-	if mode == "unverified" {
+	if mode == "unverified" || mode == "intake-denied" {
 		workerMode = "success"
 	}
 	if mode == "revoked-running" {
@@ -342,9 +342,8 @@ func testM3A2APublication(t *testing.T, mode string) {
 			t.Fatalf("%s admitted: %d %s", token, status, body)
 		}
 	}
-	var ownerApproval *protocol.ApprovalRequest
 	var ownerClient *clientapi.Client
-	if mode == "denied" {
+	{
 		ownerClient, err = clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "waiting", Version: "1.0"}})
 		if err != nil {
 			t.Fatal(err)
@@ -413,80 +412,24 @@ func testM3A2APublication(t *testing.T, mode string) {
 		}
 	}
 
-	if mode == "denied" {
-		receiveCtx, stopReceive := context.WithCancel(h.ctx)
-		type received struct {
-			frame protocol.Envelope
-			err   error
+	choice := protocol.ApprovalChoiceOnce
+	if mode == "intake-denied" {
+		choice = protocol.ApprovalChoiceDeny
+	}
+	answerA2AOwner(t, h, cfg.Publications[0].Conversation, choice, func(card protocol.ApprovalRequest) {
+		if calls.Load() != 0 {
+			t.Fatal("caller input reached a model before owner approval")
 		}
-		frames := make(chan received, 1)
-		receiveDone := make(chan struct{})
-		go func() {
-			defer close(receiveDone)
-			for {
-				frame, err := ownerClient.Receive(receiveCtx)
-				select {
-				case frames <- received{frame, err}:
-				case <-receiveCtx.Done():
-					return
-				}
-				if err != nil {
-					return
-				}
-			}
-		}()
-		defer func() { stopReceive(); <-receiveDone }()
-		poll := time.NewTicker(50 * time.Millisecond)
-		defer poll.Stop()
-		for ownerApproval == nil {
-			select {
-			case next := <-frames:
-				if next.err != nil {
-					t.Fatal(next.err)
-				}
-				if approval, ok := next.frame.Payload.(protocol.ApprovalRequest); ok {
-					ownerApproval = &approval
-				}
-			case <-poll.C:
-				_, body = request("valid", "GetTask", map[string]string{"id": id})
-				var task struct{ Result a2a.Task }
-				json.Unmarshal(body, &task)
-				if a2a.Terminal(task.Result.Status.State) {
-					t.Fatalf("task stopped before an approval: %s", body)
-				}
-			case <-h.ctx.Done():
-				t.Fatal(h.ctx.Err())
-			}
+		if launches, err := workerLaunches(fixture); err != nil || launches != "" {
+			t.Fatal("caller input launched an unapproved worker", launches, err)
 		}
-		if ownerApproval.Card == nil || ownerApproval.ConversationID == nil || *ownerApproval.ConversationID != cfg.Publications[0].Conversation {
-			t.Fatal("approval lost owner conversation")
-		}
-		_, body = request("valid", "AnswerApproval", map[string]any{"id": ownerApproval.Card.ID, "choice": "once"})
+		_, body = request("valid", "AnswerApproval", map[string]any{"id": card.Card.ID, "choice": "once"})
 		if !bytes.Contains(body, []byte(`"code":-32601`)) {
 			t.Fatal("caller answered owner approval", string(body))
 		}
-		answerID, err := ownerClient.AnswerApproval(h.ctx, protocol.ApprovalAnswer{CardID: &ownerApproval.Card.ID, Revision: &ownerApproval.Card.Revision, Choice: protocol.ApprovalChoiceDeny})
-		if err != nil {
-			t.Fatal(err)
-		}
-		answered := false
-		for !answered {
-			select {
-			case next := <-frames:
-				if next.err != nil {
-					t.Fatal(next.err)
-				}
-				if next.frame.ReplyTo != nil && *next.frame.ReplyTo == answerID {
-					answer, ok := next.frame.Payload.(protocol.ApprovalAnswer)
-					if !ok || next.frame.Error != nil || answer.Outcome == nil || *answer.Outcome != protocol.DecisionOutcomeResolved {
-						t.Fatalf("owner denial was not recorded: %+v", next.frame)
-					}
-					answered = true
-				}
-			case <-h.ctx.Done():
-				t.Fatal("owner denial acknowledgment missing")
-			}
-		}
+	})
+	if mode == "denied" {
+		answerA2AOwner(t, h, cfg.Publications[0].Conversation, protocol.ApprovalChoiceDeny, nil)
 	}
 	if mode == "uncertain-cancel" || mode == "revoked-running" {
 		poll := time.NewTicker(20 * time.Millisecond)
@@ -576,9 +519,12 @@ func testM3A2APublication(t *testing.T, mode string) {
 		case <-tick.C:
 		}
 	}
-	if mode == "unverified" || mode == "denied" {
+	if mode == "unverified" || mode == "denied" || mode == "intake-denied" {
 		if completed.Status.State == a2a.Completed || len(completed.Artifacts) != 0 {
 			t.Fatalf("unverified completion: %+v", completed)
+		}
+		if mode == "intake-denied" && calls.Load() != 0 {
+			t.Fatal("denied external input reached a model")
 		}
 		launches, err := workerLaunches(fixture)
 		want := ""
@@ -777,5 +723,64 @@ func logA2ATaskState(t *testing.T, h *harness) {
 	})
 	if err != nil {
 		t.Log(err)
+	}
+}
+
+// A fresh owner client reads the ordinary waiting snapshot and answers one
+// exact card. Its reader stays connected until the decision acknowledgment.
+func answerA2AOwner(t *testing.T, h *harness, conversation string, choice protocol.ApprovalChoice, before func(protocol.ApprovalRequest)) {
+	t.Helper()
+	c, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "waiting", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	topic := "waiting"
+	if _, err = c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		t.Fatal(err)
+	}
+	var card *protocol.ApprovalRequest
+	for card == nil {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p, ok := frame.Payload.(protocol.ApprovalRequest); ok && p.Card != nil && p.Card.Outcome == nil {
+			card = &p
+		}
+		if snapshot, ok := frame.Payload.(protocol.Snapshot); ok {
+			for _, item := range snapshot.Items {
+				if item.Kind == protocol.KindApprovalRequest {
+					var p protocol.ApprovalRequest
+					if json.Unmarshal(item.Payload, &p) == nil && p.Card != nil && p.Card.Outcome == nil {
+						card = &p
+						break
+					}
+				}
+			}
+		}
+	}
+	if card.ConversationID == nil || *card.ConversationID != conversation {
+		t.Fatal("approval lost owner conversation")
+	}
+	if before != nil {
+		before(*card)
+	}
+	id, err := c.AnswerApproval(h.ctx, protocol.ApprovalAnswer{CardID: &card.Card.ID, Revision: &card.Card.Revision, Choice: choice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		frame, err := c.Receive(h.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if frame.ReplyTo != nil && *frame.ReplyTo == id {
+			answer, ok := frame.Payload.(protocol.ApprovalAnswer)
+			if !ok || frame.Error != nil || answer.Outcome == nil || *answer.Outcome != protocol.DecisionOutcomeResolved {
+				t.Fatalf("owner decision was not recorded: %+v", frame)
+			}
+			return
+		}
 	}
 }

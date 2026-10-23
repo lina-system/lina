@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/a2a"
+	"github.com/thisisjun786/lina/internal/core/authority"
+	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 )
@@ -70,6 +72,39 @@ func TestPublishedTurnExecutesToolButCannotCompleteWithoutWorker(t *testing.T) {
 	}
 	admittedWorker := dispatch.Record{Origin: dispatch.Origin{Turn: "turn:a2a-input:" + rec.Task.ID}, Definition: a2a.WorkDefinition(rec)}
 	admittedWorker.Definition.Repository = root.root
+	if allowed, _ := root.authorizePublishedWorker(t.Context(), admittedWorker); allowed {
+		t.Fatal("remote task inherited owner worker permissions without approval")
+	}
+	if ready, err := root.publications.approve(t.Context(), rec); err == nil || ready {
+		t.Fatal("execution was permitted without an owner surface", ready, err)
+	}
+	session := clientsrv.Session{ConnectionID: "owner-client", PersonID: root.person, Epoch: root.epoch, CanDecide: true, Capabilities: []protocol.Capability{clientsrv.DecisionsCapability}}
+	root.identity.DecisionPresence(session, true)
+	defer root.identity.DecisionPresence(session, false)
+	if ready, err := root.publications.approve(t.Context(), rec); err != nil || ready {
+		t.Fatal("unanswered owner execution request", ready, err)
+	}
+	rec, err = root.publications.store.Read(t.Context(), rec.Task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed, _ := root.authorizePublishedWorker(t.Context(), admittedWorker); allowed {
+		t.Fatal("pending approval dispatched worker")
+	}
+	if err := root.personaAuthority.Answer(t.Context(), rec.OwnerApproval, authority.Decider{Person: "remote-caller", Epoch: root.epoch, Surface: authority.App, Authenticated: true}, authority.Decision{Choice: authority.Once}); err == nil {
+		t.Fatal("remote caller approved worker execution")
+	}
+	if err = root.personaAuthority.Answer(t.Context(), rec.OwnerApproval, authority.Decider{Person: root.person, Epoch: root.epoch, Surface: authority.App, Authenticated: true}, authority.Decision{Choice: authority.Once}); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := root.publications.approve(t.Context(), rec); err != nil || !ready {
+		t.Fatal("owner approval not applied", ready, err)
+	}
+	changed := rec
+	changed.Definition.MaxCalls++
+	if root.publications.approved(t.Context(), changed) == nil {
+		t.Fatal("owner approval widened to another task definition")
+	}
 	if allowed, err := root.authorizePublishedWorker(t.Context(), admittedWorker); err != nil || !allowed {
 		t.Fatal("canonical repository lost its owner authority", allowed, err)
 	}
@@ -114,6 +149,12 @@ func TestPublishedTurnExecutesToolButCannotCompleteWithoutWorker(t *testing.T) {
 	if allowed, err := root.authorizePublishedWorker(t.Context(), admittedWorker); err != nil || allowed {
 		t.Fatal("terminal task retained worker execution authority", allowed, err)
 	}
+	oldEpoch := root.epoch
+	root.epoch++
+	if root.publications.approved(t.Context(), rec) == nil {
+		t.Fatal("owner approval survived an epoch change")
+	}
+	root.epoch = oldEpoch
 	if len(providerPeer.requests) != 2 {
 		t.Fatalf("provider rounds=%d", len(providerPeer.requests))
 	}

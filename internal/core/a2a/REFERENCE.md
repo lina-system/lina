@@ -84,6 +84,16 @@ Claims survive restart and are never reset to queued.
 Private task conversations use `a2a:<task>` with forwarded, untrusted input.
 Only allowed tools and the fixed dispatcher definition reach the provider.
 Owner approval uses the existing worker bridge; remote callers cannot answer it.
+Before any task input reaches a provider or tool, the owner must additionally
+approve that exact external request for installed-worker execution. The card
+includes its input, fixed definition and deadline and explicitly describes the
+worker's access to owner files, login and integrations. `approvalRequest` derives
+the facts from retained admission; `approved` checks the consumed native answer,
+owner, epoch and identical arguments. Missing surfaces, denials and stale epochs
+refuse execution. This boundary requires explicit owner delegation; it does not
+claim that the installed worker runs in a sandbox. Later worker approvals remain
+independent. An intake-denied acceptance case requires zero provider/tool/worker
+execution.
 Owner typed result, result head and delivery marker commit together. Reads,
 SSE frames, lists and downloads recheck current binding ownership and definition.
 An expired/changed binding blocks execution and disclosure; worker launches and

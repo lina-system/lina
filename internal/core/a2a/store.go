@@ -14,6 +14,7 @@ import (
 )
 
 type Record struct {
+	OwnerApproval   string            `json:"owner_approval,omitempty"`
 	Published       bool              `json:"published,omitempty"`
 	Calls           map[string]string `json:"calls,omitempty"`
 	Task            Task              `json:"task"`

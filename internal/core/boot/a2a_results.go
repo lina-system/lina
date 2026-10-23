@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/a2a"
+	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ledger"
@@ -151,6 +152,11 @@ func (p *publicationRuntime) readArtifact(ctx context.Context, rec a2a.Record, d
 	return output.Bytes(), nil
 }
 func (p *publicationRuntime) deliver(ctx context.Context, rec a2a.Record) error {
+	if rec.OwnerApproval != "" {
+		if err := p.root.personaAuthority.StopWorkerApproval(ctx, rec.OwnerApproval); err != nil && !errors.Is(err, authority.ErrStale) {
+			return err
+		}
+	}
 	if err := p.notice(ctx, rec); err != nil {
 		return err
 	}

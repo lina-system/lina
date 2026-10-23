@@ -219,6 +219,15 @@ is durable before Core interrupts work. An interrupt acknowledgment without
 terminal execution evidence leaves the task unknown; it cannot produce a
 canceled or completed claim or authorize a replacement worker.
 
+The publication binding alone cannot activate an installed worker with the
+owner's permissions. Core requires a separate one-time owner execution decision
+over the exact incoming message and fixed task definition before sending that
+input to a provider or tool. The decision explicitly names the worker's existing
+access to owner files, login and integrations. It is checked again at model/tool
+execution, worker launch/recovery and approval relay, and expires at epoch change.
+This is explicit owner delegation of an installed worker, not confinement of the
+worker's process. A missing, denied or stale decision cannot start execution.
+
 A Core-executed outgoing call records the grant fields on the main: owner,
 requesting agent, task, command, epoch, host, OS user, exact scope and expiry;
 Node/boot/session fields are none. This is local authority for Core's A2A

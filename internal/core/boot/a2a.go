@@ -87,7 +87,10 @@ func (r *conversationRuntime) validateA2A(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return r.publications.authorize(ctx, rec)
+	if err = r.publications.authorize(ctx, rec); err != nil {
+		return err
+	}
+	return r.publications.approved(ctx, rec)
 }
 func startA2AListener(ctx context.Context, r *conversationRuntime, opts *A2AOptions, ready func() bool) (func(context.Context) error, <-chan error, error) {
 	if r == nil || r.publications == nil {

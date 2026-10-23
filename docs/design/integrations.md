@@ -363,6 +363,16 @@ Each configured tool operation and the worker dispatch may run once. The
 published task uses an isolated conversation with forwarded input and no
 personal history or recall. Preset checks, tool effects, worker admission,
 local approvals and manager verification remain the existing Core paths.
+An incoming binding authorizes task admission and permitted replies; it does
+not by itself authorize the installed worker's OS-user permissions. Before any
+provider, tool or worker execution, Core shows the owner the exact caller input,
+task definition, tools, repository, write area and deadline. The approval states
+that the installed worker uses the owner's files, login and integrations. Only
+an authenticated owner can allow that request once or deny it. No eligible
+surface means refusal. The answer is bound to the request and current Core
+epoch; a caller message, another task or a restart cannot reuse it. Pending
+execution approval is `INPUT_REQUIRED`. Approval does not remove the preset
+ceiling or the worker's own later approval requirements.
 The publication does not authorize the manager to merge or close a PR.
 Supplementary messages on an authorized nonterminal task retain their origin
 and reach the owner's conversation as untrusted input. They do not change the
