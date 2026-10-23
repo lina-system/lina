@@ -282,7 +282,7 @@ func runImportReconciliation(t *testing.T, uidLineages bool) {
 	if uidLineages {
 		// Reopen the imported canon in the real Core and read the promoted
 		// result through its client protocol, without a model call.
-		core = start(true)
+		core = start(false)
 		ready, _ := conversationClient(t, h)
 		ready.Close()
 		client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "memory", Version: "1.0"}})
