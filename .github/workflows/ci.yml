@@ -6,7 +6,7 @@ on:
     branches: [dev, 'codex/ln-369-*']
     types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
-    branches: [dev]
+    branches: [dev, qa/e2e-ln-824]
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
