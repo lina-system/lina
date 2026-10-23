@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
+import { unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 import { balance, selectScenarios, planComponents, distinctScenarios } from './shard-plan.mjs';
 import { sandbox } from '../test-fixture.mjs';
@@ -81,6 +83,15 @@ test('full, shared, empty and unmapped changes conservatively select all scenari
   assert.deepEqual(selected(['e2e/m2/worker_test.go', 'e2e/m2/removed_test.go']), all);
 });
 
+test('an unaccounted acceptance-package input conservatively covers cross-package consumers', () => {
+  const named = scenarios.map(scenario => ({ ...scenario,
+    package: scenario.file.startsWith('e2e/m1/') ? 'example/e2e/m1' : 'example/e2e/m2' }));
+  const result = selectScenarios({ scenarios: named,
+    packages: [...packages, { path: 'example/e2e/m1', directory: 'e2e/m1', dependencies: [] }],
+    changed: ['e2e/m1/deleted-fixture.json'] });
+  assert.deepEqual(result.selected.map(scenario => scenario.file), scenarios.map(scenario => scenario.file));
+});
+
 test('docs selection never loads Go or creates component shards', () => {
   const result = planComponents({ cwd: '/unused', scope: { components: false, selectedComponents: [] },
     inventory() { throw new Error('docs must not invoke Go'); } });
@@ -97,9 +108,10 @@ test('a real workspace plan covers selected packages and scenario files exactly 
     'doc.go': 'package lina\n', 'kit/doc.go': 'package kit\n',
     'internal/core/records/data.go': 'package records\n',
     'cmd/lina/main.go': 'package main\nimport _ "example.invalid/lina/internal/core/records"\nfunc main() {}\n',
-    'e2e/m1/one_test.go': 'package acceptance_test\nimport "testing"\nfunc TestOne(t *testing.T) { buildLina(t) }\n',
+    'e2e/m1/one_test.go': 'package acceptance_test\nimport ("os"; "testing")\nfunc TestOne(t *testing.T) { buildLina(t); if _, err := os.ReadFile("one.json"); err != nil { t.Fatal(err) } }\n',
     'e2e/m1/two_test.go': 'package acceptance_test\nimport "testing"\nfunc TestTwo(t *testing.T) { buildLina(t) }\n',
     'e2e/m1/harness_test.go': 'package acceptance_test\nimport "testing"\nfunc buildLina(t *testing.T) { buildCommand(t, "lina") }\nfunc buildCommand(t *testing.T, name string) {}\n',
+    'e2e/m1/one.json': '{}\n',
   })) sb.write(sb.dir, path, source);
   const scope = { components: true, selectedComponents: ['kit', 'lina'], reason: 'manual-full', changed: [], automation: true };
   const full = planComponents({ cwd: sb.dir, scope, unitCount: 2, e2eCounts: { m1: 2 } });
@@ -113,6 +125,13 @@ test('a real workspace plan covers selected packages and scenario files exactly 
   const changed = planComponents({ cwd: sb.dir, scope: { ...scope, reason: 'component-change', automation: false,
     changed: ['e2e/m1/one_test.go'] } });
   assert.deepEqual(changed.tasks.filter(task => task.kind === 'e2e').flatMap(task => task.tests), ['TestOne']);
+  const fixtureScope = { ...scope, reason: 'component-change', automation: false, changed: ['e2e/m1/one.json'] };
+  assert.deepEqual(planComponents({ cwd: sb.dir, scope: fixtureScope }).tasks
+    .filter(task => task.kind === 'e2e').flatMap(task => task.tests), ['TestOne']);
+  unlinkSync(join(sb.dir, 'e2e/m1/one.json'));
+  assert.deepEqual(planComponents({ cwd: sb.dir, scope: fixtureScope }).tasks
+    .filter(task => task.kind === 'e2e').flatMap(task => task.tests).sort(), ['TestOne', 'TestTwo'],
+  'an unaccounted acceptance input must retain the owning package coverage');
   sb.write(sb.dir, 'scripts/verify/test-times.json', '{"schema":2,"packages":{},"scenarios":{}}\n');
   assert.throws(() => planComponents({ cwd: sb.dir, scope }), /timing/i);
 });

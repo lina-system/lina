@@ -44,11 +44,12 @@ export function selectScenarios({ scenarios, packages, changed, full = false, sh
     const pkg = directories.find(pkg => posix.dirname(path) === pkg.directory
       || path.startsWith(`${pkg.directory}/testdata/`) || pkg.files?.includes(path));
     if (!pkg) return all('unmapped-input');
+    if (scenarios.some(scenario => scenario.package === pkg.path)) return all('unmapped-acceptance-input');
     changedPackages.add(pkg.path);
   }
   const reachesChange = scenario => {
     if (inputsOf(scenario).some(input => changed.includes(input))) return true;
-    const reached = new Set([...(scenario.imports ?? []), ...(scenario.binaries ?? [])]);
+    const reached = new Set([scenario.package, ...(scenario.imports ?? []), ...(scenario.binaries ?? [])].filter(Boolean));
     for (const path of reached) {
       if (changedPackages.has(path)) return true;
       for (const dependency of byPath.get(path)?.dependencies ?? []) reached.add(dependency);
