@@ -34,15 +34,9 @@ func conversationClient(t *testing.T, h *harness, extra ...protocol.Capability) 
 	if !ok || history.ConversationID == nil {
 		t.Fatal("no conversation")
 	}
-	topic := "conversation:" + *history.ConversationID
-	if _, err = c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
-		t.Fatal(err)
-	}
-	if snapshot, err := c.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
-		t.Fatal("no history snapshot")
-	}
 	// Empty input probes admission without creating a message. Only recovery's
-	// explicit refusal permits another probe.
+	// explicit refusal permits another probe. Probe before subscribing so a
+	// live conversation event cannot be mistaken for the readiness response.
 	for {
 		if _, err = c.Input(h.ctx, protocol.Input{}); err != nil {
 			t.Fatal(err)
@@ -55,8 +49,15 @@ func conversationClient(t *testing.T, h *harness, extra ...protocol.Capability) 
 			break
 		}
 		if ready.Error == nil || ready.Error.Code != protocol.ErrorUnavailable {
-			t.Fatal("unexpected readiness refusal")
+			t.Fatalf("unexpected readiness refusal: %+v", ready)
 		}
+	}
+	topic := "conversation:" + *history.ConversationID
+	if _, err = c.Subscribe(h.ctx, protocol.Subscribe{Topic: &topic}); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot, err := c.Receive(h.ctx); err != nil || snapshot.Kind != protocol.KindSnapshot {
+		t.Fatal("no history snapshot")
 	}
 	return c, *history.ConversationID
 }

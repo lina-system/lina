@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -16,6 +17,100 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
+
+func TestM2WorkerOutcomeFixtureSnapshotsWhileHeld(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithTimeout(t.Context(), operationTimeout)
+	defer cancel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var requests atomic.Int32
+	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			close(entered)
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer gate.Close()
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(ctx, exe, "app-server", "--listen", "stdio://")
+	cmd.Env = []string{"LINA_WORKER_FIXTURE=1", "CODEX_HOME=/fixture/codex-home", "LINA_WORKER_FINISH_GATE=" + gate.URL}
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	encode, decode := json.NewEncoder(in), json.NewDecoder(out)
+	request := func(id int, method string, params any) json.RawMessage {
+		t.Helper()
+		if err := encode.Encode(map[string]any{"id": id, "method": method, "params": params}); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			var response struct {
+				ID     int
+				Result json.RawMessage
+			}
+			if err := decode.Decode(&response); err != nil {
+				t.Fatalf("request %s/%d did not respond while completion was held: %v", method, id, err)
+			}
+			if response.ID == id {
+				return response.Result
+			}
+		}
+	}
+	request(1, "initialize", nil)
+	if err = encode.Encode(map[string]any{"method": "initialized"}); err != nil {
+		t.Fatal(err)
+	}
+	workdir := t.TempDir()
+	request(2, "thread/start", map[string]any{"cwd": workdir})
+	request(3, "turn/start", map[string]any{"threadId": "fixture-thread", "input": []any{map[string]string{"text": "Produce result.txt"}}})
+	request(4, "thread/read", map[string]string{"threadId": "fixture-thread"})
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("worker did not enter completion gate")
+	}
+	var snapshot struct {
+		Thread struct{ Status struct{ Type string } }
+	}
+	if err = json.Unmarshal(request(5, "thread/read", map[string]string{"threadId": "fixture-thread"}), &snapshot); err != nil || snapshot.Thread.Status.Type != "active" {
+		t.Fatalf("held worker snapshot=%+v error=%v", snapshot, err)
+	}
+	close(release)
+	for {
+		var event struct{ Method string }
+		if err = decode.Decode(&event); err != nil {
+			t.Fatal("worker did not finish after release", err)
+		}
+		if event.Method == "turn/completed" {
+			break
+		}
+	}
+	if err = json.Unmarshal(request(6, "thread/read", map[string]string{"threadId": "fixture-thread"}), &snapshot); err != nil || snapshot.Thread.Status.Type != "idle" || requests.Load() != 1 {
+		t.Fatalf("completed worker snapshot=%+v gate requests=%d error=%v", snapshot, requests.Load(), err)
+	}
+}
 
 // The provider only reports a checked result after Core returns actual file bytes.
 // Cover both normal delivery and restart between admission and the follow-up.

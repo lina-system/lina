@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,6 +44,8 @@ func codexSessionFixture() {
 	}
 	initialized := false
 	cwd, turn, state := "", "", "idle"
+	var mu sync.Mutex // Serialize replies and completion notifications.
+	finishStarted := false
 	switchFailures := false
 	count := 0
 	for scan.Scan() {
@@ -54,6 +57,7 @@ func codexSessionFixture() {
 		if json.Unmarshal(scan.Bytes(), &r) != nil {
 			os.Exit(94)
 		}
+		mu.Lock()
 		reply := func(v any) { send(map[string]any{"id": r.ID, "result": v}) }
 		notify := func(method string, p any) { send(map[string]any{"method": method, "params": p}) }
 		switch r.Method {
@@ -143,22 +147,30 @@ func codexSessionFixture() {
 
 			}
 			reply(map[string]any{"thread": map[string]any{"id": "fixture-thread", "cwd": cwd, "status": threadStatus, "turns": []any{map[string]any{"id": turn, "status": status}}}})
-			if gate := os.Getenv("LINA_WORKER_FINISH_GATE"); gate != "" && count == 1 && state == "active" {
-				response, err := http.Get(gate)
-				if err != nil {
-					os.Exit(101)
-				}
-				response.Body.Close()
-				if err := os.WriteFile(filepath.Join(cwd, "result.txt"), []byte("LINA_WORKER_RESULT"), 0600); err != nil {
-					os.Exit(97)
-				}
-				notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turn, "item": map[string]any{"type": "agentMessage", "id": "result", "text": "Created result.txt: LINA_WORKER_RESULT"}})
-				state = "idle"
-				notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turn, "status": "completed"}})
+			if gate := os.Getenv("LINA_WORKER_FINISH_GATE"); gate != "" && count == 1 && state == "active" && !finishStarted {
+				finishStarted = true
+				// Core may read both the start result and background progress.
+				// Holding completion must not block either snapshot request.
+				go func(workdir, turnID string) {
+					response, err := http.Get(gate)
+					if err != nil {
+						os.Exit(101)
+					}
+					response.Body.Close()
+					mu.Lock()
+					defer mu.Unlock()
+					if err := os.WriteFile(filepath.Join(workdir, "result.txt"), []byte("LINA_WORKER_RESULT"), 0600); err != nil {
+						os.Exit(97)
+					}
+					notify("item/completed", map[string]any{"threadId": "fixture-thread", "turnId": turnID, "item": map[string]any{"type": "agentMessage", "id": "result", "text": "Created result.txt: LINA_WORKER_RESULT"}})
+					state = "idle"
+					notify("turn/completed", map[string]any{"threadId": "fixture-thread", "turn": map[string]any{"id": turnID, "status": "completed"}})
+				}(cwd, turn)
 			}
 		default:
 			os.Exit(100)
 		}
+		mu.Unlock()
 	}
 }
 
