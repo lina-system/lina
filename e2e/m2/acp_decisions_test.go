@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net"
 	"net/http"
@@ -582,6 +583,20 @@ func TestACPDecisionsThroughRunningCore(t *testing.T) {
 				proof.Decision.Choice = authority.Always
 				if err := authority.VerifyWorkerApproval(saved.WorkerProof.PublicKey, &proof); err == nil {
 					t.Fatal("tampered approval verified")
+				}
+			}
+			if mode == "form" {
+				var framed string
+				if err := json.Unmarshal(answer.Meta["lina/message"], &framed); err != nil {
+					t.Fatal("form provenance missing", err)
+				}
+				var frame struct {
+					Kind string `xml:"speaker_kind,attr"`
+					Work string `xml:"work_id,attr"`
+					Text string `xml:"text"`
+				}
+				if err := xml.Unmarshal([]byte(framed), &frame); err != nil || frame.Kind != "person" || frame.Work != card.Task.ID || !json.Valid([]byte(frame.Text)) {
+					t.Fatal("form provenance invalid", err)
 				}
 			}
 			switch mode {

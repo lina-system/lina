@@ -1416,7 +1416,8 @@ and restart. This is account-free acceptance, not a live Antigravity login test.
   speaker kind, work id and message id. Attributes and body are XML escaped,
   so content cannot close or forge a frame. Manager input is `agent`, recovery
   is `system`, tool results are `tool`, and only authenticated person answers
-  are `person`. Native typed form values remain typed request-bound records.
+  are `person`. Native typed form values remain unchanged, with the provenance frame in
+  response metadata.
   Vendor API roles do not change this provenance.
 - Workers address only Core through `coordinate`; recipient, worker and group
   arguments are refused. Core permits twelve automatic coordination requests

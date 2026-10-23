@@ -213,7 +213,14 @@ func (q workerQuestions) AnswerQuestion(ctx context.Context, person string, answ
 	e.mu.Unlock()
 	switch kind {
 	case "acp":
-		// Validated before claiming the card; raw retains the typed form values.
+		// Preserve constrained values; provenance travels in ACP metadata.
+		var result map[string]json.RawMessage
+		err = json.Unmarshal(raw, &result)
+		if err == nil {
+			meta, _ := json.Marshal(map[string]string{"lina/message": worker.FrameMessage(person, "person", event.Thread.TaskID, *answer.CardID+":answer", string(raw))})
+			result["_meta"] = meta
+			raw, err = json.Marshal(result)
+		}
 	case "tool":
 		text := ""
 		if answer.Values != nil {

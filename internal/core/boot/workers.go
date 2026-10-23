@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -35,6 +34,8 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/tools"
 )
+
+type workerCallIdentityKey struct{}
 
 type workerRuntime struct {
 	recoveryWake chan struct{}
@@ -279,6 +280,7 @@ func (r *conversationRuntime) prepareWorkerTools(turnID string, preparation *too
 			r.personaGrants[auth.GrantID] = g
 			r.personaMu.Unlock()
 			defer func() { r.personaMu.Lock(); delete(r.personaGrants, auth.GrantID); r.personaMu.Unlock() }()
+			ctx = context.WithValue(ctx, workerCallIdentityKey{}, turn.EffectKey(turnID, name, in.Target, call.ID))
 			return turn.Tool(registry, spec, tools.Call{Auth: auth}, turnID).Execute(ctx, call)
 		}}
 	}
@@ -395,7 +397,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 			return tools.Result{State: tools.Failed, Body: workerError(err)}, nil
 		}
 		release = false // A launch error may have started a turn; retain its reservation.
-		thread, err := entry.start(ctx, worker.StartSpec{TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
+		thread, err := entry.start(ctx, worker.StartSpec{ApprovalKey: r.personaAuthority.WorkerApprovalKey(), TaskID: turnID, AttemptID: turnID + ":" + strconv.FormatInt(time.Now().UnixNano(), 10), Workdir: a.Workdir, TaskPacket: a.TaskPacket, Tools: workerWorkTools(), Required: worker.CapabilitySet{worker.StreamProgress, worker.SignalCompletion, worker.WorkTools, worker.RequestApprovals, worker.ReportQuota}})
 		if err != nil {
 			activity.Release()
 			if entry.reservation == "" {
@@ -549,7 +551,13 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 		if owner {
 			sender, kind = r.person, "person"
 		}
-		id := fmt.Sprintf("input:%s:%x", turnID, sha256.Sum256([]byte(a.Text)))
+		id, _ := ctx.Value(workerCallIdentityKey{}).(string)
+		if owner {
+			id = "owner:" + turnID
+		}
+		if id == "" {
+			id = rand.Text()
+		}
 		if !owner && snap.Thread.TaskID != "" {
 			if err := worker.AdmitMessage(ctx, r.db, snap.Thread.TaskID, id, a.Text); err != nil {
 				activity.Release()
@@ -589,7 +597,6 @@ func (e *workerSession) result(ctx context.Context, t worker.Thread) (tools.Resu
 }
 func (e *workerSession) start(ctx context.Context, spec worker.StartSpec) (worker.Thread, error) {
 	spec.TaskPacket = worker.FrameMessage(e.origin.agent, "agent", spec.TaskID, spec.AttemptID+":start", spec.TaskPacket)
-	spec.ApprovalKey = e.origin.personaAuthority.WorkerApprovalKey()
 	thread, err := e.adapter.Start(ctx, e.process, spec)
 	if err != nil {
 		closeErr := e.close()
