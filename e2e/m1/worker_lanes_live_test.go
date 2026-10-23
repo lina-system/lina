@@ -40,6 +40,9 @@ func TestM3WorkerLanesLiveSession(t *testing.T) {
 		if scriptedCodingManager(t, w, req) {
 			return
 		}
+		if respondWorkerCompletion(w, req.Input, scenario.LiveResult) {
+			return
+		}
 		n := calls.Add(1)
 		if n > 1 {
 			var item struct{ Output string }
@@ -95,6 +98,7 @@ func TestM3WorkerLanesLiveSession(t *testing.T) {
 	h.connect(core).Close()
 	c, conversation := conversationClient(t, h)
 	admittedTurn(t, h, c, conversation, "lane-worker", scenario.LiveInput)
+	receiveWorkerFollowups(t, h, c, 2)
 	if calls.Load() != 6 {
 		t.Fatalf("worker rounds=%d", calls.Load())
 	}
