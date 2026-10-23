@@ -45,8 +45,25 @@ func TestM1ConversationCompactsRetainedHistory(t *testing.T) {
 		}
 		n := turns.Add(1)
 		if summaries.Load() > 0 {
-			if !strings.Contains(string(raw), "Reference summary") || !strings.Contains(string(raw), "receipt 42") {
-				t.Error("turn lost its published summary")
+			hasSummary := false
+			for _, rawItem := range req.Input {
+				var item struct{ Role, Content string }
+				if json.Unmarshal(rawItem, &item) != nil || item.Role != "user" {
+					continue
+				}
+				start := strings.IndexByte(item.Content, '{')
+				if start < 0 {
+					continue
+				}
+				var summary struct {
+					Values string `json:"specific_values"`
+				}
+				if json.Unmarshal([]byte(item.Content[start:]), &summary) == nil && summary.Values == "receipt 42" {
+					hasSummary = true
+				}
+			}
+			if !hasSummary {
+				t.Error("turn lost its published structured summary")
 			}
 			if strings.Contains(string(raw), "First archive filler") {
 				t.Error("summarized raw history was sent again")

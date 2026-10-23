@@ -23,10 +23,36 @@ import (
 // the request projection. A failed generation/publication never drops sources.
 func (r *conversationRuntime) compactConversation(ctx context.Context, in assemble.Input, events []ledger.Event, stream func(context.Context, provider.Request) (provider.Stream, error)) (provider.Request, assemble.Report, error) {
 	limit := in.MaxTokens
-	in.MaxTokens = int(^uint(0) >> 1)
 	request, report := assemble.Assemble(in, conversationRequestSize)
-	if report.Failure != "" {
+	if report.Failure != "" && report.Failure != assemble.TooLarge {
 		return provider.Request{}, report, assemble.ErrHistory
+	}
+	// Select optional context at the real budget before freezing the packet.
+	// Even when mandatory history is oversized, Assemble reports every optional
+	// budget drop it made. Keep those drops through compaction and reassembly.
+	var budgetDrops []assemble.Drop
+	omitted := map[string]bool{}
+	for _, drop := range report.Dropped {
+		if drop.Reason == assemble.Budget {
+			budgetDrops = append(budgetDrops, drop)
+			omitted[drop.ID] = true
+		}
+	}
+	var packet assemble.ContextPacket
+	for _, item := range in.Packet {
+		if !omitted[item.ID] {
+			packet = append(packet, item)
+		}
+	}
+	in.Packet = packet
+	if report.Failure == assemble.TooLarge {
+		// Only mandatory history/context remains; allow the fitting pass to
+		// reduce the former without carrying oversized optional material.
+		in.MaxTokens = int(^uint(0) >> 1)
+		request, report = assemble.Assemble(in, conversationRequestSize)
+		if report.Failure != "" {
+			return provider.Request{}, report, assemble.ErrHistory
+		}
 	}
 	fixed := len(request.Items) - len(in.History) - len(report.Items) - 1
 	if fixed < 0 || len(events) == 0 {
@@ -166,9 +192,12 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 	}
 	pass := compaction.Pass{Policy: compaction.Policy{ContextWindow: limit}, Count: conversationRequestSize, Summarize: builder.Summarize, Publish: builder.Publish}
 	fitted, err := pass.Fit(ctx, view, false)
-	if err != nil {
+	if err != nil && err != compaction.ErrTooLarge {
 		return provider.Request{}, report, err
 	}
+	// The compaction trigger is below the hard admission limit. If protected
+	// context alone exceeds that trigger, the real budgeted assembly below
+	// still decides whether a request fits. Other fitting failures stay fatal.
 	in.MaxTokens = limit
 	in.Summary = nil
 	in.History = append([]provider.Item(nil), profile...)
@@ -179,5 +208,6 @@ func (r *conversationRuntime) compactConversation(ctx context.Context, in assemb
 		in.History = append(in.History, item.Item)
 	}
 	request, report = assemble.Assemble(in, conversationRequestSize)
+	report.Dropped = append(budgetDrops, report.Dropped...)
 	return request, report, nil
 }

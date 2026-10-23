@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -152,6 +153,91 @@ func TestConversationCompactionPreservesStandingProfile(t *testing.T) {
 			}
 			if large != (calls == 1) {
 				t.Fatalf("summary calls=%d for large=%v", calls, large)
+			}
+		})
+	}
+}
+
+func TestConversationCompactionTrimsOptionalContext(t *testing.T) {
+	for _, scenario := range []string{"no-history", "short-history", "large-history", "mandatory-near-limit", "mandatory-too-large"} {
+		t.Run(scenario, func(t *testing.T) {
+			r, _, agent, _ := managementFixture(t)
+			r.agent, r.conversation = agent, "main:"+agent
+			var err error
+			r.route, err = modelpath.ResponsesFromEnv(func(key string) string {
+				return map[string]string{"LINA_RESPONSES_BASE_URL": "http://127.0.0.1:1", "LINA_RESPONSES_MODEL": "fixture-model", "LINA_RESPONSES_API_KEY": "synthetic-key"}[key]
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			limit, currentText := 3000, "Continue"
+			if scenario == "short-history" {
+				queuedContextEvent(t, r, "old", "Earlier input", guard.EntryOwner, "")
+			}
+			if scenario == "large-history" {
+				limit = 22000
+				queuedContextEvent(t, r, "old", strings.Repeat("old ", 2500), guard.EntryOwner, "")
+				queuedContextEvent(t, r, "reply", strings.Repeat("public ", 1800), guard.EntryAgent, "")
+			}
+			if scenario == "mandatory-near-limit" {
+				currentText = strings.Repeat("x", 2550)
+			}
+			if scenario == "mandatory-too-large" {
+				currentText = strings.Repeat("x", 4000)
+			}
+			current := queuedContextEvent(t, r, "current", currentText, guard.EntryOwner, "")
+			items, _, _, events, err := r.modelContext(t.Context(), current.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			packet := assemble.ContextPacket{
+				{ID: "clock", Kind: assemble.Clock, Text: "2026-10-23T00:00:00Z"},
+				{ID: "optional", Kind: assemble.Memory, Text: strings.Repeat("optional relationship ", 2000)},
+			}
+			in := assemble.Input{AgentID: agent, PersonaRevision: "fixture", Model: "fixture-model", Core: "core", Current: items[len(items)-1], History: items[:len(items)-1], Packet: packet, MaxTokens: limit}
+			calls := 0
+			stream := func(_ context.Context, request provider.Request) (provider.Stream, error) {
+				calls++
+				raw, _ := json.Marshal(request.Items)
+				if bytes.Contains(raw, []byte("optional relationship")) {
+					t.Fatal("optional memory entered summary generation")
+				}
+				text, _ := json.Marshal(compaction.Text{Requests: "none", Topics: "archive", Actions: "read", Values: "archive", Omitted: "repeated text"})
+				item, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": string(text)}}})
+				return &handoffRuntimeStream{events: []provider.Event{{Kind: provider.ItemDone, Item: item}, {Kind: provider.Terminal}}}, nil
+			}
+			request, report, err := r.compactConversation(t.Context(), in, events, stream)
+			if scenario == "mandatory-too-large" {
+				if len(request.Items) != 0 || (err == nil && report.Failure != assemble.TooLarge) {
+					t.Fatal("mandatory input escaped hard limit")
+				}
+				return
+			}
+			if err != nil || report.Failure != "" {
+				t.Fatalf("optional context blocked a fitting request: err=%v failure=%s", err, report.Failure)
+			}
+			raw, _ := json.Marshal(request.Items)
+			if conversationRequestSize(request) > limit || bytes.Contains(raw, []byte("optional relationship")) || !bytes.Contains(raw, []byte("2026-10-23T00:00:00Z")) {
+				t.Fatal("context selection lost its budget or mandatory clock")
+			}
+			dropped := false
+			for _, item := range report.Dropped {
+				if item.ID == "optional" && item.Reason == assemble.Budget {
+					dropped = true
+				}
+			}
+			if !dropped {
+				t.Fatal("optional-budget drop missing from report")
+			}
+			if scenario == "large-history" {
+				if calls != 1 {
+					t.Fatalf("large history summary calls=%d", calls)
+				}
+			} else {
+				baseline, baselineReport := assemble.Assemble(in, conversationRequestSize)
+				if baselineReport.Failure != "" || !reflect.DeepEqual(request, baseline) || calls != 0 {
+					t.Fatalf("compaction changed the previously fitting request: calls=%d", calls)
+				}
 			}
 		})
 	}
