@@ -14,7 +14,6 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/design"
-	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -126,19 +125,12 @@ func tuiWorkerQuestion(t *testing.T, name, command string) {
 		if strings.Contains(screenText(approval), confirm) {
 			t.Fatal("long approval offered confirmation before its targets were read")
 		}
-		for page := 0; !strings.Contains(screenText(approval), confirm); page++ {
-			if page >= 12 || strings.Contains(screenText(approval), design.Text(design.English, "card.escape")) {
-				t.Fatal("all target pages read at 120x34 but separate confirmation remains unavailable")
-			}
-			first := screenRows(approval)[0]
-			h.keys(terminal, "\x1b[6~")
-			approval, err = terminal.screen.Wait(h.ctx, func(s tuiterm.Snapshot) bool {
-				return screenRows(s)[0] != first
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
+		// Queue all page keys together. Each approval frame must finish its
+		// terminal write before the next key can replace it. The renderer tests
+		// inspect every intermediate frame; here Core must still resume the
+		// worker only after the separate selection and confirmation below.
+		h.keys(terminal, strings.Repeat("\x1b[6~", 12))
+		waitScreen(t, h, terminal, confirm)
 		if _, err := os.Stat(filepath.Join(workdir, fixture.Artifact)); !os.IsNotExist(err) {
 			t.Fatalf("worker wrote before confirmation: %v", err)
 		}
