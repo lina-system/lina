@@ -124,3 +124,61 @@ func TestRepositoryCriterionUsesItsOwnMergedRevision(t *testing.T) {
 		t.Fatalf("missing docs merge borrowed %s", revision)
 	}
 }
+
+func TestTaskOutcomeCheckBindsToRepairedResultRevision(t *testing.T) {
+	g := finishedGoal()
+	g.Tasks[0].Stage = TaskQAFailed
+	g.Tasks[0].QA.Passed = false
+	g.Verification = Proof{}
+	repair := readyTask("repair")
+	repair.Repairs = "a"
+	repair.DependsOn = []string{"a"}
+	if err := applySuccess(&g, &g.Tasks[0], Action{Kind: PlanGoal, TaskID: "a"}, Observation{Tasks: []Task{repair}}, 100); err != nil {
+		t.Fatal(err)
+	}
+	repaired := &g.Tasks[1]
+	repaired.Stage = TaskMerged
+	repaired.Merge = Proof{Revision: "repair-merge", Ref: "merge-2", Passed: true}
+	g.TargetRevision = "repair-merge"
+	if err := applySuccess(&g, repaired, Action{Kind: RunQA, Revision: "repair-merge"}, Observation{Proof: Proof{Revision: "repair-merge", Ref: "qa-2", Passed: true}}, 100); err != nil {
+		t.Fatal(err)
+	}
+	if g.Tasks[0].Merge.Revision != "merged" || g.Tasks[0].ResultRevision != "repair-merge" {
+		t.Fatalf("repair did not keep the historical merge and current result: %+v", g.Tasks[0])
+	}
+	outcome := Criterion{ID: "task-outcome", Statement: "the repaired task meets its outcome", Check: CriterionCheck{Kind: RunEvidence, Method: "acceptance", Target: "repo", TaskID: "a"}}
+	g.Criteria = append(g.Criteria, outcome)
+	if got := criterionRevision(g, outcome); got != "repair-merge" {
+		t.Fatalf("task outcome check used superseded revision %s", got)
+	}
+	merge := Criterion{Check: CriterionCheck{Method: "merge.read", Target: "repo", TaskID: "a"}}
+	if got := criterionRevision(g, merge); got != "merged" {
+		t.Fatalf("merge check lost its historical revision: %s", got)
+	}
+	qa := Criterion{Check: CriterionCheck{Method: "qa.read", Target: "repo", TaskID: "a"}}
+	if got := criterionRevision(g, qa); got != "repair-merge" {
+		t.Fatalf("QA check left the repaired result: %s", got)
+	}
+	stale := CriterionEvidence{Criterion: outcome.ID, GoalRevision: g.Revision, Round: g.CheckRound, Target: outcome.Check.Target, Revision: "merged", Kind: outcome.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "old-output", Passed: true}
+	if currentEvidence(g, outcome, stale) {
+		t.Fatal("superseded merge met the task outcome")
+	}
+	stale.Revision = "repair-merge"
+	if !currentEvidence(g, outcome, stale) {
+		t.Fatal("repaired result did not meet the task outcome")
+	}
+	for _, c := range goalCriteria(g) {
+		if c.ID == outcome.ID {
+			break
+		}
+		g.Checks = append(g.Checks, CriterionEvidence{Criterion: c.ID, GoalRevision: g.Revision, Round: g.CheckRound, Target: c.Check.Target, Revision: criterionRevision(g, c), Kind: c.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "core-read:" + c.ID, Passed: true})
+	}
+	g.Verification = Proof{Revision: g.TargetRevision, Ref: "probe", Passed: true}
+	p, err := Derive(State{Goals: []Goal{g}}, time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Actions) != 1 || p.Actions[0].Kind != CheckCriterion || p.Actions[0].CriterionID != outcome.ID || p.Actions[0].Revision != "repair-merge" {
+		t.Fatalf("outcome check was not dispatched against the repaired result: %+v", p.Actions)
+	}
+}

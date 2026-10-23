@@ -240,6 +240,21 @@ func TestAfterDeliveryPreparationUsesForegroundSelectionAndNoPeriodicRollup(t *t
 	if queued, err = b.QueuePreparation(t.Context(), p, v, func(context.Context, json.RawMessage) error { t.Fatal("below threshold enqueued"); return nil }); err != nil || queued {
 		t.Fatalf("queued=%v %v", queued, err)
 	}
+	// A cold turn boundary compacts early, but the request that just completed
+	// refreshed the cache. After delivery only the configured threshold queues,
+	// so a size between P and the threshold must not enqueue.
+	sizes, err := p.measure(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Policy.ContextWindow = sizes.Total * 100 / 80
+	p.Cold = true
+	if queued, err = b.QueuePreparation(t.Context(), p, v, func(context.Context, json.RawMessage) error {
+		t.Fatal("a cold boundary lowered the preparation threshold")
+		return nil
+	}); err != nil || queued {
+		t.Fatalf("queued=%v %v", queued, err)
+	}
 }
 func TestInFlightWorkerNeverHoldsForeground(t *testing.T) {
 	t.Parallel()

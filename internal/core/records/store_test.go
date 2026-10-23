@@ -43,6 +43,7 @@ func setup(t *testing.T) (*Store, string, Canon) {
 	return s, root, db
 }
 
+// actor is a read-only fixture. Parallel tests share it and must not write it.
 var actor = Actor{Person: "person", Agent: "agent"}
 
 func doc(id, title string) []byte {
@@ -67,6 +68,7 @@ func git(t *testing.T, root string, args ...string) string {
 	return strings.TrimSpace(string(raw))
 }
 func TestRevisionMoveAndOneCommitPerWrite(t *testing.T) {
+	t.Parallel()
 	s, root, _ := setup(t)
 	c := Change{ID: "stable", Path: "inbox/notes.md", Data: doc("stable", "Notes")}
 	first := commit(t, s, c)
@@ -103,6 +105,7 @@ func TestRevisionMoveAndOneCommitPerWrite(t *testing.T) {
 	}
 }
 func TestConcurrentRevisionAndOutsideEdit(t *testing.T) {
+	t.Parallel()
 	s, root, _ := setup(t)
 	c := Change{ID: "stable", Path: "inbox/notes.md", Data: doc("stable", "Notes")}
 	c.Base = commit(t, s, c)
@@ -143,6 +146,7 @@ func TestConcurrentRevisionAndOutsideEdit(t *testing.T) {
 	}
 }
 func TestRejectInvalidIdentityAndPaths(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	for _, name := range []string{"../escape.md", ".git/config", "inbox/../notes.md", "inbox/link/file.md"} {
 		if name == "inbox/link/file.md" {
@@ -163,6 +167,7 @@ func TestRejectInvalidIdentityAndPaths(t *testing.T) {
 }
 
 func TestRecoveryEditsAndMovesAtEveryBoundary(t *testing.T) {
+	t.Parallel()
 	for _, move := range []bool{false, true} {
 		for _, stage := range []string{"lock", "intent", "file", "remove", "index", "ref", "checkpoint"} {
 			t.Run(fmt.Sprintf("move=%v/%s", move, stage), func(t *testing.T) {
@@ -245,6 +250,7 @@ func TestRecoveryEditsAndMovesAtEveryBoundary(t *testing.T) {
 	}
 }
 func TestRecoveryDoesNotOverwriteOutsideDeletion(t *testing.T) {
+	t.Parallel()
 	s, root, db := setup(t)
 	c := Change{ID: "stable", Path: "inbox/notes.md", Data: doc("stable", "Original")}
 	c.Base = commit(t, s, c)
