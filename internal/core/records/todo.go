@@ -39,6 +39,10 @@ type Repeat struct {
 	Text           string `json:"text,omitempty"`
 	FromCompletion bool   `json:"from_completion,omitempty"`
 	Next           string `json:"next"`
+	Zone           string `json:"zone,omitempty"`
+	Start          string `json:"start,omitempty"`
+	Completed      int    `json:"completed,omitempty"`
+	Exhausted      bool   `json:"exhausted,omitempty"`
 }
 
 // Todo is the typed front matter of a to-do. Title and note stay in Markdown.
@@ -95,6 +99,11 @@ func (v Todo) Validate() error {
 	}
 	if v.Repeat != nil && !validDate(v.Repeat.Next) {
 		return ErrAmbiguousDate
+	}
+	if v.Repeat != nil {
+		if _, _, err := repeatSchedule(*v.Repeat); err != nil {
+			return err
+		}
 	}
 	if v.WaitingOn != nil {
 		if strings.TrimSpace(v.WaitingOn.Who) == "" || v.WaitingOn.Since == "" || v.WaitingOn.NextCheck == "" {

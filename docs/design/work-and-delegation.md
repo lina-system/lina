@@ -403,7 +403,24 @@ remain Markdown, and the typed fields remain in the same versioned front matter.
 A deadline also requires `deadline_source`. `waiting_on` carries `who`, `since`
 and `next_check`; an assignee carries `kind` and `id`. Checklist items carry only
 `text` and `checked`. A repeat retains `rule`, the original `text`,
-`from_completion` and its current `next` occurrence; advancing it is #156.
+`from_completion`, an optional IANA `zone` (UTC when omitted) and its current
+`next` occurrence. Core retains the original start, completed count and
+exhaustion state internally; these are not model arguments. Completion advances
+the same record strictly beyond the current time and clears dependencies and
+checklist ticks for the next occurrence. Core also advances overdue records at
+startup and each minute, without calling a model. Date-only occurrences become
+overdue after their local day. An exhausted rule stops scheduling; an absence
+alone does not complete the task. Supported rules are daily, weekly, monthly or
+yearly with interval, by-day, by-month-day, count or until. Invalid rules are
+refused before publication. Timed recurrences use minute precision and the
+native timer's daylight-saving rules.
+
+`promote_memo` takes a memo id and current revision and changes only its record
+kind and planning fields. Its title, note, id and path survive promotion. The
+committed receipt and conversation notice carry an undo handle; `undo_record`
+restores the prior memo as a new revision and refuses to overwrite a later edit.
+The durable publication intent includes the undo operation, so restart recovery
+retains both the change and the means to undo it.
 The record tool cannot write execution observations or complete delegated work.
 It may replace planning fields while preserving an already `completed` state,
 including on a to-do with an agent or worker assignee or a pull-request link.

@@ -909,10 +909,39 @@ there is no separate client endpoint.
   today/upcoming/anytime queries, rescheduling and restart after index loss.
   `e2e/m2/todo-completed-planning.json` covers editing a completed delegated
   to-do through Core and retaining its fields and completion after restart.
-  Recurrence advancement, candidates and memo promotion remain #156.
-- Recurrence is Core's own parser for the subset (daily, weekly, monthly, yearly; interval; by-day; by-month-day; count; until) plus the from-completion flag. `Next(rule, from, zone)` advances only to a future occurrence. A table-driven corpus covers month ends and zone gaps.
+  `e2e/m2/record-recurrence-promotion.json` exercises same-record recurrence
+  completion, model-free advancement at Core restart, memo promotion and undo.
+- Recurrence uses the native timer parser's daily, weekly, monthly and yearly
+  subset with interval, by-day, by-month-day, count and until. The public package
+  helper is `timers.Next(rule, from, zone)`. Existing series retain their start
+  anchor; a completion-relative series anchors at completion. `repeat.zone`
+  is an optional IANA name, defaulting to UTC for existing records. Core owns
+  the stored start, completed count and exhausted flag; tool arguments cannot
+  set them. Exhaustion stops scheduling without treating absence as completion.
+  Completion commits the future occurrence in the same file and clears its
+  dependencies, waiting state, planned start and checklist ticks. Core runs
+  overdue advancement at startup and each minute without a model or worker.
+  Date-only occurrences remain due throughout their civil day. Timed
+  recurrences have minute precision; the shared calendar resolves DST gaps
+  and folds as C-26 specifies. Tests cover month ends, leap years and zone gaps.
 - Reminders and pre-warnings are timer rows (C-26).
 - Candidates are rows with a source, confidence and numbered handle. An automatic addition writes an undo handle to the undo log.
+
+`promote_memo` and `undo_record` use the existing authenticated record-tool
+registry. Promotion preserves the memo's id, path, title and note, sets its kind
+to `todo` and records the memo source. Its receipt includes a one-action undo
+handle. Undo restores the prior bytes as a new revision, or cancels a newly
+added candidate to-do; it refuses a subsequent edit. Both check the requesting
+person and record revision. An undo is idempotent and never reactivates a
+rejected candidate.
+
+Migration 43 adds the canonical `record_operations` and `record_candidates`
+machine-state tables, without modifying existing files. Operation membership,
+undo handles and candidate admission results travel in the records publication
+intent and commit with its index checkpoint. Recovery therefore cannot publish
+a promotion or automatic addition without its undo receipt. Durable operation
+notices are projected into the owning agent's conversation independently of a
+model reply and recovered on startup; existing notices are not republished.
 
 **C-18 Compaction and the summary tree (changed).** `compaction.Policy` is data with the values of [conversation-and-memory.md](conversation-and-memory.md#compaction-and-resume); the in-turn pass and the continuation turn follow the same section. The summary comes from an auxiliary request to the conversation model.
 

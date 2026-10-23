@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/timers"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -30,7 +31,31 @@ func (r *conversationRuntime) startTimers(ctx context.Context) error {
 	watch, cancel := context.WithCancel(ctx)
 	r.timerStop = cancel
 	r.timerDone = make(chan struct{})
-	go func() { defer close(r.timerDone); r.timers.Run(watch, epoch, r.reactTimer) }()
+	advance := func() {
+		if r.records != nil && r.agent != "" {
+			// An outside edit or transient failure leaves the record unchanged;
+			// the next pass retries through normal publication and CAS checks.
+			_ = r.records.AdvanceRecurring(watch, records.Actor{Person: r.person, Agent: r.agent}, time.Now())
+		}
+		_ = r.publishRecordNotices(watch)
+	}
+	advance()
+	go func() {
+		defer close(r.timerDone)
+		done := make(chan struct{})
+		go func() { defer close(done); r.timers.Run(watch, epoch, r.reactTimer) }()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		defer func() { <-done }()
+		for {
+			select {
+			case <-watch.Done():
+				return
+			case <-ticker.C:
+				advance()
+			}
+		}
+	}()
 	return nil
 }
 func (r *conversationRuntime) reactTimer(ctx context.Context, f timers.Fire) error {

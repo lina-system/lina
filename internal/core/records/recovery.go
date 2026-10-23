@@ -15,7 +15,10 @@ import (
 
 // A publication is journaled before changing any tracked file, index or ref.
 // It names immutable Git objects, not a second copy of the document bytes.
-type publication struct{ Parent, Commit, Path, Blob, OldPath, OldBlob string }
+type publication struct {
+	Parent, Commit, Path, Blob, OldPath, OldBlob string
+	Operation                                    *recordOperation `json:"operation,omitempty"`
+}
 type recordState struct {
 	head, token string
 	pending     *publication
@@ -139,6 +142,9 @@ func (r *Store) checkpoint(ctx context.Context, p publication) error {
 			return err
 		}
 		if err = putProjection(ctx, tx, indexRow{id: id, path: p.Path, blob: p.Blob, revision: p.Commit, doc: doc}); err != nil {
+			return err
+		}
+		if err = checkpointOperation(ctx, tx, p, id); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, "UPDATE records_index_state SET head=? WHERE singleton=1", p.Commit)

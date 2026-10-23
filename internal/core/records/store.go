@@ -14,6 +14,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
@@ -58,6 +59,7 @@ type Store struct {
 	// PublicationHook is a fault-injection seam for deterministic crash tests.
 	// Production leaves it nil. An error after the intent is durably recoverable.
 	PublicationHook func(string) error
+	Now             func() time.Time
 }
 
 var recordsMu sync.Mutex // Includes every handle, including the result saver.
@@ -228,14 +230,17 @@ func (s *Store) Head(ctx context.Context) (CommitID, error) {
 	return head, err
 }
 func (s *Store) Commit(ctx context.Context, c Change, a Actor) (rev Rev, err error) {
+	recordsMu.Lock()
+	defer recordsMu.Unlock()
+	return s.commitLocked(ctx, c, a, nil)
+}
+func (s *Store) commitLocked(ctx context.Context, c Change, a Actor, operation *recordOperation) (rev Rev, err error) {
 	intent := false
 	defer func() {
 		if err != nil && intent {
 			err = errors.Join(ErrUncertain, err)
 		}
 	}()
-	recordsMu.Lock()
-	defer recordsMu.Unlock()
 	if a.Person == "" || a.Agent == "" || !validPath(c.Path) {
 		return "", ErrInvalid
 	}
@@ -266,6 +271,22 @@ func (s *Store) Commit(ctx context.Context, c Change, a Actor) (rev Rev, err err
 		}
 		if c.Base == "" || c.Base != rev {
 			return "", ErrStaleRevision
+		}
+		previous, parseErr := parseDocument(old.Data)
+		if parseErr != nil {
+			return "", parseErr
+		}
+		now := time.Now()
+		if s.Now != nil {
+			now = s.Now()
+		}
+		c.Data, err = transformCompletion(c.Data, previous, now)
+		if err != nil {
+			return "", err
+		}
+		candidate, err = parseDocument(c.Data)
+		if err != nil {
+			return "", err
 		}
 		if old.Path == c.Path && bytes.Equal(old.Data, c.Data) {
 			return rev, nil
@@ -300,6 +321,7 @@ func (s *Store) Commit(ctx context.Context, c Change, a Actor) (rev Rev, err err
 		return "", err
 	}
 	p := publication{Parent: parent, Commit: commit, Path: c.Path, Blob: blob, OldPath: old.Path, OldBlob: oldBlob}
+	p.Operation = operation
 	intent = true
 	if err = s.remember(ctx, token, p); err != nil {
 		return "", err
