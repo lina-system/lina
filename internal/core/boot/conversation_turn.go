@@ -22,6 +22,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/compaction"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/manifest"
@@ -57,6 +58,7 @@ type turnState struct {
 	replyShapes        reply.Shapes
 	questions          *questionTurn
 	questionRoundCalls int
+	compaction         *conversationCompaction
 }
 
 func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, input ledger.Event, inboxID int64) (err error) {
@@ -111,8 +113,25 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
 		Digest: assemble.Digest,
 	}
-	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions}
+	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions, retainBinding: func(input string, index int, item provider.Item) {
+		if s.compaction == nil {
+			return
+		}
+		c := s.compaction
+		if c.transient == nil {
+			c.transient = map[string]compaction.Record{}
+		}
+		id := fmt.Sprintf("input-binding:%s:%d", input, index)
+		c.transient[id] = compaction.Record{ID: id, Item: append(provider.Item(nil), item...)}
+		c.pending[id] = true
+	}}
 	out, err := turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: r.conversation, InboxID: inboxID, InputEvent: input.ID, Preparation: prep, Complete: s.complete,
+		Finish: func(ctx context.Context, tx *canon.Tx, cause error) error {
+			if errors.Is(cause, compaction.ErrContinuation) {
+				return s.recordCompactionContinuation(ctx, resultTransaction{tx})
+			}
+			return nil
+		},
 		StartFromTurn: func(ctx context.Context, h budget.Handoff) (budget.Handle, error) {
 			var err error
 			s.promoted, err = r.promoteRun(ctx, input, h)
@@ -122,7 +141,11 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime,
 			Tools:        s.bindings,
 			Transform: func(ctx context.Context, request provider.Request) (provider.Request, error) {
-				return s.toolCatalog.transform(ctx, request)
+				request, err := s.toolCatalog.transform(ctx, request)
+				if err != nil || s.compaction == nil {
+					return request, err
+				}
+				return s.compaction.transform(ctx, request)
 			},
 			Before: s.questions.before,
 			After: func(ctx context.Context, call provider.ToolCall, result loop.Result) loop.Result {
@@ -164,7 +187,15 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 			},
 			Observe: s.observe,
 		}})
-	return s.publishOutcome(ctx, out, err)
+	err = s.publishOutcome(ctx, out, err)
+	if err == nil {
+		if preparationErr := s.prepareSummaryAfterDelivery(ctx, out); preparationErr != nil {
+			_ = s.recordCompaction(ctx, "preparation_failed", struct {
+				Code string `json:"code"`
+			}{"summary_unavailable"})
+		}
+	}
+	return err
 }
 
 func (s *turnState) complete(ctx context.Context, db turn.Canon) error {
@@ -358,6 +389,9 @@ func (s *turnState) publishOutcome(ctx context.Context, out loop.Outcome, err er
 			if noticeErr != nil {
 				return errors.Join(err, noticeErr)
 			}
+			if shown, showErr := r.publishCompactionFailure(ctx, notice, turnID); shown || showErr != nil {
+				return errors.Join(err, showErr)
+			}
 			text := notice.Body.Text()
 			speaker := protocol.ConversationSpeakerSystem
 			return errors.Join(err, r.publish(ctx, protocol.KindItemDone, notice.ID, protocol.ItemDone{Text: &text, Speaker: &speaker}))
@@ -500,6 +534,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	if err := pinPersonaState(packet, r.agent, r.conversation); err != nil {
 		return turn.PreparedRequest{}, err
 	}
+	window, count := r.conversationBudget()
 	request, report, err := r.compactConversation(ctx, assemble.Input{
 		MainID: r.main, ConversationID: r.conversation,
 		Core:    assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting,
@@ -507,7 +542,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		AgentName: persona.Name, OwnerPersonID: persona.OwnerPersonID, WorkMethod: persona.WorkMethod,
 		Catalog: catalog, AlwaysTools: declarations,
 		History: s.items, Current: current[0], Packet: packet,
-		Model: policy.Model, Effort: policy.Effort, MaxTokens: 128000,
+		Model: policy.Model, Effort: policy.Effort, MaxTokens: window,
 	}, s.events, func(ctx context.Context, request provider.Request) (provider.Stream, error) {
 		r.dispatchMu.RLock()
 		defer r.dispatchMu.RUnlock()
@@ -517,8 +552,21 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		if err := r.validateChannel(ctx); err != nil {
 			return nil, err
 		}
-		return r.route.Adapter.Stream(ctx, s.activity, request)
-	})
+		activity, err := r.activities.Acquire(ctx, lease.Activity{Class: lease.Live, Reason: "conversation summary"})
+		if err != nil {
+			return nil, err
+		}
+		meter, _ := ctx.Value(summaryUsageKey{}).(*summaryUsage)
+		if meter != nil {
+			meter.called = true
+		}
+		stream, err := r.route.Adapter.Stream(ctx, activity, request)
+		if err != nil {
+			activity.Release()
+			return nil, err
+		}
+		return &summaryStream{Stream: stream, release: activity.Release, meter: meter}, nil
+	}, func(c *conversationCompaction) { s.compaction = c })
 	if err != nil {
 		return turn.PreparedRequest{}, err
 	}
@@ -528,6 +576,15 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 
 		}
 		return turn.PreparedRequest{}, turn.ErrInvalid
+	}
+	if s.compaction != nil {
+		s.compaction.logSizes = func(ctx context.Context, sizes compaction.Sizes) error {
+			return s.recordCompaction(ctx, "request_sizes", sizes)
+		}
+		s.compaction.session, err = compaction.NewSession(s.compaction.pass, s.compaction.view, s.resolveCompactionItems)
+		if err != nil {
+			return turn.PreparedRequest{}, err
+		}
 	}
 	if s.toolCatalog != nil {
 		s.toolCatalog.offset = len(request.Items)
@@ -554,7 +611,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	for _, ref := range report.Skills {
 		assembly.Skills = append(assembly.Skills, turn.Reference{ID: ref.ID, Revision: ref.Revision})
 	}
-	return turn.PreparedRequest{Request: request, Assembly: assembly, Counter: conversationRequestSize, MaxTokens: 128000}, nil
+	return turn.PreparedRequest{Request: request, Assembly: assembly, Counter: count, MaxTokens: window}, nil
 }
 
 func (r *conversationRuntime) verifyBuild(ctx context.Context) error {

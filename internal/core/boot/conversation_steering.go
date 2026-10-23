@@ -45,10 +45,11 @@ func (r *conversationRuntime) submitInput(event ledger.Event, inboxID int64, ste
 // Drained steering belongs to this turn; only the queue's final undrained
 // items are resubmitted as follow-ups, with their original durable identity.
 type conversationInputs struct {
-	runtime   *conversationRuntime
-	inputs    *loop.Inputs
-	failure   error
-	questions *questionTurn
+	runtime       *conversationRuntime
+	inputs        *loop.Inputs
+	failure       error
+	questions     *questionTurn
+	retainBinding func(string, int, provider.Item)
 }
 
 func (q *conversationInputs) Drain() []provider.Item {
@@ -68,7 +69,7 @@ func (q *conversationInputs) Drain() []provider.Item {
 		if err != nil {
 			q.failure = err
 		} else {
-			for _, item := range packet {
+			for index, item := range packet {
 				message, err := guard.Admit(guard.EntryTool, item.Origin, item.Text)
 				if err != nil {
 					q.failure = err
@@ -80,6 +81,9 @@ func (q *conversationInputs) Drain() []provider.Item {
 					Content string `json:"content"`
 				}{evidence.Role, evidence.Text})
 				out = append(out, raw)
+				if q.retainBinding != nil {
+					q.retainBinding(accepted.event.ID, index, raw)
+				}
 			}
 		}
 		if accepted.event.Surface.Kind == "channel" {
