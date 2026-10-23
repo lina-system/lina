@@ -1812,7 +1812,14 @@ reserves random LINA ids durably before publication. A retry reconciles those id
 through the records API, recovering publication interrupted before acknowledgement.
 It reports existing imports as reused and writes no second record or commit; it
 preserves later LINA edits and fails if an imported record is unavailable. The
-journal stays with the destination backup, outside product schemas and APIs.
+journal at `system/crw-takeover-journal.json` is captured as an opaque, hashed
+file with the destination backup, outside product schemas and APIs. Restore
+publishes the matching journal before canon; a generation without it removes
+later reservations, including when undoing an import in place. An interrupted
+restore blocks both Core and the importer until publication resumes. A restored
+retry retains the reserved ids even after a record moves and preserves user
+edits captured in that generation. Older backups that omitted the journal
+cannot recover lost reservations; they restore with no journal.
 Source ids exist only in provenance and observation text, never a product lookup.
 After import, Core uses the reported LINA ids through its ordinary record tools;
 the snapshot can be removed and Core never contacts the tracker.
@@ -1822,7 +1829,9 @@ successful records so the same verified snapshot can resume. Undo is an explicit
 restore of the pre-import backup, not an automatic deletion. The import alone is
 not the owner-approved operational switch. The headless `e2e/m3/crw-takeover.json`
 scenario uses the real tool and installed Core to read imported evidence, save a
-new result, reject source-id lookup and retain the record after restart.
+new result, reject source-id lookup and retain the record and result after
+backup/restore to a fresh root. It also restores a pre-import generation in place
+and verifies that later reservations do not survive.
 
 ### Switch admission and recovery
 
