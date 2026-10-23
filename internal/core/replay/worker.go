@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/agents"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/proc"
@@ -269,6 +270,11 @@ type InstructionBuilder func(string, agents.Preparation, []provider.ToolDecl) (s
 
 // Request applies candidate text to pinned layers and the recorded identity.
 func Request(ep Episode, candidates map[string]string, model, effort string, build InstructionBuilder) (provider.Request, error) {
+	switch ep.Evidence.Assembly.RequestLayout {
+	case "", ledger.InputBeforeContextV1:
+	default:
+		return provider.Request{}, Exclusion("missing_assembly")
+	}
 	p := ep.Persona
 	for name, text := range candidates {
 		switch filepath.ToSlash(name) {
