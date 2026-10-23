@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -41,7 +42,12 @@ func (r *conversationRuntime) History(ctx context.Context, s clientsrv.Session, 
 	return protocol.History{ConversationID: &r.conversation, AgentID: &r.agent}, nil
 }
 
+// Input admits one client line. Input ids in the launcher namespace belong to
+// the launcher capability, so a client cannot shadow a durable launcher request.
 func (r *conversationRuntime) Input(ctx context.Context, s clientsrv.Session, p protocol.Input) (protocol.ItemDone, error) {
+	if p.InputID != nil && strings.HasPrefix(*p.InputID, launcherThreadPrefix) {
+		return protocol.ItemDone{}, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
+	}
 	return r.admitInput(ctx, s, p, "tui", nil)
 }
 
