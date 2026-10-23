@@ -6,17 +6,78 @@ on:
     branches: [dev, 'codex/ln-369-*']
   push:
     branches: [dev]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: foundation-${{ github.event.pull_request.number || github.ref }}
+  group: foundation-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
-  foundation:
-    name: foundation
+  selection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.selection.outputs.matrix }}
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read the Node version
+        id: node
+        run: |
+          if [[ -f .node-version ]]; then
+            printf 'version=%s\n' "$(cat .node-version)" >> "$GITHUB_OUTPUT"
+          else
+            echo 'version=24' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ steps.node.outputs.version }}
+      - name: Select checks and shards
+        id: selection
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == pull_request && -n "$BASE_SHA" ]]; then
+            node scripts/foundation.mjs --range "$BASE_SHA..$HEAD_SHA" --no-note --select "$RUNNER_TEMP/foundation-plan.json"
+          else
+            node scripts/foundation.mjs --full --no-note --select "$RUNNER_TEMP/foundation-plan.json"
+          fi
+          node --input-type=module - "$RUNNER_TEMP/foundation-plan.json" <<'JS'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const plan = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          const include = plan.tasks.map(task => ({
+            id: task.id, kind: task.kind, go: task.kind !== 'docs',
+            sandbox: ['automation', 'unit', 'e2e'].includes(task.kind),
+          }));
+          appendFileSync(process.env.GITHUB_OUTPUT, 'matrix=' + JSON.stringify({ include }) + '\n');
+          JS
+      - name: Share the selection
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: foundation-plan
+          path: ${{ runner.temp }}/foundation-plan.json
+          if-no-files-found: error
+          retention-days: 5
+
+  checks:
+    needs: selection
+    if: needs.selection.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.selection.outputs.matrix) }}
+    name: ${{ matrix.id }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -26,38 +87,39 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Read tool versions
-        id: versions
-        shell: bash
+      - name: Read the Node version
+        id: node
         run: |
           if [[ -f .node-version ]]; then
-            printf 'node=%s\n' "$(cat .node-version)" >> "$GITHUB_OUTPUT"
+            printf 'version=%s\n' "$(cat .node-version)" >> "$GITHUB_OUTPUT"
           else
-            echo 'node=24' >> "$GITHUB_OUTPUT"
+            echo 'version=24' >> "$GITHUB_OUTPUT"
           fi
-          if [[ -f go.mod ]]; then
-            version=$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2; exit }' go.mod)
-            if [[ -z "$version" ]]; then
-              echo 'go.mod must declare a toolchain' >&2
-              exit 1
-            fi
-            printf 'go=%s\n' "$version" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: ${{ steps.versions.outputs.node }}
-
+          node-version: ${{ steps.node.outputs.version }}
+      - name: Read the Go toolchain
+        if: matrix.go
+        id: go
+        run: |
+          version=$(awk '$1 == "toolchain" { sub(/^go/, "", $2); print $2; exit }' go.mod)
+          if [[ -z "$version" ]]; then
+            echo 'go.mod must declare a toolchain' >&2
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
       - name: Set up Go
-        if: steps.versions.outputs.go != ''
+        if: matrix.go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: ${{ steps.versions.outputs.go }}
+          go-version: ${{ steps.go.outputs.version }}
           cache: false
-
+          cache-dependency-path: |
+            go.sum
+            kit/go.sum
       - name: Install actionlint
+        if: matrix.kind == 'automation'
         env:
           ACTIONLINT_URL: https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
           ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
@@ -67,29 +129,73 @@ jobs:
           mkdir -p "$RUNNER_TEMP/actionlint-bin"
           tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/actionlint-bin" actionlint
           echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
-
       - name: Install sandbox launcher
-        if: steps.versions.outputs.go != ''
+        if: matrix.sandbox
         run: |
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install --yes --no-install-recommends bubblewrap
-          sudo tee /etc/apparmor.d/bwrap >/dev/null <<'PROFILE'
-          abi <abi/4.0>,
-          include <tunables/global>
-          /usr/bin/bwrap flags=(unconfined) {
-            userns,
-          }
-          PROFILE
+          sudo install -m 0644 scripts/verify/bwrap.apparmor /etc/apparmor.d/bwrap
           sudo apparmor_parser -r /etc/apparmor.d/bwrap
           bwrap --unshare-user --unshare-pid --unshare-net --cap-drop ALL --ro-bind / / --proc /proc --dev /dev -- /bin/true
-
-      - name: Run foundation
+      - name: Read the shared selection
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: foundation-plan
+          path: ${{ runner.temp }}
+      - name: Run the selected shard
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.sha }}
+          SHARD_ID: ${{ matrix.id }}
+        run: node scripts/foundation.mjs --plan "$RUNNER_TEMP/foundation-plan.json" --shard "$SHARD_ID" --out "$RUNNER_TEMP/foundation-results/$SHARD_ID.json"
+      - name: Share the result and package timings
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: foundation-result-${{ matrix.id }}
+          path: ${{ runner.temp }}/foundation-results/*.json
+          if-no-files-found: error
+          retention-days: 5
+
+  foundation:
+    name: foundation
+    if: always()
+    needs: [selection, checks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require selection
+        env:
+          SELECTION_RESULT: ${{ needs.selection.result }}
+        run: test "$SELECTION_RESULT" = success
+      - name: Check out the candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read the Node version
+        id: node
         run: |
-          if [[ -n "$BASE_SHA" && "$BASE_SHA" != 0000000000000000000000000000000000000000 ]]; then
-            node scripts/foundation.mjs --range "$BASE_SHA..$HEAD_SHA" --no-note
+          if [[ -f .node-version ]]; then
+            printf 'version=%s\n' "$(cat .node-version)" >> "$GITHUB_OUTPUT"
           else
-            node scripts/foundation.mjs --full --no-note
+            echo 'version=24' >> "$GITHUB_OUTPUT"
           fi
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ steps.node.outputs.version }}
+      - name: Read the selection
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: foundation-plan
+          path: ${{ runner.temp }}
+      - name: Read shard results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: foundation-result-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/foundation-results
+      - name: Evaluate foundation
+        env:
+          SHARDS_RESULT: ${{ needs.checks.result }}
+        run: node scripts/foundation.mjs --plan "$RUNNER_TEMP/foundation-plan.json" --results "$RUNNER_TEMP/foundation-results" --upstream "$SHARDS_RESULT" --no-note

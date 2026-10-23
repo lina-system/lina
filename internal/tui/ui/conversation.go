@@ -292,6 +292,10 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			m.conversation.undo = nil
 			return command
 		}
+		if handled, command := m.ownerCommand(text); handled {
+			m.reduceInput(state.EditDraft{})
+			return command
+		}
 		if handled, command := m.managementCommand(text); handled {
 			m.reduceInput(state.EditDraft{})
 			m.conversation.undo = nil
@@ -623,6 +627,14 @@ func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 			return cmd
 		}
 	}
+	if p.waiting && !p.searching && name == "o" {
+		if m.waitingOrder == "lightest" {
+			m.waitingOrder = "priority"
+		} else {
+			m.waitingOrder = "lightest"
+		}
+		return m.waitingRequest()
+	}
 	if p.running && !p.searching {
 		rows := m.topicBlocks("running")
 		if len(rows) > 0 {
@@ -638,6 +650,9 @@ func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 				return nil
 			case "enter":
 				return m.runningRequest(rows[p.selected].RunID, "open", nil)
+			case "s":
+				_, cmd := m.ownerCommand("/stop " + rows[p.selected].RunID)
+				return cmd
 			case "d":
 				return m.runningRequest(rows[p.selected].RunID, "dismiss", nil)
 			}
