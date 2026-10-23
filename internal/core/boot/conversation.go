@@ -289,6 +289,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startWorkWaiting(ctx); err != nil {
 		return nil, err
 	}
+
 	if err = r.startRuns(ctx); err != nil {
 		return nil, err
 	}
@@ -326,6 +327,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	// Producers and the reactor may schedule recovered turns immediately.
 	// Start them only after background services and the final lanes are ready.
 	if err = r.startWorkerDispatch(ctx); err != nil {
+		return nil, err
+	}
+	if err = r.startWorkerRecovery(ctx); err != nil {
 		return nil, err
 	}
 	if delegationErr := r.startDelegation(ctx); delegationErr != nil {

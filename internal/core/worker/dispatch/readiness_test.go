@@ -96,6 +96,9 @@ func TestReadinessFallback(t *testing.T) {
 				if strings.Join(got.Tried, ",") != "first,second" || card.Run == nil || card.Run.Worker != "second" || card.Run.Generation != 1 || card.Receipt == nil || card.Receipt.Outcome != "interrupted" {
 					t.Fatal("fallback did not reach a real turn", got, card)
 				}
+				if got.Attempt != card.Run.Generation {
+					t.Fatalf("readiness refusal split recovery identity: dispatch attempt=%d run generation=%d", got.Attempt, card.Run.Generation)
+				}
 				ledger, err := s.cfg.Work.Ledger(t.Context(), r.ID)
 				if err != nil {
 					t.Fatal(err)

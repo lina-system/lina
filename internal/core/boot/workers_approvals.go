@@ -15,7 +15,7 @@ import (
 )
 
 func (e *workerSession) requestKey(id string) string {
-	return fmt.Sprintf("worker-request:%d:%s:%s", e.thread.ProcessGeneration, e.thread.ID, id)
+	return fmt.Sprintf("worker-request:%d:%d:%s:%s", e.thread.ProcessGeneration, e.thread.BindingEpoch, e.thread.ID, id)
 }
 
 func (e *workerSession) requestApproval(event worker.Event) {
@@ -140,6 +140,9 @@ func (e *workerSession) stopMatching(turnID, requestID string) {
 		}
 	}
 	for id, q := range e.questions {
+		if q.kind == "recovery" {
+			continue
+		}
 		if (turnID == "" || q.event.Thread.TurnID == turnID) && (requestID == "" || q.requestID == requestID) && q.card.Card.Outcome == nil {
 			outcome := stoppedQuestionOutcome
 			q.card.Card.Outcome = &outcome

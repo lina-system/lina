@@ -7,19 +7,22 @@ import (
 	"errors"
 	"fmt"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
-	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/lease"
 	"math"
+	"path/filepath"
 	"runtime"
+
 	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/clientsrv"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/ghclient"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -60,7 +63,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{Rules: rules, Workers: factories, Bind: r.bindDispatchedWorker, Capacity: func(ctx context.Context) int {
+	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{AuthorizeRecovery: r.authorizeWorkerRecovery, Rules: rules, Workers: factories, Bind: r.bindDispatchedWorker, Capacity: func(ctx context.Context) int {
 		host, err := goal.MainHost(ctx, r.main, r.root, goal.Resources{CPU: float64(runtime.NumCPU()), MemoryMB: math.MaxInt32, DiskMB: math.MaxInt32}, nil)
 		if err != nil {
 			return 0
@@ -78,8 +81,24 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 		record.Owner, record.Manager = a.Owner, a.Conversation
 		return record, nil
 	}, Publish: func(ctx context.Context, record dispatch.Record) error {
+		view, parent, err := r.dispatchRecoveryView(ctx, record)
+		if err != nil {
+			return err
+		}
 		managerVerdict := "unverified"
-		if record.Owner != "" {
+		if record.State == "decision" {
+			agent, conversation := record.Owner, record.Manager
+			if agent == "" {
+				agent, conversation = record.Origin.Agent, record.Origin.Conversation
+			}
+			id := "dispatch:" + record.ID
+			rec := recovery.Record{Worker: record.WorkerName(), ID: id, Person: record.Origin.Person, Agent: agent, Conversation: conversation, Input: strings.TrimPrefix(record.Origin.Turn, "turn:"), Workdir: filepath.Join(r.root, "work", "tasks", record.ID), State: "decision", Retries: 1, DecisionAt: record.DecisionAt, Thread: worker.Thread{ID: id, TaskID: record.ID}}
+			if err := (recovery.Recovery{DB: r.db}).Admit(ctx, rec); err != nil {
+				return err
+			}
+			r.workers.wakeRecovery()
+		}
+		if record.Owner != "" && record.State == "finished" {
 			var a codingAssignment
 			if err := r.db.Read(ctx, func(tx *canon.Tx) error { var err error; a, err = readCoding(ctx, tx, record.ID); return err }); err != nil {
 				return err
@@ -95,10 +114,6 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 				}
 			}
 		}
-		view, err := r.router.view(ctx, clientsrv.Session{PersonID: record.Origin.Person}, record.Origin.Agent)
-		if err != nil {
-			return err
-		}
 		text := record.WorkerName() + ": " + record.Code
 		if record.Version != "" {
 			text += " (" + record.Version + "; unverified version)"
@@ -109,14 +124,14 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 		if record.PR != nil {
 			text += fmt.Sprintf("; %s @ %s; Core delivery: %s", record.PR.URL, record.PR.Head, managerVerdict)
 		}
-		parent, err := view.journal().Get(ctx, strings.TrimPrefix(record.Origin.Turn, "turn:"))
-		if err != nil {
-			return err
-		}
 		now := time.Now()
-		event, err := view.journal().Get(ctx, "worker-result:"+record.ID)
+		noticeID := "worker-result:" + record.ID
+		if record.Attempt > 1 || record.State == "unknown" {
+			noticeID += fmt.Sprintf(":%d:%s", record.Attempt, record.State)
+		}
+		event, err := view.journal().Get(ctx, noticeID)
 		if errors.Is(err, ledger.ErrNotFound) {
-			event, err = view.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: "worker-result:" + record.ID, ConversationID: record.Origin.Conversation, ParentID: strings.TrimPrefix(record.Origin.Turn, "turn:"), AgentID: record.Origin.Agent, Surface: parent.Surface, ScaffoldKind: "worker_result", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
+			event, err = view.journal().Admit(ctx, guard.EntrySystem, ledger.Input{ID: noticeID, ConversationID: record.Origin.Conversation, ParentID: strings.TrimPrefix(record.Origin.Turn, "turn:"), AgentID: record.Origin.Agent, Surface: parent.Surface, ScaffoldKind: "worker_result", OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text})
 		}
 		if err != nil {
 			return err
@@ -130,11 +145,13 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 // Reuse the authenticated conversation approval/question bridge. Dispatch owns
 // adapter events and lifetime; these entries only route owner decisions.
 func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapter worker.Adapter, thread worker.Thread, packet, workdir string) (func(worker.Event), func()) {
-	delivery := newConversationView(r.router.root, record.Origin.Agent, record.Origin.Conversation)
+	delivery, input, err := r.dispatchRecoveryView(r.ctx, record)
+	if err != nil {
+		return func(worker.Event) {}, func() {}
+	}
 	owner := newConversationView(r.router.root, record.Owner, record.Manager)
 	owner.codingDelivery = delivery
-	input, _ := delivery.journal().Get(r.ctx, strings.TrimPrefix(record.Origin.Turn, "turn:"))
-	e := &workerSession{adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
+	e := &workerSession{cancelTask: func(ctx context.Context) error { return r.workerDispatch.Cancel(ctx, record.ID) }, adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
 	r.workers.mu.Lock()
 	r.workers.sessions[thread.ID] = e
 	r.workers.mu.Unlock()
@@ -164,4 +181,42 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 		r.workers.mu.Unlock()
 		close(e.done)
 	}
+}
+
+func (r *conversationRuntime) authorizeWorkerRecovery(ctx context.Context, record dispatch.Record) (bool, error) {
+	if !record.Goal {
+		view, _, err := r.dispatchRecoveryView(ctx, record)
+		if err != nil {
+			return false, err
+		}
+		return view.channelBinding == nil || view.channelBinding.Scope.Tools, nil
+	}
+	if r.dispatchMu != nil {
+		r.dispatchMu.RLock()
+	}
+	runtime := r.workEngine
+	if r.dispatchMu != nil {
+		r.dispatchMu.RUnlock()
+	}
+	if runtime == nil {
+		return false, goal.ErrInvalid
+	}
+	return runtime.engine.CanContinue(ctx, record.GoalAction)
+}
+
+// Resolve the persisted source before recovering work or delivering its result.
+// A missing/revoked channel never inherits the personal conversation's authority.
+func (r *conversationRuntime) dispatchRecoveryView(ctx context.Context, record dispatch.Record) (*conversationRuntime, ledger.Event, error) {
+	input, err := r.journal().Get(ctx, strings.TrimPrefix(record.Origin.Turn, "turn:"))
+	if err != nil {
+		return nil, input, err
+	}
+	if record.Origin.Person != r.person || input.AgentID != record.Origin.Agent || input.ConversationID != record.Origin.Conversation {
+		return nil, input, channels.ErrDenied
+	}
+	view, err := r.workerRecoveryView(ctx, input)
+	if err == nil {
+		err = view.validateChannel(ctx)
+	}
+	return view, input, err
 }
