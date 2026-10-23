@@ -17,8 +17,11 @@ const conversationHistorySources = `
  SELECT e.conversation_id,e.id AS item_key,e.id AS event_id,'' AS partial,'' AS turn_id,
         e.rowid AS fallback,1 AS phase,0 AS partial_position
  FROM conv_event e
- WHERE (e.speaker_kind IN ('person','agent','forwarded') OR e.scaffold_kind IN ('interruption','failure','skill_change','persona_change','worker_session','run_handoff','background_notice','worker_result','coding_handoff','timer'))
+ WHERE (e.speaker_kind IN ('person','agent','forwarded') OR e.scaffold_kind IN ('interruption','failure','skill_change','persona_change','worker_session','run_handoff','background_notice','worker_result','coding_handoff','timer','plan_rejection'))
    AND coalesce(e.scaffold_kind,'')<>'result'
+ UNION ALL
+ SELECT e.conversation_id,h.id,e.id,'','',e.rowid,1,0
+ FROM result_heads h JOIN plan_drafts p ON p.result_id=h.id JOIN conv_event e ON e.id=h.event_id
  UNION ALL
  SELECT e.conversation_id,printf('%s:%d:%d',r.id,p.round+1,p.ordinal),'',p.body,r.id,
         e.rowid,0,p.rowid
