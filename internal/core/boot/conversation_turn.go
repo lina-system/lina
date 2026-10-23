@@ -39,24 +39,25 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-// turnState holds the mutable state shared by a conversation turn's callbacks.
+// turnState holds the inputs and mutable state shared by a conversation turn's callbacks.
 type turnState struct {
-	runtime       *conversationRuntime
-	input         ledger.Event
-	turnID        string
-	questions     *questionTurn
-	items         []provider.Item
-	events        []ledger.Event
-	memoryEpoch   uint64
-	memoryRefs    []turn.Reference
-	preparedNames []memory.Item
-	bindings      map[string]loop.Tool
-	promoted      budget.Handle
-	round         int
-	filters       map[string]*conversationReplyStream
-	completed     []ledger.Admission
-	saved         []ledger.Event
-	replyShapes   reply.Shapes
+	runtime            *conversationRuntime
+	input              ledger.Event
+	turnID             string
+	items              []provider.Item
+	events             []ledger.Event
+	memoryEpoch        uint64
+	memoryRefs         []turn.Reference
+	preparedNames      []memory.Item
+	bindings           map[string]loop.Tool
+	promoted           budget.Handle
+	round              int
+	filters            map[string]*conversationReplyStream
+	completed          []ledger.Admission
+	saved              []ledger.Event
+	replyShapes        reply.Shapes
+	questions          *questionTurn
+	questionRoundCalls int
 }
 
 func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, input ledger.Event, inboxID int64) (err error) {
@@ -76,9 +77,9 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		runtime:   r,
 		input:     input,
 		turnID:    turnID,
-		questions: &questionTurn{},
 		bindings:  map[string]loop.Tool{},
 		filters:   map[string]*conversationReplyStream{},
+		questions: &questionTurn{},
 	}
 	if r.channelBinding == nil || r.channelBinding.Scope.Tools {
 		if r.router.root.workerDispatch != nil {
@@ -114,7 +115,6 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
 		Digest: assemble.Digest,
 	}
-	questionRoundCalls := 0
 	complete := func(ctx context.Context, db turn.Canon) error {
 		if s.promoted.ID != "" {
 			now := time.Now()
@@ -186,7 +186,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					return nil, inputQueue.failure
 				}
 				s.round++
-				questionRoundCalls = 0
+				s.questionRoundCalls = 0
 				if err := r.setPhase(ctx, protocol.TurnPhaseWaitingModel); err != nil {
 					return nil, err
 				}
@@ -272,10 +272,10 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 					s.completed = append(s.completed, ledger.Admission{Entry: guard.EntryAgent, Input: ledger.Input{ID: key, ConversationID: r.conversation, ParentID: input.ID, AgentID: r.agent, Surface: input.Surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: text.String()}})
 					return nil
 				case provider.ToolCallReady:
-					questionRoundCalls++
+					s.questionRoundCalls++
 					return nil
 				case provider.Terminal:
-					if questionRoundCalls == 0 || r.route.Adapter.Class() == provider.AgentRuntime {
+					if s.questionRoundCalls == 0 || r.route.Adapter.Class() == provider.AgentRuntime {
 						return s.questions.check(ctx)
 					}
 					return nil
@@ -355,7 +355,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 }
 
 func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.PreparedRequest, error) {
-	r, input, turnID, questions := s.runtime, s.input, s.turnID, s.questions
+	r, input, turnID := s.runtime, s.input, s.turnID
 	if err := r.refreshPersona(ctx); err != nil {
 		return turn.PreparedRequest{}, err
 	}
@@ -390,7 +390,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	if err != nil {
 		return turn.PreparedRequest{}, err
 	}
-	catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, s.bindings, questions)
+	catalog, personaPacket, err := r.preparePersonaTools(ctx, turnID, input, persona, settings, at, s.bindings, s.questions)
 
 	if err != nil {
 		return turn.PreparedRequest{}, err
