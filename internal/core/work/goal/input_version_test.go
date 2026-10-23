@@ -100,11 +100,19 @@ func TestInputVersionJudgmentsUseTheSameSignalFence(t *testing.T) {
 			if err := e.Signal(t.Context(), Signal{ID: "new-task-input", GoalID: "g", TaskID: "a"}); err != nil {
 				t.Fatal(err)
 			}
-			before := encode(reviewGoal(t, e, "g"))
+			want := reviewGoal(t, e, "g")
+			if kind == PlanGoal {
+				if !want.Tasks[0].RepairAsked {
+					t.Fatal("fixture has no outstanding repair assessment")
+				}
+				// Retirement clears only its assessment marker; the obsolete
+				// judgment must not change any current plan or evidence.
+				want.Tasks[0].RepairAsked = false
+			}
 			if err := e.Report(t.Context(), a.ID, e.cfg.Epoch, old); err != nil {
 				t.Fatal(err)
 			}
-			if after := encode(reviewGoal(t, e, "g")); !bytes.Equal(before, after) {
+			if after := encode(reviewGoal(t, e, "g")); !bytes.Equal(encode(want), after) {
 				t.Fatalf("stale judgment changed current state: %s", after)
 			}
 			assertRetiredReviewAction(t, e, a)

@@ -112,7 +112,7 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case shellBegin:
 		if msg.Generation > m.generation {
 			m.generation = msg.Generation
-			if m.conversation.pager.developer {
+			if m.conversation.pager.developer || m.conversation.pager.records != nil {
 				m.conversation.pager = textPager{}
 			}
 			m.talk = talkView{attempt: m.talk.attempt + 1}

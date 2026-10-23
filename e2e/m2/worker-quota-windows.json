@@ -1,0 +1,12 @@
+{
+  "what": "Create result.txt and submit the task pull request.",
+  "done": "The result file is committed and the task pull request passes its checks.",
+  "work_area": true,
+  "cases": [
+    {
+      "name": "success",
+      "choice": "quota-windows",
+      "expected": "ready_for_review"
+    }
+  ]
+}

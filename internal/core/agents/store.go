@@ -177,7 +177,7 @@ func (s *Store) create(ctx context.Context, in Create, first bool) (Agent, error
 		}
 		if first {
 			var n int
-			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM agent_first_run").Scan(&n); err != nil {
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM agent_starters WHERE preset=?", in.Preset).Scan(&n); err != nil {
 				return err
 			}
 			if n != 0 {
@@ -191,7 +191,7 @@ func (s *Store) create(ctx context.Context, in Create, first bool) (Agent, error
 			return err
 		}
 		if first {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO agent_first_run VALUES(1,?)", a.ID); err != nil {
+			if _, err := tx.ExecContext(ctx, "INSERT INTO agent_starters VALUES(?,?)", in.Preset, a.ID); err != nil {
 				return err
 			}
 		}
@@ -409,51 +409,5 @@ func (s *Store) Prepare(ctx context.Context, turn, id string) (Preparation, erro
 			return Preparation{}, err
 		}
 		return p, nil
-	}
-}
-
-type FirstRun struct {
-	Agent          Agent
-	SignInProvider string
-}
-
-func (s *Store) FirstRun(ctx context.Context, person string, usableAccount bool) (FirstRun, error) {
-	if !present(person) {
-		return FirstRun{}, ErrInvalid
-	}
-	if err := s.upgradeLinaPlaceholders(ctx, person); err != nil {
-		return FirstRun{}, err
-	}
-	for {
-		var id string
-		err := s.db.Read(ctx, func(tx *canon.Tx) error {
-			return tx.QueryRowContext(ctx, "SELECT agent_id FROM agent_first_run WHERE singleton=1").Scan(&id)
-		})
-		var a Agent
-		if errors.Is(err, sql.ErrNoRows) {
-			p := Preset{ID: "lina"}
-			raw, _ := json.Marshal(p)
-			err = s.db.Write(ctx, func(tx *canon.Tx) error {
-				_, err := tx.ExecContext(ctx, "INSERT INTO agent_presets VALUES(?,?) ON CONFLICT(id) DO NOTHING", p.ID, raw)
-				return err
-			})
-			if err != nil {
-				return FirstRun{}, err
-			}
-			a, err = s.create(ctx, Create{Name: "LINA", PersonID: person, Preset: "lina"}, true)
-			if errors.Is(err, ErrConflict) {
-				continue
-			}
-		} else if err == nil {
-			a, err = s.Get(ctx, id)
-		}
-		if err != nil {
-			return FirstRun{}, err
-		}
-		result := FirstRun{Agent: a}
-		if !usableAccount {
-			result.SignInProvider = "chatgpt"
-		}
-		return result, nil
 	}
 }

@@ -159,6 +159,11 @@ func (s *managementSession) request(ctx context.Context, c *clientapi.Client, p 
 		id, err = c.Waiting(ctx, p)
 	case protocol.RunningGet:
 		id, err = c.Running(ctx, p)
+	case protocol.RecordRequest:
+		id, err = c.Record(ctx, p)
+		if err == nil {
+			s.model.conversation.pager.recordID = id
+		}
 	case protocol.AgentRequest:
 		id, err = c.Agent(ctx, p)
 	case protocol.MemoryRequest:
@@ -179,6 +184,13 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 	}
 	delete(s.pending, *e.ReplyTo)
 	m := s.model
+	if _, records := request.(protocol.RecordRequest); records {
+		p := &m.conversation.pager
+		if !p.open || p.records == nil || p.recordID != *e.ReplyTo {
+			return true, nil
+		}
+		p.records.busy = false
+	}
 	if _, developer := request.(protocol.ProgressGet); developer {
 		p := &m.conversation.pager
 		if !p.open || !p.developer || p.developerID != *e.ReplyTo {
@@ -191,6 +203,12 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		return true, nil
 	}
 	switch p := e.Payload.(type) {
+	case protocol.RecordResult:
+		original, ok := request.(protocol.RecordRequest)
+		if !ok {
+			return true, errStream
+		}
+		return true, m.recordResponse(original, p)
 	case protocol.ProgressDigest:
 		lines := append([]string{}, p.Lines...)
 		lines = append(lines, fmt.Sprintf(design.Text(m.styles.options.Language, "progress.digest_count"), p.Total, p.More))
@@ -275,22 +293,14 @@ func (s *managementSession) response(ctx context.Context, c *clientapi.Client, e
 		}
 		found := false
 		for _, a := range *p.Agents {
-			label := a.AgentID + "  " + a.Name
-			if a.Preset != nil {
-				boundary := ""
-				switch *a.Preset {
-				case "investing":
-					boundary = "agents.advice_only"
-				case "legal":
-					boundary = "agents.draft_only"
-				case "dev":
-					boundary = "agents.development"
-				}
-				if boundary != "" {
-					label += " (" + design.Text(m.styles.options.Language, boundary) + ")"
+			source := design.Text(m.styles.options.Language, "agents.from_description")
+			if a.Preset != nil && *a.Preset != "" {
+				source = *a.Preset
+				if role, ok := design.Lookup(m.styles.options.Language, "agents.role."+*a.Preset); ok {
+					source = role + " (" + source + ")"
 				}
 			}
-			lines = append(lines, label)
+			lines = append(lines, a.Name+"  "+source, "  main:"+a.AgentID)
 			found = found || a.AgentID == active
 		}
 		m.openPager(strings.Join(lines, "\n"))

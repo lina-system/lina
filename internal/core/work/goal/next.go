@@ -116,6 +116,8 @@ const (
 )
 
 type Goal struct {
+	Conversation      string              `json:"conversation"`
+	Turn              string              `json:"turn"`
 	RecordID          string              `json:"record_id"`
 	RecordRevision    string              `json:"record_revision"`
 	DefinitionPending bool                `json:"definition_pending"`
@@ -254,7 +256,8 @@ func Slots(n Node, actions []Action, request Resources, now time.Time) int {
 		reserved.CPU += a.Resources.CPU
 		reserved.MemoryMB += a.Resources.MemoryMB
 		reserved.DiskMB += a.Resources.DiskMB
-		if !has(n.ObservedActions, a.ID) {
+		observed := has(n.ObservedActions, a.ID) || a.ObserveActionID != "" && has(n.ObservedActions, a.ObserveActionID)
+		if !observed {
 			pending.CPU += a.Resources.CPU
 			pending.MemoryMB += a.Resources.MemoryMB
 			pending.DiskMB += a.Resources.DiskMB

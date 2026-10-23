@@ -344,6 +344,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 
 **G2-03 Timers, reminders and sensors.** Durable timers, reminders, deterministic sensors.
 - #129 connects canon-backed timers to installed Core conversation tools and the shared reaction lane. `e2e/m2/timers.json` covers a scheduled job creating a record, model-free reminders, record-revision sensors, cancellation and restart. Focused tests exercise cron/RRULE DST gaps and folds, concurrent claims, bounded read-only recovery and SIGKILL before/after the claim commit.
+- #699 bounds RRULE intervals at admission and settles failed deliveries within the running Core. `e2e/m2/timer-recovery.json` covers interval refusal, an independent reminder, and a later sensor occurrence saving a result after source restoration without a Core restart.
 - Done when: a nonexistent local time and a repeated hour each fire once; `kill -9` at claim gives one fire per instant; an unchanged sensor signature spends no model call.
 - Depends on: G1-11, G2-02. Design refs: C-26.
 
@@ -353,7 +354,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Done when: the round trip completes with the installed Codex and records its version; an unverified version is reported and still used; a worker approval reaches the originating conversation and the answer returns; no sandbox, credential or setting is imposed on the worker.
 - Depends on: G1-05, G1-18. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#codex-adapter).
 
-**G2-05 Claude Code adapter.** Headless child, final result as signal.
+**G2-05 Claude Code adapter.** Headless child, final result as signal. #134 connects the installed `claude` worker to `dispatch_work`, preserves its final result with independent PR evidence in an adapter-derived receipt, and covers execution and failure paths through `e2e/m2/claude-worker.json`. The account-free scenario does not establish live Claude version compatibility.
 - Done when: a final result message ends the turn; exit without one is a failure; a receipt built from the final result and the pull request is marked adapter-derived; nothing is installed into the user's tool.
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 
@@ -366,6 +367,7 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Depends on: G1-02, G2-04, G2-05. Design refs: C-29, C-58; [work-and-delegation.md](work-and-delegation.md#stall-and-failure).
 
 **G2-18 Work definition and worker choice.** `dispatch_work`, task packet, chooser, quota fallback.
+- #138 wires quota-aware Antigravity/Codex choice, fenced write-area claims and one durable packet-preserving handoff into installed Core. `e2e/m2/worker-choice.json` covers quota, overlap, editable situation rules and restart with real task artifacts.
 - Definition validation (#137): invalid definitions and unresolved base-commit sections are refused before admission. Valid packets retain the assignment and pinned base through queueing and retries. `e2e/m2/work-definition.json` covers refusal and a real worker result through running Core.
 - Done when: a definition without a done condition or write area is refused; two tasks with overlapping write areas are never in flight together; a worker whose quota row is blocked is not chosen before its reset; unknown quota is usable; a quota stop hands the same packet once to the next worker.
 - Depends on: G2-01, G2-04. Design refs: C-57; [work-and-delegation.md](work-and-delegation.md#work-definition).
@@ -444,10 +446,19 @@ completion conditions to repository tests and installed Core scenarios.
   ambiguous-date refusal. [The to-do scenario](../../e2e/m2/todos.json) runs Core
   through capture, refused writes, views, rescheduling and index repair on
   restart. Recurrence advancement, candidates and memo promotion belong to #156.
+- #674 permits planning edits that preserve delegated completion. Its
+  [installed-Core scenario](../../e2e/m2/todo-completed-planning.json) checks
+  saved tags, priority and checklist, the completed state and restart durability.
 - Done when: the today rule passes its fixture; a recurring item advances only to a future occurrence; a dependency cycle is rejected; an ambiguous date is never saved silently; a candidate is added on its own only when the deterministic test passes.
 - Depends on: G2-22, G2-03. Design refs: C-54; [work-and-delegation.md](work-and-delegation.md#the-to-do-record).
 
 **G2-24 TUI records, progress and agent screens.** Views, memo inbox, progress view, quick add, board, steering, usage meter.
+- #164 connects the TUI memo inbox and record lenses to Core queries through a
+  negotiated `records` capability. Lists retain Core order and internal ids stay
+  out of display rows. [The record journey](../../e2e/m2/tui-records.json) covers
+  conversation capture, restart, discovery, direct browsing, preview cancellation
+  and explicit confirmation of token-based quick add. Memo promotion
+  remains #156.
 - Done when: a quick add shows chips before it saves; every view is a Core query result drawn without client ranking; a progress view line holds no id-shaped field; the board groups Core's rows into Waiting for me, Running and Done; a follow-up note reaches a running background run at its next round trip; the usage meter reads "unknown" for an unreported quota.
 - Depends on: G1-21, G2-13, G2-23, G2-25. Design refs: T-12, T-13, T-14.
 
