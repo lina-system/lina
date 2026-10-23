@@ -117,9 +117,11 @@ func (p *darwinProcess) wait() error {
 }
 
 // killDescendants kills every live process below root and repeats until a scan
-// finds none. A killed process cannot fork again, and a child forked between
-// one kill and the next scan still names a tracked parent, so the sweep ends.
+// finds none. The tracked set keeps identities discovered in earlier scans, so
+// a child forked just before its parent was killed and reaped still resolves to
+// the tree. Killed processes cannot fork again, so the sweep ends.
 func killDescendants(root processIdentity) error {
+	tracked := map[uint64]struct{}{root.uniqueID: {}}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		states, err := processStates()
@@ -127,24 +129,23 @@ func killDescendants(root processIdentity) error {
 			return fmt.Errorf("scan owned processes: %w", err)
 		}
 		identities := make([]processIdentity, len(states))
-		zombie := make(map[int]bool, len(states))
 		for i, state := range states {
 			identities[i] = state.processIdentity
-			zombie[state.pid] = state.zombie
 		}
+		trackDescendants(tracked, identities)
 		live := false
-		for _, id := range descendantIdentities(root.uniqueID, identities) {
-			if zombie[id.pid] {
+		for _, state := range states {
+			if _, ok := tracked[state.uniqueID]; !ok || state.zombie {
 				continue
 			}
 			// Recheck identity after the scan so a recycled pid is never
 			// signalled in place of the process that was tracked.
-			current, err := processIdentityOf(id.pid)
-			if err != nil || current.uniqueID != id.uniqueID {
+			current, err := processIdentityOf(state.pid)
+			if err != nil || current.uniqueID != state.uniqueID {
 				continue
 			}
-			if err := syscall.Kill(id.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-				return fmt.Errorf("kill descendant %d: %w", id.pid, err)
+			if err := syscall.Kill(state.pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				return fmt.Errorf("kill descendant %d: %w", state.pid, err)
 			}
 			live = true
 		}

@@ -6,6 +6,9 @@ package proc
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -22,7 +25,7 @@ const (
 	procInfoCallPIDInfo       = 0x2
 	procAllPIDs               = 0x1
 	procPIDShortBSDInfo       = 13
-	procShortBSDInfoSize      = 60 // struct proc_bsdshortinfo
+	procShortBSDInfoSize      = 64 // struct proc_bsdshortinfo, including pbsi_rfu
 	procPIDUniqIdentifierInfo = 17
 	procUniqueIDSize          = 56 // struct proc_uniqidentifierinfo
 	procStatusZombie          = 5  // SZOMB
@@ -81,9 +84,13 @@ func processStates() ([]processState, error) {
 			continue // exited between the listing and the read
 		}
 		state := processState{processIdentity: identity}
-		if err := procInfo(procInfoCallPIDInfo, uint32(pid), procPIDShortBSDInfo, 1, buf[:]); err == nil {
-			state.zombie = binary.LittleEndian.Uint32(buf[12:16]) == procStatusZombie
+		if err := procInfo(procInfoCallPIDInfo, uint32(pid), procPIDShortBSDInfo, 1, buf[:]); err != nil {
+			if errors.Is(err, syscall.ESRCH) {
+				continue // exited between the identity and status reads
+			}
+			return nil, fmt.Errorf("read process status %d: %w", pid, err)
 		}
+		state.zombie = binary.LittleEndian.Uint32(buf[12:16]) == procStatusZombie
 		states = append(states, state)
 	}
 	return states, nil

@@ -13,34 +13,30 @@ type processIdentity struct {
 	parentUniqueID uint64
 }
 
-// descendantIdentities returns the processes reachable from root through
-// recorded parent identities, excluding root itself. The walk repeats until it
-// finds nothing new, so it does not depend on the order of the scan or on the
-// intermediate processes still being alive when the scan runs.
-func descendantIdentities(root uint64, all []processIdentity) []processIdentity {
-	if root == 0 {
-		return nil
-	}
-	known := map[uint64]struct{}{root: {}}
-	var descendants []processIdentity
+// trackDescendants adds every process reachable from tracked through recorded
+// parent identities, and returns the ones it added. tracked carries identities
+// forward between calls, so a child stays attributable after the parent that
+// recorded it has been reaped. A zero identity is unreadable and never links.
+func trackDescendants(tracked map[uint64]struct{}, all []processIdentity) []processIdentity {
+	var added []processIdentity
 	for {
-		added := false
+		grew := false
 		for _, id := range all {
 			if id.uniqueID == 0 {
 				continue
 			}
-			if _, ok := known[id.uniqueID]; ok {
+			if _, ok := tracked[id.uniqueID]; ok {
 				continue
 			}
-			if _, ok := known[id.parentUniqueID]; !ok {
+			if _, ok := tracked[id.parentUniqueID]; !ok {
 				continue
 			}
-			known[id.uniqueID] = struct{}{}
-			descendants = append(descendants, id)
-			added = true
+			tracked[id.uniqueID] = struct{}{}
+			added = append(added, id)
+			grew = true
 		}
-		if !added {
-			return descendants
+		if !grew {
+			return added
 		}
 	}
 }
