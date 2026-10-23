@@ -40,6 +40,9 @@ go test -count=1 ./e2e/... -run '^TestM1TUI(Shell|Recovery|Cards|ConversationIns
 node scripts/foundation.mjs
 ```
 
+Core-backed work in these commands needs a Linux host; on macOS the Core
+admission check refuses the state root before any TUI code runs.
+
 | Parent acceptance | Evidence |
 | --- | --- |
 | Start, connect, refuse, recover and quit through a PTY | `TestM1TUIShell` and `TestM1TUIRecovery`, driven by `e2e/m1/tui-shell.json` and `e2e/m1/tui-recovery.json`. |
