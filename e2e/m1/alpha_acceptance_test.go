@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -31,6 +32,21 @@ func alphaConversationScreen(t *testing.T, h *harness, terminal *terminal, langu
 		t.Fatalf("alpha conversation did not return: %v; cells=%s", err, screenText(snapshot))
 	}
 	return snapshot
+}
+
+// T-16 uses minutes, then hours/minutes, then days/hours. The wait for a
+// person or model is unbounded by those display units; do not require "0m".
+var alphaWorkTitle = regexp.MustCompile(`^.+ +(?:[0-9]m|[1-5][0-9]m|(?:[1-9]|1[0-9]|2[0-3])h [0-5][0-9]m|[1-9][0-9]*d (?:[01][0-9]|2[0-3])h)$`)
+
+func alphaHasWorkCard(panel string) bool {
+	rows := strings.Split(panel, "\n")
+	for i := 0; i+1 < len(rows); i++ {
+		if alphaWorkTitle.MatchString(strings.TrimSpace(rows[i])) &&
+			strings.HasPrefix(rows[i+1], "  ") && strings.TrimSpace(rows[i+1]) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func alphaScreen(t *testing.T, h *harness, terminal *terminal, stage string, ready func(string) bool, forbidden string) tuiterm.Snapshot {

@@ -253,8 +253,8 @@ func TestAlphaOwnerCodingAndQuestion(t *testing.T) {
 		}
 		right.WriteByte('\n')
 	}
-	if !strings.Contains(right.String(), "0m") {
-		t.Error("missing right-side work card with elapsed time at 120x34")
+	if !alphaHasWorkCard(right.String()) {
+		t.Error("missing right-side work card with name, elapsed time and activity at 120x34")
 	}
 
 	// A result is accepted only after a persona turn follows an actual worker
