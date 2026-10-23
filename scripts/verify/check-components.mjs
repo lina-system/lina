@@ -118,7 +118,13 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
       }
       const testArgs = ['test', '-count=1', '-timeout=6m', '-mod=readonly'];
       if (json) testArgs.push('-json');
+      // GOMAXPROCS bounds one test binary's goroutines. Running GOMAXPROCS
+      // packages at once would square that demand, starving progressing
+      // packages into the six-minute watchdog on a loaded host. One package
+      // at a time keeps the shard inside its CPU share; every selected package
+      // and test still runs once.
       if (phase === 'e2e') testArgs.push('-parallel=4', '-run', testPattern);
+      else testArgs.push('-p=1');
       const acceptance = phase === 'all' && module === '.' && packages.includes('./e2e/...');
       const ordinary = acceptance ? packages.filter(name => name !== './e2e/...') : packages;
       if (phase !== 'build' && ordinary.length && invoke('go', [...testArgs, ...ordinary], directory).status !== 0) return { status: 1, output };
