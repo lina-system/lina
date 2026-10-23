@@ -47,6 +47,12 @@ type Unit struct {
 }
 
 func Compute(units []Unit) []Entry {
+	parents := map[string]bool{}
+	for _, u := range units {
+		if u.Parent != "" {
+			parents[u.Parent] = true
+		}
+	}
 	type row struct {
 		unit    Unit
 		line    Line
@@ -55,6 +61,11 @@ func Compute(units []Unit) []Entry {
 	rows := make(map[string]*row, len(units))
 	for _, u := range units {
 		line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
+		// An executable goal with its own graph and no separate project rows
+		// is one piece of work. Grouping goals keep their children as the cards.
+		if u.Kind == "goal" && !parents[u.ID] && len(u.Stages) > 0 {
+			line.Kind = "project"
+		}
 		if u.JustFinished != "" {
 			line.JustFinished = u.JustFinished
 		}

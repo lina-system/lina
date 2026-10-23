@@ -14,7 +14,7 @@ import (
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 )
 
-type panelFrame struct {
+type panelObservedFrame struct {
 	at     time.Time
 	screen tuiterm.Snapshot
 }
@@ -24,20 +24,20 @@ type panelFrame struct {
 type panelFrameProbe struct {
 	mu    sync.Mutex
 	match func(tuiterm.Snapshot) bool
-	found chan panelFrame
+	found chan panelObservedFrame
 }
 
-func (p *panelFrameProbe) arm(match func(tuiterm.Snapshot) bool) <-chan panelFrame {
+func (p *panelFrameProbe) arm(match func(tuiterm.Snapshot) bool) <-chan panelObservedFrame {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.match, p.found = match, make(chan panelFrame, 1)
+	p.match, p.found = match, make(chan panelObservedFrame, 1)
 	return p.found
 }
 func (p *panelFrameProbe) observe(at time.Time, s tuiterm.Snapshot) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.match != nil && p.match(s) {
-		p.found <- panelFrame{at, s}
+		p.found <- panelObservedFrame{at, s}
 		p.match = nil
 	}
 }
@@ -83,7 +83,7 @@ func TestWorkPanelFirstFrameMeasurement(t *testing.T) {
 type panelLatencySample struct {
 	event     string
 	committed time.Time
-	frame     panelFrame
+	frame     panelObservedFrame
 }
 
 type panelLatencyBudget struct {
@@ -129,7 +129,7 @@ func TestWorkPanelLatencyBudget(t *testing.T) {
 	fresh := func() []panelLatencySample {
 		samples := make([]panelLatencySample, budget.Count)
 		for i := range samples {
-			samples[i] = panelLatencySample{fmt.Sprint(i), base, panelFrame{at: base.Add(100 * time.Millisecond)}}
+			samples[i] = panelLatencySample{fmt.Sprint(i), base, panelObservedFrame{at: base.Add(100 * time.Millisecond)}}
 		}
 		return samples
 	}

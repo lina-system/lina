@@ -168,3 +168,10 @@ Core resolves the quote through memory management before and after restart;
 canon inspection verifies that item/revision evidence contains no quote text.
 The management renderer's synthetic [capture](../../evidence/generated-ui/memory-quotes.png)
 shows a quote and an erased-source status.
+
+- `TestM3WorkPanelEventLatency` runs 50 live corpus graphs through Core and
+  measures 50 actual step landings in eight TUI PTYs. Each language, glyph and
+  width combination records every commit and first-frame time and must meet
+  T-16’s p95 500 ms / maximum 1 s bounds. The run also checks worker result
+  files, card Now and retention of the draft, selection and reading position.
+  See [the measurement notes](../m3/work-panel-latency.md).

@@ -1,27 +1,34 @@
 # Work panel event latency
 
-T-16 E8 requires 50 actual step transitions with 50 running work cards through
-Core, its progress topic and the real TUI in a PTY. The budget is fixed in
-`work-panel-latency.json`. The runtime driver remains pending the step progress
-projection (#765) and fixed graph evaluation harness (#768).
+`TestM3WorkPanelEventLatency` runs Core boot with a fixture manager and stub
+background workers, the canonical store and normal progress publisher, and
+real TUI subprocesses in PTYs. It admits 50 graphs and names from
+`work-panel.json`. All 50 remain in progress throughout measurement.
 
-The measurement support is ready for that driver:
+The fan-out graph first releases its root and starts its 82 parallel steps.
+Then 50 of those steps produce files and return successful observations to
+Core, one at a time. Every landing changes the card’s Now and remaining parallel
+count. The other 49 graphs remain live. The fixture never writes progress
+payloads or mutates Core’s database from a second writer.
 
-- `panelFrameProbe` arms before a transition and retains the first complete
-  PTY renderer write containing its expected card change, with parsed cells and
-  the observation time. Split reads cannot satisfy it; coalesced frames cannot
-  overwrite the first match.
-- `panelLatencySummary` requires all 50 distinct event samples and both times,
-  refuses negative intervals, and enforces nearest-rank p95 ≤500 ms and max ≤1 s.
-  Boundary and deliberately invalid measurements exercise the gate.
+Eight PTYs observe the same 50 commits: English/Korean, Unicode/ASCII, and
+120x34 sidebar/100x34 overlay. `panelFrameProbe` arms before each worker result
+and retains the first complete renderer write that changes the selected card.
+Split reads cannot satisfy it; coalesced frames cannot overwrite the first
+match. The frame must agree with Core’s new Now.
 
-Run the measurement self-tests with:
+Each sample logs the event and step identities, Core’s durable `recorded_at`,
+first-frame timestamp, latency, write number and parsed screen. The timestamp
+is written within Core’s transaction, so storage time is included. Every
+combination independently requires 50 distinct valid samples, nearest-rank
+p95 ≤500 ms and maximum ≤1 s. The shared T-16 E8/E9 evaluators also consume the
+sidebar recordings. The draft, selected card and scrolled conversation remain
+stable; closing each overlay must restore its draft and reading position.
 
 ```sh
-go test -count=1 -run 'TestWorkPanel(FirstFrameMeasurement|LatencyBudget)$' ./e2e/m1
+go test -count=1 -v -run WorkPanel ./e2e/m1/...
 ```
 
-These self-tests do not establish the runtime latency bound. Completing E8
-requires feeding actual Core step commits and their first matching frames from
-the fixed corpus into the gate, logging every sample and frame, and retaining
-the draft, focus and conversation reading position during the run.
+The focused measurement self-tests cover split/coalesced frames, absent or
+duplicate samples, invalid timestamps and exact/over-budget p95/max boundaries.
+No failed latency sample is retried or excluded.

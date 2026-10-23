@@ -617,7 +617,7 @@ overlay in Korean and English with Unicode and ASCII glyphs.
 - The diagram is schematic: it fixes order and content, not glyphs or widths.
 - The first row is the name and, right-aligned, the elapsed time since its work started, from Core's start time and the clock offset of T-06 rule 4: `0m` to `59m`, then `1h 05m`, then `2d 04h`. A done card stops at its finish. The elapsed time is never cut; the name is truncated at a grapheme boundary with an ellipsis.
 - The second row, indented two cells, is Core's Now: what the 일 is doing right now, in a few words ([work-and-delegation.md](work-and-delegation.md#progress-line)). It is truncated the same way and never wraps.
-- A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too.
+- A 목표 that groups separate 일 has no card of its own; each of its 일 has one. An executable goal that owns its stage list without separate 일 rows is one work card, including a goal that is a single 할 일. A background run outside any 일 is a card too.
 - Cards keep Core's order: waiting on the person, running, waiting on something outside, done. Done cards fold into one row. When the cards do not fit, the last row (`…`, or `...` in ASCII) gives the number of hidden cards and, when any of them waits on the person, how many. Cards that wait on the person are hidden last. The numbers always equal the hidden cards.
 - The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time. Its timer uses the next elapsed-minute boundary and the existing Core clock offset. An absent start stays unknown. Snapshot replacement and live updates share the same typed card projection; neither changes conversation focus or the reading anchor.
 
@@ -721,9 +721,14 @@ Core's own card order, card fields and projected stage list as its oracle — th
 stage list must match the corpus graph in steps, depth and parallel groups, so a
 lost blocker fails the run — and records every settled 120x34 frame in both
 languages and glyph modes. A check whose input the build does not publish yet is
-reported as missing and never as a pass: E4 and E8 to E9 need the injected step
-transitions of #771, E6 and E7 the opened 일 view of #770, and E11 to E14 the
-scheduling passes of #772 and #773. The self-test
+reported as missing and never as a pass: E6 and E7 need the opened 일 view of
+#770, and E11 to E14 the scheduling passes of #772 and #773. E4 and E8 to E9
+also run in `TestM3WorkPanelEventLatency`: 50 live corpus graphs remain in
+progress while 50 of the fan-out graph’s 82 parallel steps land. Each stub
+worker writes a result before Core accepts its observation. Eight PTYs observe
+the same commits in both languages, glyph modes and widths, retaining every
+first changed frame and both timestamps. Each combination must independently
+meet the latency bound. The self-test
 builds a well-formed recording, changes one thing per check, and requires that
 check to fail and the others to stay green except where they read the same
 evidence.

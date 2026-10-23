@@ -65,6 +65,13 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 			return nil, err
 		}
 		u := Unit{ID: g.ID, Kind: "goal", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages)}
+		u.State = "waiting"
+		if len(stepsInState(stages, StepWorking)) > 0 || g.State == goal.GoalChecking {
+			u.State = "in_progress"
+		}
+		if u.Waiting > 0 {
+			u.State = "needs_input"
+		}
 		if u.Name == "" {
 			u.Name = design.Text(language, "progress.untitled")
 		}
