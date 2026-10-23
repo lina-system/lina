@@ -182,7 +182,7 @@ func (r *conversationRuntime) receiveHandoff(ctx context.Context, receipt exchan
 			return err
 		}
 		defer activity.Release()
-		_, err = turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: record.ID, InboxID: inboxID, InputEvent: record.ID + "-request", ReceivedAt: time.Now(), Prepare: func(context.Context) error { return nil }, Loop: loop.Config{Request: req, Tools: bindings, Inputs: inputs, Stream: func(ctx context.Context, q provider.Request) (provider.Stream, error) {
+		_, err = turn.New(r.db).Run(ctx, turn.Options{ID: turnID, Conversation: record.ID, InboxID: inboxID, InputEvent: record.ID + "-request", ReceivedAt: time.Now(), Prepare: func(context.Context) error { return nil }, Loop: loop.Config{RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime, Request: req, Tools: bindings, Inputs: inputs, Stream: func(ctx context.Context, q provider.Request) (provider.Stream, error) {
 			if err := r.exchangeAgent(ctx, record.To); err != nil {
 				return nil, err
 			}
