@@ -929,7 +929,7 @@ Core exposes `worker_start`, `worker_input`, `worker_interrupt` and
 receipts. These operate installed Codex sessions in an explicitly supplied work
 directory. They do not implement the scheduler or the `dispatch_work` definition
 flow. Each session belongs to its originating person, agent and conversation;
-control requires the current turn, process generation and binding epoch.
+For a delegated code goal, the durable coding assignment keeps the original requester separate from the manager that owns the task. Both bound conversations can inspect its worker, read its files and control it; unrelated conversations cannot. Owner follow-ups steer an active dispatched turn without starting another, and cancellation stays with its dispatcher rather than the scheduled-card path. Core checks the assignment’s person, owner and manager conversation before recovering the requester, including after restart. Control requires the current turn, process generation and binding epoch.
 User cancellation additionally quotes the current user input. Starting a session
 is recorded as a launch receipt, never as verified delivery.
 
