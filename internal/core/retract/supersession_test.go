@@ -18,9 +18,11 @@ import (
 )
 
 func TestSupersessionRemovalAcrossMemoryWriters(t *testing.T) {
+	t.Parallel()
 	for _, writer := range []string{"remember", "insert", "extraction", "promotion"} {
 		for _, permanent := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/permanent-%t", writer, permanent), func(t *testing.T) {
+				t.Parallel()
 				db, removals, flow, root, close := memoryFixture(t)
 				var ids []string
 				snapshot := filepath.Join(t.TempDir(), "canon.sqlite")
@@ -131,8 +133,10 @@ func TestSupersessionRemovalAcrossMemoryWriters(t *testing.T) {
 }
 
 func TestSupersessionRecoveryAndOverlappingTargets(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"active", "trashed", "erased"} {
 		t.Run(state, func(t *testing.T) {
+			t.Parallel()
 			db, s, flow, _, _ := memoryFixture(t)
 			first := seedMemory(t, db, flow, "first", "first", "synthetic first preference")
 			seedMemory(t, db, flow, "second", "second", "synthetic second evidence")
@@ -180,8 +184,10 @@ func TestSupersessionRecoveryAndOverlappingTargets(t *testing.T) {
 }
 
 func TestSupersessionExpiryPreservesRecoveredPredecessorDeadline(t *testing.T) {
+	t.Parallel()
 	for _, retrash := range []bool{false, true} {
 		t.Run(fmt.Sprintf("retrashed-%t", retrash), func(t *testing.T) {
+			t.Parallel()
 			db, original, flow, root, _ := memoryFixture(t)
 			first := seedMemory(t, db, flow, "first", "first", "synthetic first preference")
 			seedMemory(t, db, flow, "second", "second", "synthetic second evidence")

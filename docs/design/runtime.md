@@ -42,6 +42,11 @@ External components (document parsers, OCR, the local transcription component, t
 LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Cursor, Gemini CLI, Grok or Antigravity, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
 
 - LINA uses the installed tool found on `PATH` or at a path the user configured, and records the version it observed.
+- Gemini CLI is probed with `gemini --acp`; its version comes from
+  `initialize.agentInfo.version`, without creating a session. A successful
+  handshake with no version is recorded as unknown and unverified. A failed
+  handshake makes the tool unavailable. This worker uses its own login,
+  separate from the Gemini API-key provider.
 - Grok's installed version is probed with `grok --version`. The worker's separate
   ACP handshake observation never replaces that CLI version or retains host
   details from its metadata ([ACP adapter](work-and-delegation.md#acp-adapter)).

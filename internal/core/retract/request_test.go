@@ -121,8 +121,10 @@ func snapshotCanon(t *testing.T, source, target string) {
 }
 
 func TestNextRequestAndOlderGenerationHaveZeroExposure(t *testing.T) {
+	t.Parallel()
 	for _, permanent := range []bool{false, true} {
 		t.Run(map[bool]string{false: "trash", true: "tombstone"}[permanent], func(t *testing.T) {
+			t.Parallel()
 			db, s, flow, root, close := memoryFixture(t)
 			receipt := seedMemory(t, db, flow, "source-1", "conversation-1", forgotten)
 			epoch, err := s.Epoch(t.Context())

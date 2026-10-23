@@ -1,8 +1,7 @@
 {
   "check": "V1 ChatGPT sign-in and Responses round trip",
-  "status": "pending_owner_signin",
-  "live_account_verified": null,
-  "reason": "The owner must be present to complete LINA sign-in with their own ChatGPT account. Recorded-wire tests are not live request-surface acceptance.",
+  "status": "request_surface_observed_sign_in_pending",
+  "reason": "The Responses request surface was observed live on 2026-10-23 through the person's own ChatGPT plan account on a Responses-compatible gateway, not through LINA's sign-in route. The sign-in flow, LINA's own route and a remote client remain unobserved and need the owner present.",
   "documentation": [
     "https://developers.openai.com/siwc/token-sharing-open-source/sign-in/",
     "https://developers.openai.com/siwc/token-sharing-open-source/token-reference/",
@@ -10,6 +9,21 @@
     "https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations/",
     "https://developers.openai.com/siwc/website/"
   ],
+  "observations": [
+    {
+      "kind": "request_surface",
+      "revision": "7e88cf2b18c1320768b94406359420236fa83c21",
+      "observed_at": "2026-10-23T21:37:06Z",
+      "route": "the person's Responses-compatible model gateway for their ChatGPT plan; not LINA's sign-in route",
+      "lina_sign_in_route": false,
+      "model": "gpt-6-astra",
+      "mode": "request-surface",
+      "command": "go test -c -o $dir/chatgpt-v1 ./internal/core/accounts && $dir/chatgpt-v1 -test.run '^TestV1OwnerSignIn$' -v1-owner-signin -v1-mode=request-surface -v1-base-url=$LINA_RESPONSES_BASE_URL"
+    }
+  ],
+  "request_surface_verified": true,
+  "sign_in_flow_verified": false,
+  "remote_client_verified": false,
   "sign_in": {
     "local_client": null,
     "remote_client": null,
@@ -21,27 +35,47 @@
     "refresh_rotation": null
   },
   "responses": {
-    "completed_turns": null,
-    "store_false_stream_true": null,
-    "encrypted_reasoning_round_trip": null,
-    "function_tool": null,
-    "apply_patch_function": null,
-    "parallel_tool_calls": null
+    "completed_turns": 4,
+    "store_false_stream_true": true,
+    "encrypted_reasoning_round_trip": true,
+    "function_tool": true,
+    "apply_patch_function": true,
+    "parallel_tool_calls": true
   },
   "undocumented_fields": {
     "include": {
-      "accepted": null,
-      "observation": null
+      "accepted": true,
+      "observation": "Accepted on every turn request; encrypted reasoning items came back and were carried into the next request unchanged."
     },
     "parallel_tool_calls": {
-      "accepted": null,
-      "observation": null
+      "accepted": true,
+      "observation": "Accepted with true; two function calls arrived in one response."
     },
     "service_tier": {
-      "accepted": null,
-      "observation": null
+      "accepted": false,
+      "observation": "Rejected as a request the surface does not accept; the surface's own text is not recorded."
+    },
+    "prompt_cache_key": {
+      "accepted": true,
+      "observation": "Accepted with a 64-hex probe value; acceptance was observed, a cache benefit was not measured."
     }
   },
-  "accepted_request_fields": null,
-  "accepted_tool_declarations": null
+  "accepted_request_fields": [
+    "model",
+    "input",
+    "store",
+    "stream",
+    "include",
+    "reasoning",
+    "parallel_tool_calls",
+    "prompt_cache_key"
+  ],
+  "accepted_tool_declarations": {
+    "form": "additional_tools developer item",
+    "tools": [
+      "probe_echo",
+      "apply_patch"
+    ],
+    "accepted": true
+  }
 }

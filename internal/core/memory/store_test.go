@@ -55,6 +55,7 @@ func commit(t *testing.T, db *canon.Store, in Write) Item {
 	return item
 }
 func TestRecallFiltersBeforeLimitAndHidesForeignEvidence(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	store := New(db).WithQuotes(func(_ context.Context, person, agent string, ref canon.Citation) (canon.CitationValue, error) {
 		if person != "person" || !strings.HasPrefix(ref.TargetID, agent+"/") {
@@ -103,6 +104,7 @@ func TestRecallFiltersBeforeLimitAndHidesForeignEvidence(t *testing.T) {
 	}
 }
 func TestPersonSubjectChecksCanonicalSpeakerAndOwner(t *testing.T) {
+	t.Parallel()
 	for _, speaker := range []guard.SpeakerKind{guard.Agent, guard.ExternalParticipant, guard.Automation, guard.Forwarded, guard.System, guard.Tool, ""} {
 		t.Run(string(speaker), func(t *testing.T) {
 			db := database(t)
@@ -135,6 +137,7 @@ func TestPersonSubjectChecksCanonicalSpeakerAndOwner(t *testing.T) {
 	}
 }
 func TestMemoryValiditySupersessionAndProfile(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	s := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}
@@ -186,6 +189,7 @@ func TestMemoryValiditySupersessionAndProfile(t *testing.T) {
 	}
 }
 func TestWriteChecksAndDefaultLayers(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	for _, kind := range []Kind{SharedHistory, Relationship, EmotionObservation} {
 		in := proposal("A", string(kind))
@@ -216,6 +220,7 @@ func TestWriteChecksAndDefaultLayers(t *testing.T) {
 }
 
 func TestProfileUsesLatestRevisionAndHasNoPersistentCopy(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	s := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}
@@ -234,6 +239,7 @@ func TestProfileUsesLatestRevisionAndHasNoPersistentCopy(t *testing.T) {
 	}
 }
 func TestWriteDoesNotRetainSecretShapedContent(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	in := proposal("A", "api_key=synthetic-secret-value")
 	err := db.Write(t.Context(), func(tx *canon.Tx) error { _, err := Insert(t.Context(), tx, in, personOrigin); return err })
@@ -243,6 +249,7 @@ func TestWriteDoesNotRetainSecretShapedContent(t *testing.T) {
 }
 
 func TestRecallExactIdentityPrecedesLimitAndKeepsScope(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	first := proposal("A", "first private statement")
 	first.Item.Holder = "A"
@@ -262,6 +269,7 @@ func TestRecallExactIdentityPrecedesLimitAndKeepsScope(t *testing.T) {
 }
 
 func TestExchangeCommonOnlyFiltersBeforeLimit(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	common := commit(t, db, proposal("A", "Shared naming convention"))
 	private := proposal("A", "Private conversation detail")

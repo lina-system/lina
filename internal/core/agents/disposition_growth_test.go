@@ -10,6 +10,7 @@ import (
 )
 
 func TestDispositionChangesOnlyThroughMeasuredGrowthAndUndo(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := create(t, s, "")
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -81,6 +82,7 @@ func TestDispositionChangesOnlyThroughMeasuredGrowthAndUndo(t *testing.T) {
 }
 
 func TestGrowthWithoutImprovementStaysOff(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := create(t, s, "")
 	proof, err := s.MeasureDispositionGrowth(t.Context(), a.ID, a.Revision, agents.DispositionCandidate{Snapshot: "fixture", Disposition: agents.Affect{Valence: 0.1}}, agents.GrowthEvaluation{Metric: "constant fixture", SetID: "fixture", Cases: []agents.GrowthCase{{ID: "one"}}, Score: func(agents.DispositionCandidate, agents.GrowthCase) (float64, error) { return 1, nil }})

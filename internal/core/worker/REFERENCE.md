@@ -53,4 +53,6 @@ session record. Ended sessions stay readable in the registry, and the durable
 record remains the work ledger's thread handle.
 Ending is idempotent; a failed join is retried by the next event or sweep.
 The registry drains the adopted adapter's events, so an idle process cannot
-block on a full channel.
+block on a full channel. That drain ends the adopted entry, not whatever
+session later reuses its handle. Bulk ending forwards the caller's context, so
+a canceled join stays retryable.

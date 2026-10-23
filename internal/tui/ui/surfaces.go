@@ -23,6 +23,8 @@ type surfacePager struct {
 	editing  int
 	edit     string
 	busy     bool
+	inputID  string
+	pending  string
 }
 
 func (m *shellModel) openSurface(id, revision string, controls *protocol.SurfaceControls) {
@@ -88,13 +90,103 @@ func (m *shellModel) surfaceKey(msg tea.KeyMsg, name string) (bool, tea.Cmd) {
 		return true, nil
 	}
 	if name == "ctrl+e" && len(fields) > 0 {
+		p.pending = ""
 		p.editing = 0
 		p.edit = ""
 		return true, nil
 	}
-	for _, field := range fields {
+	if name == "esc" {
+		p.pending = ""
+		return false, nil
+	}
+	if len(name) == 1 && name[0] >= '0' && name[0] <= '9' {
+		if p.pending != "" {
+			if p.hasChoicePrefix(p.pending + name) {
+				p.pending += name
+				p.settleChoice()
+				return true, nil
+			}
+			p.commitChoice()
+		}
+		if !p.hasChoicePrefix(name) {
+			return false, nil
+		}
+		p.pending = name
+		p.settleChoice()
+		return true, nil
+	}
+	p.commitChoice()
+	for _, action := range p.controls.Actions {
+		if action.Key != name {
+			continue
+		}
+		if p.busy {
+			return true, nil
+		}
+		values := maps.Clone(action.Values)
+		for key, field := range action.Bindings {
+			if value, ok := p.values[field]; ok {
+				values[key] = value
+			}
+		}
+		request := protocol.SurfaceAction{ResultID: p.id, Revision: p.revision, Action: action.Name, Values: values, InputID: rand.Text()}
+		p.busy = true
+		p.inputID = request.InputID
+		generation := m.generation
+		return true, func() tea.Msg { return shellManagement{Generation: generation, Request: request} }
+	}
+	return false, nil
+}
+func (p *surfacePager) hasChoicePrefix(prefix string) bool {
+	for _, field := range p.controls.Fields {
 		for _, choice := range field.Choices {
-			if choice.Key != name {
+			if strings.HasPrefix(choice.Key, prefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// settleChoice commits a pending number once no longer key can extend it, so
+// the first digit of "12" does not select "1".
+func (p *surfacePager) settleChoice() {
+	if p.pending == "" || !p.hasChoiceKey(p.pending) {
+		return
+	}
+	for _, field := range p.controls.Fields {
+		for _, choice := range field.Choices {
+			if len(choice.Key) > len(p.pending) && strings.HasPrefix(choice.Key, p.pending) {
+				return
+			}
+		}
+	}
+	p.commitChoice()
+}
+
+func (p *surfacePager) hasChoiceKey(key string) bool {
+	for _, field := range p.controls.Fields {
+		for _, choice := range field.Choices {
+			if choice.Key == key {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p *surfacePager) commitChoice() {
+	key := p.pending
+	p.pending = ""
+	if key != "" {
+		p.choose(key)
+	}
+}
+
+func (p *surfacePager) choose(key string) bool {
+	for _, field := range p.controls.Fields {
+		for _, choice := range field.Choices {
+			if choice.Key != key {
 				continue
 			}
 			picks := []string{choice.Value}
@@ -117,29 +209,12 @@ func (m *shellModel) surfaceKey(msg tea.KeyMsg, name string) (bool, tea.Cmd) {
 				}
 			}
 			p.values[field.ID], _ = json.Marshal(picks)
-			return true, nil
+			return true
 		}
 	}
-	for _, action := range p.controls.Actions {
-		if action.Key != name {
-			continue
-		}
-		if p.busy {
-			return true, nil
-		}
-		values := maps.Clone(action.Values)
-		for key, field := range action.Bindings {
-			if value, ok := p.values[field]; ok {
-				values[key] = value
-			}
-		}
-		request := protocol.SurfaceAction{ResultID: p.id, Revision: p.revision, Action: action.Name, Values: values, InputID: rand.Text()}
-		p.busy = true
-		generation := m.generation
-		return true, func() tea.Msg { return shellManagement{Generation: generation, Request: request} }
-	}
-	return false, nil
+	return false
 }
+
 func (p *surfacePager) status(language design.Language) string {
 	if p == nil {
 		return ""
