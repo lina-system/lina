@@ -7,6 +7,7 @@ import "strings"
 // Model context and restored display intentionally retain different notice
 // sets. Changing membership is separate from keeping their SQL in sync.
 var modelContextScaffolds = []string{
+	"provider_item",
 	"interruption",
 	"failure",
 	"persona_change",
