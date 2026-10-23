@@ -177,7 +177,8 @@ func alphaSpilledCompletion(t *testing.T, db *canon.Store, root, conversation st
 			return err
 		}
 		defer rows.Close()
-		for rows.Next() {
+		// ORDER BY rowid DESC, so the first row is the latest completion.
+		if rows.Next() {
 			var id, body, material string
 			var revision int64
 			if err := rows.Scan(&id, &body, &material, &revision); err != nil {

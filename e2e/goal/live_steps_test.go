@@ -342,7 +342,7 @@ func TestLiveWorkerSessionsFollowTheStepFrontier(t *testing.T) {
 		MainHost: func(context.Context) (work.Node, error) {
 			return work.Node{ID: "live-main", Connected: true, ObservedAt: time.Now().Unix(), CPUCores: 8, CPULimit: 8, AvailableMemoryMB: 16000, MemoryLimitMB: 16000, AvailableDiskMB: 16000, DiskLimitMB: 16000, Workers: map[string]bool{"stub": true}}, nil
 		},
-		Ready: func(ctx context.Context, e *work.Engine, person, agent string) error {
+		Ready: func(ctx context.Context, e *work.Engine, person, _ string) error {
 			agent, err := fixtureWorkOwner(ctx, root)
 			if err != nil {
 				return err
