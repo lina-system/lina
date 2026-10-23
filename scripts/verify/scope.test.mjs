@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { git as runGit } from '../git.mjs';
-import { componentRegistry, kind, scopeFor } from './scope.mjs';
+import { componentRegistry, kind, registryFor, scopeFor } from './scope.mjs';
 import { evaluateGate } from './gate.mjs';
 
 test('takeover tool and its fixtures have Go verification without a release binary', t => {
@@ -22,48 +22,37 @@ test('takeover tool and its fixtures have Go verification without a release bina
   assert.equal(tool.binary, undefined);
 });
 
-test('accounts are registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/accounts'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/accounts/signin.go'), 'package accounts\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/accounts/...'));
+test('Core families select lina checks without per-package registration', async t => {
+  for (const directory of [
+    'accounts', 'waiting', 'runs', 'reply', 'exec', 'ledger', 'modelpath',
+    'budget', 'guard', 'secrets', 'assets', 'memory', 'inbox', 'lane',
+    'channels', 'gateway', 'canon', 'eventstore', 'manifest',
+    'newfamily', 'newfamily/nested',
+  ]) {
+    await t.test(directory, t => {
+      const r = repository(t);
+      const base = r.git('rev-parse', 'HEAD');
+      const path = `internal/core/${directory}/store.go`;
+      mkdirSync(join(r.cwd, path, '..'), { recursive: true });
+      writeFileSync(join(r.cwd, path), 'package fixture\n');
+      // No Go workspace is needed to check registration and package patterns.
+      const scope = r.classify(r.commit(), { base, full: true });
+      assert.deepEqual(scope.unmapped, []);
+      assert.deepEqual(scope.selectedComponents, ['lina']);
+      assert.equal(kind(path), 'components');
+      const lina = registryFor(r.cwd).find(component => component.name === 'lina');
+      assert.deepEqual(lina.packages.filter(pattern => pattern.startsWith('./internal/core/')), ['./internal/core/...']);
+    });
+  }
+  for (const path of ['internal/core-other/store.go', 'internal/cores/store.go']) {
+    assert.equal(kind(path), 'unmapped', path);
+  }
 });
 
-test('waiting and running lists are covered by the lina Go checks', t => {
+test('fixtures without Core omit its Go package pattern', t => {
   const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  for (const directory of ['waiting', 'runs']) {
-    mkdirSync(join(r.cwd, `internal/core/${directory}`), { recursive: true });
-    writeFileSync(join(r.cwd, `internal/core/${directory}/list.go`), `package ${directory}\n`);
-  }
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  for (const directory of ['waiting', 'runs']) {
-    assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes(`./internal/core/${directory}/...`));
-  }
-});
-
-test('independent Core package registrations merge without conflicts', t => {
-  const r = repository(t);
-  const source = readFileSync(new URL('./scope.mjs', import.meta.url), 'utf8');
-  const addPackage = (text, name, before) => {
-    const entry = new RegExp(`(\\s*)'internal/core/${before}/',`);
-    assert.match(text, entry);
-    return text.replace(entry, `$1'internal/core/${name}/',$&`);
-  };
-  const ours = addPackage(source, 'attachments', 'authority');
-  const theirs = addPackage(source, 'scheduler', 'secrets');
-  for (const [name, text] of Object.entries({ base: source, ours, theirs })) {
-    writeFileSync(join(r.cwd, `${name}.mjs`), text);
-  }
-  const merged = runGit(r.cwd, ['merge-file', '-p', 'ours.mjs', 'base.mjs', 'theirs.mjs']);
-  assert.equal(merged.status, 0, merged.stdout || merged.stderr);
-  assert.equal(merged.stdout, addPackage(ours, 'scheduler', 'secrets'));
+  const lina = registryFor(r.cwd).find(component => component.name === 'lina');
+  assert.ok(!lina.packages.some(pattern => pattern.startsWith('./internal/core/')));
 });
 
 test('Korean search corpus changes select the consuming Core tests', t => {
@@ -90,49 +79,6 @@ test('Korean search corpus changes select the consuming Core tests', t => {
   assert.deepEqual(scope.selectedComponents, ['lina']);
   assert.equal(scope.automation, false);
   assert.equal(scope.dependencies, false);
-});
-
-test('reply filtering is registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/reply'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/reply/filter.go'), 'package reply\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/reply/...'));
-});
-
-test('tool executor is registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/exec'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/exec/exec.go'), 'package exec\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/exec/...'));
-});
-test('ledger is registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/ledger'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/ledger/store.go'), 'package ledger\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/ledger/...'));
-});
-
-test('model path configuration is registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/modelpath'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/modelpath/config.go'), 'package modelpath\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/modelpath/...'));
 });
 
 test('Moirai source changes select its binary and Core acceptance checks', t => {
@@ -201,17 +147,6 @@ for (const path of [
   });
 }
 
-test('background runs are registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/runs'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/runs/service.go'), 'package runs\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/runs/...'));
-});
-
 test('Hermes readers and synthetic fixtures select their consumer checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -224,117 +159,6 @@ test('Hermes readers and synthetic fixtures select their consumer checks', t => 
   assert.ok(scope.selectedComponents.includes('lina'));
   assert.ok(componentRegistry.find(c => c.name === 'lina').packages.includes('./internal/addons/importer/hermes/...'));
   assert.equal(kind('testdata/hermes/README.md'), 'components');
-});
-
-test('budget is registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/budget'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/budget/budget.go'), 'package budget\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/budget/...'));
-});
-
-test('guard admission is registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/guard'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/guard/admit.go'), 'package guard\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/guard/...'));
-});
-
-test('secret store is registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/secrets'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/secrets/store.go'), 'package secrets\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/secrets/...'));
-});
-
-test('asset store is registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/assets'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/assets/store.go'), 'package assets\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/assets/...'));
-
-});
-
-test('memory and its executor are registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  for (const directory of ['memory', 'exec']) {
-    mkdirSync(join(r.cwd, `internal/core/${directory}`), { recursive: true });
-    writeFileSync(join(r.cwd, `internal/core/${directory}/store.go`), `package ${directory}\n`);
-  }
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  for (const directory of ['memory', 'exec']) {
-    assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes(`./internal/core/${directory}/...`));
-  }
-});
-
-test('inbox, lanes and channel gateway are registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  for (const directory of ['inbox', 'lane', 'channels', 'gateway']) {
-    mkdirSync(join(r.cwd, `internal/core/${directory}`), { recursive: true });
-    writeFileSync(join(r.cwd, `internal/core/${directory}/store.go`), `package ${directory}\n`);
-  }
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  for (const directory of ['inbox', 'lane', 'channels', 'gateway']) {
-    assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes(`./internal/core/${directory}/...`));
-  }
-});
-
-test('canon binding is registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/canon'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/canon/sqlite.go'), 'package canon\n');
-  const scope = r.classify(r.commit(), { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/canon/...'));
-});
-
-test('diagnosis store is registered with the lina Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/eventstore'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/eventstore/store.go'), 'package eventstore\n');
-  const head = r.commit();
-  const scope = r.classify(head, { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/eventstore/...'));
-});
-
-test('manifest changes are registered with the lina component and its Go checks', t => {
-  const r = repository(t);
-  const base = r.git('rev-parse', 'HEAD');
-  mkdirSync(join(r.cwd, 'internal/core/manifest'), { recursive: true });
-  writeFileSync(join(r.cwd, 'internal/core/manifest/manifest.go'), 'package manifest\n');
-  const head = r.commit();
-  // The fixture has no Go workspace, so classify the range in full mode.
-  const scope = r.classify(head, { base, full: true });
-  assert.deepEqual(scope.unmapped, []);
-  assert.ok(scope.selectedComponents.includes('lina'));
-  assert.ok(componentRegistry.find(component => component.name === 'lina').packages.includes('./internal/core/manifest/...'));
 });
 
 test('evidence records are documents, including additions, edits, renames and deletions', t => {
@@ -465,6 +289,7 @@ test('Core and client package edits select their tests and follow kit imports', 
     'internal/core/boot/boot.go': 'package boot\n',
     'internal/core/ctlfiles/files.go': 'package ctlfiles\n',
     'internal/core/lifecycle/registry.go': 'package lifecycle\n',
+    'internal/core/newfamily/nested/store.go': 'package nested\nimport _ "example.invalid/lina/kit/protocol"\n',
     'internal/core/clientsrv/server.go': 'package clientsrv\nimport _ "example.invalid/lina/kit/protocol"\n',
     'internal/clientapi/client.go': 'package clientapi\nimport _ "example.invalid/lina/kit/protocol"\n',
     'internal/tui/ui/ui.go': 'package ui\nimport _ "example.invalid/lina/internal/clientapi"\n',
@@ -474,7 +299,7 @@ test('Core and client package edits select their tests and follow kit imports', 
     writeFileSync(join(r.cwd, name), content);
   }
   const base = r.commit();
-  for (const path of ['internal/core/boot/boot.go', 'internal/core/ctlfiles/files.go', 'internal/core/clientsrv/server.go',
+  for (const path of ['internal/core/newfamily/nested/store.go', 'internal/core/boot/boot.go', 'internal/core/ctlfiles/files.go', 'internal/core/clientsrv/server.go',
     'internal/core/lifecycle/registry.go', 'internal/clientapi/client.go', 'internal/tui/ui/ui.go', 'kit/protocol/doc.go']) {
     writeFileSync(join(r.cwd, path), files[path] + '// edited\n');
     const scope = r.classify('HEAD', { base });
@@ -484,13 +309,11 @@ test('Core and client package edits select their tests and follow kit imports', 
     writeFileSync(join(r.cwd, path), files[path]);
   }
   const lina = componentRegistry.find(component => component.name === 'lina');
-  for (const directory of ['boot', 'ctlfiles', 'clientsrv', 'lifecycle']) {
-    assert.ok(lina.packages.includes(`./internal/core/${directory}/...`));
-  }
+  assert.ok(lina.packages.includes('./internal/core/...'));
   for (const directory of ['clientapi', 'tui']) {
     assert.ok(lina.packages.includes(`./internal/${directory}/...`));
   }
-  assert.equal(kind('internal/core/unregistered/example.go'), 'unmapped');
+  assert.equal(kind('internal/core/unregistered/example.go'), 'components');
 });
 
 for (const path of ['protocol/schema/client/1.0/envelope.json', 'protocol/fixtures/client/1.0/hello.json']) {
@@ -859,7 +682,7 @@ test('worker and vendored protocol select Core checks and vendor integrity', t =
   assert.deepEqual(scope.unmapped, []);
   assert.ok(scope.dependencies);
   const lina = componentRegistry.find(component => component.name === 'lina');
-  assert.ok(lina.packages.includes('./internal/core/worker/...'));
+  assert.ok(lina.packages.includes('./internal/core/...'));
   assert.ok(lina.packages.includes('./third_party/codex-app-server/upstream/...'));
   assert.equal(kind('third_party/codex-app-server/vendor.json'), 'dependencies');
   assert.equal(kind('third_party/codex-app-server/upstream/types.go'), 'dependencies');

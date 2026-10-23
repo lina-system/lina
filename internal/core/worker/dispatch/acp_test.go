@@ -57,7 +57,7 @@ func TestDispatchInitializedVersionProgressAndInterruptedReceipt(t *testing.T) {
 	if err := s.save(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
-	s.cfg.Workers = []Factory{{Name: a.Name(), Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+	s.cfg.Workers = []Factory{{Name: a.Name(), Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
 		return a, func(context.Context) error { return nil }, nil
 	}}}
 	seen := false
@@ -112,7 +112,7 @@ func TestConfiguredWorkerFactoriesStayIsolatedFromHostDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
-	s, err := Open(t.Context(), Config{DB: store(t), Workers: []Factory{{Name: "configured", Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+	s, err := Open(t.Context(), Config{DB: store(t), Workers: []Factory{{Name: "configured", Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
 		t.Error("empty queue opened a worker")
 		return nil, nil, nil
 	}}}})
