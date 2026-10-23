@@ -158,7 +158,7 @@ func TestM1TUIToolRows(t *testing.T) {
 			defer provider.Close()
 			h, start := installedConversationHarness(t, provider.URL)
 			core := start(true)
-			client, conversation := conversationClient(t, h)
+			client, _ := conversationClient(t, h)
 			agent := client.Welcome.Agents[0].AgentID
 			client.Close()
 			release := make(chan struct{})
@@ -195,7 +195,7 @@ func TestM1TUIToolRows(t *testing.T) {
 			waitScreen(t, h, terminal, "Tool failed as expected.")
 			t.Logf("observed completion: %s; %s", ok, failed)
 			// A later turn rebuilds the request from stored conversation history.
-			client, conversation = conversationClient(t, h)
+			client, conversation := conversationClient(t, h)
 			admittedTurn(t, h, client, conversation, "rows-history", "Check history.")
 			if requests.Load() != 5 {
 				t.Fatalf("requests=%d", requests.Load())

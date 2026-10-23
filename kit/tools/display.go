@@ -31,7 +31,7 @@ func DisplayName(name string) string {
 		return "Recalling context"
 	case "expand":
 		return "Reading context"
-	case "present_result":
+	case "present_result", "present_surface":
 		return "Presenting result"
 	case "read_result":
 		return "Reading result"

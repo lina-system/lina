@@ -223,7 +223,7 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 // ValidateEpisode also catches memory revisions changed without a revocation.
 func (s Source) ValidateEpisode(ctx context.Context, ep Episode) error {
 	a := ep.Evidence.Assembly
-	if a.InstructionFormat == "persona-v1" || a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" {
+	if a.InstructionFormat == "persona-v1" || a.InstructionFormat == "persona-tui-v1" || a.InstructionFormat == "persona-tui-work-method-v1" || a.InstructionFormat == "persona-tui-work-method-v2" {
 		at, err := time.Parse(time.RFC3339Nano, a.PreparedAt)
 		if err != nil {
 			return Exclusion("missing_assembly")

@@ -26,6 +26,24 @@ func Name(raw provider.ToolDecl) string {
 	return d.Name
 }
 
+// EnabledNames identifies the native declarations without repeating their
+// descriptions and schemas in the instruction prefix.
+func EnabledNames(declarations []provider.ToolDecl) ([]byte, error) {
+	names := make([]string, 0, len(declarations))
+	for _, raw := range declarations {
+		var declaration struct{ Name, Type string }
+		if err := json.Unmarshal(raw, &declaration); err != nil {
+			return nil, err
+		}
+		name := declaration.Name
+		if name == "" {
+			name = declaration.Type // Provider-owned built-in tools use their type.
+		}
+		names = append(names, name)
+	}
+	return json.Marshal(names)
+}
+
 // Reconstruct on-demand declarations from committed tool outputs in this turn,
 // not mutable callback state or a previous turn's history. This also works when
 // the tool journal replays an already committed load result.
@@ -78,7 +96,19 @@ func (c *Catalog) Transform(_ context.Context, r provider.Request) (provider.Req
 	if start := strings.Index(r.Instructions, "<enabled_tools>\n"); start >= 0 {
 		start += len("<enabled_tools>\n")
 		if end := strings.Index(r.Instructions[start:], "\n</enabled_tools>"); end >= 0 {
-			raw, _ := json.Marshal(r.Tools)
+			raw, err := EnabledNames(r.Tools)
+			if err != nil {
+				return r, err
+			}
+			// Older recorded requests carry complete declarations in this block.
+			// Retain their shape when reconstructing a replayed request.
+			var previous []json.RawMessage
+			if json.Unmarshal([]byte(r.Instructions[start:start+end]), &previous) == nil && len(previous) > 0 && strings.HasPrefix(strings.TrimSpace(string(previous[0])), "{") {
+				raw, err = json.Marshal(r.Tools)
+				if err != nil {
+					return r, err
+				}
+			}
 			r.Instructions = r.Instructions[:start] + string(raw) + r.Instructions[start+end:]
 		}
 	}

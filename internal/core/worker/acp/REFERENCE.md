@@ -101,7 +101,9 @@ they do not establish current acceptance or change the contracts.
 
 `internal/core/worker/acp` implements C-29 on that client.
 A profile holds the worker name, the command and arguments, the environment variables it sets (such as `CLAUDE_CODE_EXECUTABLE`), the version probe and the vendor rate-limit key it may read.
-Claude Code, Cursor, Gemini CLI and Grok are built-in profiles; person-added profiles come from an editable settings file defined by their own issue.
+Claude Code, Cursor, Gemini CLI and Grok are built-in profiles. Added profiles
+come from the C-60 settings file. Dispatch resolves their executable at startup
+and keeps the resulting factories local to that Core service.
 
 ## Typed failures and quota (#750)
 
@@ -178,3 +180,23 @@ MCP admission latches tool activity even when an answered call is no longer pend
   synthetic installed-Core scenario proves dispatch and receipt wiring, not a
   vendor release. This implements the native LINA contract; no external harness
   or memory-system behavior is ported.
+
+## Added worker profiles (#754)
+
+- **Seen:** The current Core discovers only built-in ACP commands. The shared
+  adapter already accepts command/argv profiles, reads `agentInfo.version` and
+  emits unverified compatibility progress when no verified versions are supplied.
+  Dispatch admission and tool declarations previously used only built-in names.
+- **Inferred:** Startup must validate added settings independently of installed
+  built-ins, reserve all built-in names and feed the same service-local factory
+  list to selection, admission and tool declarations. A malformed entry must not
+  disable unrelated workers or expose argument values in diagnostics.
+- **Unknown:** Synthetic execution does not verify any installed vendor release.
+  This extends LINA's existing contract; no Hermes, Honcho, LCM-X or CRW behavior
+  is ported.
+
+`TestAddedACPWorkersThroughRunningCore` uses the installed Core, synthetic ACP
+and model boundaries, real Git worktrees and a committed artifact. It covers
+added dispatch and unverified progress, rejected profiles and preserved built-in
+execution. Parser and registry tests cover invalid fields, resource limits,
+reserved names, duplicates, executable resolution and per-service isolation.

@@ -71,7 +71,9 @@ type Decision struct {
 	Agents        *AgentScope
 }
 type Approval struct {
-	TaskID                                                     string `json:",omitempty"`
+	WorkerBinding                                              *WorkerRequestBinding `json:",omitempty"`
+	WorkerProof                                                *WorkerApprovalProof  `json:",omitempty"`
+	TaskID                                                     string                `json:",omitempty"`
 	ID, EffectKey, What, Where, ScopeKey, Target, Plugin, Tool string
 	Arguments                                                  json.RawMessage
 	Undoable, Network, Outward                                 bool
@@ -390,6 +392,9 @@ func (s *Service) answerApproval(ctx context.Context, tx *canon.Tx, a Approval, 
 		a.StandingID = g.ID
 	default:
 		return ErrChoice
+	}
+	if a.Plugin == workerRelayPlugin {
+		a.WorkerProof = s.signWorkerApproval(a)
 	}
 	return saveApproval(ctx, tx, a)
 }

@@ -50,6 +50,8 @@ import (
 type conversationRuntime struct {
 	inputJudge         atropos.Judge
 	inputCreationMu    sync.Mutex
+	publications       *publicationRuntime
+	externalTask       string
 	summaryPreparation conversationPreparation
 	// Installed only by the isolated intake replay command, never by Core boot.
 	intakeReplay    func(context.Context, ledger.Event) error
@@ -346,6 +348,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startOwnerViews(ctx); err != nil {
 		return nil, err
 	}
+	if err = r.initPublications(ctx); err != nil {
+		return nil, err
+	}
 	// Producers and the reactor may schedule recovered turns immediately.
 	// Start them only after background services and the final lanes are ready.
 	if err = r.startWorkerDispatch(ctx); err != nil {
@@ -383,11 +388,20 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.resumeWorkerCompletions(ctx); err != nil {
 		return nil, err
 	}
+	r.publications.start(ctx)
 	success = true
 	return r, nil
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.publications != nil && r.publications.stop != nil {
+		r.publications.stop()
+		select {
+		case <-r.publications.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if r.recallStop != nil {
 		r.recallStop()
 		select {

@@ -653,7 +653,7 @@ for (const path of ['scripts/verify/dependency-exceptions.json', 'THIRD-PARTY-NO
 }
 
 test('brand tokens and generated data select verification while PNGs remain evidence', () => {
-  for (const path of ['design/tokens/light.json', 'design/tokens/tokens.css', 'DESIGN.md']) assert.equal(kind(path), 'automation');
+  for (const path of ['design/tokens/light.json', 'design/tokens/tokens.css', 'design/tokens/tokens.swift', 'DESIGN.md']) assert.equal(kind(path), 'automation');
   assert.equal(kind('internal/design/tokens_gen.go'), 'components');
   assert.equal(kind('evidence/brand/dark-connected.png'), 'docs');
   assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
@@ -734,4 +734,11 @@ test('one-time takeover operator is verified separately from release commands', 
   const operator = componentRegistry.find(c => c.name === 'crw-takeover');
   assert.deepEqual(operator.packages, ['./tools/crw-takeover/...']);
   assert.equal(operator.binary, undefined);
+});
+
+test('shared generated UI template and embedded font belong to the Core build', () => {
+  for (const path of ['design/template.go', 'design/template/base.css', 'design/template/mock.js', 'design/fonts/PretendardVariable.woff2']) {
+    assert.equal(kind(path), 'components');
+  }
+  assert.equal(kind('design/tokens/tokens.css'), 'automation');
 });

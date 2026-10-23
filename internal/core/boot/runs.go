@@ -64,7 +64,7 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 		return err
 	}
 	b.service, err = runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"),
-		SelectCapabilities: r.selectProviderCapabilities, ProviderClass: r.route.Adapter.Class(),
+		SelectCapabilities: r.selectProviderCapabilities, ProviderClass: r.route.Adapter.Class(), DrawMock: r.drawMock,
 		Model: r.route.Model, Tools: adapters, Authorize: r.authorizeRun, AuthorizeFollowUp: r.authorizeRunFollowSource, PublishPromotion: turn.PublishPromotion,
 		Stream: func(ctx context.Context, req provider.Request) (provider.Stream, error) {
 			activity, err := r.activities.Acquire(ctx, lease.Activity{Class: lease.Live, Reason: "background run"})
@@ -587,7 +587,7 @@ func (r *conversationRuntime) publishNoticeText(ctx context.Context, key string,
 
 // Use the existing Brief wire names so StartTool remains the sole decoder.
 func startRunDeclaration() provider.ToolDecl {
-	return provider.ToolDecl(`{"type":"function","name":"start_run","description":"Move research, reading or analysis to a background run. Preserve the whole goal, done condition and checks. Returns immediately; never wait for completion. Allowed read tools: skill_index, read_skill.","parameters":{"type":"object","properties":{"Goal":{"type":"string"},"Scope":{"type":"string"},"NotTouch":{"type":"string"},"Done":{"type":"string"},"Checks":{"type":"array","minItems":1,"items":{"type":"object","properties":{"Name":{"type":"string"},"Kind":{"type":"string","enum":["claimed","tool_called","citations_resolve"]}},"required":["Name","Kind"],"additionalProperties":false}},"Result":{"type":"string"},"Allow":{"type":"array","items":{"type":"string","enum":["skill_index","read_skill"]}}},"required":["Goal","Scope","NotTouch","Done","Checks","Result","Allow"],"additionalProperties":false}}`)
+	return provider.ToolDecl(`{"type":"function","name":"start_run","description":"Move research, reading, analysis or drawing a UI mock to a background run. For a drawn mock set Result to mock and Goal to the screen request; Core writes a checklist before drawing and returns a checked page and PNG. Feedback sets Mock to the current result_id and revision. Preserve the whole goal, done condition and checks. Returns immediately; never wait for completion. Allowed read tools: skill_index, read_skill.","parameters":{"type":"object","properties":{"Mock":{"type":"object","properties":{"result_id":{"type":"string"},"revision":{"type":"integer","minimum":1}},"required":["result_id","revision"],"additionalProperties":false},"Goal":{"type":"string"},"Scope":{"type":"string"},"NotTouch":{"type":"string"},"Done":{"type":"string"},"Checks":{"type":"array","minItems":1,"items":{"type":"object","properties":{"Name":{"type":"string"},"Kind":{"type":"string","enum":["claimed","tool_called","citations_resolve"]}},"required":["Name","Kind"],"additionalProperties":false}},"Result":{"type":"string"},"Allow":{"type":"array","items":{"type":"string","enum":["skill_index","read_skill"]}}},"required":["Goal","Scope","NotTouch","Done","Checks","Result","Allow"],"additionalProperties":false}}`)
 }
 
 func recoverConversationTurns(ctx context.Context, db *canon.Store) error {

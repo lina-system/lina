@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 // Synthetic vendor/GitHub boundary; all work and commits happen in Core's worktree.
+function messageText(text) {
+ if (!text.startsWith('<lina-message ')) return text;
+ const match=text.match(/^<lina-message [^>]*><text>([\s\S]*)<\/text><\/lina-message>$/);
+ if (!match) throw Error('invalid worker message frame');
+ return match[1].replace(/&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos);/gi,(_,e)=>e[0]==='#'?String.fromCodePoint(e[1].toLowerCase()==='x'?parseInt(e.slice(2),16):Number(e.slice(1))):({amp:'&',lt:'<',gt:'>',quot:'"',apos:"'"})[e]);
+}
 import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync, spawnSync} from 'node:child_process';
@@ -18,7 +24,7 @@ else {
   fs.appendFileSync(path.join(root, 'launches'), 'worker\n');
   if (args.join(' ') !== '--output-format stream-json') throw Error('unexpected settings override');
   if (process.env.LINA_RESPONSES_API_KEY) throw Error('Core provider credential leaked');
-  const prompt = fs.readFileSync(0, 'utf8');
+  const prompt = messageText(fs.readFileSync(0, 'utf8'));
   fs.writeFileSync(path.join(root, 'packet'), prompt);
   if (!prompt.includes('result.txt')) throw Error('task packet lost');
   console.log(JSON.stringify({event:'init',conversation_id:'fixture',init:{cwd:process.cwd(),permission_mode:'request-review'}}));

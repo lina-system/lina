@@ -155,19 +155,44 @@ provides the separate account-free paste regression; `TestAlphaWorkerCrashInstal
 checks that killing Core does not erase an acknowledged worker from its public
 lane snapshot.
 
+`TestAlphaOwnerWorkerCrash` delegates to the installed Codex through the real
+model and kills Core after observing a bound active turn and its work card.
+It reads the recovery contract's persisted thread, attempt, binding and
+observation, requires the original task to finish with at most one continuation,
+and checks that another Core restart preserves the result without another
+delivery. An unresolved snapshot fails this scenario; retaining an unknown
+worker is not reported as successful recovery.
+The result screen must show text from the completed agent reply attributed to
+the original conversation, input and recovered worker turn. Request-only and
+streaming frames do not qualify. The same reply ID and text must survive the
+second restart; a failed check retains delivery metadata and its terminal frame.
+
+To keep a measured product fixed while changing only the test harness, set
+`LINA_ALPHA_BUILD` to a private directory containing `binaries/lina`,
+`binaries/lina-node` and `pinned-binaries.json`. The manifest records
+`source_commit`, `source_dirty: false` and `binaries.<name>.sha256` for both
+commands. Each digest and each command's clean Go VCS build information must
+match before installation. Ordinary fixture and foundation builds ignore this
+option. Record the harness revision separately from the pinned product commit.
+
 The coding journey checks the delivered answer, result file, executable function
 and original worker session after either a form answer or a spoken continuation.
-Before answering a spoken question, it requires a committed LINA reply to the
-actual worker completion in the originating conversation, with that reply's turn
-completed. The capture must show the question from that reply. The original
-request, a handoff acknowledgement and an unfinished response cannot establish
-delivery. `TestAlphaSpokenQuestionInstalledCore` holds those boundaries in an
-account-free, headless journey through installed Core and a worker process.
-It does not require a card during that transition: the worker may still be idle
-or already finished. `TestM3WorkPanelLiveCodexWorker` checks the card while Core's
-worker is held at an unanswered approval or question, then verifies its artifact
-and restart. `TestAlphaWorkCardWaitsForProgress` holds back the card and its activity
-in separate recorder frames, without relying on execution speed.
+`TestAlphaOwnerCodingAndSpokenQuestion` requests a final-text worker question
+explicitly so that a form-only run cannot leave that continuation path untested.
+For a spoken question, the response must belong to that worker completion and
+its turn must be committed before the test answers; a failed response fails the
+journey immediately. The capture must contain that response, not just the
+original request or handoff acknowledgement. Screen comparison removes
+Markdown quote prefixes while retaining the question and literal operators
+inside its sentences. `TestAlphaSpokenQuestionInstalledCore` holds the handoff
+and response boundaries in an account-free journey through installed Core and
+a worker process.
+It watches the real worker throughout the task and retains a card showing both
+elapsed time and current activity; the worker may already be idle at the answer
+transition. `TestM3WorkPanelLiveCodexWorker` separately checks the fixture worker's
+card while it is held at an unanswered approval or question, then verifies its
+artifact and restart. `TestAlphaWorkCardWaitsForProgress` holds back the card and
+its activity in separate recorder frames, without relying on execution speed.
 
 Set `LINA_ALPHA_CAPTURES` to a private absolute output directory to retain
 rendered text, ANSI output and terminal cells at each observed transition.
