@@ -707,7 +707,7 @@ A messenger source is one of the person's own messenger accounts that LINA reads
 
 - Connecting a source is the person's act. LINA never connects one on its own and never looks for messenger apps, sessions or exports on the machine.
 - A source is one account on one platform. It records the person it belongs to, the account's platform user id, its mode (official or unofficial), its adapter and its state: connected, needs sign-in, failing with its cause, unreachable (its Node is away), import-only, or disconnected.
-- A source holds chats. Each chat records its platform id, name, kind (direct, group, channel or thread), the time of its first message when known, its cursor and its coverage. The person can leave a chat out of sync, out of learning or out of embedding.
+- A source holds chats. Each chat records its platform id, name, kind (direct, group, channel or thread), the time of its first message when known, its cursor and its coverage. The person can leave a chat out of sync, out of learning or out of embedding, and turn learning off for a whole source. A chat in the `never-leaves` class is searchable but is never learning input.
 - What a source reads becomes messenger records in canon ([conversation-and-memory.md](conversation-and-memory.md#messenger-records)). There is no second database.
 - Every agent can search a connected source, as every agent can use an enabled plugin. The person can name the agents that may read a source instead.
 - When a channel connection and a bot-mode source use the same bot token, Core still runs one Gateway session or poller for that token and gives each its events.

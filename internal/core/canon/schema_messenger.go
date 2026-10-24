@@ -145,3 +145,22 @@ WHEN NEW.kind='event' AND NEW.state='active' AND OLD.state<>'active' BEGIN
  INSERT OR IGNORE INTO recall_pending(kind,source_id) VALUES('event',NEW.id);
 END;
 `
+
+// MessengerLearningSchema adds the learning switches and progress used by the
+// messenger extraction job. A source keeps a learning watermark: the time it
+// connected, or the earliest time an import the person allowed learning for
+// covers. The cursor is the source's committed ledger position; the two are
+// separate because a first fill or an import may admit old records after the
+// connection without making them learning input.
+const MessengerLearningSchema = `
+-- SQLite refuses ALTER TABLE ADD COLUMN with CHECK under canon's writer
+-- authorizer, so these two switches are checked by the messenger store.
+ALTER TABLE messenger_source ADD COLUMN learn INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE messenger_chat ADD COLUMN scope TEXT NOT NULL DEFAULT 'local';
+CREATE TABLE messenger_learning_cursor (
+ platform TEXT NOT NULL, account TEXT NOT NULL, through INTEGER NOT NULL DEFAULT 0 CHECK(through>=0),
+ PRIMARY KEY(platform,account),
+ FOREIGN KEY(platform,account) REFERENCES messenger_source(platform,account)
+);
+UPDATE messenger_source SET learning_watermark=connected_at WHERE learning_watermark='';
+`

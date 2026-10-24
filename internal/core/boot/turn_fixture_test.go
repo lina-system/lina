@@ -31,6 +31,7 @@ import (
 type turnStep struct {
 	events []provider.Event
 	before func(provider.Request)
+	usage  func(provider.Request) provider.Usage
 	err    error
 }
 
@@ -69,13 +70,18 @@ func (p *turnProvider) Stream(ctx context.Context, _ lease.Lease, request provid
 	if step.err != nil {
 		return nil, step.err
 	}
-	s := &turnStream{events: step.events}
+	usage := provider.Usage{}
+	if step.usage != nil {
+		usage = step.usage(request)
+	}
+	s := &turnStream{events: step.events, usage: usage}
 	p.streams = append(p.streams, s)
 	return s, nil
 }
 
 type turnStream struct {
 	events []provider.Event
+	usage  provider.Usage
 	closed bool
 }
 
@@ -90,8 +96,10 @@ func (s *turnStream) Next(ctx context.Context) (provider.Event, error) {
 	s.events = s.events[1:]
 	return e, nil
 }
-func (*turnStream) Meta() provider.Meta { return provider.Meta{Class: provider.ModelAPI} }
-func (s *turnStream) Close() error      { s.closed = true; return nil }
+func (s *turnStream) Meta() provider.Meta {
+	return provider.Meta{Class: provider.ModelAPI, Usage: s.usage}
+}
+func (s *turnStream) Close() error { s.closed = true; return nil }
 
 func turnRuntime(t *testing.T) (*conversationRuntime, *turnProvider) {
 	t.Helper()

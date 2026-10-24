@@ -27,6 +27,7 @@ func (r *conversationRuntime) startMessenger(ctx context.Context, cfg *Messenger
 	}
 	store := messenger.Open(r.db, r.materials, r.removals)
 	service := messenger.NewService(store, cfg.Adapters, cfg.Interval)
+	service.SetAfterSync(r.notifyMessengerExtraction)
 	runCtx, stop := context.WithCancel(ctx)
 	r.messenger, r.messengerStop, r.messengerDone = service, stop, make(chan struct{})
 	go func() {

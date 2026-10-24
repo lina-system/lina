@@ -136,12 +136,15 @@ type Origin struct {
 	ID            string // Canonical event id after replay/view lineage resolution.
 	Person, Agent string
 	Speaker       guard.SpeakerKind
-	Quote         string
-	OccurredAt    int64
-	Scope         Scope
-	Sensitivity   []string
-	Verified      bool
-	PlanEnded     bool
+	// Messenger marks a messenger record. It has no participating agent: Agent
+	// is the source holder, and every agent may read it.
+	Messenger   bool
+	Quote       string
+	OccurredAt  int64
+	Scope       Scope
+	Sensitivity []string
+	Verified    bool
+	PlanEnded   bool
 }
 type ResolveEvidence func(context.Context, *canon.Tx, Evidence) (Origin, error)
 

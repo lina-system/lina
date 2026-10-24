@@ -79,6 +79,7 @@ func Migrations() []Migration {
 		{Version: 64, SQL: MiniAppsSchema},
 		{Version: 65, SQL: MessengerSchema},
 		{Version: 66, SQL: EventErasureSchema},
+		{Version: 67, SQL: MessengerLearningSchema},
 	}
 }
 
@@ -127,6 +128,7 @@ var publishedMigrationTables = []struct {
 	{64, "mini_app"}, {64, "mini_app_revision"}, {64, "mini_app_change"}, {64, "mini_app_event"},
 	{65, "messenger_source"}, {65, "messenger_chat"}, {65, "messenger_coverage"},
 	{65, "messenger_record"}, {65, "messenger_record_revision"}, {65, "messenger_effect"},
+	{67, "messenger_learning_cursor"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is

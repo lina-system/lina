@@ -68,3 +68,23 @@ Live events are on the adapter boundary and the service can deliver them, but no
 platform adapter ships yet (#1070 and the per-platform issues). Writes are
 recorded and matched here; the write verbs, grants and approvals belong to
 #1084. Learning from the person's own records is #1075.
+
+## Learning inputs
+
+`messenger_source.learning_watermark` is a time floor: `Connect` sets it to the
+connection time for a new source and preserves it on a later registration. An
+import the person starts with learning on moves it back with
+`SetLearningWatermark`, which also resets the source's cursor.
+
+`messenger_learning_cursor.through` is the committed ledger position the
+extraction job has scanned for that source. It is independent of the watermark,
+so a first fill with old message times advances progress without becoming input.
+
+`messenger_source.learn` is the source-wide switch, and `messenger_chat.learn`
+narrows it per chat. `messenger_chat.scope` carries the chat's sensitivity class:
+`local`, `private` or `never-leaves`. A `never-leaves` chat stays searchable and
+is never learning input. A disabled source or chat still advances the learning
+cursor past what arrived while it was off, so re-enabling does not learn that
+window late. SQLite refuses `ALTER TABLE ADD COLUMN` with a CHECK
+under canon's writer authorizer, so the two added columns are validated by the
+store instead of by a table constraint.
