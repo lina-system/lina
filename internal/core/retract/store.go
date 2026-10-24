@@ -21,6 +21,9 @@ type Config struct {
 	Canon *canon.Store
 	Root  string
 	Now   func() time.Time
+	// Repair replays a caller intent journaled with a removal. Open applies it
+	// before serving reads. Nil refuses a journal line that carries an intent.
+	Repair func(context.Context, *canon.Tx, []byte) error
 }
 
 type Ref struct {
@@ -30,6 +33,13 @@ type Ref struct {
 type Request struct {
 	Person  string
 	Targets []Ref
+}
+
+// Intent is a forget committed with an optional durable repair. Repair is JSON
+// ids and actions. Recovery replays it in the same transaction as the targets.
+type Intent struct {
+	Refs   []Ref
+	Repair []byte
 }
 
 type projection struct {
@@ -47,6 +57,7 @@ type Store struct {
 	now        func() time.Time
 	closed     bool
 	pending    bool
+	repair     func(context.Context, *canon.Tx, []byte) error
 	fault      func(string) error // deterministic crash boundaries in package tests
 }
 
@@ -57,7 +68,7 @@ func openStore(ctx context.Context, cfg Config, p projection) (*Store, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	s := &Store{db: cfg.Canon, root: cfg.Root, projection: p, now: cfg.Now}
+	s := &Store{db: cfg.Canon, root: cfg.Root, projection: p, now: cfg.Now, repair: cfg.Repair}
 	if err := s.Recover(ctx); err != nil {
 		if s.journal != nil {
 			s.journal.Close()
@@ -143,6 +154,14 @@ func (s *Store) Recover(ctx context.Context) error {
 					}
 					continue
 				}
+				if len(e.Repair) > 0 {
+					if s.repair == nil {
+						return ErrRecovery
+					}
+					if err := s.repair(ctx, tx, e.Repair); err != nil {
+						return err
+					}
+				}
 				if err := s.apply(ctx, tx, e, line.Sequence, line.Digest); err != nil {
 					return err
 				}
@@ -164,6 +183,102 @@ func (s *Store) Epoch(ctx context.Context) (uint64, error) {
 
 func (s *Store) Forget(ctx context.Context, r Request) error  { return s.change(ctx, r, forget) }
 func (s *Store) Restore(ctx context.Context, r Request) error { return s.change(ctx, r, restore) }
+
+// ForgetDuring runs fn inside the fenced writer that journals a forget.
+// fn may read and write canon and returns the refs to forget. It must not
+// call Read, Write, Reconcile, or another removal. An empty list commits fn
+// and writes no removal-list line. A non-empty list is journaled and applied
+// before that writer commits, so fn's changes and the retraction become
+// visible together. A failure rolls both back. A journal line that reached
+// disk keeps reads closed until recovery replays it.
+func (s *Store) ForgetDuring(ctx context.Context, person string, fn func(*canon.Tx) ([]Ref, error)) error {
+	if fn == nil {
+		return ErrInvalid
+	}
+	return s.ForgetDuringIntent(ctx, person, func(tx *canon.Tx) (Intent, error) {
+		refs, err := fn(tx)
+		if err != nil {
+			return Intent{}, err
+		}
+		return Intent{Refs: refs}, nil
+	})
+}
+
+// ForgetDuringIntent is ForgetDuring with a repair the removal list replays.
+// Recovery applies Intent.Repair in the same transaction as the forgotten
+// targets, so a caller change that rolled back with the canon transaction is
+// finished before reads reopen. Repair is ids and actions, never content.
+func (s *Store) ForgetDuringIntent(ctx context.Context, person string, fn func(*canon.Tx) (Intent, error)) error {
+	if person == "" || fn == nil {
+		return ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return canon.ErrClosed
+	}
+	if s.journal == nil || s.journal.failed || s.pending {
+		return ErrRecovery
+	}
+	var requestErr error
+	err := s.db.Reconcile(func(write canon.RecoveryWrite) error {
+		durable := false
+		requestErr = write(ctx, func(tx *canon.Tx) error {
+			intent, err := fn(tx)
+			if err != nil {
+				return err
+			}
+			refs := intent.Refs
+			if len(refs) == 0 {
+				return nil
+			}
+			e := entry{Version: 1, Action: forget, At: s.now().UnixNano(), Person: person, Repair: intent.Repair}
+			var nonce [16]byte
+			if _, err := rand.Read(nonce[:]); err != nil {
+				return err
+			}
+			e.ID = hex.EncodeToString(nonce[:])
+			for _, ref := range refs {
+				target, err := s.projection.resolve(ctx, tx, ref, person)
+				if err != nil {
+					return err
+				}
+				if err := transition(ctx, tx, target, e); err != nil {
+					return err
+				}
+				e.Targets = append(e.Targets, target)
+			}
+			if s.projection.expand != nil {
+				e.Targets, err = s.projection.expand(ctx, tx, e)
+				if err != nil {
+					return err
+				}
+			}
+			if !e.valid() {
+				return ErrInvalid
+			}
+			// A failed write/sync has an uncertain disk outcome, so close reads even
+			// when no complete line was acknowledged. Recovery validates the bytes.
+			durable = true
+			if err := s.journal.append(e); err != nil {
+				return err
+			}
+			if err := s.fail("after_sync"); err != nil {
+				return err
+			}
+			return s.apply(ctx, tx, e, s.journal.sequence, s.journal.digest)
+		})
+		if durable {
+			s.pending = requestErr != nil
+			return requestErr
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Join(ErrRecovery, err)
+	}
+	return requestErr
+}
 
 // Delete skips recoverable trash. Its caller must establish the person's
 // explicit permanent-deletion choice before invoking it.
@@ -371,4 +486,29 @@ func (s *Store) fail(stage string) error {
 		return s.fault(stage)
 	}
 	return nil
+}
+
+// SetRepair installs the function recovery uses for a journaled caller intent.
+func (s *Store) SetRepair(fn func(context.Context, *canon.Tx, []byte) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.repair = fn
+}
+
+// SetCrash stops the next removal at a journal boundary. Tests use "after_sync"
+// for the moment the removal list is durable and the canon transaction has not
+// committed. An empty stage clears it.
+func (s *Store) SetCrash(stage string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if stage == "" || err == nil {
+		s.fault = nil
+		return
+	}
+	s.fault = func(got string) error {
+		if got == stage {
+			return err
+		}
+		return nil
+	}
 }
