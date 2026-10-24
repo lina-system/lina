@@ -239,6 +239,9 @@ func (s *Service) start(c Connection) {
 			} else {
 				current.Status = "connected"
 				current.Reason = ""
+				// A people record added after these messages arrived links on
+				// the next pass, as it does on Core's own messenger loop.
+				_, _ = s.store.Rematch(ctx)
 			}
 			if s.save(ctx, current) != nil {
 				return
