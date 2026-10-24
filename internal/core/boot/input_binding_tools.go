@@ -2,6 +2,7 @@
 package boot
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -18,7 +19,9 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/waiting"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -28,7 +31,78 @@ import (
 type toolBindingRef struct {
 	InputEventID string `json:"input_event_id,omitempty"`
 	Input        string `json:"input,omitempty"`
+	Text         string `json:"text,omitempty"`
 	Request      int    `json:"request"`
+	Ordinal      bool   `json:"-"`
+}
+
+// UnmarshalJSON accepts the shapes a model uses for the optional work binding:
+// an object, an ordinal, or a selector string holding a request or input text.
+func (t *toolBindingRef) UnmarshalJSON(raw []byte) error {
+	if ordinal, ok := flexIntRef(raw); ok {
+		t.Request, t.Ordinal = ordinal, true
+		return t.valid()
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		if ordinal, err := strconv.Atoi(strings.TrimSpace(text)); err == nil {
+			t.Request, t.Ordinal = ordinal, true
+		} else {
+			t.Input = text
+		}
+		return t.valid()
+	}
+	var obj struct {
+		InputEventID string          `json:"input_event_id"`
+		EventID      string          `json:"event_id"`
+		Input        string          `json:"input"`
+		Text         string          `json:"text"`
+		Request      json.RawMessage `json:"request"`
+		Index        json.RawMessage `json:"index"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return binding.ErrChoice
+	}
+	t.InputEventID = firstString(obj.InputEventID, obj.EventID)
+	t.Input = firstString(obj.Input, obj.Text)
+	ordinal, ok := flexIntRef(obj.Request)
+	if !ok {
+		ordinal, ok = flexIntRef(obj.Index)
+	}
+	if ok {
+		t.Request, t.Ordinal = ordinal, true
+	}
+	return t.valid()
+}
+
+func (t *toolBindingRef) valid() error {
+	if t.Request < 0 || t.Request >= 32 {
+		return binding.ErrChoice
+	}
+	return nil
+}
+
+func firstString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func flexIntRef(raw []byte) (int, bool) {
+	var number json.Number
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if decoder.Decode(&number) != nil {
+		return 0, false
+	}
+	value, err := number.Int64()
+	if err != nil {
+		return 0, false
+	}
+	return int(value), true
 }
 
 func stripToolBinding(c provider.ToolCall) (provider.ToolCall, toolBindingRef, error) {
@@ -38,7 +112,7 @@ func stripToolBinding(c provider.ToolCall) (provider.ToolCall, toolBindingRef, e
 		return c, ref, binding.ErrChoice
 	}
 	if raw, ok := args["input_binding"]; ok {
-		if decodeQuestionJSON(string(raw), &ref) != nil || ref.Request < 0 || ref.Request >= 32 {
+		if json.Unmarshal(raw, &ref) != nil {
 			return c, ref, binding.ErrChoice
 		}
 		delete(args, "input_binding")
@@ -87,7 +161,7 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				if _, err = tool.Validate(clean); err != nil {
 					return loop.Result{ID: c.ID, Code: loop.Invalid}
 				}
-				if s.bindingSource != nil && ref.Input == "" && ref.InputEventID == "" {
+				if s.bindingSource != nil && ref.Input == "" && ref.InputEventID == "" && !ref.Ordinal {
 					ref.Request = s.bindingRequest
 				}
 				input, r, err := s.selectedBindingInput(ref.InputEventID, ref.Input)
@@ -121,7 +195,20 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				var args map[string]json.RawMessage
 				_ = json.Unmarshal([]byte(clean.Arguments), &args)
 				before := r.captureEffectBefore(ctx, clean, args)
-				result := exec.Execute(ctx, clean)
+				callCtx := ctx
+				if clean.Name == "worker_input" && r.channelBinding != nil {
+					source, err := r.channelSteeringSource(ctx, input)
+					if err != nil {
+						return bindingFailure(c.ID, err)
+					}
+					callCtx = context.WithValue(ctx, channelSteeringSourceKey{}, source)
+				}
+				var result loop.Result
+				if clean.Name == "start_run" && r.channelBinding != nil {
+					result = r.submitStartRun(callCtx, clean, input, s.turnID)
+				} else {
+					result = exec.Execute(callCtx, clean)
+				}
 				if result.Code == loop.OK {
 					if err := r.recordCreatedBinding(ctx, input, ref.Request, s.turnID, clean, result); err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Unknown, Output: json.RawMessage(`{"code":"input_binding_receipt_failed"}`)}
@@ -331,16 +418,18 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		}
 	case "read_work_progress", "follow_work":
 		id = str("id")
-		// task:id:generation is the same item as id. Check the binding before delivery.
-		if taskID, ok := workerFollowTask(id); ok && taskID != id {
-			if _, err := r.work.Get(ctx, taskID); err == nil {
+		if c.Name == "follow_work" {
+			id, err = r.followTaskID(ctx, id)
+		} else if taskID, ok := workerFollowTask(id); ok && taskID != id {
+			if _, lookupErr := r.work.Get(ctx, taskID); lookupErr == nil {
 				id = taskID
 			}
 		}
 	case "worker_input", "worker_interrupt":
 		// These tools name a session, not a work item. The session's task is
-		// the binding identity, so a settled choice still applies.
-		id = r.workerTaskID(str("session"))
+		// the binding identity, so a settled choice still applies, including a
+		// session retained in the recovery record after a restart.
+		id, err = r.workerSessionTask(ctx, str("session"))
 	case "schedule_work":
 		var tasks []struct {
 			What string `json:"what"`
@@ -386,6 +475,10 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		kind = "task"
 	}
 
+	if err != nil {
+		result := bindingFailure(c.ID, err)
+		return &result
+	}
 	if id == "" && title == "" && len(choice.Tied) < 2 {
 		return nil
 	}
@@ -502,35 +595,19 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					if preparation != nil {
 						event = preparation.event
 					}
-					if taskID, ok := workerFollowTask(a.ID); ok {
-						if _, err := r.work.Get(ctx, taskID); err == nil {
-							return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
-						}
+					// Deliver to the identity the chosen-target gate checked.
+					taskID, err := r.followCallTask(ctx, event.ID, turnID, c.ID, a.ID)
+					if err != nil {
+						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}
-					var source json.RawMessage
-					if r.channelBinding != nil {
-						var e gateway.Inbound
-						if preparation == nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						receiptID, err := r.channelReceiptEventID(ctx, preparation.event)
-						if err != nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						err = r.db.Read(ctx, func(tx *canon.Tx) error {
-							var raw []byte
-							err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
-							if err != nil {
-								return err
-							}
-							return json.Unmarshal(raw, &e)
-						})
-						if err != nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						source, _ = json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: e.Sender, Direct: e.Direct, Addressed: e.Addressed})
+					if _, err := r.work.Get(ctx, taskID); err == nil {
+						return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
 					}
-					_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: a.ID, Text: a.Text}}, source)
+					source, err := r.channelSteeringSource(ctx, event)
+					if err != nil {
+						return loop.Result{ID: c.ID, Code: loop.Denied}
+					}
+					_, err = r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: taskID, Text: a.Text}}, source)
 					if err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}
@@ -614,6 +691,13 @@ func (r *conversationRuntime) followWorkerTask(ctx context.Context, input ledger
 	// unrelated conversation cannot steer or speak as the owner.
 	if !entry.origin.workerConversation(r) {
 		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	source, err := r.channelSteeringSource(ctx, input)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	if len(source) > 0 {
+		ctx = context.WithValue(ctx, channelSteeringSourceKey{}, source)
 	}
 	ctx = context.WithValue(ctx, workerCallIdentityKey{}, "binding-follow:"+turnID+":"+callID)
 	result, err := r.workerOperation(ctx, "worker_input", turnID, input, in)
@@ -731,6 +815,49 @@ func (r *conversationRuntime) channelReceiptEventID(ctx context.Context, event l
 	}
 }
 
+// channelSteeringSource is the selected channel input's delivery receipt.
+// A runtime without a channel binding returns no receipt.
+func (r *conversationRuntime) channelSteeringSource(ctx context.Context, event ledger.Event) (json.RawMessage, error) {
+	if r.channelBinding == nil {
+		return nil, nil
+	}
+	receiptID, err := r.channelReceiptEventID(ctx, event)
+	if err != nil {
+		return nil, err
+	}
+	var inbound gateway.Inbound
+	err = r.db.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(raw, &inbound)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: inbound.Sender, Direct: inbound.Direct, Addressed: inbound.Addressed})
+}
+
+// submitStartRun admits a run on the selected channel runtime. The requesting
+// turn stays the turn that called start_run. A different selected channel
+// input is kept beside it so later checks still use that channel's permission.
+func (r *conversationRuntime) submitStartRun(ctx context.Context, call provider.ToolCall, event ledger.Event, turnID string) loop.Result {
+	if r.channelBinding == nil || r.background == nil || turnID == "" {
+		return loop.Result{ID: call.ID, Code: loop.Denied}
+	}
+	receiptID, err := r.channelReceiptEventID(ctx, event)
+	if err != nil {
+		return loop.Result{ID: call.ID, Code: loop.Denied}
+	}
+	origin := r.runOrigin(turnID)
+	if turnID != "turn:"+receiptID {
+		origin.ChannelReceipt = receiptID
+	}
+	return r.background.service.StartTool(origin).Execute(ctx, call)
+}
+
 func bindingAction(name string) string {
 	switch name {
 	case "follow_work", "worker_input":
@@ -745,4 +872,80 @@ func bindingAction(name string) string {
 		return "delete"
 	}
 	return ""
+}
+
+// workerSessionTask resolves a worker session to the work item it controls.
+// An owner-started session carries a conversation turn as its task id and names
+// no work item, so the original tool keeps its own checks. Recovery records
+// retain the task identity when the session is absent after a restart.
+func (r *conversationRuntime) workerSessionTask(ctx context.Context, session string) (string, error) {
+	if session == "" {
+		return "", nil
+	}
+	if r.workers != nil {
+		r.workers.mu.Lock()
+		entry := r.workers.sessions[session]
+		r.workers.mu.Unlock()
+		if entry != nil {
+			entry.control.Lock()
+			defer entry.control.Unlock()
+			return entry.thread.TaskID, nil
+		}
+	}
+	records, err := (recovery.Recovery{DB: r.db}).Records(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, record := range records {
+		if record.Thread.ID == session {
+			return record.Thread.TaskID, nil
+		}
+	}
+	return "", nil
+}
+
+// followTaskID resolves a follow_work id to the task the follow-up reaches.
+// The chosen-target gate and execution share it, so the identity that is
+// checked is the identity that receives the instruction. A literal task id
+// wins over a generation suffix: a task named "a:1" is not generation 1 of "a".
+func (r *conversationRuntime) followTaskID(ctx context.Context, ref string) (string, error) {
+	if session, ok := strings.CutPrefix(ref, "session:"); ok {
+		return r.workerSessionTask(ctx, session)
+	}
+	if task, ok := strings.CutPrefix(ref, "task:"); ok {
+		var card work.Card
+		err := r.db.Read(ctx, func(tx *canon.Tx) error {
+			var err error
+			card, err = work.ReadReference(ctx, tx, task)
+			return err
+		})
+		return card.Task.ID, err
+	}
+	if card, err := r.work.Get(ctx, ref); err == nil {
+		return card.Task.ID, nil
+	}
+	if taskID, ok := workerFollowTask(ref); ok && taskID != ref {
+		if _, err := r.work.Get(ctx, taskID); err == nil {
+			return taskID, nil
+		}
+	}
+	return ref, nil
+}
+
+// followCallTask returns the task the gate checked for this call. It reads the
+// saved binding so execution does not resolve the reference a second time; a
+// call the gate left unbound (no settled choice) resolves once here.
+func (r *conversationRuntime) followCallTask(ctx context.Context, inputID, turnID, callID, ref string) (string, error) {
+	if inputID != "" {
+		event, err := r.journal().Get(ctx, "binding-tool:"+turnID+":"+callID)
+		if err == nil && event.ParentID == inputID {
+			var batch bindingBatch
+			if json.Unmarshal([]byte(event.Body.Text()), &batch) == nil && len(batch.Bindings) == 1 {
+				if target := batch.Bindings[0].Target; target.Class == "existing" && target.ID != "" {
+					return target.ID, nil
+				}
+			}
+		}
+	}
+	return r.followTaskID(ctx, ref)
 }

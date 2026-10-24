@@ -19,11 +19,11 @@ JSON Schema, draft 2020-12 ([json-schema.org](https://json-schema.org/specificat
 
 Rules:
 
-- The schema lives in `protocol/schema/` of the LINA repository and is versioned per connection, as described under "Versions and capabilities".
+- LINA Core (`lina-system/lina`) owns the canonical JSON Schema in `protocol/schema/` and the canonical conformance fixtures in `protocol/fixtures/`, versioned per connection as described under "Versions and capabilities".
 - Every schema file declares draft 2020-12 with `$schema`. No other dialect is used.
-- Types are generated from the schema for each language that uses it: Go for LINA Core, the TUI and Node, and TypeScript for the LINA app. Generated types are never edited by hand. The foundation verification regenerates them and fails on any difference ([foundation.md](../policy/foundation.md)).
-- The Go types are part of the LINA kit ([runtime.md](runtime.md)). LINA Core, the TUI and Node use them through the kit.
-- The TypeScript types serve the LINA app on every platform, because the app is one React codebase ([surfaces.md](surfaces.md#app-front-end)).
+- Types are generated from the schema for each language that uses it: Go for LINA Core, the TUI and Node (`kit/protocol/client.gen.go` in this repository), and Dart for the LINA app (`packages/lina_app` in `lina-system/lina-app`). Generated types are never edited by hand. Each repository's `foundation` verification regenerates its types and fails on any difference ([foundation.md](../policy/foundation.md), [lina-app#3](https://github.com/lina-system/lina-app/issues/3)).
+- The Go types and Go conformance runner (`kit/protocol/conformance`) are part of the LINA kit ([runtime.md](runtime.md)). LINA Core, the TUI and Node use them through the kit.
+- The Dart types serve the LINA app on every platform, because the app is one Flutter codebase in Dart with shared protocol types across its surfaces ([surfaces.md](surfaces.md#app-front-end)). The app's Dart generator consumes Core's versioned schema export (`protocol/schema/client/1.0/envelope.json`, which defines the `client` `1.0` and `1.1` envelopes and payload schemas) and canonical conformance fixtures (`protocol/fixtures/client/1.0/` and `1.1` fixtures) from a pinned, immutable `lina-system/lina` release tag (`v0.0.1-alpha.YYYYMMDD.N`) or exact 40-character commit SHA verified by SHA-256 file digests in `lina-system/lina-app`. App-side Dart type generation (`protocol` check in `lina-system/lina-app`'s `scripts/verify/generators.json`) and lossless Dart round-trip conformance fixture tests are owned by [lina-system/lina-app#6](https://github.com/lina-system/lina-app/issues/6).
 - Every generated type set parses and re-serializes every conformance fixture without loss.
 
 The Go generator embeds the canonical schema verbatim as a raw string so schema
@@ -353,8 +353,8 @@ Rules:
 - Each subscribed topic has its own `(epoch, seq)` cursor. A client applies only the next sequence of its current epoch and ignores duplicates. A sequence gap or a newer epoch requires a snapshot before applying more deltas. Core replays frames strictly after a retained cursor; an unavailable cursor produces `resync` followed by a snapshot at a single publication boundary. A fresh subscription starts with that snapshot. A snapshot replaces the topic's window; it does not append duplicate items or reset another topic. Coalescing happens before assigning sequence numbers, so a combined text or replacement-row frame consumes one sequence. An overflowing subscription ends with `resync_required`; other subscriptions and the connection remain usable. The retention and batching bounds are in [C-42](go-core.md#client-service).
 - Client 1.0's stream additions are new kinds (`snapshot`, `resync`, `resync_required`) and optional fields on existing payloads. The envelope, hello and welcome shapes are unchanged by the stream increment. The exact request, event metadata, snapshot item and notification fields are specified in [C-42](go-core.md#client-service) and generated from the combined client schema. Existing reserved empty payloads still round-trip; a shape alone grants no operation. Every new kind has a conformance fixture, with additional stream-event, subscription, maximum-cursor and invalid-cursor cases.
 - A client never reaches a model provider, a provider adapter or a worker directly. Everything passes through LINA Core.
-- On desktop, the LINA app's shell holds the `client` connection (the local socket or the tailnet) and relays frames to the interface over a validated channel. The interface never opens a socket of its own, and the shell refuses any message that the schema of the negotiated version does not allow. The client side of the app is one TypeScript implementation that passes the conformance fixtures wherever it runs. The shell offers the connection to the interface through one bridge interface that is the same in every shell, so that the shell of an operating system can be replaced without a change to the interface or to the protocol ([surfaces.md](surfaces.md#app-front-end)).
-- On mobile, a WebView host cannot use the local socket. The app connects with a WebSocket on LINA Core's tailnet address that carries the same JSON-RPC messages. This adds a transport, not a connection: the handshake, the kinds and the rules are the same. Where a mobile host does not allow that connection, a small native stream plugin in the host carries the same frames. The mobile transport check decides between them ([surfaces.md](surfaces.md#platform-adaptation)).
+- On desktop, the LINA app (`packages/lina_app` in `lina-system/lina-app`) holds the `client` connection (the local socket or the tailnet) and validates frames against the generated Dart protocol types of the negotiated version, refusing any message that the schema does not allow. Native platform surfaces in the app (such as the macOS Swift launcher panel; see [surfaces.md](surfaces.md#launcher)) share the app's validated client connection or connect under the same `client` protocol rules without writing canon. The client side of the app is one Dart implementation ([lina-app#6](https://github.com/lina-system/lina-app/issues/6)) that passes the conformance fixtures on every supported platform ([surfaces.md](surfaces.md#app-front-end)).
+- On mobile, the app cannot use the local Unix socket. It connects over the tailnet: either a stream or a WebSocket on LINA Core's tailnet address (`/client`) that carries the same JSON-RPC messages. This adds a transport, not a connection: the handshake, the kinds and the rules are the same. Where a mobile host needs a native stream plugin to carry the frames, that plugin uses the same wire rules. The mobile transport check confirms the path on real devices ([surfaces.md](surfaces.md#platform-adaptation)).
 
   The endpoint is `/client` on the authenticated client listener. One text message carries one JSON-RPC object without a line delimiter; the stream's message limit also applies to the reassembled text. Framing adds neither a kind nor a field. Native hosts can omit Origin; browser hosts use the endpoint's origin host. A WebView with another origin needs its native host to carry the frames rather than disabling origin validation. Upgrade headers cannot grant a capability or decider status. The same generated codec, hello/welcome negotiation, sender and epoch checks, recovery admission, subscriptions and cancellation apply after upgrade. The client conformance corpus runs through real text messages. `e2e/m3/websocket.json` additionally exercises installed Core, a real tool operation, streamed output, durable results and restart both through the installed binary's authenticated Unix connection and through the production Core boot composition's authenticated tailnet listener. The tailnet acceptance uses synthetic LocalAPI responses and maps physical addresses to loopback; it exercises owner admission, TCP upgrade and Core execution without personal tailnet credentials. It does not establish physical mobile-host compatibility.
 - A client relays a sign-in redirect, or the error of a failed one, as it received it and makes no decision about it.
@@ -682,6 +682,15 @@ messages are never inserted wholesale into a host envelope to bypass validation.
 
 ### Teams source settings
 
+The owner-only `telegram_source` 1.0 capability provides `telegram_request`
+and `telegram_result`. Requests list sources, start sign-in with the person's
+application credentials and phone number, answer the next code or password
+prompt, cancel sign-in, or disconnect a named account. Every operation requires
+the current epoch and an eligible owner decider. Sign-in answers belong only to
+the connection that started the attempt. Results contain the next stage and
+public account/state pairs, never credentials. The TUI's `/telegram` form uses
+this route independently of conversation input.
+
 The owner-only `teams` 1.0 capability provides `teams_request` and `teams_result`.
 `configure` takes a connection `id`, `tenant` and `client_id`; `list` returns
 public connection metadata, state and reason. `sign_in`, `disconnect` and `chats`
@@ -713,7 +722,7 @@ The source reader continues independently of that client connection.
 
 ## Deferred
 
-- The JSON Schema to TypeScript type generator: chosen before the first LINA app work ([surfaces.md](surfaces.md#app-front-end)).
+- The JSON Schema to Dart type generator and its pinned input manifest: owned by [lina-system/lina-app#6](https://github.com/lina-system/lina-app/issues/6) and verified by the app repository's foundation gate ([lina-app#3](https://github.com/lina-system/lina-app/issues/3), [surfaces.md](surfaces.md#app-front-end)).
 - Request timeouts on the `client` and `node` connections: set by measurement during implementation acceptance of each connection.
 - The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds: set in the schema by the implementation issue that ships results.
 

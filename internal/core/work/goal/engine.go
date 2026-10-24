@@ -44,6 +44,9 @@ const (
 	OutcomeNeedsPerson Outcome = "needs_person"
 	OutcomeQuota       Outcome = "quota"
 	OutcomeNoReceipt   Outcome = "no_receipt"
+	// OutcomePartial is a background run that landed with something usable
+	// still missing. It is not a successful landing and it is not a person row.
+	OutcomePartial Outcome = "partial"
 )
 
 type Observation struct {
@@ -56,14 +59,15 @@ type Observation struct {
 	Decision string `json:"decision,omitempty"`
 	// SourceOpen is the result of one source read. Nil is not an answer.
 	// True means the wait is still open; false closes it.
-	SourceOpen     *bool   `json:"source_open,omitempty"`
-	Status         Outcome `json:"status"`
-	Handle         string  `json:"handle,omitempty"`
-	Head           string  `json:"head,omitempty"`
-	Proof          Proof   `json:"proof"`
-	PR             PRState `json:"pr"`
-	EffectsSettled bool    `json:"effects_settled"`
-	Code           string  `json:"code,omitempty"`
+	SourceOpen     *bool            `json:"source_open,omitempty"`
+	Status         Outcome          `json:"status"`
+	Handle         string           `json:"handle,omitempty"`
+	Head           string           `json:"head,omitempty"`
+	Proof          Proof            `json:"proof"`
+	PR             PRState          `json:"pr"`
+	EffectsSettled bool             `json:"effects_settled"`
+	Code           string           `json:"code,omitempty"`
+	Partial        *ResearchPartial `json:"partial,omitempty"`
 }
 type Config struct {
 	Records       Definitions
@@ -260,6 +264,9 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 		if !freshTask(t) || t.Repairs != "" {
 			return ErrInvalid
 		}
+	}
+	if err := AcceptProse(g); err != nil {
+		return err
 	}
 	if err := e.prepareDefinition(ctx, &g); err != nil {
 		return err
@@ -659,7 +666,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			if o.Handle != "" {
 				a.Handle = o.Handle
 			}
-			if effectSettled(a, o) || !hasExternalEffect(a) && (o.Status == OutcomeSucceeded || o.Status == OutcomeFailed || o.Status == OutcomeConflict || o.Status == OutcomeNeedsPerson) {
+			if effectSettled(a, o) || !hasExternalEffect(a) && (o.Status == OutcomeSucceeded || o.Status == OutcomeFailed || o.Status == OutcomeConflict || o.Status == OutcomeNeedsPerson || o.Status == OutcomePartial) {
 				a.State = "finished"
 			}
 			return put(v, "action", id, a)
@@ -783,6 +790,17 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 				a.State = "needs_person"
 			case Deploy, Verify, Observe, Decide, CheckCriterion, ReadSource:
 				return ErrInvalid
+			}
+		case OutcomePartial:
+			if t == nil || stepKind(t.Kind) != BackgroundStep || a.Kind != Assign || !o.EffectsSettled {
+				return ErrInvalid
+			}
+			if err = applyResearchPartial(&g, t, o); err != nil {
+				return err
+			}
+			a.State = "finished"
+			if o.Handle != "" {
+				a.Handle = o.Handle
 			}
 		case OutcomeSucceeded:
 			a.State = "finished"

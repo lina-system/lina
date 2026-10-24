@@ -54,13 +54,14 @@ func (m *shellModel) refreshBlocks() {
 }
 
 func (m *shellModel) View() tea.View {
-	view := tea.NewView(m.viewContent(true))
+	content := m.styles.viewport(m.viewContent(true), m.size.Width, m.size.Height)
+	view := tea.NewView(content)
 	view.AltScreen = true
 	view.ReportFocus = true
 	view.KeyboardEnhancements.ReportEventTypes = true
 	if m.hasComposer() && m.status.State.active() {
 		plan := m.conversationPlan()
-		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.conversation.workFocused && !m.accounts.open && !m.web.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
+		if plan.Tier != layout.TooSmall && !m.conversation.pager.open && !m.conversation.workFocused && !m.accounts.open && !m.web.open && !m.telegram.open && !m.channels.open && !m.talk.open && m.content.CardView.ID == "" {
 			view.Cursor = m.conversation.composer.Cursor()
 			if view.Cursor != nil {
 				view.Cursor.Position.X += m.styles.composerPromptWidth()
@@ -120,6 +121,9 @@ func (m *shellModel) viewContent(showNotice bool) string {
 	}
 	if m.talk.open {
 		return m.talkContent()
+	}
+	if m.telegram.open {
+		return m.telegramContent()
 	}
 	if m.channels.open {
 		return m.channelContent()
