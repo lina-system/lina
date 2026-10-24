@@ -682,6 +682,15 @@ messages are never inserted wholesale into a host envelope to bypass validation.
 
 ### Teams source settings
 
+The owner-only `telegram_source` 1.0 capability provides `telegram_request`
+and `telegram_result`. Requests list sources, start sign-in with the person's
+application credentials and phone number, answer the next code or password
+prompt, cancel sign-in, or disconnect a named account. Every operation requires
+the current epoch and an eligible owner decider. Sign-in answers belong only to
+the connection that started the attempt. Results contain the next stage and
+public account/state pairs, never credentials. The TUI's `/telegram` form uses
+this route independently of conversation input.
+
 The owner-only `teams` 1.0 capability provides `teams_request` and `teams_result`.
 `configure` takes a connection `id`, `tenant` and `client_id`; `list` returns
 public connection metadata, state and reason. `sign_in`, `disconnect` and `chats`
