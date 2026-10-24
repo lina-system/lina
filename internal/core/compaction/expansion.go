@@ -43,61 +43,76 @@ func (e Expansion) epoch(ctx context.Context) (uint64, error) {
 	return epoch, err
 }
 
-// Read matches exec.ExpandRead without a flow-to-flow import. Ref is explicitly
-// node:<id> or event:<id>; event pagination treats the full body as one record.
-// Missing material bytes fail the whole page, never return a preview as exact.
-func (e Expansion) Read(ctx context.Context, agent, ref string, offset, limit int) (json.RawMessage, error) {
-	if e.DB == nil || e.Events == nil || agent == "" || offset < 0 || limit < 1 || limit > 1000 {
-		return nil, ErrExpand
+// Page is the one expand reader: it resolves node:<id> or event:<id> to the
+// exact visible events of the bound agent, a page at a time. Replay and live
+// turns both page through it; Read adds the bodies for the tool result.
+func (e Expansion) Page(ctx context.Context, agent, ref string, offset, limit int) ([]string, int, error) {
+	if e.DB == nil || agent == "" || offset < 0 || limit < 1 || limit > 1000 {
+		return nil, 0, ErrExpand
 	}
 	kind, id, ok := strings.Cut(ref, ":")
 	if !ok || id == "" {
-		return nil, ErrExpand
-	}
-	epoch, err := e.epoch(ctx)
-	if err != nil {
-		return nil, err
+		return nil, 0, ErrExpand
 	}
 	var ids []string
 	next := 0
+	var err error
 	switch kind {
 	case "node":
 		if e.NodeEvents == nil {
-			return nil, ErrExpand
+			return nil, 0, ErrExpand
 		}
 		ids, next, err = e.NodeEvents(ctx, agent, id, offset, limit)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	case "event":
-		ids = []string{id}
+		if offset == 0 {
+			ids = []string{id}
+		}
 	default:
-		return nil, ErrExpand
+		return nil, 0, ErrExpand
 	}
 	if len(ids) > limit || next < 0 || next != 0 && next <= offset {
-		return nil, ErrExpand
+		return nil, 0, ErrExpand
 	}
-	page := ExpansionPage{Events: []ExpandedEvent{}, Next: next}
 	for _, id := range ids {
 		var visible int
 		err = e.DB.Read(ctx, func(tx *canon.Tx) error {
 			return tx.QueryRowContext(ctx, `SELECT count(*) FROM retract_visible_event WHERE id=? AND agent_id=?`, id, agent).Scan(&visible)
 		})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if visible != 1 {
-			return nil, ErrExpand
+			return nil, 0, ErrExpand
 		}
+	}
+	return ids, next, nil
+}
+
+// Read matches exec.ExpandRead without a flow-to-flow import. Missing material
+// bytes fail the whole page, never return a preview as exact.
+func (e Expansion) Read(ctx context.Context, agent, ref string, offset, limit int) (json.RawMessage, error) {
+	if e.Events == nil {
+		return nil, ErrExpand
+	}
+	epoch, err := e.epoch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids, next, err := e.Page(ctx, agent, ref, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	page := ExpansionPage{Events: []ExpandedEvent{}, Next: next}
+	for _, id := range ids {
 		event, err := e.Events.Get(ctx, id)
 		if err != nil {
 			return nil, err
 		}
 		if event.AgentID != agent {
 			return nil, ErrExpand
-		}
-		if kind == "event" && offset > 0 {
-			continue
 		}
 		page.Events = append(page.Events, ExpandedEvent{ID: event.ID, Conversation: event.ConversationID, Speaker: event.SpeakerKind, Body: event.Body.Text(), Material: event.Material})
 	}

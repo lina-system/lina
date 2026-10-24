@@ -1,8 +1,9 @@
-# Shared text index
+# Shared text index and recall entry
 
-This is migration step 2 of the [store plan](../../../docs/research/unified-store.md).
-No product reader uses these tables yet. Ledger, memory and records retain their
-existing indexes and query behavior.
+This is migration steps 2 to 4 of the [store plan](../../../docs/research/unified-store.md):
+the index, and the one read entry over it. `recall.Search` serves ledger search,
+memory text match, record search and `recall_person`; the old indexes are still
+written until the contract step, so a revert is safe.
 
 `recall.Index` takes derived text in the source writer's canon transaction. It
 reads source identity, revision, scope and visibility from `recall_source`, then
@@ -33,10 +34,29 @@ During the switch window the citation walk owns removal, recovery and erase for
 this index: a removal deletes the documents it hides in its own transaction, a
 recovery queues only what the source view admits again, and the source view
 fences a late write through the candidate's citation ancestors. The existing
-retraction indexes keep their own triggers until the contract step. New
-readers, ranking, vectors and messenger windows belong to later steps.
+retraction indexes keep their own triggers until the contract step. Vectors and
+messenger windows belong to later steps.
+
+`recall.Match` applies scope (person, holder, conversation, kinds, time, speaker,
+origin, replay, visibility class), matches, ranks and limits without reading a
+source body. Query terms are literal, whitespace split, at most eight, and any
+term may match. Documents holding more terms come first by BM25 over the pair
+table; documents found only through the trigram table follow; ties go to the
+newer `occurred_at`. A short term reaches memory items and records by a literal
+scan of the already scoped set. `recall_doc.text_hash` collapses events with
+identical derived text inside one conversation to the earliest of them. A
+returned memory item hides its own evidence events, so lineage counts once.
+`recall.Search` adds the bounded masked excerpt and the citations in force at
+the result's revision. `VectorQuery` is the fusion hook for #874.
+
+Memory items, events and records are the same list: `exec.Memory` asks `Match`
+for events and items together, materializes the item set in one scoped read, and
+reads an event's text only for the results that remain. Its cost follows the
+hits, not the number of person events.
 
 Tests cover atomic native writes, queued sources and exclusions, generation
-fencing, batch bounds, migrations, records revisions, Korean ledger parity and
-the generated store corpus. The opt-in store benchmark Core test proves startup
-fill and socket memory writes/forget with the normal running Core.
+fencing, batch bounds, migrations, records revisions, Korean parity, any-term
+ranking, identical-text collapse, lineage, scope and visibility classes,
+retraction, summary navigation, excerpt bounds and the vector hook. The opt-in
+store benchmark Core test proves startup fill and socket memory writes/forget
+with the normal running Core.

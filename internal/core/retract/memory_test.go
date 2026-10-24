@@ -287,6 +287,8 @@ func TestForgetExcludesTransitiveDerivedMemory(t *testing.T) {
 	if err := s.Restore(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
+	// Recovery queues the revealed items; Core's background drain publishes them.
+	drainIndex(t, db)
 	check(3)
 	if err := s.Delete(t.Context(), r); err != nil {
 		t.Fatal(err)

@@ -76,6 +76,7 @@ func Migrations() []Migration {
 		{Version: 61, SQL: workerMessagesSchema},
 		{Version: 62, SQL: a2aSchema},
 		{Version: 63, SQL: retractCiteSchema},
+		{Version: 64, SQL: recallSearchSchema},
 	}
 }
 

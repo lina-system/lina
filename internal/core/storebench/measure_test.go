@@ -4,6 +4,7 @@ package storebench
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -35,23 +36,47 @@ type distribution struct {
 	MaxNS int64 `json:"max_ns"`
 }
 type report struct {
-	Version         int                     `json:"report_version"`
-	Schema          int                     `json:"schema_version"`
-	Corpus          counts                  `json:"corpus"`
-	RecallDocuments int                     `json:"recall_documents"`
-	RecallParity    int                     `json:"recall_parity_queries"`
-	SourceBytes     int64                   `json:"source_bytes"`
-	RecallTextBytes int64                   `json:"recall_text_bytes"`
-	RecallPairBytes int64                   `json:"recall_pair_bytes"`
-	MemoryItems     int                     `json:"memory_items"`
-	MaterialBytes   int64                   `json:"material_bytes"`
-	TableBytes      map[string]int64        `json:"table_bytes"`
-	IndexBytes      int64                   `json:"index_bytes"`
-	DatabaseBytes   int64                   `json:"database_bytes"`
-	FreeBytes       int64                   `json:"free_bytes"`
-	Latency         map[string]distribution `json:"latency"`
-	Hits            map[string]int          `json:"hits"`
-	ForgetHidden    int                     `json:"forget_hidden"`
+	Version           int                     `json:"report_version"`
+	Schema            int                     `json:"schema_version"`
+	Corpus            counts                  `json:"corpus"`
+	RecallDocuments   int                     `json:"recall_documents"`
+	PersonEventsEarly int                     `json:"person_events_early"`
+	RecallParity      int                     `json:"recall_parity_queries"`
+	SourceBytes       int64                   `json:"source_bytes"`
+	RecallTextBytes   int64                   `json:"recall_text_bytes"`
+	RecallPairBytes   int64                   `json:"recall_pair_bytes"`
+	MemoryItems       int                     `json:"memory_items"`
+	MaterialBytes     int64                   `json:"material_bytes"`
+	TableBytes        map[string]int64        `json:"table_bytes"`
+	IndexBytes        int64                   `json:"index_bytes"`
+	DatabaseBytes     int64                   `json:"database_bytes"`
+	FreeBytes         int64                   `json:"free_bytes"`
+	Latency           map[string]distribution `json:"latency"`
+	Hits              map[string]int          `json:"hits"`
+	ForgetHidden      int                     `json:"forget_hidden"`
+}
+
+// earlyQueries keeps the two depth-zero samples comparable: the same number of
+// queries, drawn from the same generator.
+func earlyQueries(c corpus) []string {
+	queries := c.queries()
+	if len(queries) > 12 {
+		queries = queries[:12]
+	}
+	return queries
+}
+
+func sampleDepthZero(ctx context.Context, flow *coreexec.Memory, timed func(string, func() error) error, hits map[string]int, name string, queries []string) error {
+	for _, q := range queries {
+		if err := timed(name, func() error {
+			answer, err := flow.RecallPerson(ctx, memory.RecallScope{Agent: agent, Person: person}, coreexec.PersonRecall{Question: q, Query: q, At: 1800000000})
+			hits[name] += len(answer.Sources)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func summarize(samples []int64) distribution {
@@ -130,6 +155,11 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 	var ids []string
 	bySession := map[string][]string{}
 	index := 0
+	// The early sample answers the same depth-zero question over the first
+	// tenth of the history. The final sample answers over all of it; comparing
+	// the two shows whether cost tracks person events or only hits.
+	early := max(1, len(c.Turns)/10)
+	seenTurns := 0
 	for _, turn := range c.Turns {
 		var batch []ledger.Admission
 		for _, msg := range turn {
@@ -168,6 +198,15 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 			}
 			if !slices.Contains(ids, receipt.ID) {
 				ids = append(ids, receipt.ID)
+			}
+		}
+		if seenTurns++; seenTurns == early {
+			r.PersonEventsEarly = r.Corpus.PersonEvents * early / len(c.Turns)
+			if err := sampleDepthZero(ctx, flow, timed, r.Hits, "recall_person_early", earlyQueries(c)); err != nil {
+				return r, err
+			}
+			if err := sampleDepthZero(ctx, flow, timed, r.Hits, "recall_person_miss_early", []string{c.missQuery()}); err != nil {
+				return r, err
 			}
 		}
 	}
@@ -228,17 +267,20 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 		return r, errors.New("recall_document_count")
 	}
 	scope := memory.RecallScope{Agent: agent, Person: person}
+	eventScope := recall.Scope{Person: person, Agent: agent, Kinds: []recall.Kind{recall.Event}}
 	for _, q := range c.queries() {
-		var hits []ledger.SearchHit
+		var hits []recall.Hit
 		if err := timed("ledger_search", func() error {
 			var e error
-			hits, e = events.Search(ctx, ledger.SearchQuery{AgentID: agent, PersonID: person, Text: q, Limit: 12})
+			hits, e = recall.Match(ctx, db, eventScope, recall.Query{Text: q})
 			r.Hits["ledger_search"] += len(hits)
 			return e
 		}); err != nil {
 			return r, err
 		}
 
+		// Parity against the old ledger index, still written during the switch
+		// window: single literal terms in recency order must be the same events.
 		var want []string
 		for _, hit := range hits {
 			want = append(want, hit.ID)
@@ -249,7 +291,7 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 		}
 		var got []string
 		e := db.Read(ctx, func(tx *canon.Tx) error {
-			rows, e := tx.QueryContext(ctx, "SELECT source_id FROM recall_doc WHERE kind='event' AND person=? AND holder=? AND replay=0 AND id IN (SELECT rowid FROM "+table+" WHERE "+table+" MATCH ?) ORDER BY julianday(occurred_at) DESC,source_id LIMIT 12", person, agent, canon.TrigramPhrase(q))
+			rows, e := tx.QueryContext(ctx, "SELECT source_id FROM recall_doc WHERE kind='event' AND person=? AND holder=? AND replay=0 AND id IN (SELECT rowid FROM "+table+" WHERE "+table+" MATCH ?) ORDER BY julianday(occurred_at) DESC,source_id", person, agent, canon.TrigramPhrase(q))
 			if e != nil {
 				return e
 			}
@@ -266,6 +308,8 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 		if e != nil {
 			return r, e
 		}
+		slices.Sort(got)
+		slices.Sort(want)
 		if !slices.Equal(got, want) {
 			return r, errors.New("recall_parity_mismatch")
 		}
@@ -277,6 +321,13 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 		}); err != nil {
 			return r, err
 		}
+		if err := timed("recall_match", func() error {
+			found, e := recall.Match(ctx, db, recall.Scope{Person: person, Agent: agent, Kinds: []recall.Kind{recall.Event, recall.Memory}}, recall.Query{Text: q, Limit: coreexec.RecallItemLimit})
+			r.Hits["recall_match"] += len(found)
+			return e
+		}); err != nil {
+			return r, err
+		}
 		if err := timed("recall_person", func() error {
 			answer, e := flow.RecallPerson(ctx, scope, coreexec.PersonRecall{Question: q, Query: q, At: 1800000000})
 			r.Hits["recall_person"] += len(answer.Sources)
@@ -284,6 +335,23 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 		}); err != nil {
 			return r, err
 		}
+	}
+	// A query that matches nothing must not pay for the person events it did
+	// not match. The old ledger side scanned every person event per query, so
+	// this cost grew with the person event count. Append as many unmatched
+	// person events as the corpus already holds and measure it again.
+	if err := sampleDepthZero(ctx, flow, timed, r.Hits, "recall_person_miss", []string{c.missQuery()}); err != nil {
+		return r, err
+	}
+	for i := 0; i < len(c.Turns); i++ {
+		at := time.Unix(1900000000+int64(i), 0)
+		if _, err := events.Admit(ctx, guard.EntryOwner, ledger.Input{ID: fmt.Sprintf("extra-person-%06d", i), ConversationID: "extra-person", AgentID: agent, PersonID: person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Body: "unmatched filler body"}); err != nil {
+			return r, err
+		}
+		r.PersonEventsExtra++
+	}
+	if err := sampleDepthZero(ctx, flow, timed, r.Hits, "recall_person_miss_more_person", []string{c.missQuery()}); err != nil {
+		return r, err
 	}
 	// The packaged engine omits dbstat. Python's SQLite inspects the same
 	// committed file read-only; it does not execute or time any store operation.

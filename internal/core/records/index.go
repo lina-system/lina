@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/recall"
@@ -203,6 +202,27 @@ func (s *Store) Query(ctx context.Context, p Params) ([]Row, error) {
 	if _, _, err := s.snapshot(ctx); err != nil {
 		return nil, err
 	}
+	// The search argument is the one recall entry's match: terms are literal,
+	// any term may match, and a short term reaches records by literal scan.
+	matched := ""
+	if search := strings.TrimSpace(p.Search); search != "" {
+		found, err := recall.Match(ctx, s.db, recall.Scope{Person: p.Person, Kinds: []recall.Kind{recall.Record}}, recall.Query{Text: search})
+		if err != nil {
+			return nil, err
+		}
+		if len(found) == 0 {
+			return []Row{}, nil
+		}
+		ids := make([]string, 0, len(found))
+		for _, hit := range found {
+			ids = append(ids, hit.ID)
+		}
+		raw, err := json.Marshal(ids)
+		if err != nil {
+			return nil, err
+		}
+		matched = string(raw)
+	}
 	rows := []Row{}
 	err = s.db.Read(ctx, func(tx *canon.Tx) error {
 		query := "WITH bounds AS (SELECT ? AS day,? AS start,? AS end,? AS week_end,? AS week_day) SELECT i.id,i.revision,t.kind,t.state,t.title,t.note,COALESCE(v.fields,'')," +
@@ -214,19 +234,9 @@ func (s *Store) Query(ctx context.Context, p Params) ([]Row, error) {
 			query += " AND t.kind=?"
 			args = append(args, p.Kind)
 		}
-		if search := strings.TrimSpace(p.Search); search != "" {
-			// Quote the whole phrase; model text cannot inject FTS query operators.
-			switch {
-			case len(canon.HangulBigrams(search)) == 0:
-				query += " AND i.id IN (SELECT id FROM records_fts WHERE records_fts MATCH ?)"
-				args = append(args, canon.TrigramPhrase(search))
-			case utf8.RuneCountInString(search) == 2:
-				query += " AND i.id IN (SELECT id FROM records_korean_bigram WHERE gram=?)"
-				args = append(args, search)
-			default:
-				query += " AND i.id IN (SELECT id FROM records_korean_fts WHERE records_korean_fts MATCH ?)"
-				args = append(args, canon.TrigramPhrase(search))
-			}
+		if matched != "" {
+			query += " AND i.id IN (SELECT value FROM json_each(?))"
+			args = append(args, matched)
 		}
 		query += " ORDER BY i.id LIMIT ?"
 		args = append(args, p.Limit)

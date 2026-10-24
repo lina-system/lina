@@ -4,11 +4,12 @@ package exec
 import (
 	"context"
 	"errors"
-	"strings"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
@@ -20,46 +21,61 @@ import (
 func NewMemory(db *canon.Store, materials ledger.Materials, aux Auxiliary) *Memory {
 	events := ledger.New(db, materials)
 	m := newMemory(db, nil, nil, aux)
+	m.events = events
 	m.store = memory.New(db).WithQuotes(events.Citation)
 	m.prepare = func(ctx context.Context, in memory.Write) (memory.ResolveEvidence, error) {
 		return PrepareMemoryEvidence(ctx, db, materials, in)
 	}
-	m.ledger = func(ctx context.Context, scope memory.RecallScope, q memory.Query) ([]RecallSource, error) {
-		// Raw conversation evidence has no grant for projection to another audience.
-		if scope.Projection {
-			return nil, nil
+	m.search = m.recallSources
+	return m
+}
+
+// recallSources answers a person question from the same recall list as every
+// other reader: memory items and events are matched and ranked together, and
+// an event that is a returned item's evidence counts once as that item.
+func (m *Memory) recallSources(ctx context.Context, scope memory.RecallScope, in PersonRecall) ([]RecallSource, error) {
+	kinds := []recall.Kind{recall.Event, recall.Memory}
+	// Raw conversation evidence has no grant for projection to another audience.
+	if scope.Projection {
+		kinds = []recall.Kind{recall.Memory}
+	}
+	query := recall.Scope{
+		Person: scope.Person, Agent: scope.Agent, Kinds: kinds,
+		CommonOnly: scope.CommonOnly, History: in.History, At: in.At,
+		Projection: scope.Projection, ExternalModel: scope.ExternalModel,
+	}
+	if in.At > 0 {
+		query.Until = time.Unix(in.At, 0).Add(time.Second)
+	}
+	hits, err := recall.Match(ctx, m.db, query, recall.Query{Text: in.Query, Limit: RecallItemLimit})
+	if err != nil {
+		return nil, err
+	}
+	var memoryIDs []string
+	for _, hit := range hits {
+		if hit.Kind == recall.Memory {
+			memoryIDs = append(memoryIDs, hit.ID)
 		}
-		restricted, err := m.store.RestrictedEvents(ctx, scope)
-		if err != nil {
-			return nil, err
-		}
-		var ids []string
-		err = db.Read(ctx, func(tx *canon.Tx) error {
-			rows, err := tx.QueryContext(ctx, `SELECT id FROM retract_visible_event WHERE person_id=? AND agent_id=? AND speaker_kind='person' AND replay_of IS NULL AND unixepoch(occurred_at)<=?
-    AND NOT EXISTS(SELECT 1 FROM ev_rel WHERE event_id=retract_visible_event.id AND kind='view_of')
-    ORDER BY julianday(occurred_at) DESC,id`, scope.Person, scope.Agent, q.At)
-			if err != nil {
-				return err
-			}
-			defer rows.Close()
-			for rows.Next() {
-				var id string
-				if err := rows.Scan(&id); err != nil {
-					return err
-				}
-				ids = append(ids, id)
-			}
-			return rows.Err()
-		})
-		if err != nil {
-			return nil, err
-		}
-		var sources []RecallSource
-		for _, id := range ids {
-			if restricted[id] {
+	}
+	items, err := m.store.Items(ctx, scope, memoryIDs, in.At, in.History)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]memory.Hit, len(items))
+	for _, item := range items {
+		byID[item.ID] = item
+	}
+	sources := make([]RecallSource, 0, len(hits))
+	for _, hit := range hits {
+		switch hit.Kind {
+		case recall.Memory:
+			item, ok := byID[hit.ID]
+			if !ok {
 				continue
 			}
-			event, err := events.Get(ctx, id)
+			sources = append(sources, RecallSource{Citation: Citation{ID: "memory:" + item.ID, Revision: item.Revision}, Text: item.Content, Holder: item.Holder, Evidence: item.Evidence, Older: item.Older})
+		case recall.Event:
+			event, err := m.events.Get(ctx, hit.ID)
 			if errors.Is(err, ledger.ErrBytesUnavailable) && ctx.Err() == nil {
 				continue
 			}
@@ -67,17 +83,10 @@ func NewMemory(db *canon.Store, materials ledger.Materials, aux Auxiliary) *Memo
 				return nil, err
 			}
 			text := event.Body.DerivedText()
-			if !strings.Contains(strings.ToLower(text), strings.ToLower(q.Text)) {
-				continue
-			}
-			sources = append(sources, RecallSource{Citation: Citation{ID: "event:" + event.ID}, Text: text, Holder: memory.Holder(scope.Agent), Evidence: []memory.Evidence{{Kind: memory.Event, ID: event.ID, Precision: memory.Exact, SourceAgent: event.AgentID, OccurredAt: event.OccurredAt.Unix(), Quote: text}}})
-			if len(sources) == q.Limit {
-				break
-			}
+			sources = append(sources, RecallSource{Citation: Citation{ID: "event:" + event.ID}, Text: text, Holder: memory.Holder(hit.Holder), Evidence: []memory.Evidence{{Kind: memory.Event, ID: event.ID, Precision: memory.Exact, SourceAgent: event.AgentID, OccurredAt: event.OccurredAt.Unix(), Quote: text}}})
 		}
-		return sources, nil
 	}
-	return m
+	return sources, nil
 }
 
 type transactionReader struct{ tx *canon.Tx }

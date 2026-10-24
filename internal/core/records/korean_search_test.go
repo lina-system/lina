@@ -54,7 +54,9 @@ func TestKoreanRecordSearchLifecycle(t *testing.T) {
 		check("도서관", "", 10, "b-memo")
 		check("연필", "", 1, "b-memo")
 		check("연필", "b-memo", 1, "c-title")
-		check(`연필 OR 도서관`, "", 10)
+		// Any query term may match, and an operator word is a literal term, so
+		// the two matching records come back (#871).
+		check(`연필 OR 도서관`, "", 10, "b-memo", "c-title")
 		check(`연필" OR *`, "", 10)
 	}
 	checkAll()
@@ -178,12 +180,16 @@ func TestKoreanRecordSearchLiteralPhrases(t *testing.T) {
 		{"등대", []string{"a", "c"}},
 		{"연필", []string{"a", "b", "c"}},
 		{"연필통", []string{"b"}},
-		{`연필 "파란" OR 등대`, []string{"c"}},
+		// Any term matches: 연필 reaches a, b and c; the quoted word and the
+		// operator word are literal terms, never query syntax (#871).
+		{`연필 "파란" OR 등대`, []string{"a", "b", "c"}},
 		{`"연필"`, nil},
-		{"연필 OR 종이", nil},
+		// 연필 is one of the terms, so its records match (#871).
+		{"연필 OR 종이", []string{"a", "b", "c"}},
 		{"prototype", []string{"d"}},
 		{"go", []string{"d"}},
-		{"rotot", nil},
+		// A three-character term matches as a literal substring of any word.
+		{"rotot", []string{"d"}},
 	} {
 		rows, err := s.Query(t.Context(), Params{Person: "person", Search: tc.query})
 		if err != nil {

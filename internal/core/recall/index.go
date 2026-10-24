@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package recall maintains the shared search index beside the existing readers.
-// Only Core writers call it; scope and source revisions always come from canon.
+// Package recall maintains the shared search index and serves the one read
+// entry over its documents. Only Core writers fill it; scope and source
+// revisions always come from canon.
 package recall
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"unicode"
@@ -39,7 +42,7 @@ func Index(ctx context.Context, tx *canon.Tx, kind, id, text string) error {
 		return e
 	}
 	if err == nil {
-		result, e := tx.ExecContext(ctx, `INSERT INTO recall_doc(kind,source_id,revision,person,holder,conversation,occurred_at,speaker_kind,origin,replay) VALUES(?,?,?,?,?,?,?,?,?,?)`, s.kind, s.id, s.revision, s.person, s.holder, s.conversation, s.occurred, s.speaker, s.origin, s.replay)
+		result, e := tx.ExecContext(ctx, `INSERT INTO recall_doc(kind,source_id,revision,person,holder,conversation,occurred_at,speaker_kind,origin,replay,text_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, s.kind, s.id, s.revision, s.person, s.holder, s.conversation, s.occurred, s.speaker, s.origin, s.replay, textHash(text))
 		if e != nil {
 			return e
 		}
@@ -66,6 +69,13 @@ func IndexText(ctx context.Context, tx *canon.Tx, kind, id, text string) error {
 		return err
 	}
 	return Index(ctx, tx, kind, id, masked.DerivedText())
+}
+
+// textHash identifies identical derived text within one conversation. It is
+// the only content-derived value the index retains.
+func textHash(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
 }
 
 // PairTokens preserves occurrence counts for BM25. Composed Hangul runs become

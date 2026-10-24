@@ -98,6 +98,16 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 				if result.Items == nil || len(*result.Items) != 1 || (*result.Items)[0].ItemID != *retained.ItemID {
 					t.Errorf("forgotten correction chain reappeared in /memory list: %+v", result.Items)
 				}
+				// A text query is served by the shared recall index through the
+				// running Core, not by a second per-kind index.
+				filtered := command("/memory list teal")
+				if filtered.Items == nil || len(*filtered.Items) != 1 || (*filtered.Items)[0].ItemID != *retained.ItemID {
+					t.Errorf("recall text query missed the retained item: %+v", filtered.Items)
+				}
+				gone := command("/memory list golden")
+				if gone.Items == nil || len(*gone.Items) != 0 {
+					t.Errorf("recall text query returned a forgotten item: %+v", gone.Items)
+				}
 			}
 			assertRequest := func(stage string) {
 				t.Helper()
@@ -178,8 +188,17 @@ func TestM1MemoryCorrectionForgetRestore(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(answer.Sources) != 0 {
-					t.Errorf("restored recall or ledger fallback exposed %q: %+v", fact, answer.Sources)
+				// Any query term may match, so a shared word may return a live
+				// item; what must never come back is the forgotten text itself.
+				for _, source := range answer.Sources {
+					if strings.Contains(source.Text, fact) {
+						t.Errorf("restored recall or ledger fallback exposed %q: %+v", fact, source)
+					}
+					for _, evidence := range source.Evidence {
+						if strings.Contains(evidence.Quote, fact) {
+							t.Errorf("restored recall exposed %q through evidence: %+v", fact, evidence)
+						}
+					}
 				}
 			}
 			if err := db.Close(context.Background()); err != nil {

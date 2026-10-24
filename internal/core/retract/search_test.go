@@ -59,6 +59,9 @@ INSERT INTO memory_search_bigram(gram,item_id) SELECT '커피',id FROM memory_it
 	if err := s.Restore(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
+	// Recovery queues the sources it reveals; Core's background drain publishes
+	// them before the next read.
+	drainIndex(t, db)
 	search(1)
 	if err := s.Delete(t.Context(), r); err != nil {
 		t.Fatal(err)
@@ -130,7 +133,9 @@ func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
 	copyEvent("view-1", "source-1", false)
 	copyEvent("replay-1", "view-1", true)
 	copyEvent("nested-view", "replay-1", false)
-	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 4 {
+	// One lineage counts once: the copy chain is represented by its original
+	// (conversation-and-memory.md, One recall entry).
+	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 1 || hits[0].ID != "source-1" {
 		t.Fatalf("copy precondition: %+v %v", hits, err)
 	}
 	generation := filepath.Join(t.TempDir(), "canon.sqlite")
@@ -162,7 +167,9 @@ func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
 	if err := s.Restore(t.Context(), retract.Request{Person: "person-1", Targets: []retract.Ref{{Kind: retract.Memory, ID: receipt.ID}}}); err != nil {
 		t.Fatal(err)
 	}
-	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 6 {
+	drainIndex(t, db)
+	// The whole recovered chain is one lineage, represented by its original.
+	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 1 || hits[0].ID != "source-1" {
 		t.Fatalf("recovered lineage: %+v %v", hits, err)
 	}
 	if err := s.Delete(t.Context(), retract.Request{Person: "person-1", Targets: []retract.Ref{{Kind: retract.Memory, ID: receipt.ID}}}); err != nil {
