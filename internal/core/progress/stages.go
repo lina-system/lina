@@ -335,14 +335,17 @@ func GoalStages(ctx context.Context, tx *canon.Tx, goalID, person string, langua
 	if err != nil {
 		return nil, err
 	}
-	var current goal.Goal
-	if err = json.Unmarshal(raw, &current); err != nil {
+	current, err := decodeProgressGoal(raw)
+	if err != nil {
 		return nil, err
 	}
 	if current.Person != person {
 		return nil, goal.GraphUnavailable
 	}
-	ids := map[string]bool{goalID: true}
+	ids := map[string]bool{}
+	if current.StepGraph == nil || current.StepGraph.Revision != 1 {
+		ids[goalID] = true
+	}
 	history, err := stepGraphRevisions(ctx, tx, ids)
 	if err != nil {
 		return nil, err
@@ -499,6 +502,9 @@ type graphRevision struct {
 // stepGraphRevisions reads the whole revisions the manager submitted, in commit
 // order. Each step graph event journals the goal record that carries it.
 func stepGraphRevisions(ctx context.Context, tx *canon.Tx, goals map[string]bool) (map[string][]graphRevision, error) {
+	if len(goals) == 0 {
+		return nil, nil
+	}
 	rows, err := tx.QueryContext(ctx, "SELECT body FROM work_events WHERE kind='goal.step_graph' ORDER BY seq")
 	if err != nil {
 		return nil, err
@@ -524,8 +530,8 @@ func stepGraphRevisions(ctx context.Context, tx *canon.Tx, goals map[string]bool
 			if change.Kind != "goal" || !goals[change.ID] {
 				continue
 			}
-			var g goal.Goal
-			if json.Unmarshal(change.Body, &g) != nil {
+			g, err := decodeProgressGoal(change.Body)
+			if err != nil {
 				return nil, ErrStageGraph
 			}
 			if g.StepGraph != nil {

@@ -25,7 +25,8 @@ const (
 	ownerViewRefreshInterval = 5 * time.Second
 	// ownerViewSettle coalesces a burst of commits into one projection. The
 	// publish must land within 250 ms of the commit (work-and-delegation.md#stages),
-	// so the settle window leaves room for the projection itself.
+	// so the window is the least interval between publishes: it leaves room for
+	// the projection itself, and an isolated commit is never held for it.
 	ownerViewSettle = 100 * time.Millisecond
 )
 
@@ -139,6 +140,7 @@ func (r *conversationRuntime) startOwnerViews(ctx context.Context) error {
 func (r *conversationRuntime) runOwnerViews(watch context.Context, refresh <-chan time.Time) {
 	for {
 		changed := r.db.Changed()
+		published := time.Now()
 		_ = r.publishOwnerViews(watch)
 		pending := false
 		for !pending {
@@ -155,7 +157,7 @@ func (r *conversationRuntime) runOwnerViews(watch context.Context, refresh <-cha
 				pending = r.topics.HasSubscribers("progress")
 			}
 		}
-		timer := time.NewTimer(ownerViewSettle)
+		timer := time.NewTimer(ownerViewSettle - time.Since(published))
 		select {
 		case <-watch.Done():
 			timer.Stop()
@@ -176,7 +178,21 @@ func (r *conversationRuntime) ownerAgentNames(ctx context.Context) (map[string]s
 	}
 	return names, nil
 }
+
+// ownerWaiting serves the person's waiting list and the actions on it. It may
+// clean finished candidates, so it takes canon's writer.
 func (r *conversationRuntime) ownerWaiting(ctx context.Context, names map[string]string, opts waiting.Options) (waiting.List, error) {
+	return r.waitingList(ctx, names, opts, true)
+}
+
+// ownerProjectionWaiting serves the progress and overview projections. They
+// publish on every commit, so they read without the writer: queueing a
+// projection behind the commits it describes delays the person's next frame.
+func (r *conversationRuntime) ownerProjectionWaiting(ctx context.Context, names map[string]string, opts waiting.Options) (waiting.List, error) {
+	return r.waitingList(ctx, names, opts, false)
+}
+
+func (r *conversationRuntime) waitingList(ctx context.Context, names map[string]string, opts waiting.Options, clean bool) (waiting.List, error) {
 	name := func(id string) string { return names[id] }
 	sources := map[string]waiting.Source{
 		"approval":              &waiting.ApprovalSource{Service: r.personaAuthority, AgentName: name},
@@ -195,7 +211,11 @@ func (r *conversationRuntime) ownerWaiting(ctx context.Context, names map[string
 		}
 		sources["outside"] = outsideWaitingSource{r.person, r.agent, name(r.agent)}
 	}
-	return waiting.NewWithLive(r.db, sources, map[string]waiting.LiveSource{"worker": workerWaitingSource{r, names}, "a2a": a2aWaitingSource{r, names}}).Build(ctx, r.person, opts)
+	service := waiting.NewWithLive(r.db, sources, map[string]waiting.LiveSource{"worker": workerWaitingSource{r, names}, "a2a": a2aWaitingSource{r, names}})
+	if clean {
+		return service.Build(ctx, r.person, opts)
+	}
+	return service.BuildProjection(ctx, r.person, opts)
 }
 func waitingRows(list waiting.List) []protocol.WaitingRow {
 	rows := []protocol.WaitingRow{}
@@ -235,7 +255,7 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 	if err != nil {
 		return protocol.Progress{}, "", err
 	}
-	list, err := r.ownerWaiting(ctx, names, waiting.Options{Now: time.Now(), Order: order})
+	list, err := r.ownerProjectionWaiting(ctx, names, waiting.Options{Now: time.Now(), Order: order})
 	if err != nil {
 		return protocol.Progress{}, "", err
 	}
