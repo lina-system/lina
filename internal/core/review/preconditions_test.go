@@ -3,6 +3,7 @@ package review
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -52,6 +53,82 @@ func TestFailedCheckAndScopeMissAreCoreComputedP1Findings(t *testing.T) {
 
 	if r = assessPR(t, p, []string{"src/deep/a.go"}, []string{"src/**"}); r.State != "" {
 		t.Fatalf("in-scope ready delivery rejected: %+v", r)
+	}
+}
+
+func TestScopeFindingsStayWithinTheSchemaWhenManyPathsMiss(t *testing.T) {
+	files := make([]string, 257)
+	for i := range files {
+		files[i] = fmt.Sprintf("out/%d.txt", i+1)
+	}
+	r := Assess(Precondition{}, files, []string{"src/**"})
+	raw, err := json.Marshal(map[string]any{"findings": r.Findings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Parse(raw); err != nil || r.State != "complete" || r.Verdict != "needs_changes" || len(r.Findings) != 256 {
+		t.Fatalf("scope findings exceed the schema: count=%d err=%v record=%+v", len(r.Findings), err, r.State)
+	}
+	if r.Findings[0].ID != "core-scope-1" || r.Findings[0].File != "out/1.txt" || r.Findings[254].ID != "core-scope-255" || r.Findings[255].ID != "core-scope-more" || r.Findings[255].File != "out/256.txt" {
+		t.Fatalf("remainder finding: %+v", r.Findings[len(r.Findings)-1])
+	}
+	if !strings.Contains(r.Evidence, `"out/1.txt"`) || !strings.Contains(r.Evidence, `"out/257.txt"`) {
+		t.Fatalf("scope evidence dropped a path: %s", r.Evidence)
+	}
+	exact := make([]string, 256)
+	for i := range exact {
+		exact[i] = fmt.Sprintf("exact/%d.txt", i+1)
+	}
+	gotExact := Assess(Precondition{}, exact, []string{"src/**"})
+	exactRaw, err := json.Marshal(map[string]any{"findings": gotExact.Findings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Parse(exactRaw); err != nil || len(gotExact.Findings) != 256 || gotExact.Findings[255].ID != "core-scope-256" {
+		t.Fatalf("256 paths should stay one finding each: %d %v %+v", len(gotExact.Findings), err, gotExact.Findings)
+	}
+	db := reviewDB(t)
+	rec := Record{Key: Key{Repository: "owner/repo", Number: 11, Head: head('b')}, Task: "task", Receipt: "receipt", Generation: 1}
+	if err = New(db).Claim(t.Context(), rec); err != nil {
+		t.Fatal(err)
+	}
+	rec.State, rec.Verdict, rec.Evidence, rec.Findings = r.State, r.Verdict, r.Evidence, r.Findings
+	finishReview(t, db, rec)
+	got, err := New(db).Get(t.Context(), rec.Key)
+	if err != nil || got.State != "complete" || got.Verdict != "needs_changes" || len(got.Findings) != 256 {
+		t.Fatalf("large scope miss left the claim unfinished: %+v %v", got, err)
+	}
+}
+
+func TestUnusableScopePathStaysInEvidence(t *testing.T) {
+	long := strings.Repeat("p", 4097)
+	files := []string{long, `bad\name`, "ok.txt"}
+	r := Assess(Precondition{}, files, []string{"src/**"})
+	raw, err := json.Marshal(map[string]any{"findings": r.Findings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Parse(raw); err != nil || r.Verdict != "needs_changes" || len(r.Findings) != 2 {
+		t.Fatalf("unusable path rejected the scope review: %+v %v", r.Findings, err)
+	}
+	if r.Findings[0].File != "ok.txt" || r.Findings[1].ID != "core-scope-more" {
+		t.Fatalf("findings: %+v", r.Findings)
+	}
+	for _, f := range r.Findings {
+		if f.File == long || f.File == `bad\name` {
+			t.Fatalf("unusable path became a finding file: %s", f.File)
+		}
+	}
+	if !strings.Contains(r.Evidence, long) || !strings.Contains(r.Evidence, `bad\\name`) {
+		t.Fatalf("evidence lost an unusable path: %s", r.Evidence)
+	}
+	only := Assess(Precondition{}, []string{`bad\name`}, nil)
+	onlyRaw, err := json.Marshal(map[string]any{"findings": only.Findings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Parse(onlyRaw); err != nil || len(only.Findings) != 1 || only.Findings[0].ID != "core-scope-more" || only.Findings[0].File != scopeOverflowFile {
+		t.Fatalf("path that cannot be a finding file left no schema-valid result: %+v %v", only.Findings, err)
 	}
 }
 

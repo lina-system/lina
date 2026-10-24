@@ -2671,6 +2671,7 @@ Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [w
   Failed or incomplete checks and blocking GitHub reviews are merge preconditions: they block the task without a `verified` verdict.
   Each failed required check is a Core-computed P1 finding on that blocked review, naming the check and pointing at the workflow definitions; waiting, missing or mismatched evidence records no finding.
   A change outside the declared write area is a Core-computed scope miss, recorded as `needs_changes` with one P1 finding per path, without calling a model.
+  That finding list stays within the accepted schema, at most 256 items. Every out-of-area path remains in the scope evidence. When the list does not fit, one finding names the remainder so the review still finishes.
   Renames are observed as deletion and addition, so both paths are checked with the scheduler's path language.
 - The manager receives the work definition, observed diff and design text read at the admission's pinned base, as source-labeled data in the existing handoff.
   Missing or oversized change evidence finishes the claimed review as `blocked` with cause `change_evidence_unavailable`, without a verdict, findings or a model call, even when an observed path is outside the write area.
