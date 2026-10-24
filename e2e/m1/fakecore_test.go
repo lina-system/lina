@@ -27,14 +27,11 @@ import (
 // controls the scenario; socket deadlines below are failure bounds only.
 type scenarioClock struct{ now time.Time }
 
-// fakecore matches hello payloads exactly, so the scripted peer offers what the
-// shell offers. Taking the list from the shell keeps the two from drifting.
-var tuiCapabilities = ui.ShellCapabilities()
-
-// Keep the shared conformance corpus unchanged. The TUI scenario explicitly
-// offers its implemented capabilities, which Core may grant or not. A refused
-// 1.1 handshake reconnects once with the legacy envelope, so hello-legacy.json
-// carries the same offers without the fields only a newer minor version defines.
+// The TUI scenario offers exactly what the shell sends in its hello. Reading
+// the shell's own list keeps the scripted handshake in step with a new offer.
+// Keep the shared conformance corpus unchanged. A refused 1.1 handshake
+// reconnects once with the legacy envelope, so hello-legacy.json carries the
+// same offers without the fields only a newer minor version defines.
 func tuiFixtures(t *testing.T) fstest.MapFS {
 	t.Helper()
 	fixtures := fstest.MapFS{}
@@ -61,7 +58,8 @@ func tuiFixtures(t *testing.T) fstest.MapFS {
 	}
 	hello := envelope.Payload.(protocol.Hello)
 	hello.ProtocolVersions = []string{"1.1", "1.0"}
-	hello.Capabilities = append([]protocol.Capability(nil), tuiCapabilities...)
+	capabilities := ui.ShellCapabilities()
+	hello.Capabilities = capabilities
 	// The real client sends its compiled platform, and Core admits the pair.
 	platform := runtime.GOOS + "/" + runtime.GOARCH
 	hello.Platform = &platform
@@ -74,7 +72,7 @@ func tuiFixtures(t *testing.T) fstest.MapFS {
 	legacyHello := hello
 	legacyHello.ProtocolVersions = []string{"1.0"}
 	legacyHello.Capabilities = nil
-	for _, capability := range tuiCapabilities {
+	for _, capability := range capabilities {
 		if capability.Name != "results" && capability.Name != "mocks" {
 			legacyHello.Capabilities = append(legacyHello.Capabilities, protocol.Capability{Name: capability.Name, Version: capability.Version})
 		}

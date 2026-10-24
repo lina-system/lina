@@ -280,23 +280,32 @@ func (a *Adapter) attachmentsLocked(message *tg.Message) []messenger.Attachment 
 }
 
 func photoSize(photo *tg.Photo) int64 {
-	var size int64
-	for _, item := range photo.Sizes {
-		if sized, ok := item.(*tg.PhotoSize); ok && int64(sized.Size) > size {
-			size = int64(sized.Size)
-		}
-	}
-	return size
+	_, size := largestPhoto(photo)
+	return int64(max(size, 0))
 }
 
 func largestPhotoType(photo *tg.Photo) string {
+	kind, _ := largestPhoto(photo)
+	return kind
+}
+
+// largestPhoto picks the downloadable size with the most bytes. A progressive
+// size lists the byte length of each JPEG prefix; the last is the full image.
+func largestPhoto(photo *tg.Photo) (string, int) {
 	best, size := "", -1
 	for _, item := range photo.Sizes {
-		if sized, ok := item.(*tg.PhotoSize); ok && sized.Size > size {
-			best, size = sized.Type, sized.Size
+		switch sized := item.(type) {
+		case *tg.PhotoSize:
+			if sized.Size > size {
+				best, size = sized.Type, sized.Size
+			}
+		case *tg.PhotoSizeProgressive:
+			if n := len(sized.Sizes); n > 0 && sized.Sizes[n-1] > size {
+				best, size = sized.Type, sized.Sizes[n-1]
+			}
 		}
 	}
-	return best
+	return best, size
 }
 
 func documentName(document *tg.Document) string {

@@ -119,6 +119,11 @@ Every other column is compared against its old value, so any other update aborts
 with the same `ledger_append_only` refusal. The trigger replacement is the only
 change, so an install at 65 keeps every row it has.
 
+Migration 76 adds `messenger_relation_pending` and `messenger_deletion_pending`.
+They hold platform ids only: a reply or thread target not yet admitted, and a
+chat-less platform deletion that matched no record yet. Both are new tables, so
+an install at 75 keeps every row it has.
+
 Migration 71 adds `binding_effects` and `binding_moves` for the binding chip and
 moves. `binding_effects` is keyed by input, turn and call and keeps the bytes an
 edit replaced; `binding_moves` is append-only per move and carries its counter

@@ -103,6 +103,20 @@ edits and deletions; new messages arrive through sync, so a live event never
 moves a cursor. Attachment metadata is read with the page and its bytes only on
 `FetchAttachment`.
 
+A chat missing from the dialog listing that precedes every read, or a history
+read refused with `CHANNEL_PRIVATE`, `CHANNEL_INVALID`,
+`CHANNEL_PUBLIC_GROUP_NA` or `USER_BANNED_IN_CHANNEL`, returns
+`messenger.ErrChatUnavailable`, so sync skips only that chat.
+
+A photo's download size is the one with the most bytes. For
+`photoSizeProgressive` that is the last JPEG prefix length, the full image.
+
+`FetchAttachment` uses the location the adapter cached from a page or update.
+On a miss, as after a restart or a new sign-in, it reads the named message
+again (`messages.getMessages`, or `channels.getMessages` for a channel), checks
+that it belongs to the named chat and caches its attachment locations. An
+expired file reference during a download is not retried yet.
+
 No request that marks a message read or shows presence exists in this package.
 `TestReadsNeverTouchReadStateOrPresence` asserts it against an in-process
 MTProto server, and the installed-Core scenario asserts it again.
@@ -147,6 +161,10 @@ per-source admission lock as live events. Completed response checkpoints persist
 as versioned secret-store blobs under `updates:<account>`; a failed admission or
 save replays from the previous checkpoint. Too-long or non-progressing differences
 report `telegram_update_gap` instead of treating the source as current.
+A channel difference refused with one of the access errors above removes that
+channel's checkpoint and cached dialog pts, saves, and goes on to the next
+channel. A later dialog listing that names the channel again sets a new
+baseline; updates from the time without access are not recovered.
 
 Seen: pinned gotd types expose account/channel differences and too-long responses.
 Inferred: canon's idempotent admission permits replay after an interrupted save.
