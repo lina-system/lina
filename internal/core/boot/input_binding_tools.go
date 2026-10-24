@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -123,7 +124,7 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				// A selected steering input keeps its runtime and channel source
 				// through execution, not only through the binding gate.
 				if r != s.runtime || input.ID != s.input.ID {
-					alt, err := r.steeringTool(s.turnID, input, clean.Name)
+					alt, err := r.steeringTool(s.turnID, input, s.replyShapes, clean.Name)
 					if err != nil {
 						return bindingFailure(c.ID, err)
 					}
@@ -147,9 +148,11 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 // steeringTool rebuilds a tool on the runtime that owns the selected input.
 // Families that close over the runtime or the event are prepared again so a
 // channel follow-up, record write, or work preparation keeps that channel.
-// Persona preparation needs the turn's persona and stays on the original tool.
-func (r *conversationRuntime) steeringTool(turnID string, event ledger.Event, name string) (loop.Tool, error) {
-	prep := &toolPreparation{event: event}
+// Result tools keep the turn's prepared reply shapes so the speaking agent's
+// work-method check can commit. Persona preparation needs the turn's persona
+// and stays on the original tool.
+func (r *conversationRuntime) steeringTool(turnID string, event ledger.Event, shapes reply.Shapes, name string) (loop.Tool, error) {
+	prep := &toolPreparation{event: event, replyShapes: shapes}
 	var found loop.Tool
 	for _, prepare := range []toolPreparer{
 		r.prepareRecordTools,

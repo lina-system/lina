@@ -12,8 +12,10 @@ import (
 	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/records"
+	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -1421,5 +1423,57 @@ func TestPrepareWorkUsesSelectedChannelRuntime(t *testing.T) {
 	runner, err := r.completionRunner(t.Context(), card)
 	if err != nil || runner.channelBinding == nil || !runner.channelBinding.Scope.Tools {
 		t.Fatalf("completion lost the channel binding: runner=%v err=%v", runner != nil && runner.channelBinding != nil, err)
+	}
+}
+
+func TestSteeredPresentResultKeepsReplyShapes(t *testing.T) {
+	r, _ := turnRuntime(t)
+	input := questionPersonInput(t, r, "owner-result", "Show the note")
+	steering := questionPersonInput(t, r, "steered-result", "Show this note")
+	s := &turnState{runtime: r, input: input, turnID: "turn:" + input.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: r}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		receipt, err := inbox.Insert(t.Context(), tx, inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "test", NativeID: input.ID}})
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(t.Context(), `INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,'active')`, s.turnID, r.conversation, receipt.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	draft := map[string]any{
+		"type": "document_draft", "title": "Note", "summary": "Noted.",
+		"body": json.RawMessage(`{"blocks":[{"kind":"paragraph","text":"Hello."}],"from_summary":null}`),
+	}
+	if got := questionCall(t, s.bindings, "present_result", "owner-card", draft); got.Code != loop.OK {
+		t.Fatalf("current input: %+v", got)
+	}
+	steered := map[string]any{
+		"type": "document_draft", "title": "Steered note", "summary": "Noted.",
+		"body":          json.RawMessage(`{"blocks":[{"kind":"paragraph","text":"Hello."}],"from_summary":null}`),
+		"input_binding": map[string]any{"input_event_id": steering.ID},
+	}
+	got := questionCall(t, s.bindings, "present_result", "steered-card", steered)
+	if got.Code != loop.OK {
+		t.Fatalf("steered present_result: %+v", got)
+	}
+	var parent, check string
+	err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		if err := tx.QueryRowContext(t.Context(), `SELECT parent_id FROM conv_event WHERE scaffold_kind='result' AND json_extract(body,'$.title')='Steered note'`).Scan(&parent); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(t.Context(), `SELECT c.body FROM conv_event c JOIN conv_event result ON result.id=c.parent_id WHERE c.scaffold_kind='reply_check' AND result.parent_id=?`, steering.ID).Scan(&check)
+	})
+	if err != nil || parent != steering.ID {
+		t.Fatalf("parent=%q err=%v", parent, err)
+	}
+	var recorded struct {
+		Shapes *reply.Shapes `json:"shapes"`
+	}
+	if json.Unmarshal([]byte(check), &recorded) != nil || recorded.Shapes == nil || recorded.Shapes.Status != s.replyShapes.Status || recorded.Shapes.Candidates != s.replyShapes.Candidates {
+		t.Fatalf("reply check lost the turn shapes: %s", check)
 	}
 }

@@ -37,7 +37,8 @@ presents the created record as a project so a later read or correction matches
 the person's choice. A goal id that does
 not resolve is refused. Steering execution uses the selected input's runtime, so a
 channel follow-up keeps that channel source and work preparation keeps that
-channel binding. A system turn that consumes person steering still offers
+channel binding. Result tools rebuilt for that input keep the turn's prepared
+reply shapes, so the work-method check commits with the revision. A system turn that consumes person steering still offers
 binding. A retained tie is not a settled
 reply target or the next focus. A reply that stays unresolved keeps that tie,
 so a later control asks before it runs.
