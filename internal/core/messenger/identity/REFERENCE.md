@@ -109,7 +109,7 @@ transaction, so an item keeps its evidence, holder and scope.
 
 What a link produced is recorded in `identity_artifact` (memory items, and the
 kind reserved for people-record entries) and a citation of the link as external
-evidence counts too. Migration 78 adds `identity_repair`: pending item ids are written with the link change and requeue in canon. Delivery through the removal list follows commit; `Rematch` drains pending repairs before matching at startup and on scheduled passes. Delivery acknowledges already-hidden or deleted items without submitting a duplicate `Forget` transition. A failure remains pending and is returned to the caller; it is never reported as completed repair.
+evidence counts too. Migration 79 adds `identity_repair`: pending item ids are written with the link change and requeue in canon. Delivery through the removal list follows commit; `Rematch` drains pending repairs before matching at startup and on scheduled passes. Delivery acknowledges already-hidden or deleted items without submitting a duplicate `Forget` transition. A failure remains pending and is returned to the caller; it is never reported as completed repair.
 
 A repair leaves one row per identity in `identity_requeue`, from the source's
 learning watermark or, without one, the identity's first sighting. Extraction

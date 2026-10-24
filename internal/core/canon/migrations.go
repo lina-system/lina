@@ -89,8 +89,9 @@ func Migrations() []Migration {
 		{Version: 74, SQL: MessengerOwnerSchema},
 		{Version: 75, SQL: DiscordSessionsSchema},
 		{Version: 76, SQL: MessengerPendingSchema},
-		{Version: 77, SQL: IdentitySchema},
-		{Version: 78, SQL: IdentityRepairSchema},
+		{Version: 77, SQL: recallSearchSchema},
+		{Version: 78, SQL: IdentitySchema},
+		{Version: 79, SQL: IdentityRepairSchema},
 	}
 }
 
@@ -146,12 +147,12 @@ var publishedMigrationTables = []struct {
 	{72, "messenger_attachment"},
 	{75, "discord_sessions"},
 	{76, "messenger_relation_pending"}, {76, "messenger_deletion_pending"},
-	{77, "identity_sender"}, {77, "identity_identifier"}, {77, "identity_name"},
-	{77, "identity_link"}, {77, "identity_link_signal"}, {77, "identity_link_change"},
-	{77, "identity_question"}, {77, "identity_question_candidate"}, {77, "identity_artifact"}, {77, "identity_merge"},
-	{77, "identity_merge_link"}, {77, "identity_merge_alias"}, {77, "identity_merge_artifact"},
-	{77, "identity_requeue"},
-	{78, "identity_repair"},
+	{78, "identity_sender"}, {78, "identity_identifier"}, {78, "identity_name"},
+	{78, "identity_link"}, {78, "identity_link_signal"}, {78, "identity_link_change"},
+	{78, "identity_question"}, {78, "identity_question_candidate"}, {78, "identity_artifact"}, {78, "identity_merge"},
+	{78, "identity_merge_link"}, {78, "identity_merge_alias"}, {78, "identity_merge_artifact"},
+	{78, "identity_requeue"},
+	{79, "identity_repair"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is
