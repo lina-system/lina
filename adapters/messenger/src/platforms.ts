@@ -8,6 +8,7 @@
 // and only that source fails.
 import { Refusal, type Driver } from './protocol.ts';
 import type { DriverFactory, DriverOptions } from './driver.ts';
+import { lineDriver } from './line.ts';
 
 export type PlatformName = 'kakaotalk' | 'discord' | 'whatsapp' | 'line';
 
@@ -22,7 +23,14 @@ export type Registration = {
   load: () => Promise<unknown>;
 };
 
-const DRIVERS: Partial<Record<PlatformName, Registration>> = {};
+const DRIVERS: Partial<Record<PlatformName, Registration>> = {
+  // LINE: QR and PIN sign-in as a secondary device, read-only, newest N
+  // messages per chat and live events (#1087).
+  line: {
+    load: () => import('agent-messenger/line'),
+    open: async (sdk, options) => lineDriver(sdk, options),
+  },
+};
 
 export function registered(platform: string): platform is PlatformName {
   return Object.hasOwn(PLATFORMS, platform) && Object.hasOwn(DRIVERS, platform);
