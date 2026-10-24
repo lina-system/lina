@@ -13,7 +13,11 @@ import (
 )
 
 func (r *conversationRuntime) initTeams(relay *clientsrv.SignInRelay, transport http.RoundTripper) error {
-	r.teams = teams.NewService(r.ctx, r.db, r.vault, messenger.Open(r.db, r.materials, r.removals), r.person, transport)
+	store, err := r.messengerStore(r.ctx)
+	if err != nil {
+		return err
+	}
+	r.teams = teams.NewService(r.ctx, r.db, r.vault, store, r.person, transport)
 	if err := r.teams.Start(r.ctx); err != nil {
 		return err
 	}

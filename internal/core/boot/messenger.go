@@ -59,6 +59,32 @@ type AddonStarter interface {
 	Close(context.Context) error
 }
 
+// senderIdentities returns the identity store this conversation admits through,
+// composing it on first use and matching the identities already recorded. Every
+// messenger reader shares it, so an author read by the sync loop, the Teams
+// service or the Webex service is matched the same way.
+func (r *conversationRuntime) senderIdentities(ctx context.Context) (*identity.Store, error) {
+	if r.senderIdentity != nil {
+		return r.senderIdentity, nil
+	}
+	store := identity.Open(r.db, r.person, peopleRecords{store: r.records}, r.removals)
+	if _, err := store.Rematch(ctx); err != nil {
+		return nil, err
+	}
+	r.senderIdentity = store
+	return store, nil
+}
+
+// messengerStore opens the registry and admission store on this conversation's
+// canon with sender identity attached.
+func (r *conversationRuntime) messengerStore(ctx context.Context) (*messenger.Store, error) {
+	identities, err := r.senderIdentities(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return messenger.Open(r.db, r.materials, r.removals).WithIdentities(identities), nil
+}
+
 // startMessenger opens the messenger store on this conversation's canon and
 // reads connected sources on their schedule until Core stops. Sender identity
 // is composed here so every admitted author is matched to a people record.
@@ -69,11 +95,10 @@ func (r *conversationRuntime) startMessenger(ctx context.Context, cfg *Messenger
 	if cfg.Addon == nil && len(cfg.Adapters) == 0 {
 		return nil
 	}
-	r.senderIdentity = identity.Open(r.db, r.person, peopleRecords{store: r.records}, r.removals)
-	if _, err := r.senderIdentity.Rematch(ctx); err != nil {
+	store, err := r.messengerStore(ctx)
+	if err != nil {
 		return err
 	}
-	store := messenger.Open(r.db, r.materials, r.removals).WithIdentities(r.senderIdentity)
 	service := messenger.NewServiceWithResolver(store, resolveMessenger(cfg), cfg.Interval)
 	runCtx, stop := context.WithCancel(ctx)
 	r.messenger, r.messengerAddon, r.messengerStop, r.messengerDone = service, cfg.Addon, stop, make(chan struct{})

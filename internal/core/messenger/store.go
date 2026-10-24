@@ -62,6 +62,16 @@ func (s *Store) WithClock(now func() time.Time) *Store { s.now = now; return s }
 // WithIdentities records every admitted author as a sender identity.
 func (s *Store) WithIdentities(identities Identities) *Store { s.identities = identities; return s }
 
+// Rematch matches identities that still have no link, so a people record the
+// person adds after the messages arrived links on the next read. A store
+// without identities does nothing.
+func (s *Store) Rematch(ctx context.Context) (int, error) {
+	if s.identities == nil {
+		return 0, nil
+	}
+	return s.identities.Rematch(ctx)
+}
+
 func validName(text string) bool { return text != "" && !strings.ContainsRune(text, 0) }
 
 // Connect records a source the person connected, or updates its adapter state.
