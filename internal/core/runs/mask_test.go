@@ -9,6 +9,7 @@ import (
 )
 
 func TestRejectedMaskInputCannotBypassValidationFromCache(t *testing.T) {
+	t.Parallel()
 	nested := strings.Repeat("[", 70) + `"password=synthetic-value"` + strings.Repeat("]", 70)
 	body, _ := json.Marshal(map[string]string{"body": nested})
 	var m masker
@@ -20,6 +21,7 @@ func TestRejectedMaskInputCannotBypassValidationFromCache(t *testing.T) {
 }
 
 func TestNestedCredentialJSONRemainsValidAfterMasking(t *testing.T) {
+	t.Parallel()
 	body, _ := json.Marshal(map[string]string{"nested": `{"token":"synthetic-nested"}`})
 	var m masker
 	masked, err := m.json(body)
@@ -36,6 +38,7 @@ func TestNestedCredentialJSONRemainsValidAfterMasking(t *testing.T) {
 }
 
 func TestSensitiveJSONFieldsMaskEveryValueType(t *testing.T) {
+	t.Parallel()
 	var m masker
 	for _, raw := range []string{`{"password":123456}`, `{"token":[123456,"synthetic-value"]}`, `{"api_key":{"value":"synthetic-value"}}`, `{"client_secret":true}`} {
 		body, err := m.json([]byte(raw))
