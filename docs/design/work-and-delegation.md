@@ -781,8 +781,12 @@ automation, dependencies, build/analysis and unit checks. E2e runs after merge
 on every `dev` push and nightly; the `e2e` PR label opts into reached scenarios
 before merge. Post-merge test failures become deduplicated `qa` issues in the
 current milestone, with the tested head, first failing range and diagnostics.
-An explicit pass on a later head closes the matching finding. They do not block
-unrelated pull requests. The [foundation policy](../policy/foundation.md)
+Three consecutive passing descendant heads that ran the test close the matching
+finding; the repository may configure the count. A fail/pass/fail sequence within
+48 hours marks it `flaky` and keeps it open pending that recovery evidence.
+Each finding has one reusable status comment, and a closed finding can reopen
+at most once per 24 hours; failures during that cooldown update the comment.
+They do not block unrelated pull requests. The [foundation policy](../policy/foundation.md)
 defines this repository's selection and automated QA evidence.
 
 At merge the manager session checks the result against the work definition's done condition, scope and design reference, then asks Core to merge or close. It sends work back only when the result misses that definition, never to triage review findings or CI failures. The steps are in Judgment and delivery, and the only GitHub writes LINA Core makes on delegated work are merging and closing (see GitHub writes and merges).
@@ -1914,7 +1918,7 @@ Much non-code work waits on things LINA does not control: a reply, a confirmatio
 - A wait records what it waits for (a reply in one thread, a record changing, a date, a check result, the person), the signal that wakes it (a change signal from the plugin of that service, a timer at a time), its deadline, and its expiry action.
 - Change signals are hints, as [integrations.md](integrations.md) says: a signal starts one read of the source, and only the read closes the wait. Core never reads a source on a short interval to see whether something happened. Besides signals, the only reads are the one at the deadline and the slow reconcile sweep.
 - The deadline comes from the goal: a reply needed before a trip waits until a day before the trip, not until an arbitrary hour. Without a date in the goal, Core uses a starting default per kind of wait (see Deferred).
-- At expiry, Core reads the source once more. If the wait is still open, the expiry action applies. The action never sends anything in the person's name by itself: a reminder to someone else is an outward message and needs approval. The usual expiry action is a row in "Waiting for me" with the recommendation first ("no reply from the host yet; I recommend a short follow-up, here is the draft"), and the goal goes on with everything that does not depend on the wait.
+- At expiry, Core reads the source once more. If the wait is still open, the expiry action applies. The action never sends anything in the person's name by itself: a reminder to someone else is an outward message and needs approval. The usual expiry action is a row in "Waiting for me" with the recommendation first ("no reply from the host yet; I recommend a short follow-up, here is the draft"), and the goal goes on with everything that does not depend on the wait. That row is the goal's waiting-for-me row: the recommendation, then the draft. Core does not send the draft. A change signal queues one read of the source, and a second signal for the same wake waits until that read finishes, then queues one more. The deadline queues one read, including when the reconcile sweep finds that the deadline passed while Core was down. The sweep does not read a source that has no pending signal and whose deadline has not passed. The deadline is one durable timer and fires once. A deadline read that fails does not close the wait, so it applies that same row. A wait that names a 할 일 is that 할 일's `waiting_on` (`who`, `since`, and `next_check` equal to the UTC calendar date of the deadline), and Core writes the same `waiting_on` onto the 할 일. Core refuses a `next_check` that is not that date. When the read closes the wait, or the expiry row replaces it, Core clears that `waiting_on`.
 - A wait on the person is a row in "Waiting for me". It carries a recommendation, a deadline and a default. Reversible choices are never rows: the agent decides them.
 - A dated wait uses Core's durable timers, which fire once per instant across restarts and do not call a model when nothing changed.
 - A wait that belongs to a 할 일 is that 할 일's `waiting_on`, with the deadline as its next-check date, so the to-do views and the goal show the same wait.

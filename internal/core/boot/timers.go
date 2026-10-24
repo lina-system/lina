@@ -63,6 +63,14 @@ func (r *conversationRuntime) reactTimer(ctx context.Context, f timers.Fire) err
 	if t.Person != r.person || t.Conversation != "main:"+t.Agent {
 		return timers.ErrInvalid
 	}
+	if t.Action.Kind == "goal_wait" {
+		// The deadline only wakes derivation. The read and the expiry row
+		// happen in the work engine; this delivery does not call a model or send.
+		if r.workEngine == nil || r.workEngine.engine == nil {
+			return errors.New("goal wait is waiting for work")
+		}
+		return r.workEngine.engine.Reconcile(ctx)
+	}
 	view, err := r.router.view(ctx, clientsrv.Session{PersonID: r.person}, t.Agent)
 	if err != nil {
 		return err
