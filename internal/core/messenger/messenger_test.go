@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1143,6 +1144,40 @@ func TestLiveFailureMarksTheSourceFailing(t *testing.T) {
 	if cause := readFailure(t, f, source.Account); !strings.Contains(cause, "add-on exited") {
 		t.Fatalf("failure cause = %q", cause)
 	}
+}
+
+// Run does not return while a subscription is still inside the adapter: the
+// caller that stops Core may close the store right after.
+func TestRunJoinsLiveSubscriptions(t *testing.T) {
+	f := newFixture(t)
+	f.connect(t)
+	adapter := &exitingAdapter{fakeAdapter: &fakeAdapter{chats: []messenger.Chat{{ID: "dm-1", Kind: "direct"}}}}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, 10*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); service.Run(ctx) }()
+	waitUntil(t, "the subscription", func() bool { return adapter.entered.Load() })
+	cancel()
+	<-done
+	if !adapter.exited.Load() {
+		t.Fatal("Run returned while the subscription was still running")
+	}
+}
+
+type exitingAdapter struct {
+	*fakeAdapter
+	entered, exited atomic.Bool
+}
+
+func (a *exitingAdapter) Live(ctx context.Context, _ messenger.SourceID, _ func(messenger.Event) error) error {
+	a.entered.Store(true)
+	<-ctx.Done()
+	a.exited.Store(true)
+	return nil
+}
+
+func (a *exitingAdapter) Capabilities() messenger.Capabilities {
+	return messenger.Capabilities{LiveEvents: true}
 }
 
 func readFailure(t *testing.T, f *fixture, account string) string {

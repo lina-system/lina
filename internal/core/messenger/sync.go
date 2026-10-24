@@ -26,6 +26,7 @@ type Service struct {
 	// cancelled. token identifies the current subscription, so a finishing one
 	// never removes its replacement.
 	live     map[string]liveSub
+	liveWait sync.WaitGroup
 	sequence uint64
 }
 
@@ -68,39 +69,33 @@ func (s *Service) Store() *Store { return s.store }
 // recorded in its own registry row.
 func (s *Service) Run(ctx context.Context) {
 	s.SyncAll(ctx, nil)
-	go s.watchAsync(ctx)
-	ticker := time.NewTicker(s.interval)
-	defer ticker.Stop()
+	s.reconcileLive(ctx)
+	scheduled := time.NewTicker(s.interval)
+	defer scheduled.Stop()
+	follow := time.NewTicker(s.interval)
+	defer follow.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			// A subscription is joined before the caller may close the store
+			// under it.
+			s.stopLive()
+			s.liveWait.Wait()
 			return
-		case <-ticker.C:
+		case <-scheduled.C:
 			s.SyncAll(ctx, nil)
+		case <-follow.C:
+			s.reconcileLive(ctx)
 		}
 	}
 }
 
 func liveKey(source Source) string { return source.Platform + "\x00" + source.Account }
 
-// watchAsync keeps one live subscription per connected source that offers live
-// events. A subscription whose source is no longer connected is cancelled; a
-// platform whose subscription ends is retried on the next interval, and one
-// that never returns (the platform without live events) is not started.
-func (s *Service) watchAsync(ctx context.Context) {
-	s.reconcileLive(ctx)
-	ticker := time.NewTicker(s.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			s.stopLive()
-			return
-		case <-ticker.C:
-			s.reconcileLive(ctx)
-		}
-	}
-}
+// reconcileLive keeps one live subscription per connected source that offers
+// live events. A subscription whose source is no longer connected is
+// cancelled; a platform whose subscription ends is retried on the next
+// interval, and one without live events is never started.
 
 func (s *Service) reconcileLive(ctx context.Context) {
 	sources, err := s.store.allSources(ctx)
@@ -133,7 +128,11 @@ func (s *Service) reconcileLive(ctx context.Context) {
 		s.sequence++
 		token := s.sequence
 		s.live[key] = liveSub{stop: stop, token: token}
-		go s.watch(run, source, token)
+		s.liveWait.Add(1)
+		go func() {
+			defer s.liveWait.Done()
+			s.watch(run, source, token)
+		}()
 	}
 	s.mu.Unlock()
 }
