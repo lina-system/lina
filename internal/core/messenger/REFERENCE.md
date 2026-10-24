@@ -155,6 +155,19 @@ are tracked by #1070 and the per-platform issues.
 The [Telegram adapter](telegram/REFERENCE.md) uses the same live admission path,
 with account-wide deletion namespaces and persistent update recovery.
 
+## Sender identity
+
+`Store.WithIdentities` composes `internal/core/messenger/identity`. Every
+admitted person or external-participant record observes its author inside the
+page's transaction, so a record and the identity it was seen with commit
+together; the person's own account is recorded as `Self` and never linked as
+another person. The identity scope is the source's `workspace`, which the
+platform's ids are scoped by. After each sync pass the service asks identity to
+rematch identities that have no link, so a people record the person creates
+after the messages arrive still links without a restart. Core gives the same
+identity store to the sync loop, the Teams service and the Webex service, and
+the Teams worker rematches after each of its passes.
+
 Sender profile emails, when supplied by an adapter, are stored as evidence in
 `messenger_author` with the source account and platform author ID. They do not
 change ledger attribution or create an automatic person merge.
