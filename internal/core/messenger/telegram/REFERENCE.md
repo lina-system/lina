@@ -114,8 +114,13 @@ A photo's download size is the one with the most bytes. For
 `FetchAttachment` uses the location the adapter cached from a page or update.
 On a miss, as after a restart or a new sign-in, it reads the named message
 again (`messages.getMessages`, or `channels.getMessages` for a channel), checks
-that it belongs to the named chat and caches its attachment locations. An
-expired file reference during a download is not retried yet.
+that it belongs to the named chat and caches its attachment locations. A
+channel read needs the channel entity and its access hash. When that entity is
+not cached, including before dialog listing finishes, the adapter resolves it
+from the account's dialogs and then reads the message. A missing cache entry
+is not loss of access; the chat is unavailable only when the dialogs omit it
+or the platform refuses the read. An expired file reference during a download
+is not retried yet.
 
 No request that marks a message read or shows presence exists in this package.
 `TestReadsNeverTouchReadStateOrPresence` asserts it against an in-process

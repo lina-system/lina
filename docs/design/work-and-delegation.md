@@ -785,7 +785,9 @@ Three consecutive passing descendant heads that ran the test close the matching
 finding; the repository may configure the count. Passes already recorded on later
 runs count toward that threshold when an older failure is reported. A fail/pass/fail
 sequence within 48 hours marks it `flaky` and keeps it open pending that recovery
-evidence, including when the pass is reported after both failures.
+evidence. The window includes the pass start, including a pass reported after
+both failures, and earlier failure heads stay available when a failure is
+reported late.
 Each finding has one reusable status comment, and a closed finding can reopen
 at most once per 24 hours; failures during that cooldown update the comment.
 They do not block unrelated pull requests. The [foundation policy](../policy/foundation.md)
@@ -946,6 +948,14 @@ Every worker adapter offers the work engine the same operations:
 - report the worker's remaining quota where it exposes one; unknown is a value
 
 **Text-form tool calls.** Across LINA's own model routes ([go-core.md](go-core.md#model-path-and-accounts)) and coding workers (ACP and Codex adapters), one rule governs a turn that ends with a text-form tool call (`[tool_use …]`, `<tool_use>`, `<function_calls><invoke>`, `<antml:invoke>`, `<tool_call>`) and no real tool call ([text-tool-calls.md](../research/text-tool-calls.md)): Core detects it at the end of the turn, never shows it as progress or a completed reply, and handles it by (1) parsing it into a real call when the arguments are complete valid JSON (or complete named parameters) and the tool is allowed in the active declaration set (matching the declared name, or the declared name after stripping one leading `_`), else (2) starting a fresh session on the same worker (in the same worktree and branch) with a short state summary. There is no nudging loop in the contaminated session and no silent hand-off to another worker.
+
+The shared detector is evaluated before it is connected to worker adapters. Its
+replay covers each observed format, exact and single-underscore tool names,
+malformed arguments, and prose or structured-call negatives. Missing or invalid
+cases are failures, never passing samples. Replay dispatch and restart counts are
+proposals; only the running adapter can establish actual tool effects and session
+starts. See the [shared parsing boundary](go-core.md#model-path-and-accounts) and
+[replay command](../../internal/core/textcall/README.md).
 
 ### Delivery tiers
 
@@ -1918,6 +1928,7 @@ or repeated delivery does not repeat that assessment.
 Much non-code work waits on things LINA does not control: a reply, a confirmation mail, a date, a review by someone else, a document another person is editing. A wait is a record, never a loop.
 
 - A wait records what it waits for (a reply in one thread, a record changing, a date, a check result, the person), the signal that wakes it (a change signal from the plugin of that service, a timer at a time), its deadline, and its expiry action.
+- One manager plan can record several independent waits together, such as a host's reply and a booking confirmation. Core admits the set atomically and refuses duplicate wake identities. Each signal and deadline reads only its own source. Independent tasks continue, but final checking and closure wait until every outside wait and decision row is resolved, even when earlier criterion evidence already passes. When several waits expire, their recommendations and drafts share the goal's row; a later expiry never replaces an earlier proposal.
 - Change signals are hints, as [integrations.md](integrations.md) says: a signal starts one read of the source, and only the read closes the wait. Core never reads a source on a short interval to see whether something happened. Besides signals, the only reads are the one at the deadline and the slow reconcile sweep.
 - The deadline comes from the goal: a reply needed before a trip waits until a day before the trip, not until an arbitrary hour. Without a date in the goal, Core uses a starting default per kind of wait (see Deferred).
 - At expiry, Core reads the source once more. If the wait is still open, the expiry action applies. The action never sends anything in the person's name by itself: a reminder to someone else is an outward message and needs approval. The usual expiry action is a row in "Waiting for me" with the recommendation first ("no reply from the host yet; I recommend a short follow-up, here is the draft"), and the goal goes on with everything that does not depend on the wait. That row is the goal's waiting-for-me row: the recommendation, then the draft. Core does not send the draft. A change signal queues one read of the source, and a second signal for the same wake waits until that read finishes, then queues one more. The deadline queues one read, including when the reconcile sweep finds that the deadline passed while Core was down. The sweep does not read a source that has no pending signal and whose deadline has not passed. The deadline is one durable timer and fires once. A deadline read that fails does not close the wait, so it applies that same row. A wait that names a 할 일 is that 할 일's `waiting_on` (`who`, `since`, and `next_check` equal to the UTC calendar date of the deadline), and Core writes the same `waiting_on` onto the 할 일. Core refuses a `next_check` that is not that date. When the read closes the wait, or the expiry row replaces it, Core clears that `waiting_on`.

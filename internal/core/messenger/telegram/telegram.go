@@ -358,20 +358,9 @@ func (a *Adapter) ListChats(ctx context.Context, source messenger.SourceID) ([]m
 	}
 	var chats []messenger.Chat
 	seen := map[string]bool{}
-	offsetID, offsetPeer := 0, tg.InputPeerClass(&tg.InputPeerEmpty{})
+	cursor := dialogCursor{peer: &tg.InputPeerEmpty{}}
 	for page := 0; page < maxDialogPages; page++ {
-		var response tg.MessagesDialogsClass
-		err := a.retry(ctx, func() error {
-			var callErr error
-			response, callErr = api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
-				OffsetPeer: offsetPeer, OffsetID: offsetID, Limit: a.size, Hash: 0,
-			})
-			return callErr
-		})
-		if err != nil {
-			return nil, err
-		}
-		list, count, complete, err := a.dialogs(response)
+		list, count, complete, next, err := a.oneDialogPage(ctx, api, cursor)
 		if err != nil {
 			return nil, err
 		}
@@ -385,16 +374,44 @@ func (a *Adapter) ListChats(ctx context.Context, source messenger.SourceID) ([]m
 		if complete || count < a.size {
 			return chats, nil
 		}
-		if len(list) == 0 {
+		if len(list) == 0 || next.id == 0 {
 			return nil, ErrInvalid
 		}
-		last := list[len(list)-1]
-		if last.top == 0 {
-			return nil, ErrInvalid
-		}
-		offsetID, offsetPeer = last.top, last.peer
+		cursor = next
 	}
 	return nil, ErrInvalid
+}
+
+// dialogCursor is the platform offset of the next dialog page.
+type dialogCursor struct {
+	id   int
+	peer tg.InputPeerClass
+}
+
+// oneDialogPage reads one unfiltered dialog page and caches its entities.
+// next is the offset of the last named dialog on that page.
+func (a *Adapter) oneDialogPage(ctx context.Context, api *tg.Client, cursor dialogCursor) (list []dialogItem, count int, complete bool, next dialogCursor, err error) {
+	var response tg.MessagesDialogsClass
+	err = a.retry(ctx, func() error {
+		var callErr error
+		response, callErr = api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+			OffsetPeer: cursor.peer, OffsetID: cursor.id, Limit: a.size, Hash: 0,
+		})
+		return callErr
+	})
+	if err != nil {
+		return nil, 0, false, cursor, err
+	}
+	list, count, complete, err = a.dialogs(response)
+	if err != nil {
+		return nil, 0, false, cursor, err
+	}
+	next = cursor
+	if len(list) > 0 {
+		last := list[len(list)-1]
+		next = dialogCursor{id: last.top, peer: last.peer}
+	}
+	return list, count, complete, next, nil
 }
 
 // dialogItem pairs a registry chat with the platform's pagination fields.
@@ -800,6 +817,44 @@ func (a *Adapter) FetchAttachment(ctx context.Context, source messenger.SourceID
 	return reader, nil
 }
 
+// resolveChannel returns the id and access hash a channel read needs. A
+// restart clears the in-memory cache before dialog listing runs, so a miss is
+// resolved from the account's dialogs. The chat is unavailable only when
+// those dialogs do not include it.
+func (a *Adapter) resolveChannel(ctx context.Context, api *tg.Client, id int64) (int64, int64, error) {
+	if channelID, accessHash, ok := a.cachedChannel(id); ok {
+		return channelID, accessHash, nil
+	}
+	cursor := dialogCursor{peer: &tg.InputPeerEmpty{}}
+	for page := 0; page < maxDialogPages; page++ {
+		list, count, complete, next, err := a.oneDialogPage(ctx, api, cursor)
+		if err != nil {
+			return 0, 0, err
+		}
+		if channelID, accessHash, ok := a.cachedChannel(id); ok {
+			return channelID, accessHash, nil
+		}
+		if complete || count < a.size {
+			return 0, 0, messenger.ErrChatUnavailable
+		}
+		if len(list) == 0 || next.id == 0 {
+			return 0, 0, ErrInvalid
+		}
+		cursor = next
+	}
+	return 0, 0, ErrInvalid
+}
+
+func (a *Adapter) cachedChannel(id int64) (channelID, accessHash int64, ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	channel := a.channels[id]
+	if channel == nil {
+		return 0, 0, false
+	}
+	return channel.ID, channel.AccessHash, true
+}
+
 // refetchAttachment reads one message of chat again and returns the location
 // of the named attachment when that message still carries it.
 func (a *Adapter) refetchAttachment(ctx context.Context, api *tg.Client, chat, message, attachment string) (tg.InputFileLocationClass, error) {
@@ -820,16 +875,16 @@ func (a *Adapter) refetchAttachment(ctx context.Context, api *tg.Client, chat, m
 	}
 	if key.kind == "channel" {
 		// A channel numbers its messages on its own, so the read names it.
-		a.mu.Lock()
-		channel := a.channels[key.id]
-		a.mu.Unlock()
-		if channel == nil {
-			return nil, messenger.ErrChatUnavailable
+		// The cache is empty after a restart until dialog listing finishes;
+		// that miss is not proof the account lost access.
+		channelID, accessHash, err := a.resolveChannel(ctx, api, key.id)
+		if err != nil {
+			return nil, err
 		}
 		call = func() error {
 			var callErr error
 			response, callErr = api.ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{
-				Channel: &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}, ID: ids,
+				Channel: &tg.InputChannel{ChannelID: channelID, AccessHash: accessHash}, ID: ids,
 			})
 			return callErr
 		}

@@ -362,7 +362,7 @@ func (v *Vectors) Query(ctx context.Context, scope Scope, text string) ([]string
 	}
 	restricted := scope.Projection || scope.ExternalModel
 	where, args := scopeWhere(scope, kindsOf(scope), at, restricted, "d")
-	prefix, prefixArgs := restrictedCTE(scope)
+	prefix, prefixArgs := restrictedPrefix(scope)
 	if !scope.History {
 		older, olderArgs := olderExpr(kindsOf(scope), at, "d")
 		where = append(where, "("+older+")=0")
@@ -404,11 +404,14 @@ func (v *Vectors) Query(ctx context.Context, scope Scope, text string) ([]string
 	})
 	return ids, err
 }
-func restrictedCTE(scope Scope) (string, []any) {
-	return `WITH restricted AS (
- SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
- WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
- AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves')))`, []any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel)}
+
+// restrictedPrefix supplies a complete WITH clause for vector and messenger queries.
+func restrictedPrefix(scope Scope) (string, []any) {
+	cte, args := restrictedCTE(scope)
+	if cte == "" {
+		cte = "restricted AS (SELECT NULL AS id WHERE 0)"
+	}
+	return "WITH " + cte, args
 }
 
 // SetImportConsent is called only after the import flow has presented its

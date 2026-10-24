@@ -255,7 +255,7 @@ func MessengerExpand(ctx context.Context, db Canon, read ReadEvent, scope Scope,
 	err := db.Read(ctx, func(tx *canon.Tx) error {
 		where, args := scopeWhere(scope, []Kind{Event}, now.Unix(), true, "d")
 		args = append(args, id)
-		prefix, prefixArgs := restrictedCTE(scope)
+		prefix, prefixArgs := restrictedPrefix(scope)
 		return tx.QueryRowContext(ctx, prefix+` SELECT d.conversation,m.platform,m.account,m.chat FROM recall_source d JOIN messenger_record m ON m.event=d.source_id WHERE `+strings.Join(where, " AND ")+` AND d.source_id=?`, append(prefixArgs, args...)...).Scan(&conversation, &source.Platform, &source.Account, &chat)
 	})
 	if err != nil {
@@ -265,7 +265,7 @@ func MessengerExpand(ctx context.Context, db Canon, read ReadEvent, scope Scope,
 	var hits []Hit
 	err = db.Read(ctx, func(tx *canon.Tx) error {
 		where, args := scopeWhere(scope, []Kind{Event}, now.Unix(), true, "d")
-		prefix, prefixArgs := restrictedCTE(scope)
+		prefix, prefixArgs := restrictedPrefix(scope)
 		rows, err := tx.QueryContext(ctx, prefix+`, ordered AS (SELECT d.source_id,d.revision,d.occurred_at,d.holder,row_number() OVER(ORDER BY julianday(d.occurred_at),d.source_id)-1 AS position FROM recall_source d WHERE `+strings.Join(where, " AND ")+`) SELECT source_id,revision,occurred_at,holder FROM ordered WHERE position>=max(0,(SELECT position FROM ordered WHERE source_id=?)-5)+? ORDER BY position LIMIT ?`, append(append(prefixArgs, args...), id, offset, limit+1)...)
 		if err != nil {
 			return err
