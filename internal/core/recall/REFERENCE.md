@@ -38,7 +38,9 @@ retraction indexes keep their own triggers until the contract step. Messenger wi
 
 `recall.Match` applies scope (person, holder, conversation, kinds, time, speaker,
 origin, replay, visibility class), matches, ranks and limits without reading a
-published source body. Query terms are literal, whitespace split, at most
+published source body. `EventSpeaker` restricts event candidates without
+dropping memory items, summaries or records; `recall_person` sets it to
+`person`. Query terms are literal, whitespace split, at most
 eight, and any term may match. Documents holding more terms come first by BM25
 over the pair table; documents found only through the trigram table follow;
 ties go to the newer `occurred_at`. A short term reaches memory items and
@@ -51,8 +53,11 @@ identical derived text inside one conversation to the earliest of them. A
 returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
 its lineage counts once: a copy appears when its original is out of scope.
-`recall.Search` adds the bounded masked excerpt and the citations in force at
-the result's revision. `VectorQuery` binds the optional embedding adapter. Endpoint failures and rebuilds preserve the lexical result list and order.
+Lineage deduplication compares source identity. A queued copy has no document
+id yet, and that missing id does not drop the other events. `recall.Search`
+adds the bounded masked excerpt and the citations in force at the result's
+revision. A material-backed event has a NULL inline body; the excerpt comes
+from the caller-supplied reader. `VectorQuery` binds the optional embedding adapter. Endpoint failures and rebuilds preserve the lexical result list and order.
 
 Memory items, events and records are the same list: `exec.Memory` asks `Match`
 for events and items together, materializes the item set in one scoped read, and

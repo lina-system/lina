@@ -113,8 +113,12 @@ ORDER BY CASE type WHEN 'trigger' THEN 0 WHEN 'view' THEN 1 WHEN 'index' THEN 2 
 	}
 	if err == nil {
 		// Later search migrations also insert catalog rows in this old table.
-		// Restore the published metadata so their upgrade can run again.
-		_, err = legacy.ExecContext(h.ctx, "DELETE FROM search_index_config")
+		// Added columns stay behind because the table exists at v14. Rebuild
+		// the published three-column shape so that upgrade can add them again.
+		_, err = legacy.ExecContext(h.ctx, `DROP TABLE search_index_config;
+CREATE TABLE search_index_config (
+ name TEXT PRIMARY KEY, tokenizer TEXT NOT NULL, fallback TEXT NOT NULL
+);`)
 	}
 	if err == nil {
 		rows, err = reference.QueryContext(h.ctx, "SELECT name,tokenizer,fallback FROM search_index_config")

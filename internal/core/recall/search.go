@@ -48,6 +48,10 @@ type Scope struct {
 	Conversation string
 	Since, Until time.Time
 	SpeakerKind  guard.SpeakerKind
+	// EventSpeaker limits event candidates only. Memory items, summaries and
+	// records keep their own speaker and stay eligible. recall_person sets this
+	// to person so an agent or tool reply cannot take a source slot.
+	EventSpeaker guard.SpeakerKind
 	Origin       string
 	CommonOnly   bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
@@ -431,7 +435,9 @@ func lineageFilter(enabled bool) string {
 	if !enabled {
 		return ""
 	}
-	return ` WHERE c.kind<>'event' OR c.id NOT IN (SELECT d.id FROM candidates d JOIN derived x ON x.id=d.source_id)`
+	// Queued candidates have a NULL document id. Compare source identity so that
+	// NULL cannot make NOT IN unknown for every event.
+	return ` WHERE c.kind<>'event' OR NOT EXISTS (SELECT 1 FROM derived x WHERE x.id=c.source_id)`
 }
 
 func holderCondition(scope Scope, alias string) string {
@@ -469,6 +475,10 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	if scope.SpeakerKind != "" {
 		where = append(where, alias+".speaker_kind=?")
 		args = append(args, string(scope.SpeakerKind))
+	}
+	if scope.EventSpeaker != "" {
+		where = append(where, "("+alias+".kind<>'event' OR "+alias+".speaker_kind=?)")
+		args = append(args, string(scope.EventSpeaker))
 	}
 	if scope.Origin != "" {
 		where = append(where, "json_extract("+alias+".origin,'$.kind')=?")
@@ -789,7 +799,9 @@ func maskDerived(text string, spans []secrets.Span) (string, error) {
 func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (string, error) {
 	switch hit.Kind {
 	case Event:
-		var body string
+		// Material-backed events store a NULL body. Scanning into a string fails
+		// the whole result list before the reader can supply the bytes.
+		var body sql.NullString
 		var material sql.NullString
 		var spans []secrets.Span
 		err := db.Read(ctx, func(tx *canon.Tx) error {
@@ -827,7 +839,7 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 			}
 			return text, nil
 		}
-		return body, nil
+		return body.String, nil
 	case Memory:
 		var text string
 		err := db.Read(ctx, func(tx *canon.Tx) error {

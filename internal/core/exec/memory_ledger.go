@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/recall"
@@ -43,6 +44,8 @@ func (m *Memory) recallSources(ctx context.Context, scope memory.RecallScope, in
 		Person: scope.Person, Agent: scope.Agent, Kinds: kinds,
 		CommonOnly: scope.CommonOnly, History: in.History, At: in.At,
 		Projection: scope.Projection, ExternalModel: scope.ExternalModel,
+		// Memory rows have an empty speaker. This predicate applies to events only.
+		EventSpeaker: guard.Person,
 	}
 	if in.At > 0 {
 		query.Until = time.Unix(in.At, 0).Add(time.Second)
