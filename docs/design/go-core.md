@@ -1894,6 +1894,7 @@ Obsolescence is decided before the first write; malformed current proposals and 
 Common equal statements merge evidence and ordinary recall hides each predecessor in a supersession chain.
 
 The messenger extraction job is registered once for the whole main, separate from the per-agent job and with its own budget and adoption record.
+Core starts it with the messenger service, so a main configured without messengers registers no such job.
 It reads the person's live messenger records at or after each source's learning watermark, in bounded batches, one utterance per chat burst, and carries at most three earlier records of that chat as untrusted context.
 A source or chat with learning off, and a `never-leaves` chat, advance the source's learning cursor without being read.
 Items take the default holder of their kind and no source agent; the write path accepts only messenger records of that batch as evidence.

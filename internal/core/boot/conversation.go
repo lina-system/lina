@@ -92,6 +92,7 @@ type conversationRuntime struct {
 	teams           *teams.Service
 	webex           *webex.Service
 	messenger       *messenger.Service
+	messengerAddon  AddonStarter
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
 	channels        *channelRuntime
@@ -398,9 +399,6 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startMemoryExtraction(ctx); err != nil {
 		return nil, err
 	}
-	if err = r.startMessengerExtraction(ctx); err != nil {
-		return nil, err
-	}
 	if err = r.startPlanning(ctx); err != nil {
 		return nil, err
 	}
@@ -473,6 +471,11 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		case <-r.messengerDone:
 		case <-ctx.Done():
 			return ctx.Err()
+		}
+	}
+	if r.messengerAddon != nil {
+		if err := r.messengerAddon.Close(ctx); err != nil {
+			return err
 		}
 	}
 	if r.publications != nil && r.publications.stop != nil {

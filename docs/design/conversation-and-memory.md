@@ -390,12 +390,22 @@ that request's focus. Several created tasks stay unresolved. When the person
 has selected a new target and creation has recorded its id, a later record
 read, progress read, or follow-up of that created item stays on the same
 request. Naming a different item does not replace the person's choice.
+A code goal created for a new project stays on that choice. Its definition
+file keeps kind goal, and the snapshot presents the record as a project, so a
+later read or correction of the created record is the same identity. A progress
+read of that record returns the goal's current progress line. The binding check
+still uses the record id.
 A resumed channel request recovers the original channel receipt through the
 answer's parent chain before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
 permissions. A tool executed for that steering input uses the steering runtime
-and event, so a channel follow-up keeps that channel's source. Reading a tied
+and event, so a channel follow-up keeps that channel's source. A result
+tool rebuilt for that input keeps the turn's prepared reply shapes, so the
+speaking agent's work-method check commits with the revision. When that input
+belongs to another conversation, the result grant uses the selected
+conversation's active turn, so a new result is checked and created there.
+Reading a tied
 candidate does not resolve the original ambiguity. A retained tie, including a
 read that has not asked a question, does not settle a reply or the next focus.
 A reply that stays unresolved keeps that tie, so a later control asks before it
