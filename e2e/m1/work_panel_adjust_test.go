@@ -346,11 +346,7 @@ func adjustLedger(t *testing.T, ctx context.Context, root string) []adjustPass {
 // adjustReserves reports an action that holds a run slot, as the engine counts
 // it: a worker action that has not finished and is not a wait step.
 func adjustReserves(kind string) bool {
-	switch goal.ActionKind(kind) {
-	case goal.Assign, goal.Resume, goal.RepairConflict, goal.RepairQA, goal.ContinueWorker:
-		return true
-	}
-	return false
+	return goal.WorkerAction(goal.ActionKind(kind))
 }
 
 // TestM3WorkPanelAdjustChild runs the fixture Core for the adjust scenarios. It
