@@ -787,8 +787,16 @@ older messages with `beforeMessage`, follows room and membership paging, and
 catches up across multiple pages before moving its newest-message anchor. A
 room that was empty keeps that anchor unset, so the next burst fills back to
 the beginning before the anchor moves. A reply whose parent is on an older
-page of the same walk is returned with that parent; a parent older than the
-previous anchor is already stored.
+page of the same walk is returned with that parent when both fit in one
+admission. Admission binds two placeholders per message plus the platform,
+account and chat, and the linked SQLite build allows 32766 variables, so a
+page stops at 16381 messages. A wider gap carries the reply's id on the
+cursor and continues in bounded pages; the reply is returned on the page that
+reaches its parent, or on the next page after that parent was committed when
+the two no longer fit together. A page may commit only the cursor while every
+message it fetched is still waiting on a parent. A parent older than the
+previous anchor is already stored. A parent that never appears is left
+unresolved at the anchor or the beginning, and those bounded pages still commit.
 Paging must stay on the same origin and collection. HTTP redirects are refused.
 429 and 423 respect Retry-After; waits over one minute or exhausted attempts
 leave the cursor unchanged and report a retryable source failure. A failed
