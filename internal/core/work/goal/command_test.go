@@ -827,3 +827,34 @@ func TestStopSettlesPersonWaitReservations(t *testing.T) {
 		})
 	}
 }
+
+func TestStoppedGoalHoldsAreaUntilMergeSettles(t *testing.T) {
+	for _, state := range []string{"claimed", "unknown", "queued", "finished"} {
+		t.Run(state, func(t *testing.T) {
+			task := readyTask("a")
+			task.Stage, task.EffectsSettled = TaskDelivered, true
+			first := oneGoal(task)
+			first.ID, first.State = "first", GoalStopped
+			other := readyTask("b")
+			other.Area = task.Area
+			second := oneGoal(other)
+			second.ID = "second"
+			merge := Action{ID: "merge", GoalID: first.ID, TaskID: task.ID, Kind: Merge, State: state}
+			if state == "queued" {
+				merge.ObserveActionID = "original-merge"
+			}
+			plan, err := Derive(State{Goals: []Goal{first, second}, Nodes: []Node{readyNode("n")}, Actions: []Action{merge}}, time.Unix(100, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assignments := planAssignments(plan)
+			if state == "finished" {
+				if len(assignments) != 1 || assignments[0] != "b" {
+					t.Fatalf("settled merge retained area: %v", assignments)
+				}
+			} else if len(assignments) != 0 {
+				t.Fatalf("%s merge released area before settlement: %v", state, assignments)
+			}
+		})
+	}
+}

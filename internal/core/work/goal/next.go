@@ -402,15 +402,17 @@ func Derive(state State, now time.Time) (Plan, error) {
 			}
 		}
 		for _, t := range g.Tasks {
+			mergePending := false
 			for _, a := range state.Actions {
 				if a.GoalID == g.ID && a.TaskID == t.ID && a.Kind == Merge && a.State != "finished" {
+					mergePending = true
 					mergeSlots[t.Repository+"\x00"+t.Base] = true
 				}
 			}
 			if t.Stage != TaskReady && t.Stage != TaskDone && t.Stage != TaskMerged && t.Stage != TaskQAFailed {
-				// A stopped goal derives no merge, so a settled result holds no
-				// write area. An unsettled effect keeps its lease until it is read.
-				if g.State == GoalStopped && t.EffectsSettled {
+				// A stopped task releases its area only after both its worker
+				// and any already-dispatched merge have settled.
+				if g.State == GoalStopped && t.EffectsSettled && !mergePending {
 					continue
 				}
 				occupied = append(occupied, areaLease{g.ID, t})
