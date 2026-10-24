@@ -346,7 +346,13 @@ export function readResults(directory) {
   return records;
 }
 
-export async function runPipeline(root, plan, { jobs = Math.min(4, availableParallelism()), log = console.error, run = runAsync } = {}) {
+export async function runPipeline(root, plan, { jobs, log = console.error, run = runAsync } = {}) {
+  // A caller that sets GOFLAGS=-p=N is capping compile parallelism for a
+  // memory limit. Overlapping shards would multiply that cap, so the default
+  // then becomes one shard. CI leaves GOFLAGS unset and keeps four workers.
+  if (jobs === undefined) {
+    jobs = /(?:^|\s)-p=\d+(?:\s|$)/.test(process.env.GOFLAGS ?? '') ? 1 : Math.min(4, availableParallelism());
+  }
   if (!Number.isInteger(jobs) || jobs < 1) throw new Error('Worker count must be a positive integer');
   if (plan.selection.result !== 'success') return aggregate(plan, []);
   validatePlan(plan, root);
@@ -374,7 +380,10 @@ export async function runPipeline(root, plan, { jobs = Math.min(4, availablePara
     return null;
   };
   let upstream = 'success';
-  const deadline = Date.now() + componentsTimeoutMs;
+  // Serial shards share one clock. A compile cap (-p) forces that mode, and
+  // the four unit shards then need longer than the overlapping twenty minutes.
+  const serial = jobs === 1 && /(?:^|\s)-p=\d+(?:\s|$)/.test(process.env.GOFLAGS ?? '');
+  const deadline = Date.now() + (serial ? 5_400_000 : componentsTimeoutMs);
   try {
     await Promise.all(Array.from({ length: Math.min(jobs, plan.tasks.length) }, async () => {
       for (;;) {
@@ -388,9 +397,14 @@ export async function runPipeline(root, plan, { jobs = Math.min(4, availablePara
           wake();
           continue;
         }
+        // The build shard's exhaustive process follows GOMAXPROCS. A caller's
+        // -p cap applies there so typechecking stays inside a 6G job. Unit
+        // shards keep the wider share; their package timeout assumes it.
+        const cap = Number(/(?:^|\s)-p=(\d+)(?:\s|$)/.exec(process.env.GOFLAGS ?? '')?.[1] ?? 0);
+        const procs = cap > 0 && task.kind === 'build' ? cap : Math.max(1, Math.floor(availableParallelism() / jobs));
         const result = await run(process.execPath, [join(root, 'scripts/foundation.mjs'),
           '--plan', file, '--shard', task.id, '--out', join(results, task.id + '.json')],
-        { cwd: root, env: { ...cleanEnv(), GOMAXPROCS: String(Math.max(1, Math.floor(availableParallelism() / jobs))) },
+        { cwd: root, env: { ...cleanEnv(), GOMAXPROCS: String(procs) },
           timeoutMs: Math.min(timeouts[task.kind] + 5000, remaining) });
         if (result.status !== 0) upstream = 'failure';
         // Workers write machine results to files; their stdout is a short progress record.

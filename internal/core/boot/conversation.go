@@ -30,6 +30,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/messenger"
+	"github.com/thisisjun786/lina/internal/core/messenger/identity"
 	"github.com/thisisjun786/lina/internal/core/messenger/teams"
 	"github.com/thisisjun786/lina/internal/core/messenger/webex"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
@@ -93,6 +94,7 @@ type conversationRuntime struct {
 	webex           *webex.Service
 	telegram        *telegramControl
 	messenger       *messenger.Service
+	senderIdentity  *identity.Store
 	messengerAddon  AddonStarter
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
@@ -228,7 +230,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	} else if !errors.Is(e, agents.ErrNotFound) {
 		return nil, e
 	}
-	r.removals, err = retract.Open(ctx, retract.Config{Canon: db, Root: root})
+	r.removals, err = retract.Open(ctx, retract.Config{Canon: db, Root: root, Repair: identity.ReplayRepair})
 	if err != nil {
 		return nil, err
 	}

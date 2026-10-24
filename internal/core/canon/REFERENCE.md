@@ -124,6 +124,16 @@ They hold platform ids only: a reply or thread target not yet admitted, and a
 chat-less platform deletion that matched no record yet. Both are new tables, so
 an install at 75 keeps every row it has.
 
+Migration 77 adds `recall_doc.text_hash` and re-queues every recall document
+so an existing install fills the digest without a search request. The new
+column is nullable, so an install at 76 keeps every row it has.
+
+Migration 78 adds sender identity: the platform key, identifier and name
+observations, links, the one open question, artifacts, the merge record, and
+the extraction requeue. It also adds `messenger_source.workspace`. The new
+tables are empty on upgrade, and the new column defaults to empty, so an
+install at 77 keeps every row it has.
+
 Migration 71 adds `binding_effects` and `binding_moves` for the binding chip and
 moves. `binding_effects` is keyed by input, turn and call and keeps the bytes an
 edit replaced; `binding_moves` is append-only per move and carries its counter
