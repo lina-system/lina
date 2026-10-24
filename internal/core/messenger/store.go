@@ -479,6 +479,11 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		if !validName(message.ID) || !message.Route.Valid() || (message.DecryptionFailed && message.Text != "") {
 			return PageResult{}, ErrInvalid
 		}
+		for _, attachment := range message.Attachments {
+			if !validName(attachment.ID) || attachment.Size < 0 {
+				return PageResult{}, ErrInvalid
+			}
+		}
 		ids = append(ids, message.ID)
 	}
 	existing, err := s.recordRows(ctx, source, chat, ids)
@@ -781,6 +786,17 @@ ON CONFLICT(platform,account,chat,message) DO UPDATE SET revision=excluded.revis
  author=excluded.author,author_name=excluded.author_name,edited_at=excluded.edited_at,decryption_failed=excluded.decryption_failed`,
 		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID, message.Author.ID, message.Author.Name, occurred, edited, boolInt(message.DecryptionFailed)); err != nil {
 		return err
+	}
+	// The platform's attachment metadata commits with the record, so the
+	// cursor never passes a page whose attachments were not stored. The bytes
+	// stay outside LINA until the person asks for them.
+	for ordinal, attachment := range message.Attachments {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_attachment(event,platform,account,chat,message,ordinal,attachment,name,mime,size)
+VALUES(?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(event,ordinal) DO UPDATE SET attachment=excluded.attachment,name=excluded.name,mime=excluded.mime,size=excluded.size`,
+			event.ID, source.Platform, source.Account, chat, message.ID, ordinal, attachment.ID, attachment.Name, attachment.MIMEType, attachment.Size); err != nil {
+			return err
+		}
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_record_revision(platform,account,chat,message,revision,event) VALUES(?,?,?,?,?,?)`,
 		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID)

@@ -815,6 +815,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 ### Sync and coverage
 
 - Core reads each source on its schedule or from its live events. The records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Reading the same messages again adds nothing.
+- A failing source is read again on its schedule and returns to connected when a read completes; the person sees its cause in between. A source that needs sign-in waits for the person, and an unreachable, import-only or disconnected source is not read.
 - A chat's first fill reads back as far as the platform allows.
 - Where a platform serves no cursor that survives a restart, a read covers only its newest messages, and the chat's coverage record states that depth and that the cursor does not survive. Overlap between those reads is resolved by the platform message id, so a message reads once.
 - A message the platform served but this account could not decrypt is a record with no text and a decryption-failed flag: it is never an empty message, a message from the system, or a deletion.

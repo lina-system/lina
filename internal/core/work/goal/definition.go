@@ -362,6 +362,7 @@ func (e *Engine) RefreshDefinitions(ctx context.Context) error {
 			current.State = GoalRunning
 			current.AttentionID = ""
 			current.BlockedReason = ""
+			current.DecisionRow = ""
 			current.AssessedFailure = ""
 			if invalid {
 				blockCorrection(&current, "The goal needs a valid done condition and criteria. Correct its record to continue.")
