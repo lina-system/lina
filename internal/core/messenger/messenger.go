@@ -82,15 +82,19 @@ type Attachment struct {
 // Edited time later than the stored version makes a new record that supersedes
 // the earlier one; a zero Edited is the message as first read.
 type Message struct {
-	ID          string
-	Author      Author
-	Route       Route
-	At          time.Time
-	Edited      time.Time
-	Text        string
-	ReplyTo     string
-	Thread      string
-	Attachments []Attachment
+	ID     string
+	Author Author
+	Route  Route
+	At     time.Time
+	Edited time.Time
+	Text   string
+	// DecryptionFailed marks a message the platform served but this account
+	// could not decrypt. Its text is empty, and it stays a record with the
+	// flag: it is never read as an empty message someone sent.
+	DecryptionFailed bool
+	ReplyTo          string
+	Thread           string
+	Attachments      []Attachment
 }
 
 // Deletion is a deletion the platform reports. A message absent from a later
@@ -127,6 +131,20 @@ type Page struct {
 	HasMore   bool
 	// Through is the newest time this page read completely, when known.
 	Through time.Time
+	// Coverage describes what a completed read covers when the platform's
+	// history depth or cursor differs from the default. The sync loop fills it
+	// from the adapter's capabilities; nil keeps the defaults.
+	Coverage *ReadCoverage
+}
+
+// ReadCoverage is how a completed read relates to what the platform can still
+// serve. It is stored with the chat's coverage record.
+type ReadCoverage struct {
+	// HistoryDepth names the range one read covers, in the adapter's words.
+	HistoryDepth string
+	// CursorSurvivesRestart reports whether the page's next cursor still
+	// points at the right place after Core restarts.
+	CursorSurvivesRestart bool
 }
 
 // Capabilities is the adapter's static descriptor. Only adapters of official

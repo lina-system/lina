@@ -407,12 +407,22 @@ type effectRow struct {
 	agent, state string
 }
 
+// MaxAdmitMessages is the largest page effectsFor can bind. That statement
+// uses two placeholders per message id plus the platform, account and chat.
+// The linked SQLite build allows 32766 variables, so one more id fails with
+// "too many SQL variables" and the cursor never commits.
+const (
+	sqliteMaxVariables     = 32766
+	effectQueryFixedParams = 3
+	effectQueryParamsPerID = 2
+	MaxAdmitMessages       = (sqliteMaxVariables - effectQueryFixedParams) / effectQueryParamsPerID
+)
+
 func (s *Store) effectsFor(ctx context.Context, source Source, chat string, ids []string) (map[string]effectRow, error) {
 	effects := map[string]effectRow{}
 	if len(ids) == 0 {
 		return effects, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 	args := []any{source.Platform, source.Account, chat}
 	// The two IN lists take the same ids in the same order: the first list
 	// matches the client id and the second the platform's message id.
@@ -423,8 +433,7 @@ func (s *Store) effectsFor(ctx context.Context, source Source, chat string, ids 
 		args = append(args, id)
 	}
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT client_id,message,agent,state FROM messenger_effect
-WHERE platform=? AND account=? AND chat=? AND state<>'failed' AND (client_id IN (`+placeholders+`) OR message IN (`+placeholders+`))`, args...)
+		rows, err := tx.QueryContext(ctx, effectLookupSQL(len(ids)), args...)
 		if err != nil {
 			return err
 		}
@@ -443,6 +452,14 @@ WHERE platform=? AND account=? AND chat=? AND state<>'failed' AND (client_id IN 
 		return rows.Err()
 	})
 	return effects, err
+}
+
+// effectLookupSQL is the effectsFor statement. MaxAdmitMessages is the largest
+// n this statement can bind on the linked SQLite build.
+func effectLookupSQL(n int) string {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", n), ",")
+	return `SELECT client_id,message,agent,state FROM messenger_effect
+WHERE platform=? AND account=? AND chat=? AND state<>'failed' AND (client_id IN (` + placeholders + `) OR message IN (` + placeholders + `))`
 }
 
 // PageResult reports one committed page.
@@ -476,8 +493,13 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 	}
 	ids := make([]string, 0, len(page.Messages))
 	for _, message := range page.Messages {
-		if !validName(message.ID) || !message.Route.Valid() {
+		if !validName(message.ID) || !message.Route.Valid() || (message.DecryptionFailed && message.Text != "") {
 			return PageResult{}, ErrInvalid
+		}
+		for _, attachment := range message.Attachments {
+			if !validName(attachment.ID) || attachment.Size < 0 {
+				return PageResult{}, ErrInvalid
+			}
 		}
 		ids = append(ids, message.ID)
 	}
@@ -775,12 +797,23 @@ ON CONFLICT(platform,account,author) DO UPDATE SET name=excluded.name,email=excl
 	if !message.Edited.IsZero() {
 		edited = message.Edited.UTC().Format(time.RFC3339Nano)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_record(platform,account,chat,message,revision,event,author,author_name,occurred_at,edited_at)
-VALUES(?,?,?,?,?,?,?,?,?,?)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_record(platform,account,chat,message,revision,event,author,author_name,occurred_at,edited_at,decryption_failed)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(platform,account,chat,message) DO UPDATE SET revision=excluded.revision,event=excluded.event,
- author=excluded.author,author_name=excluded.author_name,edited_at=excluded.edited_at`,
-		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID, message.Author.ID, message.Author.Name, occurred, edited); err != nil {
+ author=excluded.author,author_name=excluded.author_name,edited_at=excluded.edited_at,decryption_failed=excluded.decryption_failed`,
+		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID, message.Author.ID, message.Author.Name, occurred, edited, boolInt(message.DecryptionFailed)); err != nil {
 		return err
+	}
+	// The platform's attachment metadata commits with the record, so the
+	// cursor never passes a page whose attachments were not stored. The bytes
+	// stay outside LINA until the person asks for them.
+	for ordinal, attachment := range message.Attachments {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_attachment(event,platform,account,chat,message,ordinal,attachment,name,mime,size)
+VALUES(?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(event,ordinal) DO UPDATE SET attachment=excluded.attachment,name=excluded.name,mime=excluded.mime,size=excluded.size`,
+			event.ID, source.Platform, source.Account, chat, message.ID, ordinal, attachment.ID, attachment.Name, attachment.MIMEType, attachment.Size); err != nil {
+			return err
+		}
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_record_revision(platform,account,chat,message,revision,event) VALUES(?,?,?,?,?,?)`,
 		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID)
@@ -812,10 +845,18 @@ func (s *Store) writeProgress(ctx context.Context, tx *canon.Tx, source Source, 
 	if through.IsZero() {
 		through = s.now()
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_coverage(platform,account,chat,read_from,read_through,read_at,messages)
-VALUES(?,?,?,?,?,?,?)
-ON CONFLICT(platform,account,chat,read_from,read_through) DO UPDATE SET read_at=excluded.read_at,messages=excluded.messages`,
-		source.Platform, source.Account, chat, string(from), through.UTC().Format(time.RFC3339Nano), readAt, messages)
+	// A page whose adapter states no coverage keeps the default: an opaque
+	// cursor that survives a restart and history as deep as the platform serves.
+	depth, durable := "", 1
+	if page.Coverage != nil {
+		depth = page.Coverage.HistoryDepth
+		durable = boolInt(page.Coverage.CursorSurvivesRestart)
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_coverage(platform,account,chat,read_from,read_through,read_at,messages,history_depth,cursor_survives_restart)
+VALUES(?,?,?,?,?,?,?,?,?)
+ON CONFLICT(platform,account,chat,read_from,read_through) DO UPDATE SET read_at=excluded.read_at,messages=excluded.messages,
+ history_depth=excluded.history_depth,cursor_survives_restart=excluded.cursor_survives_restart`,
+		source.Platform, source.Account, chat, string(from), through.UTC().Format(time.RFC3339Nano), readAt, messages, depth, durable)
 	return err
 }
 
