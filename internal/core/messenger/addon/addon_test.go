@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -339,5 +340,32 @@ func TestSignInRelaysAnAnswerToTheSameAccountSession(t *testing.T) {
 	defer s.mu.Unlock()
 	if s.exits != 1 || len(s.requests) != 3 || s.requests[1]["value"] != "synthetic-pin" {
 		t.Fatalf("relay did not use one session")
+	}
+}
+
+func TestSandboxedAddonProgramUsesItsPrivateDirectory(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux sandbox acceptance")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	launcher, err := exec.LookPath("bwrap")
+	if err != nil {
+		t.Skip("Bubblewrap absent")
+	}
+	socket := filepath.Join(root, "core.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	value := addon.NewSession("kakaotalk", "account-1", addon.Config{Node: node, Program: fixtureProgram(t), StateRoot: root, Socket: socket, Launcher: launcher, RequestTimeout: 5 * time.Second})
+	defer value.Close(context.Background())
+	_, err = value.Adapter().ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"})
+	if err != nil {
+		t.Fatalf("sandbox: %v", err)
 	}
 }
