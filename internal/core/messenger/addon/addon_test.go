@@ -31,6 +31,12 @@ type script struct {
 	responses map[string][]string
 	requests  []map[string]any
 	exits     int
+	// liveEvent is written after the answer to a live request, so a test can
+	// observe the subscription Core established. stopSeen signals the first stop
+	// request, so a test synchronizes on the add-on instead of a delay.
+	liveEvent string
+	stopSeen  chan struct{}
+	stopOnce  sync.Once
 }
 
 func (s *script) Run(ctx context.Context, l lease.Lease, command sandbox.Command, _ []string) error {
@@ -48,6 +54,9 @@ func (s *script) Run(ctx context.Context, l lease.Lease, command sandbox.Command
 		s.mu.Lock()
 		s.requests = append(s.requests, request)
 		op, _ := request["op"].(string)
+		if op == "stop" && s.stopSeen != nil {
+			s.stopOnce.Do(func() { close(s.stopSeen) })
+		}
 		queue := s.responses[op]
 		if len(queue) == 0 {
 			s.mu.Unlock()
@@ -63,6 +72,14 @@ func (s *script) Run(ctx context.Context, l lease.Lease, command sandbox.Command
 		}
 		if err := writer.Flush(); err != nil {
 			return err
+		}
+		if op == "live" && s.liveEvent != "" {
+			if _, err := writer.WriteString(s.liveEvent + "\n"); err != nil {
+				return err
+			}
+			if err := writer.Flush(); err != nil {
+				return err
+			}
 		}
 		if op == "quit" {
 			return nil
@@ -437,16 +454,17 @@ func TestChildExitUnblocksPendingRead(t *testing.T) {
 	}
 }
 
-// countingRunner runs the program with the caller's context, so a cancelled
-// request kills the child exactly as the sandbox does.
-type countingRunner struct {
-	mu     sync.Mutex
-	starts int
+// recordingRunner runs the program with the context the supervisor gave it, so
+// a cancelled request kills the child exactly as the sandbox does, and keeps
+// that context for the test to inspect.
+type recordingRunner struct {
+	mu    sync.Mutex
+	child []context.Context
 }
 
-func (r *countingRunner) Run(ctx context.Context, _ lease.Lease, command sandbox.Command, env []string) error {
+func (r *recordingRunner) Run(ctx context.Context, _ lease.Lease, command sandbox.Command, env []string) error {
 	r.mu.Lock()
-	r.starts++
+	r.child = append(r.child, ctx)
 	r.mu.Unlock()
 	cmd := exec.CommandContext(ctx, command.Path, command.Args...)
 	cmd.Env = env
@@ -454,10 +472,16 @@ func (r *countingRunner) Run(ctx context.Context, _ lease.Lease, command sandbox
 	return cmd.Run()
 }
 
-func (r *countingRunner) count() int {
+func (r *recordingRunner) starts() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.starts
+	return len(r.child)
+}
+
+func (r *recordingRunner) context(index int) context.Context {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.child[index]
 }
 
 // TestFinishedRequestKeepsTheAccountProcess proves a request's context ends
@@ -470,7 +494,7 @@ func TestFinishedRequestKeepsTheAccountProcess(t *testing.T) {
 	if err != nil {
 		t.Skip("node is absent")
 	}
-	runner := &countingRunner{}
+	runner := &recordingRunner{}
 	value := addon.NewSession("fixture", "account-1", addon.Config{
 		Node: node, Program: fixtureProgram(t), StateRoot: t.TempDir(), Runner: runner,
 		RestartDelay: time.Millisecond, MaxRestarts: 1, RequestTimeout: 5 * time.Second,
@@ -484,12 +508,15 @@ func TestFinishedRequestKeepsTheAccountProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel()
-	// The cancelled request's child exits before the next read asks for one.
-	time.Sleep(100 * time.Millisecond)
+	// Cancelling a parent context closes the contexts derived from it
+	// synchronously, so this reads the child's lifetime without a delay.
+	if err := runner.context(0).Err(); err != nil {
+		t.Fatalf("the request's cancellation ended the account's process: %v", err)
+	}
 	if _, err := adapter.ListChats(t.Context(), id); err != nil {
 		t.Fatalf("the next read failed after a cancelled request: %v", err)
 	}
-	if got := runner.count(); got != 1 {
+	if got := runner.starts(); got != 1 {
 		t.Fatalf("child started %d times, want the one process of the account", got)
 	}
 }
@@ -499,32 +526,36 @@ func TestFinishedRequestKeepsTheAccountProcess(t *testing.T) {
 // serving afterwards.
 func TestStoppingALiveReaderStopsItsSubscription(t *testing.T) {
 	t.Parallel()
-	s := &script{responses: map[string][]string{
-		"live":   {`{"id":"","ok":true,"result":{"live":true}}`},
-		"signIn": {`{"id":"","ok":true,"result":{"state":"signed_in"}}`},
-	}}
+	s := &script{
+		responses: map[string][]string{
+			"live":   {`{"id":"","ok":true,"result":{"live":true}}`},
+			"signIn": {`{"id":"","ok":true,"result":{"state":"signed_in"}}`},
+		},
+		liveEvent: `{"event":"message","message":{"id":"m-1","author":{"id":"u1","name":"Someone"},"route":"external_participant","at":"2026-10-24T09:00:00Z","text":"hi"}}`,
+		stopSeen:  make(chan struct{}),
+	}
 	adapter := session(t, s).Adapter()
 	id := messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	// The reader leaves once its subscription is running.
+	// The reader leaves once Core has admitted an event of the subscription.
+	established := make(chan struct{})
+	var once sync.Once
 	go func() {
-		deadline := time.Now().Add(10 * time.Second)
-		for s.count("live") == 0 && time.Now().Before(deadline) {
-			time.Sleep(5 * time.Millisecond)
-		}
-		time.Sleep(20 * time.Millisecond)
+		<-established
 		cancel()
 	}()
-	if err := adapter.Live(ctx, id, func(messenger.Event) error { return nil }); err != nil {
+	err := adapter.Live(ctx, id, func(messenger.Event) error {
+		once.Do(func() { close(established) })
+		return nil
+	})
+	if err != nil {
 		t.Fatalf("live returned %v", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for s.count("stop") != 1 {
-		if time.Now().After(deadline) {
-			t.Fatalf("subscription stop requests = %d, want 1", s.count("stop"))
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-s.stopSeen:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the add-on was never told to end the subscription")
 	}
 	if state, err := adapter.SignIn(t.Context(), id); err != nil || state != messenger.SignedIn {
 		t.Fatalf("the add-on stopped serving after the reader left: %v, %v", state, err)
