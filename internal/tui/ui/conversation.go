@@ -22,7 +22,7 @@ type conversationView struct {
 	workCompact  bool
 	workFilter   protocol.RunningState
 	// workStop names the card whose stop ask waits for Enter or a cancel.
-	workStop string
+	workStop     string
 	workStages   workStageView
 	undo         []state.Draft
 	history      *inputHistory
@@ -51,6 +51,12 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 	switch key.Name {
 	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+p", "ctrl+b", "f6":
 		class = term.Toggle
+	case "space", "delete":
+		// In the work panel these flip a card's pause or its stop ask, so a held
+		// key must not flip it back.
+		if m.conversation.workFocused && !m.conversation.pager.open && !m.conversation.move.open {
+			class = term.Toggle
+		}
 	}
 	if !m.gate.Admit(key, class, m.now()) {
 		return nil
