@@ -80,13 +80,30 @@ func (a Auxiliary) Summarize(ctx context.Context, segment PassSegment) (Text, er
 	return text, nil
 }
 
-func (a Auxiliary) generate(ctx context.Context, segment PassSegment, instructions string) (Text, error) {
-	if a.Stream == nil || a.Request.Model == "" {
-		return Text{}, ErrSummary
+// SummaryRequest is the exact auxiliary request Summarize sends for segment,
+// built without sending it so the provider replay can measure the same bytes.
+func (a Auxiliary) SummaryRequest(segment PassSegment) (provider.Request, error) {
+	return a.request(segment, a.instructions(segment))
+}
+
+func (a Auxiliary) instructions(segment PassSegment) string {
+	instructions := summaryInstructions
+	switch {
+	case len(segment.Root) > 0 && len(segment.Records) > 0:
+		instructions += "\n" + valuesDeltaInstructions
+	case len(segment.Root) > 0:
+		instructions += "\n" + valuesCondenseInstructions
 	}
+	return instructions
+}
+
+// request keeps the conversation's fixed instructions, tool declarations and
+// history unchanged through the end of the segment, then adds the summary
+// instruction. Tools and tool choice are the conversation's own.
+func (a Auxiliary) request(segment PassSegment, instructions string) (provider.Request, error) {
 	var nonce [24]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return Text{}, err
+		return provider.Request{}, err
 	}
 	// JSON encoding keeps role delimiters inert; a fresh nonce prevents source
 	// text from closing the data block. Only segment records/direct root are sent.
@@ -95,7 +112,7 @@ func (a Auxiliary) generate(ctx context.Context, segment PassSegment, instructio
 		Records []Record      `json:"events"`
 	}{segment.Root, segment.Records})
 	if err != nil {
-		return Text{}, errors.Join(ErrSummary, err)
+		return provider.Request{}, errors.Join(ErrSummary, err)
 	}
 	delimiter := "segment_" + hex.EncodeToString(nonce[:])
 	req := a.Request
@@ -106,6 +123,9 @@ func (a Auxiliary) generate(ctx context.Context, segment PassSegment, instructio
 	req.Tools = nil
 	req.Bridge = nil
 	req.Fields = nil
+	// A request without the conversation prefix carries none of its boundaries.
+	req.Layout = nil
+	req.Capabilities.CacheMarks = nil
 	req.Items = []provider.Item{textItem("developer", instructions), textItem("user", "<"+delimiter+">\n"+string(body)+"\n</"+delimiter+">")}
 	if a.RetainPrefix {
 		req.Instructions = a.Request.Instructions
@@ -118,7 +138,51 @@ func (a Auxiliary) generate(ctx context.Context, segment PassSegment, instructio
 		for _, record := range segment.Records {
 			req.Items = append(req.Items, append(provider.Item(nil), record.Item...))
 		}
+		// The segment ends at the last retained history item; the instruction
+		// is not an input, so no mark names it.
+		req.Layout = prefixLayout(a.Request.Layout, len(req.Items), len(req.Tools))
+		req.Capabilities.CacheMarks = prefixMarks(a.Request.Capabilities.CacheMarks, req.Layout)
 		req.Items = append(req.Items, textItem("developer", instructions))
+	}
+	return req, nil
+}
+
+// prefixLayout keeps the conversation's fixed and previous-input positions and
+// ends the marked prefix where the segment ends. A layout that the retained
+// prefix cannot satisfy is dropped with its marks.
+func prefixLayout(l *provider.RequestLayout, items, tools int) *provider.RequestLayout {
+	if l == nil || items <= l.Fixed.Items || l.Fixed.Tools > tools || l.CurrentInput.Tools > tools {
+		return nil
+	}
+	out := &provider.RequestLayout{Fixed: l.Fixed, CurrentInput: provider.Position{Items: items, Tools: l.CurrentInput.Tools}}
+	if l.PreviousInput != nil && l.PreviousInput.Items < items && l.PreviousInput.Items > l.Fixed.Items && l.PreviousInput.Tools <= tools {
+		previous := *l.PreviousInput
+		out.PreviousInput = &previous
+	}
+	return out
+}
+
+// prefixMarks keeps only marks that the retained prefix still covers.
+func prefixMarks(marks []provider.CacheMark, l *provider.RequestLayout) []provider.CacheMark {
+	if l == nil {
+		return nil
+	}
+	var out []provider.CacheMark
+	for _, mark := range marks {
+		if mark.Position != l.Fixed && (l.PreviousInput == nil || mark.Position != *l.PreviousInput) {
+			continue
+		}
+		out = append(out, mark)
+	}
+	return out
+}
+func (a Auxiliary) generate(ctx context.Context, segment PassSegment, instructions string) (Text, error) {
+	if a.Stream == nil || a.Request.Model == "" {
+		return Text{}, ErrSummary
+	}
+	req, err := a.request(segment, instructions)
+	if err != nil {
+		return Text{}, err
 	}
 	stream, err := a.Stream(ctx, req)
 	if err != nil {

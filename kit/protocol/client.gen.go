@@ -106,6 +106,8 @@ const (
 	KindSurfaceAction        Kind = "surface_action"
 	KindMockRequest          Kind = "mock_request"
 	KindMockResponse         Kind = "mock_response"
+	KindMiniAppRequest       Kind = "mini_app_request"
+	KindMiniAppResult        Kind = "mini_app_result"
 )
 
 type A2aCallStatus struct {
@@ -631,6 +633,38 @@ type MemoryTombstone struct {
 	At     json.Number `json:"at"`
 	Person string      `json:"person"`
 }
+type MiniApp struct {
+	Agent           string      `json:"agent"`
+	Allowed         bool        `json:"allowed"`
+	AllowedRevision json.Number `json:"allowed_revision"`
+	Hosts           []string    `json:"hosts"`
+	ID              string      `json:"id"`
+	Name            string      `json:"name"`
+	Reads           []string    `json:"reads"`
+	Request         string      `json:"request"`
+	Requests        []string    `json:"requests"`
+	Revision        json.Number `json:"revision"`
+	Schedule        *string     `json:"schedule,omitempty"`
+}
+type MiniAppRequest struct {
+	App       *string      `json:"app,omitempty"`
+	Operation string       `json:"operation"`
+	Revision  *json.Number `json:"revision,omitempty"`
+}
+type MiniAppResult struct {
+	App       *MiniApp           `json:"app,omitempty"`
+	Apps      []MiniApp          `json:"apps"`
+	Code      *string            `json:"code,omitempty"`
+	Operation string             `json:"operation"`
+	Revisions *[]MiniAppRevision `json:"revisions,omitempty"`
+	Tailnet   *string            `json:"tailnet,omitempty"`
+	URL       *string            `json:"url,omitempty"`
+}
+type MiniAppRevision struct {
+	Request  string      `json:"request"`
+	Revision json.Number `json:"revision"`
+	Summary  *string     `json:"summary,omitempty"`
+}
 type MockAssetRef struct {
 	AssetID  string      `json:"asset_id"`
 	Revision json.Number `json:"revision"`
@@ -701,12 +735,17 @@ type PlanResponse struct {
 	Revision    *string      `json:"revision,omitempty"`
 }
 type Progress struct {
-	CardOrder   *[]string      `json:"card_order,omitempty"`
-	Lanes       *[]WorkerLane  `json:"lanes,omitempty"`
-	NextCursor  *string        `json:"next_cursor,omitempty"`
-	Rows        *[]ProgressRow `json:"rows,omitempty"`
-	Waiting     *[]WaitingRow  `json:"waiting,omitempty"`
-	WaitingMore *json.Number   `json:"waiting_more,omitempty"`
+	CardOrder   *[]string       `json:"card_order,omitempty"`
+	Counts      *ProgressCounts `json:"counts,omitempty"`
+	Lanes       *[]WorkerLane   `json:"lanes,omitempty"`
+	NextCursor  *string         `json:"next_cursor,omitempty"`
+	Rows        *[]ProgressRow  `json:"rows,omitempty"`
+	Waiting     *[]WaitingRow   `json:"waiting,omitempty"`
+	WaitingMore *json.Number    `json:"waiting_more,omitempty"`
+}
+type ProgressCounts struct {
+	Running json.Number `json:"running"`
+	Waiting json.Number `json:"waiting"`
 }
 type ProgressDigest struct {
 	Lines []string    `json:"lines"`
@@ -730,6 +769,7 @@ type ProgressLine struct {
 	Next         string           `json:"next"`
 	Now          *string          `json:"now,omitempty"`
 	Percent      *json.Number     `json:"percent,omitempty"`
+	Row          *bool            `json:"row,omitempty"`
 	Stage        string           `json:"stage"`
 	Stages       *[]ProgressStage `json:"stages,omitempty"`
 	StartedAt    *string          `json:"started_at,omitempty"`
@@ -754,6 +794,7 @@ type ProgressStageStep struct {
 }
 type ProgressUpdate struct {
 	CardOrder   *[]string       `json:"card_order,omitempty"`
+	Counts      *ProgressCounts `json:"counts,omitempty"`
 	Rows        *[]ProgressRow  `json:"rows,omitempty"`
 	Stream      *StreamMetadata `json:"stream,omitempty"`
 	Text        *string         `json:"text,omitempty"`
@@ -1643,6 +1684,8 @@ func (A2aResult) isPayload()            {}
 func (SurfaceAction) isPayload()        {}
 func (MockRequest) isPayload()          {}
 func (MockResponse) isPayload()         {}
+func (MiniAppRequest) isPayload()       {}
+func (MiniAppResult) isPayload()        {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -2042,6 +2085,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p MockResponse
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindMiniAppRequest:
+		var p MiniAppRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindMiniAppResult:
+		var p MiniAppResult
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -2077,7 +2128,7 @@ const clientSchemaJSON = `{
   "$comment": "SPDX-License-Identifier: Apache-2.0",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Client 1.0 and 1.1 envelope",
-  "description": "Client 1.0 and 1.1 envelope and payloads. Client 1.1 adds generated cards and drawn mocks behind separate capabilities.",
+  "description": "Client 1.0 and 1.1 envelope and payloads. Client 1.1 adds generated cards, drawn mocks and mini apps behind separate capabilities.",
   "type": "object",
   "properties": {
     "protocol": {
@@ -2179,7 +2230,9 @@ const clientSchemaJSON = `{
         "a2a_result",
         "surface_action",
         "mock_request",
-        "mock_response"
+        "mock_response",
+        "mini_app_request",
+        "mini_app_result"
       ]
     },
     "message_id": {
@@ -3976,6 +4029,38 @@ const clientSchemaJSON = `{
     {
       "if": {
         "properties": {
+          "kind": {
+            "const": "mini_app_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/mini_app_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "mini_app_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/mini_app_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "protocol": {
             "properties": {
               "version": {
@@ -3993,7 +4078,9 @@ const clientSchemaJSON = `{
                 "kind": {
                   "enum": [
                     "mock_request",
-                    "mock_response"
+                    "mock_response",
+                    "mini_app_request",
+                    "mini_app_result"
                   ]
                 }
               }
@@ -5208,6 +5295,9 @@ const clientSchemaJSON = `{
     "progress": {
       "type": "object",
       "properties": {
+        "counts": {
+          "$ref": "#/$defs/progress_counts"
+        },
         "lanes": {
           "type": "array",
           "items": {
@@ -5246,6 +5336,9 @@ const clientSchemaJSON = `{
     "progress_update": {
       "type": "object",
       "properties": {
+        "counts": {
+          "$ref": "#/$defs/progress_counts"
+        },
         "stream": {
           "$ref": "#/$defs/stream_metadata"
         },
@@ -5276,6 +5369,24 @@ const clientSchemaJSON = `{
         }
       },
       "required": [],
+      "additionalProperties": false
+    },
+    "progress_counts": {
+      "type": "object",
+      "properties": {
+        "running": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "waiting": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "running",
+        "waiting"
+      ],
       "additionalProperties": false
     },
     "progress_digest_get": {
@@ -8192,6 +8303,9 @@ const clientSchemaJSON = `{
     "progress_line": {
       "type": "object",
       "properties": {
+        "row": {
+          "type": "boolean"
+        },
         "started_at": {
           "type": "string",
           "format": "date-time"
@@ -10097,6 +10211,176 @@ const clientSchemaJSON = `{
       "required": [
         "asset_id",
         "revision"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "agent": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "request": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allowed_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allowed": {
+          "type": "boolean"
+        },
+        "reads": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "requests": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          }
+        },
+        "hosts": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "maxLength": 256
+          }
+        },
+        "schedule": {
+          "type": "string",
+          "maxLength": 8
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "agent",
+        "request",
+        "revision",
+        "allowed_revision",
+        "allowed",
+        "reads",
+        "requests",
+        "hosts"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app_revision": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "request": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "revision",
+        "request"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "open",
+            "allow",
+            "deny",
+            "keep",
+            "undo",
+            "restore",
+            "remove",
+            "history"
+          ]
+        },
+        "app": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "mini_app_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "apps": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/mini_app"
+          }
+        },
+        "app": {
+          "$ref": "#/$defs/mini_app"
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "tailnet": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "revisions": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/mini_app_revision"
+          }
+        },
+        "code": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "operation",
+        "apps"
       ],
       "additionalProperties": false
     }

@@ -29,7 +29,7 @@ func TestGrowthUpgradesPublishedInstalledSchemas(t *testing.T) {
 			if err = ctl.Acquire(); err != nil {
 				t.Fatal(err)
 			}
-			cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: published[:version]}
+			cfg := canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: published[:version], NoSync: true}
 			db, err := canon.Open(t.Context(), cfg)
 			if err != nil {
 				t.Fatal(err)

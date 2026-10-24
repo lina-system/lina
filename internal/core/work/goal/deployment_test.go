@@ -11,6 +11,7 @@ import (
 )
 
 func TestAdmitRejectsAmbiguousServiceRepository(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {
@@ -64,6 +65,7 @@ func deploymentEngine(t *testing.T, g Goal) *Engine {
 }
 
 func TestServiceDeploymentRevisionFollowsRepository(t *testing.T) {
+	t.Parallel()
 	for _, order := range [][]string{{"service", "docs", "service-update", "docs-update"}, {"docs", "service", "docs-update", "service-update"}} {
 		t.Run(order[0]+"_first", func(t *testing.T) {
 			var tasks []Task
@@ -122,6 +124,7 @@ func TestServiceDeploymentRevisionFollowsRepository(t *testing.T) {
 }
 
 func TestNoServiceMultiRepositoryKeepsLastMergeRevision(t *testing.T) {
+	t.Parallel()
 	service, docs := readyTask("service"), readyTask("docs")
 	docs.Repository = "docs"
 	g := oneGoal(service, docs)
@@ -139,6 +142,7 @@ func TestNoServiceMultiRepositoryKeepsLastMergeRevision(t *testing.T) {
 }
 
 func TestServiceRepositoryAdmissionAndRecord(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		repos   []string
@@ -188,6 +192,7 @@ func TestServiceRepositoryAdmissionAndRecord(t *testing.T) {
 }
 
 func TestLegacySingleRepositoryServiceRecordLoadsUnchanged(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	cfg := Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }}
 	e, err := NewEngine(cfg)
@@ -227,6 +232,7 @@ func TestLegacySingleRepositoryServiceRecordLoadsUnchanged(t *testing.T) {
 }
 
 func TestAdmitRejectsSuppliedRepositoryMergeState(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1})
 	if err != nil {
@@ -240,6 +246,7 @@ func TestAdmitRejectsSuppliedRepositoryMergeState(t *testing.T) {
 }
 
 func TestServiceRepositoryCorrectionInvalidatesSameCommitProofs(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1})
 	if err != nil {
@@ -274,6 +281,7 @@ func TestServiceRepositoryCorrectionInvalidatesSameCommitProofs(t *testing.T) {
 }
 
 func TestLegacyServiceRevisionSurvivesAddedRepository(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1})
 	if err != nil {
@@ -305,6 +313,7 @@ func TestLegacyServiceRevisionSurvivesAddedRepository(t *testing.T) {
 }
 
 func TestLateDeploymentCannotVerifyAnotherRepositoryAtSameCommit(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {
@@ -349,6 +358,7 @@ func TestLateDeploymentCannotVerifyAnotherRepositoryAtSameCommit(t *testing.T) {
 }
 
 func TestLegacyServiceAdmissionRecoversPublishedDefinition(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1})
 	if err != nil {

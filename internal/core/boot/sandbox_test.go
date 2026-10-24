@@ -21,7 +21,7 @@ func TestSandboxFailureLeavesCoreReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	reached := false
-	err := boot.Run(ctx, boot.Config{SandboxLauncher: missingLauncher, StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), AfterStep: func(step boot.Step, snapshot boot.Snapshot) error {
+	err := boot.Run(ctx, boot.Config{NoSync: true, SandboxLauncher: missingLauncher, StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), AfterStep: func(step boot.Step, snapshot boot.Snapshot) error {
 		if step == boot.Ready {
 			reached = true
 			if snapshot.Sandbox.Available || snapshot.Sandbox.Cause == "" {
@@ -47,7 +47,7 @@ func TestStartupProvidesProbedSandbox(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var box *sandbox.Sandbox
-	err := boot.Run(ctx, boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Services: boot.Services{SandboxReady: func(value *sandbox.Sandbox) { box = value }}, AfterStep: func(step boot.Step, snapshot boot.Snapshot) error {
+	err := boot.Run(ctx, boot.Config{NoSync: true, StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Services: boot.Services{SandboxReady: func(value *sandbox.Sandbox) { box = value }}, AfterStep: func(step boot.Step, snapshot boot.Snapshot) error {
 		if step == boot.Ready {
 			if box == nil || !box.Status().Available || !snapshot.Sandbox.Available {
 				t.Error("startup did not provide an available sandbox")
@@ -85,7 +85,7 @@ func TestSandboxCannotReadMaterialRevisions(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var box *sandbox.Sandbox
-	err := boot.Run(ctx, boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Services: boot.Services{SandboxReady: func(value *sandbox.Sandbox) { box = value }}, AfterStep: func(step boot.Step, _ boot.Snapshot) error {
+	err := boot.Run(ctx, boot.Config{NoSync: true, StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Services: boot.Services{SandboxReady: func(value *sandbox.Sandbox) { box = value }}, AfterStep: func(step boot.Step, _ boot.Snapshot) error {
 		if step == boot.Ready {
 			l := lease.New(func() {})
 			defer l.Release()

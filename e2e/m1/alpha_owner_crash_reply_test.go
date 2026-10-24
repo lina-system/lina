@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +21,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/ui"
 )
 
 type alphaRecoveryReply struct {
@@ -141,77 +141,28 @@ func alphaRecoveredReplyVisible(request, reply, screen string) bool {
 		return false
 	}
 	// Long replies scroll their beginning out of view. Require a substantial
-	// suffix of the committed answer, not a topic already present in the request.
-	runes := []rune(alphaRenderedText(reply, false))
-	if len(runes) == 0 {
-		return false
-	}
-	if len(runes) > 64 {
-		runes = runes[len(runes)-64:]
-	}
-	suffix := string(runes)
-	return !strings.Contains(alphaRenderedText(request, false), suffix) && strings.Contains(alphaRenderedText(screen, true), suffix)
-}
-
-var alphaMarkdownLink = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
-
-// alphaRenderedText reduces Markdown source and the TUI's rendering of it to
-// the same visible text. The screen replaces emphasis, headings, list markers
-// and link targets with presentation, so comparing the source's syntax alone
-// would reject a correctly delivered result. A wrapped screen line can begin
-// with a literal operator, so only the glyphs the renderer actually emits as a
-// list marker are removed from the screen side.
-func alphaRenderedText(text string, rendered bool) string {
-	var out strings.Builder
-	for _, line := range strings.Split(text, "\n") {
-		line = alphaMarkdownLink.ReplaceAllString(line, "$1")
-		line = strings.TrimLeft(line, " \t")
-		// Fence delimiters render as presentation, not text.
-		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+	// suffix of the painted answer, not a topic already present in the request.
+	// The committed body is Markdown source; the frame shows list markers and
+	// link labels from the conversation renderer.
+	painted := alphaQuestionText(screen)
+	tokens := design.Dark()
+	for _, bullet := range []string{tokens.GlyphUnicodeAction, tokens.GlyphAsciiAction} {
+		runes := []rune(alphaQuestionText(ui.VisibleMarkdown(reply, bullet)))
+		if len(runes) == 0 {
 			continue
 		}
-		// Quote prefixes are presentation; an operator inside a sentence is
-		// content and stays visible.
-		for {
-			rest := strings.TrimLeft(line, " ")
-			if len(line)-len(rest) > 3 || !strings.HasPrefix(rest, ">") {
-				break
-			}
-			line = strings.TrimPrefix(strings.TrimPrefix(rest, ">"), " ")
+		if len(runes) > 64 {
+			runes = runes[len(runes)-64:]
 		}
-		markers := []string{"›", "•", "·"}
-		if !rendered {
-			markers = append(markers, "-", "*", "+")
+		suffix := string(runes)
+		if strings.Contains(alphaQuestionText(ui.VisibleMarkdown(request, bullet)), suffix) {
+			continue
 		}
-		for _, marker := range markers {
-			if strings.HasPrefix(line, marker+" ") || strings.HasPrefix(line, marker+"\t") {
-				line = strings.TrimLeft(line[len(marker):], " \t")
-				break
-			}
+		if strings.Contains(painted, suffix) {
+			return true
 		}
-		line = line[alphaOrderedMarker(line):]
-		out.WriteString(line)
 	}
-	plain := strings.NewReplacer("*", "", "_", "", "`", "", "#", "").Replace(out.String())
-	return strings.Join(strings.Fields(plain), "")
-}
-
-// alphaOrderedMarker returns the length of a leading "1. " or "1) " marker.
-func alphaOrderedMarker(line string) int {
-	digits := 0
-	for digits < len(line) && line[digits] >= '0' && line[digits] <= '9' {
-		digits++
-	}
-	if digits == 0 || digits+1 >= len(line) {
-		return 0
-	}
-	if line[digits] != '.' && line[digits] != ')' {
-		return 0
-	}
-	if line[digits+1] != ' ' && line[digits+1] != '\t' {
-		return 0
-	}
-	return digits + 2
+	return false
 }
 
 func TestAlphaRecoveredReplyRequiresResultText(t *testing.T) {
@@ -243,6 +194,32 @@ func TestAlphaRecoveredReplyRequiresResultText(t *testing.T) {
 	if !alphaRecoveredReplyVisible(request, long, ending+"\n"+live) {
 		t.Fatal("visible end of a long result was rejected")
 	}
+	// The screen paints list markers and link labels. The committed reply still
+	// has the Markdown source, and that source must not hide a delivered ending.
+	bullet, ascii := design.Dark().GlyphUnicodeAction, design.Dark().GlyphAsciiAction
+	summary := "검토가 끝났습니다.\n- 흙이 마르면 물을 줍니다\n- 뿌리가 깊으면 더 줍니다"
+	painted := "검토가 끝났습니다.\n" + bullet + " 흙이 마르면 물을 줍니다\n" + bullet + " 뿌리가 깊으면 더 줍니다"
+	if !alphaRecoveredReplyVisible(request, summary, request+"\n"+painted+"\n"+live) {
+		t.Fatal("rendered bullet summary was rejected")
+	}
+	paintedASCII := "검토가 끝났습니다.\n" + ascii + " 흙이 마르면 물을 줍니다\n" + ascii + " 뿌리가 깊으면 더 줍니다"
+	if !alphaRecoveredReplyVisible(request, summary, request+"\n"+paintedASCII+"\n"+live) {
+		t.Fatal("ASCII bullet summary was rejected")
+	}
+	stars := "검토가 끝났습니다.\n* 흙이 마르면 물을 줍니다\n* 뿌리가 깊으면 더 줍니다"
+	if !alphaRecoveredReplyVisible(request, stars, request+"\n"+painted+"\n"+live) {
+		t.Fatal("rendered star list was rejected")
+	}
+	linked := "정리한 기준은 [물 주기 안내](https://example.com/water)에 있습니다."
+	if !alphaRecoveredReplyVisible(request, linked, request+"\n정리한 기준은 물 주기 안내에 있습니다.\n"+live) {
+		t.Fatal("rendered markdown link was rejected")
+	}
+	if alphaRecoveredReplyVisible(request, linked, request+"\n"+linked+"\n"+live) {
+		t.Fatal("unrendered link syntax was treated as the painted reply")
+	}
+	if alphaRecoveredReplyVisible(request, linked, request+"\n정리한 기준은 다른 문장입니다.\n"+live) {
+		t.Fatal("missing link label was accepted")
+	}
 	// The TUI renders Markdown instead of showing its syntax. A committed
 	// result that ends with a list or a link must still be recognized.
 	bulleted := "## 정리\n\n- 물은 3일 간격\n- 수확은 8월"
@@ -265,8 +242,8 @@ func TestAlphaRecoveredReplyRequiresResultText(t *testing.T) {
 	if !alphaRecoveredReplyVisible(request, "차이는 7 - 4 = 3입니다.", "차이는 7\n- 4 = 3입니다.\n"+live) {
 		t.Error("a minus at a wrapped line boundary was treated as a list marker")
 	}
-	linked := "자세한 내용은 [문서](https://example.com/water)를 보세요."
-	if !alphaRecoveredReplyVisible(request, linked, "자세한 내용은 문서를 보세요.\n"+live) {
+	legacyLinked := "자세한 내용은 [문서](https://example.com/water)를 보세요."
+	if !alphaRecoveredReplyVisible(request, legacyLinked, "자세한 내용은 문서를 보세요.\n"+live) {
 		t.Error("a rendered link label was rejected")
 	}
 }

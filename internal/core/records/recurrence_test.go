@@ -10,6 +10,7 @@ import (
 )
 
 func TestExhaustedRecurringCompletionLedger(t *testing.T) {
+	t.Parallel()
 	for _, interrupted := range []bool{false, true} {
 		name := "normal"
 		if interrupted {
@@ -78,6 +79,7 @@ func TestExhaustedRecurringCompletionLedger(t *testing.T) {
 }
 
 func TestRepeatRefusesUnsupportedRules(t *testing.T) {
+	t.Parallel()
 	for _, rule := range []string{"FREQ=MINUTELY", "FREQ=DAILY;UNKNOWN=1", "FREQ=DAILY;COUNT=2;UNTIL=20261231T000000Z", "FREQ=MONTHLY;BYMONTHDAY=0"} {
 		if err := (Todo{Repeat: &Repeat{Rule: rule, Next: "2026-01-31"}}).Validate(); err == nil {
 			t.Errorf("unsupported recurrence saved: %s", rule)
@@ -86,6 +88,7 @@ func TestRepeatRefusesUnsupportedRules(t *testing.T) {
 }
 
 func TestRecurringCompletionAdvancesFuture(t *testing.T) {
+	t.Parallel()
 	s, _, db := setup(t)
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	s.Now = func() time.Time { return now }
@@ -114,6 +117,7 @@ func TestRecurringCompletionAdvancesFuture(t *testing.T) {
 }
 
 func TestClaimedRecurringCompletionStaysVisible(t *testing.T) {
+	t.Parallel()
 	s, _, db := setup(t)
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	s.Now = func() time.Time { return now }
@@ -141,6 +145,7 @@ func stringsReplaceState(data []byte) string {
 }
 
 func TestRecurrenceCompletionModesAndExhaustion(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
 	for _, fromCompletion := range []bool{false, true} {
 		v := Todo{State: "completed", BlockedBy: []string{"prior"}, Checklist: []ChecklistItem{{Text: "Step", Checked: true}}, Repeat: &Repeat{Rule: "FREQ=DAILY;INTERVAL=3", Next: "2026-01-01", FromCompletion: fromCompletion}}
@@ -168,6 +173,7 @@ func TestRecurrenceCompletionModesAndExhaustion(t *testing.T) {
 }
 
 func TestRecurrenceKeepsTodayAndOriginalAnchor(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 31, 15, 0, 0, 0, time.UTC)
 	v := Todo{State: "open", Repeat: &Repeat{Rule: "FREQ=MONTHLY", Next: "2026-01-31", Zone: "UTC"}}
 	if changed, err := advanceTodo(&v, now, false); err != nil || changed {
@@ -182,6 +188,7 @@ func TestRecurrenceKeepsTodayAndOriginalAnchor(t *testing.T) {
 }
 
 func TestCompletionRelativeTimestampKeepsPrecision(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 10, 12, 34, 56, 123456789, time.UTC)
 	v := Todo{State: "completed", Repeat: &Repeat{Rule: "FREQ=DAILY;INTERVAL=3", Next: "2026-01-01T09:00:31.12Z", FromCompletion: true}}
 	if _, err := advanceTodo(&v, now, true); err != nil || v.Repeat.Next != "2026-01-13T12:34:56.123456789Z" {

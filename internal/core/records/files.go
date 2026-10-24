@@ -12,36 +12,45 @@ import (
 	"strings"
 )
 
-func privateDirectories(root *os.Root, name string) error {
+func (s *Store) privateDirectories(name string) error {
 	if !fs.ValidPath(name) {
 		return ErrInvalid
 	}
 	parent := "."
 	for _, part := range strings.Split(name, "/") {
 		current := path.Join(parent, part)
-		if err := root.Mkdir(current, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		if err := s.root.Mkdir(current, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 			return err
 		}
-		info, err := root.Lstat(current)
+		info, err := s.root.Lstat(current)
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() || info.Mode().Perm() != 0700 {
 			return ErrInvalid
 		}
-		if err := syncDirectory(root, parent); err != nil {
+		if err := s.syncDirectory(parent); err != nil {
 			return err
 		}
 		parent = current
 	}
 	return nil
 }
-func syncDirectory(root *os.Root, name string) error {
-	f, err := root.Open(name)
+func (s *Store) sync(f *os.File) error {
+	if s.noSync {
+		return nil
+	}
+	if s.syncFile != nil {
+		return s.syncFile(f)
+	}
+	return f.Sync()
+}
+func (s *Store) syncDirectory(name string) error {
+	f, err := s.root.Open(name)
 	if err != nil {
 		return err
 	}
-	return errors.Join(f.Sync(), f.Close())
+	return errors.Join(s.sync(f), f.Close())
 }
 func regular(root *os.Root, name string) ([]byte, error) {
 	info, err := root.Lstat(name)
@@ -54,7 +63,7 @@ func regular(root *os.Root, name string) ([]byte, error) {
 	return root.ReadFile(name)
 }
 func (r *Store) atomic(name string, data []byte) error {
-	if err := privateDirectories(r.root, path.Dir(name)); err != nil {
+	if err := r.privateDirectories(path.Dir(name)); err != nil {
 		return err
 	}
 	tmp := path.Join(".git", ".result-stage-"+newID())
@@ -68,7 +77,7 @@ func (r *Store) atomic(name string, data []byte) error {
 		err = io.ErrShortWrite
 	}
 	if err == nil {
-		err = f.Sync()
+		err = r.sync(f)
 	}
 	err = errors.Join(err, f.Close())
 	if err != nil {
@@ -77,7 +86,7 @@ func (r *Store) atomic(name string, data []byte) error {
 	if err = r.root.Rename(tmp, name); err != nil {
 		return err
 	}
-	return syncDirectory(r.root, path.Dir(name))
+	return r.syncDirectory(path.Dir(name))
 }
 func (r *Store) initialize() error {
 	if info, err := r.root.Lstat(".git"); err == nil {
@@ -88,7 +97,7 @@ func (r *Store) initialize() error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := privateDirectories(r.root, ".git/objects"); err != nil {
+	if err := r.privateDirectories(".git/objects"); err != nil {
 		return err
 	}
 	if err := r.atomic(".git/config", []byte("[core]\nrepositoryformatversion = 0\nbare = false\nfilemode = false\n")); err != nil {

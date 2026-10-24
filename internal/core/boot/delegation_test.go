@@ -66,7 +66,7 @@ func TestDelegationDistinguishesTerminalConnectionFailure(t *testing.T) {
 			if err = ctl.Acquire(); err != nil {
 				t.Fatal(err)
 			}
-			db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: canon.Migrations()})
+			db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: canon.Migrations(), NoSync: true})
 			if err != nil {
 				t.Fatal(err)
 			}

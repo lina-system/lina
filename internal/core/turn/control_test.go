@@ -14,6 +14,7 @@ import (
 )
 
 func TestPreparationFailureHandsBackSteering(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	inputs := &loop.Inputs{}
 	item := provider.Item(`{"role":"user","content":"keep this input"}`)
@@ -32,6 +33,7 @@ func TestPreparationFailureHandsBackSteering(t *testing.T) {
 }
 
 func TestLaneSteeringReachesNextRoundOnly(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	store := turn.New(db)
 	lanes := lane.New()
@@ -82,6 +84,7 @@ func TestLaneSteeringReachesNextRoundOnly(t *testing.T) {
 }
 
 func TestStopAbortsOpenCallsWithTypedCause(t *testing.T) {
+	t.Parallel()
 	for _, issuer := range []turn.Issuer{turn.Person, turn.Watchdog, turn.EpochLost, turn.GrantRevoked, turn.Budget, turn.Shutdown} {
 		t.Run(string(issuer), func(t *testing.T) {
 			db, _ := database(t)
@@ -135,6 +138,7 @@ func TestStopAbortsOpenCallsWithTypedCause(t *testing.T) {
 }
 
 func TestFourStepPreparationFailureHandsBackSteering(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	inputs := &loop.Inputs{}
 	item := provider.Item(`{"role":"user","content":"pending direction"}`)

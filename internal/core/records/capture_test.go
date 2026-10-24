@@ -4,6 +4,7 @@ package records
 import "testing"
 
 func TestCaptureKeepsSentenceAndParsesExplicitTokens(t *testing.T) {
+	t.Parallel()
 	for _, sentence := range []string{"책을 반납한다", `Say "hello" to Sam`, "Call 123-456-7890"} {
 		got, err := ParseCapture(sentence)
 		if err != nil || got.Title != sentence || got.Todo.When != "" {

@@ -7,6 +7,7 @@ import (
 )
 
 func TestSnapshotFiltersTargetsEvidenceAndStaleDerivedData(t *testing.T) {
+	t.Parallel()
 	db, root := fixture(t)
 	seedProtocol(t, db)
 	s := protocolStore(t, db, root)

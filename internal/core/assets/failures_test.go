@@ -30,6 +30,7 @@ type callbackReader struct {
 func (r *callbackReader) Read(p []byte) (int, error) { r.once.Do(r.before); return r.Reader.Read(p) }
 
 func TestStaleEditCannotRemoveNewerCommittedBytes(t *testing.T) {
+	t.Parallel()
 	s, _, root := setup(t)
 	a := importAsset(t, s, "original")
 	newPath := filepath.Join("materials/user", a.ID, "2/content")
@@ -67,6 +68,7 @@ func TestStaleEditCannotRemoveNewerCommittedBytes(t *testing.T) {
 }
 
 func TestFailedOrCancelledImportRemovesPartialBytes(t *testing.T) {
+	t.Parallel()
 	s, _, root := setup(t)
 	if _, err := s.StageImport(t.Context(), io.MultiReader(strings.NewReader("partial"), brokenReader{})); !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("read failure: %v", err)
@@ -82,6 +84,7 @@ func TestFailedOrCancelledImportRemovesPartialBytes(t *testing.T) {
 }
 
 func TestFailedDeliveryIsRecordedAsUnknownAndNotRetried(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	a := importAsset(t, s, "delivery")
 	expected := errors.New("delivery interrupted")
@@ -123,6 +126,7 @@ func TestFailedDeliveryIsRecordedAsUnknownAndNotRetried(t *testing.T) {
 }
 
 func TestFencedHandoverKeepsStageAndRollsBackMaterial(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	token, err := s.StageImport(t.Context(), strings.NewReader("not owned yet"))
 	if err != nil {
@@ -154,6 +158,7 @@ func TestFencedHandoverKeepsStageAndRollsBackMaterial(t *testing.T) {
 }
 
 func TestPathsCannotEscapeManagedAreas(t *testing.T) {
+	t.Parallel()
 	s, _, root := setup(t)
 	if _, err := s.Handover(t.Context(), "../../outside", "name", assets.User, actor); !errors.Is(err, assets.ErrInvalid) {
 		t.Fatalf("token traversal: %v", err)
@@ -174,6 +179,7 @@ func TestPathsCannotEscapeManagedAreas(t *testing.T) {
 }
 
 func TestLinaMaterialsAndPendingImportsSurviveReopen(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	token, err := s.StageImport(t.Context(), strings.NewReader("generated"))
 	if err != nil {
@@ -194,6 +200,7 @@ func TestLinaMaterialsAndPendingImportsSurviveReopen(t *testing.T) {
 }
 
 func TestCorruptExportDoesNotDeliverOrLeaveStage(t *testing.T) {
+	t.Parallel()
 	s, _, root := setup(t)
 	a := importAsset(t, s, "good")
 	if err := os.WriteFile(filepath.Join(root, a.Path), []byte("evil"), 0600); err != nil {
@@ -209,6 +216,7 @@ func TestCorruptExportDoesNotDeliverOrLeaveStage(t *testing.T) {
 }
 
 func TestReopenPreservesEpisodeExportDirectories(t *testing.T) {
+	t.Parallel()
 	store, db, root := setup(t)
 	for _, name := range []string{"episode-SYNTHETIC", ".episode-INCOMPLETE"} {
 		path := filepath.Join(root, "staging/export", name)
@@ -241,6 +249,7 @@ func TestReopenPreservesEpisodeExportDirectories(t *testing.T) {
 }
 
 func TestExportCleanupRefusesUnexpectedEntries(t *testing.T) {
+	t.Parallel()
 	for _, symlink := range []bool{false, true} {
 		t.Run(fmt.Sprint(symlink), func(t *testing.T) {
 			store, db, root := setup(t)

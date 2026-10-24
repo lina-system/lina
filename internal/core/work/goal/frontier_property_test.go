@@ -14,6 +14,7 @@ import (
 // integer CPU requests and ample memory/disk, so a separate accounting model
 // can check the complete same-pass award rather than only checking safety.
 func TestFrontierGeneratedGraphsAndEventOrders(t *testing.T) {
+	t.Parallel()
 	for seed := int64(0); seed < 100; seed++ {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
 			rng := rand.New(rand.NewSource(seed))

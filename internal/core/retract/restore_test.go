@@ -52,8 +52,10 @@ func backupCanon(t *testing.T, source, destination string) {
 }
 
 func TestOldGenerationReplaysLatestRemovalListBeforeRead(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"forget", "erase", "recover"} {
 		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
 			root := filepath.Join(t.TempDir(), "state")
 			db, closeDB := openGeneration(t, root)
 			seedProtocol(t, db)

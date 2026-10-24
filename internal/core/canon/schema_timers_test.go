@@ -4,6 +4,7 @@ package canon
 import "testing"
 
 func TestTimerMigrationPreservesCompletions(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	all := Migrations()
 	index := -1

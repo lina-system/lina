@@ -186,5 +186,5 @@ func handshake(ctx context.Context, conn net.Conn, productVersion string, capabi
 }
 
 func offersClient11(capabilities []protocol.Capability) bool {
-	return protocol.HasCapability(capabilities, protocol.SurfaceResultsCapability()) || protocol.HasCapability(capabilities, protocol.Capability{Name: "mocks", Version: "1.0"})
+	return protocol.HasCapability(capabilities, protocol.SurfaceResultsCapability()) || protocol.HasCapability(capabilities, protocol.Capability{Name: "mocks", Version: "1.0"}) || protocol.HasCapability(capabilities, protocol.Capability{Name: "mini_apps", Version: "1.0"})
 }
