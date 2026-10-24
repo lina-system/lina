@@ -8,6 +8,7 @@ import (
 )
 
 func TestDestinationBoundary(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{"http://example.com/rpc", "https://user:pass@example.com/rpc", "https://169.254.169.254/latest", "https://[fd00:ec2::254]/latest", "https://127.0.0.1/rpc", "https://[::1]/rpc", "https://example.com/rpc#token"} {
 		t.Run(raw, func(t *testing.T) {
 			p := Network{Resolve: func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("93.184.216.34")}, nil }}
