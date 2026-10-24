@@ -45,6 +45,143 @@ var m4Identity = map[string]struct {
 	"legal":     {[]string{"고문"}, []string{"~거든", "~잖아"}},
 }
 
+// The changes each preset is listed under, transcribed from
+// docs/design/preset-work-methods.md#starter-records-and-persona-changes. A
+// change is carried when one paragraph (or example line) of the named layer
+// matches every group, and each group lists the wordings that state that part of
+// the rule. The list exists because the issue requires the test to check each
+// preset against the design; it is a list of the contract's terms, and a rewrite
+// that drops one of them is a different rule. Presets the design lists as
+// "Default voice: unchanged" have no voice entry: their voice is verified by the
+// identity, example and prohibition checks below instead of by its wording.
+type m4Change struct {
+	change string
+	layer  string
+	groups [][]string
+}
+
+var m4Changes = map[string][]m4Change{
+	"system": {
+		{"personal tools are not over-guarded", "core", [][]string{
+			{"사용자 자신의 도구", "사용자의 도구", "사용자 도구"}, {"자격 증명", "자격증명"}, {"삭제"}, {"비용"}, {"공개"},
+			{"지나친", "과도한", "넘어선", "지나치게"}, {"제한", "제약", "통제"},
+		}},
+		{"an executable step is the agent's", "core", [][]string{
+			{"직접 실행", "직접 할", "직접 하는"}, {"사용자에게", "사용자한테"}, {"넘기지", "미루지", "떠넘기지"},
+		}},
+		{"an all-agent rule is not excepted unasked", "core", [][]string{
+			{"모든 에이전트", "전체 에이전트"}, {"규칙"}, {"한 에이전트", "단일 에이전트", "특정 에이전트"}, {"묻", "물어", "확인"},
+		}},
+	},
+	"lina": {
+		{"read sources before open items or asking", "core", [][]string{
+			{"미완료", "남은 일", "열린 일", "할 일"}, {"나열", "물어", "묻", "질문"},
+			{"묻기 전에", "묻기 앞서", "나열하기 전에", "나열하기 앞서", "물어보기 전에", "물어보기 앞서", "질문하기 전에", "질문하기에 앞서"},
+			{"원출처", "원문", "출처", "원래 자료"},
+		}},
+		{"finish a legal draft before review", "core", [][]string{
+			{"초안"}, {"마친 뒤", "마치고", "끝낸 뒤", "완성한 뒤", "마친 다음", "끝낸 다음"}, {"Kanna"}, {"검토", "리뷰"},
+		}},
+	},
+	"dev": {
+		{"a peer report is a claim until reproduced", "core", [][]string{
+			{"worker", "워커"}, {"다른 에이전트", "동료", "에이전트"}, {"주장"}, {"재현", "확인"}, {"전까지", "때까지", "전에는"},
+		}},
+		{"done is what ran, not what merged", "core", [][]string{
+			{"완료"}, {"병합", "merge", "머지"}, {"실행", "돌려", "run"}, {"아니라", "아닌"},
+		}},
+		{"evidence labels stay visible", "voice", [][]string{
+			{"출처"}, {"구분", "밝히", "표시"}, {"worker", "다른 에이전트"}, {"보고", "말"},
+		}},
+	},
+	"knowledge": {
+		{"one concrete flag instead of warning-led framing", "core", [][]string{
+			{"경고부터", "경고를 앞세우지", "경고로 시작", "경고를 먼저"}, {"위험", "우려"}, {"하나", "한 가지"},
+			{"구체", "분명", "특정"}, {"한 번", "한번"},
+		}},
+		{"read a source or record before asking", "core", [][]string{
+			{"묻기 전에", "묻기 앞서", "질문하기 전에", "물어보기 전에", "질문하기에 앞서"}, {"읽", "봐", "확인"}, {"출처", "기록", "자료"},
+		}},
+	},
+	"life": {
+		{"same voice on every topic with explicit safety", "core", [][]string{
+			{"주제", "화제"}, {"말투", "말씨", "목소리"}, {"그대로", "같은", "유지", "바꾸지"}, {"안전"}, {"분명", "명확", "또렷"},
+		}},
+		{"recorded dislikes and choices come before a recommendation", "core", [][]string{
+			{"추천 전에", "권하기 전에", "권하기 앞서"}, {"싫", "기피", "좋아하지"}, {"정한", "선택", "고른"},
+			{"기록", "기억"}, {"확인", "보고"},
+		}},
+		{"an owned-device fact is checked before it is quoted", "core", [][]string{
+			{"기기", "장비"}, {"사용자"}, {"정보", "사실", "설정"}, {"확인"}, {"인용", "옮기", "말하", "쓰기"},
+		}},
+		{"the correction example keeps the honorific register", "voice", [][]string{
+			{"잘못", "실수"}, {"사옵니다", "하옵니다", "이옵니다"},
+		}},
+	},
+	"creative": {
+		{"the favourite is checked against stated taste", "core", [][]string{
+			{"최애컷", "최애", "기본안"}, {"내기 전에", "내기 앞서", "고르기 전에", "제안하기 전에"}, {"취향"}, {"맞는지", "맞춤", "부합", "맞나"},
+		}},
+		{"a hand-off is mentioned only after it is sent", "core", [][]string{
+			{"전달", "핸드오프", "handoff"}, {"보낸 뒤", "보낸 후", "실제로 보낸", "보내고"}, {"말", "전하", "보고"},
+		}},
+		{"a reversible rerun is done without asking", "core", [][]string{
+			{"되돌릴 수 있는", "되돌릴 수 있"}, {"재실행", "다시 실행", "재생성", "다시 돌"}, {"묻지 않고", "묻지 않", "묻지 말고"},
+		}},
+		{"a vague rejection narrows to one question", "core", [][]string{
+			{"막연", "모호"}, {"거절"}, {"질문 하나", "한 가지 질문", "하나의 질문", "질문 한"}, {"좁", "추려"},
+		}},
+	},
+	"investing": {
+		{"state assumptions and finish instead of ending with questions", "core", [][]string{
+			{"가정"}, {"밝히", "밝혀", "적어", "말해"}, {"마무리", "끝내", "끝맺"},
+			{"질문으로 돌려주지", "질문으로 끝내지", "되묻지", "질문을 남기지"},
+		}},
+		{"every figure carries a source, an as-of date and a trading day", "core", [][]string{
+			{"수치", "숫자", "값"}, {"출처"}, {"기준일", "기준 시점", "기준시점"}, {"종가"}, {"거래일"}, {"확인"},
+		}},
+	},
+	"legal": {
+		{"an unasked legal risk is flagged once", "core", [][]string{
+			{"묻지 않은", "요청하지 않은", "말하지 않은"}, {"법적 위험", "법률 위험", "법적 문제"}, {"한 번", "한번"},
+		}},
+		{"a stated floor or ceiling is rounded toward", "core", [][]string{
+			{"하한", "상한", "최저", "최대"}, {"반올림", "올림", "내림"}, {"경계", "한도", "기준"}, {"지키는", "맞춰", "향해"},
+		}},
+		{"the person's own document labels are used", "core", [][]string{
+			{"항목명", "용어", "명칭", "라벨"}, {"문서"}, {"따라", "그대로", "맞춰"},
+		}},
+	},
+}
+
+func TestM4StarterChangesAreCarried(t *testing.T) {
+	if len(m4Changes) != len(persona.Starters()) {
+		t.Fatal("every starter needs its listed changes")
+	}
+	for _, starter := range persona.Starters() {
+		t.Run(starter.Key, func(t *testing.T) {
+			changes, ok := m4Changes[starter.Key]
+			if !ok || len(changes) == 0 {
+				t.Fatalf("starter %s has no listed change", starter.Key)
+			}
+			core, voice, err := persona.Load(persona.Shipped(), starter.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			layers := map[string]string{"core": core, "voice": voice}
+			for _, change := range changes {
+				body, ok := layers[change.layer]
+				if !ok {
+					t.Fatalf("change %q names an unknown layer %q", change.change, change.layer)
+				}
+				if !carries(body, change.groups) {
+					t.Errorf("%s layer does not carry the listed change %q", change.layer, change.change)
+				}
+			}
+		})
+	}
+}
+
 func TestM4StarterRevisionCarriesTheDocumentedChanges(t *testing.T) {
 	if len(m4ChangedLayers) != len(persona.Starters()) {
 		t.Fatal("every starter needs a ledger entry")
@@ -188,6 +325,53 @@ func TestM4ChecksCatchRegressions(t *testing.T) {
 			}
 		})
 	}
+	groups := m4Changes["lina"][0].groups
+	for name, tc := range map[string]struct {
+		body string
+		want bool
+	}{
+		"wording accepted":  {body: "미완료 일을 나열하기 전에 원출처를 읽는다.", want: true},
+		"rule dropped":      {body: "미완료 일을 나열한다.", want: false},
+		"rule split":        {body: "미완료 일을 나열하기 전에 확인한다.\n\n원출처를 읽는다.", want: false},
+		"previous revision": {body: strings.Join(baseline(t, "lina", "core-v1.md"), "\n\n"), want: false},
+	} {
+		t.Run("changes/"+name, func(t *testing.T) {
+			if got := carries(tc.body, groups); got != tc.want {
+				t.Fatalf("carries = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// carries reports whether one paragraph (or quoted example line) of a layer
+// states every group of a listed change.
+func carries(body string, groups [][]string) bool {
+	for _, unit := range units(body) {
+		ok := true
+		for _, group := range groups {
+			if !containsAny(unit, group) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// units are the layer's paragraphs and, for the default voice, its quoted
+// example lines. A rule must sit in one unit; two fragments in different
+// paragraphs are two different rules.
+func units(body string) []string {
+	out := paragraphs(body)
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "-") {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 // checkRevision requires a documented change to exist as a rule the previous
