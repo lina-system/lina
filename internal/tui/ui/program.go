@@ -22,7 +22,7 @@ import (
 
 // Offer only rendered families; the conversation discovers and maintains its
 // concrete conversation/results subscriptions after welcome.
-var shellCapabilities = []protocol.Capability{protocol.SurfaceResultsCapability(), {Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+var shellCapabilities = []protocol.Capability{protocol.SurfaceResultsCapability(), {Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}, {Name: "work", Version: "1.0"}}
 
 // shellClient is the request surface used by the shell and its sessions.
 // Transport negotiation and validated receives remain in clientapi.
@@ -37,6 +37,8 @@ type shellClient interface {
 	Channel(context.Context, protocol.ChannelRequest) (string, error)
 	Input(context.Context, protocol.Input) (string, error)
 	Interrupt(context.Context, protocol.Interrupt) (string, error)
+	Binding(context.Context, protocol.BindingGet) (string, error)
+	BindingMove(context.Context, protocol.BindingMove) (string, error)
 	Account(context.Context, protocol.AccountRequest) (string, error)
 	SignInListening(context.Context, protocol.SignInListening) (string, error)
 	SignInRedirect(context.Context, protocol.SignInRedirect) (string, error)
@@ -47,6 +49,8 @@ type shellClient interface {
 	Running(context.Context, protocol.RunningGet) (string, error)
 	Record(context.Context, protocol.RecordRequest) (string, error)
 	Memory(context.Context, protocol.MemoryRequest) (string, error)
+	WorkControl(context.Context, protocol.WorkControlRequest) (string, error)
+	WorkLimit(context.Context, protocol.WorkLimitRequest) (string, error)
 }
 
 type clientPeer struct{ *clientapi.Client }
@@ -296,6 +300,12 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 				case state.InterruptRequest:
 					_, err := client.Interrupt(ctx, protocol.Interrupt{ConversationID: &model.conversation.id})
 					return err
+				case state.BindingGetRequest:
+					_, err := client.Binding(ctx, protocol.BindingGet{InputID: request.InputID})
+					return err
+				case state.BindingMoveRequest:
+					_, err := client.BindingMove(ctx, protocol.BindingMove{InputID: request.InputID, Target: request.Target})
+					return err
 				}
 			}
 		}
@@ -314,6 +324,9 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 						return nil
 					}
 					if client != nil {
+						if model.bindingResponse(*e) {
+							return display.showShell(model)
+						}
 						if consumed, err := management.response(ctx, client, *e); consumed {
 							if err != nil {
 								return err

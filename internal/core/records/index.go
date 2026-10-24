@@ -44,16 +44,9 @@ func parseDocument(data []byte) (document, error) {
 		return d, err
 	}
 	front, body, _ := strings.Cut(string(data[4:]), "\n---\n")
-	fields := map[string]string{}
-	for _, line := range strings.Split(front, "\n") {
-		key, value, ok := strings.Cut(line, ": ")
-		if !ok {
-			return d, ErrInvalid
-		}
-		if _, duplicate := fields[key]; duplicate {
-			return d, ErrInvalid
-		}
-		fields[key] = value
+	fields, err := frontFields(front)
+	if err != nil {
+		return d, err
 	}
 	scalar := func(key string) (string, error) {
 		value := fields[key]
@@ -66,7 +59,6 @@ func parseDocument(data []byte) (document, error) {
 		}
 		return value, nil
 	}
-	var err error
 	for key, dest := range map[string]*string{"person_id": &d.person, "kind": &d.kind, "state": &d.state, "source": &d.source} {
 		*dest, err = scalar(key)
 		if err != nil {

@@ -316,6 +316,9 @@ func projectConversationBlock(block *state.Block, payload protocol.Payload) {
 		if p.EchoKey != nil {
 			block.EchoKey = *p.EchoKey
 		}
+		if p.Binding != nil {
+			block.Binding = p.Binding
+		}
 		if p.Speaker != nil {
 			block.Speaker = *p.Speaker
 		}

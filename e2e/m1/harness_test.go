@@ -150,6 +150,14 @@ type harness struct {
 
 func newHarness(t *testing.T, binary string) *harness {
 	t.Helper()
+	return newHarnessWithin(t, binary, 3*operationTimeout)
+}
+
+// newHarnessWithin bounds a whole scenario, including every child it starts.
+// The default covers a single operation; a scenario that restarts installed
+// Core several times passes its own total instead of stretching the default.
+func newHarnessWithin(t *testing.T, binary string, total time.Duration) *harness {
+	t.Helper()
 	// Keep Unix socket paths below the platform limit even for long test names.
 	root, err := os.MkdirTemp("", "lina-e2e-")
 	if err != nil {
@@ -160,7 +168,7 @@ func newHarness(t *testing.T, binary string) *harness {
 			t.Errorf("remove scenario state: %v", err)
 		}
 	})
-	ctx, cancel := context.WithTimeout(t.Context(), 3*operationTimeout)
+	ctx, cancel := context.WithTimeout(t.Context(), total)
 	t.Cleanup(cancel)
 	return &harness{t: t, ctx: ctx, binary: binary, root: root, socket: filepath.Join(root, "run", "client.sock")}
 }

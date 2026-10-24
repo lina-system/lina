@@ -21,6 +21,8 @@ type conversationView struct {
 	workOffset   int
 	workCompact  bool
 	workFilter   protocol.RunningState
+	// workStop names the card whose stop ask waits for Enter or a cancel.
+	workStop string
 	workStages   workStageView
 	undo         []state.Draft
 	history      *inputHistory
@@ -33,6 +35,7 @@ type conversationView struct {
 	pager        textPager
 	cardsFocused bool
 	selected     int
+	move         moveList
 }
 
 func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
@@ -46,11 +49,14 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		class = term.Toggle
 	}
 	switch key.Name {
-	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+p", "f6":
+	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+p", "ctrl+b", "f6":
 		class = term.Toggle
 	}
 	if !m.gate.Admit(key, class, m.now()) {
 		return nil
+	}
+	if command, handled := m.moveKey(key.Name); handled {
+		return command
 	}
 	if m.conversation.pager.open {
 		return m.pagerKey(msg, key.Name)
@@ -90,6 +96,8 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 			return m.reduceInput(state.EditDraft{Draft: draft})
 		}
 		return nil
+	case "ctrl+b":
+		return m.openMoveList()
 	case "ctrl+c":
 		return m.controlC()
 	case "ctrl+d":

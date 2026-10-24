@@ -1,0 +1,26 @@
+{
+  "side": "client",
+  "input": [
+    "normal/binding.json",
+    "normal/binding_move_result.json",
+    "normal/binding_stats.json",
+    "normal/binding_export_result.json"
+  ],
+  "output": [
+    "normal/binding.json",
+    "normal/binding_move_result.json",
+    "normal/binding_stats.json",
+    "normal/binding_export_result.json"
+  ],
+  "errors": [
+    "",
+    "",
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 4,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}
