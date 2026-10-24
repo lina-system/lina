@@ -38,7 +38,7 @@ func TestRunComparesVariantsPerAgent(t *testing.T) {
 		return "확인했습니다.", nil
 	}
 	report, err := Run(t.Context(), Config{Cases: cases, Variants: []Variant{{Name: "baseline"}, {Name: "tailored"}},
-		Play: play, Repeat: 1, Changed: []string{"dev"}})
+		Play: play, Repeat: 3, Changed: []string{"dev"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestRunShipsWhenTheAgentImprovesAndOthersHold(t *testing.T) {
 		return "확인했습니다.", nil
 	}
 	report, err := Run(t.Context(), Config{Cases: cases, Variants: []Variant{{Name: "baseline"}, {Name: "tailored"}},
-		Play: play, Repeat: 1, Changed: []string{"dev"}})
+		Play: play, Repeat: 3, Changed: []string{"dev"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,8 +77,8 @@ func TestRunShipsWhenTheAgentImprovesAndOthersHold(t *testing.T) {
 
 func TestRunRequiresANamedChange(t *testing.T) {
 	report, err := Run(t.Context(), Config{Cases: []Case{runCase("dev-001", "dev", false)},
-		Variants: []Variant{{Name: "baseline"}, {Name: "tailored"}},
-		Play:     func(context.Context, Case, Variant) (string, error) { return "확인했습니다.", nil }})
+		Variants: []Variant{{Name: "baseline"}, {Name: "tailored"}}, Repeat: 3,
+		Play: func(context.Context, Case, Variant) (string, error) { return "확인했습니다.", nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +145,58 @@ func TestRunExcludesACaseThatLostARun(t *testing.T) {
 	}
 	if report.Ship.Ships {
 		t.Fatalf("a partial case decided the ship rule: %+v", report.Ship)
+	}
+}
+
+func TestRunRefusesToShipBelowThreeRepeats(t *testing.T) {
+	cases := []Case{runCase("dev-001", "dev", false), runCase("life-001", "life", false)}
+	play := func(_ context.Context, c Case, v Variant) (string, error) {
+		if c.Role == "dev" && v.Name == "baseline" {
+			return strings.Repeat("가", 60), nil
+		}
+		return "확인했습니다.", nil
+	}
+	for _, repeat := range []int{1, 2} {
+		report, err := Run(t.Context(), Config{Cases: cases, Variants: []Variant{{Name: "baseline"}, {Name: "tailored"}},
+			Play: play, Repeat: repeat, Changed: []string{"dev"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.Agents[0].Verdict != "improved" || report.Agents[1].Verdict != "unchanged" {
+			t.Fatalf("repeat %d comparison: %+v", repeat, report.Agents)
+		}
+		if report.Ship.Ships || !contains(report.Ship.Reasons, "fewer than three repeats") {
+			t.Fatalf("repeat %d shipped: %+v", repeat, report.Ship)
+		}
+	}
+}
+
+func TestRunExcludesAPartialBaseline(t *testing.T) {
+	// One successful baseline reply and two model errors is excluded, even
+	// though the tailored side completed every run.
+	plays := 0
+	report, err := Run(t.Context(), Config{Cases: []Case{runCase("dev-001", "dev", false)},
+		Variants: []Variant{{Name: "baseline"}, {Name: "tailored"}}, Repeat: 3, Changed: []string{"dev"},
+		Play: func(_ context.Context, _ Case, v Variant) (string, error) {
+			if v.Name == "baseline" {
+				plays++
+				if plays > 1 {
+					return "", errors.New("provider unavailable")
+				}
+			}
+			return "확인했습니다.", nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Excluded != 1 || report.Scored != 0 {
+		t.Fatalf("report=%+v", report)
+	}
+	if len(report.Agents) != 1 || report.Agents[0].Cases != 0 || report.Agents[0].Verdict != "insufficient" {
+		t.Fatalf("a partial baseline reached the comparison: %+v", report.Agents)
+	}
+	if report.Ship.Ships {
+		t.Fatalf("a partial baseline decided the ship rule: %+v", report.Ship)
 	}
 }
 

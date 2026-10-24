@@ -96,7 +96,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		report.Cases = append(report.Cases, result)
 	}
 	report.Agents = summarize(report.Cases, cfg.Variants, repeat)
-	report.Ship = ship(cfg.Changed, report.Agents)
+	report.Ship = ship(cfg.Changed, report.Agents, repeat)
 	return report, nil
 }
 
@@ -183,11 +183,15 @@ func complete(c CaseResult, repeat int) bool {
 }
 
 // ship applies the design's rule. It names why a change must not ship so the
-// finding can go back to M4-2 instead of a silent revert.
-func ship(changed []string, agents []AgentSummary) Ship {
+// finding can go back to M4-2 instead of a silent revert. A model answer varies
+// between runs, so fewer than three repeats never ships.
+func ship(changed []string, agents []AgentSummary, repeat int) Ship {
 	result := Ship{Changed: append([]string(nil), changed...)}
+	if repeat < 3 {
+		result.Reasons = append(result.Reasons, "fewer than three repeats")
+	}
 	if len(changed) == 0 {
-		result.Reasons = []string{"no changed agent named"}
+		result.Reasons = append(result.Reasons, "no changed agent named")
 		return result
 	}
 	observed := map[string]bool{}

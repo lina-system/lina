@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/persona"
 )
 
 type fakeAdapter struct {
@@ -91,6 +92,21 @@ func TestPlayerSendsLayersAndDropsInjectedTurns(t *testing.T) {
 	for _, want := range []string{"core text", `<work_method>`, `"preset":"dev"`} {
 		if !strings.Contains(request.Instructions, want) {
 			t.Fatalf("instructions lack %q: %s", want, request.Instructions)
+		}
+	}
+}
+
+func TestInstructionsUseTheStarterDisplayName(t *testing.T) {
+	for _, starter := range persona.Starters() {
+		text, err := Instructions(Preset{Layers: agents.Layers{Core: "core"}, WorkMethod: `{"schema":1,"preset":"` + starter.Key + `"}`}, starter.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(text, `"name":"`+starter.Name+`"`) {
+			t.Fatalf("%s: instructions lack the shipped name %s", starter.Key, starter.Name)
+		}
+		if starter.Name != starter.Key && strings.Contains(text, `"name":"`+starter.Key+`"`) {
+			t.Fatalf("%s: instructions use the preset key as the name", starter.Key)
 		}
 	}
 }
