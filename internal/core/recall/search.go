@@ -53,11 +53,12 @@ type Scope struct {
 	// agent and tool words out of the evidence about the person while items
 	// stay eligible.
 	EventSpeakerKind guard.SpeakerKind
-	// PersonSubject keeps memory candidates whose subject is the person.
-	// recall_person uses it so a third-party or world item cannot take a result.
-	PersonSubject bool
-	Origin        string
-	CommonOnly    bool
+	// PersonMemory limits memory candidates to items whose subject is the
+	// person. recall_person sets it so an item about a third party or the
+	// world is never evidence about the person.
+	PersonMemory bool
+	Origin       string
+	CommonOnly   bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
 	// with its lineage, so it surfaces only when its original is not a
 	// candidate: a copy appears only when asked, through its original.
@@ -480,12 +481,12 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
    AND coalesce(e.scaffold_kind,'')<>'reply_check'
    AND NOT (coalesce(e.scaffold_kind,'')='result' AND EXISTS(SELECT 1 FROM ev_rel view WHERE view.event_id=e.id AND view.kind='view_of'))))`)
 	}
-	if scope.PersonSubject && containsKind(kinds, Memory) {
-		where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item person_subject WHERE person_subject.id=`+alias+`.source_id AND person_subject.subject_kind='person'))`)
-	}
 	if containsKind(kinds, Memory) {
 		where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item v WHERE v.id=`+alias+`.source_id AND v.valid_from<=?))`)
 		args = append(args, at)
+		if scope.PersonMemory {
+			where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item p WHERE p.id=`+alias+`.source_id AND p.subject_kind='person'))`)
+		}
 		if restricted {
 			where = append(where, `(`+alias+`.kind<>'memory' OR NOT EXISTS(SELECT 1 FROM memory_item s WHERE s.id=`+alias+`.source_id
    AND ((?=1 AND s.scope IN ('private','never-leaves')) OR (?=1 AND s.scope='never-leaves'))))`)

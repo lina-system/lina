@@ -137,6 +137,8 @@ type publicationStartAdapter struct {
 	starts int
 }
 
+func (*publicationStartAdapter) Capabilities() worker.CapabilitySet { return nil }
+
 func (a *publicationStartAdapter) Start(_ context.Context, _ lease.Lease, spec worker.StartSpec) (worker.Thread, error) {
 	a.spec = spec
 	a.starts++

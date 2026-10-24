@@ -62,3 +62,32 @@ installed Core after steering without a reply or after a failed snapshot, then
 verifies exact-turn readback, one result delivery, reservation release and no
 replayed input. Model and worker endpoints are synthetic; Core, files and SQLite
 are real.
+
+## Terminal text-call recovery
+
+ACP and Codex use `worker.DetectTextCall` over the shared `textcall` evaluator.
+`TurnText` keeps assistant fragments private until the terminal reply, replaces
+Codex complete items over their deltas, and bounds memory. Native tool evidence
+(including MCP bridge admission) prevents replay. Thought and plan activity keeps
+its existing path. Ordinary assistant text is released once at completion.
+
+A complete permitted call emits the existing `ToolCallEvent`; Core supplies the
+caller identity and executes its ordinary work-tool handler. ACP uses its session
+MCP bridge internally. Codex retains a local pending request and consumes Core's
+answer without writing an unsolicited JSON-RPC reply to the worker. Both delay
+completion until that answer, reject failed results and discard the raw text.
+Codex snapshot/reconciliation of a handled turn retains this local outcome rather
+than reading the contaminated transcript back into output.
+
+An unrecoverable call ends with `text_tool_call`. Dispatch persists `fresh_session`
+with its recovery intent and pins the same worker even when initial assignment
+used the chooser. Start bypasses ACP resume/load and Codex resume. Existing files,
+branch, task definition and recovery allowance survive; the packet excludes the
+contaminated assistant turn. The second failure reaches the existing decision
+projection. Adapters without session work-tool support receive no declarations.
+
+`TestWorkerTextCallsThroughRunningCore` in `e2e/m4/text_tool_calls_test.go` exercises
+both protocols through a running Core, real Git worktrees, tool handlers, canon
+and process supervision. Synthetic workers cover coordination, underscore inbox
+and receipt calls, incomplete/internal calls, fresh-session recovery, and the
+second failure. No provider calls or private transcripts are used.
