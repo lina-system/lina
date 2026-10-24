@@ -69,6 +69,10 @@ register switch or a fixed nothing-to-decide closing, and each keeps its name,
 character, address terms and voice markers. The six default voices other than
 Sion's and Arin's are unchanged.
 
+The marker checks are required by #619's Done condition: the persona name, its
+character and its voice markers stay unchanged. They compare normalized tokens
+rather than phrases, so the requirement holds without pinning the text.
+
 `TestM4StarterLayersAreShippedRevisions` checks the structure of every pair:
 both versioned revision files are present and usable, each layer has one title
 heading, the core keeps at least four rule paragraphs and the default voice at
