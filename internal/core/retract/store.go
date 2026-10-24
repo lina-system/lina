@@ -429,6 +429,15 @@ func (s *Store) apply(ctx context.Context, tx *canon.Tx, e entry, sequence int, 
 		return err
 	}
 	for _, target := range e.Targets {
+		// A repaired item is trashed with no evidence block. Permanent deletion
+		// must not create that block, or the source chat becomes ineligible.
+		var priorState string
+		var priorBlocks int
+		if target.Kind == Memory {
+			if err := tx.QueryRowContext(ctx, "SELECT coalesce((SELECT state FROM retract_target WHERE kind=? AND id=?),''), (SELECT count(*) FROM retract_block WHERE item_id=?)", target.Kind, target.ID, target.ID).Scan(&priorState, &priorBlocks); err != nil {
+				return err
+			}
+		}
 		state := ""
 		switch e.Action {
 		case forget, suppress:
@@ -464,7 +473,8 @@ func (s *Store) apply(ctx context.Context, tx *canon.Tx, e entry, sequence int, 
 			if _, err := tx.ExecContext(ctx, "DELETE FROM retract_block WHERE item_id=?", target.ID); err != nil {
 				return err
 			}
-			if e.Action == forget || e.Action == erase {
+			repaired := priorState == "trashed" && priorBlocks == 0
+			if e.Action == forget || (e.Action == erase && !repaired) {
 				for _, event := range target.Events {
 					if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO retract_block(item_id,person,holder,event_id) VALUES(?,?,?,?)", target.ID, e.Person, target.Holder, event); err != nil {
 						return err

@@ -98,7 +98,7 @@ What a link produced is recorded in `identity_artifact` (memory items, and the
 kind reserved for people-record entries) and a citation of the link as external
 evidence counts too. Removing, correcting, or superseding a link hides those
 items through the removal list in the same writer transaction as the link
-change. The repair leaves the source events and their conversations eligible. A citing item that is hidden only because an ancestor was forgotten is
+change. The repair leaves the source events and their conversations eligible, including after the repaired item is permanently deleted. A citing item that is hidden only because an ancestor was forgotten is
 retracted too, so restoring that ancestor does not show it again. An item that
 is already retracted, or whose row is gone, stays as it is. The link change and the retraction become visible together. An empty
 retraction commits the link and writes no removal-list line. A failure rolls

@@ -343,6 +343,35 @@ func TestSuppressHidesTheItemWithoutBlockingItsEvidence(t *testing.T) {
 	}
 }
 
+func TestExpiryOfARepairKeepsTheSourceEligible(t *testing.T) {
+	t.Parallel()
+	db, root := fixture(t)
+	seedProtocol(t, db)
+	s := protocolStore(t, db, root)
+	if err := s.ForgetDuringIntent(t.Context(), "person-1", func(*canon.Tx) (Intent, error) {
+		return Intent{Refs: []Ref{{Kind: Memory, ID: "memory-1"}}, Suppress: true}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.now = func() time.Time { return time.Unix(0, 123).Add(TrashRetention) }
+	if err := s.Expire(t.Context(), "person-1"); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	var blocks int
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		if err := tx.QueryRowContext(t.Context(), "SELECT state FROM retract_target WHERE id='memory-1'").Scan(&state); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM retract_block").Scan(&blocks)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if state != "erased" || blocks != 0 {
+		t.Fatalf("state=%s blocks=%d", state, blocks)
+	}
+}
+
 func TestTrashRecoveryAndExpiryBoundaries(t *testing.T) {
 	t.Parallel()
 	for _, atBoundary := range []bool{false, true} {
