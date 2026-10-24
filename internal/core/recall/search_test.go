@@ -308,6 +308,62 @@ func TestSearchKoreanFixtureEventParity(t *testing.T) {
 	}
 }
 
+func TestSearchQueuedReplayKeepsPublishedLineage(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "original", "conversation", "owner", "agent", "도서관에서 공부", base, "")
+	admitAt(t, db, "unrelated", "conversation", "owner", "agent", "도서관 산책", base.Add(time.Second), "")
+	// A matching replay that is still queued must not null out every event id.
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,body)
+ SELECT 'queued-copy',conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,id,'도서관에서 공부' FROM conv_event WHERE id='original'`)
+	write(t, db, eventSQL, "queued-note", "도서관 대기")
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}, IncludeReplay: true}
+	ids := searchIDs(t, db, scope, "도서관", 0)
+	sort.Strings(ids)
+	if !reflect.DeepEqual(ids, []string{"original", "queued-note", "unrelated"}) {
+		t.Fatalf("queued replay hid the lineage: %v", ids)
+	}
+}
+
+func TestSearchMaterialEventExcerpt(t *testing.T) {
+	db := database(t)
+	admit(t, db, "inline", "도서관 안내")
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES('material','conversation','owner','agent','person','{}','2026-01-02T00:00:01Z','2026-01-02T00:00:01Z','observed','{"kind":"native"}','asset',1)`)
+	read := func(context.Context, string) (string, error) { return "도서관 자료", nil }
+	if n, err := recall.New(db, read).DrainBatch(t.Context()); err != nil || n != 1 {
+		t.Fatalf("drain: %d %v", n, err)
+	}
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	results, err := recall.Search(t.Context(), db, read, scope, recall.Query{Text: "도서관"})
+	if err != nil {
+		t.Fatalf("material scan: %v", err)
+	}
+	got := map[string]string{}
+	for _, result := range results {
+		got[result.ID] = result.Excerpt
+	}
+	if !strings.Contains(got["inline"], "도서관") || !strings.Contains(got["material"], "도서관") || got["material"] == "" {
+		t.Fatalf("excerpts: %+v", results)
+	}
+}
+
+func TestSearchExcerptAppliesStoredSecretSpans(t *testing.T) {
+	db := database(t)
+	body := "도서관 hiddenneedle 다음"
+	write(t, db, eventSQL, "flagged", body)
+	write(t, db, "INSERT INTO ev_span VALUES('flagged',?,?, 'secret')", len("도서관 "), len("도서관 hiddenneedle"))
+	drain(t, db)
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	results, err := recall.Search(t.Context(), db, nil, scope, recall.Query{Text: "도서관"})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("search: %+v %v", results, err)
+	}
+	if strings.Contains(results[0].Excerpt, "hiddenneedle") {
+		t.Fatalf("flagged secret in excerpt: %s", results[0].Excerpt)
+	}
+}
+
 func TestSearchVectorCandidatesKeepScopeBeforeFusion(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)

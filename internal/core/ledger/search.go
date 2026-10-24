@@ -64,10 +64,16 @@ func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchHit, error) 
 	if text == "" {
 		return nil, nil
 	}
+	// Zero is the omitted limit. Match treats zero as unlimited; the ledger
+	// default stays 20, and the check above still rejects a limit above 100.
+	limit := q.Limit
+	if limit == 0 {
+		limit = 20
+	}
 	hits, err := recall.Match(ctx, s.db, recall.Scope{
 		Person: q.PersonID, Agent: q.AgentID, Kinds: []recall.Kind{recall.Event},
 		Since: q.Since, Until: q.Until, SpeakerKind: q.SpeakerKind, Origin: q.Origin, IncludeReplay: q.IncludeReplay,
-	}, recall.Query{Text: text, Limit: q.Limit, EventText: func(ctx context.Context, id string) (string, error) {
+	}, recall.Query{Text: text, Limit: limit, EventText: func(ctx context.Context, id string) (string, error) {
 		event, err := s.Get(ctx, id)
 		if err != nil {
 			return "", err

@@ -5,9 +5,17 @@ package storebench
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/thisisjun786/lina/internal/core/embedding"
+	"github.com/thisisjun786/lina/internal/moirai"
+	moiraicanon "github.com/thisisjun786/lina/internal/moirai/canon"
+	"github.com/thisisjun786/lina/internal/moirai/jobapi"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,6 +82,29 @@ func TestHeadlessCore(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "system/core/main.json"), []byte(`{"main_id":"storebench"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
+	var calls atomic.Int64
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var in struct {
+			Model string
+			Input []string
+		}
+		if json.NewDecoder(request.Body).Decode(&in) != nil || len(in.Input) > embedding.BatchSize {
+			t.Error("invalid embedding batch")
+			w.WriteHeader(400)
+			return
+		}
+		calls.Add(1)
+		rows := []map[string]any{}
+		for i := range in.Input {
+			rows = append(rows, map[string]any{"index": i, "embedding": []float32{1, 0}})
+		}
+		json.NewEncoder(w).Encode(map[string]any{"model": in.Model, "data": rows})
+	}))
+	defer endpoint.Close()
+	config, _ := json.Marshal(embedding.Config{Endpoint: endpoint.URL, Model: "fixture", Dimension: 2})
+	if err = os.WriteFile(filepath.Join(root, "system/embedding.json"), config, 0600); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
 	defer cancel()
 	ready, done := make(chan struct{}), make(chan struct{})
@@ -111,6 +142,46 @@ func TestHeadlessCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { observer.Close() })
+	reader, err := moiraicanon.Open(ctx, filepath.Join(root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	workerDone := make(chan error, 1)
+	go func() {
+		workerDone <- (moirai.Worker{Reader: reader, Core: jobapi.NewClient(filepath.Join(root, "run/jobs.sock"))}).Run(workerCtx, 10*time.Millisecond)
+	}()
+	t.Cleanup(func() {
+		workerCancel()
+		select {
+		case err := <-workerDone:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Error("worker shutdown deadline")
+		}
+		reader.Close()
+	})
+	waitVectors := func() {
+		t.Helper()
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			var pending, ready int
+			if err := observer.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM recall_embed_pending),ready FROM search_index_config WHERE name='recall'").Scan(&pending, &ready); err != nil {
+				t.Fatal(err)
+			}
+			if pending == 0 && ready == 1 {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatalf("embedding queue pending=%d ready=%d", pending, ready)
+			case <-ticker.C:
+			}
+		}
+	}
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -133,6 +204,12 @@ func TestHeadlessCore(t *testing.T) {
 		t.Fatalf("Core recall documents=%d: %v", documents, err)
 	}
 	t.Logf("running Core drained queued sources: %d documents", documents)
+	waitVectors()
+	var vectorCount int
+	if err = observer.QueryRowContext(ctx, "SELECT count(*) FROM recall_vec").Scan(&vectorCount); err != nil || vectorCount != documents {
+		t.Fatalf("Core vectors=%d documents=%d err=%v", vectorCount, documents, err)
+	}
+	t.Logf("Moirai filled %d vectors through Core in %d embedding calls", vectorCount, calls.Load())
 	client, err := clientapi.DialWithCapabilities(ctx, socket, "0.0.0", []protocol.Capability{{Name: "memory", Version: "1.0"}})
 	if err != nil {
 		t.Fatal(err)
@@ -142,9 +219,13 @@ func TestHeadlessCore(t *testing.T) {
 		t.Fatal("Core identity missing")
 	}
 	a := client.Welcome.Agents[0].AgentID
-	request := func(operation string, id *string) protocol.MemoryResult {
+	request := func(operation string, id *string, text ...string) protocol.MemoryResult {
 		t.Helper()
-		requestID, err := client.Memory(ctx, protocol.MemoryRequest{Operation: &operation, AgentID: &a, ItemID: id})
+		var query *string
+		if len(text) > 0 {
+			query = &text[0]
+		}
+		requestID, err := client.Memory(ctx, protocol.MemoryRequest{Operation: &operation, AgentID: &a, ItemID: id, Text: query})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -170,6 +251,10 @@ func TestHeadlessCore(t *testing.T) {
 	if listed.Items == nil || len(*listed.Items) != r.MemoryItems-r.ForgetHidden {
 		t.Fatal("Core did not recover the benchmark's visible memory")
 	}
+	semantic := request("list", nil, "growing plants without lexical overlap")
+	if semantic.Items == nil || len(*semantic.Items) != 1 {
+		t.Fatal("live Core did not use semantic recall")
+	}
 	id := (*listed.Items)[0].ItemID
 	request("forget", &id)
 	listed = request("list", nil)
@@ -178,6 +263,9 @@ func TestHeadlessCore(t *testing.T) {
 	}
 	if err = observer.QueryRowContext(ctx, "SELECT count(*) FROM recall_doc WHERE kind='memory'").Scan(&documents); err != nil || documents != 0 {
 		t.Fatalf("Core forget left %d recall memory documents: %v", documents, err)
+	}
+	if err = observer.QueryRowContext(ctx, "SELECT count(*) FROM recall_vec v JOIN recall_doc d ON d.id=v.rowid WHERE d.kind='memory'").Scan(&vectorCount); err != nil || vectorCount != 0 {
+		t.Fatal("forget left vectors")
 	}
 	operation, text := "remember", "도서관에서 공부를 합니다."
 	requestID, err := client.Memory(ctx, protocol.MemoryRequest{Operation: &operation, AgentID: &a, Text: &text})
@@ -200,5 +288,9 @@ func TestHeadlessCore(t *testing.T) {
 	if err = observer.QueryRowContext(ctx, "SELECT count(*) FROM recall_doc WHERE kind IN ('event','memory') AND id IN (SELECT rowid FROM recall_text WHERE recall_text MATCH '도서관')").Scan(&documents); err != nil || documents != 2 {
 		t.Fatalf("live Core remember indexed %d documents: %v", documents, err)
 	}
-	t.Log("live socket remember wrote event and memory indexes; forget removed memory postings")
+	waitVectors()
+	if err = observer.QueryRowContext(ctx, "SELECT count(*) FROM recall_vec v JOIN recall_doc d ON d.id=v.rowid WHERE d.kind='memory'").Scan(&vectorCount); err != nil || vectorCount != 1 {
+		t.Fatal("new memory was not embedded")
+	}
+	t.Log("live socket recall used vectors; remember queued vectors; forget removed vectors atomically")
 }
