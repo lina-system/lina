@@ -173,6 +173,7 @@ func TestM1LiveTopicRecallInstalledCore(t *testing.T) {
 	}
 	var episode replay.Episode
 	found := false
+	topicTurn := ""
 	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
 		if err := json.Unmarshal(line, &episode); err != nil {
 			t.Fatal(err)
@@ -180,6 +181,7 @@ func TestM1LiveTopicRecallInstalledCore(t *testing.T) {
 		for _, ref := range episode.Evidence.Assembly.Context {
 			if ref.ID == "memory:"+memoryID && ref.Source == "topic-memory-v1" && ref.Revision == "1" {
 				found = true
+				topicTurn = episode.TurnID
 			}
 		}
 	}
@@ -187,7 +189,7 @@ func TestM1LiveTopicRecallInstalledCore(t *testing.T) {
 		t.Fatal("export omitted topic revision")
 	}
 	// Core's replay command verifies the original request digest before dispatch.
-	run := h.command("replay", filepath.Join(result.Directory, "episodes.jsonl"), "--socket", h.socket, "--out", filepath.Join(h.root, "topic-replay"))
+	run := h.command("replay", filepath.Join(result.Directory, "episodes.jsonl"), "--turn", topicTurn, "--socket", h.socket, "--out", filepath.Join(h.root, "topic-replay"))
 	run.start(t)
 	run.wait(t, 0)
 	raw, err = os.ReadFile(filepath.Join(h.root, "topic-replay", "manifest.json"))
