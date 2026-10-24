@@ -40,6 +40,9 @@ Fixed before the runs, as the research note requires.
 | Budgets | Fifteen minutes per run; at most three runs per candidate |
 | Stop rules | Two start failures in a row mark a candidate blocked; a candidate without an install or account is not observed |
 
+The earlier runs used a seed that can no longer be reproduced. The seed commit
+above is the one `setup.sh seed` creates from the published fixture.
+
 Each run drives one adapter directly, in one worktree, and answers the worker's
 requests itself: a permission request is answered `allow_once`, and a work-tool
 call is answered with a success. No scheduling, no Core, no pull request. The
