@@ -19,7 +19,9 @@ choice bytes for request replay.
 `NormalizeChoices` decodes a model's binding arguments before validation:
 ordinals are optional and placed in message order, a target may be an object, an
 id, an exact title, `new` or `none`, an absent or inexact excerpt becomes the
-input text, and kind and parent words are mapped to stored values. Only a target
+input text, and kind and parent words are mapped to stored values. An exact
+candidate id is bound before a leading kind name and colon are read as new work.
+Only a target
 naming no open item, or more than one, returns a correction with the allowed ids.
 
 A work tool that names its target appends the same kind of choice, so the

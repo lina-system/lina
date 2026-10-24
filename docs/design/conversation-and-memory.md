@@ -376,7 +376,8 @@ admission binding; retries retain the same event and question. The tool tolerate
 the shapes a model naturally writes, because a rejected argument loses the whole
 message: a request ordinal is optional and omitted ordinals take message order,
 a target may be the candidate object, its exact id or title, `new` or `none`, and
-an excerpt that is absent or not an exact copy becomes the input text. A kind
+an excerpt that is absent or not an exact copy becomes the input text. An exact
+candidate id is bound before a leading kind name and colon are read as new work. A kind
 word is mapped to the stored kinds, an unknown kind becomes a to-do, and a parent
 that is not an open initiative or project is dropped. Only a target naming no
 candidate, or more than one, returns `field` and `reason` with the allowed ids so
