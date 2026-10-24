@@ -575,7 +575,7 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 		var inputErr error
 		if r.work != nil {
 			var message work.SteeringMessage
-			message, inputErr = entry.storeSteeringFrom(ctx, id, a.Text, sender, kind)
+			message, inputErr = entry.storeSteeringFrom(ctx, id, a.Text, sender, kind, nil)
 			if inputErr == nil {
 				state, inputErr = entry.deliverSteering(ctx, message, snap, activity)
 			} else {

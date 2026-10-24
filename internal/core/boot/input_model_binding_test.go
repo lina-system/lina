@@ -689,6 +689,56 @@ func TestFollowWorkKeepsChannelSteeringReceipt(t *testing.T) {
 	}
 }
 
+func TestFollowWorkKeepsChannelTaskReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{{ID: "channel-task", Title: "Channel task", Kind: "task", State: "running", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	app := questionPersonInput(t, r, "app-turn", "Continue in the app")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("one", "first")
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "follow_work", "task-note", map[string]any{"id": "channel-task", "text": "Keep the channel scope.", "input_binding": map[string]any{"input_event_id": steering.ID}})
+	if got.Code != loop.OK {
+		t.Fatalf("channel task follow-up: %+v", got)
+	}
+	messages, err := r.work.SteeringMessages(t.Context(), "fixture:fixture")
+	if err != nil || len(messages) != 1 || len(messages[0].Source) == 0 {
+		t.Fatalf("task follow-up lost its channel receipt: %+v %v", messages, err)
+	}
+	var source channelFollowSource
+	if json.Unmarshal(messages[0].Source, &source) != nil || source.Sender != "42" || source.Address != view.channelAddress {
+		t.Fatalf("receipt: %s", messages[0].Source)
+	}
+	revoked := *view.channelBinding
+	revoked.Scope.Tools = false
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	th := worker.Thread{ID: "fixture", TaskID: "channel-task", AttemptID: "attempt", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Active}}, tier: "push"}
+	session := &workerSession{origin: r, thread: th, adapter: &fixtureMailbox{mailboxProbe: probe}, scheduled: true}
+	if err = session.resumeSteering(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if probe.inputs != 0 {
+		t.Fatal("revoked channel delivered the task follow-up")
+	}
+	messages, err = r.work.SteeringMessages(t.Context(), "fixture:fixture")
+	if err != nil || messages[0].State == "delivered" {
+		t.Fatalf("revoked follow-up was delivered: %+v %v", messages, err)
+	}
+}
+
+type fixtureMailbox struct{ *mailboxProbe }
+
+func (p *fixtureMailbox) Name() string { return "fixture" }
+
 func TestModelBindingSteeringKeepsToolScope(t *testing.T) {
 	r, _ := turnRuntime(t)
 	input := questionPersonInput(t, r, "owner-turn", "Read available skills")
