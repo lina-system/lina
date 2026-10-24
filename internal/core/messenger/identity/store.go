@@ -6,10 +6,12 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -24,6 +26,7 @@ type Store struct {
 	people   People
 	removals Removals
 	now      func() time.Time
+	repairMu sync.Mutex
 }
 
 // Open composes the store. people supplies the people records matching reads;
@@ -315,7 +318,18 @@ func (s *Store) Observe(ctx context.Context, observation Observation) error {
 	if err != nil {
 		return err
 	}
-	return s.db.Write(ctx, func(tx *canon.Tx) error { return observer.ObserveTx(ctx, tx, observation) })
+	if err := s.db.Write(ctx, func(tx *canon.Tx) error { return observer.ObserveTx(ctx, tx, observation) }); err != nil {
+		return err
+	}
+	return observer.Repair(ctx)
+}
+
+// Repair delivers durable repair work after the admission transaction commits.
+func (o *Observer) Repair(ctx context.Context) error {
+	if o == nil || o.store == nil {
+		return nil
+	}
+	return o.store.recoverRepairs(ctx)
 }
 
 // ObserveTx records one sender, its names and its identifiers, then matches it.
@@ -426,7 +440,7 @@ ON CONFLICT(platform,scope,user,kind,value,source) DO UPDATE SET
 			reason = ReasonIdentifierReused
 			target, signals = "", nil
 			offered = append(offered, linkRecords(otherLinks)...)
-			if err := s.endValidity(ctx, tx, otherLinks, identifier.Kind, identifier.Value, at); err != nil {
+			if err := s.endValidity(ctx, tx, otherLinks, identifier, identifier.First); err != nil {
 				return err
 			}
 		}
@@ -645,46 +659,161 @@ func (s *Store) namesTx(ctx context.Context, tx *canon.Tx, id Identity) ([]strin
 }
 
 // endValidity ends the earlier link's validity when an identifier moves to
-// another identity.
-func (s *Store) endValidity(ctx context.Context, tx *canon.Tx, links []Link, kind Kind, value string, at time.Time) error {
+// another identity. The end is the earliest sighting of the move: evidence can
+// arrive out of order, so a backfilled earlier sighting moves the end back, and
+// nothing ever moves it later. The newly invalid window is queued for repair
+// inside the same transaction, for delivery through the removal journal.
+func (s *Store) endValidity(ctx context.Context, tx *canon.Tx, links []Link, identifier storedIdentifier, at time.Time) error {
 	for _, link := range links {
-		if link.State != Active || !link.ValidThrough.IsZero() {
-			continue
-		}
 		used := false
 		for _, signal := range link.Signals {
-			if signal.Kind == string(kind) && signal.Value == value {
+			if signal.Kind == string(identifier.Kind) && signal.Value == identifier.Value {
 				used = true
 				break
 			}
 		}
-		if !used || (!link.ValidFrom.IsZero() && !at.After(link.ValidFrom)) {
+		if !used {
+			continue
+		}
+		if link.ValidThrough.IsZero() {
+			if !link.ValidFrom.IsZero() && !at.After(link.ValidFrom) {
+				continue
+			}
+		} else if !at.Before(link.ValidThrough) {
+			// The move is already recorded at or before this sighting.
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE identity_link SET valid_through=?,revision=revision+1 WHERE id=?", formatTime(at), link.ID); err != nil {
 			return err
 		}
+		if err := writeSignals(ctx, tx, link.ID, []Signal{{Kind: string(identifier.Kind), Source: identifier.Source, Value: identifier.Value}}); err != nil {
+			return err
+		}
 		if err := writeChange(ctx, tx, link.ID, link.Revision+1, "moved", link.Class, link.State, link.Record, MatcherVersion, at); err != nil {
+			return err
+		}
+		// The first cutoff ends a link that had no end: it invalidates every
+		// moment from the move on, so an empty valid_through is an unbounded end
+		// rather than nothing to invalidate. A later, earlier sighting shortens
+		// the window the same way.
+		items, err := s.citingItemsBetween(ctx, tx, link.ID, at, link.ValidThrough)
+		if err != nil {
+			return err
+		}
+		_, err = s.requeueFromTx(ctx, tx, link.Identity, at, "link validity moved")
+		if err != nil {
+			return err
+		}
+		if err := s.queueRepairTx(ctx, tx, link.ID, items); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// assess derives an exact link's ambiguity from every identifier the identity
-// currently shows and from its links. A later identifier that belongs to
-// another record makes the earlier exact link ambiguous while that conflict is
-// open. Confirmed links are the person's word.
+// citingItemsBetween lists the memory items a link produced whose evidence falls
+// in [from, through). A zero through is an unbounded end, which is what a link
+// that had no cutoff yet becomes when the first one is set. An item with no
+// evidence time cannot be placed in the window and is left alone.
+func (s *Store) citingItemsBetween(ctx context.Context, tx *canon.Tx, linkID string, from, through time.Time) ([]string, error) {
+	// An item cites the link either as an artifact it produced or as external
+	// evidence, and both are retracted when the window becomes invalid.
+	rows, err := tx.QueryContext(ctx, `SELECT m.id, m.record FROM retract_visible_memory m
+WHERE m.person=? AND m.id IN (
+  SELECT id FROM identity_artifact WHERE link=? AND kind='item'
+  UNION
+  SELECT view_id FROM cite WHERE view_kind='memory' AND target_kind='external' AND target_id=? AND dropped_revision IS NULL)`,
+		s.person, linkID, linkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			return nil, err
+		}
+		var item memory.Item
+		if json.Unmarshal(raw, &item) != nil {
+			continue
+		}
+		if inWindow(from, through, item.ValidFrom) {
+			items = append(items, id)
+			continue
+		}
+		for _, evidence := range item.Evidence {
+			if inWindow(from, through, evidence.OccurredAt) {
+				items = append(items, id)
+				break
+			}
+		}
+	}
+	return items, rows.Err()
+}
+
+// inWindow reports whether a unix second falls in [from, through), where a zero
+// through is unbounded.
+func inWindow(from, through time.Time, unix int64) bool {
+	if unix == 0 {
+		return false
+	}
+	at := time.Unix(unix, 0).UTC()
+	return !at.Before(from) && (through.IsZero() || at.Before(through))
+}
+
+// requeueFromTx queues only this identity's messages from one time, which is the
+// start of a window a repair invalidated.
+func (s *Store) requeueFromTx(ctx context.Context, tx *canon.Tx, id Identity, from time.Time, reason string) (bool, error) {
+	return s.queueRequeueTx(ctx, tx, id, from, reason, s.now())
+}
+
+// queueRequeueTx leaves one row per identity, starting at the earliest time any
+// repair needs it: a row from an earlier time covers a later one, so a later
+// start is replaced rather than added.
+func (s *Store) queueRequeueTx(ctx context.Context, tx *canon.Tx, id Identity, from time.Time, reason string, queuedAt time.Time) (bool, error) {
+	if from.IsZero() {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM identity_requeue WHERE platform=? AND scope=? AND user=? AND from_at>?",
+		id.Platform, id.Scope, id.User, formatTime(from)); err != nil {
+		return false, err
+	}
+	var covered bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM identity_requeue WHERE platform=? AND scope=? AND user=? AND from_at<=?)",
+		id.Platform, id.Scope, id.User, formatTime(from)).Scan(&covered); err != nil {
+		return false, err
+	}
+	if covered {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_requeue(platform,scope,user,from_at,reason,queued_at) VALUES(?,?,?,?,?,?)
+ON CONFLICT(platform,scope,user,from_at) DO NOTHING`,
+		id.Platform, id.Scope, id.User, formatTime(from), reason, formatTime(queuedAt)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// assess derives an exact link's ambiguity from the identity's current
+// identifiers and links. Confirmed links are the person's word.
 func (s *Store) assess(ctx context.Context, tx *canon.Tx, people []Person, link Link) (string, error) {
-	if link.State != Active || link.Class == Confirmed || !link.ValidThrough.IsZero() {
-		// A link whose identifier moved elsewhere has ended; it is not ambiguous.
+	if link.State != Active || link.Class == Confirmed {
 		return "", nil
 	}
-	stored, err := s.identifiersTx(ctx, tx, link.Identity)
+	identifiers, err := s.identifiersTx(ctx, tx, link.Identity)
 	if err != nil {
 		return "", err
 	}
-	byRecord, err := candidates(people, stored)
+	// Identifiers first observed after this window cannot contradict it.
+	relevant := identifiers[:0]
+	for _, identifier := range identifiers {
+		if link.ValidThrough.IsZero() || identifier.First.Before(link.ValidThrough) {
+			relevant = append(relevant, identifier)
+		}
+	}
+	byRecord, err := candidates(people, relevant)
 	if err != nil {
 		return "", err
 	}
@@ -693,26 +822,19 @@ func (s *Store) assess(ctx context.Context, tx *canon.Tx, people []Person, link 
 	}
 	for record := range byRecord {
 		if record != link.Record {
-			return ReasonTwoLinks, nil
+			return ReasonIdentifierConflict, nil
 		}
 	}
 	links, err := s.linksTx(ctx, tx, link.Identity)
 	if err != nil {
 		return "", err
 	}
-	records := map[string]bool{}
 	for _, other := range links {
-		if other.State == Active && (other.Class == Exact || other.Class == Confirmed) {
-			records[other.Record] = true
+		if other.Record != link.Record && conflictingWindow(link, other) {
+			return ReasonTwoLinks, nil
 		}
 	}
-	if len(records) > 1 {
-		return ReasonTwoLinks, nil
-	}
-	for _, identifier := range stored {
-		if identifier.Kind != Phone && identifier.Kind != Email {
-			continue
-		}
+	for _, identifier := range relevant {
 		others, err := s.otherIdentities(ctx, tx, link.Identity, identifier.Kind, identifier.Value)
 		if err != nil {
 			return "", err
@@ -722,21 +844,28 @@ func (s *Store) assess(ctx context.Context, tx *canon.Tx, people []Person, link 
 			if err != nil {
 				return "", err
 			}
-			if linkedTo(otherLinks, link.Record) {
-				continue
-			}
-			// Another identity that shows the identifier and is tied to a
-			// different record contradicts this link. An identity with no link
-			// was already refused one at observation time, so it does not make
-			// this link ambiguous.
 			for _, otherLink := range otherLinks {
-				if otherLink.State == Active && (otherLink.Class == Exact || otherLink.Class == Confirmed) && otherLink.Record != link.Record {
+				if otherLink.Record != link.Record && conflictingWindow(link, otherLink) {
 					return ReasonIdentifierConflict, nil
 				}
 			}
 		}
 	}
 	return "", nil
+}
+
+// conflictingWindow excludes retired, weak and disjoint links from ambiguity.
+func conflictingWindow(link, other Link) bool {
+	if other.State != Active || (other.Class != Exact && other.Class != Confirmed) {
+		return false
+	}
+	if !link.ValidThrough.IsZero() && !other.ValidFrom.IsZero() && !other.ValidFrom.Before(link.ValidThrough) {
+		return false
+	}
+	if !other.ValidThrough.IsZero() && !link.ValidFrom.IsZero() && !link.ValidFrom.Before(other.ValidThrough) {
+		return false
+	}
+	return true
 }
 
 // Links lists an identity's links with the ambiguity of each.
@@ -805,9 +934,10 @@ func (s *Store) Question(ctx context.Context, id Identity) (Question, bool, erro
 	return question, found, err
 }
 
-// Confirm records the person's answer: this identity is this people record.
-// A link the answer supersedes is removed, and the items it produced are
-// retracted, in that same writer transaction.
+// Confirm records the person's answer: this identity is this people record. The
+// answer settles the record, not how long the identifier was theirs, so a
+// validity window a move recorded is kept and confirming an ended link does not
+// reopen it.
 func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) (Link, error) {
 	if !id.valid() || record == "" {
 		return Link{}, ErrInvalid
@@ -822,21 +952,38 @@ func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) 
 		signals := []Signal{{Kind: SignalAnswer, Source: s.person, Value: words}}
 		var chosen *Link
 		for i := range links {
-			if links[i].Record == record && links[i].State != Removed {
+			if links[i].Record == record {
 				chosen = &links[i]
 				break
 			}
 		}
+		// Record choice and ownership duration are independent. This applies
+		// even when the destination already has an older proposal or refusal.
+		from, through := confirmationWindow(links)
+		for _, previous := range links {
+			for _, signal := range previous.Signals {
+				if signal.Kind == SignalPhone || signal.Kind == SignalEmail {
+					signals = appendSignal(signals, signal)
+				}
+			}
+		}
 		if chosen == nil {
-			if err := s.insertLink(ctx, tx, id, record, Confirmed, s.person, at, time.Time{}, signals); err != nil {
+			if err := s.insertLink(ctx, tx, id, record, Confirmed, s.person, at, from, signals); err != nil {
 				return nil, false, nil, err
 			}
-		} else if _, err := tx.ExecContext(ctx, `UPDATE identity_link SET class='confirmed',maker=?,revision=revision+1,valid_through='' WHERE id=?`, s.person, chosen.ID); err != nil {
-			return nil, false, nil, err
-		} else if err := writeChange(ctx, tx, chosen.ID, chosen.Revision+1, "confirm", Confirmed, Active, record, s.person, at); err != nil {
-			return nil, false, nil, err
-		} else if err := writeSignals(ctx, tx, chosen.ID, signals); err != nil {
-			return nil, false, nil, err
+			if _, err := tx.ExecContext(ctx, "UPDATE identity_link SET valid_through=? WHERE platform=? AND scope=? AND user=? AND record=? AND state='active'", formatTime(through), id.Platform, id.Scope, id.User, record); err != nil {
+				return nil, false, nil, err
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx, `UPDATE identity_link SET class='confirmed',state='active',maker=?,valid_from=?,valid_through=?,revision=revision+1 WHERE id=?`, s.person, formatTime(from), formatTime(through), chosen.ID); err != nil {
+				return nil, false, nil, err
+			}
+			if err := writeChange(ctx, tx, chosen.ID, chosen.Revision+1, "confirm", Confirmed, Active, record, s.person, at); err != nil {
+				return nil, false, nil, err
+			}
+			if err := writeSignals(ctx, tx, chosen.ID, signals); err != nil {
+				return nil, false, nil, err
+			}
 		}
 		// The person's answer settles the identity: a link the matcher made to
 		// another record is superseded and repaired like any wrong match.
@@ -844,7 +991,7 @@ func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) 
 		var supersededIDs []string
 		superseded := false
 		for _, link := range links {
-			if link.State != Active || link.Record == record {
+			if link.State != Active || (chosen != nil && link.ID == chosen.ID) {
 				continue
 			}
 			supersededIDs = append(supersededIDs, link.ID)
@@ -898,6 +1045,12 @@ func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) 
 		return items, requeued, raw, nil
 	})
 	if err != nil {
+		return Link{}, err
+	}
+	if confirmed.ID == "" {
+		return Link{}, ErrNotFound
+	}
+	if err := s.recoverRepairs(ctx); err != nil {
 		return Link{}, err
 	}
 	return confirmed, nil
@@ -972,7 +1125,8 @@ func (s *Store) Remove(ctx context.Context, linkID string) (Repair, error) {
 
 // Correct moves an identity to the right people record. The items the old link
 // produced are retracted, and only this identity's messages after the learning
-// watermark are queued again. The move and the retraction commit together.
+// watermark are queued again. The recorded validity window stays: the answer
+// settles the record, not how long the identifier was theirs.
 func (s *Store) Correct(ctx context.Context, linkID, record string) (Repair, error) {
 	if linkID == "" || record == "" {
 		return Repair{}, ErrInvalid
@@ -987,7 +1141,7 @@ func (s *Store) Correct(ctx context.Context, linkID, record string) (Repair, err
 			Scan(&identity.Platform, &identity.Scope, &identity.User, &revision, &class, &previous); err != nil {
 			return nil, false, nil, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE identity_link SET record=?,class='confirmed',maker=?,state='active',revision=revision+1,valid_through='' WHERE id=?`,
+		if _, err := tx.ExecContext(ctx, `UPDATE identity_link SET record=?,class='confirmed',maker=?,state='active',revision=revision+1 WHERE id=?`,
 			record, s.person, linkID); err != nil {
 			return nil, false, nil, err
 		}
@@ -1093,8 +1247,8 @@ type repairingRemovals interface {
 
 // commitRepair runs mutate and the retraction of the items it names in one
 // writer transaction. An empty item list commits mutate and writes no removal
-// line. A removal path that cannot share that writer leaves the link unchanged
-// when there are items to retract. The journaled repair is replayed if the
+// line. A removal path that cannot share that writer uses the durable repair
+// queue and delivers it before returning success. The journaled repair is replayed if the
 // removal list reaches disk and the canon transaction does not.
 func (s *Store) commitRepair(ctx context.Context, mutate func(*canon.Tx) ([]string, bool, []byte, error)) (Repair, error) {
 	describe := func(n int, requeued bool) Repair {
@@ -1139,17 +1293,31 @@ func (s *Store) commitRepair(ctx context.Context, mutate func(*canon.Tx) ([]stri
 	if !ok {
 		var repair Repair
 		err := s.db.Write(ctx, func(tx *canon.Tx) error {
-			items, requeued, _, err := mutate(tx)
+			items, requeued, raw, err := mutate(tx)
 			if err != nil {
 				return err
 			}
 			if len(items) > 0 {
-				return ErrInvalid
+				if s.removals == nil {
+					return ErrInvalid
+				}
+				var intent repairIntent
+				if err := json.Unmarshal(raw, &intent); err != nil {
+					return err
+				}
+				for _, drop := range intent.Drops {
+					if err := s.queueRepairTx(ctx, tx, drop.Link, []string{drop.ID}); err != nil {
+						return err
+					}
+				}
 			}
-			repair = describe(0, requeued)
+			repair = describe(len(items), requeued)
 			return nil
 		})
 		if err != nil {
+			return Repair{}, err
+		}
+		if err := s.recoverRepairs(ctx); err != nil {
 			return Repair{}, err
 		}
 		return repair, nil
@@ -1206,12 +1374,7 @@ WHERE platform=? AND (workspace=? OR workspace='') AND learning_watermark<>'' OR
 	if fromAt.IsZero() {
 		fromAt = at
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_requeue(platform,scope,user,from_at,reason,queued_at) VALUES(?,?,?,?,?,?)
-ON CONFLICT(platform,scope,user,from_at) DO NOTHING`,
-		id.Platform, id.Scope, id.User, formatTime(fromAt), reason, formatTime(at)); err != nil {
-		return false, err
-	}
-	return true, nil
+	return s.queueRequeueTx(ctx, tx, id, fromAt, reason, at)
 }
 
 // Requeues lists the identities waiting for extraction again.
@@ -1564,6 +1727,9 @@ WHERE state='active' AND class='proposed' ORDER BY created_at,id`)
 // people record the person creates after the messages arrive still links. The
 // messenger loop calls it on its schedule, and Core calls it once at start.
 func (s *Store) Rematch(ctx context.Context) (int, error) {
+	if err := s.recoverRepairs(ctx); err != nil {
+		return 0, err
+	}
 	observer, err := s.Prepare(ctx)
 	if err != nil {
 		return 0, err
@@ -1625,7 +1791,7 @@ ORDER BY platform,scope,user`)
 			}
 		}
 	}
-	return matched, nil
+	return matched, observer.Repair(ctx)
 }
 
 func sqlNames(ctx context.Context, tx *canon.Tx, id Identity) ([]NameSeen, error) {

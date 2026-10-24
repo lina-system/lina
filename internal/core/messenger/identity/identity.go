@@ -32,7 +32,7 @@ var (
 
 // MatcherVersion names the matcher that made a link. A change to the matcher
 // changes this string, and the evaluation runs again for it.
-const MatcherVersion = "identity-matcher/1"
+const MatcherVersion = "identity-matcher/2"
 
 // Kind is the kind of an identifier a platform shows for an author.
 type Kind string
@@ -170,19 +170,16 @@ func (l Link) Usable(at time.Time) bool {
 	if l.State != Active || l.Ambiguous {
 		return false
 	}
-	if l.Class == Confirmed {
-		return true
-	}
-	if l.Class != Exact {
-		return false
-	}
+	// The person's word settles which record the identity is, not how long an
+	// identifier was theirs: a confirmed phone or email link ends when the
+	// identifier moves, exactly as an exact one does.
 	if !l.ValidFrom.IsZero() && at.Before(l.ValidFrom) {
 		return false
 	}
 	if !l.ValidThrough.IsZero() && !at.Before(l.ValidThrough) {
 		return false
 	}
-	return true
+	return l.Class == Confirmed || l.Class == Exact
 }
 
 // People is the source of known people records with their identifiers. Core

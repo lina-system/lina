@@ -290,6 +290,19 @@
           "source": "iMessage profile 2026-01-09"
         }
       ]
+    },
+    {
+      "id": "p-moved",
+      "names": [
+        "Moved number owner"
+      ],
+      "contacts": [
+        {
+          "kind": "phone",
+          "value": "+821066660002",
+          "source": "Discord profile 2026-01"
+        }
+      ]
     }
   ],
   "identities": [
@@ -735,6 +748,55 @@
         }
       ],
       "expect": "unknown"
+    },
+    {
+      "platform": "discord",
+      "user": "d-moved",
+      "at": "2026-01-10T09:00:00Z",
+      "names": [
+        "Moved number owner"
+      ],
+      "identifiers": [
+        {
+          "kind": "phone",
+          "value": "+821066660002",
+          "source": "Discord profile"
+        }
+      ],
+      "expect": "p-moved"
+    },
+    {
+      "platform": "imessage",
+      "user": "+821066660002",
+      "at": "2026-03-10T09:00:00Z",
+      "names": [
+        "Moved number owner"
+      ],
+      "identifiers": [
+        {
+          "kind": "phone",
+          "value": "+821066660002",
+          "source": "iMessage profile"
+        }
+      ],
+      "expect": "unknown"
+    },
+    {
+      "platform": "imessage",
+      "user": "+821066660002",
+      "at": "2026-02-10T09:00:00Z",
+      "observed_at": "2026-04-10T09:00:00Z",
+      "names": [
+        "Moved number owner"
+      ],
+      "identifiers": [
+        {
+          "kind": "phone",
+          "value": "+821066660002",
+          "source": "iMessage profile"
+        }
+      ],
+      "expect": "unknown"
     }
   ],
   "ambiguities": [
@@ -763,6 +825,16 @@
       "platform": "imessage",
       "user": "+821055550002",
       "reason": "a second family phone is listed by two people records"
+    }
+  ],
+  "windows": [
+    {
+      "platform": "discord",
+      "user": "d-moved",
+      "record": "p-moved",
+      "from": "2026-02-10T09:00:00Z",
+      "until": "2026-03-10T09:00:00Z",
+      "why": "a February sighting of the number arrived after the March one; the Discord link ends at the earliest move"
     }
   ]
 }

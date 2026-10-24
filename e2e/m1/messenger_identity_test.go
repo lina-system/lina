@@ -3,6 +3,7 @@ package e2e_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -137,7 +138,7 @@ func TestM1SenderIdentityInInstalledCore(t *testing.T) {
 	empty.waitFor(t, "c1")
 	stop()
 	db, closeStore = installedAcceptanceStore(t, h)
-	defer closeStore()
+	defer func() { closeStore() }()
 	if n := count(`SELECT count(*) FROM identity_link WHERE user='U-later' AND record='person-later' AND state='active'`); n != 1 {
 		t.Fatal("a people record created after the messages did not link the identity")
 	}
@@ -149,7 +150,8 @@ func TestM1SenderIdentityInInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer removals.Close()
-	sender := identity.Open(db, person, e2ePeople{store: repositoryAt(t, h, db)}, removals)
+	repository = repositoryAt(t, h, db)
+	sender := identity.Open(db, person, e2ePeople{store: repository}, removals)
 	links, err := sender.Links(h.ctx, identity.Identity{Platform: "fixture", Scope: "T-1", User: "U-anna"})
 	if err != nil {
 		t.Fatal(err)
@@ -182,12 +184,25 @@ func TestM1SenderIdentityInInstalledCore(t *testing.T) {
 	if err := sender.RecordArtifact(h.ctx, links[0].ID, "item", item.ID); err != nil {
 		t.Fatal(err)
 	}
-	repair, err := sender.Remove(h.ctx, links[0].ID)
-	if err != nil {
-		t.Fatal(err)
+	// Commit the repair intent but fail before delivery, then start the real
+	// Core. Its startup recovery must retract this item without another action.
+	interrupted := identity.Open(db, person, e2ePeople{store: repository}, nil)
+	if _, err := interrupted.Remove(h.ctx, links[0].ID); !errors.Is(err, identity.ErrInvalid) {
+		t.Fatalf("interrupted repair = %v", err)
 	}
-	if repair.Items != 1 || !repair.Requeued {
-		t.Fatalf("repair = %+v", repair)
+	if n := count("SELECT count(*) FROM identity_repair WHERE item=?", item.ID); n != 1 {
+		t.Fatalf("durable pending repairs = %d", n)
+	}
+	repository.Close()
+	removals.Close()
+	closeStore()
+	restarted := &scriptedAdapter{pages: map[string][]scriptedPage{"c1": {{page: messenger.Page{Next: "c1"}}}}}
+	stop = runMessengerCore(t, h, restarted)
+	restarted.waitFor(t, "c1")
+	stop()
+	db, closeStore = installedAcceptanceStore(t, h)
+	if n := count("SELECT count(*) FROM identity_repair"); n != 0 {
+		t.Fatalf("Core startup left %d pending repairs", n)
 	}
 	if n := count("SELECT count(*) FROM retract_visible_memory WHERE id=?", item.ID); n != 0 {
 		t.Fatal("the item citing the removed link stayed visible")

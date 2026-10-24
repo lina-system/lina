@@ -87,6 +87,16 @@ func (s *Store) WithClock(now func() time.Time) *Store { s.now = now; return s }
 // WithIdentities records every admitted author as a sender identity.
 func (s *Store) WithIdentities(identities Identities) *Store { s.identities = identities; return s }
 
+// Rematch matches identities that still have no link, so a people record the
+// person adds after the messages arrived links on the next read. A store
+// without identities does nothing.
+func (s *Store) Rematch(ctx context.Context) (int, error) {
+	if s.identities == nil {
+		return 0, nil
+	}
+	return s.identities.Rematch(ctx)
+}
+
 func validName(text string) bool { return text != "" && !strings.ContainsRune(text, 0) }
 
 // Connect records a source the person connected, or updates its adapter state.
@@ -749,14 +759,16 @@ func (s *Store) admit(ctx context.Context, source Source, chat string, from Curs
 		return result, nil
 	}
 	var observe func(context.Context, *canon.Tx, identity.Observation) error
+	var observer *identity.Observer
 	if s.identities != nil {
 		for _, plan := range plans {
 			if _, ok := senderObservation(source, plan); ok {
-				observer, err := s.identities.Prepare(ctx)
+				prepared, err := s.identities.Prepare(ctx)
 				if err != nil {
 					return PageResult{}, err
 				}
-				observe = observer.ObserveTx
+				observer = prepared
+				observe = prepared.ObserveTx
 				break
 			}
 		}
@@ -803,6 +815,14 @@ func (s *Store) admit(ctx context.Context, source Source, chat string, from Curs
 	})
 	if _, err := events.AdmitBatch(ctx, batch); err != nil {
 		return PageResult{}, err
+	}
+	if observer != nil {
+		// A move that ended an earlier link at an earlier sighting retracts what
+		// that link produced inside the newly invalid window, through the one
+		// retraction path, once the page's own write has committed.
+		if err := observer.Repair(ctx); err != nil {
+			return PageResult{}, err
+		}
 	}
 	for _, plan := range plans {
 		if plan.added {

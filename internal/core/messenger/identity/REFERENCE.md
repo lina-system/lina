@@ -38,6 +38,11 @@ inside the page's transaction (`messenger.Store.WithIdentities`); bots and
 platform notices are not observed. The person's own account (`Self`) is recorded
 so it is known, and is never linked as another person.
 
+Core composes one identity store per conversation and gives it to every reader
+it starts: the messenger sync loop, the built-in Teams service and the built-in
+Webex service. A people record added after messages arrived links on the sync
+loop's next pass, and on the Teams worker's next pass.
+
 ## Identifiers
 
 Phone numbers are E.164 and emails are lower case; a number without a country
@@ -64,7 +69,18 @@ identity at Core start (`Rematch`).
    keyed by that number (iMessage and WhatsApp) keep linking on their own; a
    handle that reuses an identifier only an identifier link held (a recycled
    number) is ambiguous (`identifier_reused`) and ends the earlier link's
-   validity at the new sighting.
+   validity at the new sighting. The end is the earliest sighting of the move:
+   evidence can arrive out of order, so a backfilled earlier sighting moves the
+   end back, records the signal and its source, bumps the revision and writes a
+   `moved` change; nothing moves the end later. Items the earlier link produced
+   inside the newly invalid window are retracted through the one retraction
+   path after the transaction commits, and only that identity's messages from
+   the window's start are queued again. An item cites the link either as an
+   artifact it produced or as external evidence, and the repair covers both. A
+   link that had no end yet is ended the same way: the first cutoff invalidates
+   every moment from the move on, so an item it produced afterwards is retracted
+   and that identity is queued from the cutoff. One `identity_requeue` row per
+   identity remains, at the earliest start any repair needs.
 4. Otherwise exactly one candidate makes an `exact` link with every shared
    identifier as a signal; a contact-card source adds a `contact_card` signal.
 
@@ -74,7 +90,11 @@ with the same name propose nothing. A rejection or a removal is kept and that
 proposal never returns. Proposals are offered in one batch of at most five.
 
 A link is usable when it is `confirmed`, or `exact` and unambiguous, and its
-validity covers the time asked about. Ambiguity is derived, never stored.
+validity covers the time asked about: a confirmed phone or email link ends when
+the identifier moves, exactly as an exact one does. `Confirm` and `Correct` keep
+the cutoff a move recorded — the answer settles the record, not how long the
+identifier was theirs — so answering again brings nothing back that the move
+retracted. Ambiguity is derived from all observed identifiers within the link window, never stored. Ending a window preserves unresolved conflicts within it; disjoint links do not conflict. Confirmation of a rejected or removed link reactivates the existing record without erasing its bounds. A new confirmed destination inherits the known bounds and identifier signals.
 
 ## Person actions and repair
 
@@ -109,6 +129,13 @@ state, not the person's answer or other signal text. The backup and
 restore commands pass this replay function when they open the removal
 list, so a restored generation finishes the same line. The backup
 package does not import the identity store.
+
+Migration 79 adds `identity_repair` for items invalidated by a moved validity
+end and for removal paths that cannot share Core's writer. Pending item ids
+commit with the link change; `Rematch` drains these
+repairs before matching at startup and on scheduled passes. Failed delivery
+stays pending, and already-hidden or deleted items are acknowledged without
+a duplicate `Forget` transition.
 
 A repair leaves one row per identity in `identity_requeue`, from the source's
 learning watermark or, without one, the identity's first sighting. Extraction
@@ -145,13 +172,14 @@ records `gate` false and the command exits unsuccessfully. The files are
 without `expect`) and `labels.json` (`{"<platform>/<scope>/<user>": "<record id>"|"unknown"|"self"}`).
 
 `Evaluate` replaces the store's people source with the set's, observes every
-identity in order of the parsed instant, and then measures. Timestamp text is
-not the order: two RFC3339 values with different offsets replay by the instant
-they name. It removes one link as its repair check, so a store is measured once.
+identity in order of the parsed arrival instant (`observed_at`, defaulting to `at`, so a backfill can
+be seen after a later sighting), and then measures. A `windows` entry names a
+period in which a link to a record must not be usable; it pins the end of a link
+whose identifier moved. It removes one link as its repair check, so a store is
+measured once.
 
 ## Not in this increment
 
 Learning about matched senders, including writing items and `identity_artifact`
-rows, is #1077 and stays off until the gate holds. Matching a newly created
-people record without restarting Core is not wired: Core rematches at start and
-on every observation. The person's actions reach no client surface here.
+rows, is #1077 and stays off until the gate holds. The person's actions reach no
+client surface here.
