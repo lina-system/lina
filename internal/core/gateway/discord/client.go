@@ -37,6 +37,8 @@ type Client struct {
 	http  *http.Client
 	// Attempts bounds how many platform waits one call may honour.
 	Attempts int
+	// AttemptTimeout bounds one attempt; zero means the default.
+	AttemptTimeout time.Duration
 }
 
 // NewClient binds a read client to one bot token and the fixed API origin.
@@ -72,36 +74,28 @@ func (c *Client) VerifyBot(ctx context.Context, account string) (bool, error) {
 	return true, nil
 }
 
+// attemptTimeout bounds one REST attempt, so a connection that stalls before
+// or during its answer cannot hold a scheduled read. The retry-after wait is
+// outside it.
+const attemptTimeout = 30 * time.Second
+
 // Get reads one absolute API path with its query and decodes the JSON body.
 // Redirects are refused, so the credential cannot leave Discord.
 func (c *Client) Get(ctx context.Context, path string, query url.Values, out any) error {
+	site := "https://discord.com/api/v10" + path
+	if len(query) > 0 {
+		site += "?" + query.Encode()
+	}
 	for attempt := 0; ; attempt++ {
 		if attempt >= c.Attempts {
 			return ErrUnavailable
 		}
-		site := "https://discord.com/api/v10" + path
-		if len(query) > 0 {
-			site += "?" + query.Encode()
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, site, nil)
+		status, body, err := c.fetch(ctx, site)
 		if err != nil {
-			return ErrUnavailable
-		}
-		if err = secret.InjectHeader(req.Header, "Authorization", "Bot ", c.token); err != nil {
-			return ErrUnavailable
-		}
-		req.Header.Set("User-Agent", "LINA (https://github.com/thisisjun786/lina)")
-		resp, err := c.http.Do(req)
-		if err != nil {
-			return ErrUnavailable
-		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, ReadLimit))
-		resp.Body.Close()
-		if readErr != nil {
-			return ErrUnavailable
+			return err
 		}
 		switch {
-		case resp.StatusCode == http.StatusTooManyRequests:
+		case status == http.StatusTooManyRequests:
 			var limited struct {
 				Retry float64 `json:"retry_after"`
 			}
@@ -116,13 +110,13 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values, out any
 			case <-timer.C:
 			}
 			continue
-		case resp.StatusCode == http.StatusUnauthorized:
+		case status == http.StatusUnauthorized:
 			return ErrUnauthorized
-		case resp.StatusCode == http.StatusForbidden:
+		case status == http.StatusForbidden:
 			return ErrForbidden
-		case resp.StatusCode == http.StatusNotFound:
+		case status == http.StatusNotFound:
 			return ErrNotFound
-		case resp.StatusCode < 200 || resp.StatusCode >= 300:
+		case status < 200 || status >= 300:
 			return ErrUnavailable
 		}
 		if out == nil {
@@ -133,4 +127,32 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values, out any
 		}
 		return nil
 	}
+}
+
+// fetch runs one bounded attempt and reads a bounded body.
+func (c *Client) fetch(ctx context.Context, site string) (int, []byte, error) {
+	limit := c.AttemptTimeout
+	if limit <= 0 {
+		limit = attemptTimeout
+	}
+	attemptCtx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, site, nil)
+	if err != nil {
+		return 0, nil, ErrUnavailable
+	}
+	if err = secret.InjectHeader(req.Header, "Authorization", "Bot ", c.token); err != nil {
+		return 0, nil, ErrUnavailable
+	}
+	req.Header.Set("User-Agent", "LINA (https://github.com/thisisjun786/lina)")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, ErrUnavailable
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, ReadLimit))
+	if readErr != nil {
+		return 0, nil, ErrUnavailable
+	}
+	return resp.StatusCode, body, nil
 }

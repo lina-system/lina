@@ -104,6 +104,14 @@ type delivery struct {
 	data json.RawMessage
 }
 
+// ErrBacklog reports a subscriber that fell too far behind to keep its
+// dispatches. The session reconnects and replays from the last checkpoint.
+var ErrBacklog = errors.New("discord_dispatch_backlog")
+
+// memberBacklog bounds the dispatches one subscriber may hold while it waits
+// for its own store.
+const memberBacklog = 256
+
 // hub owns one bot token's socket. Subscribers join and leave while it runs.
 // One Gateway session per token is what Discord expects and what the design
 // requires when a channel connection and a source share a bot.
@@ -123,6 +131,10 @@ type hub struct {
 	pendingCond *sync.Cond
 	pending     []*held
 	advancing   int
+
+	// writeMu serializes checkpoint writes and the position they keep, so two
+	// subscribers that accept out of order never rewind the stored cursor.
+	writeMu sync.Mutex
 
 	stop     chan struct{}
 	done     chan struct{}
@@ -227,20 +239,24 @@ func (h *hub) detach(m *member) {
 	}
 }
 
-// push queues one dispatch for this subscriber.
-func (m *member) push(item delivery) bool {
+// push queues one dispatch for this subscriber. It reports whether the
+// subscriber took the dispatch and whether its backlog is full.
+func (m *member) push(item delivery) (queued, full bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.cond == nil {
 		m.cond = sync.NewCond(&m.mu)
 	}
 	if m.closed {
-		return false
+		return false, false
+	}
+	if len(m.queue) >= memberBacklog {
+		return false, true
 	}
 	m.queue = append(m.queue, item)
 	m.outstanding = append(m.outstanding, item.held)
 	m.cond.Signal()
-	return true
+	return true, false
 }
 
 // accepted drops a dispatch this subscriber just accepted from the list its
@@ -371,6 +387,9 @@ func (h *hub) fail(err error) {
 // accepts the dispatch, so a deletion cannot be skipped, and a subscriber that
 // must wait never holds up the socket or the others.
 func (h *hub) broadcast(ctx context.Context, kind string, data json.RawMessage, position cursor) {
+	if h.stopped() {
+		return
+	}
 	h.mu.Lock()
 	members := append([]*member(nil), h.members...)
 	h.mu.Unlock()
@@ -385,7 +404,16 @@ func (h *hub) broadcast(ctx context.Context, kind string, data json.RawMessage, 
 	}
 	item := delivery{held: held, kind: kind, data: data}
 	for _, m := range members {
-		if !m.push(item) {
+		queued, full := m.push(item)
+		if full {
+			// A subscriber that cannot store events fell too far behind. The
+			// session stops instead of retaining its backlog without limit,
+			// and the next session replays from the last accepted checkpoint.
+			h.fail(channels.Retry(ErrBacklog))
+			h.interrupt()
+			return
+		}
+		if !queued {
 			h.accepted(ctx, held)
 		}
 	}
@@ -424,7 +452,6 @@ func (h *hub) accepted(ctx context.Context, held *held) {
 			h.interrupt()
 			return
 		}
-		h.keep(position)
 	}
 }
 
@@ -478,19 +505,31 @@ func (h *hub) settle() {
 	h.pendingMu.Unlock()
 }
 
-// advance writes the shared checkpoint.
+// advance writes the shared checkpoint, keeping the newest position. Two
+// subscribers can accept out of order after one of them detaches; a write that
+// is older than the stored one is dropped instead of rewinding the cursor.
 func (h *hub) advance(ctx context.Context, position cursor) error {
+	h.writeMu.Lock()
+	defer h.writeMu.Unlock()
+	if position.Session == h.position.Session && position.Seq <= h.position.Seq {
+		return nil
+	}
 	cursor, err := json.Marshal(position)
 	if err != nil {
 		return err
 	}
-	return h.db.Write(ctx, func(tx *canon.Tx) error {
+	err = h.db.Write(ctx, func(tx *canon.Tx) error {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO discord_sessions(bot,cursor) VALUES(?,?) ON CONFLICT(bot) DO UPDATE SET cursor=excluded.cursor", h.bot.Key(), string(cursor)); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor=? WHERE bot=?", string(cursor), h.bot.Key())
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	h.position = position
+	return nil
 }
 
 // dispatchRetry bounds the wait before a subscriber's retryable refusal is
@@ -579,9 +618,9 @@ func (h *hub) resume(ctx context.Context) cursor {
 }
 
 func (h *hub) keep(position cursor) {
-	h.mu.Lock()
+	h.writeMu.Lock()
 	h.position = position
-	h.mu.Unlock()
+	h.writeMu.Unlock()
 }
 
 // reset drops the session identity the platform refused. Native receipts,

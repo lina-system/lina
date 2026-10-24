@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/gateway"
+	"github.com/thisisjun786/lina/kit/secret"
 )
 
 // TestOneGatewaySessionServesAChannelAndASource proves that a channel binding
@@ -656,5 +657,83 @@ func TestDisallowedContentIntentKeepsTheChannelWorker(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the channel worker did not stop")
+	}
+}
+
+// A subscriber that never stores a dispatch must not grow Core's memory without
+// limit: past the backlog the session stops and the next one replays from the
+// last accepted checkpoint.
+func TestSubscriberBacklogIsBounded(t *testing.T) {
+	f := setup(t, nil)
+	h := testHub(f.a.bot, f.db)
+	blocked := make(chan struct{})
+	defer close(blocked)
+	h.addMember(0, func(context.Context, string, json.RawMessage, string) error {
+		<-blocked
+		return channels.Retry(errors.New("held"))
+	})
+	for seq := 1; seq <= memberBacklog+5 && !h.stopped(); seq++ {
+		h.broadcast(t.Context(), "MESSAGE_CREATE", json.RawMessage(`{"id":"1","channel_id":"100"}`), cursor{Session: "session-1", Seq: int64(seq), Intents: baseIntents})
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !h.stopped() {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !h.stopped() {
+		t.Fatal("an unbounded backlog did not stop the session")
+	}
+	h.pendingMu.Lock()
+	pending := len(h.pending)
+	h.pendingMu.Unlock()
+	// One dispatch may be in the worker's hand and one in flight when the
+	// session stops; the backlog itself is bounded.
+	if pending > memberBacklog+2 {
+		t.Fatalf("pending dispatches = %d, want at most %d", pending, memberBacklog+2)
+	}
+}
+
+// A stalled REST answer cannot hold a scheduled read forever.
+func TestRestAttemptIsBounded(t *testing.T) {
+	stalled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-stalled:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	defer close(stalled)
+	endpoint, _ := url.Parse(server.URL)
+	client, err := NewClient(secret.New("synthetic.discord.token"), transportFunc(func(r *http.Request) (*http.Response, error) {
+		wire := r.Clone(r.Context())
+		wire.URL.Scheme, wire.URL.Host = endpoint.Scheme, endpoint.Host
+		return http.DefaultTransport.RoundTrip(wire)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.AttemptTimeout = 100 * time.Millisecond
+	client.Attempts = 1
+	start := time.Now()
+	if err := client.Get(t.Context(), "/users/@me", nil, nil); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("stalled read = %v, want unavailable", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("stalled read took %v", elapsed)
+	}
+}
+
+// A checkpoint write that is older than the stored one never rewinds it.
+func TestCheckpointNeverRewinds(t *testing.T) {
+	f := setup(t, nil)
+	h := testHub(f.a.bot, f.db)
+	if err := h.advance(t.Context(), cursor{Session: "session-1", Seq: 5, Intents: baseIntents}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.advance(t.Context(), cursor{Session: "session-1", Seq: 4, Intents: baseIntents}); err != nil {
+		t.Fatal(err)
+	}
+	if got := (&hub{bot: f.a.bot, db: f.db}).resume(t.Context()); got.Seq != 5 {
+		t.Fatalf("checkpoint = %+v, want seq 5", got)
 	}
 }
