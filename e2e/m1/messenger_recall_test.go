@@ -149,13 +149,14 @@ func TestM3MessengerRecallInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	closeStore()
-	for _, action := range []string{"--enable", "--disable"} {
+	for _, action := range []string{"--enable", "--disable", "--enable"} {
 		command := h.command("embedding", "messenger", "--state-root", h.root, "--person", person, "--platform", "discord", "--account", "synthetic-account", action)
 		command.start(t)
 		command.wait(t, 0)
 	}
 	seeded.Store(true)
 	core = start()
+	waitForRows(t, h, nil, 1, "SELECT count(*) FROM messenger_window")
 	client, conversation = conversationClient(t, h)
 	admittedTurn(t, h, client, conversation, "ordinary", "Tell me about library schedules")
 	admittedTurn(t, h, client, conversation, "search", "Search my messenger study chat")

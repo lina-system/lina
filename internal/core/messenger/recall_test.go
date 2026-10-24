@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -188,6 +189,8 @@ func TestMessengerWindowsConsentAndRemoval(t *testing.T) {
 		t.Fatalf("embedding off created %d windows", n)
 	}
 	var texts []string
+	var textMu sync.Mutex
+	recorded := func() []string { textMu.Lock(); defer textMu.Unlock(); return append([]string{}, texts...) }
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Input []string `json:"input"`
@@ -195,7 +198,9 @@ func TestMessengerWindowsConsentAndRemoval(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			t.Error(err)
 		}
+		textMu.Lock()
 		texts = append(texts, in.Input...)
+		textMu.Unlock()
 		data := []map[string]any{}
 		for i := range in.Input {
 			data = append(data, map[string]any{"index": i, "embedding": []float32{1, 0}})
@@ -224,8 +229,8 @@ func TestMessengerWindowsConsentAndRemoval(t *testing.T) {
 		t.Fatal("vectors did not drain")
 	}
 	finish()
-	if len(texts) != 0 {
-		t.Fatalf("embedding off sent %v", texts)
+	if len(recorded()) != 0 {
+		t.Fatalf("embedding off sent %v", recorded())
 	}
 	if err := f.store.SetEmbedding(t.Context(), "person", source.Platform, source.Account, true); err != nil {
 		t.Fatal(err)
@@ -244,7 +249,7 @@ func TestMessengerWindowsConsentAndRemoval(t *testing.T) {
 	if n := count(t, f.db, "SELECT count(*) FROM recall_text WHERE rowid IN (SELECT d.id FROM recall_doc d JOIN messenger_window w ON w.id=d.source_id)"); n != 0 {
 		t.Fatal("window has index text")
 	}
-	joined := strings.Join(texts, "|")
+	joined := strings.Join(recorded(), "|")
 	if strings.Contains(joined, "DO-NOT-SEND") || !strings.Contains(joined, "\nwindow record 02") || strings.Contains(joined, "window-secret-value") {
 		t.Fatalf("endpoint texts: %q", joined)
 	}
@@ -286,10 +291,10 @@ func TestMessengerWindowsConsentAndRemoval(t *testing.T) {
 	if n := count(t, f.db, "SELECT count(*) FROM recall_vec"); n != 0 {
 		t.Fatalf("revocation retained %d vectors", n)
 	}
-	sent := len(texts)
+	sent := len(recorded())
 	drain()
 	finish()
-	if len(texts) != sent {
+	if len(recorded()) != sent {
 		t.Fatal("revoked source reached endpoint")
 	}
 	if err := f.store.SetEmbedding(t.Context(), "person", source.Platform, source.Account, true); err != nil {
