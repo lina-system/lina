@@ -37,12 +37,11 @@ The stage word is the lowest-numbered stage entry that is not done.
 
 ### Event-to-card latency
 
-#771 projects a goal with its own stage list and no separate project rows as
-one work card. Grouping goals keep their child cards. The execution state and
-Now both come from observed steps.
+#771 uses the managed project lines and row membership from #767. The
+execution state and Now both come from observed steps.
 
 A progress overview reads graph revision history and work-card start times
-once per canon snapshot and groups them by goal. `GoalStages` and the overview
+once per canon snapshot, indexing history by goal and start times by step. `GoalStages` and the overview
 share the same stage projection. This removes repeated decoding of every
 other goal's history without retaining a cache across transactions.
 
@@ -51,3 +50,12 @@ step reports and eight TUI PTYs. Each sample joins the durable work-engine
 event's precise admission time to the first complete renderer write showing
 its changed card. The scenario logs every sample and enforces the T-16 budget
 per language, glyph and width combination.
+
+### C-55 running count increment
+
+#767 makes the running count follow lines, not rows.
+`progress.CountLines` counts the visible lines of a projection: a row at depth 0 belongs to its own line, a goal's step cards are rows under it, and a line whose row waits on the person counts as waiting for them. Core publishes the result as `counts.running` and `counts.waiting` beside the overview rows, so a client draws Core's number and never recounts the cards it folds.
+`progress.Compute` marks each entry as a line or a row: a step card is a row of the 일 that runs it, linked through the step id its stage list already carries, and a task handed under a 목표 is that 목표's 일, a line of its own. A line carries `row` on the wire so a client never draws a row as a card.
+A managed goal is one 일, so `progress.Goals` publishes it as a project line; a card that groups others stays a 목표 line.
+A goal line carries the running list's state word, projected by `progress.goalState` in the order the stage list uses: input needed, failed, stopped, working, waiting, then the goal's own state.
+`e2e/m3/running-count.json` drives installed Core with three 일 of four steps and one background run outside any 일: four lines by state, thirteen rows in the running list, and the TUI status line prints Core's number.

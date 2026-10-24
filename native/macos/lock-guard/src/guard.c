@@ -32,9 +32,14 @@ int lina_restore_backup(const struct lina_host *host, const struct lina_paths *p
   host->remove_file(host->context, paths->enabled);
   host->remove_file(host->context, paths->pending);
   if (!matches) {
+    // Turning the feature off removed what triggered this restore, so the
+    // retry marker is what brings the guard back to it.
+    const char *text = reason == NULL ? "" : reason;
+    host->write_file(host->context, paths->restore_retry, text, strlen(text));
     log_line(host, "restore failed: rule write");
     return -1;
   }
+  host->remove_file(host->context, paths->restore_retry);
   host->remove_file(host->context, paths->backup);
   char line[160];
   snprintf(line, sizeof(line), "restored %s%s", reason == NULL ? "" : reason, stock_used ? " from stock" : "");
@@ -69,9 +74,12 @@ struct lina_guard_report lina_guard_tick(const struct lina_host *host, const str
   bool enabled = lina_enabled_present(host, paths);
   struct lina_backup backup;
   int backup_state = lina_backup_read(host, paths, &backup);
+  bool retry = host->exists(host->context, paths->restore_retry) == 1;
   // Nothing of LINA's is installed, so the guard has nothing to restore and
   // writes nothing.
-  if (!enabled && !names_lina && pending_state != 1 && backup_state != 1) return report;
+  if (!enabled && !names_lina && pending_state != 1 && backup_state != 1 && !retry) return report;
+
+  if (retry) return restore(host, paths, "restore-retry");
 
   if (pending_state == 1) {
     // A clock that reads earlier than the record was written means the Mac
@@ -81,16 +89,18 @@ struct lina_guard_report lina_guard_tick(const struct lina_host *host, const str
       pending.lock_ms = 0;
       lina_pending_write(host, paths, &pending);
     }
+    // The install asked for one lock and one manual unlock. An unlock first
+    // seen after the window cannot prove it came inside it, so the rule
+    // returns to the backup before the session is read.
+    if (pending.lock_ms != 0 && now_ms >= pending.lock_ms + LINA_VERIFY_WINDOW_MS) {
+      return restore(host, paths, "verify-timeout");
+    }
     bool locked = false;
     if (host->session_locked(host->context, &locked) == 0) {
       if (locked) {
         if (pending.lock_ms == 0) {
           pending.lock_ms = now_ms;
           lina_pending_write(host, paths, &pending);
-        } else if (now_ms >= pending.lock_ms + LINA_VERIFY_WINDOW_MS) {
-          // The install asked for one lock and one manual unlock. No unlock
-          // came inside the window, so the rule returns to the backup.
-          return restore(host, paths, "verify-timeout");
         }
       } else if (pending.lock_ms != 0) {
         host->remove_file(host->context, paths->pending);
@@ -121,6 +131,13 @@ struct lina_guard_report lina_guard_tick(const struct lina_host *host, const str
     }
     if (!host->eval_test_mac(host->context) && !host->build_is_measured(host->context, build)) {
       return restore(host, paths, "build-unmeasured");
+    }
+    // The install passed every check, so a marker left by a crashed
+    // evaluation no longer needs to hold later evaluations back.
+    uint64_t age = 0;
+    if (host->file_age_ms(host->context, paths->evaluation, &age) == 1 && age >= LINA_EVALUATION_STALE_MS
+        && host->remove_file(host->context, paths->evaluation) == 0) {
+      log_line(host, "cleared the marker of a crashed evaluation");
     }
   }
   return report;

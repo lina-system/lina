@@ -342,11 +342,11 @@ func GoalStages(ctx context.Context, tx *canon.Tx, goalID, person string, langua
 	if err != nil {
 		return nil, err
 	}
-	started, err := cardStarts(ctx, tx, ids)
+	started, err := cardStarts(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
-	return stagesForGoal(current, history[goalID], started[goalID], language)
+	return stagesForGoal(current, history[goalID], started, language)
 }
 
 // stagesForGoal uses inputs from one canon snapshot. Overview callers read
@@ -374,15 +374,16 @@ func stagesForGoal(current goal.Goal, graphs []graphRevision, started map[string
 	return Stages(revisions, current.State, language)
 }
 
-// cardStarts reads the selected goals' step starts once, which order parallel
-// stage labels. A step that has not started has no start and sorts by id.
-func cardStarts(ctx context.Context, tx *canon.Tx, goals map[string]bool) (map[string]map[string]time.Time, error) {
+// cardStarts reads when each step started, which orders a parallel stage's
+// label. A step's card carries the step id, so the ledger needs no goal link on
+// the card. A step that has not started has no start and sorts by id.
+func cardStarts(ctx context.Context, tx *canon.Tx) (map[string]time.Time, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT record FROM work_cards ORDER BY task_id")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]map[string]time.Time{}
+	out := map[string]time.Time{}
 	for rows.Next() {
 		var raw []byte
 		var card work.Card
@@ -392,11 +393,8 @@ func cardStarts(ctx context.Context, tx *canon.Tx, goals map[string]bool) (map[s
 		if json.Unmarshal(raw, &card) != nil {
 			return nil, ErrStageGraph
 		}
-		if goals[card.Task.GoalID] && !card.StartedAt.IsZero() {
-			if out[card.Task.GoalID] == nil {
-				out[card.Task.GoalID] = map[string]time.Time{}
-			}
-			out[card.Task.GoalID][card.Task.ID] = card.StartedAt
+		if !card.StartedAt.IsZero() {
+			out[card.Task.ID] = card.StartedAt
 		}
 	}
 	return out, rows.Err()

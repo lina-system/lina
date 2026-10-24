@@ -1,0 +1,14 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "goals": [
+    {"id": "day-a", "steps": ["Collect dates", "Check venue", "Book the room", "Send invites"]},
+    {"id": "day-b", "steps": ["Draft agenda", "Invite speakers", "Order lunch", "Print badges"]},
+    {"id": "day-c", "steps": ["Book travel", "Reserve hotel", "Plan the tour", "Pack the kit"]}
+  ],
+  "run": {"goal": "Read competitor notes"},
+  "lines": 4,
+  "tasks": 12,
+  "rows": 13,
+  "width": 120,
+  "height": 34
+}
