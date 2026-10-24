@@ -29,7 +29,7 @@ Go fits these components because:
 - An always-on main keeps a low resident cost.
 - It suits a main that may later serve many people.
 
-The LINA app is one React codebase in TypeScript, drawn with React DOM, and macOS usability comes first. On desktop it runs in a Wails v3 shell, which is Go and uses the operating system's own web engine: WKWebView on macOS, WebView2 on Windows and WebKitGTK 6.0 on Linux. Electron is the drop-in fallback behind the same bridge interface, and a different shell for an operating system is allowed. On iOS and Android the app runs in a thin WebView host, Capacitor by default ([surfaces.md](surfaces.md#app-front-end)). The shell's runtime is part of the app artifact. It is not a runtime that the person or another LINA component installs, and it is never called Node, which is LINA's device execution component. The TUI is not part of the app: it stays Go on Bubble Tea.
+The LINA app is one Flutter codebase in Dart, compiled natively for macOS, Linux (Omarchy), Windows, iOS and Android, and macOS usability comes first. It is developed in [`lina-system/lina-app`](https://github.com/lina-system/lina-app) and follows [surfaces.md](surfaces.md#app-front-end): an exact stable Flutter SDK pin, native platform code where a measured surface requires it, and no Flutter web build. There is no web-technology shell (such as Wails, Electron or Capacitor) and no WebView shell for the app's own interface. The Flutter engine ships inside the app artifact. It is not a runtime that the person or another LINA component installs, and it is never called Node, which is LINA's device execution component. The TUI is not part of the app: it stays Go on Bubble Tea.
 
 The conversation engine is LINA's own Go loop, built on the [Codex](https://github.com/openai/codex) tool contracts, with a structure that follows the [pi](https://github.com/earendil-works/pi) agent loop and conversation patterns from [Hermes Agent](https://github.com/NousResearch/hermes-agent) (see Conversation loop). pi and Hermes Agent are design references only: no code from either is vendored or translated line by line.
 
@@ -62,7 +62,7 @@ LINA uses some tools that the user installs and that LINA neither ships nor pins
 | LINA Core | Go, a static binary | A service under the user's own OS user | Everything; it is the only canon writer. Agents are data that this one LINA Core runs; there is no process per agent ([product-families.md](product-families.md)). The message gateway for external channels runs inside it, with one adapter per platform ([integrations.md](integrations.md#channels)). |
 | `moirai-worker` | Go, a static binary | An optional background service of the LINA Core install | Background memory (the maintenance pass and imports included) and planning |
 | `lina` TUI | Go on Bubble Tea, a static binary | A user process connected to LINA Core over its local socket or the tailnet | The terminal surface ([surfaces.md](surfaces.md)) |
-| LINA app | TypeScript on React, in a bundled shell: Wails v3 (Go) on macOS, Windows and Linux, a WebView host on mobile, Capacitor by default | A user process on the person's device, connected to LINA Core over its local socket or the tailnet | The app surface ([surfaces.md](surfaces.md)) |
+| LINA app | Dart on Flutter, compiled natively per platform, with native platform code where a surface requires it ([surfaces.md](surfaces.md#app-front-end)) | A user process on the person's device, connected to LINA Core over its local socket or the tailnet | The app surface ([surfaces.md](surfaces.md)) |
 | Node | Go, a static binary | A service on each device | Device execution under grants |
 | Worker | The coding tool the user installed or signed in to, with the user's own configuration; Codex runs as `codex app-server`; Claude Code, Cursor, Gemini CLI, Grok and added agents run through the Agent Client Protocol, Claude Code under the pinned `claude-agent-acp` program; Antigravity runs as a headless child process ([work-and-delegation.md](work-and-delegation.md#workers)) | A stdio child of LINA Core, or of Node on a remote device | Workers, one child per task in flight |
 | Claude adapter | LINA's own TypeScript on Node.js, an external component pinned by the release, with the Claude Agent SDK installed on the person's machine (see Provider adapters) | A stdio child of LINA Core, started on first use of a Claude account and stopped after an idle period | Model calls through a Claude account |
@@ -907,7 +907,7 @@ The release manifest records:
 
 - external components, each with version, digest, execution mode, source and license
 - versions and digests of LINA Core, Node, LINA APP and `moirai-worker`, and the Go toolchain that built them
-- the app shell: the Wails version, the web engine version observed in acceptance, the mobile host version (and the Electron version where it is used), and the digest of the front-end package lockfile
+- the LINA app build: the pinned Flutter SDK version, the Flutter engine version observed in acceptance, and the digest of the app's `pubspec.lock` ([surfaces.md](surfaces.md#app-front-end))
 - the plan catalog: its version and digest ([Connected accounts and automatic setup](#connected-accounts-and-automatic-setup))
 - the idle memory of the packaged LINA app on Linux and macOS, which the foundation gate compares against on every build
 - the SQLite binding and sqlite-vec, with versions and digests
@@ -925,7 +925,7 @@ The release manifest records:
 
 The current `supportedCombinations` section has one client 1.0 row for peer `lina-tui` on the selected build target's `GOOS/GOARCH`, with `lifecycle` version `1.0` and evidence from protocol conformance and `TestPlannedRestart`. The listener and build writer obtain this row from the same compiled manifest definition. Product version is absent from the compatibility key.
 
-The manifest pins only LINA's own artifacts and dependencies: its components, the app shell (with the engine it bundles, where that is Electron), and the external components LINA ships. A change to a pinned value (an SDK, the Claude adapter's lockfile, a request field list, a sign-in scope, environment rules, retry values) lands in the same change as its manifest change.
+The manifest pins only LINA's own artifacts and dependencies: its components, the LINA app (with the Flutter SDK and engine bundled in that build), and the external components LINA ships. A change to a pinned value (an SDK, the Claude adapter's lockfile, a request field list, a sign-in scope, environment rules, retry values) lands in the same change as its manifest change.
 
 ### Packaging and resident budget
 
@@ -1109,11 +1109,11 @@ Foundation keeps one local command and one required CI result. PRs select docs, 
 
 ## Deferred
 
-- The packaging and resident budget for LINA Core, Node and the desktop LINA app: declared in the first implementation issue before the V2 measurement runs (for the app, before its first packaged measurement), and recorded with its result. A result outside the budget reopens the language choice, and for the desktop app it reopens the shell choice.
+- The packaging and resident budget for LINA Core, Node and the desktop LINA app: declared in the first implementation issue before the V2 measurement runs (for the app, before its first packaged measurement), and recorded with its result. A result outside the budget reopens the language choice, and for the desktop app it reopens the framework choice under [surfaces.md](surfaces.md#platform-adaptation).
 - The development-loop budget: declared before the V7 measurement and recorded with its result. A result outside the budget reopens the language choice.
 - The SQLite binding is selected by #39 and recorded in the build manifest. #94 packages the pinned sqlite-vec engine with mandatory digest verification, Linux amd64 and macOS arm64 build targets, and binary archives in the release build stage. Vector queries, FTS5, WAL and online backup run against the packaged engine. Service startup is exercised through the installer and Core protocol. The full V2 24-hour residency, native macOS execution and performance acceptance remain separate from these packaging checks; producing an archive alone does not qualify a supported-combination row.
 - The Windows sandbox mechanism of the kit's sandbox wrapper: chosen and verified by the Windows Node implementation, which cannot be accepted without it.
-- Exact pins (the Go toolchain, the Gemini client, the MCP Go SDK, Bubble Tea, the SQLite binding, sqlite-vec, the JSON Schema to Go type generator, the app shells (Wails, the mobile host, and Electron where it is used), the Claude Agent SDK package): set by the first implementation issue and recorded in the release manifest.
+- Exact pins (the Go toolchain, the Gemini client, the MCP Go SDK, Bubble Tea, the SQLite binding, sqlite-vec, the JSON Schema to Go type generator, the Claude Agent SDK package): set by the first implementation issue and recorded in the release manifest. The LINA app records its Flutter SDK pin in its own release manifest ([surfaces.md](surfaces.md#app-front-end), [lina-app#3](https://github.com/lina-system/lina-app/issues/3)).
 - The verified versions of each installed tool: set by the first implementation issue (V5 for Codex) and recorded in the release manifest.
 - Whether LINA Core as a service sees the user's login environment (`PATH`, the SSH agent and the keychain), or reads the login shell's environment once at start instead: measured by the first implementation issue.
 - Per-tool deadlines other than the 15 second default of the turn budget: set during implementation acceptance of the conversation engine.
