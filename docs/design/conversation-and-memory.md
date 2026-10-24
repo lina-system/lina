@@ -390,6 +390,11 @@ that request's focus. Several created tasks stay unresolved. When the person
 has selected a new target and creation has recorded its id, a later record
 read, progress read, or follow-up of that created item stays on the same
 request. Naming a different item does not replace the person's choice.
+A code goal created for a new project stays on that choice. Its definition
+file keeps kind goal, and the snapshot presents the record as a project, so a
+later read or correction of the created record is the same identity. A progress
+read of that record returns the goal's current progress line. The binding check
+still uses the record id.
 A resumed channel request recovers the original channel receipt through the
 answer's parent chain before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
@@ -452,7 +457,7 @@ Core checks a retained tie again when a later tool would make it irreversible.
 
 **Admission and context.** Native person input and its initial system binding event commit together, before acknowledgement or turn dispatch. The binding is structured canon metadata stored inline, including full candidate titles; large work metadata must not prevent admission or require filesystem I/O inside the transaction. Admission reads the prior binding and the last exchange through the retraction-visible projection, so a withdrawn input neither restores focus nor refreshes its age. A notice's run identity comes from its durable delivery record, never from a notice body that may be stored as a material. Retrying an input reuses that event; input admitted during a turn keeps its own event and supplies its binding at the next model round. A binding records `no-rule` and an unresolved choice when no Core rule holds, alongside a fresh-focus or none default. It does not authorize an action. Existing pending input from an earlier Core version receives a binding before preparation resumes.
 
-Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A code goal record is a project candidate under its record id. A prepared task whose record has no person id is included when its agent and conversation belong to that person. A task recorded for someone else is not. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
+Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A code goal record is a project candidate under its record id. A progress read of that id returns the goal's progress line; the binding check keeps the record id. A prepared task whose record has no person id is included when its agent and conversation belong to that person. A task recorded for someone else is not. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
 
 Client input may carry optional `reply_to`, `card` and `thread` references. Core resolves them within the authenticated conversation and the person's work queue. Platform reply ids are resolved within their channel address. An unresolved or foreign reference supplies no rule. General questions may explicitly mark a yes-or-no form; free text is never inferred to be that form.
 
@@ -1324,7 +1329,7 @@ Imported observations, card lines and legacy summaries stay outside recall, Cont
 
 ### Importing a Hermes install
 
-Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The remaining Hermes import work in [#115](https://github.com/lina-system/lina/issues/115), its sub-issues and [#320](https://github.com/lina-system/lina/issues/320) keeps its scope under this framing ([#330](https://github.com/lina-system/lina/issues/330)). No other source adapter is implemented by this change.
+Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The Hermes import work in [#115](https://github.com/lina-system/lina/issues/115), its sub-issues and [#320](https://github.com/lina-system/lina/issues/320) landed in `internal/addons/importer/hermes` and the `lina import-hermes` command under this framing ([#330](https://github.com/lina-system/lina/issues/330)). No other source adapter is implemented by this change.
 
 The adapter lives outside Core in `internal/addons/importer/hermes`. The explicit `lina import-hermes` command is its installed entry point; no onboarding or ordinary conversation starts it. Importing remains optional.
 
