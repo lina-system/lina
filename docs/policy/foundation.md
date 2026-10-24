@@ -81,17 +81,48 @@ instead of assigning findings to a guessed milestone.
 Before opening the first issue for a test, the reporter checks retained artifacts
 from completed later CI runs on the same branch. It validates each plan and result
 against the run head and plan digest, selects the newest attempt per shard, and
-compares commit ancestry. A latest terminal pass on a descendant head prevents
-an older failure from creating an already recovered finding, even when the pass
-was reported before any issue existed. A same-head failure takes precedence over
+compares commit ancestry. Three consecutive passing descendant heads prevent
+an older failure from creating an already recovered finding, even when those passes
+were reported before any issue existed. The same configurable recovery count
+applies to existing findings. A same-head failure takes precedence over
 a pass. Missing, expired or skipped results cannot establish recovery; malformed
 results fail reporting. This uses existing Actions artifacts within their retention
 period, without creating issues for tests that have only passed. The reporter
 needs `actions: read` for cross-run artifacts and `unzip` to read their JSON members.
 
 Issue identity includes branch, package and test name in a machine-readable
-body marker. Repeated failures update the same issue, including reopening a
-resolved finding. An explicit pass on a later descendant head closes it.
+body marker. Repeated failures update the same issue. Recovery requires passes on
+three consecutive distinct descendant heads that ran the test, configurable with
+the positive integer repository variable `QA_RECOVERY_PASSES` (default `3`).
+Each failure resets the pass count. A failure, pass and another failure within
+48 hours of the first failure marks the issue `flaky`; it stays open until the
+same recovery threshold is met. The observation window uses plan start times.
+The label remains as history after recovery. The reporter creates the label if
+it is missing and preserves other labels.
+An unfinished test resets the recovery streak without creating a failure;
+skipped or absent tests do not count. Same-head passes can establish flakiness
+if another failure follows, but never advance the recovery count.
+
+A closed finding reopens at most once per 24 hours, measured from the reporter's
+last reopen. Further failures during that window update its body and one reusable
+status comment without changing the issue's closed state. A later failure report
+after the cooldown can reopen it, including a report of the same failing head.
+State changes and recovery progress edit that same comment instead of posting
+new comments. The issue body persists the pass count, failure timestamp, flaky
+classification and last reopen timestamp across reporter runs.
+Recovery retains the most recent passing head identities, bounded by the
+configured threshold, and orders them by commit ancestry. A late intervening
+failure or unfinished observation removes earlier passes from the streak, even
+when a newer head has already reported. A failure can reopen a prematurely
+closed finding through the same cooldown; a failure followed by enough known
+passing heads leaves it closed. The latest tested head never moves backward.
+
+The first run with this policy migrates existing QA markers on its branch even
+when a test is absent from today's artifacts. It uses the Actions bot's close and
+reopen timeline to preserve the reopen cooldown and recognize prior flapping
+(including #1228), while retaining the original failure range and diagnostics.
+Legacy pass counts start at zero because the old marker did not retain that
+evidence; migration alone does not change an issue's open or closed state.
 Same-head reruns, skipped or missing tests, invalid artifacts and older heads
 do not prove recovery. Each test is reconciled independently of unrelated test
 failures. The first failing range survives updates. Reporting is serialized
@@ -197,7 +228,9 @@ Register a component in `scripts/verify/scope.mjs` in the change that adds it. I
 
 Core package families belong to `lina`. Add each new `internal/core/<package>/` family to `coreDirectories` in `scripts/verify/scope.mjs`, keeping entries sorted by path with one entry per line. This lets additions at separate positions merge without editing a shared line; registration still selects only the listed families and their descendants.
 
-The protocol JSON Schema in `protocol/schema/` and the conformance fixtures in `protocol/fixtures/` are registered with the component that generates types from them, so a schema or fixture change runs type regeneration and the fixtures ([host-protocol.md](../design/host-protocol.md)).
+The protocol JSON Schema in `protocol/schema/` and the conformance fixtures in `protocol/fixtures/` are owned by this repository and registered with `kit` in `scripts/verify/scope.mjs`, so a schema or fixture change runs Go type regeneration (`kit/protocol/client.gen.go`) and the Go conformance fixtures (`kit/protocol/conformance`) ([host-protocol.md](../design/host-protocol.md#schema-and-generated-types)). Likewise, the canonical DTCG design token files in `design/tokens/`, `DESIGN.md` and `scripts/tokens.mjs` are owned by this repository and mapped to `lina` and `automation`; `node scripts/tokens.mjs --check` verifies `internal/design/tokens_gen.go` (the TUI's Lip Gloss palette), `design/tokens/tokens.css`, `design/tokens/tokens.swift`, `design/tokens/mark.svg`, the token tables in `DESIGN.md`, WCAG 2.2 AA contrast (and 7:1 on `high-contrast` canvas and surface), and the absence of hardcoded presentation colours and glyphs in `internal/tui` ([surfaces.md](../design/surfaces.md#one-design-language)).
+
+The LINA app (`packages/lina_design` and `packages/lina_app` in [`lina-system/lina-app`](https://github.com/lina-system/lina-app)) runs its own repository-local `node scripts/foundation.mjs` gate ([lina-app#3](https://github.com/lina-system/lina-app/issues/3)). Its theme generator ([lina-app#5](https://github.com/lina-system/lina-app/issues/5)) and Dart protocol generator ([lina-app#6](https://github.com/lina-system/lina-app/issues/6)) consume this repository's canonical `design/tokens/` and versioned `protocol/schema/` and `protocol/fixtures/` exports from a pinned, immutable `lina-system/lina` release tag (`v0.0.1-alpha.YYYYMMDD.N`) or 40-character commit SHA verified by SHA-256 file digests, and the app repository's `foundation` gate runs Flutter/Dart regeneration drift checks, widget visual-value linting and Dart conformance round-trip tests there.
 
 The initial registry is:
 
