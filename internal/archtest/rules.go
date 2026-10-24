@@ -64,13 +64,14 @@ func family(name, prefix string) string {
 	return strings.Split(strings.TrimPrefix(name, prefix+"/"), "/")[0]
 }
 
-// explicitImporterCommand reports whether an installed command is the one entry
-// point of the memory importer add-on it imports: each source adapter has its
-// own command, and no default package may reach any of them.
+// explicitImporterCommand restricts importer add-ons to their named installed
+// import commands and murmur's read-only comparison command. No default package
+// may reach an importer, and each command may reach only its source adapter.
 func explicitImporterCommand(name, imported, rootModule string) bool {
 	for command, adapter := range map[string]string{
-		"cmd/lina/import_hermes.go": "hermes",
-		"cmd/lina/import_murmur.go": "murmur",
+		"cmd/lina/import_hermes.go":  "hermes",
+		"cmd/lina/import_murmur.go":  "murmur",
+		"cmd/lina/compare_murmur.go": "murmur",
 	} {
 		if name == command && imported == rootModule+"/internal/addons/importer/"+adapter {
 			return true

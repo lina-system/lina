@@ -190,3 +190,21 @@ rest; the source still returns to connected.
 revision carries the attachment with in `messenger_attachment` and passes the
 chat, message and attachment id to the adapter. It refuses a disconnected
 source and a deleted record.
+
+## Collection comparison
+
+`Store.Compare` compares unique `(chat, message)` keys for one person's
+platform/account over a half-open message-time interval. It checks the source
+owner and reads the keys in one canon read transaction; deleted and erased keys
+remain collection evidence. It never reads event bodies or changes canon.
+
+The installed `lina compare-murmur` command opens `canon.OpenReader` beside a
+running Core. The murmur adapter validates a handed-over version-1 spool and
+projects only keys, timestamps and merge provenance, retaining archive-over-live
+precedence. Each JSONL event is bounded to 16 MiB. The command refuses a changing
+input file and redacts all failure details. `Comparison` defines its JSON output:
+per-chat counts and sorted IDs missing from each side, plus interval and total
+counts. A completed comparison exits zero even when it finds differences.
+This command is not a coverage certificate or a cutover action. The
+[owner's runbook](../../../docs/research/messengers.md#owners-cutover-runbook)
+requires coverage, recall and actual elapsed collection evidence separately.

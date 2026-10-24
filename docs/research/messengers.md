@@ -191,6 +191,80 @@ Following the data-pipeline method: the sink key is the legacy reference, every 
 
 The iMessage source replaces murmur's SSH copy once the Mac Node runs it. Discord history imported from exports stays a source in the import-only state until the person connects Discord.
 
+### Owner's cutover runbook
+
+Prerequisites: the murmur importer (#1072), connected KakaoTalk collection
+(#1071), and messenger recall/context tools (#1074). A comparison command does
+not replace any of these. #1071 and #1074 remain open at this implementation's
+baseline; do not cut over until their behavior and the checks below are available.
+
+1. Hand over a stopped copy of murmur's data home, rehearse and import it with
+   `lina import-murmur` as described in the
+   [importer reference](../../internal/addons/importer/murmur/REFERENCE.md).
+   Confirm the per-room reconciliation and retain the import backup. Resume
+   murmur's collector, then connect KakaoTalk in LINA through its tablet sign-in
+   and terms acceptance. Confirm the same account and chats are selected.
+2. Record the UTC start after both collectors are active. Keep them running
+   for at least seven complete days. Check each chat's freshness and gaps.
+   Resolve gaps before accepting the run. Do not import messages from this
+   interval into LINA: that would hide omissions in its live collection.
+3. Select an end time both collectors have finished reading. Hand over a stable
+   JSONL copy of murmur's version-1 `spool/events.jsonl`, ending at a complete
+   newline. Do not point the command at an actively appended file. Set the
+   paths, person ID, account ID and UTC interval explicitly:
+
+   ```sh
+   lina compare-murmur --state-root "$LINA_STATE_ROOT" \
+     --inbox "$MURMUR_INBOX_COPY" --person "$PERSON_ID" \
+     --platform kakaotalk --account "$KAKAO_ACCOUNT_ID" \
+     --since "$OVERLAP_START" --until "$OVERLAP_END" > "$COMPARISON_REPORT"
+   ```
+
+   Core may keep running. The command reads only this inbox and canon; it
+   never discovers or changes murmur's service, MCP, configuration or data home.
+   The interval is `[since, until)` by original message time, not import or
+   collection time. Duplicate keys and edits count once. IDs remain strings.
+   Events larger than 16 MiB, malformed input, an incomplete tail, a changing
+   file or an unknown LINA source refuse the comparison without a partial
+   report. Exit zero means the comparison ran; inspect every chat's
+   `missing_in_lina` and `missing_in_murmur` arrays. Differences do not produce
+   a nonzero exit code. Empty data is not successful parallel-run evidence.
+4. Require zero `missing_in_lina` IDs for every selected chat, explain the
+   reverse differences, and check coverage separately. Keep the ID report
+   private. Record only aggregate counts in the table below. With the messenger
+   recall tools, repeat representative Korean/English searches, expand a hit
+   into its transcript, and query messages by a known sender. Check returned
+   records and references against murmur. Deleted content must stay hidden.
+   Record query counts and pass/fail counts, never query text or people's names.
+5. After those checks pass, the owner identifies and stops murmur's actual
+   timer and disables its MCP entry in each client. The owner verifies no
+   collector or MCP process remains and that LINA continues collecting new
+   messages. LINA performs none of those service changes. Keep murmur's data
+   home intact for at least 30 days. If collection or recall regresses, the
+   owner restarts murmur's timer and MCP and resumes comparison. Only the owner
+   may delete that data home after the retention period.
+
+### Cutover evidence
+
+Synthetic acceptance checks a planted omission while Core is collecting, a
+matching set after its next page, and the same result beside restarted installed
+Core. Unit fixtures cover reverse differences, large IDs, time bounds, duplicate
+keys, source isolation and retained deletion keys. These are not measurements
+of the owner's account.
+
+| Evidence | Observed result |
+| --- | --- |
+| Owner overlap days | Not measured |
+| Chats compared; murmur IDs; LINA IDs | Not measured |
+| IDs missing in LINA; IDs missing in murmur | Not measured |
+| Chats with coverage gaps | Not measured |
+| Search / transcript / people query checks passed / attempted | Not measured |
+| Owner stopped collector and MCP | Not performed |
+| Data-home retention days after cutover | Not started |
+
+The owner's seven-day run and shutdown remain required for #1073. No real
+account or message store was read, and no cutover is claimed.
+
 ## Security review
 
 Method: security-safety-review. Verdict: **HOLD**. This is a design; no code, scan, add-on or sign-in was run.

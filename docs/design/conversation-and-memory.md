@@ -1492,6 +1492,7 @@ murmur is the owner's earlier store of KakaoTalk, Discord and iMessage messages.
 - **Reconciliation.** For each room, the count and the SHA-256 of the sorted murmur UIDs match murmur's own manifest. A second run adds nothing.
 - **Learning.** Imported messages are learned from only when the person turns learning on in the import, whose card states how many of the person's messages it covers and an estimated model cost. Embedding asks once per source.
 - **Cutover.** The person stops murmur's collector after LINA's own sources have matched it over an overlap. LINA never stops, changes or deletes murmur or its data.
+- **Comparison.** The explicit local `lina compare-murmur` command reads a handed-over version-1 murmur spool JSONL and a read-only snapshot of the installed canon, including while Core runs. The person selects their source account and an inclusive start and exclusive end by message time. Each chat reports unique message counts and sorted IDs missing on either side, without message text or names. Retained deleted and erased keys count as collection evidence; this does not make their text available. Invalid or incomplete input refuses the entire comparison. An empty or matching set alone does not prove continuous coverage, working recall, or readiness to cut over.
 
 ### Correction, retraction and deletion
 

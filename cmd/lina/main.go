@@ -22,6 +22,8 @@ func main() {
 			os.Exit(runImportHermes(os.Args[2:]))
 		case "import-murmur":
 			os.Exit(runImportMurmur(os.Args[2:]))
+		case "compare-murmur":
+			os.Exit(runCompareMurmur(os.Args[2:]))
 		case "restore":
 			os.Exit(runRestore(os.Args[2:]))
 		case "backup":
@@ -72,6 +74,6 @@ func main() {
 			os.Exit(tools.Main(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
-	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|update|backup|restore|import-hermes|import-murmur|doctor|replay|provider-replay|text-tool-replay|intake-replay|method-replay|export|identity-eval|a2a|teams|webex|version|file-tool|worker-tools|proc-supervise|proc-job>")
+	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|update|backup|restore|import-hermes|import-murmur|compare-murmur|doctor|replay|provider-replay|text-tool-replay|intake-replay|method-replay|export|identity-eval|a2a|teams|webex|version|file-tool|worker-tools|proc-supervise|proc-job>")
 	os.Exit(64)
 }
