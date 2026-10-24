@@ -11,6 +11,7 @@ import (
 )
 
 func TestRunResultRetryKeepsIdentityAndPriorRevision(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	id := strings.Repeat("a", 32)
 	first, err := s.SaveRunResult(t.Context(), id, []byte("gathered"), actor)
@@ -34,6 +35,7 @@ func TestRunResultRetryKeepsIdentityAndPriorRevision(t *testing.T) {
 	}
 }
 func TestCitationUsesNamedRevisionAndDeletedEvidenceDoesNotResolve(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := importAsset(t, s, "original passage")
 	anchor := materials.Anchor{AssetID: a.ID, Revision: a.Revision, Start: 0, End: 8, Hash: a.Hash}
