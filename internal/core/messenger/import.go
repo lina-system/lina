@@ -224,7 +224,9 @@ type importPlan struct {
 }
 
 // importRelations resolves a record's reply and thread targets against what the
-// chat already holds and what this run admits earlier in the same transaction.
+// chat already holds and what this admission has already planned. AdmitPage and
+// AdmitImport share it. planned maps a platform message id to the event id of
+// a record placed earlier in the same batch.
 func (s *Store) importRelations(ctx context.Context, source Source, chat string, message Message, existing map[string]recordRow, planned map[string]string) ([]ledger.Relation, error) {
 	relations, err := s.relations(ctx, source, chat, message, existing)
 	if err != nil {

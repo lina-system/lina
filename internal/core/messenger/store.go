@@ -536,14 +536,22 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		}
 		plan.ownWrite = message.Route == RoutePerson && hasEffect && (effect.state == EffectSent || effect.state == EffectUnknown)
 		plan.effect = effect
-		plan.relations, err = s.relations(ctx, source, chat, message, existing)
+		plans = append(plans, plan)
+	}
+	// A root and its replies often arrive together. Relations name ledger events,
+	// and a later event in the batch may name an earlier one, so targets are
+	// admitted first and resolved from that prefix plus rows already committed.
+	plans = orderPagePlans(plans)
+	admitted := map[string]string{}
+	for i := range plans {
+		plans[i].relations, err = s.importRelations(ctx, source, chat, plans[i].message, existing, admitted)
 		if err != nil {
 			return PageResult{}, err
 		}
-		if seen {
-			plan.relations = append(plan.relations, ledger.Relation{TargetID: row.event, Kind: "supersedes"})
+		if !plans[i].added {
+			plans[i].relations = append(plans[i].relations, ledger.Relation{TargetID: existing[plans[i].message.ID].event, Kind: "supersedes"})
 		}
-		plans = append(plans, plan)
+		admitted[plans[i].message.ID] = eventID(source, chat, plans[i].message.ID, plans[i].revision)
 	}
 	if len(page.Deletions) > 0 {
 		// A deletion is durable before the cursor passes it: a crash after the
@@ -621,6 +629,60 @@ type recordPlan struct {
 	ownWrite  bool
 	effect    effectRow
 	relations []ledger.Relation
+}
+
+// orderPagePlans admits a message after the same-page messages it replies to
+// or sits in a thread under. Page order is the tie break. A cycle cannot be
+// ordered, so the remaining messages stay in page order and only the link
+// toward an earlier message is kept.
+func orderPagePlans(plans []recordPlan) []recordPlan {
+	n := len(plans)
+	if n < 2 {
+		return plans
+	}
+	pos := make(map[string]int, n)
+	for i, plan := range plans {
+		pos[plan.message.ID] = i
+	}
+	next := make([][]int, n)
+	indeg := make([]int, n)
+	for i, plan := range plans {
+		seen := map[int]bool{}
+		for _, id := range []string{plan.message.ReplyTo, plan.message.Thread} {
+			j, ok := pos[id]
+			if !ok || j == i || seen[j] {
+				continue
+			}
+			seen[j] = true
+			next[j] = append(next[j], i)
+			indeg[i]++
+		}
+	}
+	used := make([]bool, n)
+	out := make([]recordPlan, 0, n)
+	for len(out) < n {
+		pick := -1
+		for i := 0; i < n; i++ {
+			if !used[i] && indeg[i] == 0 {
+				pick = i
+				break
+			}
+		}
+		if pick < 0 {
+			for i := 0; i < n; i++ {
+				if !used[i] {
+					out = append(out, plans[i])
+				}
+			}
+			break
+		}
+		used[pick] = true
+		out = append(out, plans[pick])
+		for _, i := range next[pick] {
+			indeg[i]--
+		}
+	}
+	return out
 }
 
 func (s *Store) relations(ctx context.Context, source Source, chat string, message Message, existing map[string]recordRow) ([]ledger.Relation, error) {
