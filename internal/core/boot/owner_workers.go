@@ -24,6 +24,9 @@ func workerReference(id string) bool {
 // worker operation rechecks the observed handle under its control lock before
 // delivering input or an interrupt. A request is never a completion verdict.
 func (r *conversationRuntime) ownerWorkerControl(ctx context.Context, s clientsrv.Session, id string, conversation *string, key, note string) error {
+	return r.ownerWorkerControlFrom(ctx, s, id, conversation, key, note, nil)
+}
+func (r *conversationRuntime) ownerWorkerControlFrom(ctx context.Context, s clientsrv.Session, id string, conversation *string, key, note string, source json.RawMessage) error {
 	if err := r.authorize(s, nil); err != nil {
 		return err
 	}
@@ -62,7 +65,7 @@ func (r *conversationRuntime) ownerWorkerControl(ctx context.Context, s clientsr
 		}
 	}
 	if entry == nil && note != "" {
-		return r.offlineSteering(ctx, s.PersonID, session, card, conversation, key, note)
+		return r.offlineSteering(ctx, s.PersonID, session, card, conversation, key, note, source)
 	}
 	if entry == nil || entry.origin.person != s.PersonID || !workerControlConversation(entry.origin, conversation) {
 		return outsideManagement()
@@ -93,7 +96,7 @@ func (r *conversationRuntime) ownerWorkerControl(ctx context.Context, s clientsr
 		return nil
 	}
 	if note != "" {
-		return entry.ownerSteering(ctx, key, note)
+		return entry.ownerSteering(ctx, key, note, source)
 	}
 	snapshot, err := entry.adapter.Snapshot(ctx, entry.thread)
 	if err != nil {
