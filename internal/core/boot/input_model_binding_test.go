@@ -506,6 +506,38 @@ func TestModelBindingBareGenerationFollowsChosenTask(t *testing.T) {
 	}
 }
 
+func TestModelBindingPrefixedTaskMatchesDelivery(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "task:a", Title: "Prefixed task", Kind: "task", State: "running", LastActivity: now},
+		{ID: "a", Title: "Plain task", Kind: "task", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "prefixed-task", "Change the format.")
+	chosen := binding.Target{Class: "existing", ID: "task:a", Kind: "task"}
+	if _, err := r.saveModelBinding(t.Context(), input, "person-choice", []binding.Choice{{Quote: input.Body.Text(), Target: chosen}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	delivered, ok := r.followWorkerIdentity(t.Context(), "task:a")
+	if !ok {
+		t.Fatal("task:a did not resolve to a task")
+	}
+	raw, _ := json.Marshal(map[string]any{"id": "task:a", "text": "Change the format."})
+	got := r.bindWorkCall(t.Context(), input, 0, "turn:"+input.ID, provider.ToolCall{ID: "follow", Name: "follow_work", Arguments: string(raw)})
+	if delivered == chosen.ID {
+		if got != nil {
+			t.Fatalf("follow of the selected task was refused: %+v", got)
+		}
+		return
+	}
+	if got == nil || got.Code != loop.Denied {
+		t.Fatalf("follow resolved to %s but was not rejected: %+v", delivered, got)
+	}
+}
+
 func TestModelBindingReplyUsesEffectiveTarget(t *testing.T) {
 	for _, creation := range []string{"model", "prepare_work", "schedule_work"} {
 		t.Run(creation, func(t *testing.T) {

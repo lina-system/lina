@@ -16,7 +16,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/waiting"
-	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -278,10 +277,8 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		id = str("id")
 		if c.Name == "follow_work" {
 			id, err = r.followTargetTask(ctx, id)
-		} else if taskID, ok := workerFollowTask(id); ok && taskID != id {
-			if _, e := r.work.Get(ctx, taskID); e == nil {
-				id = taskID
-			}
+		} else if taskID, ok := r.followWorkerIdentity(ctx, id); ok {
+			id = taskID
 		}
 	case "worker_input", "worker_interrupt":
 		// A worker session steers the task it controls. Resolving it here keeps
@@ -453,10 +450,8 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					if preparation != nil {
 						event = preparation.event
 					}
-					if taskID, ok := workerFollowTask(a.ID); ok {
-						if _, err := r.work.Get(ctx, taskID); err == nil {
-							return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
-						}
+					if taskID, ok := r.followWorkerIdentity(ctx, a.ID); ok {
+						return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
 					}
 					var source json.RawMessage
 					if r.channelBinding != nil {
@@ -509,6 +504,21 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 		provider.ToolDecl(`{"type":"function","name":"read_work_progress","description":"Answer progress questions from the current item's progress line, never remembered status. Unknown stays unknown. Names the input's work target.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}}`),
 		provider.ToolDecl(`{"type":"function","name":"follow_work","description":"Send a follow-up to the named running task or background run under its existing controls. Resolve a risky target tie with bind_input first; a pending instruction must not be sent. This does not cancel work.","parameters":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}`),
 	}, nil
+}
+
+// followWorkerIdentity is the task follow_work steers. workerFollowTask strips
+// a task: prefix and a trailing generation, and the card for that id is the
+// target. Authorization and delivery both call this so they name one task.
+func (r *conversationRuntime) followWorkerIdentity(ctx context.Context, ref string) (string, bool) {
+	taskID, ok := workerFollowTask(ref)
+	if !ok {
+		return "", false
+	}
+	card, err := r.work.Get(ctx, taskID)
+	if err != nil {
+		return "", false
+	}
+	return card.Task.ID, true
 }
 
 func workerFollowTask(id string) (string, bool) {
@@ -722,31 +732,14 @@ func (r *conversationRuntime) workerSessionTask(ctx context.Context, session str
 	return "", nil
 }
 
-// Resolve the same generation-bound task references used by owner controls.
-// Raw task and background-run IDs retain their identity.
+// followTargetTask resolves a follow_work reference to the task delivery steers.
+// Sessions stay session lookups. Every other form uses followWorkerIdentity.
 func (r *conversationRuntime) followTargetTask(ctx context.Context, ref string) (string, error) {
-	// Match execution's precedence when a raw task ID contains a prefix.
-	if card, err := r.work.Get(ctx, ref); err == nil {
-		return card.Task.ID, nil
-	}
 	if session, ok := strings.CutPrefix(ref, "session:"); ok {
 		return r.workerSessionTask(ctx, session)
 	}
-	if task, ok := strings.CutPrefix(ref, "task:"); ok {
-		var card work.Card
-		err := r.db.Read(ctx, func(tx *canon.Tx) error {
-			var err error
-			card, err = work.ReadReference(ctx, tx, task)
-			return err
-		})
-		return card.Task.ID, err
-	}
-	// Execution accepts a bare "<id>:<generation>" and delivers to that task.
-	// Resolve it here so the chosen target is checked before delivery.
-	if taskID, ok := workerFollowTask(ref); ok && taskID != ref {
-		if card, err := r.work.Get(ctx, taskID); err == nil {
-			return card.Task.ID, nil
-		}
+	if taskID, ok := r.followWorkerIdentity(ctx, ref); ok {
+		return taskID, nil
 	}
 	return ref, nil
 }
