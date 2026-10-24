@@ -27,6 +27,11 @@ var (
 	// message text, such as Discord without the message-content intent. The
 	// source states the cause instead of storing records whose bodies are empty.
 	ErrTextUnavailable = errors.New("messenger_text_unavailable")
+	// ErrLiveEnded reports a live subscription that ended without being
+	// stopped, such as after a lost connection. It is not a source failure:
+	// the adapter keeps serving its other reads, and the next scheduled read
+	// restores live events. A revoked session joins it with ErrNeedsSignIn.
+	ErrLiveEnded = errors.New("messenger_live_ended")
 )
 
 // Removals is the one retraction path. Deleted records are hidden through it and

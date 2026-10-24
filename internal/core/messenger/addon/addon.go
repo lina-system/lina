@@ -40,8 +40,8 @@ var ErrStopped = errors.New("messenger add-on stopped")
 
 // ErrLiveEnded reports a live subscription the add-on ended on its own, such
 // as after a lost connection. The add-on keeps serving; the source is read
-// again on its schedule.
-var ErrLiveEnded = errors.New("messenger add-on live events ended")
+// again on its schedule. It is the adapter boundary's own sentinel.
+var ErrLiveEnded = messenger.ErrLiveEnded
 
 // Capabilities is the add-on's own descriptor. Each platform driver narrows it.
 func Capabilities() messenger.Capabilities {

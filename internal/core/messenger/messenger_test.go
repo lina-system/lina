@@ -77,6 +77,16 @@ func (f *fixture) connect(t *testing.T) messenger.Source {
 	return source
 }
 
+// state is the one source's registry state.
+func (f *fixture) state(t *testing.T) messenger.State {
+	t.Helper()
+	sources, err := f.store.Sources(t.Context(), "person")
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("sources: %+v %v", sources, err)
+	}
+	return sources[0].State
+}
+
 func message(id string, route messenger.Route, at time.Time, text string) messenger.Message {
 	return messenger.Message{ID: id, Route: route, At: at, Text: text, Author: messenger.Author{ID: "author-" + id, Name: "someone"}}
 }

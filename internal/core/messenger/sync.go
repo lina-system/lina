@@ -330,8 +330,23 @@ func (s *Service) follow(ctx context.Context, source Source, key string, w *watc
 		if ctx.Err() != nil || errors.Is(err, ErrNotConnected) {
 			return
 		}
-		if err != nil && !channels.Retryable(err) && !errors.Is(err, ErrPageWaiting) {
-			_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
+		if err != nil {
+			if errors.Is(err, ErrNeedsSignIn) {
+				// The platform revoked the session. The source waits for the
+				// person instead of being read again on its schedule.
+				_ = s.store.setState(ctx, source.Person, source.Platform, source.Account, StateNeedsSignIn, "")
+				return
+			}
+			if errors.Is(err, ErrLiveEnded) {
+				// A subscription that ended without being stopped is not a
+				// source failure: the add-on keeps serving, and the next
+				// scheduled read starts a new reader
+				// ([docs/design/integrations.md#the-messenger-add-on]).
+				return
+			}
+			if !channels.Retryable(err) && !errors.Is(err, ErrPageWaiting) {
+				_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
+			}
 		}
 		timer := time.NewTimer(backoff)
 		select {

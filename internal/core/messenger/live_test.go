@@ -121,6 +121,69 @@ func TestDisconnectStopsTheLiveReader(t *testing.T) {
 	}
 }
 
+// A live subscription that ends without being stopped is not a source
+// failure: the source stays connected, and a revoked session needs sign-in.
+func TestEndedLiveSubscriptionLeavesTheSourceState(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause error
+		want  messenger.State
+	}{
+		{"lost connection", messenger.ErrLiveEnded, messenger.StateConnected},
+		{"revoked session", errors.Join(messenger.ErrLiveEnded, messenger.ErrNeedsSignIn), messenger.StateNeedsSignIn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				source := f.connect(t)
+				adapter := &endedLiveAdapter{
+					liveAdapter: &liveAdapter{chats: []messenger.Chat{{ID: "dm-1", Kind: "direct"}}, started: make(chan struct{}, 8)},
+					cause:       tc.cause,
+					release:     make(chan struct{}),
+				}
+				service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Hour)
+				ctx, cancel := context.WithCancel(t.Context())
+				t.Cleanup(cancel)
+
+				// The scheduled read completes and leaves the source connected
+				// before its live reader reports the end.
+				if _, err := service.Sync(ctx, source); err != nil {
+					t.Fatal(err)
+				}
+				<-adapter.started
+				if got := f.state(t); got != messenger.StateConnected {
+					t.Fatalf("state after the read = %q, want connected", got)
+				}
+
+				close(adapter.release)
+				// The reader reports its end and waits to rejoin; the state it
+				// leaves behind is final until the next scheduled read.
+				synctest.Wait()
+				if got := f.state(t); got != tc.want {
+					t.Fatalf("source state after the live end = %q, want %q", got, tc.want)
+				}
+			})
+		})
+	}
+}
+
+// endedLiveAdapter ends its live subscription once released, with a fixed cause.
+type endedLiveAdapter struct {
+	*liveAdapter
+	cause   error
+	release chan struct{}
+}
+
+func (a *endedLiveAdapter) Live(ctx context.Context, _ messenger.SourceID, _ func(messenger.Event) error) error {
+	a.started <- struct{}{}
+	select {
+	case <-a.release:
+		return a.cause
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // Without message text the source states the cause and stores nothing.
 func TestTextUnavailableIsReportedOnTheSource(t *testing.T) {
 	f := newFixture(t)
