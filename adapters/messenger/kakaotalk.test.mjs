@@ -256,6 +256,27 @@ test('a stored session the platform rejects asks for sign-in instead of failing'
   assert.equal(await driver.signInState(), 'needs_sign_in');
 });
 
+test('a timed-out stored-session login is tried again on the next check and the next read', async () => {
+  const { driver, fixture } = open(signedIn({ loginErrors: ['ETIMEDOUT', 'ETIMEDOUT'], chats: [] }));
+  const logins = () => fixture.calls.filter(call => call === 'login').length;
+  await assert.rejects(driver.signInState(), error => error?.code === 'ETIMEDOUT');
+  assert.equal(logins(), 1);
+  // The timeout is not a lasting failure: the next check logs in again.
+  await assert.rejects(driver.signInState(), error => error?.code === 'ETIMEDOUT');
+  assert.equal(logins(), 2);
+  assert.deepEqual(await driver.listChats(), []);
+  assert.equal(logins(), 3);
+  assert.equal(await driver.signInState(), 'signed_in');
+});
+
+test('a stored-session login the platform refuses stays failing', async () => {
+  const { driver, fixture } = open(signedIn({ loginErrors: ['session_rejected'], chats: [] }));
+  assert.equal(await driver.signInState(), 'failing');
+  assert.equal(await driver.signInState(), 'failing');
+  assert.equal(fixture.calls.filter(call => call === 'login').length, 1);
+  await assert.rejects(driver.listChats(), error => error?.code === 'source_failing');
+});
+
 test('an unknown chat class refuses the source rather than guessing its kind', async () => {
   const { driver } = open(signedIn({
     chats: [{ chat_id: '100', type: 'SomeFutureChat', display_name: 'Future', title: null, active_members: 2, last_log_id: '9' }],

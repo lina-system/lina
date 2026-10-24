@@ -108,6 +108,32 @@ const TYPE = { PHOTO: 2, VIDEO: 3, AUDIO: 5, FILE: 18, REPLY: 26, MULTIPHOTO: 27
 // the person signs in again, while every other source keeps running.
 const NEEDS_SIGN_IN: Record<string, true> = { invalid_access_token: true, login_rejected: true };
 
+// A stored-session login that timed out or lost the connection is not a
+// rejected session and is not remembered. The next sign-in check and the next
+// read try the same session. These are the Node and undici codes a socket
+// surfaces on `error.code`.
+const TRANSIENT_LOGIN = new Set([
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'EPIPE',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'EHOSTDOWN',
+  'ENETDOWN',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
+function loginCode(error: unknown): string {
+  return error instanceof Error && Object.hasOwn(error, 'code') ? String(Reflect.get(error, 'code')) : '';
+}
+
 export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
   const credentials = new sdk.KakaoCredentialManager(options.configDir);
   const client = new sdk.KakaoTalkClient();
@@ -142,11 +168,12 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
       ownId = String(account.user_id);
       signedIn = true;
     } catch (error) {
-      const code = error instanceof Error && Object.hasOwn(error, 'code') ? String(Reflect.get(error, 'code')) : '';
+      const code = loginCode(error);
       if (NEEDS_SIGN_IN[code]) {
         failure = 'needs_sign_in';
         throw new Refusal('needs_sign_in', failure);
       }
+      if (TRANSIENT_LOGIN.has(code)) throw error;
       failure = code === '' ? 'sign-in failed' : 'sign-in failed: ' + code;
       throw new Refusal('source_failing', failure);
     }
@@ -258,8 +285,10 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
     if (pending || confirming) return 'needs_sign_in';
     try {
       await ready();
-    } catch {
-      // ready records the cause; the state below reports it.
+    } catch (error) {
+      // A timeout is raised again so this check fails and the next one logs in.
+      // A lasting cause is already recorded; the state below reports it.
+      if (TRANSIENT_LOGIN.has(loginCode(error))) throw error;
     }
     if (signedIn) return 'signed_in';
     if (failure !== '') return failure === 'needs_sign_in' ? 'needs_sign_in' : 'failing';

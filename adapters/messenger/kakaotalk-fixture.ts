@@ -11,6 +11,7 @@
 //	{
 //	  "accounts": { "<account id>": <credentials> },  // stored session
 //	  "expire": true,                                  // stored token rejected
+//	  "loginErrors": ["ETIMEDOUT"],                    // one thrown code per login
 //	  "session": { "error": "..." },                    // live session refused
 //	  "login": { "attempts": [<login result>], "passcode": "4821",
 //             "registration": { "delayMs": 0, "error": null } },
@@ -27,6 +28,9 @@ import type { KakaoSDK } from './src/kakaotalk.ts';
 export type Recorded = {
   accounts?: Record<string, RecordedAccount>;
   expire?: boolean;
+  // loginErrors: transport or login codes thrown by stored-session login, one
+  // per call, before a later call succeeds. Used to prove a timeout is retried.
+  loginErrors?: string[];
   // session: an injected failure of acquireSession, for the live path.
   session?: { error?: string };
   login?: { attempts?: RecordedLogin[]; passcode?: string; registration?: { error?: string; delayMs?: number } };
@@ -90,6 +94,7 @@ export function fixtureSDK(script: Recorded, configDir: string): Fixture {
   let current: string | null = Object.keys(accounts)[0] ?? null;
   let pendingLogin: { device_uuid: string; device_type: string; email: string } | null = null;
   const attempts = [...(script.login?.attempts ?? [])];
+  const loginErrors = [...(script.loginErrors ?? [])];
   let own = '';
 
   const persist = () => {
@@ -144,6 +149,8 @@ export function fixtureSDK(script: Recorded, configDir: string): Fixture {
       if (script.expire) {
         throw Object.assign(new Error('stored session expired'), { code: 'invalid_access_token' });
       }
+      const loginError = loginErrors.shift();
+      if (loginError) throw Object.assign(new Error('stored session login failed'), { code: loginError });
       if (!input.oauthToken || !input.userId) throw Object.assign(new Error('missing token'), { code: 'login_rejected' });
       own = String(input.userId);
       return this;

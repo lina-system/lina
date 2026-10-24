@@ -53,8 +53,11 @@ account.
   the passing rules for the tablet slot. A shape Core does not know refuses the
   batch with `upstream_changed` and keeps the cursor.
 - Whether a stored session can be rejected with a code other than
-  `invalid_access_token` or `login_rejected`. Any other login code is reported
-  as the source failing with its cause, not as needing sign-in.
+  `invalid_access_token` or `login_rejected`. A transport code for a timeout or
+  a dropped connection (`ETIMEDOUT` and the other socket codes named in the
+  driver) is not remembered: the next sign-in check and the next read call
+  `login` again. Any other login code is reported as the source failing with
+  its cause, not as needing sign-in, until the person starts sign-in again.
 - The exact behaviour of the passcode slot when the phone does not confirm
   within the add-on's own timeout. The relay stops after ten minutes and the
   person starts sign-in again; the session never keeps the password.

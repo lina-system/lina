@@ -864,7 +864,11 @@ is refused while it runs, and the flow expires after ten minutes. An expired or
 ended flow is cancelled in the add-on, so the next sign-in starts its own rather
 than resuming abandoned credentials or showing its passcode again. A stored
 session the platform rejects marks only that source as needing sign-in; other
-sources keep reading.
+sources keep reading. A stored-session login that fails because the connection
+timed out or dropped is tried again on the next sign-in check and the next
+read. It does not ask the person to sign in, and it does not stay failed for
+the life of the add-on. Any other login failure stays until the person starts
+sign-in again.
 
 The adapter lists chats, reads a chat forward from a `log_id` cursor, reads
 members, follows live message pushes, and reports a 64-bit log id as an opaque
