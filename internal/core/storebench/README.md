@@ -100,3 +100,66 @@ benchmark endpoint to the product.
 ```sh
 dv heavy -- go test -tags storebench_core ./internal/core/storebench -run TestHeadlessCore -count=1 -v
 ```
+
+## Recall eval
+
+`BenchmarkRecallEval` runs named `recall` configurations over one private
+question set and the same private snapshot. It loads the history through the
+ledger's own admission path into a fresh scratch store, drains the shared
+index, then asks every configuration the same questions. It writes nothing
+outside its scratch directory and prints numbers only: no question, query or
+message text, and no source path.
+
+```sh
+go test -run '^$' -bench '^BenchmarkRecallEval$' -benchtime=1x ./internal/core/storebench \
+  -storebench-hermes=/absolute/offline-snapshot.sqlite \
+  -recall-questions=/absolute/questions.jsonl
+```
+
+The question file is JSON lines, one object per question, never committed:
+
+```json
+{"id":"q01","question":"...","short_query":"...","evidence":["1234","message:5678"]}
+```
+
+`id` and `question` are required, `short_query` is optional, and `evidence`
+lists at least one event: a LINA event id, or the snapshot's own row reference
+as a decimal number, optionally prefixed `message:`. The reader refuses a
+duplicate id, an empty question, missing evidence or a reference the snapshot
+does not hold.
+
+Configurations are the lexical ranking with the question as asked
+(`lexical-question`) and with the short query (`lexical-short`); when a vector
+source is supplied the same two run fused by reciprocal rank
+(`fused-question`, `fused-short`). A question without a short query is left out
+of the short rows rather than reusing the question. Vectors arrive through
+`recall.VectorQuery`, so the command needs no endpoint of its own and runs the
+lexical rows until #874 supplies one.
+
+Each row reports recall at 5, 12 and 20, evidence recall at 12, MRR at 20,
+empty results and latency at p50 and p95 over the questions it ran. Identical
+derived text counts as one document, as `recall` returns it: evidence and
+results are compared by that identity within a conversation. Each pair of
+configurations reports the questions only one finds at 12 and the exact
+two-sided sign test over those discordant pairs.
+
+The run is private: the snapshot and the question file stay where the owner put
+them, and only the numbers leave the machine.
+
+The mode ports the reference's pipeline trial, not its pipeline search:
+
+- **Seen:** AutoRAG's legacy `evaluator.py` evaluates a YAML file of node lines,
+  runs every candidate module over the whole question set, scores retrieval
+  (`evaluation/metric/retrieval.py`) and keeps each candidate's output with a
+  summary table of times; `strategy.py` then keeps the best candidate by mean
+  metric and writes the winning pipeline back as YAML.
+- **Inferred:** LINA keeps the repeatable trial — fixed questions, one corpus,
+  one row per configuration, paired counts — and drops automatic choice: the
+  person or the issue reads the rows, because a one-question difference is
+  noise (#1040). Metrics are the ones the owner's set reports, not the
+  reference's full set: recall at 5, 12 and 20, evidence recall at 12, MRR at
+  20, empty results and latency percentiles.
+- **Unknown:** how the reference scores questions whose evidence is missing
+  from the corpus; LINA counts the missing references and skips only a question
+  left without evidence. The reference's own numbers on Korean questions were
+  not re-measured here.

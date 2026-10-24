@@ -78,7 +78,7 @@ func readSnapshot(ctx context.Context, path string) (_ corpus, err error) {
 	if err != nil {
 		return corpus{}, err
 	}
-	c := corpus{}
+	c := corpus{SourceEvents: map[int64]string{}}
 	sessions := map[string]string{}
 	turnBySession := map[string]int{}
 	bySource := map[int64]message{}
@@ -127,6 +127,7 @@ func readSnapshot(ctx context.Context, path string) (_ corpus, err error) {
 		m := message{fmt.Sprintf("snapshot-event-%08d", len(bySource)), sessions[session], masked.DerivedText(), entry}
 		position[m.ID] = len(bySource)
 		bySource[source] = m
+		c.SourceEvents[source] = m.ID
 		c.Turns[turn] = append(c.Turns[turn], m)
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
