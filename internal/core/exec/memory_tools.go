@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/url"
 	"strconv"
@@ -109,7 +110,24 @@ func (m *Memory) RecallPersonTool(scope memory.RecallScope, now func() int64) (t
 		}
 		answer, err := m.RecallPerson(ctx, scope, PersonRecall{Question: request.Question, Query: request.Query, Depth: request.Depth, History: request.History, At: now()})
 		if err != nil {
-			return tools.Result{State: tools.Failed}, err
+			code := "aux_failed"
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				code = "aux_timeout"
+			case errors.Is(err, context.Canceled):
+				code = "aux_cancelled"
+			case errors.Is(err, ErrAuxUnavailable):
+				code = "aux_unavailable"
+			case errors.Is(err, ErrAuxInvalid):
+				code = "aux_invalid"
+			case errors.Is(err, ErrBackgroundRequired):
+				code = "background_required"
+			}
+			body, encodeErr := json.Marshal(struct {
+				PersonAnswer
+				Error string `json:"error"`
+			}{answer, code})
+			return tools.Result{State: tools.Failed, Body: body}, errors.Join(err, encodeErr)
 		}
 		body, err := json.Marshal(answer)
 		if err != nil {

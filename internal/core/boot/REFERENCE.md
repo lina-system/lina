@@ -136,3 +136,33 @@ provider through topic selection, recall, summary expansion, restart, export and
 replay. Storebench's `topic_memory_read` reports the shared ranked-id and scoped
 item retrieval latency; it does not measure full turn preparation or claim
 owner-question recall quality.
+
+
+## Person recall auxiliary
+
+The live read family and replay both bind `recall_person` to the configured
+conversation route. `exec.NewRecallAuxiliary` uses one fixed instruction and a
+separate source pack, requires a terminal structured response, and closes the
+stream on every outcome. The memory flow still filters unknown citations and
+mismatched revisions; only sentences with a remaining citation reach the caller.
+Live requests use the shared budget with a conservative input reservation plus
+4,096 output tokens and the existing 1,048,576-token auxiliary allowance. Missing
+usage retains the reservation charge. Replay records metadata without budget
+writes. Source visibility is checked before model dispatch and after completion.
+
+Behavioral reference, read before implementation: the supplied Hermes Honcho
+`dialectic.py` (`_run_dialectic_depth`, `_consume_pending_dialectic`) and
+`client.py` (`dialectic_depth`).
+
+- Seen: depth one uses one reasoning pass; deeper levels can combine multiple
+  passes. Background results are consumed only when ready and expire by turn age.
+- Inferred mapping: LINA makes one foreground request over permitted sources,
+  with structured sentence citations, and creates no memory fact as a read effect.
+- Unknown: Honcho server reasoning and relative answer quality. Its deeper
+  passes and background cadence are outside this change.
+
+`TestM1RecallPersonAuxiliaryInstalledCore` runs an installed Core against a
+fixture HTTP provider. It checks live registration, actual model dispatch,
+citation filtering, and cancellation of a silent auxiliary with preserved
+sources in the failed tool receipt. Virtual-clock unit coverage tests the exact
+auxiliary deadline without sleeping; boot coverage checks replay and accounting.

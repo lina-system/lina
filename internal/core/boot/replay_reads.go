@@ -10,7 +10,6 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/compaction"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
-	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/grant"
@@ -19,7 +18,7 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
-func (r *conversationRuntime) replayReads(source replay.Source, ep replay.Episode) (map[string]loop.Tool, error) {
+func (r *conversationRuntime) replayReads(source replay.Source, ep replay.Episode, usage func(provider.Meta)) (map[string]loop.Tool, error) {
 	registry := tools.NewRegistry(replay.ReadGate{}, r.activities)
 	reads := map[string]loop.Tool{}
 	add := func(spec tools.Spec, handler tools.Handler) error {
@@ -75,8 +74,10 @@ func (r *conversationRuntime) replayReads(source replay.Source, ep replay.Episod
 	if err := add(spec, handler); err != nil {
 		return nil, err
 	}
-	mem := coreexec.NewMemory(r.db, r.materials, nil)
-	spec, handler = mem.RecallPersonTool(memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true}, func() int64 { return ep.Clock.Unix() })
+	if usage == nil {
+		usage = func(provider.Meta) {}
+	}
+	spec, handler = r.recallPersonTool("replay:"+ep.TurnID, func() int64 { return ep.Clock.Unix() }, usage)
 	if err := add(spec, handler); err != nil {
 		return nil, err
 	}

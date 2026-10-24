@@ -93,3 +93,34 @@ func TestRecallToolBindsScopeAndRejectsUnknownArguments(t *testing.T) {
 		t.Fatalf("foreign source quote: %+v", answer)
 	}
 }
+
+func TestRecallToolPreservesSourcesOnAuxiliaryFailure(t *testing.T) {
+	for _, failure := range []struct {
+		name string
+		err  error
+		code string
+	}{{"timeout", context.DeadlineExceeded, "aux_timeout"}, {"unavailable", ErrAuxUnavailable, "aux_unavailable"}, {"provider", errors.New("private provider detail"), "aux_failed"}} {
+		t.Run(failure.name, func(t *testing.T) {
+			flow := newMemory(memoryDB(t), source, nil, func(context.Context, RecallRequest) ([]Sentence, error) { return nil, failure.err })
+			if _, err := flow.Remember(t.Context(), rememberInput("likes tea")); err != nil {
+				t.Fatal(err)
+			}
+			spec, handler := flow.RecallPersonTool(memory.RecallScope{Agent: "A", Person: "person"}, func() int64 { return 100 })
+			in, err := spec.Schema(json.RawMessage(`{"question":"What drink?","query":"tea","depth":1}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			l := lease.New(func() {})
+			defer l.Release()
+			result, err := handler(t.Context(), l, in)
+			var body struct {
+				Sources []RecallSource
+				Answer  []Sentence
+				Error   string `json:"error"`
+			}
+			if !errors.Is(err, failure.err) || result.State != tools.Failed || json.Unmarshal(result.Body, &body) != nil || len(body.Sources) != 1 || len(body.Answer) != 0 || body.Error != failure.code {
+				t.Fatalf("lost fallback: state=%s body=%s err=%v", result.State, result.Body, err)
+			}
+		})
+	}
+}

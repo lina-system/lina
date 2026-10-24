@@ -1200,6 +1200,11 @@ LINA deliberately does not adopt a separately mutable peer card or duplicate con
 
 The first Core tool requires a nonempty retrieval query alongside the question; an omitted query is refused before selecting or limiting candidates. It caps depth 1 at 12 retrieved memory items and ledger hits combined and a 10-second auxiliary deadline; the call makes no tools or retries. Sentences are structured with their citations. Unknown ids and mismatched revisions are removed, and a sentence without a remaining citation is not returned. Depths above 1 return a background-required outcome for the conversation flow. Standing-profile views use the latest committed revision order and caller-supplied line and tokenizer limits, without persisting a profile copy.
 
+Live turns and development replay register the same `recall_person` reader. Depth 1 uses the conversation's explicitly configured model and account, including its direct model-API route when selected. It never silently switches to another model or account. A fixed instruction asks only for short, source-supported sentences in the question's language; the separate data item contains the question, source ids and revisions, source text and older-source flags. No conversation history, persona, tools or tool bridge enters this request. Incomplete, malformed or tool-calling responses supply no answer.
+
+If the auxiliary reaches its deadline, the tool returns its permitted depth-0 source pack, no answer and the typed `aux_timeout` error with a failed receipt. Other auxiliary failures similarly return sources with `aux_unavailable`, `aux_cancelled`, `aux_invalid` or `aux_failed`; provider diagnostics do not enter the tool body. A concurrent retraction discards both the answer and source pack. Live calls reserve and settle auxiliary usage against the shared budget; replay usage belongs only in its output artifact. The 10-second cap also applies to runtime routes; slower calls fall back to sources, with no retry.
+
+
 ### Learning the person
 
 What an agent learns about its person, and how. What is learned is stored as memory items or as records, under the rules of this contract; the structure of the person model is defined by the memory model above.

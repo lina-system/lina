@@ -68,7 +68,7 @@ func TestLiveTopicRecall(t *testing.T) {
 			if found != tc.match {
 				t.Errorf("topic evidence=%v, want %v", found, tc.match)
 			}
-			for _, name := range []string{"recall", "expand"} {
+			for _, name := range []string{"recall", "expand", "recall_person"} {
 				_, bound := s.bindings[name]
 				declared := false
 				for _, decl := range prepared.Request.Tools {
