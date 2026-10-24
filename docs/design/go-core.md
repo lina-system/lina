@@ -2357,7 +2357,7 @@ type Adapter interface {
 - Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches).
   Claude Code, Cursor, Gemini CLI, Grok and added agents through the one ACP adapter of C-60.
   Antigravity as a headless child with streaming output.
-  The Claude Code headless adapter below remains until the worker evaluation chooses between it and the ACP profile.
+  The Claude Code headless adapter below stays an explicit selection; the worker evaluation kept the ACP profile ([worker-evaluation.md](../../evidence/worker-evaluation.md)).
 - Implementation notes: [C-29 session integration](../../internal/core/worker/REFERENCE.md#c-29-session-integration).
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)).
   Approvals go to the originating conversation.
