@@ -10,8 +10,8 @@ import (
 
 // MessengerConfig supplies the adapters Core reads messenger sources with. The
 // source registry, admission and the sync loop are Core's; adapters are the
-// platform boundary. No platform adapter ships yet, so an installed Core starts
-// an idle loop until an add-on or a ported adapter provides one.
+// platform boundary. Teams runs account-specific workers through the installed
+// Teams service; this seam also supports independently supplied adapters.
 type MessengerConfig struct {
 	// Adapters are keyed by platform.
 	Adapters map[string]messenger.Adapter

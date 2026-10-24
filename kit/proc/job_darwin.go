@@ -64,7 +64,14 @@ type jobRequest struct {
 	Path, Dir, Temp   string
 	Ctl, In, Out, Err string
 	Label, Domain     string
-	Args, Env         []string
+	Args              []string
+}
+
+// jobEnvironment travels on the control connection after the job connects, so
+// no credential is ever written to a file another process of the same user
+// could read while the command runs.
+type jobEnvironment struct {
+	Env []string
 }
 
 type jobRecord struct {
@@ -137,6 +144,7 @@ type jobProcess struct {
 	streams                   map[string]*jobStream // "in", "out" and "err"
 	stdin                     io.Reader
 	stdout, stderr            io.Writer
+	environment               []string
 	stdinMu                   sync.Mutex
 	stdinErr                  error
 	stdinRelay                *ownedFileRelay
@@ -166,7 +174,8 @@ func newProcess(c Command) (process, error) {
 		p.release()
 		return nil, err
 	}
-	request := jobRequest{Path: c.Path, Dir: c.Dir, Temp: dir, Label: p.label, Args: c.Args, Env: c.Env}
+	p.environment = c.Env
+	request := jobRequest{Path: c.Path, Dir: c.Dir, Temp: dir, Label: p.label, Args: c.Args}
 	for _, stream := range []struct {
 		name   string
 		path   *string
@@ -332,6 +341,10 @@ func (p *jobProcess) start() error {
 		return errors.New("start launchd job: the job did not connect")
 	}
 	p.ctl, p.decoder = ctl, json.NewDecoder(ctl)
+	if err := json.NewEncoder(ctl).Encode(jobEnvironment{Env: p.environment}); err != nil {
+		p.teardown()
+		return fmt.Errorf("start launchd job: send environment: %w", err)
+	}
 	for name, stream := range p.streams {
 		conn, ok := <-stream.accepted
 		if !ok || conn == nil {
@@ -704,7 +717,8 @@ func (p *jobProcess) release() {
 
 // JobMain implements the explicit proc-job subcommand a launchd job runs. It is
 // registered by both `lina` and `lina-node`, as proc-supervise is on Linux. The
-// job request arrives through a private file named in argv.
+// job request arrives through a private file named in argv, and the command's
+// environment arrives on the control connection so no credential reaches disk.
 func JobMain(args []string, diagnostic io.Writer) int {
 	flags := flag.NewFlagSet(jobHelper, flag.ContinueOnError)
 	flags.SetOutput(diagnostic)
@@ -728,6 +742,11 @@ func JobMain(args []string, diagnostic io.Writer) int {
 		return 70
 	}
 	defer ctl.Close()
+	var environment jobEnvironment
+	if err := json.NewDecoder(ctl).Decode(&environment); err != nil {
+		fmt.Fprintln(diagnostic, "proc-job:", err)
+		return 70
+	}
 	if err := inheritStreams(request); err != nil {
 		fmt.Fprintln(diagnostic, "proc-job:", err)
 		return 70
@@ -751,13 +770,14 @@ func JobMain(args []string, diagnostic io.Writer) int {
 		endJob(request.Domain, request.Label, request.Temp)
 		os.Exit(0)
 	}()
-	if request.Env == nil {
-		// A nil environment would make the command inherit the job's own, so
-		// an absent list is the same empty environment Linux gives it.
-		request.Env = []string{}
+	// An absent environment would make the command inherit the job's own, so it
+	// is the same empty environment Linux gives a command.
+	env := environment.Env
+	if env == nil {
+		env = []string{}
 	}
 	command := exec.Command(request.Path, request.Args...)
-	command.Dir, command.Env = request.Dir, request.Env
+	command.Dir, command.Env = request.Dir, env
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := command.Start(); err != nil {
 		record := jobRecord{Event: eventFailed, Error: err.Error()}

@@ -5,8 +5,12 @@
 package proc
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/rand"
+	"encoding/json"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -193,5 +197,117 @@ func assertInputStaysWithCaller(t *testing.T, reader, writer *os.File, client *n
 	n, err := reader.Read(buf)
 	if err != nil || string(buf[:n]) != "two" {
 		t.Fatalf("caller read %q, %v", buf[:n], err)
+	}
+}
+
+// TestJobDirectoryKeepsNoEnvironment is the credential-isolation check for the
+// macOS job: the command's environment travels over the control connection, so
+// nothing the job writes into its private directory - the request file, the job
+// definition or a stream socket - carries a credential-bearing value. The
+// command still receives the value it was given.
+func TestJobDirectoryKeepsNoEnvironment(t *testing.T) {
+	secret := rand.Text()
+	input, control, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	defer control.Close()
+	output, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	defer writer.Close()
+	if err := output.SetReadDeadline(time.Now().Add(40 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	p, err := newProcess(Command{
+		Path: "/bin/sh", Args: []string{"-c", `printf '%s\n' "$LINA_PROC_SENTINEL"; read -r release || :`},
+		Dir: t.TempDir(), Env: []string{"LINA_PROC_SENTINEL=" + secret}, Stdin: input, Stdout: writer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, ok := p.(*jobProcess)
+	if !ok {
+		t.Fatalf("newProcess returned %T", p)
+	}
+	defer job.release()
+	requireNoJobDirectoryValue(t, job.dir, secret)
+	if err := job.start(); err != nil {
+		t.Fatal(err)
+	}
+	// Receipt of the value proves the command started with its environment.
+	// It cannot exit until we close control, so the scan cannot race its exit.
+	line, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line != secret+"\n" {
+		t.Fatal("the command did not receive its environment")
+	}
+	requireNoJobDirectoryValue(t, job.dir, secret)
+	if err := control.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := job.wait(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-job.streams["in"].pump; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// requireNoJobDirectoryValue fails when a regular file under dir holds text.
+// Non-regular entries are sockets, which carry bytes but store none.
+func requireNoJobDirectoryValue(t *testing.T, dir, text string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "request.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request map[string]json.RawMessage
+	if err := json.Unmarshal(data, &request); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := request["Env"]; ok {
+		t.Error("request.json contains an environment field")
+	}
+	if err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || entry.Type()&os.ModeSocket != 0 {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(data, []byte(text)) {
+			t.Errorf("%s holds the command's environment", filepath.Base(path))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestJobNilEnvironmentIsEmpty(t *testing.T) {
+	var out bytes.Buffer
+	p, err := newProcess(Command{Path: "/usr/bin/env", Stdout: &out})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.release()
+	if err := p.start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.wait(); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("nil Env inherited %d bytes of the job's environment", out.Len())
 	}
 }
