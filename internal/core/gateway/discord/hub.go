@@ -124,7 +124,7 @@ type hub struct {
 
 	mu       sync.Mutex
 	members  []*member
-	socket   context.CancelFunc
+	socket   *live
 	position cursor
 
 	pendingMu   sync.Mutex
@@ -200,7 +200,7 @@ func (h *hub) attach(intents Intents, handle Handler) *member {
 	changed := before != h.unionLocked()
 	h.mu.Unlock()
 	if changed {
-		h.interrupt()
+		h.handover()
 	}
 	return m
 }
@@ -221,10 +221,14 @@ func (h *hub) detach(m *member) {
 		h.stopOnce.Do(func() { close(h.stop) })
 	}
 	m.close()
-	if empty || before != h.unionLocked() {
-		if h.socket != nil {
-			h.socket()
+	l := h.socket
+	h.socket = nil
+	if empty {
+		if l != nil {
+			l.cancel()
 		}
+	} else if before != h.unionLocked() && l != nil {
+		l.handover()
 	}
 	h.mu.Unlock()
 	hubs.Unlock()
@@ -287,12 +291,27 @@ func (m *member) close() {
 	m.mu.Unlock()
 }
 
+// interrupt stops the current socket at once. The hub uses it when it stops or
+// a subscriber fell too far behind, not for an intent change.
 func (h *hub) interrupt() {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.socket != nil {
-		h.socket()
-		h.socket = nil
+	l := h.socket
+	h.socket = nil
+	h.mu.Unlock()
+	if l != nil {
+		l.cancel()
+	}
+}
+
+// handover replaces the current socket with a close handshake, so the platform
+// ends this session before the next Identify.
+func (h *hub) handover() {
+	h.mu.Lock()
+	l := h.socket
+	h.socket = nil
+	h.mu.Unlock()
+	if l != nil {
+		l.handover()
 	}
 }
 
@@ -657,6 +676,22 @@ func (h *hub) reset(ctx context.Context) error {
 	})
 }
 
+// live is one open socket. A hub replaces it when its subscribers' intents
+// change: the replacement ends with a close handshake, so the platform closes
+// the old session before the next Identify. A hub that stops simply cancels it.
+type live struct {
+	cancel  context.CancelFunc
+	replace chan struct{}
+	once    sync.Once
+}
+
+func (l *live) handover() { l.once.Do(func() { close(l.replace) }) }
+
+// closeGrace bounds the close handshake a replaced socket waits for. The
+// platform has to end the old session before the next Identify, and a peer
+// that does not answer must not hold the reconnect.
+const closeGrace = 2 * time.Second
+
 // serve runs one socket until it closes. A nil return means the requested
 // intents changed, so the caller replaces the socket with a fresh Identify.
 func (h *hub) serve(asked Intents) error {
@@ -667,7 +702,8 @@ func (h *hub) serve(asked Intents) error {
 		h.mu.Unlock()
 		return nil
 	}
-	h.socket = cancel
+	l := &live{cancel: cancel, replace: make(chan struct{})}
+	h.socket = l
 	h.mu.Unlock()
 	position := h.resume(ctx)
 	dialCtx, cancelDial := context.WithTimeout(ctx, 30*time.Second)
@@ -679,13 +715,66 @@ func (h *hub) serve(asked Intents) error {
 		}
 		return errUnavailable
 	}
-	defer conn.CloseNow()
 	conn.SetReadLimit(1 << 20)
+	// A socket this hub replaces ends with a close handshake, so the platform
+	// has closed the old session before the next Identify. A socket the
+	// platform or an error ends is closed at once.
+	joined := make(chan struct{})
+	reader := false
+	var replaced, handed atomic.Bool
+	defer func() {
+		cancel()
+		// A close handshake in flight ends this socket itself; closing it here
+		// as well would wait behind that handshake.
+		if !handed.Load() {
+			conn.CloseNow()
+		}
+		if reader {
+			<-joined
+		}
+	}()
+	var handoverOnce sync.Once
+	handover := func() {
+		handoverOnce.Do(func() {
+			replaced.Store(true)
+			handed.Store(true)
+			closed := make(chan struct{})
+			go func() {
+				defer close(closed)
+				_ = conn.Close(websocket.StatusNormalClosure, "")
+			}()
+			timer := time.NewTimer(closeGrace)
+			select {
+			case <-joined:
+			case <-closed:
+			case <-timer.C:
+			}
+			timer.Stop()
+			cancel()
+		})
+	}
+	watchDone := make(chan struct{})
+	defer close(watchDone)
+	go func() {
+		select {
+		case <-l.replace:
+		case <-h.stop:
+			// The hub stopped while this socket ran; end it even though the
+			// stop could not reach the live socket itself.
+			cancel()
+			return
+		case <-watchDone:
+			return
+		case <-ctx.Done():
+			return
+		}
+		handover()
+	}()
 	helloCtx, cancelHello := context.WithTimeout(ctx, 30*time.Second)
 	var hello frame
 	err = wsjson.Read(helloCtx, conn, &hello)
 	cancelHello()
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || replaced.Load() {
 		return nil
 	}
 	if code := websocket.CloseStatus(err); code != -1 {
@@ -701,9 +790,14 @@ func (h *hub) serve(asked Intents) error {
 	// would ask Discord for fewer intents than the session has to serve, and a
 	// resume that changes them is refused, so dial again with the whole set.
 	h.mu.Lock()
-	changed := h.unionLocked() != asked || len(h.members) == 0
+	changed := h.unionLocked() != asked
+	empty := len(h.members) == 0
 	h.mu.Unlock()
 	if changed {
+		handover()
+		return nil
+	}
+	if empty {
 		return nil
 	}
 	var seq atomic.Int64
@@ -717,7 +811,7 @@ func (h *hub) serve(asked Intents) error {
 		}
 		return wsjson.Write(ctx, conn, map[string]any{"op": 1, "d": n})
 	}
-	joined := make(chan struct{})
+	reader = true
 	go func() {
 		defer close(joined)
 		timer := time.NewTicker(time.Duration(beat.Interval) * time.Millisecond)
@@ -735,7 +829,6 @@ func (h *hub) serve(asked Intents) error {
 			}
 		}
 	}()
-	defer func() { cancel(); conn.CloseNow(); <-joined }()
 	headers := make(http.Header)
 	if secret.InjectHeader(headers, "Authorization", "", h.token) != nil {
 		return errUnavailable
@@ -755,7 +848,7 @@ func (h *hub) serve(asked Intents) error {
 	for {
 		var f frame
 		if err := wsjson.Read(ctx, conn, &f); err != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil || replaced.Load() {
 				return nil
 			}
 			return h.readError(ctx, err)
@@ -795,6 +888,7 @@ func (h *hub) serve(asked Intents) error {
 			changed := h.unionLocked() != asked
 			h.mu.Unlock()
 			if changed {
+				handover()
 				return nil
 			}
 		}

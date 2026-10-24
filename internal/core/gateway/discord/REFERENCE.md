@@ -53,8 +53,10 @@ A close 4014 (disallowed intents) removes only the subscribers that asked for
 the refused privileged intent: each is told `ErrIntentsDenied`, so its source
 reports text unavailable, and the session reconnects with the remaining
 subscribers' intents so a channel worker on the same token keeps running. A
-socket this hub interrupts for an intent change reconnects with the current
-union instead of failing every subscriber.
+A socket this hub interrupts for an intent change reconnects with the current
+union instead of failing every subscriber. The replaced socket ends with a close
+handshake before the next Identify, so the platform has ended the old session
+before the new one starts and a token never shows two sessions, even briefly.
 A subscriber that cannot store a dispatch yet returns `channels.Retry`. Each
 subscriber has its own delivery worker, so the socket's read loop and the other
 subscribers keep running while that dispatch waits: later messages arrive and
