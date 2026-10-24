@@ -266,7 +266,7 @@ func freshTextRequest(req provider.Request) provider.Request {
 	// Retain trusted instructions separately. The summary includes task inputs
 	// and actual tool receipts, never assistant text or opaque reasoning state.
 	var trusted []provider.Item
-	var state []string
+	var inputs, receipts []string
 	for _, raw := range req.Items {
 		var v struct {
 			Role, Type, Output string
@@ -283,18 +283,24 @@ func freshTextRequest(req provider.Request) provider.Request {
 			continue
 		}
 		if v.Role == "user" {
-			state = append(state, "Task/input: "+assistantText(fields["content"]))
+			inputs = append(inputs, "Task/input: "+assistantText(fields["content"]))
 		}
 		if v.Type == "function_call_output" || v.Type == "custom_tool_call_output" {
 			_ = json.Unmarshal(fields["output"], &v.Output)
 			_ = json.Unmarshal(fields["call_id"], &v.ID)
-			state = append(state, "Recorded tool result "+v.ID+": "+v.Output)
+			receipts = append(receipts, "Recorded tool result "+v.ID+": "+v.Output)
 		}
 	}
-	// Bound the summary without relabelling truncated output as complete proof.
-	if len(state) > 12 {
-		state = append(state[:1], state[len(state)-11:]...)
+	// Inputs and receipts have separate budgets: a long tool round must never
+	// displace the latest task or steering in favor of an old conversation input.
+	if len(inputs) > 4 {
+		inputs = inputs[len(inputs)-4:]
 	}
+	if len(receipts) > 8 {
+		receipts = receipts[len(receipts)-8:]
+	}
+	state := append(inputs, receipts...)
+	// Bound each entry without presenting truncated output as complete proof.
 	for i, value := range state {
 		if len(value) > 2048 {
 			state[i] = strings.ToValidUTF8(value[:2048], "") + " [truncated]"

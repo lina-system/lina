@@ -34,7 +34,8 @@ indices without retaining contaminated state. A recovered call becomes a canonic
 item with a fresh ID and travels through `Run`'s existing journal and execution.
 
 An unusable call opens one fresh request through the same stream function with a
-bounded task/receipt summary. Server-session, reasoning and stale cache-mark
+bounded task/receipt summary, reserving separate space for recent task/steering
+inputs and receipts so tool output cannot displace the current request. Server-session, reasoning and stale cache-mark
 positions are cleared. The first stream is closed before the next opens. A second
 unusable call returns `ErrTextCall`; cancellation and transport errors never
 trigger this continuation. Nested installation preserves one recovery allowance.

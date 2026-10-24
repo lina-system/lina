@@ -355,3 +355,25 @@ func TestFreshContinuationDropsPriorReasoningItems(t *testing.T) {
 		}
 	}
 }
+
+func TestFreshContinuationKeepsTaskSeparateFromReceiptBudget(t *testing.T) {
+	items := []provider.Item{json.RawMessage(`{"role":"user","content":"unrelated old task"}`), json.RawMessage(`{"role":"user","content":"CURRENT TASK: inspect the fixture"}`), json.RawMessage(`{"role":"user","content":"STEERING: preserve the evidence"}`)}
+	for range 12 {
+		items = append(items, json.RawMessage(`{"type":"function_call_output","call_id":"verified","output":"{\"code\":\"ok\",\"output\":\"receipt\"}"}`))
+	}
+	requests := 0
+	_, err := loop.Run(t.Context(), loop.Config{Request: provider.Request{Items: items}, Stream: textcall.Guard(func(_ context.Context, q provider.Request) (provider.Stream, error) {
+		requests++
+		if requests == 1 {
+			return message("[tool_use"), nil
+		}
+		raw, _ := json.Marshal(q.Items)
+		if !strings.Contains(string(raw), "CURRENT TASK") || !strings.Contains(string(raw), "STEERING") {
+			t.Errorf("active task or steering lost: %s", raw)
+		}
+		return message("Recovered."), nil
+	})})
+	if err != nil || requests != 2 {
+		t.Fatalf("requests=%d err=%v", requests, err)
+	}
+}
