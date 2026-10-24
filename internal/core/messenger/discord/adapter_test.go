@@ -146,12 +146,6 @@ func mustAdapter(t *testing.T, db *canon.Store, tr http.RoundTripper) *messenger
 	return a
 }
 
-func (f *fixture) paths() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.requested...)
-}
-
 const guilds = `[{"id":"g1","name":"Guild"}]`
 const guildChannels = `[{"id":"100","name":"general","type":0},{"id":"300","name":"voice","type":2},{"id":"500","name":"news","type":5}]`
 const activeThreads = `{"threads":[{"id":"400","name":"topic","type":11,"parent_id":"100"}]}`
