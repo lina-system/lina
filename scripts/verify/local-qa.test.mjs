@@ -2,12 +2,12 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, linkSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { developmentRepository, sandbox } from '../test-fixture.mjs';
-import { executeLocalRun, readLocalHistory, readSandboxJSON, runLocalQA, runLocalShards } from './local-qa.mjs';
+import { executeLocalRun, readLocalHistory, readSandboxJSON, runLocalQA, runLocalShards, toolPath } from './local-qa.mjs';
 
 function fixture(t) {
   const sb = sandbox(t);
@@ -162,6 +162,25 @@ test('only bounded regular sandbox output is imported, without following links o
   assert.throws(() => readSandboxJSON(fifo), /regular file/);
 });
 
+test('tools resolve from PATH without an external which command', { skip: process.platform === 'win32' }, t => {
+  const sb = sandbox(t);
+  const bin = join(sb.dir, 'bin');
+  const real = join(sb.dir, 'real-tool');
+  mkdirSync(bin);
+  writeFileSync(real, '#!/bin/sh\n');
+  chmodSync(real, 0o755);
+  symlinkSync(real, join(bin, 'linked-tool'));
+  mkdirSync(join(bin, 'directory-tool'));
+  writeFileSync(join(bin, 'plain-tool'), '');
+  const path = process.env.PATH;
+  t.after(() => { process.env.PATH = path; });
+  process.env.PATH = ['relative', join(sb.dir, 'missing'), bin].join(':');
+  assert.equal(toolPath('linked-tool'), realpathSync(real));
+  for (const name of ['directory-tool', 'plain-tool', 'absent-tool']) {
+    assert.throws(() => toolPath(name), /unavailable: /);
+  }
+});
+
 test('a rejected shard output still waits for every independent worker before cleanup', async () => {
   const plan = { tasks: ['one', 'two', 'three'].map(id => ({ id })) };
   const executed = [];
@@ -177,6 +196,7 @@ test('the real sandbox selects and runs a clean synthetic candidate without host
   const f = fixture(t);
   const secret = join(f.sb.dir, 'operator-secret');
   f.sb.write(f.sb.dir, 'operator-secret', 'private fixture');
+  const hostNpm = spawnSync(join(dirname(realpathSync(process.execPath)), 'npm'), ['--version'], { encoding: 'utf8' });
   f.sb.commit(f.work, 'test: sandbox boundary', { 'scripts/boundary.test.mjs': `// SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
@@ -187,6 +207,11 @@ assert.equal(process.env.HOME, '/home/qa');
 const profile = spawnSync('apparmor_parser', ['--skip-kernel-load', '--skip-cache',
   'scripts/verify/bwrap.apparmor'], { encoding: 'utf8' });
 assert.equal(profile.status, 0, profile.stderr);
+const expectedNpm = ${JSON.stringify(hostNpm.status === 0 ? hostNpm.stdout.trim() : null)};
+if (expectedNpm) {
+  const npm = spawnSync('npm', ['--version'], { encoding: 'utf8' });
+  assert.equal(npm.stdout?.trim(), expectedNpm, String(npm.error ?? npm.stderr));
+}
 ` });
   f.sb.g(f.work, 'push', '-q', 'origin', 'dev');
   const result = await runLocalQA({ ...f.options, execute: executeLocalRun, report: async ({ root, runDirectory }) => {

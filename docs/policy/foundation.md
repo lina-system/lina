@@ -196,8 +196,10 @@ another shard fails. `--jobs` bounds simultaneous shards (default two) and each
 gets a share of the available CPUs. Each command retains a bounded deadline.
 Bubblewrap exposes only the candidate, tools, public dependency caches and the
 command's temporary output directory, with isolated home, temporary files and
-PID namespace. Host-owned state, run metadata, logs and retained results are
-not mounted into the sandbox. Shards receive a read-only sealed plan. After
+PID namespace. The tools are the system `/usr`, the running Node executable, the
+npm package installed beside it when that is outside `/usr`, actionlint found on
+`PATH` and the Go toolchain. Host-owned state, run metadata, logs and retained
+results are not mounted into the sandbox. Shards receive a read-only sealed plan. After
 each command exits, the host imports only bounded regular output files through
 no-follow file descriptors; links and special files are rejected. Host writes
 use exclusive file creation and atomic replacement.
