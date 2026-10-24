@@ -27,16 +27,6 @@ func (a *Adapter) Live(ctx context.Context, id messenger.SourceID, deliver func(
 	})
 }
 
-func (a *Adapter) listed() []string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	ids := make([]string, 0, len(a.chats))
-	for id := range a.chats {
-		ids = append(ids, id)
-	}
-	return ids
-}
-
 // live maps a dispatch to a messenger event for a chat this source reads.
 func (a *Adapter) live(ctx context.Context, kind string, data json.RawMessage, deliver func(messenger.Event) error) error {
 	switch kind {
