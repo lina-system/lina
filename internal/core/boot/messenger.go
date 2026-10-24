@@ -225,7 +225,7 @@ func (r *conversationRuntime) botSource(source messenger.Source, transport http.
 // Messenger is the running source loop, when Core started one.
 func (r *conversationRuntime) Messenger() *messenger.Service { return r.messenger }
 
-// Identity is the sender-identity store the messenger loop matches with.
+// SenderIdentity is the sender-identity store the messenger loop matches with.
 func (r *conversationRuntime) SenderIdentity() *identity.Store { return r.senderIdentity }
 
 // resolveMessenger selects an adapter per source: a platform adapter when one

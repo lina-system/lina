@@ -3,7 +3,10 @@
 // Package retract coordinates content removal with the durable removal list.
 package retract
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+)
 
 var (
 	ErrInvalid  = errors.New("invalid_retraction")
@@ -46,6 +49,9 @@ const (
 	restore    action = "restore"
 	erase      action = "erase"
 	disconnect action = "disconnect"
+	// suppress hides cited items for a wrong-match repair. It does not record
+	// their evidence events or conversations as forgotten.
+	suppress action = "suppress"
 )
 
 type entry struct {
@@ -55,6 +61,10 @@ type entry struct {
 	At      int64    `json:"at"`
 	Person  string   `json:"person"`
 	Targets []Target `json:"targets"`
+	// Repair is an optional caller intent journaled with this removal.
+	// It holds ids and actions, never content. Recovery applies it in the
+	// same transaction as the targets. Empty for an ordinary forget.
+	Repair json.RawMessage `json:"repair,omitempty"`
 }
 
 func (e entry) valid() bool {
@@ -62,7 +72,7 @@ func (e entry) valid() bool {
 		return false
 	}
 	switch e.Action {
-	case forget, restore, erase, disconnect:
+	case forget, restore, erase, disconnect, suppress:
 	default:
 		return false
 	}

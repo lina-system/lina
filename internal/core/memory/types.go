@@ -14,6 +14,7 @@ import (
 
 var (
 	ErrInvalid        = errors.New("invalid_memory_item")
+	ErrNotFound       = errors.New("memory_item_not_found")
 	ErrEvidence       = errors.New("invalid_memory_evidence")
 	ErrPersonEvidence = errors.New("person_memory_requires_person_events")
 	ErrScope          = errors.New("memory_scope_refused")

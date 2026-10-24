@@ -123,6 +123,21 @@ sits in its chat, in order, as a record. `AdmitPage` refuses a page that pairs
 the flag with text, and the add-on's wire check refuses the same, so a failure
 can never become an empty message that reads as something someone sent.
 
+## Sender identity
+
+`Store.WithIdentities` composes `internal/core/messenger/identity`. Every
+admitted person or external-participant record observes its author inside the
+page's transaction, so a record and the identity it was seen with commit
+together; the person's own account is recorded as `Self` and never linked as
+another person, including when the message is a write LINA sent in that
+account's name. A later observation that omits the mark does not change it.
+The identity scope is the source's `workspace`, which the
+platform's ids are scoped by. After each sync pass the service asks identity to
+rematch identities that have no link, so a people record the person creates
+after the messages arrive still links without a restart. Core gives the same
+identity store to the sync loop, the Teams service and the Webex service, and
+the Teams worker rematches after each pass.
+
 ## Live events
 
 `AdmitEvent` admits one pushed message or deletion through the same admission
@@ -154,19 +169,6 @@ are tracked by #1070 and the per-platform issues.
 
 The [Telegram adapter](telegram/REFERENCE.md) uses the same live admission path,
 with account-wide deletion namespaces and persistent update recovery.
-
-## Sender identity
-
-`Store.WithIdentities` composes `internal/core/messenger/identity`. Every
-admitted person or external-participant record observes its author inside the
-page's transaction, so a record and the identity it was seen with commit
-together; the person's own account is recorded as `Self` and never linked as
-another person. The identity scope is the source's `workspace`, which the
-platform's ids are scoped by. After each sync pass the service asks identity to
-rematch identities that have no link, so a people record the person creates
-after the messages arrive still links without a restart. Core gives the same
-identity store to the sync loop, the Teams service and the Webex service, and
-the Teams worker rematches after each of its passes.
 
 Sender profile emails, when supplied by an adapter, are stored as evidence in
 `messenger_author` with the source account and platform author ID. They do not

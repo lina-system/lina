@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/messenger/identity"
 )
@@ -34,6 +35,9 @@ func TestSyntheticSetHasNoWrongUsableLinkAndFlagsEveryAmbiguity(t *testing.T) {
 	}
 	if !measures.Gate() {
 		t.Fatal("the synthetic set does not pass the gate")
+	}
+	if measures.OwnerGate() {
+		t.Fatal("the synthetic set must not pass the owner-sample gate")
 	}
 	if measures.UsableLinks == 0 || measures.Precision() != 1 {
 		t.Fatalf("usable links = %d precision = %v", measures.UsableLinks, measures.Precision())
@@ -110,8 +114,8 @@ func TestOwnerSampleWritesCountsOnly(t *testing.T) {
 			t.Fatalf("counts are missing %q: %s", key, data)
 		}
 	}
-	if written["gate"] != true || written["wrong_links"] != float64(0) {
-		t.Fatalf("counts = %s", data)
+	if written["gate"] != false || written["wrong_links"] != float64(0) || written["usable_links"] != float64(1) {
+		t.Fatalf("a one-link sample must not pass the owner gate: %s", data)
 	}
 	info, err := os.Stat(counts)
 	if err != nil {
@@ -119,6 +123,107 @@ func TestOwnerSampleWritesCountsOnly(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("counts mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestRepeatedObservationsCountAsOneUsableLink(t *testing.T) {
+	t.Parallel()
+	person := identity.SetPerson{ID: "record-1", Contacts: []identity.SetContact{{Kind: identity.Phone, Value: "+821012345678", Source: "sample"}}}
+	one := identity.SetIdentity{
+		Platform: "imessage", User: "+821012345678", At: "2026-10-01T09:00:00Z", Expect: "record-1",
+		Identifiers: []identity.SetContact{{Kind: identity.Phone, Value: "+821012345678", Source: "sample"}},
+	}
+	set := identity.Set{Version: 1, People: []identity.SetPerson{person}}
+	for i := 0; i < 300; i++ {
+		row := one
+		row.At = time.Date(2026, 10, 1, 9, 0, i, 0, time.UTC).Format(time.RFC3339)
+		set.Identities = append(set.Identities, row)
+	}
+	f := newFixture(t, nil)
+	measures, err := identity.Evaluate(t.Context(), f.store, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if measures.UsableLinks != 1 || measures.Identities != 1 {
+		t.Fatalf("repeated observations counted as separate trials: identities=%d usable=%d", measures.Identities, measures.UsableLinks)
+	}
+	if measures.OwnerGate() {
+		t.Fatal("300 copies of one link passed the owner-sample gate")
+	}
+}
+
+func TestOwnerSampleGateNeedsThreeHundredTrials(t *testing.T) {
+	t.Parallel()
+	short := identity.CountsOf(identity.Measures{UsableLinks: 1})
+	if short.Gate {
+		t.Fatal("one usable link passed the owner-sample gate")
+	}
+	enough := identity.CountsOf(identity.Measures{UsableLinks: 300})
+	if !enough.Gate || enough.WrongLinks != 0 {
+		t.Fatalf("counts = %+v", enough)
+	}
+	wrong := identity.CountsOf(identity.Measures{UsableLinks: 300, WrongLinks: 1})
+	if wrong.Gate {
+		t.Fatal("a wrong link passed the owner-sample gate")
+	}
+	shortfall := identity.CountsOf(identity.Measures{UsableLinks: 299})
+	if shortfall.Gate {
+		t.Fatal("299 usable links passed the owner-sample gate")
+	}
+}
+
+// TestEvaluationReplaysObservationsByInstant proves two RFC3339 timestamps
+// with different offsets are replayed by the instant they name. The later
+// text sorts first: 2026-10-24T02:00:00Z is before 2026-10-24T09:00:00+09:00
+// as strings, and two hours after it as time. Replaying the later iMessage
+// handle first would keep both links; time order ends the earlier Discord
+// link and refuses the recycled handle.
+func TestEvaluationReplaysObservationsByInstant(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660009"
+	set := identity.Set{
+		Version: 1,
+		People: []identity.SetPerson{{
+			ID:       "person-old",
+			Contacts: []identity.SetContact{{Kind: identity.Phone, Value: number, Source: "contacts"}},
+		}},
+		Identities: []identity.SetIdentity{
+			{
+				Platform: "imessage", User: number, At: "2026-10-24T02:00:00Z", Expect: "unknown",
+				Identifiers: []identity.SetContact{{Kind: identity.Phone, Value: number, Source: "iMessage profile"}},
+			},
+			{
+				Platform: "discord", User: "d-old", At: "2026-10-24T09:00:00+09:00", Expect: "unknown",
+				Names:       []string{"Old owner"},
+				Identifiers: []identity.SetContact{{Kind: identity.Phone, Value: number, Source: "Discord profile"}},
+			},
+		},
+	}
+	f := newFixture(t, nil)
+	measures, err := identity.Evaluate(t.Context(), f.store, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if measures.UsableLinks != 0 || measures.WrongLinks != 0 {
+		t.Fatalf("replayed out of time order: usable=%d wrong=%d", measures.UsableLinks, measures.WrongLinks)
+	}
+	earlier := links(t, f, discord("d-old"))
+	if len(earlier) != 1 || earlier[0].ValidThrough.IsZero() {
+		t.Fatalf("the earlier link did not end: %+v", earlier)
+	}
+	later, err := time.Parse(time.RFC3339, "2026-10-24T02:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !earlier[0].ValidThrough.Equal(later) {
+		t.Fatalf("valid through = %v, want the later instant", earlier[0].ValidThrough)
+	}
+	if got := links(t, f, imessage(number)); len(got) != 0 {
+		t.Fatalf("the recycled number linked: %+v", got)
+	}
+	question, found, err := f.store.Question(t.Context(), imessage(number))
+	if err != nil || !found || question.Reason != identity.ReasonIdentifierReused {
+		t.Fatalf("question = %+v found=%t err=%v", question, found, err)
 	}
 }
 

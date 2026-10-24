@@ -79,6 +79,134 @@ func visibleProtocol(t *testing.T, db *canon.Store) int {
 	return n
 }
 
+func TestForgetDuringCommitsTheCallerWriteWithTheRemoval(t *testing.T) {
+	t.Parallel()
+	db, root := fixture(t)
+	seedProtocol(t, db)
+	s := protocolStore(t, db, root)
+	err := s.ForgetDuring(t.Context(), "person-1", func(tx *canon.Tx) ([]Ref, error) {
+		if _, err := tx.ExecContext(t.Context(), "UPDATE removal_test_content SET body='moved' WHERE id='memory-1'"); err != nil {
+			return nil, err
+		}
+		return []Ref{{Kind: Memory, ID: "memory-1"}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, state := protocolRow(t, db)
+	if body != "moved" || state != "forget" {
+		t.Fatalf("body=%q state=%q", body, state)
+	}
+}
+
+func TestForgetDuringRollsBackTheCallerWrite(t *testing.T) {
+	t.Parallel()
+	db, root := fixture(t)
+	seedProtocol(t, db)
+	s := protocolStore(t, db, root)
+	stop := errors.New("removal stopped")
+	err := s.ForgetDuring(t.Context(), "person-1", func(tx *canon.Tx) ([]Ref, error) {
+		if _, err := tx.ExecContext(t.Context(), "UPDATE removal_test_content SET body='moved' WHERE id='memory-1'"); err != nil {
+			return nil, err
+		}
+		return nil, stop
+	})
+	if !errors.Is(err, stop) {
+		t.Fatal(err)
+	}
+	body, state := protocolRow(t, db)
+	if body != "synthetic violet" || state != "active" {
+		t.Fatalf("partial write stayed: body=%q state=%q", body, state)
+	}
+}
+
+func TestForgetDuringEmptyListCommitsWithoutAJournalLine(t *testing.T) {
+	t.Parallel()
+	db, root := fixture(t)
+	seedProtocol(t, db)
+	s := protocolStore(t, db, root)
+	err := s.ForgetDuring(t.Context(), "person-1", func(tx *canon.Tx) ([]Ref, error) {
+		if _, err := tx.ExecContext(t.Context(), "UPDATE removal_test_content SET body='moved' WHERE id='memory-1'"); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, state := protocolRow(t, db)
+	if body != "moved" || state != "active" {
+		t.Fatalf("body=%q state=%q", body, state)
+	}
+	var n int
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM removal_applied").Scan(&n)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("removal lines = %d", n)
+	}
+}
+
+func TestForgetDuringCrashRollsBackTheCallerWrite(t *testing.T) {
+	t.Parallel()
+	db, root := fixture(t)
+	seedProtocol(t, db)
+	s := protocolStore(t, db, root)
+	failure := errors.New("injected crash boundary")
+	s.fault = func(stage string) error {
+		if stage == "after_sync" {
+			return failure
+		}
+		return nil
+	}
+	err := s.ForgetDuring(t.Context(), "person-1", func(tx *canon.Tx) ([]Ref, error) {
+		if _, err := tx.ExecContext(t.Context(), "UPDATE removal_test_content SET body='moved' WHERE id='memory-1'"); err != nil {
+			return nil, err
+		}
+		return []Ref{{Kind: Memory, ID: "memory-1"}}, nil
+	})
+	if !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	if err := db.Read(t.Context(), func(*canon.Tx) error { return nil }); !errors.Is(err, canon.ErrRecoveryRequired) {
+		t.Fatalf("partial state was readable: %v", err)
+	}
+	inspection, err := canon.OpenSQLiteReader(t.Context(), filepath.Join(root, "canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body, state string
+	err = inspection.QueryRowContext(t.Context(), "SELECT body,state FROM removal_test_content WHERE id='memory-1'").Scan(&body, &state)
+	inspection.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body != "synthetic violet" || state != "active" {
+		t.Fatalf("caller write survived the crash boundary: body=%q state=%q", body, state)
+	}
+	s.fault = nil
+	if err := s.Recover(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	body, state = protocolRow(t, db)
+	if body != "synthetic violet" || state != "forget" {
+		t.Fatalf("after replay body=%q state=%q", body, state)
+	}
+}
+
+func protocolRow(t *testing.T, db *canon.Store) (string, string) {
+	t.Helper()
+	var body, state string
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT body,state FROM removal_test_content WHERE id='memory-1'").Scan(&body, &state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return body, state
+}
+
 func TestDurableIntentReplaysBeforeReads(t *testing.T) {
 	t.Parallel()
 	for _, stage := range []string{"after_sync", "after_apply"} {
@@ -172,6 +300,75 @@ func TestInvalidRemovalDoesNotCloseReads(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(root, "backups", "removals"))
 	if err != nil || len(data) != 0 {
 		t.Fatalf("invalid intent journaled: %s %v", data, err)
+	}
+}
+
+func TestSuppressHidesTheItemWithoutBlockingItsEvidence(t *testing.T) {
+	t.Parallel()
+	for _, suppress := range []bool{false, true} {
+		t.Run(map[bool]string{false: "forget", true: "suppress"}[suppress], func(t *testing.T) {
+			t.Parallel()
+			db, root := fixture(t)
+			seedProtocol(t, db)
+			s := protocolStore(t, db, root)
+			var err error
+			if suppress {
+				err = s.ForgetDuringIntent(t.Context(), "person-1", func(*canon.Tx) (Intent, error) {
+					return Intent{Refs: []Ref{{Kind: Memory, ID: "memory-1"}}, Suppress: true}, nil
+				})
+			} else {
+				err = s.Forget(t.Context(), Request{Person: "person-1", Targets: []Ref{{Kind: Memory, ID: "memory-1"}}})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state string
+			var blocks int
+			if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+				if err := tx.QueryRowContext(t.Context(), "SELECT state FROM retract_target WHERE id='memory-1'").Scan(&state); err != nil {
+					return err
+				}
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM retract_block").Scan(&blocks)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			want := 2
+			if suppress {
+				want = 0
+			}
+			if state != "trashed" || blocks != want {
+				t.Fatalf("state=%s blocks=%d, want trashed and %d", state, blocks, want)
+			}
+		})
+	}
+}
+
+func TestExpiryOfARepairKeepsTheSourceEligible(t *testing.T) {
+	t.Parallel()
+	db, root := fixture(t)
+	seedProtocol(t, db)
+	s := protocolStore(t, db, root)
+	if err := s.ForgetDuringIntent(t.Context(), "person-1", func(*canon.Tx) (Intent, error) {
+		return Intent{Refs: []Ref{{Kind: Memory, ID: "memory-1"}}, Suppress: true}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.now = func() time.Time { return time.Unix(0, 123).Add(TrashRetention) }
+	if err := s.Expire(t.Context(), "person-1"); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	var blocks int
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		if err := tx.QueryRowContext(t.Context(), "SELECT state FROM retract_target WHERE id='memory-1'").Scan(&state); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM retract_block").Scan(&blocks)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if state != "erased" || blocks != 0 {
+		t.Fatalf("state=%s blocks=%d", state, blocks)
 	}
 }
 

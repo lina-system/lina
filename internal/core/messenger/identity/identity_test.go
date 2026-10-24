@@ -3,7 +3,9 @@ package identity_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -124,9 +126,14 @@ func usable(t *testing.T, f *fixture, id identity.Identity) []identity.Link {
 
 func (f *fixture) item(t *testing.T, subject, content string) memory.Item {
 	t.Helper()
+	return f.itemIn(t, subject, content, "native:agent")
+}
+
+func (f *fixture) itemIn(t *testing.T, subject, content, conversation string) memory.Item {
+	t.Helper()
 	event := "event-" + content
 	if _, err := f.events.Admit(t.Context(), guard.EntryOwner, ledger.Input{
-		ID: event, ConversationID: "native:agent", AgentID: "agent", PersonID: "person",
+		ID: event, ConversationID: conversation, AgentID: "agent", PersonID: "person",
 		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: f.now, RecordedAt: f.now,
 		TimeQuality: "recorded", Body: content, Locator: event,
 	}); err != nil {
@@ -282,6 +289,33 @@ func TestObservationDropsAnIdentifierItCannotNormalize(t *testing.T) {
 	}
 	if identifiers != 1 {
 		t.Fatalf("identifiers = %d, want only the email", identifiers)
+	}
+}
+
+func TestLaterIdentifierMakesTheExactLinkAmbiguous(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-a", Identifiers: []identity.SeenIdentifier{{Kind: identity.Email, Value: "a@example.com", Source: "profile"}}},
+		{Record: "person-b", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340002", Source: "profile"}}},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	id := discord("d-split")
+	observe(t, f, id, "Split", mail("a@example.com", "Discord profile"))
+	if got := usable(t, f, id); len(got) != 1 || got[0].Record != "person-a" {
+		t.Fatalf("first identifier = %+v, want one usable link to person-a", got)
+	}
+	f.now = at(10)
+	observe(t, f, id, "Split", mail("a@example.com", "Discord profile"), phone("+821012340002", "Discord profile"))
+	if got := usable(t, f, id); len(got) != 0 {
+		t.Fatalf("a later identifier for another record left a usable link: %+v", got)
+	}
+	question, found, err := f.store.Question(t.Context(), id)
+	if err != nil || !found || question.State != "open" {
+		t.Fatalf("question = %+v found=%v err=%v", question, found, err)
+	}
+	if len(question.Candidates) != 2 || question.Candidates[0] != "person-a" || question.Candidates[1] != "person-b" {
+		t.Fatalf("candidates = %v, want both records", question.Candidates)
 	}
 }
 
@@ -885,6 +919,49 @@ func TestConfirmRepairsTheLinkItSupersedes(t *testing.T) {
 	}
 }
 
+func TestRemoveKeepsTheLinkRepairAfterTheJournalSync(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-anna", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "iMessage profile"}}},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, imessage("+821012340001"), "Anna", phone("+821012340001", "iMessage profile"))
+	anna := usable(t, f, imessage("+821012340001"))
+	if len(anna) != 1 {
+		t.Fatal("the identity did not link")
+	}
+	item := f.item(t, "person-anna", "prefers short replies")
+	if err := f.store.RecordArtifact(t.Context(), anna[0].ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	crash := errors.New("injected crash boundary")
+	f.removal.SetCrash("after_sync", crash)
+	if _, err := f.store.Remove(t.Context(), anna[0].ID); !errors.Is(err, crash) {
+		t.Fatalf("remove = %v", err)
+	}
+	if err := f.db.Read(t.Context(), func(*canon.Tx) error { return nil }); !errors.Is(err, canon.ErrRecoveryRequired) {
+		t.Fatalf("partial state was readable: %v", err)
+	}
+	f.removal.SetCrash("", nil)
+	if err := f.removal.Recover(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(usable(t, f, imessage("+821012340001"))) != 0 {
+		t.Fatal("recovered link stayed usable")
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("recovered item stayed visible")
+	}
+	requeues, err := f.store.Requeues(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeues) != 1 || requeues[0].Identity != imessage("+821012340001") {
+		t.Fatalf("requeues = %+v", requeues)
+	}
+}
+
 func TestRemoveRetractsItemsAndRequeuesOnlyThatIdentity(t *testing.T) {
 	t.Parallel()
 	people := identity.StaticPeople{
@@ -1038,6 +1115,186 @@ func TestSplitMovesOneIdentityAndItsItems(t *testing.T) {
 	}
 }
 
+// TestSplitMovesAForgottenItemWithItsIdentity proves an item the person forgot
+// before the split still follows the identity that produced it, and stays
+// forgotten. An item of an identity that stays behind does not move.
+func TestSplitMovesAForgottenItemWithItsIdentity(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-shared", Identifiers: []identity.SeenIdentifier{
+			{Kind: identity.Phone, Value: "+821012340001", Source: "iMessage profile"},
+			{Kind: identity.Phone, Value: "+821012340002", Source: "iMessage profile"},
+		}},
+		{Record: "person-split"},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, imessage("+821012340001"), "One", phone("+821012340001", "iMessage profile"))
+	observe(t, f, imessage("+821012340002"), "Two", phone("+821012340002", "iMessage profile"))
+	staying := usable(t, f, imessage("+821012340001"))
+	moving := usable(t, f, imessage("+821012340002"))
+	if len(staying) != 1 || len(moving) != 1 {
+		t.Fatal("both identities did not link")
+	}
+	kept := f.itemIn(t, "person-shared", "still here", "native:kept")
+	forgotten := f.itemIn(t, "person-shared", "please forget", "native:forgotten")
+	other := f.itemIn(t, "person-shared", "stays behind", "native:other")
+	for _, item := range []memory.Item{kept, forgotten} {
+		if err := f.store.RecordArtifact(t.Context(), moving[0].ID, "item", item.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.store.RecordArtifact(t.Context(), staying[0].ID, "item", other.ID); err != nil {
+		t.Fatal(err)
+	}
+	ref := func(id string) retract.Request {
+		return retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: id}}}
+	}
+	if err := f.removal.Forget(t.Context(), ref(forgotten.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Forget(t.Context(), ref(other.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Split(t.Context(), "person-shared", "person-split", []identity.Identity{imessage("+821012340002")}); err != nil {
+		t.Fatal(err)
+	}
+	if subject(t, f, kept.ID) != "person-split" || !visible(t, f, kept.ID) {
+		t.Fatal("the active item did not follow its identity")
+	}
+	state, subj, ok := itemRow(t, f, forgotten.ID)
+	if !ok || state != "trashed" || subj != "person-split" || visible(t, f, forgotten.ID) {
+		t.Fatalf("forgotten item = state %q subject %q present %t visible %t", state, subj, ok, visible(t, f, forgotten.ID))
+	}
+	state, subj, ok = itemRow(t, f, other.ID)
+	if !ok || state != "trashed" || subj != "person-shared" || visible(t, f, other.ID) {
+		t.Fatalf("another identity's forgotten item = state %q subject %q present %t", state, subj, ok)
+	}
+}
+
+// stopRemovals interrupts the shared writer after the link mutation.
+// The failed retraction must roll back the mutation with it.
+type stopRemovals struct{ db *canon.Store }
+
+func (stopRemovals) Forget(context.Context, retract.Request) error {
+	return errors.New("removal stopped")
+}
+
+func (r stopRemovals) ForgetDuring(ctx context.Context, _ string, mutate func(*canon.Tx) ([]retract.Ref, error)) error {
+	return r.db.Write(ctx, func(tx *canon.Tx) error {
+		if _, err := mutate(tx); err != nil {
+			return err
+		}
+		return identity.ErrInvalid
+	})
+}
+
+func TestRepairDoesNotKeepALinkChangeWhenRetractionStops(t *testing.T) {
+	t.Parallel()
+	for _, act := range []string{"remove", "correct", "confirm", "no removal path"} {
+		t.Run(act, func(t *testing.T) {
+			t.Parallel()
+			people := identity.StaticPeople{
+				{Record: "person-wrong", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "Discord profile"}}},
+				{Record: "person-right"},
+			}
+			f := newFixture(t, people)
+			f.now = at(9)
+			observe(t, f, discord("d-repair"), "Someone", phone("+821012340001", "Discord profile"))
+			before := usable(t, f, discord("d-repair"))
+			if len(before) != 1 || before[0].Record != "person-wrong" {
+				t.Fatalf("exact link = %+v", before)
+			}
+			item := f.item(t, "person-wrong", "repair rollback "+act)
+			if err := f.store.RecordArtifact(t.Context(), before[0].ID, "item", item.ID); err != nil {
+				t.Fatal(err)
+			}
+			var removals identity.Removals = stopRemovals{db: f.db}
+			if act == "no removal path" {
+				removals = nil
+			}
+			f.store = identity.Open(f.db, "person", people, removals).WithClock(func() time.Time { return f.now })
+			var err error
+			switch act {
+			case "remove", "no removal path":
+				_, err = f.store.Remove(t.Context(), before[0].ID)
+			case "correct":
+				_, err = f.store.Correct(t.Context(), before[0].ID, "person-right")
+			case "confirm":
+				_, err = f.store.Confirm(t.Context(), discord("d-repair"), "person-right", "that one")
+			}
+			if !errors.Is(err, identity.ErrInvalid) {
+				t.Fatalf("error = %v, want ErrInvalid", err)
+			}
+			got := links(t, f, discord("d-repair"))
+			if len(got) != 1 || got[0].Record != "person-wrong" || got[0].Class != identity.Exact || got[0].State != identity.Active {
+				t.Fatalf("link changed without a retraction: %+v", got)
+			}
+			if !visible(t, f, item.ID) {
+				t.Fatal("the item was hidden without a committed repair")
+			}
+		})
+	}
+}
+
+// TestRepairRetractsACitingItemHiddenByItsAncestor proves a repair still
+// retracts an item that is hidden only because an ancestor in its evidence
+// was forgotten. Restoring that ancestor must not show the item again.
+func TestRepairRetractsACitingItemHiddenByItsAncestor(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-wrong", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "Discord profile"}}},
+		{Record: "person-right"},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, discord("d-hidden"), "Someone", phone("+821012340001", "Discord profile"))
+	link := usable(t, f, discord("d-hidden"))
+	if len(link) != 1 {
+		t.Fatal("the identity did not link")
+	}
+	ancestor := f.itemIn(t, "person-wrong", "ancestor fact", "native:ancestor")
+	child := f.itemCiting(t, "person-wrong", "citing fact", ancestor.ID)
+	if err := f.store.RecordArtifact(t.Context(), link[0].ID, "item", child.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Forget(t.Context(), retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: ancestor.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	if visible(t, f, child.ID) {
+		t.Fatal("the ancestor's removal left the citing item visible")
+	}
+	if _, err := f.store.Correct(t.Context(), link[0].ID, "person-right"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Restore(t.Context(), retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: ancestor.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	if visible(t, f, child.ID) {
+		t.Fatal("restoring the ancestor showed the unrepaired citing item")
+	}
+}
+
+func (f *fixture) itemCiting(t *testing.T, subject, content, ancestor string) memory.Item {
+	t.Helper()
+	var item memory.Item
+	err := f.db.Write(t.Context(), func(tx *canon.Tx) error {
+		var err error
+		item, err = memory.Insert(t.Context(), tx, memory.Write{Agent: "agent", Person: "person", Item: memory.Item{
+			Kind: memory.Fact, Content: content, Person: "person", Basis: memory.Derived,
+			Subject:  memory.Subject{Kind: memory.ThirdParty, ID: subject},
+			Evidence: []memory.Evidence{{Kind: memory.MemoryItem, ID: ancestor, Precision: memory.Exact}},
+		}}, func(context.Context, *canon.Tx, memory.Evidence) (memory.Origin, error) {
+			return memory.Origin{Person: "person", Agent: "agent", Speaker: guard.Person, Scope: memory.Private, Quote: content}, nil
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return item
+}
+
 func TestCorrectMovesTheLinkAndRetractsItsItems(t *testing.T) {
 	t.Parallel()
 	people := identity.StaticPeople{
@@ -1075,6 +1332,97 @@ func TestCorrectMovesTheLinkAndRetractsItsItems(t *testing.T) {
 	}
 }
 
+// TestCorrectLeavesTheSourceEligible proves a wrong-match repair hides the
+// item and queues the identity again without treating the source event or its
+// conversation as forgotten. The rebuilt item belongs to the right record, and
+// a later message in the same chat can be learned.
+func TestCorrectLeavesTheSourceEligible(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-wrong", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "Discord profile"}}},
+		{Record: "person-right"},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, discord("d-1"), "Someone", phone("+821012340001", "Discord profile"))
+	link := usable(t, f, discord("d-1"))
+	if len(link) != 1 {
+		t.Fatal("the identity did not link")
+	}
+	const conversation = "native:chat"
+	item := f.itemIn(t, "person-wrong", "wrong fact", conversation)
+	if err := f.store.RecordArtifact(t.Context(), link[0].ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	repair, err := f.store.Correct(t.Context(), link[0].ID, "person-right")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requeues, err := f.store.Requeues(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repair.Items != 1 || repair.Requeued != true || len(requeues) != 1 || visible(t, f, item.ID) {
+		t.Fatalf("repair = %+v requeues = %+v visible = %t", repair, requeues, visible(t, f, item.ID))
+	}
+	var problems []string
+	if _, err := f.remember(t, "person-right", "right fact", "event-wrong fact"); err != nil {
+		problems = append(problems, "rebuilt item rejected: "+err.Error())
+	}
+	if _, err := f.events.Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "event-later note", ConversationID: conversation, AgentID: "agent", PersonID: "person",
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: f.now, RecordedAt: f.now,
+		TimeQuality: "recorded", Body: "later note", Locator: "event-later note",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.remember(t, "person-other", "later fact", "event-later note"); err != nil {
+		problems = append(problems, "later message blocked: "+err.Error())
+	}
+	if !eventVisible(t, f, "event-wrong fact") {
+		problems = append(problems, "source event hidden from search")
+	}
+	if len(problems) > 0 {
+		t.Fatal(fmt.Sprintf("source stayed ineligible: %s", joinProblems(problems)))
+	}
+}
+
+func joinProblems(problems []string) string {
+	out := problems[0]
+	for _, problem := range problems[1:] {
+		out += "; " + problem
+	}
+	return out
+}
+
+func (f *fixture) remember(t *testing.T, subject, content, event string) (memory.Item, error) {
+	t.Helper()
+	var item memory.Item
+	err := f.db.Write(t.Context(), func(tx *canon.Tx) error {
+		var err error
+		item, err = memory.Insert(t.Context(), tx, memory.Write{Agent: "agent", Person: "person", Item: memory.Item{
+			Kind: memory.Fact, Content: content, Person: "person", Basis: memory.Derived,
+			Subject:  memory.Subject{Kind: memory.ThirdParty, ID: subject},
+			Evidence: []memory.Evidence{{Kind: memory.Event, ID: event, Precision: memory.Exact}},
+		}}, func(context.Context, *canon.Tx, memory.Evidence) (memory.Origin, error) {
+			return memory.Origin{Person: "person", Agent: "agent", Speaker: guard.Person, Scope: memory.Private, Quote: content}, nil
+		})
+		return err
+	})
+	return item, err
+}
+
+func eventVisible(t *testing.T, f *fixture, event string) bool {
+	t.Helper()
+	var found bool
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT EXISTS(SELECT 1 FROM retract_visible_event WHERE id=?)", event).Scan(&found)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return found
+}
+
 func TestProposalsComeInOneBatchOfAtMostFive(t *testing.T) {
 	t.Parallel()
 	people := identity.StaticPeople{
@@ -1110,4 +1458,115 @@ func TestStoreRejectsAnIncompleteObservation(t *testing.T) {
 	if err := f.store.Observe(t.Context(), identity.Observation{Identity: identity.Identity{Platform: "discord"}}); !errors.Is(err, identity.ErrInvalid) {
 		t.Fatalf("error = %v, want ErrInvalid", err)
 	}
+}
+
+// TestLaterObservationDoesNotMatchASelfAccount proves an account already
+// recorded as the person's own stays that way. A later observation that omits
+// the self mark must not match the account to a people record.
+func TestLaterObservationDoesNotMatchASelfAccount(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{{
+		Record: "person-anna",
+		Identifiers: []identity.SeenIdentifier{
+			{Kind: identity.Phone, Value: "+821012340001", Source: "contacts"},
+		},
+	}}
+	f := newFixture(t, people)
+	f.now = at(9)
+	account := imessage("+821099990001")
+	if err := f.store.Observe(t.Context(), identity.Observation{Identity: account, At: f.now, Self: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Observe(t.Context(), identity.Observation{
+		Identity: account, At: f.now.Add(time.Minute),
+		Identifiers: []identity.SeenIdentifier{phone("+821012340001", "profile")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := links(t, f, account); len(got) != 0 {
+		t.Fatalf("a self account gained a third-party link: %+v", got)
+	}
+}
+
+// TestUndoMergeAfterAnItemIsForgottenOrDeleted proves ordinary memory removal
+// does not make a merge impossible to undo, and does not bring a removed item
+// back.
+func TestUndoMergeAfterAnItemIsForgottenOrDeleted(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-a", Names: []string{"Anna"}, Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "iMessage profile"}}},
+		{Record: "person-b", Names: []string{"Ann"}},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, imessage("+821012340001"), "Anna", phone("+821012340001", "iMessage profile"))
+	// Each item has its own conversation. Forgetting one must not block the
+	// others through the conversation exclusion.
+	kept := f.itemIn(t, "person-a", "still here", "native:kept")
+	forgotten := f.itemIn(t, "person-a", "please forget", "native:forgotten")
+	deleted := f.itemIn(t, "person-a", "please delete", "native:deleted")
+	merge, err := f.store.Merge(t.Context(), "person-a", "person-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subject(t, f, kept.ID) != "person-b" || subject(t, f, forgotten.ID) != "person-b" {
+		t.Fatal("the merge did not move the items")
+	}
+	ref := func(id string) retract.Request {
+		return retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: id}}}
+	}
+	if err := f.removal.Forget(t.Context(), ref(forgotten.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Delete(t.Context(), ref(deleted.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if visible(t, f, forgotten.ID) || visible(t, f, deleted.ID) {
+		t.Fatal("a removed item stayed visible")
+	}
+	if err := f.store.UndoMerge(t.Context(), merge); err != nil {
+		t.Fatalf("undo after ordinary removal: %v", err)
+	}
+	restored := links(t, f, imessage("+821012340001"))
+	if len(restored) != 1 || restored[0].Record != "person-a" || restored[0].State != identity.Active {
+		t.Fatalf("restored link = %+v", restored)
+	}
+	if subject(t, f, kept.ID) != "person-a" || !visible(t, f, kept.ID) {
+		t.Fatal("the surviving item did not return")
+	}
+	state, subj, ok := itemRow(t, f, forgotten.ID)
+	if !ok || state != "trashed" || subj != "person-a" || visible(t, f, forgotten.ID) {
+		t.Fatalf("forgotten item = state %q subject %q present %t", state, subj, ok)
+	}
+	if _, _, ok := itemRow(t, f, deleted.ID); ok {
+		t.Fatal("a permanently deleted item was resurrected")
+	}
+	var mergeState string
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT state FROM identity_merge WHERE id=?", merge).Scan(&mergeState)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if mergeState != "undone" {
+		t.Fatalf("merge state = %q", mergeState)
+	}
+}
+
+func itemRow(t *testing.T, f *fixture, id string) (state, subject string, ok bool) {
+	t.Helper()
+	err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		err := tx.QueryRowContext(t.Context(), "SELECT state,subject_id FROM memory_item WHERE id=?", id).Scan(&state, &subject)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		ok = true
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state, subject, ok
 }
