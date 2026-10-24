@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,33 +140,189 @@ func TestOneGatewaySessionServesAChannelAndASource(t *testing.T) {
 	}
 }
 
+// testHub is a hub without a socket, for checkpoint tests.
+func testHub(bot channels.Bot, db channels.Canon) *hub {
+	return &hub{bot: bot, db: db, stop: make(chan struct{}), done: make(chan struct{})}
+}
+
+// addMember starts a subscriber's delivery worker.
+func (h *hub) addMember(intents Intents, handle Handler) *member {
+	m := &member{intents: intents, handle: handle, done: make(chan error, 1)}
+	m.cond = sync.NewCond(&m.mu)
+	h.members = append(h.members, m)
+	go h.work(m)
+	return m
+}
+
+// waitCheckpoint waits for the shared checkpoint to reach seq.
+func waitCheckpoint(t *testing.T, h *hub, seq int64) cursor {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := h.resume(t.Context()); got.Seq == seq {
+			return got
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("checkpoint = %+v, want seq %d", h.resume(t.Context()), seq)
+	return cursor{}
+}
+
+// A subscriber that must wait for its own store cannot hold up the socket or
+// the other subscriber sharing the token.
+func TestHeldSubscriberDoesNotBlockTheSession(t *testing.T) {
+	frames := make(chan any, 4)
+	ready := make(chan struct{}, 1)
+	beat := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		if wsjson.Write(ctx, conn, map[string]any{"op": 10, "d": map[string]any{"heartbeat_interval": 60000}}) != nil {
+			return
+		}
+		var identify struct {
+			Op int `json:"op"`
+		}
+		if wsjson.Read(ctx, conn, &identify) != nil {
+			return
+		}
+		if wsjson.Write(ctx, conn, map[string]any{"op": 0, "t": "READY", "s": 1, "d": map[string]any{"session_id": "session-1", "user": map[string]any{"id": "123456", "bot": true}}}) != nil {
+			return
+		}
+		ready <- struct{}{}
+		written := make(chan struct{}, 4)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case frame := <-frames:
+					if wsjson.Write(ctx, conn, frame) != nil {
+						return
+					}
+					written <- struct{}{}
+				}
+			}
+		}()
+		<-written
+		<-written
+		// The client must answer this while a subscriber is still holding a
+		// dispatch, which proves the read loop is not blocked behind it.
+		if wsjson.Write(ctx, conn, map[string]any{"op": 1, "d": nil}) != nil {
+			return
+		}
+		var reply struct {
+			Op int `json:"op"`
+		}
+		if wsjson.Read(ctx, conn, &reply) == nil && reply.Op == 1 {
+			beat <- struct{}{}
+		}
+		<-ctx.Done()
+	}))
+	defer server.Close()
+	endpoint, _ := url.Parse(server.URL)
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		wire := r.Clone(r.Context())
+		wire.URL.Scheme = endpoint.Scheme
+		wire.URL.Host = endpoint.Host
+		return http.DefaultTransport.RoundTrip(wire)
+	})
+	f := setup(t, transport)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	release := make(chan struct{})
+	held := make(chan struct{}, 1)
+	holding := make(chan error, 1)
+	go func() {
+		holding <- Listen(ctx, Listener{Bot: f.a.bot, Token: f.a.token, DB: f.db, Transport: transport, Intents: baseIntents, Handle: func(_ context.Context, kind string, data json.RawMessage, _ string) error {
+			var m struct {
+				ID string `json:"id"`
+			}
+			_ = json.Unmarshal(data, &m)
+			if kind == "MESSAGE_CREATE" && m.ID == "1" {
+				held <- struct{}{}
+				<-release
+			}
+			return nil
+		}})
+	}()
+	select {
+	case <-ready:
+	case err := <-holding:
+		t.Fatalf("holding subscriber stopped: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("holding subscriber never connected")
+	}
+
+	got := make(chan string, 4)
+	g := gateway.New(f.db, func(_ context.Context, d gateway.Delivery) error {
+		got <- d.NativeID
+		return nil
+	})
+	go func() { _ = f.a.Run(ctx, g) }()
+	waitMembers(t, f.db, f.a.bot, 2)
+
+	frames <- map[string]any{"op": 0, "t": "MESSAGE_CREATE", "s": 2, "d": map[string]any{"id": "1", "channel_id": "100", "author": map[string]any{"id": "200"}, "content": "first"}}
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the holding subscriber never received the first dispatch")
+	}
+	frames <- map[string]any{"op": 0, "t": "MESSAGE_CREATE", "s": 3, "d": map[string]any{"id": "2", "channel_id": "100", "author": map[string]any{"id": "200"}, "content": "second"}}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-got:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("the other subscriber received %d of 2 dispatches while one was held", i)
+		}
+	}
+	select {
+	case <-beat:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the socket did not answer a heartbeat while a dispatch was held")
+	}
+	if got := (&hub{bot: f.a.bot, db: f.db}).resume(t.Context()); got.Seq != 1 {
+		t.Fatalf("checkpoint advanced past a held dispatch: %+v", got)
+	}
+	close(release)
+	waitCheckpoint(t, &hub{bot: f.a.bot, db: f.db}, 3)
+}
+
 // A channel receipt must not acknowledge a dispatch that the source refused.
 func TestSharedCheckpointWaitsForEverySubscriber(t *testing.T) {
 	f := setup(t, nil)
-	h := &hub{bot: f.a.bot, db: f.db}
+	h := testHub(f.a.bot, f.db)
 	in := gateway.New(f.db, func(context.Context, gateway.Delivery) error { return nil })
-	h.members = []*member{{handle: func(ctx context.Context, kind string, data json.RawMessage, at string) error {
+	h.addMember(0, func(ctx context.Context, kind string, data json.RawMessage, at string) error {
 		return f.a.dispatch(ctx, in, kind, data, at)
-	}}, {handle: func(_ context.Context, kind string, _ json.RawMessage, _ string) error {
+	})
+	h.addMember(0, func(_ context.Context, kind string, _ json.RawMessage, _ string) error {
 		if kind == "MESSAGE_DELETE" {
 			return errResponse
 		}
 		return nil
-	}}}
-	// Use the cursor's actual wire shape, independent of field tag spelling.
+	})
 	position := cursor{Session: "session-1", Seq: 2, Intents: baseIntents}
-	raw, _ := json.Marshal(position)
-	first := string(raw)
-	if err := h.deliver(t.Context(), "MESSAGE_CREATE", json.RawMessage(`{"id":"1","channel_id":"100","author":{"id":"200"},"content":"hello"}`), first); err != nil {
-		t.Fatal(err)
-	}
+	h.broadcast(t.Context(), "MESSAGE_CREATE", json.RawMessage(`{"id":"1","channel_id":"100","author":{"id":"200"},"content":"hello"}`), position)
+	waitCheckpoint(t, h, 2)
 	position.Seq = 3
-	raw, _ = json.Marshal(position)
-	if err := h.deliver(t.Context(), "MESSAGE_DELETE", json.RawMessage(`{"id":"1","channel_id":"100"}`), string(raw)); err == nil {
-		t.Fatal("refused dispatch succeeded")
+	h.broadcast(t.Context(), "MESSAGE_DELETE", json.RawMessage(`{"id":"1","channel_id":"100"}`), position)
+	// The refusal stops the session, and the checkpoint stays at the last
+	// dispatch every subscriber accepted.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && !h.stopped() {
+		time.Sleep(5 * time.Millisecond)
 	}
-	next := &hub{bot: f.a.bot, db: f.db}
-	if got := next.resume(t.Context()); got.Seq != 2 {
+	if !h.stopped() {
+		t.Fatal("a refused dispatch did not stop the session")
+	}
+	if got := (&hub{bot: f.a.bot, db: f.db}).resume(t.Context()); got.Seq != 2 {
 		t.Fatalf("shared checkpoint = %+v, want seq 2", got)
 	}
 }
@@ -175,13 +332,10 @@ func TestSharedCheckpointWaitsForEverySubscriber(t *testing.T) {
 func TestSourceOnlyCheckpointSurvivesHubRecreation(t *testing.T) {
 	f := setup(t, nil)
 	bot := channels.Bot{Platform: "discord", Account: "987654"}
-	h := &hub{bot: bot, db: f.db}
+	h := testHub(bot, f.db)
 	position := cursor{Session: "source-session", Seq: 7, Intents: baseIntents | IntentMessageContent}
-	raw, _ := json.Marshal(position)
-	if err := h.deliver(t.Context(), "MESSAGE_DELETE", nil, string(raw)); err != nil {
-		t.Fatal(err)
-	}
-	h.keep(position)
+	h.broadcast(t.Context(), "MESSAGE_DELETE", nil, position)
+	waitCheckpoint(t, h, 7)
 	next := &hub{bot: bot, db: f.db}
 	if got := next.resume(t.Context()); got != position {
 		t.Fatalf("recreated checkpoint = %+v, want %+v", got, position)

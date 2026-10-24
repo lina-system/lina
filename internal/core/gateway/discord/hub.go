@@ -69,10 +69,39 @@ func Listen(ctx context.Context, l Listener) error {
 	}
 }
 
+// member is one subscriber. Its dispatches are delivered by its own worker, so
+// a subscriber that cannot store a dispatch yet never holds up the socket or
+// the other subscribers.
 type member struct {
 	intents Intents
 	handle  Handler
 	done    chan error
+
+	mu          sync.Mutex
+	cond        *sync.Cond
+	queue       []delivery
+	outstanding []*held
+	closed      bool
+}
+
+// held is one dispatch awaiting acceptance from every subscriber it was
+// handed to. The shared checkpoint advances only past accepted dispatches.
+type held struct {
+	position  cursor
+	remaining int
+	dropped   atomic.Bool
+}
+
+func (held *held) cursor() string {
+	data, _ := json.Marshal(held.position)
+	return string(data)
+}
+
+// delivery is one dispatch for one subscriber.
+type delivery struct {
+	held *held
+	kind string
+	data json.RawMessage
 }
 
 // hub owns one bot token's socket. Subscribers join and leave while it runs.
@@ -89,6 +118,11 @@ type hub struct {
 	members  []*member
 	socket   context.CancelFunc
 	position cursor
+
+	pendingMu   sync.Mutex
+	pendingCond *sync.Cond
+	pending     []*held
+	advancing   int
 
 	stop     chan struct{}
 	done     chan struct{}
@@ -146,6 +180,8 @@ func joinHub(l Listener) (*hub, *member) {
 
 func (h *hub) attach(intents Intents, handle Handler) *member {
 	m := &member{intents: intents, handle: handle, done: make(chan error, 1)}
+	m.cond = sync.NewCond(&m.mu)
+	go h.work(m)
 	h.mu.Lock()
 	before := h.unionLocked()
 	h.members = append(h.members, m)
@@ -172,6 +208,7 @@ func (h *hub) detach(m *member) {
 	if empty {
 		h.stopOnce.Do(func() { close(h.stop) })
 	}
+	m.close()
 	if empty || before != h.unionLocked() {
 		if h.socket != nil {
 			h.socket()
@@ -188,6 +225,44 @@ func (h *hub) detach(m *member) {
 		}
 		hubs.Unlock()
 	}
+}
+
+// push queues one dispatch for this subscriber.
+func (m *member) push(item delivery) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cond == nil {
+		m.cond = sync.NewCond(&m.mu)
+	}
+	if m.closed {
+		return false
+	}
+	m.queue = append(m.queue, item)
+	m.outstanding = append(m.outstanding, item.held)
+	m.cond.Signal()
+	return true
+}
+
+// accepted drops a dispatch this subscriber just accepted from the list its
+// worker settles on exit, so it is never counted twice.
+func (m *member) accepted(held *held) {
+	m.mu.Lock()
+	for i, x := range m.outstanding {
+		if x == held {
+			m.outstanding = append(m.outstanding[:i], m.outstanding[i+1:]...)
+			break
+		}
+	}
+	m.mu.Unlock()
+}
+
+func (m *member) close() {
+	m.mu.Lock()
+	m.closed = true
+	if m.cond != nil {
+		m.cond.Broadcast()
+	}
+	m.mu.Unlock()
 }
 
 func (h *hub) interrupt() {
@@ -291,25 +366,129 @@ func (h *hub) fail(err error) {
 	}
 }
 
-// deliver passes one dispatch to every subscriber in join order, then advances
-// the shared checkpoint. A refusal stops the session before the checkpoint
-// moves, so the next session resumes at this dispatch and every subscriber
-// sees it again. Discord cannot page a deletion a second time, so a checkpoint
-// that moved past a dispatch another subscriber could not store would lose it.
-func (h *hub) deliver(ctx context.Context, kind string, data json.RawMessage, cursor string) error {
+// broadcast hands one dispatch to every subscriber, then lets each accept it
+// on its own. The shared checkpoint advances only after every subscriber
+// accepts the dispatch, so a deletion cannot be skipped, and a subscriber that
+// must wait never holds up the socket or the others.
+func (h *hub) broadcast(ctx context.Context, kind string, data json.RawMessage, position cursor) {
 	h.mu.Lock()
 	members := append([]*member(nil), h.members...)
 	h.mu.Unlock()
+	// With no subscriber, one acceptance finishes the dispatch.
+	held := &held{position: position, remaining: max(len(members), 1)}
+	h.pendingMu.Lock()
+	h.pending = append(h.pending, held)
+	h.pendingMu.Unlock()
+	if len(members) == 0 {
+		h.accepted(ctx, held)
+		return
+	}
+	item := delivery{held: held, kind: kind, data: data}
 	for _, m := range members {
-		if err := h.hand(ctx, m, kind, data, cursor); err != nil {
-			return err
+		if !m.push(item) {
+			h.accepted(ctx, held)
 		}
 	}
+}
+
+// accepted records one subscriber's acceptance and advances the checkpoint
+// past every dispatch that is now accepted by all of its subscribers.
+func (h *hub) accepted(ctx context.Context, held *held) {
+	h.pendingMu.Lock()
+	if held.dropped.Load() {
+		h.pendingMu.Unlock()
+		return
+	}
+	held.remaining--
+	var ready []cursor
+	for len(h.pending) > 0 && h.pending[0].remaining == 0 && !h.pending[0].dropped.Load() {
+		ready = append(ready, h.pending[0].position)
+		h.pending = h.pending[1:]
+	}
+	h.advancing += len(ready)
+	h.pendingMu.Unlock()
+	defer func() {
+		h.pendingMu.Lock()
+		h.advancing -= len(ready)
+		if h.pendingCond != nil {
+			h.pendingCond.Broadcast()
+		}
+		h.pendingMu.Unlock()
+	}()
+	for _, position := range ready {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := h.advance(ctx, position); err != nil {
+			h.fail(err)
+			h.interrupt()
+			return
+		}
+		h.keep(position)
+	}
+}
+
+// abandon drops the dispatches this socket did not finish, so the next session
+// resumes from the last checkpoint every subscriber accepted.
+func (h *hub) abandon() {
+	h.pendingMu.Lock()
+	for _, held := range h.pending {
+		held.dropped.Store(true)
+	}
+	h.pending = nil
+	if h.pendingCond != nil {
+		h.pendingCond.Broadcast()
+	}
+	h.pendingMu.Unlock()
+}
+
+// settleGrace bounds how long a closing session waits for dispatches it already
+// read. A dispatch a subscriber still cannot store after the grace replays on
+// the next session from the last accepted checkpoint.
+const settleGrace = 2 * time.Second
+
+// settle waits for the dispatches this socket already read to be accepted, so
+// a dispatch that arrived before the close is stored before the session ends.
+func (h *hub) settle() {
+	h.pendingMu.Lock()
+	if h.pendingCond == nil {
+		h.pendingCond = sync.NewCond(&h.pendingMu)
+	}
+	cond := h.pendingCond
+	h.pendingMu.Unlock()
+	expired := make(chan struct{})
+	timer := time.AfterFunc(settleGrace, func() {
+		close(expired)
+		h.pendingMu.Lock()
+		cond.Broadcast()
+		h.pendingMu.Unlock()
+	})
+	defer timer.Stop()
+	h.pendingMu.Lock()
+	for len(h.pending) > 0 || h.advancing > 0 {
+		select {
+		case <-expired:
+			h.pendingMu.Unlock()
+			h.abandon()
+			return
+		default:
+		}
+		cond.Wait()
+	}
+	h.pendingMu.Unlock()
+}
+
+// advance writes the shared checkpoint.
+func (h *hub) advance(ctx context.Context, position cursor) error {
+	cursor, err := json.Marshal(position)
+	if err != nil {
+		return err
+	}
 	return h.db.Write(ctx, func(tx *canon.Tx) error {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO discord_sessions(bot,cursor) VALUES(?,?) ON CONFLICT(bot) DO UPDATE SET cursor=excluded.cursor", h.bot.Key(), cursor); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO discord_sessions(bot,cursor) VALUES(?,?) ON CONFLICT(bot) DO UPDATE SET cursor=excluded.cursor", h.bot.Key(), string(cursor)); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor=? WHERE bot=?", cursor, h.bot.Key())
+		_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor=? WHERE bot=?", string(cursor), h.bot.Key())
 		return err
 	})
 }
@@ -322,19 +501,53 @@ const (
 	dispatchRetryMax = 2 * time.Second
 )
 
+// work delivers this subscriber's dispatches in order. A retryable refusal is
+// replayed with bounded backoff; anything else stops the session as before.
+func (h *hub) work(m *member) {
+	for {
+		m.mu.Lock()
+		for len(m.queue) == 0 && !m.closed {
+			m.cond.Wait()
+		}
+		if len(m.queue) == 0 {
+			outstanding := m.outstanding
+			m.outstanding = nil
+			m.mu.Unlock()
+			for _, held := range outstanding {
+				h.accepted(context.Background(), held)
+			}
+			return
+		}
+		item := m.queue[0]
+		m.queue = m.queue[1:]
+		m.mu.Unlock()
+		if err := h.hand(m, item); err != nil {
+			h.fail(err)
+			h.interrupt()
+			return
+		}
+		m.accepted(item.held)
+		h.accepted(context.Background(), item.held)
+	}
+}
+
 // hand passes one dispatch to one subscriber, replaying it while the
-// subscriber reports that it can store it later. Anything else stops the
-// session as before.
-func (h *hub) hand(ctx context.Context, m *member, kind string, data json.RawMessage, cursor string) error {
+// subscriber reports that it can store it later.
+func (h *hub) hand(m *member, item delivery) error {
 	backoff := dispatchRetryMin
 	for {
-		err := m.handle(ctx, kind, data, cursor)
+		err := m.handle(context.Background(), item.kind, item.data, item.held.cursor())
 		if err == nil || !channels.Retryable(err) {
 			return err
 		}
+		if item.held.dropped.Load() {
+			// The socket ended before this subscriber could store the
+			// dispatch, so the next session replays it.
+			return nil
+		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-h.stop:
+			return nil
 		case <-time.After(backoff):
 		}
 		backoff = min(2*backoff, dispatchRetryMax)
@@ -374,6 +587,9 @@ func (h *hub) keep(position cursor) {
 // reset drops the session identity the platform refused. Native receipts,
 // pairing and bindings stay, so a replay cannot repeat work.
 func (h *hub) reset(ctx context.Context) error {
+	// Settle the dispatches this socket read before dropping its identity, so a
+	// late checkpoint write cannot revive the refused session.
+	h.settle()
 	h.keep(cursor{})
 	return h.db.Write(ctx, func(tx *canon.Tx) error {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO discord_sessions(bot,cursor) VALUES(?,'') ON CONFLICT(bot) DO UPDATE SET cursor=''", h.bot.Key()); err != nil {
@@ -478,6 +694,7 @@ func (h *hub) serve(asked Intents) error {
 		return errUnavailable
 	}
 	token = ""
+	defer h.settle()
 	for {
 		var f frame
 		if err := wsjson.Read(ctx, conn, &f); err != nil {
@@ -515,12 +732,8 @@ func (h *hub) serve(asked Intents) error {
 				position.Session = ready.Session
 			}
 			position.Seq, position.Intents = *f.Seq, asked
-			data, _ := json.Marshal(position)
-			if err := h.deliver(ctx, f.Type, f.Data, string(data)); err != nil {
-				return err
-			}
-			h.keep(position)
 			seq.Store(*f.Seq)
+			h.broadcast(ctx, f.Type, f.Data, position)
 			h.mu.Lock()
 			changed := h.unionLocked() != asked
 			h.mu.Unlock()

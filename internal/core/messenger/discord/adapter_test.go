@@ -746,10 +746,9 @@ func TestLiveForwardedMessageReadsItsSnapshot(t *testing.T) {
 	}
 }
 
-// gatewayFixture starts a synthetic Gateway for one adapter and returns the
-// frame channel plus the adapter's live event stream. A test writes frames to
-// the channel and reads the events the live reader delivered.
-func gatewayFixture(t *testing.T, rest func(*http.Request) *http.Response) (chan any, chan messenger.Event, *messengerdiscord.Adapter, func()) {
+// gatewayServer starts a synthetic Gateway for one adapter and returns the
+// frame channel a test writes dispatches to. It does not start a live reader.
+func gatewayServer(t *testing.T, rest func(*http.Request) *http.Response) (chan any, <-chan int, *messengerdiscord.Adapter, func()) {
 	t.Helper()
 	frames := make(chan any, 8)
 	identified := make(chan int, 1)
@@ -759,7 +758,7 @@ func gatewayFixture(t *testing.T, rest func(*http.Request) *http.Response) (chan
 			return
 		}
 		defer conn.CloseNow()
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 		defer cancel()
 		if wsjson.Write(ctx, conn, map[string]any{"op": 10, "d": map[string]any{"heartbeat_interval": 60000}}) != nil {
 			return
@@ -809,22 +808,22 @@ func gatewayFixture(t *testing.T, rest func(*http.Request) *http.Response) (chan
 	if _, err := a.ListChats(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"}); err != nil {
 		t.Fatal(err)
 	}
+	return frames, identified, a, func() { server.Close() }
+}
+
+// gatewayFixture starts a live reader on a synthetic Gateway and returns the
+// frame channel plus the events it delivered.
+func gatewayFixture(t *testing.T, rest func(*http.Request) *http.Response) (chan any, chan messenger.Event, *messengerdiscord.Adapter, func()) {
+	t.Helper()
+	frames, joined, a, stop := gatewayServer(t, rest)
 	ctx, cancel := context.WithCancel(context.Background())
 	events := make(chan messenger.Event, 8)
 	done := make(chan error, 1)
 	go func() {
 		done <- a.Live(ctx, messenger.SourceID{Platform: "discord", Account: "123456"}, func(e messenger.Event) error { events <- e; return nil })
 	}()
-	select {
-	case <-identified:
-	case err := <-done:
-		cancel()
-		t.Fatalf("live stopped: %v", err)
-	case <-time.After(5 * time.Second):
-		cancel()
-		t.Fatal("live never identified")
-	}
-	stop := func() {
+	<-joined
+	return frames, events, a, func() {
 		cancel()
 		select {
 		case err := <-done:
@@ -834,9 +833,8 @@ func gatewayFixture(t *testing.T, rest func(*http.Request) *http.Response) (chan
 		case <-time.After(5 * time.Second):
 			t.Error("live did not stop")
 		}
-		server.Close()
+		stop()
 	}
-	return frames, events, a, stop
 }
 
 // Discord sends a partial MESSAGE_UPDATE. Only the fields it sent may reach the
@@ -889,5 +887,48 @@ func TestPartialMessageUpdateReadsTheStoredMessage(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("the session stopped after an update without text")
 		}
+	}
+}
+
+// A partial update needs the full message from REST. A transient failure must
+// keep the dispatch so the session replays it; only an answer that will not
+// change, such as a deleted message, is skipped.
+func TestUpdateHydrationRetriesTransientFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		repeats bool
+	}{
+		{"transient", 503, `{"message":"try later"}`, true},
+		{"gone", 404, `{"code":10008,"message":"Unknown Message"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var fetches atomic.Int32
+			frames, events, _, stop := gatewayFixture(t, func(r *http.Request) *http.Response {
+				fetches.Add(1)
+				return reply(r, tc.status, tc.body)
+			})
+			defer stop()
+			frames <- map[string]any{"op": 0, "t": "MESSAGE_UPDATE", "s": 2, "d": map[string]any{
+				"id": "901", "channel_id": "100", "guild_id": "g1", "content": "edited words",
+				"edited_timestamp": "2026-10-24T08:05:00.000000+00:00"}}
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) && fetches.Load() < 3 {
+				time.Sleep(20 * time.Millisecond)
+			}
+			if tc.repeats {
+				if fetches.Load() < 2 {
+					t.Fatalf("a transient hydration failure was acknowledged: fetches=%d", fetches.Load())
+				}
+			} else if fetches.Load() != 1 {
+				t.Fatalf("a gone message was fetched %d times", fetches.Load())
+			}
+			select {
+			case e := <-events:
+				t.Fatalf("an unreadable update was admitted: %+v", e)
+			case <-time.After(100 * time.Millisecond):
+			}
+		})
 	}
 }

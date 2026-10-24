@@ -42,7 +42,10 @@ read again for this increment.
   changed. An update without an author is completed from the message REST
   keeps; an update that changes neither text nor edit time, such as an embed
   refresh, is skipped; and an update whose text is unavailable is skipped
-  rather than failing the shared session.
+  rather than failing the shared session. A read that fails transiently is
+  retryable instead of skipped, because a page starts after the committed
+  cursor and could never recover the edit; only an answer that will not change,
+  a deleted message or an unreadable channel, is skipped.
 - **Inferred for LINA:** a live event the store cannot admit yet, such as an
   edit held behind an unsettled write, comes back as a retryable dispatch. The
   shared session replays it on the same socket after a bounded backoff, so the

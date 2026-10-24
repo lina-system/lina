@@ -55,11 +55,14 @@ reports text unavailable, and the session reconnects with the remaining
 subscribers' intents so a channel worker on the same token keeps running. A
 socket this hub interrupts for an intent change reconnects with the current
 union instead of failing every subscriber.
-A subscriber that cannot store a dispatch yet returns `channels.Retry`; the
-session replays that dispatch on the same socket with a bounded backoff and
-advances the shared checkpoint only after every subscriber accepts it, so a
-held edit is neither acknowledged nor lost and other subscribers keep the
-session (#1079).
+A subscriber that cannot store a dispatch yet returns `channels.Retry`. Each
+subscriber has its own delivery worker, so the socket's read loop and the other
+subscribers keep running while that dispatch waits: later messages arrive and
+heartbeats are answered. The worker replays the dispatch with a bounded backoff
+and the shared checkpoint advances only after every subscriber accepts it, so a
+held edit is neither acknowledged nor lost (#1079). A closing socket waits
+briefly for the dispatches it already read and then lets the next session replay
+the rest from the last accepted checkpoint.
 Discord connection verifies the bot identity before replacing its credential or worker.
 Gateway close 4007/4009 clears that bot's durable session/sequence cursor before the existing supervisor retries with Identify.
 This also applies before Hello.

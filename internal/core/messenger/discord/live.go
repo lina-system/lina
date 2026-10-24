@@ -7,6 +7,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/channels"
+	gatewaydiscord "github.com/thisisjun786/lina/internal/core/gateway/discord"
+
 	"github.com/thisisjun786/lina/internal/core/messenger"
 )
 
@@ -106,10 +109,15 @@ func (a *Adapter) updated(ctx context.Context, data json.RawMessage, deliver fun
 	}
 	if raw.Author.ID == "" {
 		full, err := a.message(ctx, raw.ChannelID, raw.ID)
-		if err != nil {
-			// The message is gone or unreadable: the scheduled read owns that
-			// record, and an update must not fail the shared session.
+		switch {
+		case errors.Is(err, ErrGone):
+			// The message is deleted or unreadable for good: the scheduled read
+			// owns that record.
 			return nil
+		case err != nil:
+			// A transient failure keeps the dispatch: the session replays it,
+			// because a page read starts past this message and cannot see it.
+			return channels.Retry(err)
 		}
 		raw = full
 	}
@@ -129,7 +137,12 @@ func (a *Adapter) updated(ctx context.Context, data json.RawMessage, deliver fun
 // message reads one message through the REST port.
 func (a *Adapter) message(ctx context.Context, chat, id string) (message, error) {
 	var raw message
-	if err := a.client.Get(ctx, "/channels/"+chat+"/messages/"+id, nil, &raw); err != nil {
+	err := a.client.Get(ctx, "/channels/"+chat+"/messages/"+id, nil, &raw)
+	switch {
+	case errors.Is(err, gatewaydiscord.ErrNotFound), errors.Is(err, gatewaydiscord.ErrForbidden):
+		// The message is deleted or the bot can never read it.
+		return message{}, ErrGone
+	case err != nil:
 		return message{}, err
 	}
 	return raw, nil

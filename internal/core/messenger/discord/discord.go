@@ -62,6 +62,10 @@ type Adapter struct {
 // ErrUnsupported reports that the source cannot serve this operation.
 var ErrUnsupported = errors.New("discord_source_unsupported")
 
+// ErrGone reports a REST answer that will not change: the message is deleted or
+// the bot cannot read its channel. A transient failure is any other error.
+var ErrGone = errors.New("discord_message_gone")
+
 var snowflake = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
 // New composes the source adapter. Nothing here contacts Discord.
