@@ -915,7 +915,7 @@ Workers are coding tools the user installed or signed in to: Codex, Claude Code,
 
 - Codex runs on its own app-server protocol over stdio (see Codex adapter).
 - Every ACP worker runs through one ACP adapter: Claude Code through the `claude-agent-acp` adapter program, Cursor (`cursor-agent acp`), Gemini CLI (`gemini --acp`) and Grok natively (see ACP adapter). Codex is never driven through ACP: both Codex ACP adapters measured worse than the app-server ([worker-protocols.md](../research/worker-protocols.md)).
-- Antigravity runs as a headless child with streaming output (see Antigravity headless adapter). The Claude Code headless adapter remains beside the ACP one until the worker evaluation chooses between them.
+- Antigravity runs as a headless child with streaming output (see Antigravity headless adapter). [CC] keeps ACP as its worker connection; its headless adapter stays only as an explicit selection ([worker-evaluation.md](../../evidence/worker-evaluation.md)).
 
 Each worker thread is a per-task coding-agent session: it implements the task packet, opens the task's pull request, waits for CI and review bots, fixes every CI failure and the P0 and P1 findings once, and reports done with a completion receipt only when the resulting head is green and no P0 or P1 remains. Review and CI stay with that session and never return to the manager for triage.
 
@@ -1251,8 +1251,10 @@ Added workers participate in normal dispatch authority, readiness and receipts.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
 
 The lifecycle adapter in #747 registers `claude-acp`, `cursor`, `gemini` and
-`grok` with `dispatch_work`; `claude` retains the headless adapter pending the
-worker evaluation. Each attempt records its version again after session
+`grok` with `dispatch_work`; `claude` keeps the headless adapter only as an
+explicit selection, because the worker evaluation kept ACP for [CC]
+([worker-evaluation.md](../../evidence/worker-evaluation.md)). Each attempt
+records its version again after session
 initialization and reports an unverified version while continuing the task.
 Gemini CLI installation reads its version through `gemini --acp` and
 `initialize`, without opening a session or requiring sign-in. Dispatch uses the
@@ -1303,8 +1305,10 @@ installs are discarded; complete installs are checked before reuse. Readiness
 records `claude --version`; the result separately records `agentInfo.version`.
 A missing Claude or Node returns an unsupported cause for this worker through
 `dispatch_work`, while other installed workers remain available. The `claude`
-headless worker remains a separate selection pending evaluation. A separately
-opted-in live test records the person's Claude version and the program version.
+headless worker stays available only as an explicit selection; the evaluation
+kept ACP ([worker-evaluation.md](../../evidence/worker-evaluation.md)). A
+separately opted-in live test records the person's Claude version and the
+program version.
 
 ### Readiness
 
@@ -2523,7 +2527,7 @@ The running-Core acceptance scenario is `e2e/m3/operational-switch.json`.
 - Retention periods for closed workspaces: set during work engine implementation acceptance.
 - Whether Codex subagents inside a worker see the `lina` tools, and that a declined approval leaves the action unexecuted: confirmed by QA in the worker adapter implementation issue.
 - Remote-device worker hosting through Node and the worker's own pull-request path from the device: verified during Node implementation acceptance; unsupported until then.
-- The ACP worker profiles: confirmed against each installed version when the profile is built, with live runs in the worker evaluation ([worker-protocols.md](../research/worker-protocols.md#evaluation-defined-before-building)). Which Claude Code adapter stays, ACP or headless, is decided by that evaluation.
+- The ACP worker profiles: confirmed against each installed version when the profile is built, with live runs in the worker evaluation ([worker-protocols.md](../research/worker-protocols.md#evaluation-defined-before-building)). That evaluation kept ACP for [CC] ([worker-evaluation.md](../../evidence/worker-evaluation.md)).
 - The wire format of delivery layers, work events and progress data: added to [host-protocol.md](host-protocol.md) during work engine implementation acceptance.
 - The Korean words of the frame and of the date fields, and the exposure of the four-level priority: set by a card sort with non-developers and by use.
 - The thresholds of the to-do record (surviving briefings before a question, the rate at which rejected automatic additions fall back to candidates), Korean date parsing coverage (lunar dates, month ends, business days), the commit granularity and inbox form of the records repository, and its behavior at thousands of files: set by measurement during work engine implementation acceptance.
