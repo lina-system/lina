@@ -74,14 +74,16 @@ M4-3 tailoring does not ship.
 
 ## What this change does with the result
 
-The tailoring is reverted in this pull request: every preset ships the empty
-record (`{"schema":1,"preset":"<key>"}`) and the unchanged persona layers, the
-release-validation expectations in `persona/release_work_method.go` follow, and
-`docs/design/preset-work-methods.md` records that the per-preset values are
-measured but not in effect. The finding returns to M4-2. The mechanism — the
-record, its loading, dispatch, reply shapes, ask settings, done evidence,
-hand-offs and names — stays; only the shipped values and layer text revert, and
-the boot and e2e fixtures install the record they need.
+The reply-shaping tailoring is reverted in this pull request: every preset drops
+its `reply`, `ask`, `fill` and `done` values and the M4-3 persona-layer edits,
+while keeping the fields that wire the mechanism (`tools.declare_first`,
+`workers.dispatch` and `handoff.owns`). A replay request declares no tools and
+creates no worker task, so this runner cannot measure those fields; they are kept
+rather than reverted, and removing them would leave coding work undispatchable.
+`docs/design/preset-work-methods.md` records that the reply-shaping values are
+measured but not in effect, and release validation expects the mechanism-only
+records. The finding returns to M4-2. The mechanism — the record, its loading,
+dispatch, reply shapes, ask settings, done evidence, hand-offs and names — stays.
 
 ## Decisions
 

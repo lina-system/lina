@@ -36,10 +36,46 @@ var starterMethodDefaults = map[string]string{
 	"fill":                `[]`,
 }
 
-// starterMethodValues holds the per-starter overrides the release ships. It is
-// empty: the M4-4 replay measured the M4-3 tailoring and it did not ship, so
-// every starter ships the empty record and its defaults until M4-2 revises it.
-var starterMethodValues = map[string]map[string]string{}
+// starterMethodValues holds the per-starter overrides the release ships: the
+// fields that wire the mechanism (declared tool groups, worker dispatch and the
+// work kinds each preset owns). The reply-shaping values and the persona-layer
+// changes of M4-3 are not shipped: the M4-4 replay measured them, no agent
+// improved without another regressing, and the finding returns to M4-2.
+var starterMethodValues = map[string]map[string]string{
+	"system": {
+		"tools.declare_first": `["device","setup","terminal"]`,
+		"handoff.owns":        `["setup","device","account","health_of_lina"]`,
+	},
+	"lina": {
+		"tools.declare_first": `["to_do","mail","calendar","messaging_read","documents"]`,
+		"handoff.owns":        `["schedule","to_do","mail","business_document","coordination"]`,
+	},
+	"dev": {
+		"tools.declare_first": `["work","github","terminal"]`,
+		"workers.dispatch":    `true`,
+		"handoff.owns":        `["code","pull_request","worker_task"]`,
+	},
+	"knowledge": {
+		"tools.declare_first": `["people_records","wiki","messaging_read"]`,
+		"handoff.owns":        `["people_record","wiki"]`,
+	},
+	"life": {
+		"tools.declare_first": `["life_records","web_research"]`,
+		"handoff.owns":        `["life_record","inventory","diet_log"]`,
+	},
+	"creative": {
+		"tools.declare_first": `["creative_artifacts","image_generation","documents"]`,
+		"handoff.owns":        `["creative_artifact","creative_tooling_brief"]`,
+	},
+	"investing": {
+		"tools.declare_first": `["web_research","materials"]`,
+		"handoff.owns":        `["investment_analysis"]`,
+	},
+	"legal": {
+		"tools.declare_first": `["documents","web_research","materials"]`,
+		"handoff.owns":        `["contract_draft","tax_calculation","legal_review"]`,
+	},
+}
 
 func validateStarterMethod(key, record string) error {
 	overrides, ok := starterMethodValues[key]

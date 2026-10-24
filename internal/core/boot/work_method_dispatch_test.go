@@ -78,13 +78,11 @@ func TestWorkMethodGoalResultReturnsToRequester(t *testing.T) {
 	}
 }
 
-// installDispatchRecord gives the dev preset a record that owns code and enables
-// worker dispatch. The shipped presets carry the empty record after the M4-4
-// replay measured the M4-3 tailoring and it did not ship; the mechanism stays,
-// so fixtures install the record they need.
+// installDispatchRecord gives the dev preset the record that owns code and
+// enables worker dispatch, for fixtures that exercise dispatch directly.
 func installDispatchRecord(t *testing.T, r *conversationRuntime) {
 	t.Helper()
-	method := `{"schema":1,"preset":"dev","workers":{"dispatch":true},"handoff":{"owns":["code","pull_request","worker_task"]}}`
+	method := `{"schema":1,"preset":"dev","tools":{"declare_first":["work","github","terminal"]},"workers":{"dispatch":true},"handoff":{"owns":["code","pull_request","worker_task"]}}`
 	if err := r.agents.UpdatePreset(t.Context(), agents.Preset{ID: "dev", WorkMethod: method}, r.person); err != nil {
 		t.Fatal(err)
 	}

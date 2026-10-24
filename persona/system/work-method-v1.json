@@ -1,4 +1,19 @@
 {
   "schema": 1,
-  "preset": "system"
+  "preset": "system",
+  "tools": {
+    "declare_first": [
+      "device",
+      "setup",
+      "terminal"
+    ]
+  },
+  "handoff": {
+    "owns": [
+      "setup",
+      "device",
+      "account",
+      "health_of_lina"
+    ]
+  }
 }

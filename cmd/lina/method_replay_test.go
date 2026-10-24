@@ -11,9 +11,12 @@ import (
 	"github.com/thisisjun786/lina/persona"
 )
 
-// The M4-4 replay measured the M4-3 tailoring and it did not ship, so the two
-// variants carry the same shipped triple and the comparison is a control: it can
-// only report `unchanged`. A snapshot baseline is what measures a later change.
+// The record-alone comparison keeps the shipped layers on both sides and strips
+// only the record from the baseline, so it measures the record's own
+// contribution. The shipped records carry the mechanism fields (declared tool
+// groups, worker dispatch, work-kind ownership); the reply-shaping values of
+// M4-3 are not shipped, because the M4-4 replay measured them and no agent
+// improved without another regressing.
 func TestReplayVariantsUseTheShippedTriple(t *testing.T) {
 	variants, err := replayVariants("")
 	if err != nil {
@@ -31,11 +34,8 @@ func TestReplayVariantsUseTheShippedTriple(t *testing.T) {
 		if !ok {
 			t.Fatalf("baseline variant lacks %s", starter.Key)
 		}
-		if !sameMethod(t, tailored.WorkMethod, persona.EmptyWorkMethod(starter.Key), starter.Key) {
-			t.Fatalf("shipped %s record is not the empty record: %s", starter.Key, tailored.WorkMethod)
-		}
-		if !sameMethod(t, before.WorkMethod, tailored.WorkMethod, starter.Key) {
-			t.Fatalf("%s: baseline record differs from the shipped record", starter.Key)
+		if !sameMethod(t, before.WorkMethod, persona.EmptyWorkMethod(starter.Key), starter.Key) {
+			t.Fatalf("%s: baseline is not the empty record: %s", starter.Key, before.WorkMethod)
 		}
 		if before.Layers != tailored.Layers {
 			t.Fatalf("%s: baseline layers differ from the shipped layers", starter.Key)

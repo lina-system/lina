@@ -1,4 +1,17 @@
 {
   "schema": 1,
-  "preset": "creative"
+  "preset": "creative",
+  "tools": {
+    "declare_first": [
+      "creative_artifacts",
+      "image_generation",
+      "documents"
+    ]
+  },
+  "handoff": {
+    "owns": [
+      "creative_artifact",
+      "creative_tooling_brief"
+    ]
+  }
 }

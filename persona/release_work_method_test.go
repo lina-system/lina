@@ -74,19 +74,22 @@ func sameRecord(t *testing.T, a, b, key string) bool {
 }
 
 func TestReleaseWorkMethodsRejectDrift(t *testing.T) {
-	// The M4-4 replay measured the M4-3 tailoring and it did not ship, so every
-	// starter ships the empty record. Any value a record adds is now drift: the
-	// finding went back to M4-2, and a re-tuned record lands through that design
-	// change rather than as an edit here.
+	// The shipped records carry the mechanism fields (declared tool groups,
+	// worker dispatch, work-kind ownership) and no reply-shaping override: the
+	// M4-4 replay measured that tailoring and it did not ship, so the finding is
+	// M4-2's and a re-tuned record lands through that design change.
 	for _, starter := range persona.Starters() {
 		t.Run(starter.Key, func(t *testing.T) {
 			path := starter.Key + "/work-method-v1.json"
 			source := releaseSource(t)
 			original := source[path].Data
-			if !sameRecord(t, string(original), persona.EmptyWorkMethod(starter.Key), starter.Key) {
-				t.Fatalf("shipped record is not the empty record: %s", original)
-			}
 			values := persona.WorkMethodValues(string(original))
+			if string(values["tools.declare_first"]) == `[]` {
+				t.Fatalf("shipped record declares no tool groups: %s", original)
+			}
+			if string(values["reply.candidates"]) != `1` {
+				t.Fatalf("shipped record carries a reply override: %s", values["reply.candidates"])
+			}
 			changes := map[string]string{
 				"tools.declare_first": `["work"]`,
 				"handoff.owns":        `["code"]`,
@@ -99,7 +102,7 @@ func TestReleaseWorkMethodsRejectDrift(t *testing.T) {
 				"fill":                `["ask.per_turn"]`,
 			}
 			if starter.Key == "dev" {
-				changes["workers.dispatch"] = `true`
+				changes["workers.dispatch"] = `false`
 			}
 			for field, raw := range values {
 				if strings.HasPrefix(field, "done.") {
@@ -140,10 +143,10 @@ func TestReleaseWorkMethodsRejectDrift(t *testing.T) {
 					t.Fatal("release accepted declared tool groups")
 				}
 			})
-			t.Run("empty record accepted", func(t *testing.T) {
+			t.Run("empty record refused", func(t *testing.T) {
 				source[path].Data = []byte(persona.EmptyWorkMethod(starter.Key))
-				if err := persona.Validate(source); err != nil {
-					t.Fatalf("release refused the empty record: %v", err)
+				if err := persona.Validate(source); err == nil {
+					t.Fatal("release accepted a record that drops the mechanism fields")
 				}
 			})
 		})
