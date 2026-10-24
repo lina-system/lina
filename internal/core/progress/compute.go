@@ -26,8 +26,11 @@ type Line struct {
 	Stages       []Stage `json:"stages,omitempty"`
 }
 type Entry struct {
-	Ref  string
-	Line Line
+	Ref string
+	// GoalID names the goal of a line built from a 목표 record, the only line a
+	// goal command can address.
+	GoalID string
+	Line   Line
 	// Row marks a row of a line: a task or run drawn inside an 일 or 목표. A row
 	// is not a line and the running count never counts it.
 	Row bool
@@ -160,14 +163,21 @@ func Compute(units []Unit) []Entry {
 		children[at.parent] = append(children[at.parent], r)
 	}
 	sort.Slice(roots, func(i, j int) bool { return less(roots[i], roots[j]) })
+	entry := func(r *row) Entry {
+		e := Entry{Ref: r.unit.ID, Line: r.line, Row: r.row}
+		if r.unit.GoalLine {
+			e.GoalID = r.unit.ID
+		}
+		return e
+	}
 	out := []Entry{}
 	for _, r := range roots {
-		out = append(out, Entry{Ref: r.unit.ID, Line: r.line, Row: r.row})
+		out = append(out, entry(r))
 		group := children[r.unit.ID]
 		sort.Slice(group, func(i, j int) bool { return less(group[i], group[j]) })
 		for _, child := range group {
 			child.line.Depth = 1
-			out = append(out, Entry{Ref: child.unit.ID, Line: child.line, Row: child.row})
+			out = append(out, entry(child))
 		}
 	}
 	return out

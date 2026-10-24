@@ -883,6 +883,7 @@ type ProgressLine struct {
 	Waiting      json.Number      `json:"waiting"`
 }
 type ProgressRow struct {
+	GoalID    *string              `json:"goal_id,omitempty"`
 	Line      ProgressLine         `json:"line"`
 	Ref       string               `json:"ref"`
 	StageRefs *[]ProgressStageRefs `json:"stage_refs,omitempty"`
@@ -9374,6 +9375,9 @@ const clientSchemaJSON = `{
         },
         "line": {
           "$ref": "#/$defs/progress_line"
+        },
+        "goal_id": {
+          "type": "string"
         },
         "stage_refs": {
           "type": "array",
