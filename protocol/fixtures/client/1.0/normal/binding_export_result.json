@@ -1,0 +1,25 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "binding_export_result",
+  "message_id": "binding_export_result-example",
+  "attempt_id": "binding_export_result-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "applied",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "directory": "derived/intake-cases",
+    "cases": 1
+  }
+}

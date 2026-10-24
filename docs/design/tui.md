@@ -1425,12 +1425,12 @@ the two-mode comparison. S11 requires every width observation from 100 through
 greater width in that range. SIGINT and SIGTERM cancel the scenario runner through
 its terminal-restoration paths.
 
-LN-85 delivers the harness and scenario validation. [#86](https://github.com/thisisjun786/lina/issues/86)
+LN-85 delivers the harness and scenario validation. [#86](https://github.com/lina-system/lina/issues/86)
 records the proposed terminal matrix in `evidence/tui-spike/terminals.json`.
 A confirmed matrix records each terminal's observed product version and `TERM`;
 a proposed entry cannot carry either field.
 Owner confirmation of that list is still pending and is the first Done-when item
-of [follow-up #371](https://github.com/thisisjun786/lina/issues/371), which also
+of [follow-up #371](https://github.com/lina-system/lina/issues/371), which also
 owns the confirmed matrix, owner-run S1–S7 and S9–S11 evidence and the final
 library decision, including #87's outstanding acceptance. Harness completion
 does not establish the spike gate.
@@ -1579,7 +1579,7 @@ against installed Core's socket through `e2e/m1/conformance-agents.json`, checki
 refusals and unchanged canon for missing/deleted agents and channel targets.
 Native result-body cases run against Core's result store and ledger; client
 result-type negotiation and full wire bodies remain tracked in
-[#419](https://github.com/thisisjun786/lina/issues/419).
+[#419](https://github.com/lina-system/lina/issues/419).
 
 | Layer | Runs | Asserts |
 | --- | --- | --- |

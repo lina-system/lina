@@ -425,7 +425,9 @@ Core checks a retained tie again when a later tool would make it irreversible.
 
 - A binding that leaves the focus, returns to an aged focus or creates an item shows as a one-line chip on the person's message, naming the item. A binding to a fresh focus shows nothing.
 - One tap on the chip lists the other candidates, "new" and "none". Choosing one moves the binding: Core appends a rebinding event and moves what the turn did to the right item ([work-and-delegation.md](work-and-delegation.md#messages-about-work)). The move is the label of that choice in Jev's material and in the replay set.
-- An effect that already left the person cannot be moved, which is why the agent asks first for those.
+- An effect that already left the person cannot be moved, which is why the agent asks first for those. A move lists such an effect as not moved, with the reason.
+- The chip is available wherever the message is shown, including channel replies, and it follows a later choice. A surface without a pointer reaches the same list with one key or one short reply.
+- Core counts moves per hundred bindings by the decider that made the original pick, and each move becomes a Jev label and one exportable replay case. Both are canon: they survive a restart. A retry returns the original move receipt. The corrected choice becomes the active binding in the same commit as the move. Replay keeps the original input and admission facts, excluding personal name memories.
 
 **Admission and context.** Native person input and its initial system binding event commit together, before acknowledgement or turn dispatch. The binding is structured canon metadata stored inline, including full candidate titles; large work metadata must not prevent admission or require filesystem I/O inside the transaction. Admission reads the prior binding and the last exchange through the retraction-visible projection, so a withdrawn input neither restores focus nor refreshes its age. A notice's run identity comes from its durable delivery record, never from a notice body that may be stored as a material. Retrying an input reuses that event; input admitted during a turn keeps its own event and supplies its binding at the next model round. A binding records `no-rule` and an unresolved choice when no Core rule holds, alongside a fresh-focus or none default. It does not authorize an action. Existing pending input from an earlier Core version receives a binding before preparation resumes.
 
@@ -1301,7 +1303,7 @@ Imported observations, card lines and legacy summaries stay outside recall, Cont
 
 ### Importing a Hermes install
 
-Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The Hermes import work in [#115](https://github.com/thisisjun786/lina/issues/115), its sub-issues and [#320](https://github.com/thisisjun786/lina/issues/320) landed in `internal/addons/importer/hermes` and the `lina import-hermes` command under this framing ([#330](https://github.com/thisisjun786/lina/issues/330)). No other source adapter is implemented by this change.
+Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The Hermes import work in [#115](https://github.com/lina-system/lina/issues/115), its sub-issues and [#320](https://github.com/lina-system/lina/issues/320) landed in `internal/addons/importer/hermes` and the `lina import-hermes` command under this framing ([#330](https://github.com/lina-system/lina/issues/330)). No other source adapter is implemented by this change.
 
 The adapter lives outside Core in `internal/addons/importer/hermes`. The explicit `lina import-hermes` command is its installed entry point; no onboarding or ordinary conversation starts it. Importing remains optional.
 
@@ -1481,7 +1483,7 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 - The bound on the part of a result's text that the model sees, and the size limit of a preview's file bytes held in the ledger: set by measurement during implementation acceptance of the conversation engine.
 - The reply budgets, the size of a tuning step and the reaction classes: starting values set in Reply shape, tuned by measurement with real use and kept per person.
 - Episode format version 1 and its manifest are defined under [Episode export](#episode-export).
-- The fusion constant of `recall` ranking and any weight per kind: starting values set on the [parity set](https://github.com/thisisjun786/lina/issues/849) during implementation acceptance of the shared index, recorded with each change ([research](../research/unified-store.md#recall-quality)).
+- The fusion constant of `recall` ranking and any weight per kind: starting values set on the [parity set](https://github.com/lina-system/lina/issues/849) during implementation acceptance of the shared index, recorded with each change ([research](../research/unified-store.md#recall-quality)).
 
 [lcm-store]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/store.py
 [lcm-compaction]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/compaction.py
