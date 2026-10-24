@@ -394,6 +394,53 @@ func TestFollowWorkNormalizesChosenWorker(t *testing.T) {
 	}
 }
 
+// A task may be named session:foo. That string is also a session reference.
+// follow_work must resolve it the same way delivery does: the task id wins
+// when the card exists, so a person who chose a different task is not bypassed
+// by a missing session of the same suffix.
+func TestFollowWorkSessionPrefixedTaskKeepsChosenTarget(t *testing.T) {
+	r, _ := turnRuntime(t)
+	reserve := t.TempDir()
+	chosen := work.Task{ID: "chosen-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Chosen task", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	sessionTask := work.Task{ID: "session:foo", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Session-shaped task", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	for _, task := range []work.Task{chosen, sessionTask} {
+		if err := r.work.Create(t.Context(), task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "session-shaped-run", TaskID: sessionTask.ID, Generation: 1, Worker: "codex", ThreadID: "real-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "session-shaped-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "real-thread", TaskID: sessionTask.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "session-shaped-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	input := questionPersonInput(t, r, "session-shaped-choice", "Stay with the chosen task.")
+	tools := modelBindingTools(t, r, input)
+	if _, err := r.saveModelBinding(t.Context(), input, "binding-person:session-shaped", []binding.Choice{{Quote: input.Body.Text(), Target: binding.Target{Class: "existing", ID: chosen.ID, Kind: "task"}}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, tools, "follow_work", "session-shaped-follow", map[string]string{"id": "session:foo", "text": "Steer the session-shaped task"})
+	if got.Code != loop.Denied || !strings.Contains(string(got.Output), "input_target_pending") {
+		t.Fatalf("session-prefixed task id bypassed the chosen task: %+v", got)
+	}
+	if probe.inputs != 0 {
+		t.Fatalf("session-shaped task received %d follow-ups", probe.inputs)
+	}
+}
+
 func TestFollowWorkUsesSelectedChannelSource(t *testing.T) {
 	r, _ := turnRuntime(t)
 	now := time.Now().UTC()
