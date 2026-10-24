@@ -9,6 +9,7 @@ import (
 )
 
 func TestCitationProjectionRebuildAndSourceRemoval(t *testing.T) {
+	t.Parallel()
 	s, _, db := setup(t)
 	document := func(source string) []byte {
 		return bytes.Replace(doc("note", "Notes"), []byte("kind: memo"), []byte("kind: memo\nsource: "+source), 1)
@@ -60,6 +61,7 @@ func TestCitationProjectionRebuildAndSourceRemoval(t *testing.T) {
 }
 
 func TestCitationProjectionUsesRetainedEventIdentity(t *testing.T) {
+	t.Parallel()
 	s, _, db := setup(t)
 	seedCandidateSource(t, db, "source-event", "Retained source", "person", guard.EntryOwner)
 	data := bytes.Replace(doc("event-note", "Notes"), []byte("kind: memo"), []byte("kind: memo\nsource: \"source-event\""), 1)

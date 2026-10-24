@@ -33,8 +33,13 @@ struct lina_host {
   // 1 signed and notarized, 0 invalid, -1 could not check.
   int (*verify_code)(void *context, const char *path);
   int (*remove_bundle)(void *context, const char *path);
-  // Renames within a directory; used to swap a verified bundle into place.
+  // Renames within a directory; used to move a verified bundle into place
+  // when none is installed.
   int (*rename_path)(void *context, const char *from, const char *to);
+  // Exchanges two existing paths in one step, so the installed bundle is never
+  // missing while a verified one replaces it. 0 on success; on failure neither
+  // path changed.
+  int (*swap_paths)(void *context, const char *first, const char *second);
   // Installs or removes the root launchd job that carries the guard.
   int (*install_guard)(void *context, const char *binary, const char *plist);
   int (*remove_guard)(void *context, const char *binary, const char *plist);
@@ -46,6 +51,9 @@ struct lina_host {
   int (*remove_file)(void *context, const char *path);
   // 1 present, 0 absent, -1 error.
   int (*exists)(void *context, const char *path);
+  // 1 present with `age_ms` since it was last written, 0 absent, -1 error. A
+  // file dated after the current time reports UINT64_MAX.
+  int (*file_age_ms)(void *context, const char *path, uint64_t *age_ms);
   // 0700, root owned. 0 on success.
   int (*make_dir)(void *context, const char *path);
 

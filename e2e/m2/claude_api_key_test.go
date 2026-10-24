@@ -179,6 +179,91 @@ func TestM2ClaudeAPIKeyTurnThroughRunningCore(t *testing.T) {
 	markBoundaries(t, requests[1])
 }
 
+// A configured effort reaches a normal conversation on installed Core and is
+// sent as the Messages thinking budget.
+func TestM2ClaudeAPIKeyConfiguredEffort(t *testing.T) {
+	var mu sync.Mutex
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("path %s", r.URL.Path)
+		}
+		var decoded map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&decoded); err != nil {
+			t.Errorf("body: %v", err)
+		}
+		mu.Lock()
+		body = decoded
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		messagesEvent(w, "message_start", `,"message":{"id":"msg_effort","role":"assistant","content":[]}`)
+		messagesEvent(w, "content_block_start", `,"index":0,"content_block":{"type":"text","text":""}`)
+		messagesEvent(w, "content_block_delta", `,"index":0,"delta":{"type":"text_delta","text":"Done."}`)
+		messagesEvent(w, "content_block_stop", `,"index":0`)
+		messagesEvent(w, "message_stop", ``)
+	}))
+	t.Cleanup(server.Close)
+	h, start := installedCore(t,
+		"LINA_CLAUDE_API_MODEL=fixture-model",
+		"LINA_CLAUDE_API_KEY=synthetic-key",
+		"LINA_CLAUDE_API_BASE_URL="+server.URL+"/v1",
+		"LINA_CLAUDE_API_EFFORT=high",
+	)
+	stop := start()
+	defer stop()
+	c, conversation := conversationClient(t, h)
+	defer c.Close()
+	delivered := composeTurn(t, h, c, conversation, "messages-effort", "Answer in one line.")
+	if !delivered["Done."] {
+		t.Fatalf("reply not delivered: %v", delivered)
+	}
+	mu.Lock()
+	thinkingBody := body["thinking"]
+	mu.Unlock()
+	raw, err := json.Marshal(thinkingBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var thinking struct {
+		Type   string `json:"type"`
+		Budget int64  `json:"budget_tokens"`
+	}
+	if err := json.Unmarshal(raw, &thinking); err != nil || thinking.Type != "enabled" || thinking.Budget != 16384 {
+		t.Fatalf("thinking %s", raw)
+	}
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(h.ctx)
+	var evidence ledger.RequestEvidence
+	var stored, material string
+	var revision int64
+	if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, "SELECT coalesce(body,''),coalesce(material_id,''),coalesce(material_revision,0) FROM conv_event WHERE scaffold_kind='request_assembly' ORDER BY rowid ASC LIMIT 1").Scan(&stored, &material, &revision)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if material != "" {
+		store, err := assets.Open(h.ctx, h.root, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		spilled, err := store.Read(h.ctx, material, revision)
+		_ = store.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored = string(spilled)
+	}
+	if err = json.Unmarshal([]byte(stored), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.Effort != "high" {
+		t.Fatalf("recorded effort %q", evidence.Effort)
+	}
+}
+
 // markBoundaries checks the first request's cache marks against Core's layout
 // evidence in the same wire: at most four, each 1 hour, never on the packet.
 func markBoundaries(t *testing.T, body map[string]any) {

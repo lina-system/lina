@@ -13,6 +13,9 @@
 
 #define LINA_PATH_MAX 256
 #define LINA_VERIFY_WINDOW_MS 120000u
+// An evaluation answers within 500 ms, so its marker is never this old unless
+// the evaluation crashed.
+#define LINA_EVALUATION_STALE_MS 5000u
 #define LINA_BACKUP_TEXT_MAX 4096
 
 struct lina_paths {
@@ -22,6 +25,10 @@ struct lina_paths {
   char enabled[LINA_PATH_MAX];
   char measured[LINA_PATH_MAX];
   char eval_marker[LINA_PATH_MAX];
+  // The plug-in's crash marker, present while an evaluation runs.
+  char evaluation[LINA_PATH_MAX];
+  // Present while a restore that failed waits for the guard to retry it.
+  char restore_retry[LINA_PATH_MAX];
   char bundle[LINA_PATH_MAX];
   char guard[LINA_PATH_MAX];
   char guard_plist[LINA_PATH_MAX];
