@@ -108,7 +108,9 @@
         "mini_app_request",
         "mini_app_result",
         "local_task",
-        "local_task_result"
+        "local_task_result",
+        "teams_request",
+        "teams_result"
       ]
     },
     "message_id": {
@@ -2010,6 +2012,38 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/local_task_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "teams_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/teams_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "teams_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/teams_result"
           }
         }
       }
@@ -8452,6 +8486,135 @@
         "provider",
         "model",
         "served_id"
+      ],
+      "additionalProperties": false
+    },
+    "teams_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "configure",
+            "list",
+            "sign_in",
+            "disconnect",
+            "chats",
+            "switches"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "tenant": {
+          "type": "string"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "chat": {
+          "type": "string"
+        },
+        "sync": {
+          "type": "boolean"
+        },
+        "learn": {
+          "type": "boolean"
+        },
+        "embed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "teams_connection_status": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tenant": {
+          "type": "string"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "tenant",
+        "client_id",
+        "account",
+        "status",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "teams_chat_status": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "sync": {
+          "type": "boolean"
+        },
+        "learn": {
+          "type": "boolean"
+        },
+        "embed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "sync",
+        "learn",
+        "embed"
+      ],
+      "additionalProperties": false
+    },
+    "teams_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "connections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/teams_connection_status"
+          }
+        },
+        "chats": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/teams_chat_status"
+          }
+        }
+      },
+      "required": [
+        "operation"
       ],
       "additionalProperties": false
     }

@@ -335,9 +335,24 @@ func (m *shellModel) workDetails() string {
 	lines := []string{card.Name, card.Now}
 	if p.workStage != "" {
 		m.syncWorkStage(card)
+		// The pager stores the stage from when Details opened. A later projection
+		// can place the same step ref on another stage; follow the ref.
+		stageID := p.workStage
+		if p.workStep != "" {
+			for _, stage := range card.Stages {
+				if !stageExpandable(stage) {
+					continue
+				}
+				for _, step := range stage.Steps {
+					if step.ID == p.workStep && step.State != "superseded" {
+						stageID = stageKey(stage)
+					}
+				}
+			}
+		}
 		lines = []string{card.Name, design.Text(m.styles.options.Language, "unknown")}
 		for _, stage := range card.Stages {
-			if stageKey(stage) == p.workStage {
+			if stageKey(stage) == stageID {
 				lines = []string{card.Name, stage.Label}
 				if p.workStep != "" {
 					lines = []string{card.Name, design.Text(m.styles.options.Language, "unknown")}

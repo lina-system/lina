@@ -683,8 +683,9 @@ without moving focus or changing the draft.
 
 Within an expanded entry, Up and Down visit its steps before the next entry.
 Step selection follows the opaque ref supplied beside the display line, even
-when the name or position changes. Ctrl+O on a step shows that step's Details;
-closing the pager returns to the same selection. Expanded steps put person
+when the name or position changes. Ctrl+O on a step shows that step's Details.
+While Details stay open, that ref is read from the stage that currently holds
+it. Closing the pager returns to the same selection. Expanded steps put person
 waits first, then working, waiting and remaining history. A step and its worker
 rows stay together when scrolling, with a count of steps hidden on either side.
 Worker state words use the client's language; worker rows disappear on collapse

@@ -67,8 +67,9 @@ func (r Route) Valid() bool {
 // Author identifies a message's writer on the platform. It never becomes a LINA
 // person or agent id.
 type Author struct {
-	ID   string
-	Name string
+	ID    string
+	Name  string
+	Email string // Profile evidence; never an identity key.
 }
 
 // Attachment is metadata only; its bytes enter LINA when the person asks.
