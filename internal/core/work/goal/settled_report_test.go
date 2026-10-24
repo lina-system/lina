@@ -11,6 +11,7 @@ import (
 )
 
 func TestLateReportKeepsSettledAssignmentTerminal(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []TaskStage{TaskMerged, TaskDone} {
 		for _, restart := range []bool{false, true} {
 			for _, status := range []Outcome{OutcomeSucceeded, OutcomeUnknown} {

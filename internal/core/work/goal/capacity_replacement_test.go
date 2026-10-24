@@ -7,6 +7,7 @@ import (
 )
 
 func TestCapacityReplacementUsesObservedEffect(t *testing.T) {
+	t.Parallel()
 	for _, resource := range []string{"cpu", "memory", "disk"} {
 		t.Run(resource, func(t *testing.T) {
 			n := readyNode("n")
