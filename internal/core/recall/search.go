@@ -192,11 +192,9 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	var with []string
 	var withArgs []any
 	if restricted {
-		with = append(with, `restricted AS (
-  SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
-  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
-   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves')))`)
-		withArgs = append(withArgs, scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel))
+		fragment, args := restrictedSources(scope)
+		with = append(with, fragment)
+		withArgs = append(withArgs, args...)
 	}
 	if len(pairPhrases) > 0 {
 		with = append(with, `pair AS MATERIALIZED (SELECT rowid AS doc, bm25(recall_pair) AS score FROM recall_pair WHERE recall_pair MATCH ?)`)
@@ -269,7 +267,7 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 			return nil, err
 		}
 	}
-	statement := `WITH ` + strings.Join(with, ",\n") + `,
+	statement := `WITH RECURSIVE ` + strings.Join(with, ",\n") + `,
 candidates AS MATERIALIZED (
  SELECT d.id,d.kind,d.source_id,d.revision,d.occurred_at,d.holder,d.conversation,d.text_hash,d.replay,
   p.score AS score,(p.doc IS NOT NULL) AS paired,(t.doc IS NOT NULL) AS trigram,` + olderD + ` AS older
@@ -350,11 +348,9 @@ func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, rest
 	prefix := ""
 	var prefixArgs []any
 	if restricted {
-		prefix = `WITH restricted AS (
-  SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
-  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
-   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))) `
-		prefixArgs = append(prefixArgs, scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel))
+		fragment, values := restrictedSources(scope)
+		prefix = "WITH RECURSIVE " + fragment + " "
+		prefixArgs = values
 	}
 	args = append(prefixArgs, args...)
 	var queued []Hit
@@ -431,6 +427,24 @@ func holderCondition(scope Scope, alias string) string {
 	return alias + ".holder IN (?,'all')"
 }
 
+// Follow protected memory to its evidence, then protect every current view
+// that depends on any of those sources. Typed identities and UNION terminate
+// cycles without confusing equal ids belonging to different source kinds.
+func restrictedSources(scope Scope) (string, []any) {
+	return `sensitive(kind,id) AS (
+ SELECT 'memory',m.id FROM memory_item m WHERE m.person=?
+  AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))
+ UNION
+ SELECT c.target_kind,c.target_id FROM cite c JOIN sensitive s ON c.view_kind=s.kind AND c.view_id=s.id
+  WHERE c.dropped_revision IS NULL
+), restricted(kind,id) AS (
+ SELECT kind,id FROM sensitive
+ UNION
+ SELECT c.view_kind,c.view_id FROM cite c JOIN restricted r ON c.target_kind=r.kind AND c.target_id=r.id
+  WHERE c.dropped_revision IS NULL
+)`, []any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel)}
+}
+
 // scopeWhere applies the scope before matching. It is shared by the published
 // index and the still-queued sources so both see the same filters.
 func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias string) ([]string, []any) {
@@ -478,18 +492,9 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	if containsKind(kinds, Memory) {
 		where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item v WHERE v.id=`+alias+`.source_id AND v.valid_from<=?))`)
 		args = append(args, at)
-		if restricted {
-			where = append(where, `(`+alias+`.kind<>'memory' OR NOT EXISTS(SELECT 1 FROM memory_item s WHERE s.id=`+alias+`.source_id
-   AND ((?=1 AND s.scope IN ('private','never-leaves')) OR (?=1 AND s.scope='never-leaves'))))`)
-			args = append(args, boolInt(scope.Projection), boolInt(scope.ExternalModel))
-			where = append(where, `(`+alias+`.kind<>'memory' OR NOT EXISTS(SELECT 1 FROM cite c2 JOIN restricted r2 ON r2.id=c2.target_id
-   WHERE c2.view_kind='memory' AND c2.view_id=`+alias+`.source_id AND c2.dropped_revision IS NULL))`)
-		}
 	}
 	if restricted {
-		where = append(where, `(`+alias+`.kind<>'event' OR NOT EXISTS(SELECT 1 FROM restricted r WHERE r.id=`+alias+`.source_id))`)
-		where = append(where, `(`+alias+`.kind NOT IN ('summary','record') OR NOT EXISTS(SELECT 1 FROM cite c3 JOIN restricted r3 ON r3.id=c3.target_id
-   WHERE c3.view_kind=`+alias+`.kind AND c3.view_id=`+alias+`.source_id AND c3.dropped_revision IS NULL))`)
+		where = append(where, "NOT EXISTS(SELECT 1 FROM restricted r WHERE r.kind="+alias+".kind AND r.id="+alias+".source_id)")
 	}
 	return where, args
 }
@@ -623,14 +628,24 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		return nil, err
 	}
 	kinds := kindsOf(scope)
-	where := []string{"d.person=?", holderCondition(scope, "d"), "d.source_id IN (SELECT value FROM json_each(?))", "d.kind IN (" + placeholders(len(kinds)) + ")"}
-	args := []any{scope.Person}
-	if !scope.CommonOnly && scope.Agent != "" {
-		args = append(args, scope.Agent)
+	at := scope.At
+	if at == 0 {
+		at = time.Now().Unix()
 	}
+	restricted := scope.Projection || scope.ExternalModel
+	where, args := scopeWhere(scope, kinds, at, restricted, "d")
+	where = append(where, "d.source_id IN (SELECT value FROM json_each(?))")
 	args = append(args, encoded)
-	for _, kind := range kinds {
-		args = append(args, string(kind))
+	if !scope.History {
+		older, olderArgs := olderExpr(kinds, at, "d")
+		where = append(where, "("+older+")=0")
+		args = append(args, olderArgs...)
+	}
+	prefix := ""
+	if restricted {
+		fragment, prefixArgs := restrictedSources(scope)
+		prefix = "WITH RECURSIVE " + fragment + " "
+		args = append(prefixArgs, args...)
 	}
 	order := map[string]int{}
 	for i, id := range ids {
@@ -640,7 +655,7 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 	}
 	var hits []Hit
 	err = db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT d.source_id,d.kind,d.revision,d.occurred_at,d.holder FROM recall_doc d
+		rows, err := tx.QueryContext(ctx, prefix+`SELECT d.source_id,d.kind,d.revision,d.occurred_at,d.holder FROM recall_doc d
    WHERE `+strings.Join(where, " AND "), args...)
 		if err != nil {
 			return err
@@ -805,7 +820,7 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 		if !body.Valid {
 			return "", ErrBytesUnavailable
 		}
-		return body.String, nil
+		return maskDerived(body.String, spans)
 	case Memory:
 		var text string
 		err := db.Read(ctx, func(tx *canon.Tx) error {

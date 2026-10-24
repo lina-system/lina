@@ -1082,6 +1082,8 @@ During the index migration, old indexes remain written and all readers keep thei
 
 **Ranking.** Ranking is deterministic and makes no model call. A document matches when it holds any term; BM25 over the pair table orders the matches, so documents holding more of the query's terms come first, and documents found only through the trigram table follow. Vector matches are ordered by distance, and the two lists are fused by reciprocal rank; ties go to the newer `occurred_at`. Without vectors, the full-text order decides. No model reranks a result.
 
+Visibility checks follow current citation ancestry before matching, ranking and limiting, including indexed, queued and vector candidates. A parent summary or record cannot expose protected evidence through an intermediate summary or memory item. External-model scope excludes `never-leaves` evidence; projection also excludes private evidence.
+
 **One retraction path.** A retraction, trash move, recovery or permanent deletion of an event, a memory item or a source reaches every view that cites it through one index of cited targets, in the same transaction. Views that become hidden leave the search index in that transaction, and every reader checks visibility in one place. What a removal does to each kind stays in [Correction, retraction and deletion](#correction-retraction-and-deletion), [Summary tree](#summary-tree) and [Deleting a conversation](#deleting-a-conversation).
 
 A memory removal changes search rows only for the target and the items whose item evidence reaches it. Recovery inserts only items that become visible again; another hidden ancestor keeps an item excluded. Unaffected search rows stay in place. A late index write checks the candidate and its evidence ancestors before accepting it.
