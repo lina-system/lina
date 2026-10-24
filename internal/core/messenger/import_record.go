@@ -12,16 +12,16 @@ import (
 // ImportRecordRow is the retained record of one memory import: the run it
 // belongs to, what it wrote, and the person's learning choice with its count.
 type ImportRecordRow struct {
-	Batch             ImportBatch
-	System, Instance  string
-	Person            string
-	ConfigHash        string
-	SpoolHash         string
-	Learning          bool
-	LearningMessages  int
-	LearningThrough   time.Time
-	Report            any
-	BackupGeneration  string
+	Batch            ImportBatch
+	System, Instance string
+	Person           string
+	ConfigHash       string
+	SpoolHash        string
+	Learning         bool
+	LearningMessages int
+	LearningThrough  time.Time
+	Report           any
+	BackupGeneration string
 }
 
 // RecordImport retains the run's report with the batch it wrote. The row is the
@@ -76,4 +76,3 @@ func (s *Store) SetImportBackup(ctx context.Context, batch, generation string) e
 		return nil
 	})
 }
-
