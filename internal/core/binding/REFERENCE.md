@@ -28,7 +28,8 @@ A work tool that names its target appends the same kind of choice, so the
 message's item follows what the tool acts on. A worker session resolves to the
 work item it controls, which keeps a person's chosen target authoritative for
 `worker_input` and `worker_interrupt`: a session for another task in the same
-conversation is refused while a chosen target is in effect.
+conversation is refused while a chosen target is in effect. A retained tie
+between running tasks asks before `worker_interrupt` cancels one of them.
 
 Target questions store their choice with the existing durable question record.
 Their resolution appends the selected or cancelled binding in the same transaction

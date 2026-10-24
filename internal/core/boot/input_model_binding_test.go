@@ -330,6 +330,42 @@ func TestModelBindingReadDoesNotResolveRiskyTie(t *testing.T) {
 	}
 }
 
+func TestModelBindingInterruptHoldsTiedRunningTasks(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "task-a", Title: "First task", Kind: "task", State: "running", LastActivity: now},
+		{ID: "task-b", Title: "Second task", Kind: "task", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	foreign := &conversationRuntime{person: "person:elsewhere"}
+	r.workers.mu.Lock()
+	r.workers.sessions["session-b"] = &workerSession{thread: worker.Thread{ID: "session-b", TaskID: "task-b"}, origin: foreign}
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, "session-b")
+		r.workers.mu.Unlock()
+	})
+	input := questionPersonInput(t, r, "interrupt-tie", "Stop the running task.")
+	a := binding.Target{Class: "existing", ID: "task-a", Kind: "task"}
+	b := binding.Target{Class: "existing", ID: "task-b", Kind: "task"}
+	if _, err := r.saveModelBinding(t.Context(), input, "read-tie", []binding.Choice{{Quote: input.Body.Text(), Target: a, Tied: []binding.Target{a, b}, Action: "read"}}, "model"); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{"session": "session-b", "turn": "turn-1", "generation": 1, "binding": 1, "quote": "Stop the running task."})
+	got := r.bindWorkCall(t.Context(), input, 0, "turn:"+input.ID, provider.ToolCall{ID: "stop", Name: "worker_interrupt", Arguments: string(raw)})
+	if got == nil || got.Code != loop.Denied {
+		t.Fatalf("ambiguous interrupt was allowed: %+v", got)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) != 1 || choices[0].Question == "" || len(choices[0].Tied) != 2 {
+		t.Fatalf("tie not held: %+v %v", choices, err)
+	}
+}
+
 func TestModelBindingWorkerInputFollowsPersonTarget(t *testing.T) {
 	r, _ := turnRuntime(t)
 	now := time.Now().UTC()

@@ -523,7 +523,9 @@ func (r *conversationRuntime) recordCreatedBinding(ctx context.Context, input le
 
 func bindingAction(name string) string {
 	switch name {
-	case "follow_work", "worker_input":
+	case "follow_work", "worker_input", "worker_interrupt":
+		// Stopping a worker is steering the running task it controls. A retained
+		// tie must ask before cancellation, the same as any other steer.
 		return "steer"
 	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start":
 		return "start"
