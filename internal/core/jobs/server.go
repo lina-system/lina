@@ -132,6 +132,15 @@ func handle(s jobapi.API, ctx context.Context, w http.ResponseWriter, r *http.Re
 					Protocol string `json:"protocol"`
 				}{"moirai/1"}
 			}
+		case "/Embed":
+			var v struct{}
+			if err = decode(&v); err == nil {
+				if api, ok := s.(jobapi.EmbeddingAPI); ok {
+					out, err = api.Embed(r.Context())
+				} else {
+					out = jobapi.EmbeddingResult{}
+				}
+			}
 		case "/Aux":
 			var v jobapi.AuxRequest
 			if err = decode(&v); err == nil {

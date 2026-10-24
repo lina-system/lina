@@ -156,6 +156,7 @@ type Page struct {
 // ReadCoverage is how a completed read relates to what the platform can still
 // serve. It is stored with the chat's coverage record.
 type ReadCoverage struct {
+	Interval, ReadWindow time.Duration
 	// HistoryDepth names the range one read covers, in the adapter's words.
 	HistoryDepth string
 	// CursorSurvivesRestart reports whether the page's next cursor still

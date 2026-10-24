@@ -158,6 +158,57 @@ func TestSearchOneHitPerIdenticalTextAndReplayOptIn(t *testing.T) {
 	}
 }
 
+// A matching copy that is still queued has no recall_doc row, so its candidate
+// id is NULL. Lineage must exclude that copy by source id. Using the nullable
+// row id in NOT IN drops every event, including indexed matches that do not
+// derive from it.
+func TestSearchQueuedDerivedEventKeepsIndexedMatches(t *testing.T) {
+	t.Run("view_of", func(t *testing.T) {
+		db := database(t)
+		base := time.Unix(1700000000, 0)
+		admitAt(t, db, "source", "conversation", "owner", "agent", "도서관 원문", base, "")
+		admitAt(t, db, "other", "conversation", "owner", "agent", "도서관 산책", base.Add(time.Second), "")
+		write(t, db, eventSQL, "view", "도서관 보기")
+		write(t, db, "INSERT INTO ev_rel(event_id,target_id,kind,ordinal) VALUES('view','source','view_of',0)")
+		if n := count(t, db, "SELECT count(*) FROM recall_pending WHERE kind='event' AND source_id='view'"); n != 1 {
+			t.Fatalf("view not queued: %d", n)
+		}
+		if n := count(t, db, "SELECT count(*) FROM recall_doc WHERE kind='event' AND source_id='view'"); n != 0 {
+			t.Fatalf("view already published: %d", n)
+		}
+		scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+		assertLineageIDs(t, db, scope, "queued view")
+		drain(t, db)
+		assertLineageIDs(t, db, scope, "published view")
+	})
+	t.Run("replay_of", func(t *testing.T) {
+		db := database(t)
+		base := time.Unix(1700000000, 0)
+		admitAt(t, db, "source", "conversation", "owner", "agent", "도서관 원문", base, "")
+		admitAt(t, db, "other", "conversation", "owner", "agent", "도서관 산책", base.Add(time.Second), "")
+		write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,body)
+ SELECT 'copy',conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,id,'도서관 복사' FROM conv_event WHERE id='source'`)
+		if n := count(t, db, "SELECT count(*) FROM recall_pending WHERE kind='event' AND source_id='copy'"); n != 1 {
+			t.Fatalf("copy not queued: %d", n)
+		}
+		scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+		assertLineageIDs(t, db, scope, "queued replay hidden by default")
+		scope.IncludeReplay = true
+		assertLineageIDs(t, db, scope, "queued replay")
+		drain(t, db)
+		assertLineageIDs(t, db, scope, "published replay")
+	})
+}
+
+func assertLineageIDs(t *testing.T, db *canon.Store, scope recall.Scope, label string) {
+	t.Helper()
+	ids := searchIDs(t, db, scope, "도서관", 0)
+	sort.Strings(ids)
+	if !reflect.DeepEqual(ids, []string{"other", "source"}) {
+		t.Fatalf("%s: %v", label, ids)
+	}
+}
+
 func TestSearchLineageKeepsEventAsItemCitation(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)
