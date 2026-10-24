@@ -332,7 +332,11 @@ func TestFollowWorkKeepsAgentBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 13 {
-		got := questionCall(t, tools, "follow_work", fmt.Sprintf("follow-%d", i), map[string]string{"id": "task:" + task.ID + ":1", "text": "Continue the task"})
+		id := "task:" + task.ID + ":1"
+		if i == 0 {
+			id = task.ID
+		}
+		got := questionCall(t, tools, "follow_work", fmt.Sprintf("follow-%d", i), map[string]string{"id": id, "text": "Continue the task"})
 		if i < 12 && got.Code != loop.OK {
 			t.Fatalf("follow %d: %+v", i, got)
 		}

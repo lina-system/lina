@@ -68,6 +68,7 @@ type rawChoice struct {
 	Action     string          `json:"action"`
 	Close      rawStrings      `json:"close_matches"`
 	Difference string          `json:"difference"`
+	More       rawTargets      `json:"more"`
 }
 
 func normalizeChoice(state State, text string, raw json.RawMessage) (Choice, error) {
@@ -103,8 +104,8 @@ func normalizeChoice(state State, text string, raw json.RawMessage) (Choice, err
 	for _, rawTied := range in.Tied {
 		other, err := NormalizeTarget(state, rawTied)
 		if err != nil {
-			// A target Core cannot authorize is never offered as an option.
-			continue
+			// Dropping an alternative would leave the recommendation settled.
+			return Choice{}, err
 		}
 		if !slices.Contains(tied, other) {
 			tied = append(tied, other)
@@ -112,6 +113,18 @@ func normalizeChoice(state State, text string, raw json.RawMessage) (Choice, err
 	}
 	if len(tied) > 1 {
 		c.Tied = tied[:min(5, len(tied))]
+	}
+	// A later page is Core's own overflow. The tool drops a page the model sends
+	// before this decode, so a remaining page is part of the inherited set.
+	for _, rawMore := range in.More {
+		other, err := NormalizeTarget(state, rawMore)
+		if err != nil {
+			return Choice{}, err
+		}
+		if slices.Contains(tied, other) || slices.Contains(c.More, other) {
+			continue
+		}
+		c.More = append(c.More, other)
 	}
 	c.Action = normalizeAction(in.Action)
 	for _, id := range in.Close {
@@ -248,18 +261,17 @@ func resolveReference(state State, ref string) (Target, error) {
 			matches = append(matches, item)
 		}
 	}
-	// The rules prefer unfinished work when one such item matches; a name the
-	// model gave explicitly still decides between two open items.
+	// Unfinished work wins when any open item matches. With none, one offered
+	// item, including a finished one, is that target. Its id already binds.
 	var open []Item
 	for _, item := range matches {
 		if Open(item) {
 			open = append(open, item)
 		}
 	}
-	if len(open) == 1 {
-		return Target{Class: "existing", ID: open[0].ID, Kind: open[0].Kind}, nil
+	if len(open) > 0 {
+		matches = open
 	}
-	matches = open
 	switch len(matches) {
 	case 1:
 		return Target{Class: "existing", ID: matches[0].ID, Kind: matches[0].Kind}, nil
