@@ -30,6 +30,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/messenger"
+	"github.com/thisisjun786/lina/internal/core/messenger/identity"
 	"github.com/thisisjun786/lina/internal/core/messenger/teams"
 	"github.com/thisisjun786/lina/internal/core/messenger/webex"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
@@ -93,6 +94,7 @@ type conversationRuntime struct {
 	webex           *webex.Service
 	telegram        *telegramControl
 	messenger       *messenger.Service
+	senderIdentity  *identity.Store
 	messengerAddon  AddonStarter
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
