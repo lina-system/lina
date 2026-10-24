@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/waiting"
+	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -245,11 +248,14 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		}
 	case "read_work_progress", "follow_work":
 		id = str("id")
+		if c.Name == "follow_work" {
+			id, err = r.followTargetTask(ctx, id)
+		}
 	case "worker_input", "worker_interrupt":
 		// A worker session steers the task it controls. Resolving it here keeps
 		// a person's chosen target authoritative: the tool cannot deliver the
 		// instruction to another task in the same conversation.
-		id = r.workerSessionTask(str("session"))
+		id, err = r.workerSessionTask(ctx, str("session"))
 	case "schedule_work":
 		var tasks []struct {
 			What string `json:"what"`
@@ -287,6 +293,10 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		kind = "task"
 	}
 
+	if err != nil {
+		result := bindingFailure(c.ID, err)
+		return &result
+	}
 	if id == "" && title == "" && len(choice.Tied) < 2 {
 		return nil
 	}
@@ -415,8 +425,12 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 						source, _ = json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: e.Sender, Direct: e.Direct, Addressed: e.Addressed})
 					}
 					id := a.ID
-					if _, err := r.work.Get(ctx, id); err == nil {
-						id = "task:" + id
+					if card, err := r.work.Get(ctx, id); err == nil {
+						generation := 0
+						if card.Run != nil {
+							generation = card.Run.Generation
+						}
+						id = fmt.Sprintf("task:%s:%d", card.Task.ID, generation)
 					}
 					_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: id, Text: a.Text}}, source)
 					if err != nil {
@@ -479,8 +493,10 @@ func (r *conversationRuntime) recordCreatedBinding(ctx context.Context, input le
 			return nil
 		}
 		var receipt struct {
-			ID       string `json:"id"`
-			RecordID string `json:"record_id"`
+			ID       string   `json:"id"`
+			RecordID string   `json:"record_id"`
+			TaskID   string   `json:"task_id"`
+			Result   []string `json:"result"`
 		}
 		if json.Unmarshal(result.Output, &receipt) != nil {
 			return nil
@@ -488,6 +504,15 @@ func (r *conversationRuntime) recordCreatedBinding(ctx context.Context, input le
 		c.CreatedID = receipt.ID
 		if receipt.RecordID != "" {
 			c.CreatedID = receipt.RecordID
+		}
+		switch call.Name {
+		case "prepare_work":
+			c.CreatedID = receipt.TaskID
+		case "schedule_work":
+			// The gate binds this call to its first task's title.
+			if len(receipt.Result) > 0 {
+				c.CreatedID = receipt.Result[0]
+			}
 		}
 		if c.CreatedID == "" {
 			return nil
@@ -512,18 +537,52 @@ func bindingAction(name string) string {
 
 // workerSessionTask resolves a worker session to the work item it controls.
 // An owner-started session carries a conversation turn as its task id and names
-// no work item, so it resolves to "" and the original tool keeps its own checks.
-func (r *conversationRuntime) workerSessionTask(session string) string {
-	if r.workers == nil || session == "" {
-		return ""
+// no work item, so the original tool keeps its own checks. Recovery records
+// retain the task identity when the session is absent after a restart.
+func (r *conversationRuntime) workerSessionTask(ctx context.Context, session string) (string, error) {
+	if session == "" {
+		return "", nil
 	}
-	r.workers.mu.Lock()
-	entry := r.workers.sessions[session]
-	r.workers.mu.Unlock()
-	if entry == nil {
-		return ""
+	if r.workers != nil {
+		r.workers.mu.Lock()
+		entry := r.workers.sessions[session]
+		r.workers.mu.Unlock()
+		if entry != nil {
+			entry.control.Lock()
+			defer entry.control.Unlock()
+			return entry.thread.TaskID, nil
+		}
 	}
-	entry.control.Lock()
-	defer entry.control.Unlock()
-	return entry.thread.TaskID
+	records, err := (recovery.Recovery{DB: r.db}).Records(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, record := range records {
+		if record.Thread.ID == session {
+			return record.Thread.TaskID, nil
+		}
+	}
+	return "", nil
+}
+
+// Resolve the same generation-bound task references used by owner controls.
+// Raw task and background-run IDs retain their identity.
+func (r *conversationRuntime) followTargetTask(ctx context.Context, ref string) (string, error) {
+	// Match execution's precedence when a raw task ID contains a prefix.
+	if card, err := r.work.Get(ctx, ref); err == nil {
+		return card.Task.ID, nil
+	}
+	if session, ok := strings.CutPrefix(ref, "session:"); ok {
+		return r.workerSessionTask(ctx, session)
+	}
+	if task, ok := strings.CutPrefix(ref, "task:"); ok {
+		var card work.Card
+		err := r.db.Read(ctx, func(tx *canon.Tx) error {
+			var err error
+			card, err = work.ReadReference(ctx, tx, task)
+			return err
+		})
+		return card.Task.ID, err
+	}
+	return ref, nil
 }

@@ -346,17 +346,29 @@ func bindingTarget(ctx context.Context, tx *canon.Tx, input ledger.Event, ref st
 	if !errors.Is(err, sql.ErrNoRows) {
 		return binding.Target{}, err
 	}
-	var raw string
-	err = tx.QueryRowContext(ctx, `SELECT b.body FROM conv_event e JOIN conv_event b ON b.parent_id=CASE WHEN e.speaker_kind='person' THEN e.id ELSE e.parent_id END AND b.scaffold_kind=? WHERE e.id=? AND e.conversation_id=? AND e.agent_id=?`, inputBindingKind, ref, input.ConversationID, input.AgentID).Scan(&raw)
+	var inputID string
+	err = tx.QueryRowContext(ctx, `SELECT b.parent_id FROM conv_event e JOIN conv_event b ON b.parent_id=CASE WHEN e.speaker_kind='person' THEN e.id ELSE e.parent_id END AND b.scaffold_kind=? WHERE e.id=? AND e.conversation_id=? AND e.agent_id=?`, inputBindingKind, ref, input.ConversationID, input.AgentID).Scan(&inputID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return binding.Target{}, nil
 	}
 	if err != nil {
 		return binding.Target{}, err
 	}
-	var d binding.Decision
-	err = json.Unmarshal([]byte(raw), &d)
-	return d.Target, err
+	choices, err := readInputChoices(ctx, tx, ledger.Event{ID: inputID})
+	if err != nil {
+		return binding.Target{}, err
+	}
+	var target binding.Target
+	for _, c := range choices {
+		if c.Question != "" || c.Cancelled {
+			continue
+		}
+		target = c.Target
+		if c.CreatedID != "" {
+			target = binding.Target{Class: "existing", ID: c.CreatedID, Kind: c.Target.Kind}
+		}
+	}
+	return target, nil
 }
 
 // Several bundled runs remain unresolved, even when they share a delivery.
