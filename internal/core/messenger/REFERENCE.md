@@ -121,13 +121,34 @@ platform's ids are scoped by. After each sync pass the service asks identity to
 rematch identities that have no link, so a people record the person creates
 after the messages arrive still links without a restart.
 
-## Not in this increment
+## Live events
 
-Live events are on the adapter boundary and the service can deliver them, and the [Teams adapter](teams/README.md) polls Graph through Core. Other
-platforms are tracked by #1070 and the per-platform issues. Writes are
-recorded and matched here; the write verbs, grants and approvals belong to
-#1084. Learning from the person's own records is #1075; learning about matched
-senders is #1077 and waits for the identity gate.
+`AdmitEvent` admits one pushed message or deletion through the same admission
+path as a page, and writes no cursor or coverage: a live event is newer than the
+last complete read, and the next page admits it again without adding anything.
+`Service` starts one live reader per connected source, after the source's first
+sync, and re-joins the platform's session with bounded backoff after a failure.
+A source that needs a new sign-in gets no live reader.
+
+An event held behind an unsettled write (`ErrPageWaiting`) is returned to the
+session as `channels.Retry`, not acknowledged: the scheduled read resumes past
+its cursor and cannot see that edit or deletion again. The session replays the
+dispatch after a bounded backoff and keeps the source connected.
+
+`NewServiceWith` resolves an adapter per source, so two accounts on one platform
+never share an adapter's read state. `NewService` keeps the map form for
+platforms with one account.
+
+## Platform adapters
+
+`internal/core/messenger/discord` reads the servers of a bot the person added
+(#1079). It shares the Gateway session with a channel connection on the same
+token. Writes are recorded and matched here; the write verbs, grants and
+approvals belong to #1084. Learning from the person's own records is #1075,
+which waits for the Discord developer policy reading; nothing here learns.
+
+The [Teams adapter](teams/README.md) polls Graph through Core. Other platforms
+are tracked by #1070 and the per-platform issues.
 
 Sender profile emails, when supplied by an adapter, are stored as evidence in
 `messenger_author` with the source account and platform author ID. They do not
