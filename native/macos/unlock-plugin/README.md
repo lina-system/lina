@@ -122,17 +122,23 @@ would catch a shell error in it.
 The bundle build and the signature check run on an Apple silicon hosted macOS
 runner in
 [`macos-unlock-plugin.yml`](../../../.github/workflows/macos-unlock-plugin.yml)
-as two jobs. `bundle (arm64)` runs on every push and pull request that touches
+as `bundle (arm64)`. It runs on every push and pull request that touches
 `native/macos/**`: it builds `build.sh` ad-hoc, runs `codesign --verify --strict`,
 `codesign -dvvv` and `lipo -archs`, fails when the hardened runtime flag is
 absent, and keeps the bundle as a build artifact.
 
-`signed bundle (arm64, Developer ID)` produces the shippable signature. It runs
-on `dev`, `main` and `v*` tags, and on any other ref only when someone starts it
-by hand:
+`signed bundle (arm64, Developer ID)` produces the shippable signature in
+[`macos-unlock-plugin-signed.yml`](../../../.github/workflows/macos-unlock-plugin-signed.yml).
+That workflow runs only on pushes to `dev`, `main` and `v*` tags, or when someone
+starts it by hand with `sign=true`. Branch pushes use the same native paths filter
+with both workflow files included; tag pushes have no paths filter. Pull requests
+and feature-branch pushes run only the
+ad-hoc workflow, so no skipped signing check appears on them. The workflows use
+separate concurrency groups so an ad-hoc build cannot cancel an approved signing
+run. Start signing on any ref with:
 
 ```sh
-gh workflow run macos-unlock-plugin.yml --ref <branch> -f sign=true
+gh workflow run macos-unlock-plugin-signed.yml --ref <branch> -f sign=true
 ```
 
 The job declares the `macos-signing` environment, which requires the owner's
