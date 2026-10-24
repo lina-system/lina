@@ -11,10 +11,12 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/compaction"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/internal/core/retract"
@@ -166,6 +168,28 @@ func TestLiveRecallScopeAndExpansion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	copy, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "hidden-copy", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, ReplayOf: hidden.ID,
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(2, 0), RecordedAt: time.Unix(2, 0),
+		TimeQuality: "observed", Body: "The aurora private fact.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "hidden-view", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person,
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(3, 0), RecordedAt: time.Unix(3, 0),
+		TimeQuality: "observed", Body: "A view of the aurora private fact.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO ev_rel(event_id,target_id,kind) VALUES(?,?,'view_of')`, view.ID, hidden.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	other, err := r.agents.Create(t.Context(), agents.Create{Name: "Other", PersonID: r.person, Preset: "lina"})
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +205,7 @@ func TestLiveRecallScopeAndExpansion(t *testing.T) {
 	for _, e := range []struct {
 		id      string
 		allowed bool
-	}{{own.ID, true}, {reply.ID, true}, {hidden.ID, false}, {foreign.ID, false}, {"missing", false}} {
+	}{{own.ID, true}, {reply.ID, true}, {hidden.ID, false}, {copy.ID, false}, {view.ID, false}, {foreign.ID, false}, {"missing", false}} {
 		args, _ := json.Marshal(map[string]any{"id": "event:" + e.id})
 		out := bindings["expand"].Execute(t.Context(), provider.ToolCall{ID: e.id, Name: "expand", Arguments: string(args)})
 		if (out.Code == loop.OK) != e.allowed {
