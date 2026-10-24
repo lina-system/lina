@@ -2805,8 +2805,9 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
   They remain answerable through the existing authenticated question/approval forms.
   Implementation notes: [C-55 waiting migration](../../internal/core/waiting/REFERENCE.md#c-55-waiting-migration).
 - Canon closes its change notification only after a committed mutation; read callbacks and rollbacks remain quiet.
-  Core coalesces those events and live worker changes for 100 ms, rereads the sources, and publishes the replaced overview when its contents or the full waiting list change.
-  The coalescing window leaves room inside the 250 ms (P) bound from a goal commit to its changed line, so the projection itself still fits.
+  Core coalesces a burst of those events and live worker changes, rereads once and publishes at most every 100 ms; a change that follows an idle period publishes at once, because the person is waiting for it.
+  The window leaves room inside the 250 ms (P) bound from a goal commit to its changed line, so the projection itself still fits.
+  The projection reads canon without its writer, so it never queues behind the commits it describes; a finished waiting candidate is cleaned by the next `waiting_get`, which writes.
   A change below Home's five-row limit still advances the overview cursor, causing an open full waiting view to reread its sources.
   Subscriptions reread before their snapshot.
   While the progress topic has observers, a five-second reconciliation tick also rereads filesystem-backed sources, using the same coalescing.
