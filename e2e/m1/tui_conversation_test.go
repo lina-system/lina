@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/install"
@@ -229,7 +230,12 @@ func waitComposerReady(t *testing.T, h *harness, terminal *terminal) tuiterm.Sna
 
 func installedConversationHarness(t *testing.T, providerURL string, installArgs ...string) (*harness, func(bool) *process) {
 	t.Helper()
-	h := newHarness(t, buildLina(t))
+	return installedConversationHarnessWithin(t, 3*operationTimeout, providerURL, installArgs...)
+}
+
+func installedConversationHarnessWithin(t *testing.T, total time.Duration, providerURL string, installArgs ...string) (*harness, func(bool) *process) {
+	t.Helper()
+	h := newHarnessWithin(t, buildLina(t), total)
 	base := h.root
 	bundle := makeInstallBundle(t, base, h.binary, buildCommand(t, "lina-node"))
 	return installConversationBundle(t, h, bundle, providerURL, installArgs...)

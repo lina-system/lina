@@ -49,6 +49,10 @@ func (r *conversationRuntime) bindInput(ctx context.Context, tx *canon.Tx, input
 		}
 	}
 	decision := binding.Resolve(state, facts)
+	// Replay retains admission facts, excluding personal name memories.
+	snapshot := state
+	snapshot.Items = decision.Candidates
+	decision.Snapshot = &snapshot
 	raw, err := json.Marshal(decision)
 	if err != nil {
 		return err

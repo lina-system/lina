@@ -53,3 +53,16 @@ func TestSignInListenerRelaysExactlyOnceAndCloses(t *testing.T) {
 		t.Fatal("listener survived cancellation")
 	}
 }
+
+func TestSignInRegisteredPortNeverFallsBack(t *testing.T) {
+	occupied, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	port := occupied.Addr().(*net.TCPAddr).Port
+	if relay, err := ListenSignInPort(t.Context(), port); err == nil {
+		relay.Close()
+		t.Fatal("registered port silently changed")
+	}
+}
