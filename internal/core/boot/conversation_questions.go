@@ -222,6 +222,9 @@ func (r *conversationRuntime) answerConversationQuestion(ctx context.Context, pe
 		return protocol.DecisionOutcomeWithdrawn, nil
 	}
 	if q.Resolution != nil {
+		if err = r.publishContinuedTargetQuestion(ctx, q); err != nil {
+			return "", err
+		}
 		return protocol.DecisionOutcomeResolved, nil
 	}
 	d := waiting.QuestionResolution{Input: messageID, At: time.Now().UTC()}
@@ -256,7 +259,7 @@ func (r *conversationRuntime) answerConversationQuestion(ctx context.Context, pe
 		if !visible {
 			return errQuestionWithdrawn
 		}
-		if err := resolveTargetBinding(ctx, tx, input, q, d); err != nil {
+		if err := r.resolveTargetBinding(ctx, tx, input, q, d); err != nil {
 			return err
 		}
 		value := d.Value
@@ -272,8 +275,13 @@ func (r *conversationRuntime) answerConversationQuestion(ctx context.Context, pe
 			if err != nil {
 				return err
 			}
-			raw, _ := json.Marshal(choices[q.Binding.Request])
-			body += "\nHeld request: " + string(raw) + "\nResume only the explicitly selected request after checking its current state and authority."
+			held := choices[q.Binding.Request]
+			raw, _ := json.Marshal(held)
+			note := "\nResume only the explicitly selected request after checking its current state and authority."
+			if held.Question != "" {
+				note = "\nThe target is still unresolved. Another question lists the remaining items. Do not run the held request."
+			}
+			body += "\nHeld request: " + string(raw) + note
 		}
 		masked, err := secrets.Mask(body)
 		if err != nil {
@@ -302,6 +310,9 @@ func (r *conversationRuntime) answerConversationQuestion(ctx context.Context, pe
 		if err = view.submitWorkerCompletion(answerEvent, receipt.ID); err != nil {
 			return "", err
 		}
+	}
+	if err = r.publishContinuedTargetQuestion(ctx, q); err != nil {
+		return "", err
 	}
 	return protocol.DecisionOutcomeResolved, nil
 }

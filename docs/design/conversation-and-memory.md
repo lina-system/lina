@@ -403,6 +403,8 @@ runs.
 An unresolved follow-up after an input with several settled targets also keeps
 those targets for the control check. A tool's session argument alone does not
 choose between them: stopping a worker asks which item before any interrupt.
+When more targets remain than one question can list, Core asks again for the
+rest before it runs the instruction.
 Current choices enter the
 ContextPacket and remain reconstructible from their ledger sources.
 
@@ -412,6 +414,25 @@ ContextPacket and remain reconstructible from their ledger sources.
 - a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, stop a worker, or send, pay or delete.
 
 It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
+
+A question offers at most five answers. When an inherited set is larger, Core
+keeps the instruction pending and pages the targets. Each page shows four
+targets and one answer that asks the next page, until the last page shows the
+remaining targets. Choosing a listed target resolves only that request.
+Choosing the next page does not run the instruction and does not drop the
+remaining targets. Cancelling or declining cancels the request. The model
+names at most five tied targets and cannot supply the targets Core holds for
+a later page.
+
+Core decides whether a steer must ask from the whole inherited set, including
+targets held for a later page. A running, working, waiting, or needs-input
+task or run anywhere in that set keeps the instruction pending.
+
+A retained read keeps every inherited target, including targets held for a
+later page. A later steer or stop still asks from that whole set.
+
+A later page belongs to the same person, agent, and conversation as the
+question it continues.
 
 When it asks, Core keeps the instruction pending until the person explicitly selects a target or cancels it. Passing over the question, an unrelated turn or a deadline never applies the recommended pick. While the target is unresolved, Core does not deliver the instruction as a steer, start its work (including a step graph or a mock build), stop its worker, or perform its send, payment or deletion. Unrelated conversation and independent work continue. Selecting a target resolves only the binding; execution still requires the usual state and authorization checks ([main-authority.md](main-authority.md#approval)). This exception also applies to the general skipped-question rule in [Applying the record](preset-work-methods.md#applying-the-record).
 
