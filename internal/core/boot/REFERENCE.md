@@ -107,6 +107,12 @@ Standing profile/name/relationship items win duplicate identities. Only selected
 topic references join pre-dispatch revision validation; `topic-memory-v1`
 reconstructs the same projection on replay without a new search.
 
+Replay also validates structured `recall` results against current source
+identity, revision and citations during episode loading and before dispatch.
+It walks canonical summary/record dependencies and retains checks for recorded
+citations that a current source no longer carries. Legacy episodes bind missing
+owner metadata through their canonical input rather than exported text.
+
 `conversation_recall.go` binds one live family in the ordered tool preparation
 table. It uses ordinary Core read grants, checks channel memory/tool scope and
 agent availability on execution, and fences reads with the revocation epoch.
