@@ -273,7 +273,13 @@ func (s *Store) orderImport(ctx context.Context, source Source, chat string, pla
 }
 
 // importRelations resolves a record's reply and thread targets against what the
+<<<<<<< HEAD
 // chat already holds and what this run admits before it in the same transaction.
+=======
+// chat already holds and what this admission has already planned. AdmitPage and
+// AdmitImport share it. planned maps a platform message id to the event id of
+// a record placed earlier in the same batch.
+>>>>>>> origin/feat/1523
 func (s *Store) importRelations(ctx context.Context, source Source, chat string, message Message, existing map[string]recordRow, planned map[string]string) ([]ledger.Relation, error) {
 	relations, err := s.relations(ctx, source, chat, message, existing)
 	if err != nil {
