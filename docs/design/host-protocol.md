@@ -733,6 +733,21 @@ acyclic dependencies. The result stream replaces the whole card on update;
 An `unknown` confirmation effect is not success. It is settled only by observing
 the exact saved records, never by automatically repeating publication.
 
+### Local model capability
+
+`local_model` version `1.0` adds `local_task` and `local_task_result` to client 1.0.
+A task is one of `intent`, `autocomplete`, `rewrite`, `title`, `classify`, `extract`,
+or `summary`, plus the text. Optional `preference` is `auto`, `local`, or `main`.
+Optional `schema` is a closed JSON Schema object of strings, integers, and booleans.
+Optional `images` is a count and `tools` names tools the task needs. `mac_local`
+records that those tools are on this Mac. A task that names tools still uses
+the main model, because this route does not call tools. The result names the route, the reason, the
+provider, the model, and `served_id`. Structured success returns `object`.
+Unstructured success returns `text`. A schema miss returns neither. The effect
+is `none`. An invalid schema is malformed. When neither model can serve, the
+reply is unavailable. The task text is not written to the ledger. Routing and
+fallback are in [On-device Apple model](runtime.md#on-device-apple-model).
+
 ## Operational work control
 
 The negotiated `work` capability, version `1.0`, installs `work_switch_request` and
@@ -805,6 +820,28 @@ with a name, a state and the instant a step started; it holds no step id, and a
 line holds no identity at all. A line without a stage list omits the field, which
 older clients ignore. The stage word of a goal line is the label of its current
 stage entry.
+
+A work card carries the stages of its canonical goal link when that goal has
+the same person and agent. Missing or foreign links leave its list unknown.
+Core reuses the goal projection from the same canon snapshot; a client never
+joins cards to graphs by display names or row positions.
+For a manager-owned dispatch card, Core instead validates its stored goal
+action against the original person, agent, conversation and turn, and the
+card's recorded manager. This supplies the goal link without changing the
+card's owner or granting a manager access through an arbitrary goal id.
+
+The optional `stage_refs` on a progress row carries each entry's `kind`, optional
+`number`, and `steps`: opaque step refs in the same order as its displayed steps.
+These navigation refs stay outside `line` and never appear in panel text. A
+client without refs can still display entries, but cannot infer a step identity
+from its name. The optional `workers` on a displayed step is a list of `name`
+and `state` (`running_state`) pairs, without process or thread ids. It contains
+only active dispatch bindings or retained live sessions linked by that scoped
+step's canonical session handle. Active bindings also match the dispatch's
+original person and agent, independently of its manager persona. Core observes adapters outside canon, checks
+the bound turn, and drops ended or replaced sessions. An unsuccessful or stale
+observation reads unknown. Idle retained sessions read waiting. These additions
+grant no execution or worker-control authority.
 
 The optional `started_at` and `finished_at` fields are RFC 3339 instants recorded
 by Core; `now` is Core's short current-activity line. The TUI applies its snapshot

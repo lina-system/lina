@@ -56,6 +56,7 @@ type Step struct {
 	Name      string
 	DependsOn []string
 	State     StepState
+	Cards     []string
 }
 
 // Revision is one admitted step graph revision, whole, with the step states
@@ -63,11 +64,13 @@ type Step struct {
 // revision's event, so a replay needs no second source.
 type Revision struct{ Steps []Step }
 
-// StageStep is one step of a stage, as the 일 view lists it. The id stays on
-// this side: a line holds no identity.
+// StageStep is one step of a stage, as the 일 view lists it. The id and the
+// work cards that ran the step stay on this side: a line holds no identity.
 type StageStep struct {
+	Session   string    `json:"-"`
 	StartedAt time.Time `json:"started_at,omitzero"`
 	ID        string    `json:"-"`
+	Cards     []string  `json:"-"`
 	Name      string    `json:"name"`
 	State     StepState `json:"state"`
 }
@@ -164,9 +167,11 @@ func Stages(revisions []Revision, state goal.GoalState, language design.Language
 		}
 	}
 	started := map[string]time.Time{}
+	cards := map[string][]string{}
 	for _, revision := range revisions {
 		for _, step := range revision.Steps {
 			started[step.ID] = step.StartedAt
+			cards[step.ID] = step.Cards
 		}
 	}
 	out := make([]Stage, 0, highest+1)
@@ -182,7 +187,7 @@ func Stages(revisions []Revision, state goal.GoalState, language design.Language
 		first, live := "", 0
 		for _, id := range ids {
 			stepState := states[id]
-			entry.Steps = append(entry.Steps, StageStep{ID: id, Name: names[id], State: stepState, StartedAt: started[id]})
+			entry.Steps = append(entry.Steps, StageStep{ID: id, Cards: cards[id], Name: names[id], State: stepState, StartedAt: started[id]})
 			if stepState == StepSuperseded {
 				continue
 			}
@@ -337,10 +342,25 @@ func GoalStages(ctx context.Context, tx *canon.Tx, goalID, person string, langua
 	if current.Person != person {
 		return nil, goal.GraphUnavailable
 	}
-	graphs, err := stepGraphRevisions(ctx, tx, goalID)
+	ids := map[string]bool{goalID: true}
+	history, err := stepGraphRevisions(ctx, tx, ids)
 	if err != nil {
 		return nil, err
 	}
+	cards, err := stepCards(ctx, tx, map[string]string{goalID: current.Turn})
+	if err != nil {
+		return nil, err
+	}
+	started, err := cardStarts(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	return stagesForGoal(current, history[goalID], cards[goalID], started, language)
+}
+
+// stagesForGoal uses inputs from one canon snapshot. Overview callers read
+// history and cards once for the whole set, rather than once per displayed goal.
+func stagesForGoal(current goal.Goal, graphs []graphRevision, cards map[string][]string, started map[string]time.Time, language design.Language) ([]Stage, error) {
 	if current.StepGraph != nil && (len(graphs) == 0 || graphs[len(graphs)-1].Graph.Revision != current.StepGraph.Revision) {
 		graphs = append(graphs, graphRevision{Graph: *current.StepGraph, Tasks: current.Tasks})
 	}
@@ -355,21 +375,81 @@ func GoalStages(ctx context.Context, tx *canon.Tx, goalID, person string, langua
 	// after the last revision was committed.
 	last := graphs[len(graphs)-1]
 	revisions[len(revisions)-1].Steps = graphSteps(last.Graph.Steps, current.Tasks)
-	started, err := cardStarts(ctx, tx)
+	for i := range revisions {
+		for j := range revisions[i].Steps {
+			step := &revisions[i].Steps[j]
+			step.Cards = cards[step.ID]
+			for _, card := range step.Cards {
+				if at := started[card]; !at.IsZero() && (step.StartedAt.IsZero() || at.Before(step.StartedAt)) {
+					step.StartedAt = at
+				}
+			}
+		}
+	}
+	stages, err := Stages(revisions, current.State, language)
 	if err != nil {
 		return nil, err
 	}
-	for i := range revisions {
-		for j := range revisions[i].Steps {
-			revisions[i].Steps[j].StartedAt = started[revisions[i].Steps[j].ID]
+	for i := range stages {
+		for j := range stages[i].Steps {
+			step := &stages[i].Steps[j]
+			for _, task := range current.Tasks {
+				if task.ID == step.ID {
+					step.Session = task.Session
+					break
+				}
+			}
 		}
 	}
-	return Stages(revisions, current.State, language)
+	return stages, nil
 }
 
-// cardStarts reads when each step started, which orders a parallel stage's
-// label. A step's card carries the step id, so the ledger needs no goal link on
-// the card. A step that has not started has no start and sorts by id.
+// stepCards lists, for each goal by its turn, the work cards each step's worker
+// actions dispatched, in action id order. A card carries its dispatch's id,
+// never the step's, so the goal's actions are the only link between them. An
+// action that observes another after a restart leads to that action's card.
+func stepCards(ctx context.Context, tx *canon.Tx, turns map[string]string) (map[string]map[string][]string, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT body FROM work_records WHERE kind='action' ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]map[string][]string{}
+	seen := map[string]bool{}
+	for rows.Next() {
+		var raw []byte
+		var a goal.Action
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if json.Unmarshal(raw, &a) != nil {
+			return nil, ErrStageGraph
+		}
+		turn, ok := turns[a.GoalID]
+		// Background and wait steps start no dispatch, so they have no card.
+		if !ok || a.TaskID == "" || !goal.WorkerAction(a.Kind) || a.StepKind != "" && a.StepKind != goal.TaskStep {
+			continue
+		}
+		source := a.ID
+		if a.ObserveActionID != "" {
+			source = a.ObserveActionID
+		}
+		card := work.DispatchID(turn, source)
+		if seen[card] {
+			continue
+		}
+		seen[card] = true
+		if out[a.GoalID] == nil {
+			out[a.GoalID] = map[string][]string{}
+		}
+		out[a.GoalID][a.TaskID] = append(out[a.GoalID][a.TaskID], card)
+	}
+	return out, rows.Err()
+}
+
+// cardStarts reads when each work card started. A step starts with the first of
+// its cards, which orders a parallel stage's label; a step that has not started
+// has no start and sorts by id.
 func cardStarts(ctx context.Context, tx *canon.Tx) (map[string]time.Time, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT record FROM work_cards ORDER BY task_id")
 	if err != nil {
@@ -418,13 +498,13 @@ type graphRevision struct {
 
 // stepGraphRevisions reads the whole revisions the manager submitted, in commit
 // order. Each step graph event journals the goal record that carries it.
-func stepGraphRevisions(ctx context.Context, tx *canon.Tx, goalID string) ([]graphRevision, error) {
+func stepGraphRevisions(ctx context.Context, tx *canon.Tx, goals map[string]bool) (map[string][]graphRevision, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT body FROM work_events WHERE kind='goal.step_graph' ORDER BY seq")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var graphs []graphRevision
+	graphs := map[string][]graphRevision{}
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
@@ -441,7 +521,7 @@ func stepGraphRevisions(ctx context.Context, tx *canon.Tx, goalID string) ([]gra
 			return nil, ErrStageGraph
 		}
 		for _, change := range entry.Changes {
-			if change.Kind != "goal" || change.ID != goalID {
+			if change.Kind != "goal" || !goals[change.ID] {
 				continue
 			}
 			var g goal.Goal
@@ -449,7 +529,7 @@ func stepGraphRevisions(ctx context.Context, tx *canon.Tx, goalID string) ([]gra
 				return nil, ErrStageGraph
 			}
 			if g.StepGraph != nil {
-				graphs = append(graphs, graphRevision{Graph: *g.StepGraph, Tasks: g.Tasks})
+				graphs[change.ID] = append(graphs[change.ID], graphRevision{Graph: *g.StepGraph, Tasks: g.Tasks})
 			}
 		}
 	}

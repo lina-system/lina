@@ -346,9 +346,6 @@ func validEffectState(state string) bool {
 	return false
 }
 
-// recordKey identifies one message inside one chat.
-type recordKey struct{ platform, account, chat, message string }
-
 type recordRow struct {
 	revision   int
 	event      string
@@ -358,6 +355,9 @@ type recordRow struct {
 	authorName string
 	occurredAt time.Time
 	visible    bool
+	// speaker is the stored event's speaker kind, so an importer can tell a
+	// confirmed map that changed from a source row that changed.
+	speaker string
 }
 
 func (s *Store) recordRows(ctx context.Context, source Source, chat string, ids []string) (map[string]recordRow, error) {
@@ -371,8 +371,9 @@ func (s *Store) recordRows(ctx context.Context, source Source, chat string, ids 
 		args = append(args, id)
 	}
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		cursor, err := tx.QueryContext(ctx, `SELECT message,revision,event,edited_at,state,author,author_name,occurred_at,
- EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=r.event) FROM messenger_record r
+		cursor, err := tx.QueryContext(ctx, `SELECT message,revision,event,edited_at,state,author,author_name,r.occurred_at,
+ EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=r.event),COALESCE(e.speaker_kind,'') FROM messenger_record r
+ LEFT JOIN conv_event e ON e.id=r.event
  WHERE platform=? AND account=? AND chat=? AND message IN (`+placeholders+`)`, args...)
 		if err != nil {
 			return err
@@ -382,7 +383,7 @@ func (s *Store) recordRows(ctx context.Context, source Source, chat string, ids 
 			var id string
 			var row recordRow
 			var edited, occurred string
-			if err := cursor.Scan(&id, &row.revision, &row.event, &edited, &row.state, &row.author, &row.authorName, &occurred, &row.visible); err != nil {
+			if err := cursor.Scan(&id, &row.revision, &row.event, &edited, &row.state, &row.author, &row.authorName, &occurred, &row.visible, &row.speaker); err != nil {
 				return err
 			}
 			if row.edited, err = parseTime(edited); err != nil {
@@ -406,7 +407,7 @@ func parseTime(text string) (time.Time, error) {
 }
 
 type effectRow struct {
-	agent, state, message string
+	agent, state string
 }
 
 func (s *Store) effectsFor(ctx context.Context, source Source, chat string, ids []string) (map[string]effectRow, error) {

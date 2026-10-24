@@ -33,6 +33,7 @@ func submitGraph(t *testing.T, e *Engine, revision uint64, steps []Step) (StepGr
 	return e.SubmitStepGraph(t.Context(), "g", "person", "agent", "conversation", revision, steps)
 }
 func TestStepGraphRefusalsAreAtomic(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		code GraphError
@@ -87,6 +88,7 @@ func TestStepGraphRefusalsAreAtomic(t *testing.T) {
 	}
 }
 func TestStepGraphRevisionReplayAndRestart(t *testing.T) {
+	t.Parallel()
 	e, db := graphFixture(t)
 	steps := []Step{graphStep("first", strings.Repeat("가", 12)), graphStep("second", strings.Repeat("e\u0301", 24))}
 	steps[1].DependsOn = []string{"first"}
@@ -127,6 +129,7 @@ func TestStepGraphRevisionReplayAndRestart(t *testing.T) {
 	}
 }
 func TestStepGraphRevisesExecutableTasksAndProtectsStartedWork(t *testing.T) {
+	t.Parallel()
 	e, _ := graphFixture(t)
 	steps := []Step{graphStep("first", "Create parser"), graphStep("second", "Add validation")}
 	steps[1].DependsOn = []string{"first"}
@@ -177,6 +180,7 @@ func TestStepGraphRevisesExecutableTasksAndProtectsStartedWork(t *testing.T) {
 	}
 }
 func TestStepNamesMeasureGraphemesAndRejectTechnicalTokens(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"숙소 고르기", "로그인 화면 수정", strings.Repeat("👩‍💻", 12), strings.Repeat("e\u0301", 24), strings.Repeat("x", 24)} {
 		if !validStepName(name, nil) {
 			t.Errorf("refused %q", name)
@@ -190,6 +194,7 @@ func TestStepNamesMeasureGraphemesAndRejectTechnicalTokens(t *testing.T) {
 }
 
 func TestStepGraphReplacesUnclaimedWorkAndRenamesFinishedWork(t *testing.T) {
+	t.Parallel()
 	e, _ := graphFixture(t)
 	steps := []Step{graphStep("first", "Create parser")}
 	if _, err := submitGraph(t, e, 0, steps); err != nil {
@@ -239,6 +244,7 @@ func TestStepGraphReplacesUnclaimedWorkAndRenamesFinishedWork(t *testing.T) {
 }
 
 func TestStepGraphConcurrentRevisionsHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	e, _ := graphFixture(t)
 	steps := []Step{graphStep("first", "Create parser")}
 	if _, err := submitGraph(t, e, 0, steps); err != nil {
@@ -271,6 +277,7 @@ func TestStepGraphConcurrentRevisionsHaveOneWinner(t *testing.T) {
 }
 
 func TestStepGraphKeepsRepairProvenance(t *testing.T) {
+	t.Parallel()
 	e, _ := graphFixture(t)
 	steps := []Step{graphStep("first", "Create parser"), graphStep("second", "Repair parser")}
 	if _, err := submitGraph(t, e, 0, steps); err != nil {
@@ -298,6 +305,7 @@ func TestStepGraphKeepsRepairProvenance(t *testing.T) {
 }
 
 func TestStepNamesCannotHideKnownTokensWithJoiners(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"Run foun\u200ddation", "Run FOUNDATION"} {
 		if validStepName(name, []string{"foundation"}) {
 			t.Errorf("accepted hidden check name: %q", name)
@@ -306,6 +314,7 @@ func TestStepNamesCannotHideKnownTokensWithJoiners(t *testing.T) {
 }
 
 func TestStepNamesRejectUnicodeTechnicalReferences(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"파일.go 수정", "Read PR １２", "이슈 762 처리", "풀 리퀘스트 17 확인"} {
 		if validStepName(name, nil) {
 			t.Errorf("accepted technical reference: %q", name)

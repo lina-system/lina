@@ -93,12 +93,36 @@ The same small task goes through every worker connection, under conditions fixed
 - **Report.** Each run is marked observed, blocked or not observed, with its time and versions. The public record under `evidence/` holds only ids, codes, counts and versions. The recommendation is per worker (which connection to use) with a confidence level, and names the candidates that no other candidate beats on every dimension.
 - **What it does not establish.** It does not rank models or code quality. It is not review, CI or merge evidence. It covers one host and one synthetic task.
 
-The first run that would settle the largest open question: Claude Code through ACP against Claude Code headless, on the resume and permission dimensions.
+The run that settled the largest open question is the [CC] ACP and headless comparison on the resume and permission dimensions, in Results.
+
+## Results
+
+The evaluation ran on 2026-10-23 with the candidates' own installs and
+sign-ins; the record is [worker-evaluation.md](../../evidence/worker-evaluation.md).
+Six candidates were observed and Gemini CLI was not, because it is not
+installed on the host.
+
+| Connection | Start | Progress | Permission | Cancel | Resume | Done | Outcome |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Codex app-server | pass | pass | pass | pass | pass | pass | pass |
+| [CC] ACP | pass | pass | pass | pass | pass | pass | pass |
+| [CC] headless | pass | pass | fail | n/a | n/a | pass | fail |
+| Cursor ACP | pass | pass | pass | pass | pass | pass | pass |
+| Grok ACP | pass | pass | n/a | pass | pass | pass | pass |
+| Antigravity headless | pass | pass | fail | fail | n/a | fail | fail |
+| Gemini CLI ACP | not observed | not observed | not observed | not observed | not observed | not observed | not observed |
+
+[CC] through ACP answered the open question and stays the connection for that
+worker: it routed approvals to the caller and restored the same session after a
+kill, where the headless adapter has neither channel and could not finish the
+task. Grok's own mode approved both the write and the command without asking,
+so its permission row is not applicable. Cursor and Grok were signed in on this
+host, so their rows are now observed rather than documented.
 
 ## Limits
 
 - One host and one person's setup, including that person's own model routing for both installed workers.
-- Cursor, Gemini CLI and Grok had no account here, so only their handshakes were measured. Their rows rely on the documented behavior until the evaluation runs with a signed-in account.
+- Cursor and Grok had no account at the protocol probe, so only their handshakes were measured then; the evaluation above ran both with a signed-in account. Gemini CLI stayed uninstalled, so its row still relies on the documented behavior.
 - Plans, sub-agent events, quota exhaustion and rate-limit errors did not occur in the probe runs.
 - The probe ran three short prompts per worker. It shows that the protocol paths work, not how they behave under long tasks.
 

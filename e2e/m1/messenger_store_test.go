@@ -266,5 +266,4 @@ func (a *scriptedAdapter) waitFor(t *testing.T, cursor messenger.Cursor) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("adapter was not asked for cursor %q", cursor)
-	return
 }
