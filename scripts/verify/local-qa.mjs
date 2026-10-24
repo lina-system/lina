@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { closeSync, constants, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { availableParallelism, hostname, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { git, gitOut, toplevel } from '../git.mjs';
@@ -152,22 +152,46 @@ export async function runLocalQA({ cwd = process.cwd(), stateFile, repository, m
   return { status: 'tested', head, result: result.result, changes, logPath: localRun.logPath };
 }
 
-function toolPath(name) {
-  const result = spawnSync('which', [name], { encoding: 'utf8', env: { PATH: process.env.PATH } });
-  if (result.status !== 0) throw new Error('Required QA tool is unavailable: ' + name);
-  return realpathSync(result.stdout.trim());
+// Resolved in-process: inside the sandbox /usr/bin/which may point through an
+// unmounted /etc/alternatives entry.
+export function toolPath(name) {
+  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
+    if (!isAbsolute(directory)) continue;
+    const candidate = join(directory, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      if (statSync(candidate).isFile()) return realpathSync(candidate);
+    } catch {
+      // Missing or unusable entries fall through to the next PATH directory.
+    }
+  }
+  throw new Error('Required QA tool is unavailable: ' + name);
+}
+
+// The npm package shipped beside a user-local Node (nvm, mise, a release
+// archive). System packages under /usr are already visible and may resolve
+// dependencies through sibling directories, so they are not rebound.
+export function npmPackage(node) {
+  const launcher = join(dirname(node), 'npm');
+  if (!existsSync(launcher)) return undefined;
+  const cli = realpathSync(launcher);
+  const directory = dirname(dirname(cli));
+  if (directory.startsWith('/usr/') || basename(cli) !== 'npm-cli.js'
+      || readJSON(join(directory, 'package.json')).name !== 'npm') return undefined;
+  return directory;
 }
 
 // Same foundation shard command as CI, with an additional outer filesystem/PID
 // sandbox for a persistent machine. Only public dependency caches are shared;
 // networking remains available for dependency and vulnerability checks, as in CI.
-export function sandboxArguments({ worktree, outputDirectory, planFile, cacheDirectory, goRoot, node, actionlint, jobs }, args) {
+export function sandboxArguments({ worktree, outputDirectory, planFile, cacheDirectory, goRoot, node, npm, actionlint, jobs }, args) {
   return [
     '--unshare-all', '--share-net', '--die-with-parent', '--new-session', '--cap-drop', 'ALL', '--clearenv',
     ...['/usr', '/bin', '/lib', '/lib64', '/etc/ssl', '/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/etc/ld.so.cache', '/etc/apparmor.d']
       .filter(existsSync).flatMap(path => ['--ro-bind', path, path]),
     '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home/qa', '--dir', '/tools',
     '--ro-bind', node, '/tools/node', '--ro-bind', actionlint, '/tools/actionlint',
+    ...(npm ? ['--ro-bind', npm, '/tools/npm-package', '--symlink', '/tools/npm-package/bin/npm-cli.js', '/tools/npm'] : []),
     '--ro-bind', goRoot, '/toolchain', '--ro-bind', worktree, '/source',
     '--bind', outputDirectory, '/output',
     ...(planFile ? ['--ro-bind', planFile, '/qa/plan.json'] : []),
@@ -225,7 +249,8 @@ export async function executeLocalRun(input) {
     PATH: process.env.PATH, HOME: tmpdir(), GOENV: 'off', GOTOOLCHAIN: 'local',
   } });
   if (go.status !== 0) throw new Error('Cannot locate the installed Go toolchain');
-  const context = { ...input, goRoot: realpathSync(go.stdout.trim()), node: realpathSync(process.execPath), actionlint: toolPath('actionlint') };
+  const node = realpathSync(process.execPath);
+  const context = { ...input, goRoot: realpathSync(go.stdout.trim()), node, npm: npmPackage(node), actionlint: toolPath('actionlint') };
   const outputs = mkdtempSync(join(tmpdir(), 'lina-qa-output-'));
   const planFile = join(input.runDirectory, 'plan.json');
   const results = join(input.runDirectory, 'results');

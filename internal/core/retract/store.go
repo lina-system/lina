@@ -162,7 +162,8 @@ func (s *Store) Epoch(ctx context.Context) (uint64, error) {
 	return epoch, err
 }
 
-func (s *Store) Forget(ctx context.Context, r Request) error  { return s.change(ctx, r, forget) }
+func (s *Store) Forget(ctx context.Context, r Request) error { return s.change(ctx, r, forget) }
+
 func (s *Store) Restore(ctx context.Context, r Request) error { return s.change(ctx, r, restore) }
 
 // Delete skips recoverable trash. Its caller must establish the person's
