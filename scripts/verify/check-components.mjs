@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Verify registered Go packages using the workspace's exact toolchain and disposable outputs.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -41,16 +41,43 @@ export function createGoContext(cwd, { timeoutMs = 120_000 } = {}) {
   const [gocache, gomodcache] = cache.stdout.trim().split(/\r?\n/);
   if (!gocache || !gomodcache) throw new Error('Go did not return its download/build cache paths');
   const directory = mkdtempSync(join(tmpdir(), 'lina-components-'));
+  // -mod=readonly stays fixed. A caller's -p=N is kept so a memory-capped job
+  // can limit compile parallelism without dropping the readonly module check.
+  const parallel = /(?:^|\s)(-p=\d+)(?:\s|$)/.exec(process.env.GOFLAGS ?? '')?.[1];
   return {
     directory, toolchain,
     env: {
       ...inherited, HOME: directory, USERPROFILE: directory, XDG_CONFIG_HOME: directory,
-      GOENV: 'off', GOTOOLCHAIN: toolchain, GOWORK: join(cwd, 'go.work'), GOFLAGS: '-mod=readonly',
+      GOENV: 'off', GOTOOLCHAIN: toolchain, GOWORK: join(cwd, 'go.work'),
+      GOFLAGS: parallel ? `-mod=readonly ${parallel}` : '-mod=readonly',
       GOCACHE: gocache, GOMODCACHE: gomodcache, CGO_ENABLED: '0',
       GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
     },
     close: () => rmSync(directory, { recursive: true, force: true }),
   };
+}
+
+// One exhaustive process loads the syntax of every named package and its
+// imports. ./internal/core/... together with the rest of lina exceeds a 6G
+// job. Checking each child tree still covers those packages.
+export function exhaustivePatterns(packages, cwd) {
+  const patterns = [];
+  for (const pkg of packages) {
+    if (pkg !== './internal/core/...') {
+      patterns.push(pkg);
+      continue;
+    }
+    const root = join(cwd, 'internal/core');
+    const children = existsSync(root)
+      ? readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
+      : [];
+    if (!children.length) {
+      patterns.push(pkg);
+      continue;
+    }
+    for (const name of children) patterns.push(`./internal/core/${name}/...`);
+  }
+  return patterns;
 }
 
 export function checkComponents({ cwd = process.cwd(), components, execute: run = execute,
@@ -112,9 +139,16 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
       for (const args of build ? [
         ['build', '-mod=readonly', ...outputArgs, ...packages],
         ['vet', '-mod=readonly', ...packages],
-        ['tool', 'exhaustive', ...packages],
       ] : []) {
         if (invoke('go', args, directory).status !== 0) return { status: 1, output };
+      }
+      // exhaustive typechecks one import graph per process. The lina module
+      // together exceeds a 6G job, so each pattern is its own process and
+      // internal/core is one process per child tree. A single pattern is unchanged.
+      if (build) {
+        for (const pattern of exhaustivePatterns(packages, cwd)) {
+          if (invoke('go', ['tool', 'exhaustive', pattern], directory).status !== 0) return { status: 1, output };
+        }
       }
       // An acceptance scenario's own deadline reaches four minutes. A shard
       // budgets 240 seconds of measured work, so the e2e watchdog must outlive

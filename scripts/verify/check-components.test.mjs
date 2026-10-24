@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { sandbox } from '../test-fixture.mjs';
-import { checkComponents, createGoContext, execute, componentsTimeoutMs } from './check-components.mjs';
+import { checkComponents, createGoContext, execute, componentsTimeoutMs, exhaustivePatterns } from './check-components.mjs';
 
 const source = fileURLToPath(new URL('../../', import.meta.url));
 function fixture(t) {
@@ -271,10 +271,18 @@ setInterval(() => {}, 1000);
 test('components use the pinned toolchain, readonly commands, module verification and uncached tests', t => {
   const sb = fixture(t);
   const calls = [];
-  const result = checkComponents({ cwd: sb.dir, components: [kit], execute(command, args, options) {
-    calls.push({ command, args, ...options });
-    return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
-  } });
+  const saved = process.env.GOFLAGS;
+  delete process.env.GOFLAGS;
+  let result;
+  try {
+    result = checkComponents({ cwd: sb.dir, components: [kit], execute(command, args, options) {
+      calls.push({ command, args, ...options });
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  } finally {
+    if (saved === undefined) delete process.env.GOFLAGS;
+    else process.env.GOFLAGS = saved;
+  }
   assert.equal(result.status, 0, result.output);
   const commands = calls.map(call => call.args);
   assert.deepEqual(commands, [
@@ -291,6 +299,38 @@ test('components use the pinned toolchain, readonly commands, module verificatio
   }
   assert.equal(calls[1].cwd, sb.dir);
   for (const call of calls.slice(2)) assert.equal(call.cwd, join(sb.dir, 'kit'));
+});
+
+test('a caller -p limit is kept and exhaustive runs one core tree at a time', t => {
+  const sb = fixture(t);
+  sb.write(sb.dir, 'internal/core/boot/doc.go', 'package boot\n');
+  sb.write(sb.dir, 'internal/core/canon/doc.go', 'package canon\n');
+  const saved = process.env.GOFLAGS;
+  process.env.GOFLAGS = '-p=2';
+  const calls = [];
+  let result;
+  try {
+    result = checkComponents({ cwd: sb.dir, phase: 'build', components: [{
+      name: 'lina', module: '.', packages: ['./internal/core/...', './cmd/lina/...'],
+    }], execute(command, args, options) {
+      calls.push({ args, env: options.env });
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  } finally {
+    if (saved === undefined) delete process.env.GOFLAGS;
+    else process.env.GOFLAGS = saved;
+  }
+  assert.equal(result.status, 0, result.output);
+  const exhaustive = calls.filter(call => call.args[0] === 'tool').map(call => call.args);
+  assert.deepEqual(exhaustive, [
+    ['tool', 'exhaustive', './internal/core/boot/...'],
+    ['tool', 'exhaustive', './internal/core/canon/...'],
+    ['tool', 'exhaustive', './cmd/lina/...'],
+  ]);
+  assert.deepEqual(exhaustivePatterns(['./internal/core/...', './cmd/lina/...'], sb.dir), [
+    './internal/core/boot/...', './internal/core/canon/...', './cmd/lina/...',
+  ]);
+  assert.ok(calls.every(call => call.env.GOFLAGS === '-mod=readonly -p=2'));
 });
 
 test('a failed Go command stops verification and propagates its diagnostics', t => {

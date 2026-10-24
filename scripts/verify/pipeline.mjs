@@ -346,7 +346,13 @@ export function readResults(directory) {
   return records;
 }
 
-export async function runPipeline(root, plan, { jobs = Math.min(4, availableParallelism()), log = console.error, run = runAsync } = {}) {
+export async function runPipeline(root, plan, { jobs, log = console.error, run = runAsync } = {}) {
+  // A caller that sets GOFLAGS=-p=N is capping compile parallelism for a
+  // memory limit. Overlapping shards would multiply that cap, so the default
+  // then becomes one shard. CI leaves GOFLAGS unset and keeps four workers.
+  if (jobs === undefined) {
+    jobs = /(?:^|\s)-p=\d+(?:\s|$)/.test(process.env.GOFLAGS ?? '') ? 1 : Math.min(4, availableParallelism());
+  }
   if (!Number.isInteger(jobs) || jobs < 1) throw new Error('Worker count must be a positive integer');
   if (plan.selection.result !== 'success') return aggregate(plan, []);
   validatePlan(plan, root);
