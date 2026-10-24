@@ -931,7 +931,10 @@ func (s *Store) Question(ctx context.Context, id Identity) (Question, bool, erro
 	return question, found, err
 }
 
-// Confirm records the person's answer: this identity is this people record.
+// Confirm records the person's answer: this identity is this people record. The
+// answer settles the record, not how long the identifier was theirs, so a
+// validity window a move recorded is kept and confirming an ended link does not
+// reopen it.
 func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) (Link, error) {
 	if !id.valid() || record == "" {
 		return Link{}, ErrInvalid
@@ -956,7 +959,7 @@ func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) 
 			if err := s.insertLink(ctx, tx, id, record, Confirmed, s.person, at, time.Time{}, signals); err != nil {
 				return err
 			}
-		} else if _, err := tx.ExecContext(ctx, `UPDATE identity_link SET class='confirmed',maker=?,revision=revision+1,valid_through='' WHERE id=?`, s.person, chosen.ID); err != nil {
+		} else if _, err := tx.ExecContext(ctx, `UPDATE identity_link SET class='confirmed',maker=?,revision=revision+1 WHERE id=?`, s.person, chosen.ID); err != nil {
 			return err
 		} else if err := writeChange(ctx, tx, chosen.ID, chosen.Revision+1, "confirm", Confirmed, Active, record, s.person, at); err != nil {
 			return err
@@ -1088,7 +1091,8 @@ func (s *Store) Remove(ctx context.Context, linkID string) (Repair, error) {
 
 // Correct moves an identity to the right people record. The items the old link
 // produced are retracted, and only this identity's messages after the learning
-// watermark are queued again.
+// watermark are queued again. The recorded validity window stays: the answer
+// settles the record, not how long the identifier was theirs.
 func (s *Store) Correct(ctx context.Context, linkID, record string) (Repair, error) {
 	if linkID == "" || record == "" {
 		return Repair{}, ErrInvalid
@@ -1105,7 +1109,7 @@ func (s *Store) Correct(ctx context.Context, linkID, record string) (Repair, err
 			Scan(&identity.Platform, &identity.Scope, &identity.User, &revision, &class, &previous); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE identity_link SET record=?,class='confirmed',maker=?,state='active',revision=revision+1,valid_through='' WHERE id=?`,
+		if _, err := tx.ExecContext(ctx, `UPDATE identity_link SET record=?,class='confirmed',maker=?,state='active',revision=revision+1 WHERE id=?`,
 			record, s.person, linkID); err != nil {
 			return err
 		}

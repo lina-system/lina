@@ -88,8 +88,10 @@ proposal never returns. Proposals are offered in one batch of at most five.
 
 A link is usable when it is `confirmed`, or `exact` and unambiguous, and its
 validity covers the time asked about: a confirmed phone or email link ends when
-the identifier moves, exactly as an exact one does. Ambiguity is derived, never
-stored.
+the identifier moves, exactly as an exact one does. `Confirm` and `Correct` keep
+the cutoff a move recorded — the answer settles the record, not how long the
+identifier was theirs — so answering again brings nothing back that the move
+retracted. Ambiguity is derived, never stored.
 
 ## Person actions and repair
 

@@ -575,6 +575,109 @@ func TestConfirmedLinkIsUnusableAfterTheNumberMoves(t *testing.T) {
 	}
 }
 
+// TestConfirmKeepsTheRecordedCutoff pins the other half of the same rule: the
+// person's answer settles which record the identity is, not how long the
+// identifier was theirs. Confirming a link whose number already moved must keep
+// the cutoff the move recorded and must not bring back what the move retracted.
+func TestConfirmKeepsTheRecordedCutoff(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660005"
+	people := identity.StaticPeople{{Record: "person-anna", Identifiers: []identity.SeenIdentifier{
+		{Kind: identity.Phone, Value: number, Source: "Discord profile 2026"},
+	}}}
+	f := newFixture(t, people)
+	jan := time.Date(2026, 1, 10, 9, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
+	apr := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	may := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	jun := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	f.now = jan
+	observe(t, f, discord("d-anna"), "Anna", phone(number, "Discord profile"))
+	confirmed, err := f.store.Confirm(t.Context(), discord("d-anna"), "person-anna", "that is Anna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The link produced an April item before the move was known.
+	f.now = apr
+	item := f.item(t, "person-anna", "an item from April")
+	if err := f.store.RecordArtifact(t.Context(), confirmed.ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The February sighting of the move arrives in May.
+	f.now = may
+	observeAt(t, f, imessage(number), feb, "Someone else", phone(number, "iMessage profile"))
+	// The person confirms the same link again in June.
+	f.now = jun
+	again, err := f.store.Confirm(t.Context(), discord("d-anna"), "person-anna", "still Anna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Class != identity.Confirmed || !again.ValidThrough.Equal(feb) {
+		t.Fatalf("confirmed link = %+v, want the February cutoff kept", again)
+	}
+	if again.Usable(feb) || again.Usable(apr) {
+		t.Fatal("confirming reopened the window the number moved out of")
+	}
+	if !again.Usable(jan.Add(24 * time.Hour)) {
+		t.Fatal("the confirmed link is not usable while the number was still Anna's")
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("confirming brought back an item from after the cutoff")
+	}
+}
+
+// TestCorrectKeepsTheRecordedCutoff covers the same rule for the other person
+// action that writes a confirmed link: moving the identity to another record
+// does not make the identifier theirs again after it moved.
+func TestCorrectKeepsTheRecordedCutoff(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660006"
+	people := identity.StaticPeople{
+		{Record: "person-anna", Identifiers: []identity.SeenIdentifier{
+			{Kind: identity.Phone, Value: number, Source: "Discord profile 2026"},
+		}},
+		{Record: "person-bella"},
+	}
+	f := newFixture(t, people)
+	jan := time.Date(2026, 1, 10, 9, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
+	apr := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	may := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	jun := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	f.now = jan
+	observe(t, f, discord("d-shared"), "Shared", phone(number, "Discord profile"))
+	got := links(t, f, discord("d-shared"))
+	if len(got) != 1 || got[0].Record != "person-anna" {
+		t.Fatalf("links = %+v, want the link to person-anna", got)
+	}
+	f.now = apr
+	item := f.item(t, "person-anna", "an item from April")
+	if err := f.store.RecordArtifact(t.Context(), got[0].ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The February sighting of the move arrives in May.
+	f.now = may
+	observeAt(t, f, imessage(number), feb, "Someone else", phone(number, "iMessage profile"))
+	// In June the person says the identity is Bella's.
+	f.now = jun
+	if _, err := f.store.Correct(t.Context(), got[0].ID, "person-bella"); err != nil {
+		t.Fatal(err)
+	}
+	corrected := links(t, f, discord("d-shared"))
+	if len(corrected) != 1 || corrected[0].Record != "person-bella" {
+		t.Fatalf("corrected link = %+v, want person-bella", corrected)
+	}
+	if !corrected[0].ValidThrough.Equal(feb) {
+		t.Fatalf("valid through = %v, want the February cutoff kept", corrected[0].ValidThrough)
+	}
+	if corrected[0].Usable(feb) || corrected[0].Usable(apr) {
+		t.Fatal("correcting reopened the window the number moved out of")
+	}
+	if !corrected[0].Usable(jan.Add(24 * time.Hour)) {
+		t.Fatal("the corrected link is not usable while the number was still Anna's")
+	}
+}
+
 // TestFirstCutoffRetractsWhatTheLinkProducedAfterIt covers the first cutoff on
 // a link that had no end yet. A Discord link made in January and an item it
 // produced in April are already recorded when a February iMessage sighting of
