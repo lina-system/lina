@@ -20,6 +20,7 @@ import (
 // platform boundary. A platform ported here is resolved from its source account
 // and that account's stored token; an explicitly configured adapter, such as a
 // test's, takes its platform's place.
+// Teams runs account-specific workers through the installed Teams service.
 type MessengerConfig struct {
 	// Adapters are keyed by platform and replace Core's own adapter there.
 	Adapters map[string]messenger.Adapter
