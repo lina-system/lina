@@ -784,7 +784,11 @@ is reported without trying another authentication method.
 
 Core polls independently every five minutes, including after restart. It walks
 older messages with `beforeMessage`, follows room and membership paging, and
-catches up across multiple pages before moving its newest-message anchor.
+catches up across multiple pages before moving its newest-message anchor. A
+room that was empty keeps that anchor unset, so the next burst fills back to
+the beginning before the anchor moves. A reply whose parent is on an older
+page of the same walk is returned with that parent; a parent older than the
+previous anchor is already stored.
 Paging must stay on the same origin and collection. HTTP redirects are refused.
 429 and 423 respect Retry-After; waits over one minute or exhausted attempts
 leave the cursor unchanged and report a retryable source failure. A failed
