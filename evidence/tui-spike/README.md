@@ -29,6 +29,18 @@ proposed list, unique entries, an explicit SSH flag, an observed `version` and
 applies it to this file. The matrix contains no device names, addresses or user
 data, and it covers Apple Terminal's known probe differences.
 
+[terminal-qa/README.md](terminal-qa/README.md) is the alpha evidence for the
+terminal list: an automated run of the built TUI in six Linux terminals and one
+SSH/tmux PTY, with screenshots, the observed product versions and `TERM`. Its
+`automated_qa` record in [terminals.json](terminals.json) lists each terminal
+actually run, its observed version and `TERM`, the transport and that evidence
+path, and defers owner confirmation to #371. `ReadTerminalMatrix` rejects an
+automated run whose version is only a product name. The SSH run records the
+observed OpenSSH and tmux versions. The run found the issues tracked as
+#1636, #1637 and #1638; they are not fixed here. It does not replace the
+owner-run S1–S11 measurements, the IME composition check or the final library
+decision.
+
 
 ## Running S8
 

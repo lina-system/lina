@@ -308,6 +308,42 @@ func TestSearchKoreanFixtureEventParity(t *testing.T) {
 	}
 }
 
+func TestSearchVectorCandidatesKeepScopeBeforeFusion(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "public", "conversation", "owner", "agent", "산책", base, "")
+	secret := remember(t, db, "agent", "", "도서관 비밀", memory.NeverLeaves, "public")
+	vectors := func(context.Context, recall.Scope, string) ([]string, error) {
+		return []string{secret}, nil
+	}
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Memory}, ExternalModel: true}
+	hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "산책", Vectors: vectors})
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("never-leaves vector candidate: %+v %v", hits, err)
+	}
+	// The same candidate is a normal result once the scope admits it.
+	scope.ExternalModel = false
+	hits, err = recall.Match(t.Context(), db, scope, recall.Query{Text: "산책", Vectors: vectors})
+	if err != nil || len(hits) != 1 || hits[0].ID != secret {
+		t.Fatalf("scoped vector candidate: %+v %v", hits, err)
+	}
+}
+
+func TestSearchReadsMaterialBackedEventBody(t *testing.T) {
+	db := database(t)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES('material','conversation','owner','agent','person','{"kind":"tui"}','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','recorded','{"kind":"import"}','m1',1)`)
+	read := func(context.Context, string) (string, error) { return "도서관에서 공부했다.", nil }
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	results, err := recall.Search(t.Context(), db, read, scope, recall.Query{Text: "도서관", EventText: read})
+	if err != nil || len(results) != 1 || results[0].ID != "material" {
+		t.Fatalf("material-backed event: %+v %v", results, err)
+	}
+	if !strings.Contains(results[0].Excerpt, "도서관") {
+		t.Fatalf("material excerpt: %q", results[0].Excerpt)
+	}
+}
+
 func TestSearchVectorsFuseIntoTheRankedList(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)

@@ -22,5 +22,60 @@
       "terminal": "Apple Terminal",
       "ssh": true
     }
-  ]
+  ],
+  "automated_qa": {
+    "evidence": "terminal-qa/README.md",
+    "owner_confirmation_deferred_to": 371,
+    "runs": [
+      {
+        "id": "foot",
+        "terminal": "foot",
+        "version": "1.25.0",
+        "term": "foot",
+        "transport": "local"
+      },
+      {
+        "id": "kitty",
+        "terminal": "kitty",
+        "version": "0.45.0",
+        "term": "xterm-kitty",
+        "transport": "local"
+      },
+      {
+        "id": "alacritty",
+        "terminal": "Alacritty",
+        "version": "0.16.1",
+        "term": "alacritty",
+        "transport": "local"
+      },
+      {
+        "id": "wezterm",
+        "terminal": "WezTerm",
+        "version": "20240203-110809-5046fc22",
+        "term": "xterm-256color",
+        "transport": "local"
+      },
+      {
+        "id": "xterm",
+        "terminal": "xterm",
+        "version": "407",
+        "term": "xterm",
+        "transport": "local"
+      },
+      {
+        "id": "gnome-terminal",
+        "terminal": "GNOME Terminal",
+        "version": "3.58.0, VTE 0.84",
+        "term": "xterm-256color",
+        "transport": "local"
+      },
+      {
+        "id": "ssh-tmux",
+        "terminal": "tmux",
+        "version": "OpenSSH 10.2p1 Ubuntu-2ubuntu3.8, tmux 3.6",
+        "term": "xterm-256color",
+        "transport": "ssh"
+      }
+    ]
+  }
 }
