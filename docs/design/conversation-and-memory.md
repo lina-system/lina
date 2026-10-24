@@ -379,8 +379,7 @@ parent project that completes after the call leaves that call unchanged. The too
 the shapes a model naturally writes, because a rejected argument loses the whole
 message: a request ordinal is optional and omitted ordinals take message order,
 a target may be the candidate object, its exact id or title, `new` or `none`, and
-an excerpt that is absent or not an exact copy becomes the input text. An exact
-candidate id is bound before a leading kind name and colon are read as new work. A kind
+an excerpt that is absent or not an exact copy becomes the input text. A kind
 word is mapped to the stored kinds, an unknown kind becomes a to-do, and a parent
 that is not an open initiative or project is dropped. A name that matches no
 open item and exactly one offered item, including a finished item, binds that
@@ -461,7 +460,7 @@ Target questions use the existing question card and Waiting for me. Their
 recommendation is the first option, with no default action. A card answer or an
 exact offered label or number resolves only that request; declining or cancelling
 records its cancellation. An unrelated turn can proceed without resolving it.
-Core checks a retained tie again when a later tool would make it irreversible.
+Core checks a retained tie again when a later tool would make it irreversible. On an answer continuation, a work call that omits a request ordinal uses the answered request. An explicit ordinal keeps the request it names. Starting a run for a selected channel input keeps that channel receipt beside the requesting turn, so a later check still uses the channel's tool permission and recovery still finds the turn that started the run. A follow-up sent with `worker_input` for a selected channel input keeps the same receipt and is not delivered after that channel loses tool permission.
 
 **Showing and moving.**
 

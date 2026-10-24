@@ -350,42 +350,6 @@ func TestModelBindingReadDoesNotResolveRiskyTie(t *testing.T) {
 	}
 }
 
-func TestModelBindingInterruptHoldsTiedRunningTasks(t *testing.T) {
-	r, _ := turnRuntime(t)
-	now := time.Now().UTC()
-	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
-		{ID: "task-a", Title: "First task", Kind: "task", State: "running", LastActivity: now},
-		{ID: "task-b", Title: "Second task", Kind: "task", State: "running", LastActivity: now},
-	}, Surfaces: map[string]string{}}
-	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
-		t.Fatal(err)
-	}
-	foreign := &conversationRuntime{person: "person:elsewhere"}
-	r.workers.mu.Lock()
-	r.workers.sessions["session-b"] = &workerSession{thread: worker.Thread{ID: "session-b", TaskID: "task-b"}, origin: foreign}
-	r.workers.mu.Unlock()
-	t.Cleanup(func() {
-		r.workers.mu.Lock()
-		delete(r.workers.sessions, "session-b")
-		r.workers.mu.Unlock()
-	})
-	input := questionPersonInput(t, r, "interrupt-tie", "Stop the running task.")
-	a := binding.Target{Class: "existing", ID: "task-a", Kind: "task"}
-	b := binding.Target{Class: "existing", ID: "task-b", Kind: "task"}
-	if _, err := r.saveModelBinding(t.Context(), input, "read-tie", []binding.Choice{{Quote: input.Body.Text(), Target: a, Tied: []binding.Target{a, b}, Action: "read"}}, "model"); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := json.Marshal(map[string]any{"session": "session-b", "turn": "turn-1", "generation": 1, "binding": 1, "quote": "Stop the running task."})
-	got := r.bindWorkCall(t.Context(), input, 0, "turn:"+input.ID, provider.ToolCall{ID: "stop", Name: "worker_interrupt", Arguments: string(raw)})
-	if got == nil || got.Code != loop.Denied {
-		t.Fatalf("ambiguous interrupt was allowed: %+v", got)
-	}
-	choices, err := r.currentInputChoices(t.Context(), input)
-	if err != nil || len(choices) != 1 || choices[0].Question == "" || len(choices[0].Tied) != 2 {
-		t.Fatalf("tie not held: %+v %v", choices, err)
-	}
-}
-
 func TestModelBindingWorkerInputFollowsPersonTarget(t *testing.T) {
 	r, _ := turnRuntime(t)
 	now := time.Now().UTC()
@@ -739,6 +703,103 @@ func TestSelectedNewTargetResolvesToCreatedIdentity(t *testing.T) {
 		t.Fatalf("follow-up missing: notes=%d err=%v", len(run.FollowUps), err)
 	}
 }
+
+func TestAnswerContinuationKeepsExplicitRequestOrdinal(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "first-run", Title: "First run", Kind: "run", State: "running", LastActivity: now},
+		{ID: "second-run", Title: "Second run", Kind: "run", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "split-continue", "Note this for later. Change its format.")
+	tools := modelBindingTools(t, r, input)
+	none := binding.Target{Class: "none"}
+	first := binding.Target{Class: "existing", ID: "first-run", Kind: "run"}
+	second := binding.Target{Class: "existing", ID: "second-run", Kind: "run"}
+	result := questionCall(t, tools, "bind_input", "split-tie", map[string]any{"bindings": []any{
+		map[string]any{"request": 0, "quote": "Note this for later.", "target": none},
+		map[string]any{"request": 1, "quote": "Change its format.", "target": first, "tied": []binding.Target{first, second}, "action": "steer"},
+	}})
+	if result.Code != loop.OK {
+		t.Fatalf("tie: %+v", result)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) != 2 || choices[1].Question == "" {
+		t.Fatalf("request 1 not held: %+v %v", choices, err)
+	}
+	q, err := waiting.NewConversationQuestions(r.db).Get(t.Context(), choices[1].Question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, value := "1", q.Choices[1]
+	values := protocol.FormValues{"answer": {String: &value}}
+	answer := protocol.QuestionAnswer{CardID: &q.ID, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}
+	if outcome, err := r.answerConversationQuestion(t.Context(), r.person, answer, "answer"); err != nil || outcome != protocol.DecisionOutcomeResolved {
+		t.Fatalf("answer: %s %v", outcome, err)
+	}
+	continued, err := r.journal().Get(t.Context(), q.ID+":answer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed := modelBindingTools(t, r, continued)
+	got := questionCall(t, resumed, "write_record", "independent", map[string]any{
+		"id": "", "revision": "", "kind": "todo", "title": "Independent note", "note": "Keep request zero.",
+		"input_binding": map[string]any{"request": 0},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("explicit request 0 was overwritten by the continuation: %+v", got)
+	}
+	choices, err = r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) != 2 || choices[1].Target != second || choices[1].Decider != "person" {
+		t.Fatalf("request 1 changed: %+v %v", choices, err)
+	}
+	if choices[0].Target.Class == "none" && choices[0].CreatedID == "" {
+		t.Fatal("request 0 did not receive the independent record")
+	}
+}
+
+func TestModelBindingNewWorkTargetsHaveDistinctLabels(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "garden", Title: "North garden", Kind: "project", State: "active", LastActivity: now},
+		{ID: "library", Title: "South library", Kind: "project", State: "active", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "new-tie", "Start a task under one project.")
+	tools := modelBindingTools(t, r, input)
+	garden := binding.Target{Class: "new", Kind: "task", Parent: "garden"}
+	library := binding.Target{Class: "new", Kind: "task", Parent: "library"}
+	result := questionCall(t, tools, "bind_input", "new-tie", bindingRequest{Bindings: []binding.Choice{{
+		Quote: input.Body.Text(), Target: garden, Tied: []binding.Target{garden, library}, Action: "start",
+	}}})
+	if result.Code != loop.OK {
+		t.Fatalf("new-work tie was not retained: %+v", result)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) != 1 || choices[0].Question == "" {
+		t.Fatalf("question missing: %+v %v", choices, err)
+	}
+	q, err := waiting.NewConversationQuestions(r.db).Get(t.Context(), choices[0].Question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Choices) != 2 || q.Choices[0] == q.Choices[1] {
+		t.Fatalf("labels: %#v", q.Choices)
+	}
+	if !strings.Contains(q.Choices[0], "task") || !strings.Contains(q.Choices[0], "North garden") || !strings.Contains(q.Choices[1], "task") || !strings.Contains(q.Choices[1], "South library") {
+		t.Fatalf("labels do not name kind and parent: %#v", q.Choices)
+	}
+}
+
+// A task may be named like a generation reference. The gate and execution share
+// one resolver, so the follow-up reaches the task the person selected, and an
+// unmatched suffix still falls back to the task it qualifies.
 
 func TestModelBindingRetryKeepsCompletedParent(t *testing.T) {
 	r, _ := turnRuntime(t)

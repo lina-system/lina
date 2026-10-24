@@ -1,5 +1,13 @@
 [
   {
+    "kind": "vulnerability",
+    "name": "golang.org/x/crypto",
+    "version": "v0.58.0",
+    "id": "GO-2026-5932",
+    "reason": "The advisory covers only the unmaintained golang.org/x/crypto/openpgp packages. LINA links this module for gotd/td's MTProto cryptography and imports no openpgp package, so the vulnerable code is not built or reachable. No fixed release exists; every published version is affected.",
+    "reference": "https://pkg.go.dev/vuln/GO-2026-5932"
+  },
+  {
     "kind": "install-script",
     "name": "@whiskeysockets/baileys",
     "version": "7.0.0-rc14",
