@@ -356,6 +356,7 @@ Every input of the person is bound to one target: the focus, another 목표, 일
 
 **Focus and candidates.**
 
+- An input sets the next focus only when all its current choices settle on the same item, including a single created identity. Distinct targets, a retained tie, a pending target question or a cancelled choice leave no focus; request order never selects a winner.
 - The focus ages. After 60 minutes without an exchange (a starting value) it is no longer the default and is offered as one candidate among the rest. In the owner's data a message sent within ten minutes continued the current topic about 70 percent of the time; after an hour, about 20 percent.
 - Core ranks at most eight candidates: the focus; items with a question to the person open in this conversation; tasks and runs started from it that are running or waiting; items the message names; then the person's most recently active 목표, 일 and 할 일. Each carries its id, title, kind, state and last activity, and they enter item 7.3 of the request layout.
 
@@ -403,6 +404,9 @@ candidate does not resolve the original ambiguity. A retained tie, including a
 read that has not asked a question, does not settle a reply or the next focus.
 A reply that stays unresolved keeps that tie, so a later control asks before it
 runs.
+An unresolved follow-up after an input with several settled targets also keeps
+those targets for the control check. A tool's session argument alone does not
+choose between them: stopping a worker asks which item before any interrupt.
 Current choices enter the
 ContextPacket and remain reconstructible from their ledger sources.
 

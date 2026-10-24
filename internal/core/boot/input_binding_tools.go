@@ -4,7 +4,9 @@ package boot
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -218,20 +220,55 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		result := bindingFailure(c.ID, errBindingPending)
 		return &result
 	}
-	// A reply that did not settle still has the parent's retained tie. A control
-	// action must ask before it uses the recommendation.
-	if len(choice.Tied) < 2 && (choice.Target.Class == "" || choice.Target.Class == "none") && input.Surface.ReplyTo != "" {
-		parent, err := r.currentInputChoices(ctx, ledger.Event{ID: input.Surface.ReplyTo})
+	// An unresolved reply keeps the referenced input's ambiguity. Without a
+	// reply reference, a no-rule follow-up keeps the previous input's targets.
+	// Naming a worker in a tool call must not silently choose between them.
+	if len(choice.Tied) < 2 && (choice.Target.Class == "" || choice.Target.Class == "none") {
+		var parent []binding.Choice
+		err := r.db.Read(ctx, func(tx *canon.Tx) error {
+			id := input.Surface.ReplyTo
+			action := bindingAction(c.Name)
+			if id == "" && choice.Decider == "no-rule" && (action == "stop" || action == "steer") {
+				_, _, previous, err := r.previousInputBinding(ctx, tx, input)
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				id = previous
+			}
+			if id == "" {
+				return nil
+			}
+			var err error
+			parent, err = readInputChoices(ctx, tx, ledger.Event{ID: id})
+			return err
+		})
 		if err != nil {
 			result := bindingFailure(c.ID, err)
 			return &result
 		}
+		var targets []binding.Target
+		seen := map[binding.Target]bool{}
 		for _, earlier := range parent {
-			if len(earlier.Tied) > 1 && earlier.Question == "" && !earlier.Cancelled {
-				choice.Tied = earlier.Tied
-				choice.Target = earlier.Tied[0]
-				break
+			if earlier.Question != "" || earlier.Cancelled {
+				continue
 			}
+			candidates := earlier.Tied
+			if len(candidates) == 0 {
+				candidates = []binding.Target{overlayChoiceTarget(binding.Target{}, []binding.Choice{earlier})}
+			}
+			for _, target := range candidates {
+				if (target.Class == "existing" || target.Class == "new") && !seen[target] {
+					targets = append(targets, target)
+					seen[target] = true
+				}
+			}
+		}
+		if len(targets) > 1 {
+			choice.Tied = targets
+			choice.Target = targets[0]
 		}
 	}
 	if _, err := r.journal().Get(ctx, "binding-tool:"+turnID+":"+c.ID); err == nil {
