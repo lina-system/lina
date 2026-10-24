@@ -90,7 +90,7 @@ func (s *Store) validateTodoBatch(ctx context.Context, candidates map[string]doc
 				if err != nil {
 					return err
 				}
-				if other.person != d.person || (other.kind != "project" && other.kind != "area") {
+				if other.person != d.person || (other.kind != "initiative" && other.kind != "project" && other.kind != "area") {
 					return ErrInvalid
 				}
 			}

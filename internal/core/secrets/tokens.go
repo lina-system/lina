@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/secret"
@@ -18,12 +19,26 @@ import (
 // secret store encodes its plaintext; ordinary serialization is always redacted.
 type Tokens struct{ value func() tokenRecord }
 type tokenRecord struct {
-	Access  string `json:"access"`
-	Refresh string `json:"refresh"`
+	Access  string    `json:"access"`
+	Refresh string    `json:"refresh"`
+	Expires time.Time `json:"expires,omitzero"`
 }
 
 func NewTokens(access, refresh string) Tokens {
-	return Tokens{value: func() tokenRecord { return tokenRecord{access, refresh} }}
+	return NewTokensUntil(access, refresh, time.Time{})
+}
+
+// NewTokensUntil keeps expiry with the atomically replaced credential record.
+func NewTokensUntil(access, refresh string, expires time.Time) Tokens {
+	return Tokens{value: func() tokenRecord { return tokenRecord{Access: access, Refresh: refresh, Expires: expires} }}
+}
+
+// Expires is zero for legacy credentials whose expiry is unknown.
+func (t Tokens) Expires() time.Time {
+	if t.value == nil {
+		return time.Time{}
+	}
+	return t.value().Expires
 }
 func (Tokens) String() string               { return secret.Placeholder }
 func (Tokens) GoString() string             { return secret.Placeholder }
@@ -84,7 +99,7 @@ func (s *Store) readTokens(key Key) (Tokens, error) {
 	if json.Unmarshal(raw, &record) != nil {
 		return Tokens{}, ErrInvalid
 	}
-	t := NewTokens(record.Access, record.Refresh)
+	t := NewTokensUntil(record.Access, record.Refresh, record.Expires)
 	if !t.Valid(false) {
 		return Tokens{}, ErrInvalid
 	}
