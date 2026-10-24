@@ -710,6 +710,13 @@ func (r *conversationRuntime) followOfflineSession(ctx context.Context, input le
 	if !found || rec.Thread.TaskID == "" {
 		return loop.Result{ID: callID, Code: loop.Denied}
 	}
+	// reconcileWorkers skips a finished record, so held mail would never be
+	// delivered or refused. A completed session cannot resume: refuse before
+	// any offline message is stored. A canceled record still records the
+	// session_gone receipt below.
+	if rec.State == "finished" && !rec.Canceled {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
 	name := rec.Worker
 	if name == "" {
 		name = "codex"
