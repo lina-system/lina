@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -113,12 +114,14 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				exec := tool
 				// A selected steering input keeps its runtime and channel source
 				// through execution, not only through the binding gate.
-				if (name == "follow_work" || name == "read_work_progress") && (r != s.runtime || input.ID != s.input.ID) {
-					prepared := map[string]loop.Tool{}
-					if _, err := r.prepareBindingWorkTools(s.turnID, &toolPreparation{event: input}, prepared); err != nil {
+				if r != s.runtime || input.ID != s.input.ID {
+					alt, err := r.steeringTool(ctx, s.turnID, input, s.replyShapes, clean.Name)
+					if err != nil {
 						return bindingFailure(c.ID, err)
 					}
-					exec = prepared[name]
+					if alt.Execute != nil {
+						exec = alt
+					}
 				}
 				var args map[string]json.RawMessage
 				_ = json.Unmarshal([]byte(clean.Arguments), &args)
@@ -154,6 +157,75 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 	}
 	return declarations
 }
+
+// steeringTool rebuilds a tool on the runtime that owns the selected input.
+// Families that close over the runtime or the event are prepared again so a
+// channel follow-up, record write, or work preparation keeps that channel.
+// Result tools keep the speaking turn's prepared reply shapes, and their grant
+// uses the selected conversation's turn so a new result is checked there.
+// Persona preparation needs the turn's persona and stays on the original tool.
+func (r *conversationRuntime) steeringTool(ctx context.Context, turnID string, event ledger.Event, shapes reply.Shapes, name string) (loop.Tool, error) {
+	if name == "present_result" || name == "present_surface" || name == "read_result" {
+		selected, err := r.selectedResultTurn(ctx, turnID)
+		if err != nil {
+			return loop.Tool{}, err
+		}
+		turnID = selected
+	}
+	prep := &toolPreparation{event: event, replyShapes: shapes}
+	var found loop.Tool
+	for _, prepare := range []toolPreparer{
+		r.prepareRecordTools,
+		r.prepareBindingWorkTools,
+		r.prepareResultTools,
+		r.prepareGoalWorkTools,
+		r.prepareRunTools,
+		r.prepareWebTools,
+		r.prepareA2ATools,
+		r.prepareDispatchTools,
+		r.prepareWorkTools,
+		r.prepareWorkerTools,
+		r.prepareDelegationTools,
+		r.prepareTimerTools,
+		r.prepareExchangeTools,
+	} {
+		family := map[string]loop.Tool{}
+		_, err := prepare(turnID, prep, family)
+		tool, ok := family[name]
+		if err != nil && ok && tool.Execute != nil {
+			return loop.Tool{}, err
+		}
+		if err != nil || !ok || tool.Execute == nil {
+			continue
+		}
+		found = tool
+	}
+	return found, nil
+}
+
+// selectedResultTurn is the turn whose conversation matches the runtime that
+// owns the selected input. A private turn consuming channel steering would
+// otherwise keep its own id, and the result grant would look up the private
+// conversation while the tool creates under result:new: on the channel.
+func (r *conversationRuntime) selectedResultTurn(ctx context.Context, turnID string) (string, error) {
+	var conversation string
+	err := r.db.Read(ctx, func(tx *canon.Tx) error {
+		err := tx.QueryRowContext(ctx, `SELECT conversation FROM turn_runs WHERE id=?`, turnID).Scan(&conversation)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	})
+	if err != nil || conversation == r.conversation {
+		return turnID, err
+	}
+	var id string
+	err = r.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT id FROM turn_runs WHERE conversation=? AND state='active' ORDER BY rowid DESC LIMIT 1`, r.conversation).Scan(&id)
+	})
+	return id, err
+}
+
 func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Event, index int, turnID string, c provider.ToolCall) *loop.Result {
 	// Explicit steering provenance cannot borrow the original turn's tools.
 	if input.PersonID != r.person || input.AgentID != r.agent || input.ConversationID != r.conversation || r.channelBinding != nil && (!r.channelBinding.Scope.Tools || r.validateChannel(ctx) != nil) {
