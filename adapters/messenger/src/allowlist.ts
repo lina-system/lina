@@ -12,9 +12,10 @@
 // read operation reaches them. Token extractors are never listed.
 export const READ_METHODS: Record<string, readonly string[]> = {
   kakaotalk: [
-    'KakaoTalkClient', 'login', 'getChats', 'getMessagePage', 'getMembers', 'getProfile',
-    'onPush', 'acquireSession', 'close', 'loginFlow', 'CredentialManager',
-    'setAccount', 'setCurrentAccount', 'clearPendingLogin',
+    'KakaoTalkClient', 'login', 'acquireSession', 'getChats', 'getMessagePage', 'getMembers', 'getProfile',
+    'onPush', 'close', 'KakaoCredentialManager', 'getAccount', 'setAccount', 'setCurrentAccount',
+    'loadPendingLogin', 'savePendingLogin', 'clearPendingLogin',
+    'attemptLogin', 'requestPasscode', 'registerDevice', 'generateDeviceUuid', 'classifyKakaoChat',
   ],
   discord: [
     'DiscordClient', 'login', 'testAuth', 'listChannels', 'listDMChannels', 'getMessages',
