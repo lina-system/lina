@@ -4,6 +4,7 @@ package canon
 import "testing"
 
 func TestSteeringMigrationPreservesExistingLedger(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = migrationsBefore(t, steeringSchema)
 	db := openStore(t, cfg)

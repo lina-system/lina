@@ -58,6 +58,7 @@ func claimOnlyAction(t *testing.T, e *Engine, kind ActionKind) Action {
 }
 
 func TestFailedVerificationRequestsManagerBeforePerson(t *testing.T) {
+	t.Parallel()
 	for _, service := range []bool{false, true} {
 		name := "post_merge"
 		if service {
@@ -127,6 +128,7 @@ func TestFailedVerificationRequestsManagerBeforePerson(t *testing.T) {
 }
 
 func TestFailedVerificationRejectsInvalidProof(t *testing.T) {
+	t.Parallel()
 	for _, proof := range []Proof{{}, {Revision: "merged", Ref: " "}, {Revision: "old", Ref: "output"}, {Revision: "merged", Ref: "output", Passed: true}} {
 		t.Run(proof.Ref+proof.Revision, func(t *testing.T) {
 			e, _, a := pendingVerification(t, true)
@@ -145,6 +147,7 @@ func TestFailedVerificationRejectsInvalidProof(t *testing.T) {
 }
 
 func TestFailedVerificationRepairStaysInScope(t *testing.T) {
+	t.Parallel()
 	e, _, a := pendingVerification(t, true)
 	if err := e.Report(t.Context(), a.ID, 1, Observation{Status: OutcomeFailed, Proof: Proof{Revision: a.Revision, Ref: "probe-output"}}); err != nil {
 		t.Fatal(err)

@@ -8,6 +8,7 @@ import (
 )
 
 func TestCorrectedPlanAttemptIdentitySurvivesRetirement(t *testing.T) {
+	t.Parallel()
 	for _, executed := range []bool{false, true} {
 		for _, remove := range []bool{false, true} {
 			t.Run(fmt.Sprintf("executed=%v/removed=%v", executed, remove), func(t *testing.T) {

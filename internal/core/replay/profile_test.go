@@ -14,6 +14,7 @@ import (
 )
 
 func TestProfileRevalidationRejectsCorrection(t *testing.T) {
+	t.Parallel()
 	db, source, _ := fixture(t)
 	at := time.Unix(100, 0).UTC()
 	_, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{

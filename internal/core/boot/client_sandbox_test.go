@@ -48,7 +48,7 @@ func TestClientSocketExcludedFromSandbox(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var box *sandbox.Sandbox
-	err = boot.Run(ctx, boot.Config{StateRoot: root, Socket: socket, Services: boot.Services{SandboxReady: func(s *sandbox.Sandbox) { box = s }}, AfterStep: func(step boot.Step, _ boot.Snapshot) error {
+	err = boot.Run(ctx, boot.Config{NoSync: true, StateRoot: root, Socket: socket, Services: boot.Services{SandboxReady: func(s *sandbox.Sandbox) { box = s }}, AfterStep: func(step boot.Step, _ boot.Snapshot) error {
 		if step != boot.Ready {
 			return nil
 		}

@@ -8,6 +8,7 @@ import (
 )
 
 func TestWorkPanelRecordsStartAcrossRebuildAndRetry(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	before := time.Now().UTC()
 	startFixture(t, s)
@@ -40,6 +41,7 @@ func TestWorkPanelRecordsStartAcrossRebuildAndRetry(t *testing.T) {
 }
 
 func TestWorkPanelActivityAndLegacyClock(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	startFixture(t, s)
 	for i, activity := range []string{"executing", "editing", "responding"} {

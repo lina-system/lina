@@ -8,6 +8,7 @@ import (
 )
 
 func TestEmotionShapesOnlyPresentationWithinTheExistingBudget(t *testing.T) {
+	t.Parallel()
 	budget := reply.ChatBudget()
 	warm := agents.EmotionSnapshot{Short: agents.Affect{Valence: 1, Arousal: 1}}
 	subdued := agents.EmotionSnapshot{Short: agents.Affect{Valence: -1, Arousal: -1}}

@@ -1,0 +1,25 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "teams_result",
+  "message_id": "teams_result-example",
+  "attempt_id": "teams_result-attempt-1",
+  "reply_to": "teams_request-example",
+  "sender": {
+    "party": "core",
+    "id": "core-example"
+  },
+  "epoch": "0",
+  "sent_at": "2026-01-01T00:00:00Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "operation": "list",
+    "connections": []
+  }
+}

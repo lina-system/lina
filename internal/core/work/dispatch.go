@@ -3,14 +3,23 @@ package work
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
+
+// DispatchID is the id of the dispatch a tool call admits in a turn, and of the
+// task it creates. A goal action dispatches with its own id as the call, so a
+// reader joins a goal step to its card through the action.
+func DispatchID(turn, call string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(turn+"\x00"+call)))
+}
 
 func overlaps(a, b string) bool {
 	within := func(root, path string) bool {

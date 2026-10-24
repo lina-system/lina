@@ -9,6 +9,7 @@ import (
 )
 
 func TestRecordOccurrenceDoesNotCreateWorkCard(t *testing.T) {
+	t.Parallel()
 	s, db := testStore(t)
 	task := taskFixture()
 	if err := s.Create(t.Context(), task); err != nil {

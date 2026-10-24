@@ -15,6 +15,7 @@ import (
 )
 
 func TestSharedNameReplayEvidenceAuthorization(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, sql string
 		person    string
@@ -89,6 +90,7 @@ func TestSharedNameReplayEvidenceAuthorization(t *testing.T) {
 }
 
 func TestCommonNameDoesNotAuthorizeForeignRawEvents(t *testing.T) {
+	t.Parallel()
 	db, source, _ := fixture(t)
 	id := seed(t, db, "input", guard.EntryOwner)
 	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)

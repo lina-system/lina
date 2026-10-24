@@ -42,6 +42,7 @@ func snapshotFiles(t *testing.T, root string) map[string][32]byte {
 }
 
 func TestNewerStoreExits78Unchanged(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	s := openStore(t, cfg)
 	if err := s.Write(t.Context(), insertItem); err != nil {
@@ -68,6 +69,7 @@ func TestNewerStoreExits78Unchanged(t *testing.T) {
 }
 
 func TestOlderBinaryProcess(t *testing.T) {
+	t.Parallel()
 	path := os.Getenv("LINA_TEST_OLDER_STORE")
 	if path == "" {
 		return

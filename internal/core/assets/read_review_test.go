@@ -18,6 +18,7 @@ type zeroReader struct{}
 func (zeroReader) Read(p []byte) (int, error) { clear(p); return len(p), nil }
 
 func TestReadRefusesOversizedBuffer(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	// The byte-slice convenience API is capped at 8 MiB; larger material must
 	// use a stream. Generate the fixture without allocating its full contents.
@@ -50,6 +51,7 @@ func openStream(t *testing.T, s *assets.Store, id string) io.ReadCloser {
 }
 
 func TestReadLimitChecksActualBytesAndAllowsBoundary(t *testing.T) {
+	t.Parallel()
 	s, _, root := setup(t)
 	token, err := s.StageImport(t.Context(), io.LimitReader(zeroReader{}, assets.MaxReadBytes))
 	if err != nil {
@@ -71,6 +73,7 @@ func TestReadLimitChecksActualBytesAndAllowsBoundary(t *testing.T) {
 }
 
 func TestOpenReadHonorsCancellation(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := importAsset(t, s, "cancel")
 	ctx, cancel := context.WithCancel(t.Context())
@@ -91,6 +94,7 @@ func TestOpenReadHonorsCancellation(t *testing.T) {
 }
 
 func TestOpenReadVerifiesAtEOF(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name, bytes string
 		mismatch    bool
@@ -136,6 +140,7 @@ func TestOpenReadVerifiesAtEOF(t *testing.T) {
 }
 
 func TestOpenReadDoesNotHoldStoreLock(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := importAsset(t, s, "streaming")
 	r := openStream(t, s, a.ID)
