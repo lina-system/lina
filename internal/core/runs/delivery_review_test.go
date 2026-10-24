@@ -19,6 +19,7 @@ func reusedCall(argument string) provider.Stream {
 	return &stream{events: []provider.Event{{Kind: provider.ItemDone, Item: data}, {Kind: provider.Terminal}}}
 }
 func TestRetriedRunMayReuseCallIDForDifferentArguments(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []runs.ToolKind{runs.Read, runs.Scratch} {
 		t.Run(map[runs.ToolKind]string{runs.Read: "read", runs.Scratch: "scratch"}[kind], func(t *testing.T) {
 			var rounds, executions atomic.Int64
@@ -52,6 +53,7 @@ func TestRetriedRunMayReuseCallIDForDifferentArguments(t *testing.T) {
 	}
 }
 func TestAnsweredQuestionDoesNotReuseUnstartedReceipt(t *testing.T) {
+	t.Parallel()
 	var allowed atomic.Bool
 	var rounds, executions atomic.Int64
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
@@ -90,6 +92,7 @@ func TestAnsweredQuestionDoesNotReuseUnstartedReceipt(t *testing.T) {
 }
 
 func TestCompletedReadReceiptsAreRetainedOnlyInCheckpoint(t *testing.T) {
+	t.Parallel()
 	var rounds atomic.Int64
 	s, _, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		n := rounds.Add(1)

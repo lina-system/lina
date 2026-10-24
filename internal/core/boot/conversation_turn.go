@@ -118,7 +118,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		SelectCapabilities: r.selectProviderCapabilities,
 		Account:            func(context.Context) (provider.Credential, error) { return r.route.Account() },
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
-			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: r.route.Adapter.Class()}, nil
+			return turn.ModelPolicy{Model: r.route.Model, Effort: r.route.Effort, Revision: "configured", Class: r.route.Adapter.Class()}, nil
 		},
 		Context:     s.prepare,
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
