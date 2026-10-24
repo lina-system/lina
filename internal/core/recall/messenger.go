@@ -296,7 +296,10 @@ func MessengerExpand(ctx context.Context, db Canon, read ReadEvent, scope Scope,
 		if err != nil {
 			return MessengerPage{}, err
 		}
-		results = append(results, Result{Hit: h, Excerpt: Excerpt(text, nil)})
+		// The search excerpt bound does not apply here. The next offset selects
+		// other records, so a truncated body cannot be read on a later page.
+		// sourceText already returns the masked message.
+		results = append(results, Result{Hit: h, Excerpt: text})
 	}
 	pages, err := MessengerPages(ctx, db, scope, results, now)
 	if err != nil {

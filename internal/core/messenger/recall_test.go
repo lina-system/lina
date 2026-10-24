@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/messenger"
@@ -141,6 +142,49 @@ func TestMessengerFiltersAndContext(t *testing.T) {
 	}
 	if _, err := recall.MessengerExpand(t.Context(), f.db, nil, scope, anchor, 0, 3, f.now); err == nil {
 		t.Fatal("deleted anchor expanded")
+	}
+}
+
+func TestMessengerExpandReturnsCompleteMessage(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	// The tail sits past the search excerpt bound. A later expand offset moves
+	// to another record, so the tail is reachable only in this record's body.
+	body := strings.Repeat("도서관 ", 80) + "끝표시고유 https://example.test/?token=sensitive-value"
+	if _, err := f.store.AdmitMessages(t.Context(), source, "dm-1", []messenger.Message{
+		message("long", messenger.RoutePerson, f.now, body),
+		message("next", messenger.RoutePerson, f.now.Add(time.Minute), "다음 짧은 메시지"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scope := recall.Scope{Person: "person", Agent: "agent", Origin: "messenger"}
+	hits, err := recall.Search(t.Context(), f.db, nil, scope, recall.Query{Text: "도서관"})
+	if err != nil || len(hits) != 1 {
+		t.Fatalf("search: %+v %v", hits, err)
+	}
+	if strings.Contains(hits[0].Excerpt, "끝표시고유") || utf8.RuneCountInString(hits[0].Excerpt) > recall.ExcerptRunes+1 {
+		t.Fatalf("search excerpt should stay bounded: %q", hits[0].Excerpt)
+	}
+	page, err := recall.MessengerExpand(t.Context(), f.db, nil, scope, hits[0].ID, 0, 1, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.NextCursor != "1" {
+		t.Fatalf("page: %+v", page)
+	}
+	item := page.Items[0]
+	if !strings.Contains(item.Excerpt, "끝표시고유") || utf8.RuneCountInString(item.Excerpt) <= recall.ExcerptRunes {
+		t.Fatalf("expand truncated the message: %q (%d runes)", item.Excerpt, utf8.RuneCountInString(item.Excerpt))
+	}
+	if strings.Contains(item.Excerpt, "sensitive-value") {
+		t.Fatalf("expand kept a secret: %q", item.Excerpt)
+	}
+	next, err := recall.MessengerExpand(t.Context(), f.db, nil, scope, hits[0].ID, 1, 1, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next.Items) != 1 || strings.Contains(next.Items[0].Excerpt, "끝표시고유") || !strings.Contains(next.Items[0].Excerpt, "다음 짧은 메시지") {
+		t.Fatalf("next page: %+v", next)
 	}
 }
 

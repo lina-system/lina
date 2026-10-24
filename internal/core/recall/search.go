@@ -437,7 +437,10 @@ func lineageFilter(enabled bool) string {
 	if !enabled {
 		return ""
 	}
-	return ` WHERE c.kind<>'event' OR c.id NOT IN (SELECT d.id FROM candidates d JOIN derived x ON x.id=d.source_id)`
+	// A queued candidate has no recall_doc row, so its row id is NULL. Putting
+	// that NULL into NOT IN drops every event. source_id is set for both
+	// published and queued candidates, and derived.id is that same identity.
+	return ` WHERE c.kind<>'event' OR c.source_id NOT IN (SELECT x.id FROM derived x)`
 }
 
 func holderCondition(scope Scope, alias string) string {

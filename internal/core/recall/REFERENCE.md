@@ -50,7 +50,12 @@ supplies. `recall_doc.text_hash` collapses events with
 identical derived text inside one conversation to the earliest of them. A
 returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
-its lineage counts once: a copy appears when its original is out of scope.
+its lineage counts once: a copy appears when its original is out of scope. A
+queued event has no `recall_doc` row, so its candidate row id is NULL. Lineage
+exclusion compares `source_id`, which queued and published candidates both have.
+A queued `view_of` copy, or a `replay_of` copy when copies are requested, counts
+with its source and does not drop the other matches. Vector candidates use this
+same exclusion.
 `recall.Search` adds the bounded masked excerpt and the citations in force at
 the result's revision. `VectorQuery` binds the optional embedding adapter. Endpoint failures and rebuilds preserve the lexical result list and order.
 
@@ -67,8 +72,9 @@ reader or reports unavailable bytes without failing the whole result list.
 
 Tests cover atomic native writes, queued sources and exclusions, generation
 fencing, batch bounds, migrations, records revisions, Korean parity, any-term
-ranking, identical-text collapse, lineage, scope and visibility classes,
-retraction, summary navigation, excerpt bounds and the vector hook. The opt-in
+ranking, identical-text collapse, lineage (including a queued view or replay),
+scope and visibility classes, retraction, summary navigation, excerpt bounds
+and the vector hook. The opt-in
 store benchmark Core test proves startup fill and socket memory writes/forget
 with the normal running Core.
 
@@ -89,7 +95,7 @@ A model, dimension or endpoint change atomically replaces only the derived
 vector table and queues the current documents. Reads stay lexical until this
 queue and the text backfill drain. Normal incremental writes queue their own
 vectors without blocking reads. Vector candidates pass the same scoped filters
-before distance and limit. Imported-event consent and never-leaves sensitivity
+and the same lineage exclusion before distance and limit. Imported-event consent and never-leaves sensitivity
 are checked through current citation ancestors. Messenger provenance is checked
 through its legacy references as well as the event's origin. Import consent
 stores a conversation's event watermark; future imports are excluded. Consent
@@ -118,7 +124,10 @@ person, rather than an agent holder or the presence of a person-authored message
 Platform, account, chat, author and person-only filters apply before ranking.
 Every other origin excludes messenger documents, including LINA's own writes.
 The live tools return the same source/chat/items/coverage/cursor envelope;
-`MessengerExpand` rechecks its anchor and removal epoch on each page.
+`MessengerExpand` rechecks its anchor and removal epoch on each page. Each item
+on an expansion page carries the complete masked message body. The search
+excerpt bound applies only to recall results, because a later offset selects
+other records.
 
 Windows use the shared index's summary navigation kind, an opaque
 `messenger-window:` identity and `covers` citations. They have no `sum_node`
