@@ -1180,8 +1180,8 @@ func TestStartRunKeepsChannelSteeringReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Origin.Turn != "turn:"+steering.ID {
-		t.Fatalf("run kept the app origin %s", record.Origin.Turn)
+	if record.Origin.Turn != s.turnID || record.Origin.ChannelReceipt != steering.ID {
+		t.Fatalf("origin turn %s receipt %s", record.Origin.Turn, record.Origin.ChannelReceipt)
 	}
 	if err = r.authorizeRun(t.Context(), record.Origin, record.Brief); err != nil {
 		t.Fatal(err)
@@ -1215,6 +1215,82 @@ func TestStartRunKeepsChannelSteeringReceipt(t *testing.T) {
 	record, err = r.background.service.Get(t.Context(), receipt.ID)
 	if err != nil || !record.Released {
 		t.Fatalf("committed channel start was not released: %+v %v", record, err)
+	}
+}
+
+// A selected channel input keeps its receipt for authorization. The run still
+// records the turn that called start_run, so recovery and mock lookup can
+// find that turn after a restart.
+func TestStartRunKeepsExecutionTurnWithChannelReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	app, inboxID := admitTurnInput(t, r, "app-exec")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("exec", "exec-native")
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	turns := turn.New(r.db)
+	if err := turns.Claim(t.Context(), s.turnID, r.conversation, inboxID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO turn_control(turn_id,input_event) VALUES(?,?)", s.turnID, app.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	call := provider.ToolCall{ID: "exec-start", Name: "start_run", Arguments: `{"Goal":"Research the draft","Scope":"Read the catalog","NotTouch":"Do not send","Done":"A short note exists","Result":"summary","Allow":[],"Checks":[{"Name":"note","Kind":"claimed"}]}`}
+	if err := turns.Journal(s.turnID).Calls(t.Context(), 0, []provider.ToolCall{call}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "start_run", "exec-start", map[string]any{
+		"Goal": "Research the draft", "Scope": "Read the catalog", "NotTouch": "Do not send",
+		"Done": "A short note exists", "Result": "summary", "Allow": []string{},
+		"Checks":        []map[string]string{{"Name": "note", "Kind": "claimed"}},
+		"input_binding": map[string]any{"input_event_id": steering.ID},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("channel steering start: %+v", got)
+	}
+	var receipt struct{ ID string }
+	if json.Unmarshal(got.Output, &receipt) != nil || receipt.ID == "" {
+		t.Fatalf("receipt: %s", got.Output)
+	}
+	record, err := r.background.service.Get(t.Context(), receipt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Origin.Turn != s.turnID || record.Origin.ChannelReceipt != steering.ID {
+		t.Errorf("origin turn %s receipt %s, want turn %s receipt %s", record.Origin.Turn, record.Origin.ChannelReceipt, s.turnID, steering.ID)
+	}
+	var inputID string
+	err = r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT input_event FROM turn_control WHERE turn_id=?", record.Origin.Turn).Scan(&inputID)
+	})
+	if err != nil || inputID != app.ID {
+		t.Errorf("mock lookup for turn %s input %q: %v", record.Origin.Turn, inputID, err)
+	}
+	if err = recoverConversationTurns(t.Context(), r.db); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := turns.Read(t.Context(), s.turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered.Results) != 1 || recovered.Results[0].Code != loop.OK || !strings.Contains(string(recovered.Results[0].Output), receipt.ID) {
+		t.Errorf("recovery = %+v, want the admitted receipt", recovered.Results)
+	}
+	if err = r.authorizeRun(t.Context(), record.Origin, record.Brief); err != nil {
+		t.Fatal(err)
+	}
+	revoked := *view.channelBinding
+	revoked.Scope.Tools = false
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.authorizeRun(t.Context(), record.Origin, record.Brief); err == nil {
+		t.Error("revoked channel still authorized the queued run")
 	}
 }
 
