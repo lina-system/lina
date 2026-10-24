@@ -54,7 +54,8 @@ func (m *shellModel) refreshBlocks() {
 }
 
 func (m *shellModel) View() tea.View {
-	view := tea.NewView(m.viewContent(true))
+	content := m.styles.viewport(m.viewContent(true), m.size.Width, m.size.Height)
+	view := tea.NewView(content)
 	view.AltScreen = true
 	view.ReportFocus = true
 	view.KeyboardEnhancements.ReportEventTypes = true
