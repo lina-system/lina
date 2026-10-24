@@ -70,7 +70,7 @@ func (s *Store) Create(ctx context.Context, t Timer, now time.Time) (Timer, erro
 	}
 	switch t.Action.Kind {
 	case "reminder", "job":
-	case "sensor":
+	case "sensor", "goal_wait":
 		if t.Action.Record == "" {
 			return Timer{}, ErrInvalid
 		}
