@@ -186,6 +186,55 @@ export function goTestOutcomes(output) {
   return [...tests.values()];
 }
 
+// Package and top-level test rows from `go test -json`. Nested tests are not
+// separate rows: a failure still belongs to its top-level scenario.
+//
+// Go's Elapsed for a test excludes time spent waiting for that test's parallel
+// subtests: the parent records its duration before the wait. It also excludes
+// time the test itself is paused in t.Parallel. Shard weights need the time the
+// test occupies after it starts, including that subtest wait and excluding only
+// its own pause. That is the span from run to the terminal event minus pause
+// intervals. Without timestamps, Elapsed remains the measurement.
+export function goTestTimings(output) {
+  const open = new Map();
+  const timings = [];
+  const stamp = event => typeof event.Time === 'string' ? Date.parse(event.Time) : NaN;
+  for (const line of output.split('\n')) {
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (!event?.Package || !['run', 'pause', 'cont', 'pass', 'fail', 'skip'].includes(event.Action)) continue;
+    if (!event.Test || event.Test.includes('/')) {
+      if (!event.Test && ['pass', 'fail', 'skip'].includes(event.Action)) {
+        timings.push({ package: event.Package, test: event.Test, seconds: event.Elapsed ?? 0, result: event.Action });
+      }
+      continue;
+    }
+    const key = event.Package + '\0' + event.Test;
+    const rec = open.get(key) ?? { pausedFor: 0 };
+    open.set(key, rec);
+    const when = stamp(event);
+    if (event.Action === 'run') {
+      if (Number.isFinite(when)) rec.run = when;
+    } else if (event.Action === 'pause') {
+      if (Number.isFinite(when)) rec.pausedAt = when;
+    } else if (event.Action === 'cont') {
+      if (Number.isFinite(when) && Number.isFinite(rec.pausedAt)) {
+        rec.pausedFor += when - rec.pausedAt;
+        rec.pausedAt = undefined;
+      }
+    } else {
+      let seconds = event.Elapsed ?? 0;
+      if (Number.isFinite(rec.run) && Number.isFinite(when) && when >= rec.run && !Number.isFinite(rec.pausedAt)) {
+        const occupied = (when - rec.run - rec.pausedFor) / 1000;
+        if (occupied >= 0) seconds = Math.max(seconds, occupied);
+      }
+      timings.push({ package: event.Package, test: event.Test, seconds, result: event.Action });
+      open.delete(key);
+    }
+  }
+  return timings;
+}
+
 export async function executeTask(root, plan, id, log = console.error) {
   validatePlan(plan, root);
   const task = plan.tasks.find(task => task.id === id);
@@ -199,14 +248,11 @@ export async function executeTask(root, plan, id, log = console.error) {
   else outcome = await runAsync(process.execPath, [join(root, 'scripts/verify/check-' + task.kind + '.mjs')],
     { cwd: root, env: cleanEnv(), timeoutMs: timeouts[task.kind] });
   const finished = Date.now();
-  const timings = [];
-  for (const line of outcome.output.split('\n')) {
-    let event;
-    try { event = JSON.parse(line); } catch { /* Command headers and ordinary output are retained on failure. */ }
-    if (event?.Package && ['pass', 'fail', 'skip'].includes(event.Action) && (!event.Test || !event.Test.includes('/'))) {
-      timings.push({ package: event.Package, test: event.Test, seconds: event.Elapsed ?? 0, result: event.Action });
-    }
-    if (outcome.status === 0) {
+  const timings = goTestTimings(outcome.output);
+  if (outcome.status === 0) {
+    for (const line of outcome.output.split('\n')) {
+      let event;
+      try { event = JSON.parse(line); } catch { /* Command headers and ordinary output are retained on failure. */ }
       const text = event?.Output ?? line;
       if (/^ok\s+\S+\s+\d+\.\d+s/.test(text)) log(text.trimEnd());
     }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { developmentRepository, sandbox } from '../test-fixture.mjs';
 import { selectFoundation, finishFoundation } from '../foundation.mjs';
-import { aggregate, executeTask, runPipeline, sealPlan, validatePlan, writeJSON } from './pipeline.mjs';
+import { aggregate, executeTask, goTestTimings, runPipeline, sealPlan, validatePlan, writeJSON } from './pipeline.mjs';
 
 function fixture(t) {
   const sb = sandbox(t);
@@ -15,6 +15,38 @@ function fixture(t) {
   assert.deepEqual(plan.tasks.map(task => task.id), ['docs']);
   return { sb, work, plan };
 }
+
+test('scenario timings include the wait for parallel subtests and exclude the test pause', () => {
+  const at = ms => new Date(Date.UTC(2026, 9, 24, 0, 0, 0, ms)).toISOString();
+  const line = (action, test, ms, fields = {}) => JSON.stringify({
+    Time: at(ms), Action: action, Package: 'example.invalid/e2e', Test: test, ...fields,
+  });
+  const output = [
+    line('run', 'TestParent', 0),
+    line('pause', 'TestParent', 1),
+    line('cont', 'TestParent', 1000),
+    line('run', 'TestParent/child', 1100),
+    line('pause', 'TestParent/child', 1101),
+    line('cont', 'TestParent/child', 2000),
+    line('pass', 'TestParent/child', 12000, { Elapsed: 10 }),
+    line('pass', 'TestParent', 13000, { Elapsed: 0.2 }),
+    line('run', 'TestSerial', 0),
+    line('pass', 'TestSerial', 3500, { Elapsed: 3.5 }),
+    JSON.stringify({ Action: 'pass', Package: 'example.invalid/e2e', Elapsed: 20 }),
+    JSON.stringify({ Action: 'pass', Package: 'example.invalid/e2e', Test: 'TestUntimed', Elapsed: 1.25 }),
+  ].join('\n');
+  const timings = goTestTimings(output);
+  const parent = timings.find(item => item.test === 'TestParent');
+  const serial = timings.find(item => item.test === 'TestSerial');
+  const untimed = timings.find(item => item.test === 'TestUntimed');
+  const pkg = timings.find(item => item.test === undefined);
+  assert.equal(timings.some(item => item.test?.includes('/')), false);
+  assert.ok(Math.abs(parent.seconds - 12.001) < 0.001, `parallel wait must count, got ${parent.seconds}`);
+  assert.equal(serial.seconds, 3.5);
+  assert.equal(untimed.seconds, 1.25);
+  assert.equal(pkg.seconds, 20);
+  assert.equal(pkg.result, 'pass');
+});
 
 test('selection, shard execution and aggregation share one exact candidate', async t => {
   const { sb, work, plan } = fixture(t);
