@@ -36,25 +36,33 @@ type distribution struct {
 	MaxNS int64 `json:"max_ns"`
 }
 type report struct {
-	Version           int                     `json:"report_version"`
-	Schema            int                     `json:"schema_version"`
-	Corpus            counts                  `json:"corpus"`
-	RecallDocuments   int                     `json:"recall_documents"`
-	PersonEventsEarly int                     `json:"person_events_early"`
-	PersonEventsExtra int                     `json:"person_events_extra_after_early"`
-	RecallParity      int                     `json:"recall_parity_queries"`
-	SourceBytes       int64                   `json:"source_bytes"`
-	RecallTextBytes   int64                   `json:"recall_text_bytes"`
-	RecallPairBytes   int64                   `json:"recall_pair_bytes"`
-	MemoryItems       int                     `json:"memory_items"`
-	MaterialBytes     int64                   `json:"material_bytes"`
-	TableBytes        map[string]int64        `json:"table_bytes"`
-	IndexBytes        int64                   `json:"index_bytes"`
-	DatabaseBytes     int64                   `json:"database_bytes"`
-	FreeBytes         int64                   `json:"free_bytes"`
-	Latency           map[string]distribution `json:"latency"`
-	Hits              map[string]int          `json:"hits"`
-	ForgetHidden      int                     `json:"forget_hidden"`
+	VectorDocuments            int                     `json:"vector_documents"`
+	VectorBytes                int64                   `json:"vector_bytes"`
+	VectorIndexBytes           int64                   `json:"vector_index_bytes"`
+	VectorBytesPerDocument     float64                 `json:"vector_bytes_per_document"`
+	EmbeddingBatchCalls        int64                   `json:"embedding_batch_calls"`
+	EmbeddingBatchCallsPerTurn float64                 `json:"embedding_batch_calls_per_turn"`
+	EmbeddingQueryCalls        int64                   `json:"embedding_query_calls"`
+	EmbeddingQueryCallsPerTurn float64                 `json:"embedding_query_calls_per_turn"`
+	Version                    int                     `json:"report_version"`
+	Schema                     int                     `json:"schema_version"`
+	Corpus                     counts                  `json:"corpus"`
+	RecallDocuments            int                     `json:"recall_documents"`
+	PersonEventsEarly          int                     `json:"person_events_early"`
+	PersonEventsExtra          int                     `json:"person_events_extra_after_early"`
+	RecallParity               int                     `json:"recall_parity_queries"`
+	SourceBytes                int64                   `json:"source_bytes"`
+	RecallTextBytes            int64                   `json:"recall_text_bytes"`
+	RecallPairBytes            int64                   `json:"recall_pair_bytes"`
+	MemoryItems                int                     `json:"memory_items"`
+	MaterialBytes              int64                   `json:"material_bytes"`
+	TableBytes                 map[string]int64        `json:"table_bytes"`
+	IndexBytes                 int64                   `json:"index_bytes"`
+	DatabaseBytes              int64                   `json:"database_bytes"`
+	FreeBytes                  int64                   `json:"free_bytes"`
+	Latency                    map[string]distribution `json:"latency"`
+	Hits                       map[string]int          `json:"hits"`
+	ForgetHidden               int                     `json:"forget_hidden"`
 }
 
 // earlyQueries keeps the two depth-zero samples comparable: the same number of
@@ -337,6 +345,11 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 			return r, err
 		}
 	}
+	if *vectorsFlag {
+		if err := measureVectors(ctx, db, events, len(c.Turns), &r); err != nil {
+			return r, err
+		}
+	}
 	// A query that matches nothing must not pay for the person events it did
 	// not match. The old ledger side scanned every person event per query, so
 	// this cost grew with the person event count. Append as many unmatched
@@ -360,6 +373,9 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 		return r, err
 	}
 	for table, size := range r.TableBytes {
+		if strings.HasPrefix(table, "recall_vec_") {
+			r.VectorIndexBytes += size
+		}
 		if strings.HasPrefix(table, "recall_text_") {
 			r.RecallTextBytes += size
 		}

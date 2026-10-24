@@ -34,8 +34,7 @@ During the switch window the citation walk owns removal, recovery and erase for
 this index: a removal deletes the documents it hides in its own transaction, a
 recovery queues only what the source view admits again, and the source view
 fences a late write through the candidate's citation ancestors. The existing
-retraction indexes keep their own triggers until the contract step. Vectors and
-messenger windows belong to later steps.
+retraction indexes keep their own triggers until the contract step. Messenger windows belong to a later step.
 
 `recall.Match` applies scope (person, holder, conversation, kinds, time, speaker,
 origin, replay, visibility class), matches, ranks and limits without reading a
@@ -59,7 +58,7 @@ returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
 its lineage counts once: a copy appears when its original is out of scope.
 `recall.Search` adds the bounded masked excerpt and the citations in force at
-the result's revision. `VectorQuery` is the fusion hook for #874.
+the result's revision. `VectorQuery` binds the optional embedding adapter. Endpoint failures and rebuilds preserve the lexical result list and order.
 
 Memory items, events and records are the same list: `exec.Memory` asks `Match`
 for events and items together, materializes the item set in one scoped read, and
@@ -72,3 +71,45 @@ ranking, identical-text collapse, lineage, scope and visibility classes,
 retraction, summary navigation, excerpt bounds and the vector hook. The opt-in
 store benchmark Core test proves startup fill and socket memory writes/forget
 with the normal running Core.
+
+
+## Vectors
+
+`recall_vec` is one sqlite-vec table keyed by document id. Search configuration
+records the model, dimension, endpoint, generation and rebuild readiness.
+`recall_embed_pending` stores monotonically numbered queue entries without text.
+The optional Moirai worker calls Core's private `Embed` operation; Core selects
+at most 32 documents, resolves material bytes and removes secret spans before
+calling the adapter. Source hash, queue sequence, current eligibility and model
+generation are checked before dispatch and again on publication. A failed row
+remains queued; the cursor wraps so later rows can advance. Empty derived text
+and ineligible documents consume their queue entry without a model call.
+
+A model, dimension or endpoint change atomically replaces only the derived
+vector table and queues the current documents. Reads stay lexical until this
+queue and the text backfill drain. Normal incremental writes queue their own
+vectors without blocking reads. Vector candidates pass the same scoped filters
+before distance and limit. Imported-event consent and never-leaves sensitivity
+are checked through current citation ancestors, including event `replay_of` and
+`view_of` derivation edges. Copies cannot bypass restrictions on their originals. Derived documents with an
+ancestor event containing secret spans are skipped; only the source event’s
+masked text is eligible. This avoids transferring byte offsets to changed text. Messenger provenance is checked
+through its legacy references as well as the event's origin. Import consent
+stores a conversation's event watermark; future imports are excluded. Consent
+changes and chat embedding switches invalidate vectors and restart backfill.
+
+sqlite-vec refuses virtual-table writes in triggers. Deletion triggers therefore
+record document ids in `recall_vec_delete`; canon's sole writer flushes these
+ids before committing the same transaction. Failed removals roll back both
+sources and vectors. This also handles correction, retraction and late results.
+
+Query embedding is separate from deterministic ranking and has a 200 ms cap.
+Both lists supply up to 100 candidates; reciprocal-rank fusion uses constant 60.
+The existing memory management search binds this implementation through Core;
+`exec.Memory.WithVectors` is the seam for `recall_person`. Historical replay
+keeps its recorded lexical path.
+
+Reference: the repository's design and #1040 measurements were read. The supplied
+Hermes source directories were unavailable; this is an implementation of LINA's
+contract, not a claim to reproduce unseen upstream embedding behavior. Private
+parity/model-comparison measurements are still required before closing #874.

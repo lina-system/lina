@@ -124,6 +124,7 @@ type request struct {
 // Store owns one writer goroutine and its dedicated connection. Reads use a
 // separate mode=ro/query_only pool, including while the writer is latched.
 type Store struct {
+	vectorCleanup    bool
 	path             string
 	epoch            uint64
 	controls         ControlFiles
@@ -337,6 +338,9 @@ func (s *Store) initialize(ctx context.Context, migrations []Migration, version 
 			return err
 		}
 	}
+	if err := s.writer.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='recall_vec_delete')").Scan(&s.vectorCleanup); err != nil {
+		return err
+	}
 	return s.write(ctx, func(*Tx) error { return nil })
 }
 
@@ -374,6 +378,9 @@ func (s *Store) transaction(ctx context.Context, fn func(*Tx) error, version int
 	}
 	view := &Tx{tx: tx, ctx: ctx}
 	callbackErr := fn(view)
+	if callbackErr == nil && s.vectorCleanup {
+		callbackErr = flushVectorDeletes(ctx, view)
+	}
 	view.close()
 	resetErr := s.authorizeCallback(false)
 	if err := errors.Join(callbackErr, resetErr); err != nil {

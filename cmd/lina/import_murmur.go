@@ -40,6 +40,7 @@ func runImportMurmur(args []string) int {
 	})
 	learning := flags.Bool("learning", false, "learn from the imported messages (the card states the count and an estimated cost)")
 	rehearse := flags.Bool("rehearse", false, "print rehearsal only, without writing canon")
+	embed := flags.Bool("embed", false, "send the reported imported messages to the configured embedding endpoint")
 	confirm := flags.Bool("confirm-import", false, "confirm the source, person and own-author maps, then import")
 	flags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: lina import-murmur --state-root <path> --source <path> --person <id> [--instance <id>] [--own <source>:<author id>] [--learning] [--rehearse]\nPrints a rehearsal first, then asks to import. Stop Core before importing.")
@@ -67,7 +68,7 @@ func runImportMurmur(args []string) int {
 	profile.Learning = *learning
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	err = importMurmur(ctx, *root, *source, profile, *rehearse, *confirm, os.Stdin, os.Stdout)
+	err = importMurmur(ctx, *root, *source, profile, *rehearse, *confirm, os.Stdin, os.Stdout, *embed)
 	if errors.Is(err, ctlfiles.ErrLocked) {
 		fmt.Fprintln(os.Stderr, "lina import-murmur: Core is running. Stop Core first, then rerun the command.")
 		return 69
@@ -100,7 +101,7 @@ func murmurProfile(person, instance string, own []string) (murmur.Profile, error
 	return profile, nil
 }
 
-func importMurmur(ctx context.Context, root, home string, profile murmur.Profile, rehearse, confirm bool, input io.Reader, output io.Writer) error {
+func importMurmur(ctx context.Context, root, home string, profile murmur.Profile, rehearse, confirm bool, input io.Reader, output io.Writer, embed ...bool) error {
 	home, err := filepath.Abs(home)
 	if err != nil {
 		return err
@@ -130,6 +131,9 @@ func importMurmur(ctx context.Context, root, home string, profile murmur.Profile
 	report := plan.Rehearse()
 	if err = encode.Encode(struct{ Rehearsal murmur.Report }{report}); err != nil {
 		return err
+	}
+	if len(embed) > 0 && embed[0] {
+		fmt.Fprintln(output, "Embedding enabled for the imported message volume reported above at the configured endpoint.")
 	}
 	if rehearse {
 		return nil
@@ -225,6 +229,11 @@ func importMurmur(ctx context.Context, root, home string, profile murmur.Profile
 	imported, err := plan.Import(ctx, store, batch, capture)
 	if err != nil {
 		return err
+	}
+	if len(embed) > 0 && embed[0] {
+		if err = consentImportBatch(ctx, db, batch); err != nil {
+			return err
+		}
 	}
 	return encode.Encode(struct {
 		Import murmur.ImportReport
