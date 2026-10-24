@@ -14,6 +14,24 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
+func TestChannelRunInboxKeepsReceiptBesideTurn(t *testing.T) {
+	id, ok, err := channelRunInbox(runs.Origin{Turn: "turn:app-exec", ChannelReceipt: "channel-input:9"})
+	if err != nil || !ok || id != 9 {
+		t.Fatalf("selected receipt = %d %v %v", id, ok, err)
+	}
+	id, ok, err = channelRunInbox(runs.Origin{Turn: "turn:channel-input:4"})
+	if err != nil || !ok || id != 4 {
+		t.Fatalf("channel turn = %d %v %v", id, ok, err)
+	}
+	_, ok, err = channelRunInbox(runs.Origin{Turn: "turn:app-exec"})
+	if err != nil || ok {
+		t.Fatalf("app turn looked like a channel receipt: %v %v", ok, err)
+	}
+	if _, _, err = channelRunInbox(runs.Origin{ChannelReceipt: "turn:channel-input:1"}); err == nil {
+		t.Fatal("malformed receipt was accepted")
+	}
+}
+
 func TestRecoveredExplicitStartConfirmsReceipt(t *testing.T) {
 	r := controlRuntime(t)
 	s, err := runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"), Authorize: func(context.Context, runs.Origin, runs.Brief) error { return nil }, Stream: func(context.Context, provider.Request) (provider.Stream, error) {
