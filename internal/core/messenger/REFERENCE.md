@@ -110,3 +110,7 @@ grants and approvals belong to #1084. Learning from the person's records is #107
 Sender profile emails, when supplied by an adapter, are stored as evidence in
 `messenger_author` with the source account and platform author ID. They do not
 change ledger attribution or create an automatic person merge.
+
+Live events and history pages serialize revision planning and commit through a
+cancellable, per-source admission lock. Platform requests happen outside that
+lock, so waiting for a provider does not hold up live admission.

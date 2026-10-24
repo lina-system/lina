@@ -19,6 +19,7 @@ type Service struct {
 	factory  Factory
 	interval time.Duration
 
+	admission  sync.Map // SourceID -> chan struct{}; never held during a platform read.
 	activity   sync.RWMutex
 	wake       chan struct{}
 	liveWake   chan struct{}
@@ -273,7 +274,7 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 		if err != nil {
 			return result, err
 		}
-		outcome, err := s.store.AdmitPage(ctx, source, chat.Chat, cursor, page)
+		outcome, err := s.admitPage(ctx, source, chat.Chat, cursor, page)
 		result.Added += outcome.Added
 		result.Updated += outcome.Updated
 		result.Deleted += outcome.Deleted
@@ -293,6 +294,28 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 		}
 		cursor = page.Next
 	}
+}
+
+// lockAdmission serializes revision planning and commit for one source. Live
+// updates and history pages must observe each other's completed revisions.
+func (s *Service) lockAdmission(ctx context.Context, source Source) (func(), error) {
+	value, _ := s.admission.LoadOrStore(sourceID(source), make(chan struct{}, 1))
+	token := value.(chan struct{})
+	select {
+	case token <- struct{}{}:
+		return func() { <-token }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *Service) admitPage(ctx context.Context, source Source, chat string, cursor Cursor, page Page) (PageResult, error) {
+	unlock, err := s.lockAdmission(ctx, source)
+	if err != nil {
+		return PageResult{}, err
+	}
+	defer unlock()
+	return s.store.AdmitPage(ctx, source, chat, cursor, page)
 }
 
 // Live reads a source's pushed events until ctx ends. A platform without live
@@ -323,6 +346,11 @@ func (s *Service) Apply(ctx context.Context, source Source, event Event) (Result
 	if !s.connected(ctx, source) {
 		return Result{}, nil
 	}
+	unlock, err := s.lockAdmission(ctx, source)
+	if err != nil {
+		return Result{}, err
+	}
+	defer unlock()
 	if event.Message != nil {
 		if event.Chat == "" || !validName(event.Chat) {
 			return Result{}, ErrInvalid

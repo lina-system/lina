@@ -842,6 +842,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 ### Sync and coverage
 
 - Core reads each source on its schedule or from its live events. The records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Reading the same messages again adds nothing.
+- Live events and history pages for one source finish admission one at a time, so a newer edit sees the preceding committed revision. Waiting for admission can be cancelled; platform reads run independently of admission.
 - A chat's first fill reads back as far as the platform allows.
 - A message missing from a later read is never treated as deleted. Edits and deletions the platform reports follow [Messenger records](conversation-and-memory.md#messenger-records).
 - Each chat is fresh, stale (no complete read within its interval) or in a gap (the time since its last complete read passed the platform's read window, so messages may be lost). A gap is shown on the source and told to the person once. An archive import can fill it later.
