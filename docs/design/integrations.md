@@ -734,7 +734,7 @@ A messenger source is one of the person's own messenger accounts that LINA reads
 
 ### Messenger adapter boundary
 
-Each platform has one adapter. An adapter offers: its sign-in state; listing chats; reading a page of a chat from a cursor, oldest first; members; live events where the platform has them; fetching one attachment on request; and a static capability descriptor (history depth, cursor kind, edit and deletion signals, live events and write verbs). Only adapters of official platforms have write verbs. A ported adapter is LINA's own Go code, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
+Each way of reaching a platform has one adapter. Discord's bot and Discord's personal account are two adapters of one platform; every other platform in the table has one. A source records the adapter it uses. An adapter offers: its sign-in state; listing chats; reading a page of a chat from a cursor, oldest first; members; live events where the platform has them; fetching one attachment on request; and a static capability descriptor (history depth, cursor kind, edit and deletion signals, live events and write verbs). Every operation except the capability descriptor names the source account it acts for, so two accounts of one platform never share a read. Only adapters of official platforms have write verbs. A ported adapter is LINA's own Go code, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
 
 ### The messenger add-on
 
@@ -754,7 +754,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 - A message missing from a later read is never treated as deleted. Edits and deletions the platform reports follow [Messenger records](conversation-and-memory.md#messenger-records).
 - Each chat is fresh, stale (no complete read within its interval) or in a gap (the time since its last complete read passed the platform's read window, so messages may be lost). A gap is shown on the source and told to the person once. An archive import can fill it later.
 - Rates are the adapter's: it honours the platform's retry-after and keeps its cursor.
-- A failing source never blocks conversation or another source.
+- A failing source never blocks conversation or another source. A source whose last read failed stays on the schedule. Core tries it again when the interval has passed, and on the first schedule after a restart, and a completed read clears the failure. A source that needs sign-in waits until the person signs in.
 
 ### Writes by grant
 

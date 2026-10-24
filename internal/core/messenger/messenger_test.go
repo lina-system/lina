@@ -482,21 +482,21 @@ type fakeAdapter struct {
 	calls     int
 }
 
-func (a *fakeAdapter) SignIn(context.Context) (messenger.SignInState, error) {
+func (a *fakeAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
 	if a.fail != nil {
 		return messenger.Failing, a.fail
 	}
 	return messenger.SignedIn, nil
 }
 
-func (a *fakeAdapter) ListChats(context.Context) ([]messenger.Chat, error) {
+func (a *fakeAdapter) ListChats(context.Context, messenger.SourceID) ([]messenger.Chat, error) {
 	if a.fail != nil {
 		return nil, a.fail
 	}
 	return a.chats, nil
 }
 
-func (a *fakeAdapter) Page(_ context.Context, _ string, cursor messenger.Cursor) (messenger.Page, error) {
+func (a *fakeAdapter) Page(_ context.Context, _ messenger.SourceID, _ string, cursor messenger.Cursor) (messenger.Page, error) {
 	a.requested = append(a.requested, cursor)
 	if a.fail != nil {
 		return messenger.Page{}, a.fail
@@ -511,9 +511,13 @@ func (a *fakeAdapter) Page(_ context.Context, _ string, cursor messenger.Cursor)
 	return page, nil
 }
 
-func (a *fakeAdapter) Members(context.Context, string) ([]messenger.Author, error) { return nil, nil }
-func (a *fakeAdapter) Live(context.Context, func(messenger.Event) error) error     { return nil }
-func (a *fakeAdapter) FetchAttachment(context.Context, string, string) (io.ReadCloser, error) {
+func (a *fakeAdapter) Members(context.Context, messenger.SourceID, string) ([]messenger.Author, error) {
+	return nil, nil
+}
+func (a *fakeAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
+	return nil
+}
+func (a *fakeAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 func (a *fakeAdapter) Capabilities() messenger.Capabilities {
@@ -662,3 +666,327 @@ func TestPermanentDeletionErasesTheText(t *testing.T) {
 		t.Fatalf("the ledger still returns %q", got.Body.Text())
 	}
 }
+
+// Two sources on one platform, such as a Discord bot and a personal account,
+// must read through the adapter each source records. Sharing the platform
+// adapter would write one account's chats under the other account.
+func TestSourcesOnOnePlatformUseTheirOwnAdapter(t *testing.T) {
+	f := newFixture(t)
+	bot := f.source()
+	bot.Account = "bot"
+	bot.Adapter = "discord-bot"
+	personal := f.source()
+	personal.Account = "personal"
+	personal.Mode = messenger.ModeUnofficial
+	personal.Adapter = "discord-personal"
+	personal.AcceptedTerms = &messenger.Terms{Person: "person", At: f.now, Text: "terms forbid automating an account"}
+	for _, source := range []messenger.Source{bot, personal} {
+		if err := f.store.Connect(t.Context(), source); err != nil {
+			t.Fatal(err)
+		}
+	}
+	botAdapter := &fakeAdapter{chats: []messenger.Chat{{ID: "server-1", Kind: "channel"}}, pages: map[string][]messenger.Page{
+		"": {{Messages: []messenger.Message{message("bot-m", messenger.RouteAutomation, f.now, "from the bot")}, Next: "end"}},
+	}}
+	personalAdapter := &fakeAdapter{chats: []messenger.Chat{{ID: "dm-personal", Kind: "direct"}}, pages: map[string][]messenger.Page{
+		"": {{Messages: []messenger.Message{message("personal-m", messenger.RoutePerson, f.now, "from the person")}, Next: "end"}},
+	}}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{
+		"discord-bot": botAdapter, "discord-personal": personalAdapter,
+	}, time.Hour)
+	if _, err := service.Sync(t.Context(), bot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Sync(t.Context(), personal); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='bot' AND message='bot-m'"); n != 1 {
+		t.Fatalf("bot records = %d", n)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='personal' AND message='personal-m'"); n != 1 {
+		t.Fatalf("personal records = %d", n)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='bot' AND message='personal-m'"); n != 0 {
+		t.Fatal("the personal message was stored on the bot account")
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_chat WHERE account='personal' AND chat='server-1'"); n != 0 {
+		t.Fatal("the bot chat was stored on the personal account")
+	}
+}
+
+// One adapter implementation may serve several accounts. Each call names the
+// account, and the records stay under that account.
+func TestAdapterCallsNameTheSourceAccount(t *testing.T) {
+	f := newFixture(t)
+	first := f.source()
+	first.Account = "account-a"
+	second := f.source()
+	second.Account = "account-b"
+	for _, source := range []messenger.Source{first, second} {
+		if err := f.store.Connect(t.Context(), source); err != nil {
+			t.Fatal(err)
+		}
+	}
+	adapter := &accountAdapter{pages: map[string]messenger.Message{
+		"account-a": message("m-a", messenger.RoutePerson, f.now, "alpha"),
+		"account-b": message("m-b", messenger.RoutePerson, f.now, "beta"),
+	}}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Hour)
+	results := service.SyncAll(t.Context(), &f.now)
+	if len(results) != 2 {
+		t.Fatalf("synced %d sources: %+v", len(results), results)
+	}
+	if len(adapter.seen) != 2 || adapter.seen[0].Account == adapter.seen[1].Account {
+		t.Fatalf("accounts seen: %+v", adapter.seen)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='account-a' AND message='m-a'"); n != 1 {
+		t.Fatalf("account-a records = %d", n)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='account-b' AND message='m-b'"); n != 1 {
+		t.Fatalf("account-b records = %d", n)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='account-a' AND message='m-b'"); n != 0 {
+		t.Fatal("account-b's message was stored on account-a")
+	}
+}
+
+// A transient failure leaves the source failing, and the schedule tries it
+// again. A restart tries at once. A source that needs sign-in waits.
+func TestFailingSourceIsTriedAgain(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	adapter := &flakyAdapter{failUntil: 1, fakeAdapter: fakeAdapter{pages: map[string][]messenger.Page{
+		"": {{Messages: []messenger.Message{message("m-1", messenger.RoutePerson, f.now, "after the outage")}, Next: "end"}},
+	}}}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Minute)
+	now := f.now
+	service.SyncAll(t.Context(), &now)
+	sources, err := f.store.Sources(t.Context(), "person")
+	if err != nil || len(sources) != 1 || sources[0].State != messenger.StateFailing {
+		t.Fatalf("after the outage: %+v %v", sources, err)
+	}
+	now = now.Add(30 * time.Second)
+	service.SyncAll(t.Context(), &now)
+	if adapter.hits != 1 {
+		t.Fatalf("retried before the interval: %d calls", adapter.hits)
+	}
+	now = now.Add(30 * time.Second)
+	service.SyncAll(t.Context(), &now)
+	if adapter.hits != 2 {
+		t.Fatalf("failing source calls = %d, want a retry after the interval", adapter.hits)
+	}
+	sources, err = f.store.Sources(t.Context(), "person")
+	if err != nil || sources[0].State != messenger.StateConnected || sources[0].Failure != "" {
+		t.Fatalf("after retry: %+v %v", sources, err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE message='m-1'"); n != 1 {
+		t.Fatalf("retried read admitted %d records", n)
+	}
+
+	// A new process has no memory of the last attempt, so a source left failing
+	// is read on the first schedule.
+	if err := f.store.MarkFailure(t.Context(), source.Person, source.Platform, source.Account, "temporary"); err != nil {
+		t.Fatal(err)
+	}
+	restarted := &flakyAdapter{failUntil: 0, fakeAdapter: fakeAdapter{pages: map[string][]messenger.Page{
+		"end": {{Next: "end"}},
+	}}}
+	fresh := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": restarted}, time.Minute)
+	fresh.SyncAll(t.Context(), &now)
+	if restarted.hits != 1 {
+		t.Fatalf("restart calls = %d, want the failing source read at once", restarted.hits)
+	}
+	sources, err = f.store.Sources(t.Context(), "person")
+	if err != nil || sources[0].State != messenger.StateConnected {
+		t.Fatalf("after restart: %+v %v", sources, err)
+	}
+
+	waiting := &needsSignInAdapter{}
+	held := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": waiting}, time.Minute)
+	later := now.Add(time.Minute)
+	held.SyncAll(t.Context(), &later)
+	if waiting.hits != 1 || count(t, f.db, "SELECT count(*) FROM messenger_source WHERE state='needs_sign_in'") != 1 {
+		t.Fatalf("needs sign-in was not recorded: hits=%d", waiting.hits)
+	}
+	later = later.Add(time.Minute)
+	held.SyncAll(t.Context(), &later)
+	if waiting.hits != 1 {
+		t.Fatalf("a source that needs sign-in was read again: %d calls", waiting.hits)
+	}
+}
+
+// A reply and its target on one page keep replies_to and in_thread, including
+// when the target is later in the page. A target admitted earlier still links.
+func TestSamePageReplyAndThreadResolve(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	first := message("m-1", messenger.RoutePerson, f.now, "root")
+	reply := message("m-2", messenger.RouteParticipant, f.now.Add(time.Minute), "reply")
+	reply.ReplyTo = "m-1"
+	reply.Thread = "m-1"
+	forward := message("m-3", messenger.RouteParticipant, f.now.Add(2*time.Minute), "ahead")
+	forward.ReplyTo = "m-4"
+	later := message("m-4", messenger.RoutePerson, f.now.Add(3*time.Minute), "later target")
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{first, reply, forward, later}, Next: "c2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	root := f.eventsFor(t, source, "dm-1", "m-1")
+	linked := f.eventsFor(t, source, "dm-1", "m-2")
+	if !hasRelation(linked, "replies_to", root.ID) || !hasRelation(linked, "in_thread", root.ID) {
+		t.Fatalf("same-page relations: %+v", linked.Relations)
+	}
+	target := f.eventsFor(t, source, "dm-1", "m-4")
+	ahead := f.eventsFor(t, source, "dm-1", "m-3")
+	if !hasRelation(ahead, "replies_to", target.ID) {
+		t.Fatalf("forward relation: %+v", ahead.Relations)
+	}
+	follow := message("m-5", messenger.RouteParticipant, f.now.Add(4*time.Minute), "later reply")
+	follow.ReplyTo = "m-1"
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "c2", messenger.Page{
+		Messages: []messenger.Message{follow}, Next: "c3",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	again := f.eventsFor(t, source, "dm-1", "m-5")
+	if !hasRelation(again, "replies_to", root.ID) {
+		t.Fatalf("committed target: %+v", again.Relations)
+	}
+}
+
+func hasRelation(event ledger.Event, kind, target string) bool {
+	for _, relation := range event.Relations {
+		if relation.Kind == kind && relation.TargetID == target {
+			return true
+		}
+	}
+	return false
+}
+
+// Attachment metadata is stored with the record and is not fetched. An edit
+// keeps the earlier revision's metadata. A platform deletion drops it.
+func TestAttachmentMetadataStaysWithTheRecord(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	only := message("m-1", messenger.RouteParticipant, f.now, "")
+	only.Attachments = []messenger.Attachment{{ID: "file-1", Name: "notes.txt", MIMEType: "text/plain", Size: 4}}
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{only}, Next: "c2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE message='m-1'"); n != 1 {
+		t.Fatalf("attachment-only message was not admitted: %d", n)
+	}
+	var name, mime string
+	var size int64
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT name,mime,size FROM messenger_attachment WHERE message='m-1' AND attachment='file-1' AND revision=1").Scan(&name, &mime, &size)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if name != "notes.txt" || mime != "text/plain" || size != 4 {
+		t.Fatalf("metadata = %s %s %d", name, mime, size)
+	}
+	edited := message("m-1", messenger.RouteParticipant, f.now, "")
+	edited.Edited = f.now.Add(time.Minute)
+	edited.Attachments = []messenger.Attachment{{ID: "file-2", Name: "notes.md", MIMEType: "text/markdown", Size: 8}}
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "c2", messenger.Page{
+		Messages: []messenger.Message{edited}, Next: "c3",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_attachment WHERE message='m-1'"); n != 2 {
+		t.Fatalf("attachment rows = %d, want both revisions", n)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_attachment WHERE message='m-1' AND revision=2 AND attachment='file-2'"); n != 1 {
+		t.Fatal("the edit lost its attachment")
+	}
+	again, err := f.store.AdmitPage(t.Context(), source, "dm-1", "c3", messenger.Page{
+		Messages: []messenger.Message{edited}, Next: "c4",
+	})
+	if err != nil || again.Updated != 0 {
+		t.Fatalf("second read: %+v %v", again, err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_attachment WHERE message='m-1'"); n != 2 {
+		t.Fatalf("second read duplicated attachments: %d", n)
+	}
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "c4", messenger.Page{
+		Deletions: []messenger.Deletion{{Message: "m-1", At: f.now.Add(2 * time.Minute)}}, Next: "c5",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_attachment WHERE message='m-1'"); n != 0 {
+		t.Fatalf("deleted message kept attachment metadata: %d", n)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE message='m-1' AND state='deleted'"); n != 1 {
+		t.Fatal("the tombstone was lost")
+	}
+}
+
+// flakyAdapter fails its first failUntil sign-ins, then behaves as fakeAdapter.
+type flakyAdapter struct {
+	fakeAdapter
+	failUntil int
+	hits      int
+}
+
+func (a *flakyAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
+	a.hits++
+	if a.hits <= a.failUntil {
+		return messenger.Failing, errors.New("temporary")
+	}
+	return messenger.SignedIn, nil
+}
+
+type needsSignInAdapter struct{ hits int }
+
+func (a *needsSignInAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
+	a.hits++
+	return messenger.NeedsSignIn, nil
+}
+func (a *needsSignInAdapter) ListChats(context.Context, messenger.SourceID) ([]messenger.Chat, error) {
+	return nil, nil
+}
+func (a *needsSignInAdapter) Page(context.Context, messenger.SourceID, string, messenger.Cursor) (messenger.Page, error) {
+	return messenger.Page{}, nil
+}
+func (a *needsSignInAdapter) Members(context.Context, messenger.SourceID, string) ([]messenger.Author, error) {
+	return nil, nil
+}
+func (a *needsSignInAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
+	return nil
+}
+func (a *needsSignInAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
+	return nil, errors.New("no attachments")
+}
+func (a *needsSignInAdapter) Capabilities() messenger.Capabilities { return messenger.Capabilities{} }
+
+// accountAdapter returns a different message per source account and records
+// every account it was asked about.
+type accountAdapter struct {
+	pages map[string]messenger.Message
+	seen  []messenger.SourceID
+}
+
+func (a *accountAdapter) SignIn(_ context.Context, id messenger.SourceID) (messenger.SignInState, error) {
+	a.seen = append(a.seen, id)
+	return messenger.SignedIn, nil
+}
+func (a *accountAdapter) ListChats(_ context.Context, id messenger.SourceID) ([]messenger.Chat, error) {
+	return []messenger.Chat{{ID: "dm-" + id.Account, Kind: "direct"}}, nil
+}
+func (a *accountAdapter) Page(_ context.Context, id messenger.SourceID, _ string, _ messenger.Cursor) (messenger.Page, error) {
+	return messenger.Page{Messages: []messenger.Message{a.pages[id.Account]}, Next: "end"}, nil
+}
+func (a *accountAdapter) Members(context.Context, messenger.SourceID, string) ([]messenger.Author, error) {
+	return nil, nil
+}
+func (a *accountAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
+	return nil
+}
+func (a *accountAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
+	return nil, errors.New("no attachments")
+}
+func (a *accountAdapter) Capabilities() messenger.Capabilities { return messenger.Capabilities{} }

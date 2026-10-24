@@ -471,7 +471,7 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 	}
 	ids := make([]string, 0, len(page.Messages))
 	for _, message := range page.Messages {
-		if !validName(message.ID) || !message.Route.Valid() {
+		if !validName(message.ID) || !message.Route.Valid() || !validAttachments(message.Attachments) {
 			return PageResult{}, ErrInvalid
 		}
 		ids = append(ids, message.ID)
@@ -532,14 +532,26 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		}
 		plan.ownWrite = message.Route == RoutePerson && hasEffect && (effect.state == EffectSent || effect.state == EffectUnknown)
 		plan.effect = effect
-		plan.relations, err = s.relations(ctx, source, chat, message, existing)
-		if err != nil {
-			return PageResult{}, err
-		}
 		if seen {
 			plan.relations = append(plan.relations, ledger.Relation{TargetID: row.event, Kind: "supersedes"})
 		}
 		plans = append(plans, plan)
+	}
+	planned := make(map[string]string, len(plans))
+	for _, plan := range plans {
+		planned[plan.message.ID] = eventID(source, chat, plan.message.ID, plan.revision)
+	}
+	var later []deferredRelation
+	for i := range plans {
+		ready, deferred, err := s.messageRelations(ctx, source, chat, plans[i].message, existing, planned)
+		if err != nil {
+			return PageResult{}, err
+		}
+		plans[i].relations = append(plans[i].relations, ready...)
+		event := planned[plans[i].message.ID]
+		for _, relation := range deferred {
+			later = append(later, deferredRelation{event: event, relation: relation})
+		}
 	}
 	if len(page.Deletions) > 0 {
 		// A deletion is durable before the cursor passes it: a crash after the
@@ -588,6 +600,11 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 			return err
 		}
 		if i == last {
+			for _, item := range later {
+				if _, err := tx.ExecContext(ctx, "INSERT INTO ev_rel(event_id,target_id,kind,ordinal) VALUES(?,?,?,0)", item.event, item.relation.TargetID, item.relation.Kind); err != nil {
+					return err
+				}
+			}
 			for _, id := range repairs {
 				if _, err := tx.ExecContext(ctx, `UPDATE messenger_record SET state='deleted',deleted_at=? WHERE platform=? AND account=? AND chat=? AND message=? AND state='live'`, s.now().UTC().Format(time.RFC3339Nano), source.Platform, source.Account, chat, id); err != nil {
 					return err
@@ -619,30 +636,70 @@ type recordPlan struct {
 	relations []ledger.Relation
 }
 
-func (s *Store) relations(ctx context.Context, source Source, chat string, message Message, existing map[string]recordRow) ([]ledger.Relation, error) {
-	var ids []string
-	for _, id := range []string{message.ReplyTo, message.Thread} {
-		if id != "" {
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	rows, err := s.recordRows(ctx, source, chat, ids)
-	if err != nil {
-		return nil, err
-	}
-	var relations []ledger.Relation
-	for _, target := range []struct{ id, kind string }{{message.ReplyTo, "replies_to"}, {message.Thread, "in_thread"}} {
+// deferredRelation is a replies_to or in_thread link whose target is admitted
+// in this same page. It is written after every event in the page exists, so a
+// target later in the page still links. A later read of an unchanged message
+// does not repair a missing relation.
+type deferredRelation struct {
+	event    string
+	relation ledger.Relation
+}
+
+func (s *Store) messageRelations(ctx context.Context, source Source, chat string, message Message, existing map[string]recordRow, planned map[string]string) ([]ledger.Relation, []ledger.Relation, error) {
+	type target struct{ id, kind string }
+	targets := []target{{message.ReplyTo, "replies_to"}, {message.Thread, "in_thread"}}
+	var ready, deferred []ledger.Relation
+	var missing []string
+	seen := map[string]bool{}
+	for _, target := range targets {
 		if target.id == "" {
 			continue
 		}
-		if row, ok := rows[target.id]; ok && row.state == "live" && row.visible && row.event != "" {
-			relations = append(relations, ledger.Relation{TargetID: row.event, Kind: target.kind})
+		if id, ok := planned[target.id]; ok {
+			deferred = append(deferred, ledger.Relation{TargetID: id, Kind: target.kind})
+			continue
+		}
+		if row, ok := existing[target.id]; ok {
+			if row.state == "live" && row.visible && row.event != "" {
+				ready = append(ready, ledger.Relation{TargetID: row.event, Kind: target.kind})
+			}
+			continue
+		}
+		if !seen[target.id] {
+			missing = append(missing, target.id)
+			seen[target.id] = true
 		}
 	}
-	return relations, nil
+	if len(missing) == 0 {
+		return ready, deferred, nil
+	}
+	rows, err := s.recordRows(ctx, source, chat, missing)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, target := range targets {
+		if target.id == "" || planned[target.id] != "" {
+			continue
+		}
+		if _, ok := existing[target.id]; ok {
+			continue
+		}
+		if row, ok := rows[target.id]; ok && row.state == "live" && row.visible && row.event != "" {
+			ready = append(ready, ledger.Relation{TargetID: row.event, Kind: target.kind})
+		}
+	}
+	return ready, deferred, nil
+}
+
+func validAttachments(list []Attachment) bool {
+	seen := map[string]bool{}
+	for _, attachment := range list {
+		if !validName(attachment.ID) || attachment.Size < 0 || strings.ContainsRune(attachment.Name, 0) || strings.ContainsRune(attachment.MIMEType, 0) || seen[attachment.ID] {
+			return false
+		}
+		seen[attachment.ID] = true
+	}
+	return true
 }
 
 // admission builds the trusted entry and ledger input of one record.
@@ -715,9 +772,18 @@ ON CONFLICT(platform,account,chat,message) DO UPDATE SET revision=excluded.revis
 		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID, message.Author.ID, message.Author.Name, occurred, edited); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_record_revision(platform,account,chat,message,revision,event) VALUES(?,?,?,?,?,?)`,
-		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID)
-	return err
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_record_revision(platform,account,chat,message,revision,event) VALUES(?,?,?,?,?,?)`,
+		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID); err != nil {
+		return err
+	}
+	for _, attachment := range message.Attachments {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_attachment(platform,account,chat,message,revision,attachment,name,mime,size)
+VALUES(?,?,?,?,?,?,?,?,?)`,
+			source.Platform, source.Account, chat, message.ID, plan.revision, attachment.ID, attachment.Name, attachment.MIMEType, attachment.Size); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) commitProgress(ctx context.Context, source Source, chat string, from Cursor, page Page, messages int) error {
@@ -802,6 +868,11 @@ func (s *Store) deleteRecords(ctx context.Context, source Source, chat string, d
 VALUES(?,?,?,?,0,'',?, 'deleted',?)
 ON CONFLICT(platform,account,chat,message) DO UPDATE SET state='deleted',deleted_at=excluded.deleted_at
  WHERE messenger_record.state='live'`, source.Platform, source.Account, chat, deletion.Message, deletionTime(deletion, s.now()).Format(time.RFC3339Nano), at); err != nil {
+				return err
+			}
+			// The tombstone keeps the legacy reference. Attachment names are
+			// content, so they go with the hidden record.
+			if _, err := tx.ExecContext(ctx, `DELETE FROM messenger_attachment WHERE platform=? AND account=? AND chat=? AND message=?`, source.Platform, source.Account, chat, deletion.Message); err != nil {
 				return err
 			}
 		}

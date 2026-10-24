@@ -4,8 +4,9 @@
 // source is one account on one platform; its chats each become one messenger
 // conversation whose messages are ledger events. The package owns the source
 // registry, admission of what an adapter reads, the sync loop and the adapter
-// boundary. Nothing here talks to a platform: adapters do, and one adapter
-// serves one platform.
+// boundary. Nothing here talks to a platform: adapters do. A platform with one
+// way in has one adapter. Discord's bot and personal account are two adapters
+// of one platform, and every operation names the source account it acts for.
 //
 // A messenger record is admitted through the trusted entry path: the speaker
 // kind comes from the adapter's platform route flag, never from display names
@@ -151,17 +152,26 @@ const (
 	Failing     SignInState = "failing"
 )
 
-// Adapter is the messenger adapter boundary: one implementation per platform.
+// SourceID is the platform account an adapter operation acts for. Two accounts
+// of one platform never share a read.
+type SourceID struct {
+	Platform string
+	Account  string
+}
+
+// Adapter is the messenger adapter boundary. The service selects it by the
+// name the source records, and passes that source's account on every call
+// except Capabilities, which describes the adapter rather than one account.
 type Adapter interface {
-	SignIn(context.Context) (SignInState, error)
-	ListChats(context.Context) ([]Chat, error)
+	SignIn(context.Context, SourceID) (SignInState, error)
+	ListChats(context.Context, SourceID) ([]Chat, error)
 	// Page reads one page of a chat from a cursor, oldest first.
-	Page(context.Context, string, Cursor) (Page, error)
-	Members(context.Context, string) ([]Author, error)
+	Page(context.Context, SourceID, string, Cursor) (Page, error)
+	Members(context.Context, SourceID, string) ([]Author, error)
 	// Live delivers events the platform pushes, until ctx ends.
-	Live(context.Context, func(Event) error) error
+	Live(context.Context, SourceID, func(Event) error) error
 	// FetchAttachment reads one attachment on request.
-	FetchAttachment(context.Context, string, string) (io.ReadCloser, error)
+	FetchAttachment(context.Context, SourceID, string, string) (io.ReadCloser, error)
 	Capabilities() Capabilities
 }
 
