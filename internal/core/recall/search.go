@@ -48,11 +48,16 @@ type Scope struct {
 	Conversation string
 	Since, Until time.Time
 	SpeakerKind  guard.SpeakerKind
-	Origin       string
-	CommonOnly   bool
-	// PersonOnly restricts person-model queries to person-authored events and
-	// person-subject memory items, before ranking and the result limit.
-	PersonOnly bool
+	// EventSpeakerKind restricts event candidates only. Memory items and
+	// records carry no speaker of their own, so recall_person uses this to keep
+	// agent and tool words out of the evidence about the person while items
+	// stay eligible.
+	EventSpeakerKind guard.SpeakerKind
+	// PersonSubject keeps memory items whose subject is the person. recall_person
+	// sets it with EventSpeakerKind so another subject cannot take the limit.
+	PersonSubject bool
+	Origin        string
+	CommonOnly    bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
 	// with its lineage, so it surfaces only when its original is not a
 	// candidate: a copy appears only when asked, through its original.
@@ -617,9 +622,12 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 		where = append(where, alias+".speaker_kind=?")
 		args = append(args, string(scope.SpeakerKind))
 	}
-	if scope.PersonOnly {
-		where = append(where, `((`+alias+`.kind='event' AND `+alias+`.speaker_kind='person')
- OR (`+alias+`.kind='memory' AND EXISTS(SELECT 1 FROM memory_item m WHERE m.id=`+alias+`.source_id AND m.subject_kind='person')))`)
+	if scope.EventSpeakerKind != "" {
+		where = append(where, "("+alias+".kind<>'event' OR "+alias+".speaker_kind=?)")
+		args = append(args, string(scope.EventSpeakerKind))
+	}
+	if scope.PersonSubject {
+		where = append(where, "("+alias+".kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item m WHERE m.id="+alias+".source_id AND m.subject_kind='person'))")
 	}
 	if scope.Origin != "" {
 		where = append(where, "json_extract("+alias+".origin,'$.kind')=?")
