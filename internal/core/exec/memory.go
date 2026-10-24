@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
@@ -34,6 +35,7 @@ type Memory struct {
 	prepare func(context.Context, memory.Write) (memory.ResolveEvidence, error)
 	search  RecallSearch
 	aux     Auxiliary
+	vectors recall.VectorQuery
 }
 
 // newMemory is bound by the trusted Core flow. Resolve and ledger must read
@@ -181,3 +183,6 @@ func (m *Memory) RecallPerson(ctx context.Context, scope memory.RecallScope, in 
 	}
 	return result, nil
 }
+
+// WithVectors binds Core's optional adapter to the unified recall entry.
+func (m *Memory) WithVectors(query recall.VectorQuery) *Memory { m.vectors = query; return m }

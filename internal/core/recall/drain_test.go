@@ -26,7 +26,7 @@ func write(t *testing.T, db *canon.Store, query string, args ...any) {
 func drain(t *testing.T, db *canon.Store) {
 	t.Helper()
 	s := recall.New(db, nil)
-	for count(t, db, "SELECT count(*) FROM recall_pending") > 0 {
+	for count(t, db, "SELECT (SELECT count(*) FROM recall_pending)+(SELECT count(*) FROM messenger_window_pending)") > 0 {
 		if _, err := s.DrainBatch(t.Context()); err != nil {
 			t.Fatal(err)
 		}

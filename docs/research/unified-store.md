@@ -335,3 +335,31 @@ Filed in M2. Each names its area so dispatch can keep other work out of it, and 
 | 7 | #876 | Drop the old indexes and copies | canon, ledger, memory, records, compaction | #870, #871, #872, #873, #875 |
 
 The benchmark can start now, and step 0 as soon as #839 merges. Steps 1 to 5 touch canon, memory, compaction, ledger and records, which no refactor phase holds after #839. Step 6 edits `internal/core/boot/conversation_memory.go` and the tool family table, so it waits for phases 11 (#825) and 18 (#833). No issue edits `docs/design/go-core.md` while phases 28 and 29 (#843, #844) hold it; as-built notes go to the package docs.
+
+### Vector cost (#874)
+
+The generated 100-turn store benchmark, with a local fake OpenAI-compatible
+endpoint returning 1,024-dimensional float32 vectors, measured:
+
+| Measure | Observed |
+| --- | ---: |
+| Indexed documents | 1,932 (1,830 events, 100 memory items, 2 summaries) |
+| Vector payload | 7,913,472 bytes; 4,096 bytes/document |
+| sqlite-vec shadow trees | 8,462,336 bytes; about 4,380 bytes/document |
+| Background embedding calls | 61; 0.61 calls/turn with batches of at most 32 |
+| Query embedding calls | 100; 1 call/turn when one recall is requested per turn |
+| Reciprocal-rank fusion constant | 60 |
+
+Command: `go test ./internal/core/storebench -run '^$' -bench '^BenchmarkStore$' -benchtime=1x -storebench-turns=100 -storebench-vectors`.
+Payload size excludes SQLite metadata and chunk allocation; the shadow-tree row
+includes them. These calls describe a completed backfill and one query per turn,
+not a live workload's batching cadence. With no endpoint there are no embedding
+calls. The fake endpoint measures storage and integration, not semantic quality.
+
+The private #849 parity set was not supplied for this implementation run, so its
+recall at 12 and default-model comparison remain outstanding. The earlier
+[reference study](autorag-reference.md#question-shape) measured 0.41 for pair
+BM25 and 0.61 for fusion on the person's questions; those are reference results,
+not measurements of this implementation. The default retains that study's
+`BAAI/bge-m3` candidate. Its tokenizer/input bound still needs comparison with
+this adapter's 4,096-character bound through #1117.

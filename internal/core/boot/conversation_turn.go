@@ -495,6 +495,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		r.preparePersonaTools,
 		r.prepareSkillTools,
 		r.prepareRecordTools,
+		r.prepareRecallTools,
 		r.prepareBindingWorkTools,
 		r.prepareResultTools,
 		r.prepareMiniAppTools,
@@ -573,7 +574,18 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		// no tool execution, including through the deferred-tool bridge.
 		clear(s.bindings)
 	}
-	packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) { return r.relationshipPacket(ctx, at) })
+	profileRefs := append([]turn.Reference(nil), s.memoryRefs...)
+	packet, _, err := atropos.Packet(ctx, minimum, 0, func(ctx context.Context) (assemble.ContextPacket, error) {
+		relationship, err := r.relationshipPacket(ctx, at)
+		if err != nil {
+			return nil, err
+		}
+		topic, err := r.topicPacket(ctx, input, at)
+		if err != nil {
+			return nil, err
+		}
+		return uniqueMemoryPacket(append(relationship, topic...), minimum, profileRefs), nil
+	})
 	if err != nil {
 		return turn.PreparedRequest{}, err
 	}
@@ -640,6 +652,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	if err != nil {
 		return turn.PreparedRequest{}, err
 	}
+	s.memoryRefs = append(s.memoryRefs, topicReferences(assembly.Context)...)
 	for _, event := range s.events {
 		projected, err := assemble.History([]ledger.Event{event}, r.conversation, r.agent)
 		if err != nil {

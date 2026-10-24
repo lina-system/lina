@@ -18,6 +18,8 @@ func main() {
 			os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
 		case "proc-job":
 			os.Exit(proc.JobMain(os.Args[2:], os.Stderr))
+		case "embedding":
+			os.Exit(runEmbedding(os.Args[2:]))
 		case "import-hermes":
 			os.Exit(runImportHermes(os.Args[2:]))
 		case "import-murmur":

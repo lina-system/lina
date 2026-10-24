@@ -100,3 +100,21 @@ benchmark endpoint to the product.
 ```sh
 dv heavy -- go test -tags storebench_core ./internal/core/storebench -run TestHeadlessCore -count=1 -v
 ```
+
+
+## Vector cost
+
+```sh
+go test ./internal/core/storebench -run '^$' -bench '^BenchmarkStore$' -benchtime=1x -storebench-turns=100 -storebench-vectors
+```
+
+The opt-in flag serves deterministic 1,024-dimensional vectors from a local fake
+HTTP endpoint and runs the real adapter, queue, sqlite-vec table and query path.
+It measures storage and calls, not recall quality. `vector_bytes_per_document`
+reports payload bytes; `vector_index_bytes` sums the sqlite-vec shadow trees,
+including chunk allocation and metadata. Batch calls per turn cover a completed
+backfill of the original corpus; query calls per turn measure one recall per
+turn. Extra unmatched events used by the lexical latency experiment are added
+after the vector measurement. The Core proof also starts the normal Moirai
+worker against the private socket and proves semantic memory search and vector
+removal through live client requests.
