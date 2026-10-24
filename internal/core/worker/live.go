@@ -37,6 +37,7 @@ type Live struct {
 }
 
 type liveEntry struct {
+	observation SnapshotCache
 	Session
 	adapter Adapter
 	mu      sync.Mutex
@@ -111,6 +112,7 @@ func (l *Live) finish(ctx context.Context, e *liveEntry) error {
 		e.mu.Unlock()
 		return nil
 	}
+	e.observation.Close()
 	err := e.close(ctx)
 	if err == nil {
 		e.ended = true
@@ -199,6 +201,25 @@ func (l *Live) Observe(ctx context.Context, id string) (Session, ThreadSnapshot,
 		return Session{}, ThreadSnapshot{}, false, nil
 	}
 	snapshot, err := e.adapter.Snapshot(ctx, e.Thread)
+	l.mu.Lock()
+	current := l.sessions[id] == e
+	l.mu.Unlock()
+	return e.Session, snapshot, current, err
+}
+
+// ObserveCached returns only a fresh session-local observation. Adapter reads
+// run asynchronously; an ended or replaced session cannot reuse its cache.
+func (l *Live) ObserveCached(ctx context.Context, id string, changed func()) (Session, ThreadSnapshot, bool, error) {
+	if l == nil {
+		return Session{}, ThreadSnapshot{}, false, nil
+	}
+	l.mu.Lock()
+	e := l.sessions[id]
+	l.mu.Unlock()
+	if e == nil {
+		return Session{}, ThreadSnapshot{}, false, nil
+	}
+	snapshot, err := e.observation.Read(ctx, e.Thread, e.adapter.Snapshot, changed)
 	l.mu.Lock()
 	current := l.sessions[id] == e
 	l.mu.Unlock()

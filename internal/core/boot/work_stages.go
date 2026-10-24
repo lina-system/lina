@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/progress"
@@ -34,16 +33,14 @@ func (r *conversationRuntime) stageWorkers(ctx context.Context, units []progress
 					continue
 				}
 				out[step.Session] = nil
-				readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-				session, snapshot, live, err := registry.Observe(readCtx, step.Session)
+				session, snapshot, live, err := registry.ObserveCached(r.ctx, step.Session, r.notifyOwnerViews)
 				if !live {
 					agent := u.Agent
 					if u.StageAgent != "" {
 						agent = u.StageAgent
 					}
-					session, snapshot, live, err = r.activeStageWorker(readCtx, step.Session, agent)
+					session, snapshot, live, err = r.activeStageWorker(r.ctx, step.Session, agent)
 				}
-				cancel()
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
@@ -157,7 +154,7 @@ func (r *conversationRuntime) activeStageWorker(ctx context.Context, handle, age
 		}
 		thread := e.progressTurn()
 		session := worker.Session{ID: handle, Worker: e.goalWorker, Started: e.started, Thread: thread}
-		snapshot, err := e.adapter.Snapshot(ctx, thread)
+		snapshot, err := e.stageSnapshot.Read(ctx, thread, e.adapter.Snapshot, r.notifyOwnerViews)
 		registry.mu.Lock()
 		current := registry.sessions[e.thread.ID] == e
 		registry.mu.Unlock()

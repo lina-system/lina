@@ -2325,8 +2325,11 @@ The stage list is how the person sees the steps of a goal: a short numbered list
   A session row requires both the scoped step's recorded session handle and a
   matching active dispatch binding or retained process-local live session. Ledger history alone cannot claim a
   worker is still alive after restart. Adapter observations are read outside
-  canon; failed or stale observations remain unknown, and ended or replaced
-  sessions disappear. A retained idle session can remain under work being
+  canon and off the progress publication path. A session-local cache supplies
+  observations for at most five seconds; an absent, expired or different-turn
+  observation is unknown while a bounded asynchronous read refreshes it.
+  Completion wakes the progress publisher without delaying canonical updates.
+  Failed observations remain unknown, and ended or replaced sessions disappear. A retained idle session can remain under work being
   handled, with the waiting state. The client retains step selection by its
   opaque ref, separately from the display-only stage line.
 - **Updates.** Core recomputes the stage list and Now in the transaction that commits an event of the goal, and publishes the changed line and list on the progress topic ([host-protocol.md](host-protocol.md)) within 250 ms (P) of that commit. A recomputation that changes nothing publishes nothing.

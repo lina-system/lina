@@ -45,9 +45,11 @@ Neither path joins by a display name or changes the card's owner or state.
 
 StageStep keeps the canonical step and session identities internally. Boot emits
 step refs beside the line, and display-only worker names/states inside its steps.
-It observes active dispatch bindings and retained worker.Live sessions outside
-canon and rechecks that the same session/turn survived the observation. An ended
-session is omitted, and an unsuccessful observation remains unknown.
+Active dispatch bindings and retained worker.Live sessions each own a snapshot
+cache. Progress reads the cache without waiting for adapter I/O; a cold, expired
+or different-turn entry is unknown while one bounded read refreshes it. Read
+completion wakes the publisher. The session owns and joins the read, so ended
+or replaced sessions cannot reuse an old observation.
 
 ### Event-to-card latency
 
