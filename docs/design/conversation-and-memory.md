@@ -390,6 +390,11 @@ that request's focus. Several created tasks stay unresolved. When the person
 has selected a new target and creation has recorded its id, a later record
 read, progress read, or follow-up of that created item stays on the same
 request. Naming a different item does not replace the person's choice.
+A code goal created for a new project stays on that choice. Its definition
+file keeps kind goal, and the snapshot presents the record as a project, so a
+later read or correction of the created record is the same identity. A progress
+read of that record returns the goal's current progress line. The binding check
+still uses the record id.
 A resumed channel request recovers the original channel receipt through the
 answer's parent chain before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
@@ -403,6 +408,8 @@ runs.
 An unresolved follow-up after an input with several settled targets also keeps
 those targets for the control check. A tool's session argument alone does not
 choose between them: stopping a worker asks which item before any interrupt.
+When more targets remain than one question can list, Core asks again for the
+rest before it runs the instruction.
 Current choices enter the
 ContextPacket and remain reconstructible from their ledger sources.
 
@@ -412,6 +419,25 @@ ContextPacket and remain reconstructible from their ledger sources.
 - a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, stop a worker, or send, pay or delete.
 
 It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
+
+A question offers at most five answers. When an inherited set is larger, Core
+keeps the instruction pending and pages the targets. Each page shows four
+targets and one answer that asks the next page, until the last page shows the
+remaining targets. Choosing a listed target resolves only that request.
+Choosing the next page does not run the instruction and does not drop the
+remaining targets. Cancelling or declining cancels the request. The model
+names at most five tied targets and cannot supply the targets Core holds for
+a later page.
+
+Core decides whether a steer must ask from the whole inherited set, including
+targets held for a later page. A running, working, waiting, or needs-input
+task or run anywhere in that set keeps the instruction pending.
+
+A retained read keeps every inherited target, including targets held for a
+later page. A later steer or stop still asks from that whole set.
+
+A later page belongs to the same person, agent, and conversation as the
+question it continues.
 
 When it asks, Core keeps the instruction pending until the person explicitly selects a target or cancels it. Passing over the question, an unrelated turn or a deadline never applies the recommended pick. While the target is unresolved, Core does not deliver the instruction as a steer, start its work (including a step graph or a mock build), stop its worker, or perform its send, payment or deletion. Unrelated conversation and independent work continue. Selecting a target resolves only the binding; execution still requires the usual state and authorization checks ([main-authority.md](main-authority.md#approval)). This exception also applies to the general skipped-question rule in [Applying the record](preset-work-methods.md#applying-the-record).
 
@@ -431,7 +457,7 @@ Core checks a retained tie again when a later tool would make it irreversible.
 
 **Admission and context.** Native person input and its initial system binding event commit together, before acknowledgement or turn dispatch. The binding is structured canon metadata stored inline, including full candidate titles; large work metadata must not prevent admission or require filesystem I/O inside the transaction. Admission reads the prior binding and the last exchange through the retraction-visible projection, so a withdrawn input neither restores focus nor refreshes its age. A notice's run identity comes from its durable delivery record, never from a notice body that may be stored as a material. Retrying an input reuses that event; input admitted during a turn keeps its own event and supplies its binding at the next model round. A binding records `no-rule` and an unresolved choice when no Core rule holds, alongside a fresh-focus or none default. It does not authorize an action. Existing pending input from an earlier Core version receives a binding before preparation resumes.
 
-Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A code goal record is a project candidate under its record id. A prepared task whose record has no person id is included when its agent and conversation belong to that person. A task recorded for someone else is not. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
+Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A code goal record is a project candidate under its record id. A progress read of that id returns the goal's progress line; the binding check keeps the record id. A prepared task whose record has no person id is included when its agent and conversation belong to that person. A task recorded for someone else is not. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
 
 Client input may carry optional `reply_to`, `card` and `thread` references. Core resolves them within the authenticated conversation and the person's work queue. Platform reply ids are resolved within their channel address. An unresolved or foreign reference supplies no rule. General questions may explicitly mark a yes-or-no form; free text is never inferred to be that form.
 
@@ -1303,7 +1329,7 @@ Imported observations, card lines and legacy summaries stay outside recall, Cont
 
 ### Importing a Hermes install
 
-Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The remaining Hermes import work in [#115](https://github.com/thisisjun786/lina/issues/115), its sub-issues and [#320](https://github.com/thisisjun786/lina/issues/320) keeps its scope under this framing ([#330](https://github.com/thisisjun786/lina/issues/330)). No other source adapter is implemented by this change.
+Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The Hermes import work in [#115](https://github.com/lina-system/lina/issues/115), its sub-issues and [#320](https://github.com/lina-system/lina/issues/320) landed in `internal/addons/importer/hermes` and the `lina import-hermes` command under this framing ([#330](https://github.com/lina-system/lina/issues/330)). No other source adapter is implemented by this change.
 
 The adapter lives outside Core in `internal/addons/importer/hermes`. The explicit `lina import-hermes` command is its installed entry point; no onboarding or ordinary conversation starts it. Importing remains optional.
 
@@ -1483,7 +1509,7 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 - The bound on the part of a result's text that the model sees, and the size limit of a preview's file bytes held in the ledger: set by measurement during implementation acceptance of the conversation engine.
 - The reply budgets, the size of a tuning step and the reaction classes: starting values set in Reply shape, tuned by measurement with real use and kept per person.
 - Episode format version 1 and its manifest are defined under [Episode export](#episode-export).
-- The fusion constant of `recall` ranking and any weight per kind: starting values set on the [parity set](https://github.com/thisisjun786/lina/issues/849) during implementation acceptance of the shared index, recorded with each change ([research](../research/unified-store.md#recall-quality)).
+- The fusion constant of `recall` ranking and any weight per kind: starting values set on the [parity set](https://github.com/lina-system/lina/issues/849) during implementation acceptance of the shared index, recorded with each change ([research](../research/unified-store.md#recall-quality)).
 
 [lcm-store]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/store.py
 [lcm-compaction]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/compaction.py

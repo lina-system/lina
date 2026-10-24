@@ -209,7 +209,7 @@ body preservation, rendered text, provenance and recorded counts.
 
 The native result service is not a client wire implementation. Client body and
 save schemas, client result handlers and result-type negotiation remain required
-by [#419](https://github.com/thisisjun786/lina/issues/419). A native service or
+by [#419](https://github.com/lina-system/lina/issues/419). A native service or
 codec run cannot establish those client scenarios or their supported rows.
 
 ## Background result reads
@@ -878,8 +878,10 @@ from its display-only `line`: name, kind, stage, optional percent, just_finished
 next, waiting count and hierarchy depth. An absent percent means unknown; it
 never means zero. Stage and unknown are codes localized by the client. An optional
 `state` uses the `running_state` display codes for an observed conversation-worker
-execution state; it does not supply a plan stage or completion verdict. Older
-clients may omit this additional presentation field.
+execution state; it does not supply a plan stage or completion verdict. An
+optional `paused` is the person's pause as Core recorded it on a goal line, so a
+client that offers pause and resume sends the opposite without reading Now.
+Older clients may omit these additional presentation fields.
 
 An optional `stages` array carries a line's stage list, in order, as Core computed
 it ([work-and-delegation.md](work-and-delegation.md#stages)). An entry has its
