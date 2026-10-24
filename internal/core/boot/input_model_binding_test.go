@@ -739,6 +739,52 @@ type fixtureMailbox struct{ *mailboxProbe }
 
 func (p *fixtureMailbox) Name() string { return "fixture" }
 
+func TestWorkerInputKeepsChannelSteeringReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	app := questionPersonInput(t, r, "app-turn", "Tell the worker to continue")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("one", "first")
+	th := worker.Thread{ID: "session-c", TaskID: "channel-worker", AttemptID: "attempt", TurnID: "turn-1", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Active}}, tier: "turn"}
+	session := &workerSession{origin: r, thread: th, adapter: probe}
+	r.workers.mu.Lock()
+	r.workers.sessions[th.ID] = session
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, th.ID)
+		r.workers.mu.Unlock()
+	})
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "worker_input", "steer", map[string]any{
+		"session": th.ID, "turn": th.TurnID, "generation": th.ProcessGeneration, "binding": th.BindingEpoch,
+		"text": "Keep the channel scope.", "input_binding": map[string]any{"input_event_id": steering.ID},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("channel worker input: %+v", got)
+	}
+	messages, err := r.work.SteeringMessages(t.Context(), probe.Name()+":"+th.ID)
+	if err != nil || len(messages) != 1 || len(messages[0].Source) == 0 {
+		t.Fatalf("worker input lost its channel receipt: %+v %v", messages, err)
+	}
+	revoked := *view.channelBinding
+	revoked.Scope.Tools = false
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	event := worker.Event{Thread: th, ToolCall: &worker.ToolCall{ID: "inbox", Namespace: "lina", Name: "check_inbox", Arguments: json.RawMessage(`{}`)}}
+	raw, _, err := session.mailboxReply(t.Context(), event, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "Keep the channel scope.") {
+		t.Fatal("revoked channel delivered the worker input")
+	}
+}
+
 func TestModelBindingSteeringKeepsToolScope(t *testing.T) {
 	r, _ := turnRuntime(t)
 	input := questionPersonInput(t, r, "owner-turn", "Read available skills")

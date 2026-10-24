@@ -323,6 +323,8 @@ func (r *conversationRuntime) workerStartAssignment(ctx context.Context, turnID 
 	return a, assignment, reservation, nil
 }
 
+type channelSteeringSourceKey struct{}
+
 func (r *conversationRuntime) workerOperation(ctx context.Context, name, turnID string, input ledger.Event, in tools.Input) (tools.Result, error) {
 	return r.workerOperationWithOwner(ctx, name, turnID, input, in, false)
 }
@@ -575,7 +577,8 @@ func (r *conversationRuntime) workerOperationWithOwner(ctx context.Context, name
 		var inputErr error
 		if r.work != nil {
 			var message work.SteeringMessage
-			message, inputErr = entry.storeSteeringFrom(ctx, id, a.Text, sender, kind, nil)
+			source, _ := ctx.Value(channelSteeringSourceKey{}).(json.RawMessage)
+			message, inputErr = entry.storeSteeringFrom(ctx, id, a.Text, sender, kind, source)
 			if inputErr == nil {
 				state, inputErr = entry.deliverSteering(ctx, message, snap, activity)
 			} else {

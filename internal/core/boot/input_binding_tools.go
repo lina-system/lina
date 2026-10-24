@@ -189,7 +189,15 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				case clean.Name == "start_run" && r.channelBinding != nil:
 					result = r.submitStartRun(ctx, clean, &input)
 				default:
-					result = tool.Execute(ctx, clean)
+					callCtx := ctx
+					if clean.Name == "worker_input" && r.channelBinding != nil {
+						source, err := r.channelFollowReceipt(ctx, &input)
+						if err != nil {
+							return bindingFailure(c.ID, err)
+						}
+						callCtx = context.WithValue(ctx, channelSteeringSourceKey{}, source)
+					}
+					result = tool.Execute(callCtx, clean)
 				}
 				if result.Code == loop.OK {
 					if err := r.recordCreatedBinding(ctx, input, ref.Request, s.turnID, clean, result); err != nil {
@@ -451,32 +459,9 @@ func (r *conversationRuntime) submitFollowWork(ctx context.Context, callID, turn
 	if err := authority.CheckPreset(ctx, r.db, r.epoch, authority.PolicyRequest{Key: "preset:follow:" + turnID + ":" + callID, Person: r.person, Agent: r.agent, TaskID: turnID, Tool: "follow_work", Target: a.ID, Class: tools.WorkerEffect, Arguments: json.RawMessage(arguments)}); err != nil {
 		return loop.Result{ID: callID, Code: loop.Denied}
 	}
-	var source json.RawMessage
-	if r.channelBinding != nil {
-		var inbound gateway.Inbound
-		if event == nil {
-			return loop.Result{ID: callID, Code: loop.Denied}
-		}
-		receiptID := event.ID
-		if !strings.HasPrefix(receiptID, "channel-input:") {
-			var err error
-			receiptID, err = r.originatingChannelInputID(ctx, *event)
-			if err != nil {
-				return loop.Result{ID: callID, Code: loop.Denied}
-			}
-		}
-		err := r.db.Read(ctx, func(tx *canon.Tx) error {
-			var raw []byte
-			err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
-			if err != nil {
-				return err
-			}
-			return json.Unmarshal(raw, &inbound)
-		})
-		if err != nil {
-			return loop.Result{ID: callID, Code: loop.Denied}
-		}
-		source, _ = json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: inbound.Sender, Direct: inbound.Direct, Addressed: inbound.Addressed})
+	source, err := r.channelFollowReceipt(ctx, event)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
 	}
 	id := a.ID
 	if card, err := r.work.Get(ctx, id); err == nil {
@@ -486,11 +471,43 @@ func (r *conversationRuntime) submitFollowWork(ctx context.Context, callID, turn
 		}
 		id = fmt.Sprintf("task:%s:%d", card.Task.ID, generation)
 	}
-	_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + callID, Payload: protocol.FollowUp{RunID: id, Text: a.Text}}, source)
+	_, err = r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + callID, Payload: protocol.FollowUp{RunID: id, Text: a.Text}}, source)
 	if err != nil {
 		return loop.Result{ID: callID, Code: loop.Denied}
 	}
 	return loop.Result{ID: callID, Code: loop.OK, Output: json.RawMessage(`{"state":"submitted"}`)}
+}
+
+// channelFollowReceipt is the selected channel input's delivery receipt.
+// A runtime without a channel binding returns no receipt.
+func (r *conversationRuntime) channelFollowReceipt(ctx context.Context, event *ledger.Event) (json.RawMessage, error) {
+	if r.channelBinding == nil {
+		return nil, nil
+	}
+	if event == nil {
+		return nil, fmt.Errorf("channel receipt unavailable")
+	}
+	receiptID := event.ID
+	if !strings.HasPrefix(receiptID, "channel-input:") {
+		var err error
+		receiptID, err = r.originatingChannelInputID(ctx, *event)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var inbound gateway.Inbound
+	err := r.db.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(raw, &inbound)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: inbound.Sender, Direct: inbound.Direct, Addressed: inbound.Addressed})
 }
 
 // submitStartRun admits a run on the selected channel runtime. The origin turn
