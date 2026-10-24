@@ -464,6 +464,70 @@ func TestBackfilledSightingMovesTheCutoffBack(t *testing.T) {
 	}
 }
 
+// TestFirstCutoffRetractsWhatTheLinkProducedAfterIt covers the first cutoff on
+// a link that had no end yet. A Discord link made in January and an item it
+// produced in April are already recorded when a February iMessage sighting of
+// the number arrives in May. The first cutoff ends the link at February, so the
+// April item is inside an unbounded end and must not cite the link anymore, and
+// only that identity's messages from February are queued again.
+func TestFirstCutoffRetractsWhatTheLinkProducedAfterIt(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660003"
+	people := identity.StaticPeople{{Record: "person-old", Identifiers: []identity.SeenIdentifier{
+		{Kind: identity.Phone, Value: number, Source: "Discord profile 2020"},
+	}}}
+	f := newFixture(t, people)
+	jan := time.Date(2026, 1, 10, 9, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
+	apr := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	may := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	f.now = jan
+	observe(t, f, discord("d-old"), "Old owner", phone(number, "Discord profile"))
+	got := links(t, f, discord("d-old"))
+	if len(got) != 1 || !got[0].ValidThrough.IsZero() {
+		t.Fatalf("links = %+v, want one link with no end", got)
+	}
+	// Learning about the sender wrote an item from an April message.
+	f.now = apr
+	item := f.item(t, "person-old", "an item from April")
+	if err := f.store.RecordArtifact(t.Context(), got[0].ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The February sighting of the move arrives in May, after the item.
+	f.now = may
+	observeAt(t, f, imessage(number), feb, "New owner", phone(number, "iMessage profile"))
+
+	after := links(t, f, discord("d-old"))
+	if len(after) != 1 || !after[0].ValidThrough.Equal(feb) {
+		t.Fatalf("links = %+v, want the Discord link ended at February", after)
+	}
+	if after[0].Usable(apr) {
+		t.Fatal("the link is usable in April, after the number had moved")
+	}
+	if !after[0].Usable(jan.Add(24 * time.Hour)) {
+		t.Fatal("the link is not usable while the number was still Discord's")
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("an item from after the first cutoff stayed visible")
+	}
+	var artifacts int
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM identity_artifact WHERE link=? AND kind='item'", got[0].ID).Scan(&artifacts)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if artifacts != 0 {
+		t.Fatalf("artifacts = %d, want none citing the link after the cutoff", artifacts)
+	}
+	requeues, err := f.store.Requeues(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeues) != 1 || requeues[0].Identity != discord("d-old") || !requeues[0].From.Equal(feb) {
+		t.Fatalf("requeues = %+v, want only the Discord identity from February", requeues)
+	}
+}
+
 func TestProposalIsNeverUsableAndARejectionStays(t *testing.T) {
 	t.Parallel()
 	people := identity.StaticPeople{{Record: "person-ben", Names: []string{"Ben Park"}}}

@@ -705,10 +705,10 @@ func (s *Store) endValidity(ctx context.Context, tx *canon.Tx, links []Link, ide
 		if err := writeChange(ctx, tx, link.ID, link.Revision+1, "moved", link.Class, link.State, link.Record, MatcherVersion, at); err != nil {
 			return nil, err
 		}
-		if link.ValidThrough.IsZero() {
-			// The link had no end yet, so nothing it produced became invalid.
-			continue
-		}
+		// The first cutoff ends a link that had no end: it invalidates every
+		// moment from the move on, so an empty valid_through is an unbounded end
+		// rather than nothing to invalidate. A later, earlier sighting shortens
+		// the window the same way.
 		items, err := s.citingItemsBetween(ctx, tx, link.ID, at, link.ValidThrough)
 		if err != nil {
 			return nil, err
@@ -723,8 +723,9 @@ func (s *Store) endValidity(ctx context.Context, tx *canon.Tx, links []Link, ide
 }
 
 // citingItemsBetween lists the memory items a link produced whose evidence falls
-// in [from, through). An item with no evidence time cannot be placed in the
-// window and is left alone.
+// in [from, through). A zero through is an unbounded end, which is what a link
+// that had no cutoff yet becomes when the first one is set. An item with no
+// evidence time cannot be placed in the window and is left alone.
 func (s *Store) citingItemsBetween(ctx context.Context, tx *canon.Tx, linkID string, from, through time.Time) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT a.id, m.record FROM identity_artifact a
 JOIN retract_visible_memory m ON m.id=a.id AND m.person=?
@@ -758,24 +759,44 @@ WHERE a.link=? AND a.kind='item'`, s.person, linkID)
 	return items, rows.Err()
 }
 
-// inWindow reports whether a unix second falls in [from, through).
+// inWindow reports whether a unix second falls in [from, through), where a zero
+// through is unbounded.
 func inWindow(from, through time.Time, unix int64) bool {
 	if unix == 0 {
 		return false
 	}
 	at := time.Unix(unix, 0).UTC()
-	return !at.Before(from) && at.Before(through)
+	return !at.Before(from) && (through.IsZero() || at.Before(through))
 }
 
 // requeueFromTx queues only this identity's messages from one time, which is the
 // start of a window a repair invalidated.
 func (s *Store) requeueFromTx(ctx context.Context, tx *canon.Tx, id Identity, from time.Time, reason string) (bool, error) {
+	return s.queueRequeueTx(ctx, tx, id, from, reason, s.now())
+}
+
+// queueRequeueTx leaves one row per identity, starting at the earliest time any
+// repair needs it: a row from an earlier time covers a later one, so a later
+// start is replaced rather than added.
+func (s *Store) queueRequeueTx(ctx context.Context, tx *canon.Tx, id Identity, from time.Time, reason string, queuedAt time.Time) (bool, error) {
 	if from.IsZero() {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM identity_requeue WHERE platform=? AND scope=? AND user=? AND from_at>?",
+		id.Platform, id.Scope, id.User, formatTime(from)); err != nil {
+		return false, err
+	}
+	var covered bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM identity_requeue WHERE platform=? AND scope=? AND user=? AND from_at<=?)",
+		id.Platform, id.Scope, id.User, formatTime(from)).Scan(&covered); err != nil {
+		return false, err
+	}
+	if covered {
 		return false, nil
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_requeue(platform,scope,user,from_at,reason,queued_at) VALUES(?,?,?,?,?,?)
 ON CONFLICT(platform,scope,user,from_at) DO NOTHING`,
-		id.Platform, id.Scope, id.User, formatTime(from), reason, formatTime(s.now())); err != nil {
+		id.Platform, id.Scope, id.User, formatTime(from), reason, formatTime(queuedAt)); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -1190,12 +1211,7 @@ WHERE platform=? AND (workspace=? OR workspace='') AND learning_watermark<>'' OR
 	if fromAt.IsZero() {
 		fromAt = at
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_requeue(platform,scope,user,from_at,reason,queued_at) VALUES(?,?,?,?,?,?)
-ON CONFLICT(platform,scope,user,from_at) DO NOTHING`,
-		id.Platform, id.Scope, id.User, formatTime(fromAt), reason, formatTime(at)); err != nil {
-		return false, err
-	}
-	return true, nil
+	return s.queueRequeueTx(ctx, tx, id, fromAt, reason, at)
 }
 
 // Requeues lists the identities waiting for extraction again.
