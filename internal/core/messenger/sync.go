@@ -284,6 +284,12 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 		if err != nil {
 			return result, err
 		}
+		if page.Coverage == nil {
+			// The adapter's own descriptor says how deep a read goes and whether
+			// its cursor outlives the process; the coverage record keeps both.
+			capabilities := adapter.Capabilities()
+			page.Coverage = &ReadCoverage{HistoryDepth: capabilities.HistoryDepth, CursorSurvivesRestart: capabilities.CursorKind != "none"}
+		}
 		outcome, err := s.admitPage(ctx, source, chat.Chat, cursor, page)
 		result.Added += outcome.Added
 		result.Updated += outcome.Updated

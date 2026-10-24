@@ -787,6 +787,7 @@ Rules, each testable with a scripted provider:
 - The idempotency key is built as [host-protocol.md](host-protocol.md#envelope) says, with the task id as scope, or the turn id for an effect asked in a conversation (CP-04).
 - A tool deadline excludes the approval wait.
   A call that needs approval returns `awaiting_person` at once and runs its stored arguments, bound by hash, after the answer.
+- A response that ends with a text-form tool call and no real `ToolCall` follows the model-route rule of [C-43](#model-path-and-accounts) ([text-tool-calls.md](../research/text-tool-calls.md)): it is detected by Core at the terminal boundary, never shown as streaming progress or committed as a conversation reply, and handled by (1) parsing it into a structured `ToolCall` when the arguments are complete and the tool is in the active declaration set (exact name or after stripping one leading `_`), else (2) continuing once in a fresh session/continuation request on the same model route with a short state summary that excludes the contaminated assistant turn. There is no nudging loop and no silent switch to another model or account.
 
 After a restart an accepted turn is never replayed ([runtime.md](runtime.md#failures-and-retries)).
 
@@ -1198,6 +1199,8 @@ type QuotaRow struct { // the fields of runtime.md#usage-and-cost; a nil value i
 
 For AgentRuntime providers, Core carries out the list of [runtime.md](runtime.md#providers), with LINA's tools offered through `Bridge` as MCP tools.
 The ledger names the class per request.
+
+**Text-form tool calls.** Across LINA's own model routes (`ModelAPI` and `AgentRuntime` streams in `turn`, `runs`, exchanges and auxiliary calls) and coding workers ([work-and-delegation.md](work-and-delegation.md#adapter-boundary)), one rule governs a turn that ends with a text-form tool call (`[tool_use …]`, `<tool_use>`, `<function_calls><invoke>`, `<antml:invoke>`, `<tool_call>`) and no real `ToolCall` ([text-tool-calls.md](../research/text-tool-calls.md)): Core detects it at the terminal boundary, never shows it as progress or a final reply, and handles it by (1) parsing it into a real `ToolCall` when the arguments are complete valid JSON (or complete named parameters) and the tool is allowed in the active declaration set (matching the declared name, or the declared name after stripping one leading `_`), else (2) starting a fresh session or continuation request on the same model route (or the same worker) with a short state summary that omits the contaminated assistant turn. There is no nudging loop in the contaminated session and no silent hand-off to another model, account or worker.
 
 [Provider capabilities](runtime.md#provider-capabilities) add three things to this boundary:
 - the adapter reports a capability set per model;
@@ -2376,6 +2379,7 @@ type Adapter interface {
 - Implementation notes: [C-29 work tools and approvals](../../internal/core/worker/REFERENCE.md#c-29-work-tools-and-approvals).
 - Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection); for ACP, the same declarations through the session-scoped `lina worker-tools` MCP server.
   Other adapters build a receipt from the final result and the pull request and mark it adapter-derived.
+- A worker turn that ends with a text-form tool call and no real tool call follows the same rule as LINA's model routes ([C-43](#model-path-and-accounts); [work-and-delegation.md](work-and-delegation.md#adapter-boundary); [text-tool-calls.md](../research/text-tool-calls.md)): Core detects it, never emits it as `worker_report` progress or a completed turn, and handles it by (1) parsing and dispatching it as a real call when the arguments are complete and the tool is an allowed LINA session work tool, else (2) starting a fresh session (`thread/start` on Codex, `session/new` on ACP — never `thread/resume`, `session/load` or `session/resume` of the contaminated thread) on the same worker in the same worktree and branch with a short state summary. There is no nudging loop and no silent hand-off to another worker.
 - The delegated-task store records the requesting agent and conversation, done condition, artifact roots and whether application is required.
   A run binds its task, generation, worker, thread, turn and observing node.
   Admission appends an event and updates the active-run reservation in one fenced canon transaction; a task cannot admit a second active run.
@@ -2453,6 +2457,7 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   fresh binding and work-tool server. Restore failure and Core-crash uncertainty
   do not authorize another prompt or a fresh-session fallback.
   It changes no storage schema and never claims completion.
+  When a `session/prompt` reply ends a turn with a text-form tool call and no real tool call, the adapter never uses `session/resume` or `session/load` on that contaminated session: after checking whether the call is a complete allowed LINA session work tool (which is parsed and dispatched directly), it opens a fresh `session/new` on the same ACP worker in the same worktree and branch with a short state summary ([C-29](#work-engine); [text-tool-calls.md](../research/text-tool-calls.md)).
 - A definitive authentication refusal during `session/new` returns `worker.ErrNeedsSignIn` only after child cleanup, before any prompt.
   Dispatch retains the worker/version/code as readiness evidence and lets the existing chooser try another eligible worker.
   It creates no run for a refused session; the next opened session uses the next actual run generation.
