@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +25,7 @@ import (
 // addonRoot prepares a headless state root whose canon already holds the
 // person's connected source and one synced chat. Connecting a source is the
 // person's act, so Core never creates it.
-func addonRoot(t *testing.T, platform, account string) string {
+func addonRoot(t *testing.T, platform, account string, extras ...messenger.Source) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(root, 0700); err != nil {
@@ -69,6 +68,15 @@ func addonRoot(t *testing.T, platform, account string) string {
 	}
 	if err := store.UpsertChats(t.Context(), source, []messenger.Chat{{ID: "dm-1", Name: "Direct", Kind: "direct"}}); err != nil {
 		t.Fatal(err)
+	}
+	for _, extra := range extras {
+		extra.Person = source.Person
+		if err := store.Connect(t.Context(), extra); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpsertChats(t.Context(), extra, []messenger.Chat{{ID: "room-1", Name: "Room", Kind: "group"}}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := db.Close(context.Background()); err != nil {
 		t.Fatal(err)
@@ -201,7 +209,7 @@ func TestM4MessengerAddonKilledMidPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	stop := startAddonCore(t, root, addon.Config{Node: node, Program: program, StateRoot: root, Socket: filepath.Join(root, "core.sock"), RestartDelay: 20 * time.Millisecond, MaxRestarts: 5, RequestTimeout: 30 * time.Second}, nil)
-	defer stop()
+	defer func() { stop() }()
 
 	deadline := time.Now().Add(30 * time.Second)
 	for readCanon(t, root, `SELECT count(*) FROM messenger_record`) != 1 {
@@ -214,21 +222,18 @@ func TestM4MessengerAddonKilledMidPage(t *testing.T) {
 		_, err := os.Stat(filepath.Join(dir, "blocked"))
 		return err == nil
 	})
-	data, err := os.ReadFile(filepath.Join(dir, "blocked"))
-	if err != nil {
+	if cursor := readString(t, root, `SELECT cursor FROM messenger_chat`); cursor != "c1" {
+		t.Fatalf("before kill cursor = %q", cursor)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "kill"), []byte("kill"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		t.Fatal(err)
+	waitFor(t, "the failed page", func() bool { return readString(t, root, `SELECT state FROM messenger_source`) == "failing" })
+	if cursor := readString(t, root, `SELECT cursor FROM messenger_chat`); cursor != "c1" {
+		t.Fatalf("after kill cursor = %q", cursor)
 	}
-	child, err := os.FindProcess(pid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := child.Kill(); err != nil {
-		t.Fatal(err)
-	}
+	stop()
+	stop = startAddonCore(t, root, addon.Config{Node: node, Program: program, StateRoot: root, Socket: filepath.Join(root, "core.sock"), RestartDelay: 20 * time.Millisecond, MaxRestarts: 5, RequestTimeout: 30 * time.Second}, nil)
 	waitFor(t, "the completion after the kill", func() bool {
 		return readString(t, root, `SELECT cursor FROM messenger_chat`) == "end"
 	})
@@ -253,9 +258,9 @@ func TestM4MessengerAddonKilledMidPage(t *testing.T) {
 // synced.
 func TestM4MessengerAddonFailsWithoutNode(t *testing.T) {
 	t.Parallel()
-	root := addonRoot(t, "fixture", "account-1")
+	root := addonRoot(t, "fixture", "account-1", messenger.Source{Platform: "other", Account: "other-account", Adapter: "other", Mode: messenger.ModeOfficial, State: messenger.StateConnected})
 	stop := startAddonCore(t, root, addon.Config{StateRoot: root, Socket: filepath.Join(root, "core.sock"), RestartDelay: 20 * time.Millisecond}, map[string]messenger.Adapter{"other": &otherSource{}})
-	defer stop()
+	defer func() { stop() }()
 
 	waitFor(t, "the add-on source failing with its cause", func() bool {
 		state := readString(t, root, `SELECT state FROM messenger_source WHERE platform='fixture'`)
@@ -287,7 +292,7 @@ func (*otherSource) Page(_ context.Context, _ messenger.SourceID, chat string, c
 	if cursor != "" {
 		return messenger.Page{Next: cursor}, nil
 	}
-	return messenger.Page{Messages: []messenger.Message{{ID: chat + "-m1", Route: messenger.RouteParticipant, At: time.Now(), Text: "kept"}}, Next: "done"}, nil
+	return messenger.Page{Messages: []messenger.Message{{ID: chat + "-m1", Author: messenger.Author{ID: "other-user"}, Route: messenger.RouteParticipant, At: time.Now(), Text: "kept"}}, Next: "done"}, nil
 }
 func (*otherSource) Members(context.Context, messenger.SourceID, string) ([]messenger.Author, error) {
 	return nil, nil

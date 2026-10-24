@@ -118,10 +118,14 @@ func (c *child) fail(err error) {
 func (c *child) deliverLine(line []byte) {
 	var head header
 	if err := json.Unmarshal(line, &head); err != nil {
-		c.mu.Lock()
-		c.err = fmt.Errorf("%w: %v", ErrUpstreamChanged, err)
-		c.mu.Unlock()
+		c.fail(ErrUpstreamChanged)
 		return
+	}
+	if head.ID != "" {
+		if err := decodeStrict(line, &head); err != nil || head.OK == nil || (*head.OK && (len(head.Result) == 0 || string(head.Result) == "null" || head.Error != "")) || (!*head.OK && (head.Error == "" || len(head.Result) != 0)) {
+			c.fail(ErrUpstreamChanged)
+			return
+		}
 	}
 	if head.ID != "" {
 		c.mu.Lock()
@@ -136,16 +140,12 @@ func (c *child) deliverLine(line []byte) {
 	}
 	var event wireEvent
 	if err := decodeStrict(line, &event); err != nil {
-		c.mu.Lock()
-		c.err = err
-		c.mu.Unlock()
+		c.fail(err)
 		return
 	}
 	converted, err := event.event()
 	if err != nil {
-		c.mu.Lock()
-		c.err = err
-		c.mu.Unlock()
+		c.fail(err)
 		return
 	}
 	c.mu.Lock()
@@ -251,9 +251,12 @@ func (p *process) call(ctx context.Context, op string, arguments map[string]any,
 		if result == nil {
 			return nil
 		}
+		if err := requiredResult(op, response.Result); err != nil {
+			return err
+		}
 		return decodeStrict(response.Result, result)
 	case <-current.done:
-		return fmt.Errorf("%w: %v", ErrStopped, current.failure())
+		return errors.Join(ErrStopped, current.failure())
 	case <-timer.C:
 		current.fail(errors.New("request timed out"))
 		return fmt.Errorf("%w: request timed out", ErrStopped)
@@ -282,7 +285,7 @@ func (p *process) live(ctx context.Context, deliver func(messenger.Event) error)
 	case <-ctx.Done():
 		return nil
 	case <-current.done:
-		return fmt.Errorf("%w: %v", ErrStopped, current.failure())
+		return errors.Join(ErrStopped, current.failure())
 	}
 }
 
@@ -446,7 +449,7 @@ func (p *process) read(c *child, output io.Reader) {
 		c.mu.Lock()
 		if errors.Is(err, bufio.ErrTooLong) {
 			c.err = fmt.Errorf("%w: line larger than the limit", ErrUpstreamChanged)
-		} else {
+		} else if c.err == nil {
 			c.err = err
 		}
 		c.mu.Unlock()
@@ -461,6 +464,9 @@ func (p *process) read(c *child, output io.Reader) {
 	if p.child == c {
 		p.child = nil
 		p.failures++
+		if errors.Is(cause, ErrUpstreamChanged) {
+			p.failure = ErrUpstreamChanged
+		}
 		if errors.Is(cause, sandbox.ErrUnavailable) || errors.Is(cause, ErrSandboxUnavailable) {
 			p.failure = fmt.Errorf("%w: %v", ErrSandboxUnavailable, cause)
 		}

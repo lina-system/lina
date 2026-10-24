@@ -38,7 +38,6 @@ func NewService(store *Store, adapters map[string]Adapter, interval time.Duratio
 
 // Resolver selects an adapter for the source account.
 type Resolver func(Source) (Adapter, bool)
-type ResolverFunc = Resolver
 
 // NewServiceWithResolver supports account-specific sessions while NewService
 // retains the registry of adapter names used by official platform services.
@@ -81,7 +80,10 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 		return results
 	}
 	for _, source := range sources {
-		if source.State != StateConnected {
+		if source.State != StateConnected && source.State != StateFailing {
+			continue
+		}
+		if _, ok := s.adapterFor(source); !ok {
 			continue
 		}
 		key := source.Platform + "\x00" + source.Account

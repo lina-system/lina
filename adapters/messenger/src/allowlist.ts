@@ -38,5 +38,6 @@ export const FORBIDDEN_METHODS: readonly string[] = [
   'createSticker', 'deleteSticker', 'createDM', 'createThread', 'archiveThread', 'uploadFile',
   'setUserNote', 'setNote', 'gatewayConnect', 'request', 'requestFormData', 'getUnreadDMs',
   'getUnreadMentions', 'fetchReadState', 'fetchReadStateSnapshot', 'searchMessages', 'sendMessageBatch',
+  'removeAccount', 'sendPacket', 'sendReply', 'extractViaCDP', 'getReadState', 'getReadStateSnapshot',
   'tokenExtractor', 'extract', 'extractToken', 'KakaoTokenExtractor', 'importCredentials',
 ];

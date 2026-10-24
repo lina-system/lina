@@ -87,7 +87,7 @@ type wireMessage struct {
 }
 
 func (m wireMessage) message() (messenger.Message, error) {
-	if !validIdentifier(m.ID) {
+	if !validIdentifier(m.ID) || m.At == "" {
 		return messenger.Message{}, fmt.Errorf("%w: message id", ErrUpstreamChanged)
 	}
 	author, err := m.Author.author()
@@ -125,7 +125,7 @@ type wireDeletion struct {
 }
 
 func (d wireDeletion) deletion() (messenger.Deletion, error) {
-	if !validIdentifier(d.Message) {
+	if !validIdentifier(d.Message) || d.At == "" {
 		return messenger.Deletion{}, fmt.Errorf("%w: deletion", ErrUpstreamChanged)
 	}
 	at, err := wireTime(d.At)
@@ -227,6 +227,25 @@ func decodeStrict(raw []byte, value any) error {
 	}
 	if decoder.More() {
 		return fmt.Errorf("%w: trailing data", ErrUpstreamChanged)
+	}
+	return nil
+}
+
+// requiredResult distinguishes omitted/null fields from valid empty values.
+func requiredResult(op string, raw []byte) error {
+	fields := map[string][]string{
+		"page":      {"messages", "deletions", "next", "hasMore"},
+		"listChats": {"chats"}, "members": {"members"}, "signIn": {"state"},
+		"beginSignIn": {"state"}, "answer": {"state"}, "whoami": {"author"},
+	}
+	var value map[string]json.RawMessage
+	if json.Unmarshal(raw, &value) != nil || value == nil {
+		return ErrUpstreamChanged
+	}
+	for _, key := range fields[op] {
+		if v, ok := value[key]; !ok || string(v) == "null" {
+			return ErrUpstreamChanged
+		}
 	}
 	return nil
 }

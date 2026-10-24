@@ -274,3 +274,70 @@ func (plainRunner) Run(ctx context.Context, _ lease.Lease, command sandbox.Comma
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = command.Stdin, command.Stdout, io.Discard
 	return cmd.Run()
 }
+
+func TestResponseEnvelopeAndRequiredPageFields(t *testing.T) {
+	for name, response := range map[string]string{
+		"unknown envelope": `{"id":"","ok":true,"result":{"messages":[],"deletions":[],"next":"","hasMore":false},"extra":true}`,
+		"missing fields":   `{"id":"","ok":true,"result":{}}`,
+		"null page":        `{"id":"","ok":true,"result":null}`,
+		"unknown event":    `{"event":"unexpected"}`,
+		"missing ok":       `{"id":"","result":{"messages":[],"deletions":[],"next":"","hasMore":false}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &script{responses: map[string][]string{"page": {response}}}
+			_, err := session(t, s).Adapter().Page(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}, "chat-1", "")
+			if !errors.Is(err, addon.ErrUpstreamChanged) {
+				t.Fatalf("got %v, want upstream changed", err)
+			}
+		})
+	}
+}
+
+func TestAccountMismatchNeverReachesTheProcess(t *testing.T) {
+	s := &script{responses: map[string][]string{}}
+	a := session(t, s).Adapter()
+	for _, id := range []messenger.SourceID{{Platform: "discord", Account: "account-1"}, {Platform: "kakaotalk", Account: "account-2"}, {Platform: "kakaotalk"}} {
+		_, e1 := a.SignIn(t.Context(), id)
+		_, e2 := a.ListChats(t.Context(), id)
+		_, e3 := a.Page(t.Context(), id, "chat", "")
+		_, e4 := a.Members(t.Context(), id, "chat")
+		e5 := a.Live(t.Context(), id, func(messenger.Event) error { return nil })
+		_, e6 := a.FetchAttachment(t.Context(), id, "chat", "file")
+		for _, err := range []error{e1, e2, e3, e4, e5, e6} {
+			if !errors.Is(err, messenger.ErrInvalid) {
+				t.Fatalf("wrong source: %v", err)
+			}
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.exits != 0 {
+		t.Fatalf("started %d children", s.exits)
+	}
+}
+
+func TestSignInRelaysAnAnswerToTheSameAccountSession(t *testing.T) {
+	s := &script{responses: map[string][]string{
+		"beginSignIn": {`{"id":"","ok":true,"result":{"state":"needs_sign_in","prompt":{"key":"pin","kind":"secret","text":"PIN"}}}`},
+		"answer":      {`{"id":"","ok":true,"result":{"state":"signed_in"}}`},
+		"whoami":      {`{"id":"","ok":true,"result":{"author":{"id":"u0","name":"Owner"}}}`},
+	}}
+	value := session(t, s)
+	step, err := value.BeginSignIn(t.Context())
+	if err != nil || step.Prompt == nil || step.Prompt.Key != "pin" {
+		t.Fatalf("prompt: %+v, %v", step, err)
+	}
+	step, err = value.Answer(t.Context(), "pin", "synthetic-pin")
+	if err != nil || step.State != messenger.SignedIn {
+		t.Fatalf("answer: %+v, %v", step, err)
+	}
+	author, err := value.WhoAmI(t.Context())
+	if err != nil || author.ID != "u0" {
+		t.Fatalf("whoami: %+v, %v", author, err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.exits != 1 || len(s.requests) != 3 || s.requests[1]["value"] != "synthetic-pin" {
+		t.Fatalf("relay did not use one session")
+	}
+}

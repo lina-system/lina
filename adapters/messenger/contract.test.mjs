@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { PassThrough } from 'node:stream';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { serve, describe as describeError } from './src/serve.ts';
 import { parseRequest, OPS } from './src/protocol.ts';
 import { PLATFORMS } from './src/platforms.ts';
@@ -116,7 +116,7 @@ test('a response shape the add-on does not know is refused, not passed on', asyn
 });
 
 test('a driver failure names the platform code, never the SDK message', async t => {
-  const failure = Object.assign(new Error('token abc123 at /home/jun'), { code: 'auth_expired' });
+  const failure = Object.assign(new Error('token abc123 at /synthetic/home'), { code: 'auth_expired' });
   const h = harness(t, Object.assign(fixtureDriver(), { signInState: async () => { throw failure; } }));
   const [frame] = await h.send({ id: 's', op: 'signIn' });
   assert.deepEqual(frame, { id: 's', ok: false, error: 'failed:auth_expired' });
@@ -154,4 +154,30 @@ test('the manifest pins agent-messenger 2.39.1 without optional native packages'
   assert.deepEqual(Object.keys(manifest.scripts ?? {}).filter(name => /^(pre|post|install)/.test(name)), []);
   const lock = JSON.parse(readFileSync(new URL('./package-lock.json', import.meta.url), 'utf8'));
   assert.equal(lock.packages[''].dependencies['agent-messenger'], '2.39.1');
+});
+
+// Inspect the exact installed pin without importing or executing SDK code.
+test('every SDK write and extraction entry point is denied by the dispatcher', async t => {
+  const root = new URL('./node_modules/agent-messenger/src/platforms/', import.meta.url);
+  if (!existsSync(root)) { t.skip('installed SDK inventory runs in the dependency check'); return; }
+  const dangerous = /^(send|mark|ack|add|remove|edit|delete|create|archive|upload|setUser|setNote|extract|force|leave|join|fetchRead|getRead|getUnread|request|gateway)/;
+  const methods = new Set();
+  for (const platform of Object.keys(PLATFORMS)) {
+    const dir = new URL(platform + '/', root);
+    for (const file of readdirSync(dir, { recursive: true })) {
+      if (!file.endsWith('.ts') || file.includes('.test.')) continue;
+      const source = readFileSync(new URL(file, dir), 'utf8');
+      for (const match of source.matchAll(/^  (?:(?:public|static|async) )*([A-Za-z_$][\w$]*)\s*\(/gm)) {
+        if (dangerous.test(match[1])) methods.add(match[1]);
+      }
+    }
+  }
+  assert.ok(methods.size > 30, 'enumerated pinned SDK methods');
+  const h = harness(t);
+  for (const method of methods) {
+    assert.ok(FORBIDDEN_METHODS.includes(method), `unclassified upstream method: ${method}`);
+    const [reply] = await h.send({ id: 'blocked', op: method });
+    assert.equal(reply.error, 'unknown_operation', method);
+  }
+  assert.deepEqual(h.driver.calls, []);
 });

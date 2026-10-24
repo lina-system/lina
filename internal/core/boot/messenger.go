@@ -12,9 +12,8 @@ import (
 // source registry, admission and the sync loop are Core's; adapters are the
 // platform boundary.
 type MessengerConfig struct {
-	// Adapters are keyed by adapter name for adapters that serve every account of a
-	// platform. The messenger add-on is not one of these: it runs one process per
-	// account, so Addon supplies it instead.
+	// Adapters are keyed by the name recorded on each source. Every read also
+	// receives its SourceID. Addon resolves a separate session per account.
 	Adapters map[string]messenger.Adapter
 	// Addon starts one add-on session per account of an unofficial platform. A
 	// nil Addon leaves those sources without an adapter, so Core starts an idle
@@ -57,12 +56,12 @@ func (r *conversationRuntime) Messenger() *messenger.Service { return r.messenge
 // resolveMessenger selects an adapter per source: a platform adapter when one
 // is registered, otherwise the add-on session for that account. The starter
 // keeps one session per account, so the platform sees one session.
-func resolveMessenger(cfg *MessengerConfig) messenger.ResolverFunc {
+func resolveMessenger(cfg *MessengerConfig) messenger.Resolver {
 	return func(source messenger.Source) (messenger.Adapter, bool) {
 		if adapter, ok := cfg.Adapters[source.Adapter]; ok {
 			return adapter, true
 		}
-		if cfg.Addon == nil || source.Mode != messenger.ModeUnofficial {
+		if cfg.Addon == nil || source.Mode != messenger.ModeUnofficial || source.Adapter != "messenger-addon" {
 			return nil, false
 		}
 		adapter, err := cfg.Addon.Addon(source.Platform, source.Account)

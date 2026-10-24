@@ -9,9 +9,9 @@
 //	{ "chats": [...], "pages": { "<cursor>": <page> },
 //	  "blockCursor": "<cursor>", "onPage": ... }
 //
-// blockCursor makes the first page read of that cursor hang forever and record
-// its pid, which is how Core's end-to-end test kills the add-on mid-page.
-import { readFileSync, writeFileSync } from 'node:fs';
+// blockCursor makes the first page read of that cursor hang forever and signal
+// readiness, then self-terminate when the test writes a kill marker.
+import { readFileSync, writeFileSync, existsSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import type { Author, Capabilities, Chat, Driver, LiveEvent, Page, SignInStep, SignInState } from './src/protocol.ts';
 import { cap } from './src/driver.ts';
@@ -67,10 +67,17 @@ export function fixtureDriver(recorded: Recorded = {}): FixtureDriver {
     },
     async page(_chat: string, cursor: string): Promise<Page> {
       calls.push('page');
-      if (recorded.blockCursor === cursor && recorded.configDir && !blocked.has(cursor)) {
+      if (recorded.blockCursor === cursor && recorded.configDir && !blocked.has(cursor) && !existsSync(join(recorded.configDir, "blocked"))) {
         blocked.add(cursor);
-        writeFileSync(join(recorded.configDir, 'blocked'), String(process.pid));
-        await new Promise(() => undefined);
+        // Signal only this fixture process inside its PID namespace. Never
+        // export a namespace PID for the host to kill.
+        const dir = recorded.configDir;
+        await new Promise(() => {
+          const die = () => { if (existsSync(join(dir, 'kill'))) process.kill(process.pid, 'SIGKILL'); };
+          watch(dir, die);
+          writeFileSync(join(dir, 'blocked'), 'ready');
+          die();
+        });
       }
       const pages = recorded.pages ?? {};
       if (Object.hasOwn(pages, cursor)) return pages[cursor] as Page;

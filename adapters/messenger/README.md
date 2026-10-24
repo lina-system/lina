@@ -9,7 +9,12 @@ answers ([the messenger add-on](../../docs/design/integrations.md#the-messenger-
 
 It runs on the person's Node.js 22.18.0 or newer. The source imports `.ts`
 modules directly, which needs the type stripping those releases enable by
-default; no build step and no native package is involved.
+default; no build step. Optional native packages are omitted; the locked LevelDB
+package uses its included prebuild without an install script.
+
+Platform drivers and their account connection screens are implemented in #1071,
+#1085, #1086 and #1087. This package supplies their read protocol and supervisor;
+unregistered platforms fail closed with `unsupported_platform`.
 
 `main.ts` opens the platform driver named by `LINA_MESSENGER_ADDON_PLATFORM`
 (`kakaotalk`, `discord`, `whatsapp` or `line`) for the account in
@@ -27,7 +32,9 @@ npm test
 
 `foundation` runs the same three commands on the committed lockfile in an
 isolated copy with no credentials. `npm test` needs no installed package: the
-contract tests read the sources and the manifest directly.
+contract tests read the sources and the manifest directly. The installed-SDK
+inventory test runs in the dependency check and enumerates write and extraction
+entry points without importing or executing upstream code.
 
 ## Upstream sync
 
@@ -49,3 +56,21 @@ change, titled for the release:
 4. Run the contract tests. Record the reviewed range, the methods that were
    added, removed or renamed, and which of them stay out in the change's
    message and pull request.
+
+## Core relay
+
+A managed session exposes `BeginSignIn`, `Answer` and `WhoAmI` to the platform
+connection surface. Prompts and responses are transient: the relay sends user
+input straight to that account's existing child. Only the add-on stores its
+session. A missing runtime fails that source while Core continues serving.
+
+## Reviewed reference
+
+- Seen: agent-messenger 2.39.1, upstream commit
+  `9d2de96a43fe3e0e172e8e399454c475146a2697`; its published platform source includes
+  writes, read-state changes and token extraction alongside reads. The fixed
+  dispatcher refuses those entry points. The dependency is MIT licensed.
+- Inferred: one persistent process and one data directory per account avoid
+  sharing sessions across sources. Core passes and checks SourceID on each read.
+- Unknown here: live platform behavior and sign-in eligibility. No personal
+  account or credential is used by this package's synthetic acceptance tests.
