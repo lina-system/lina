@@ -27,6 +27,7 @@ func textSQL(t *testing.T, db *sql.DB, query string, args ...any) string {
 }
 
 func TestSQLiteWALFullFTS5AndReopen(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "canon ?#%.sqlite")
 	db, err := OpenSQLite(t.Context(), path)
 	if err != nil {
@@ -73,6 +74,7 @@ func TestSQLiteWALFullFTS5AndReopen(t *testing.T) {
 }
 
 func TestSQLiteOnlineBackupReadsLiveWAL(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "source.sqlite")
 	db, err := OpenSQLite(t.Context(), path)
 	if err != nil {
@@ -125,6 +127,7 @@ func TestSQLiteOnlineBackupReadsLiveWAL(t *testing.T) {
 }
 
 func TestSQLiteFailures(t *testing.T) {
+	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "missing.sqlite")
 	if db, err := OpenSQLiteReader(t.Context(), missing); err == nil {
 		db.Close()
