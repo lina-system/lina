@@ -161,7 +161,8 @@ with account-wide deletion namespaces and persistent update recovery.
 admitted person or external-participant record observes its author inside the
 page's transaction, so a record and the identity it was seen with commit
 together; the person's own account is recorded as `Self` and never linked as
-another person. The identity scope is the source's `workspace`, which the
+another person, including when the record is a message LINA sent through that
+account. The identity scope is the source's `workspace`, which the
 platform's ids are scoped by. After each sync pass the service asks identity to
 rematch identities that have no link, so a people record the person creates
 after the messages arrive still links without a restart. Core gives the same

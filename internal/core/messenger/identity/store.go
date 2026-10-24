@@ -1440,6 +1440,7 @@ func (s *Store) Split(ctx context.Context, from, into string, identities []Ident
 	}
 	at := s.now()
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		moved := map[string]bool{}
 		for _, id := range identities {
 			if !id.valid() {
 				return ErrInvalid
@@ -1480,9 +1481,13 @@ func (s *Store) Split(ctx context.Context, from, into string, identities []Ident
 					return err
 				}
 				for _, item := range items {
+					if moved[item] {
+						continue
+					}
 					if _, err := memory.ReassignSubject(ctx, tx, s.person, item, from, into); err != nil {
 						return err
 					}
+					moved[item] = true
 				}
 			}
 		}
