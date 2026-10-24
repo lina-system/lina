@@ -170,6 +170,8 @@ func (w *tripWorld) Execute(ctx context.Context, a work.Action) (work.Observatio
 			collected.Output = string(body)
 		}
 		o.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: collected, Ref: "read:" + a.CriterionID, Passed: true}
+	case work.Resume, work.InspectPR, work.Merge, work.RunQA, work.RepairConflict, work.RepairQA, work.Deploy, work.Observe, work.Decide, work.ContinueWorker:
+		return o, fmt.Errorf("unexpected trip action %s", a.Kind)
 	default:
 		return o, fmt.Errorf("unexpected trip action %s", a.Kind)
 	}
