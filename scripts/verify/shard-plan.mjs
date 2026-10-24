@@ -138,8 +138,8 @@ export function distinctScenarios(scenarios) {
   return result;
 }
 
-// An acceptance shard is one `go test` process under the six-minute package
-// timeout. Measured work above this budget buys another shard, because a
+// An acceptance shard is one `go test` process under the ten-minute e2e
+// package watchdog. Measured work above this budget buys another shard, because a
 // failing sibling otherwise leaves no time for the remaining scenarios: run
 // 40015895235 reached 355 s in its single m3 shard and killed scenarios that
 // had not started. Scenario files stay together, so a lone heavy file can
