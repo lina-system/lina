@@ -163,7 +163,7 @@ func TestUnresolvedCitationHoldsTheDocumentCriterion(t *testing.T) {
 	if err != nil || len(p.Close) != 1 {
 		t.Fatalf("resolved citation did not close the goal: %+v %v", p, err)
 	}
-	if !QuestionsHandled([]string{"the fee"}, nil, []ResearchOpen{{Question: "the fee", Reason: "The sources do not state it."}}, "") || !QuestionsHandled([]string{"the fee"}, nil, nil, "the fee is 12") || QuestionsHandled(nil, nil, nil, "") || QuestionsHandled([]string{"the fee"}, nil, nil, "notes") {
+	if !QuestionsHandled([]string{"the fee"}, nil, []ResearchOpen{{Question: "the fee", Reason: "The sources do not state it."}}, "") || !QuestionsHandled([]string{"the fee"}, nil, nil, "the fee is 12") || !QuestionsHandled(nil, nil, nil, "the document answers the questions") || QuestionsHandled(nil, nil, nil, "") || QuestionsHandled(nil, []string{"the fee"}, nil, "notes") || QuestionsHandled([]string{"the fee"}, nil, nil, "notes") {
 		t.Fatal("open question did not count as handled")
 	}
 }

@@ -183,8 +183,12 @@ func (d *codeGoalDriver) researchCriterion(ctx context.Context, s goal.State, g 
 	if !found || latest.Material.ID == "" {
 		return goal.Observation{}, nil, goal.ErrNeedsPerson
 	}
+	body, citations, err := d.researchDocument(ctx, latest)
+	if err != nil {
+		return goal.Observation{}, nil, err
+	}
 	proof := goal.Proof{Revision: a.Revision, Ref: latest.Material.ID, Passed: false}
-	read := goal.EvidenceRead{Target: a.Check.Target, Revision: a.Revision, Content: latest.Artifact.Body}
+	read := goal.EvidenceRead{Target: a.Check.Target, Revision: a.Revision, Content: body}
 	if strings.TrimSpace(read.Content) == "" {
 		read.Content = "result"
 	}
@@ -194,7 +198,7 @@ func (d *codeGoalDriver) researchCriterion(ctx context.Context, s goal.State, g 
 		if a.Check.Kind != goal.CitationEvidence {
 			return goal.Observation{}, nil, goal.ErrInvalid
 		}
-		checked, err := materials.Check(ctx, d.runtime.assets, latest.Artifact.Citations)
+		checked, err := materials.Check(ctx, d.runtime.assets, citations)
 		if err != nil {
 			return goal.Observation{}, nil, err
 		}
@@ -219,7 +223,7 @@ func (d *codeGoalDriver) researchCriterion(ctx context.Context, s goal.State, g 
 		if a.Check.Kind != goal.JudgmentEvidence || strings.TrimSpace(a.Check.Rubric) == "" {
 			return goal.Observation{}, nil, goal.ErrInvalid
 		}
-		proof.Passed = goal.QuestionsHandled(t.ResearchGap, latest.Artifact.Missing, researchOpen(latest), latest.Artifact.Body)
+		proof.Passed = goal.QuestionsHandled(t.ResearchGap, latest.Artifact.Missing, researchOpen(latest), body)
 		collected.Rubric = a.Check.Rubric
 		if proof.Passed {
 			collected.Judgment = "each question is answered or marked open with its reason"
@@ -231,6 +235,43 @@ func (d *codeGoalDriver) researchCriterion(ctx context.Context, s goal.State, g 
 		return goal.Observation{}, nil, goal.ErrInvalid
 	}
 	return goal.Observation{Status: goal.OutcomeSucceeded, Proof: proof}, collected, nil
+}
+
+func (d *codeGoalDriver) researchDocument(ctx context.Context, latest runs.Record) (string, []materials.Anchor, error) {
+	records := []runs.Record{latest}
+	id := latest.Brief.FollowOf
+	for id != "" && len(records) < 3 {
+		prior, err := d.runtime.background.service.Get(ctx, id)
+		if err != nil {
+			return "", nil, err
+		}
+		records = append(records, prior)
+		id = prior.Brief.FollowOf
+	}
+	var body strings.Builder
+	for i := len(records) - 1; i >= 0; i-- {
+		text := strings.TrimSpace(records[i].Artifact.Body)
+		if text == "" {
+			continue
+		}
+		if body.Len() > 0 {
+			body.WriteByte('\n')
+		}
+		body.WriteString(text)
+	}
+	seen := map[string]bool{}
+	var citations []materials.Anchor
+	for _, record := range records {
+		for _, cite := range record.Artifact.Citations {
+			key := fmt.Sprintf("%s:%d:%d:%d", cite.AssetID, cite.Revision, cite.Start, cite.End)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			citations = append(citations, cite)
+		}
+	}
+	return body.String(), citations, nil
 }
 
 func researchOpen(r runs.Record) []goal.ResearchOpen {
