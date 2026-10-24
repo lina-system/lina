@@ -505,6 +505,31 @@ func restrictedSources(scope Scope) (string, []any) {
 )`, []any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel), scope.Person}
 }
 
+// RestrictedEvents returns the events a Projection or ExternalModel scope
+// excludes, by the same rule Match applies: the evidence of protected memory
+// and every replay copy, view_of event and original linked to it. Other scopes
+// restrict nothing.
+func RestrictedEvents(ctx context.Context, tx *canon.Tx, scope Scope) (map[string]bool, error) {
+	ids := map[string]bool{}
+	if !scope.Projection && !scope.ExternalModel {
+		return ids, nil
+	}
+	fragment, args := restrictedSources(scope)
+	rows, err := tx.QueryContext(ctx, "WITH RECURSIVE "+fragment+" SELECT id FROM restricted WHERE kind='event'", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids[id] = true
+	}
+	return ids, rows.Err()
+}
+
 // scopeWhere applies the scope before matching. It is shared by the published
 // index and the still-queued sources so both see the same filters.
 func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias string) ([]string, []any) {

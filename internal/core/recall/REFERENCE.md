@@ -78,6 +78,8 @@ Restricted-source selection follows protected memory to its evidence, then
 walks current citations back to every dependent memory, record and summary.
 A replay copy or `view_of` event carries its original's text, so protection
 also spreads both ways along `replay_of` and `view_of` links, indexed or queued.
+`RestrictedEvents` returns the event ids of that set, so a live read by id,
+such as `expand`, refuses exactly the events search leaves out.
 Typed source identities preserve the boundary across nested summary children.
 The same scope predicate applies before limiting indexed, queued and vector-hook
 candidates. Internal reads retain their scope, while projection also excludes
