@@ -13,6 +13,7 @@ It waits for a terminal event and a clean stream end before releasing any call, 
 Completed items are committed verbatim as they arrive; aborted visible deltas are stored separately and excluded from model context.
 Validation and before hooks finish in call order before execution.
 Independent calls use at most eight slots; normalized write targets form ordered dependency chains.
+A call may name another call's write target as its gate and waits for that call, whatever its position in the response; gated calls with different targets still run in parallel.
 Results commit as each call ends and enter model context in call order.
 Cancellation does not replace a started call's returned result: a committed success or unknown receipt remains success or unknown in the turn journal.
 Only calls that never started receive a synthetic aborted result.
