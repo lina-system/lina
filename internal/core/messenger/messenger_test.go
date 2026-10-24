@@ -1219,3 +1219,20 @@ func TestDisconnectCancelsActiveSync(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEmptyMessageRetainsPlatformTypeAndAttachment(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	empty := message("9007199254740993123", messenger.RouteParticipant, f.now, "")
+	empty.MessageType = "18"
+	empty.Attachments = []messenger.Attachment{{ID: "file-key", Name: "report.pdf", MIMEType: "application/pdf", Size: 2048}}
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{Messages: []messenger.Message{empty}, Next: messenger.Cursor(empty.ID), Through: f.now}); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(t, f.db, `SELECT count(*) FROM messenger_record r JOIN conv_event e ON r.event=e.id WHERE r.message=? AND r.message_type='18' AND e.body=''`, empty.ID); got != 1 {
+		t.Fatalf("empty typed record count: %d", got)
+	}
+	if got := count(t, f.db, `SELECT count(*) FROM messenger_attachment WHERE message=? AND attachment='file-key' AND size=2048`, empty.ID); got != 1 {
+		t.Fatalf("attachment count: %d", got)
+	}
+}

@@ -108,6 +108,7 @@ type wireMessage struct {
 	At               string           `json:"at"`
 	Edited           string           `json:"edited"`
 	Text             string           `json:"text"`
+	MessageType      string           `json:"messageType"`
 	DecryptionFailed bool             `json:"decryptionFailed"`
 	ReplyTo          string           `json:"replyTo"`
 	Thread           string           `json:"thread"`
@@ -146,7 +147,7 @@ func (m wireMessage) message() (messenger.Message, error) {
 	}
 	return messenger.Message{
 		ID: m.ID, Author: author, Route: route, At: at, Edited: edited,
-		Text: m.Text, DecryptionFailed: m.DecryptionFailed, ReplyTo: m.ReplyTo, Thread: m.Thread, Attachments: attachments,
+		Text: m.Text, MessageType: m.MessageType, DecryptionFailed: m.DecryptionFailed, ReplyTo: m.ReplyTo, Thread: m.Thread, Attachments: attachments,
 	}, nil
 }
 

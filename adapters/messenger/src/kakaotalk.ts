@@ -110,13 +110,14 @@ const NEEDS_SIGN_IN: Record<string, true> = { invalid_access_token: true, login_
 
 export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
   const credentials = new sdk.KakaoCredentialManager(options.configDir);
-  const client = new sdk.KakaoTalkClient();
+  let client = new sdk.KakaoTalkClient();
 
   let account: KakaoAccount | null = null;
   let connecting: Promise<void> | null = null;
   let signedIn = false;
   let ownId = '';
   let failure = '';
+  let retryLogin = false;
   let pending: { email: string; password: string; deviceUuid: string } | null = null;
   // shown is the passcode Kakao displays while the tablet registration runs. It
   // stays in memory until the attempt ends so a repeated step can show it again.
@@ -126,11 +127,24 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
   // generation counts sign-in attempts. A cancelled or replaced attempt stops
   // writing state, so an abandoned background registration cannot revive it.
   let generation = 0;
+  // Credential writes and cancellation share one queue. Network operations
+  // remain cancellable by generation without waiting for phone confirmation.
+  let saving: Promise<unknown> = Promise.resolve();
+  const save = <T>(action: () => Promise<T>): Promise<T> => {
+    const next = saving.then(action);
+    saving = next.catch(() => {});
+    return next;
+  };
+  const current = (mine: number): void => {
+    if (mine !== generation) throw new Refusal('invalid_request', 'sign-in ended');
+  };
 
   const connect = async (): Promise<void> => {
     if (signedIn) return;
-    if (failure) throw new Refusal('source_failing', failure);
+    if (failure && !retryLogin) throw new Refusal(failure === 'needs_sign_in' ? 'needs_sign_in' : 'source_failing', failure);
+    const mine = generation;
     account = account ?? (await credentials.getAccount());
+    current(mine);
     if (!account) return;
     try {
       await client.login({
@@ -139,14 +153,22 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
         deviceUuid: account.device_uuid,
         deviceType: 'tablet',
       }, account.account_id);
+      current(mine);
+      await client.acquireSession();
+      current(mine);
       ownId = String(account.user_id);
       signedIn = true;
+      failure = '';
+      retryLogin = false;
     } catch (error) {
+      current(mine);
       const code = error instanceof Error && Object.hasOwn(error, 'code') ? String(Reflect.get(error, 'code')) : '';
       if (NEEDS_SIGN_IN[code]) {
+        retryLogin = false;
         failure = 'needs_sign_in';
         throw new Refusal('needs_sign_in', failure);
       }
+      retryLogin = true;
       failure = code === '' ? 'sign-in failed' : 'sign-in failed: ' + code;
       throw new Refusal('source_failing', failure);
     }
@@ -170,7 +192,8 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
     return client;
   };
 
-  const keep = async (login: KakaoLogin): Promise<void> => {
+  const keep = async (login: KakaoLogin, mine: number): Promise<void> => {
+    current(mine);
     if (!login.credentials?.access_token) {
       failure = 'login failed';
       throw new Refusal('source_failing', failure);
@@ -182,45 +205,78 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
       device_uuid: login.credentials.device_uuid,
       device_type: 'tablet',
     };
-    await credentials.setAccount(saved);
-    await credentials.setCurrentAccount(saved.account_id);
-    await credentials.clearPendingLogin();
-    account = saved;
-    ownId = String(saved.user_id);
-    signedIn = true;
-    failure = '';
-    pending = null;
-    shown = '';
+    const nextClient = new sdk.KakaoTalkClient();
+    try {
+      await nextClient.login({ oauthToken: saved.oauth_token, userId: saved.user_id, deviceUuid: saved.device_uuid, deviceType: 'tablet' }, saved.account_id);
+      current(mine);
+      await nextClient.acquireSession();
+      current(mine);
+      await save(async () => {
+        current(mine);
+        await credentials.setAccount(saved);
+        current(mine);
+        await credentials.setCurrentAccount(saved.account_id);
+        current(mine);
+        await credentials.clearPendingLogin();
+        current(mine);
+        client.close();
+        client = nextClient;
+        account = saved;
+        ownId = String(saved.user_id);
+        signedIn = true;
+        failure = '';
+        retryLogin = false;
+        pending = null;
+        shown = '';
+      });
+    } finally {
+      if (client !== nextClient) nextClient.close();
+    }
   };
 
   // submit tries the tablet slot once. The slot is never forced, so no other
   // device of the person is evicted; an occupied slot asks for the passcode.
   const submit = async (): Promise<SignInStep> => {
     if (!pending) throw new Refusal('invalid_request', 'no sign-in in progress');
-    const result = await sdk.attemptLogin(pending.email, pending.password, pending.deviceUuid, 'tablet', false);
+    const mine = generation;
+    const attempt = pending;
+    const result = await sdk.attemptLogin(attempt.email, attempt.password, attempt.deviceUuid, 'tablet', false);
+    current(mine);
     if (result.authenticated) {
-      await keep(result);
+      await keep(result, mine);
       return { state: 'signed_in' };
     }
     if (result.next_action === 'provide_passcode') {
-      const code = await sdk.requestPasscode(pending.email, pending.password, pending.deviceUuid);
+      const code = await sdk.requestPasscode(attempt.email, attempt.password, attempt.deviceUuid);
+      current(mine);
       if (!code.passcode) {
         failure = code.error ?? 'passcode request failed';
         pending = null;
         return { state: 'failing' };
       }
-      await credentials.savePendingLogin({
-        device_uuid: pending.deviceUuid,
-        device_type: 'tablet',
-        email: pending.email,
-        created_at: (options.now ? options.now() : new Date()).toISOString(),
+      await save(async () => {
+        current(mine);
+        await credentials.savePendingLogin({
+          device_uuid: attempt.deviceUuid,
+          device_type: 'tablet',
+          email: attempt.email,
+          created_at: (options.now ? options.now() : new Date()).toISOString(),
+        });
       });
+      current(mine);
       // The code is shown now and the person enters it on their phone. The
       // registration then finishes in the background; nothing of it is kept.
       shown = code.passcode;
       confirming = true;
-      const mine = generation;
-      registering = confirm(mine).finally(() => {
+      registering = confirm(mine).catch(async () => {
+        if (mine !== generation) return;
+        failure = 'registration failed';
+        pending = null;
+        shown = '';
+        await save(async () => {
+          if (mine === generation) await credentials.clearPendingLogin();
+        }).catch(() => { /* A later explicit cancellation retries cleanup. */ });
+      }).finally(() => {
         if (mine !== generation) return;
         confirming = false;
         registering = null;
@@ -249,12 +305,12 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
       pending = null;
       return;
     }
-    await keep(result);
+    await keep(result, mine);
   };
 
   const signInState = async (): Promise<SignInState> => {
     if (signedIn) return 'signed_in';
-    if (failure) return failure === 'needs_sign_in' ? 'needs_sign_in' : 'failing';
+    if (failure && !retryLogin) return failure === 'needs_sign_in' ? 'needs_sign_in' : 'failing';
     if (pending || confirming) return 'needs_sign_in';
     try {
       await ready();
@@ -269,8 +325,8 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
   const message = (log: KakaoLogRecord): Message => {
     const id = typeof log.log_id === 'string' ? log.log_id : String(log.log_id ?? '');
     if (id === '') throw new Refusal('upstream_changed', 'log id');
-    const sent = typeof log.sent_at === 'number' && Number.isFinite(log.sent_at) ? new Date(log.sent_at) : null;
-    if (!sent) throw new Refusal('upstream_changed', 'sent at');
+    const sent = typeof log.sent_at === 'number' && Number.isFinite(log.sent_at) ? new Date(log.sent_at * 1000) : null;
+    if (!sent || !Number.isFinite(sent.getTime())) throw new Refusal('upstream_changed', 'sent at');
     const authorId = String(log.author_id);
     const route: Route = ownId !== '' && authorId === ownId ? 'person'
       : authorId === '0' ? 'system' : 'external_participant';
@@ -280,6 +336,7 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
       route,
       at: sent.toISOString(),
       text: typeof log.message === 'string' ? log.message : '',
+      messageType: String(log.type),
     };
     if (log.type === TYPE.REPLY) {
       const source = log.attachment?.src_logId;
@@ -317,19 +374,18 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
       failure = '';
       confirming = false;
       registering = null;
-      try {
-        await credentials.clearPendingLogin();
-      } catch {
-        // A record that cannot be cleared still leaves this attempt dropped.
-      }
+      retryLogin = false;
+      await save(() => credentials.clearPendingLogin());
     },
 
     async beginSignIn(): Promise<SignInStep> {
+      const mine = generation;
       try {
         await ready();
       } catch {
         // A stored session the platform rejected asks for sign-in again.
       }
+      current(mine);
       if (signedIn) return { state: 'signed_in' };
       // A begin is an explicit request for a sign-in step, so a rejected
       // password or a lost session starts over rather than staying failed: the
@@ -345,6 +401,7 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
           : { state: 'needs_sign_in', prompt: { key: 'password', kind: 'secret', text: 'KakaoTalk password' } };
       }
       const saved = await credentials.loadPendingLogin();
+      current(mine);
       pending = { email: saved?.email ?? '', password: '', deviceUuid: saved?.device_uuid ?? sdk.generateDeviceUuid() };
       return pending.email === ''
         ? { state: 'needs_sign_in', prompt: { key: 'email', kind: 'text', text: 'KakaoTalk email' } }

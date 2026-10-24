@@ -85,6 +85,10 @@ export type Fixture = {
 
 export function fixtureSDK(script: Recorded, configDir: string): Fixture {
   const calls: string[] = [];
+  const record = (method: string) => {
+    calls.push(method);
+    writeFileSync(join(configDir, 'calls.json'), JSON.stringify(calls), { mode: 0o600 });
+  };
   let sink: ((packet: { method: string; body: Record<string, unknown> }) => void) | null = null;
   const accounts: Record<string, RecordedAccount> = { ...(script.accounts ?? {}) };
   let current: string | null = Object.keys(accounts)[0] ?? null;
@@ -109,38 +113,41 @@ export function fixtureSDK(script: Recorded, configDir: string): Fixture {
 
   const credentials = {
     async getAccount(id?: string) {
-      calls.push('getAccount');
+      record('getAccount');
       return accounts[id ?? current ?? ''] ?? null;
     },
     async setAccount(account: RecordedAccount) {
-      calls.push('setAccount');
+      record('setAccount');
       accounts[account.account_id] = account;
       persist();
     },
     async setCurrentAccount(id: string) {
-      calls.push('setCurrentAccount');
+      record('setCurrentAccount');
       current = id;
       persist();
     },
     async loadPendingLogin() {
-      calls.push('loadPendingLogin');
+      record('loadPendingLogin');
       return pendingLogin;
     },
     async savePendingLogin(state: { device_uuid: string; device_type: string; email: string }) {
-      calls.push('savePendingLogin');
+      record('savePendingLogin');
       pendingLogin = state;
       persist();
     },
     async clearPendingLogin() {
-      calls.push('clearPendingLogin');
+      record('clearPendingLogin');
       pendingLogin = null;
       persist();
     },
   };
 
   class KakaoTalkClient {
+    private requireLogin() {
+      if (!own) throw new Error('client has not logged in');
+    }
     async login(input: { oauthToken: string; userId: string; deviceUuid?: string; deviceType?: string }) {
-      calls.push('login');
+      record('login');
       if (script.expire) {
         throw Object.assign(new Error('stored session expired'), { code: 'invalid_access_token' });
       }
@@ -149,12 +156,15 @@ export function fixtureSDK(script: Recorded, configDir: string): Fixture {
       return this;
     }
     async acquireSession() {
-      calls.push('acquireSession');
+      this.requireLogin();
+      record('acquireSession');
       if (script.session?.error) throw new Error(script.session.error);
+      for (const packet of script.push ?? []) sink?.(packet);
       return {};
     }
     async getChats() {
-      calls.push('getChats');
+      this.requireLogin();
+      record('getChats');
       return (script.chats ?? []).map(chat => ({
         chat_id: chat.chat_id,
         type: chat.type,
@@ -168,34 +178,37 @@ export function fixtureSDK(script: Recorded, configDir: string): Fixture {
       }));
     }
     async getMessagePage(_chat: string, options?: { count?: number; from?: string }) {
-      calls.push('getMessagePage');
+      this.requireLogin();
+      record('getMessagePage');
       const from = options?.from ?? '';
       return script.pages?.[from] ?? { messages: [], next_cursor: null, complete: true };
     }
     async getMembers() {
-      calls.push('getMembers');
+      this.requireLogin();
+      record('getMembers');
       return script.members ?? [];
     }
     async getProfile() {
-      calls.push('getProfile');
+      this.requireLogin();
+      record('getProfile');
       return script.profile ?? { user_id: own, nickname: '' };
     }
     onPush(handler: (packet: { method: string; body: Record<string, unknown> }) => void) {
-      calls.push('onPush');
+      record('onPush');
       sink = handler;
       return () => {
-        calls.push('offPush');
+        record('offPush');
         sink = null;
       };
     }
     close() {
-      calls.push('close');
+      record('close');
     }
   }
 
   class KakaoCredentialManager {
     constructor() {
-      calls.push('KakaoCredentialManager');
+      record('KakaoCredentialManager');
     }
     getAccount = credentials.getAccount;
     setAccount = credentials.setAccount;
@@ -211,7 +224,7 @@ export function fixtureSDK(script: Recorded, configDir: string): Fixture {
     KakaoTalkClient,
     KakaoCredentialManager,
     async attemptLogin(_email, _password, deviceUuid, deviceType, forced) {
-      calls.push('attemptLogin');
+      record('attemptLogin');
       if (forced) throw new Error('the tablet slot is never forced');
       const result = next();
       if (result.authenticated) {
@@ -228,11 +241,11 @@ export function fixtureSDK(script: Recorded, configDir: string): Fixture {
       return result;
     },
     async requestPasscode() {
-      calls.push('requestPasscode');
+      record('requestPasscode');
       return { authenticated: false, next_action: 'confirm_on_phone', passcode: script.login?.passcode ?? '0000' };
     },
     async registerDevice() {
-      calls.push('registerDevice');
+      record('registerDevice');
       const delay = script.login?.registration?.delayMs ?? 0;
       if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
       return script.login?.registration?.error
@@ -240,11 +253,11 @@ export function fixtureSDK(script: Recorded, configDir: string): Fixture {
         : { authenticated: false };
     },
     generateDeviceUuid() {
-      calls.push('generateDeviceUuid');
+      record('generateDeviceUuid');
       return 'fixture-device-uuid';
     },
     classifyKakaoChat(chat) {
-      calls.push('classifyKakaoChat');
+      record('classifyKakaoChat');
       const open = new Set([2, 13, 14, 15, 16, 'OM', 'OD']);
       if (open.has(chat.type)) return 'open';
       if (typeof chat.type === 'string' && !['DirectChat', 'MultiChat', 'PlusChat', 'MemoChat', 'OM', 'OD'].includes(chat.type)) return 'unknown';

@@ -23,6 +23,9 @@ account.
   carries `log_id`, `type`, `author_id`, `author_name`, `message`, `sent_at` and
   an `attachment` object; a reply names its source in
   `attachment.src_logId`.
+- Upstream `client.test.ts` and `listener.test.ts` use Unix seconds for
+  `sent_at` / `sendAt` (for example 1700000000). Both pages and live events
+  convert seconds to an ISO timestamp; synthetic fixtures use those same units.
 - `log_id` is a 64-bit integer that already exceeds `Number.MAX_SAFE_INTEGER`.
   The driver keeps it as the string the SDK carries, and Core validates it as an
   opaque identifier.
@@ -85,6 +88,20 @@ therefore survives the change from pending to the platform's user id.
 
 ## Sign-in
 
+The Core service has one pending relay and one lock for its lifecycle. Each
+step captures the session and uses a cancellable request; transport I/O does
+not hold the lifecycle lock. Completion validates the same live attempt before
+committing. Expiration cancels the add-on and removes an unclaimed session
+before allowing another connection. A reset failure retains the reservation.
+The add-on invalidates asynchronous work by generation and orders credential
+writes with cancellation. The manager keys sessions by platform and account,
+and a single-account session cannot be reassigned once claimed.
+
+The installed 2.39.1 `client.js` confirms that `login(credentials)` initializes
+the client without opening LOCO. The driver therefore calls `acquireSession`
+before reporting success. Transient initialization failures retry on the next
+scheduled read; background registration rejections become a failed step.
+
 The add-on's own flow is relayed unchanged: email, then password (read without
 echo), then the passcode Kakao shows, which the person enters on the phone while
 the tablet registration finishes in the background. A repeated step shows the
@@ -128,3 +145,7 @@ The client prints the add-on's prompts and shows a code with `show.kind=code`.
 A password typed at a terminal is read without echo. No actual account was
 used for verification: the driver is exercised against LOCO-shaped fixtures
 through the add-on's line protocol, and the service against a scripted add-on.
+`e2e/m4/kakaotalk_addon_test.go` additionally exercises the owner relay, first
+fill, incremental restart, empty message type and file metadata, a quiet-chat
+skip, gap notification and rejected-session isolation through a running Core
+and its sandboxed TypeScript add-on.

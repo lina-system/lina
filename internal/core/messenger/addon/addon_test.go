@@ -455,11 +455,11 @@ func TestSingleAccountPlatformKeepsOneSessionUntilStopped(t *testing.T) {
 		SingleAccount: []string{"kakaotalk"},
 	})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	first, err := manager.Addon("kakaotalk", "pending")
+	first, err := manager.Addon("kakaotalk", "7788")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = first.ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "pending"}); err != nil {
+	if _, err = first.ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "7788"}); err != nil {
 		t.Fatal(err)
 	}
 	second, err := manager.Addon("kakaotalk", "7788")
@@ -504,11 +504,11 @@ func TestRemoveLeavesTheOwnersSessionAlone(t *testing.T) {
 		SingleAccount: []string{"kakaotalk"},
 	})
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
-	first, err := manager.Start("kakaotalk", "pending")
+	first, err := manager.Start("kakaotalk", "7788")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.Adapter().ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "pending"}); err != nil {
+	if _, err := first.Adapter().ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "7788"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := manager.Start("kakaotalk", "7788"); err != nil {
@@ -600,5 +600,40 @@ func TestPageCarriesAnEditAnEmptyBodyAndAttachments(t *testing.T) {
 	}
 	if page.Through.IsZero() || page.HasMore || page.Next != "9007199254740993123" {
 		t.Fatalf("page position %+v", page)
+	}
+}
+
+func TestManagerKeepsPlatformNamespaces(t *testing.T) {
+	manager := addon.NewManager(addon.Config{StateRoot: t.TempDir()})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	first, err := manager.Start("line", "same")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.Start("discord", "same")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second || second.Platform() != "discord" || second.Account() != "same" {
+		t.Fatal("different platforms shared a session")
+	}
+}
+
+func TestSingleAccountOwnerCannotBeReassigned(t *testing.T) {
+	manager := addon.NewManager(addon.Config{StateRoot: t.TempDir(), SingleAccount: []string{"kakaotalk"}})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	pending, err := manager.Start("kakaotalk", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := manager.Start("kakaotalk", "7788")
+	if err != nil || owner != pending {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, err := manager.Start("kakaotalk", "old-account"); !errors.Is(err, messenger.ErrInvalid) {
+		t.Fatalf("historical account reassigned the shared session: %v", err)
+	}
+	if _, err := owner.Adapter().ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "old-account"}); !errors.Is(err, messenger.ErrInvalid) {
+		t.Fatalf("read another account through the owner's session: %v", err)
 	}
 }

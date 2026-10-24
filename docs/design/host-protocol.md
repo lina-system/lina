@@ -739,6 +739,11 @@ the connection that accepted the terms, are never stored, and the relay ends
 after ten minutes. While one connection holds the add-on's pending sign-in,
 another connection's `connect` or `sign_in` is refused with `not_authorized`,
 and an expired relay cancels its flow before the next one begins.
+An overlapping step on the same connection is also `not_authorized`. Cleanup
+failure returns `unavailable` and retains the reservation until cleanup succeeds.
+Signing in again cannot change the source account. Disconnect invalidates any
+outstanding completion, and repeating it for a historical account leaves the
+current session intact.
 The source reader continues independently of that client connection.
 
 ## Deferred

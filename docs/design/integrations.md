@@ -866,11 +866,20 @@ than resuming abandoned credentials or showing its passcode again. A stored
 session the platform rejects marks only that source as needing sign-in; other
 sources keep reading.
 
+Only one step may run at a time, including repeated requests from the same
+connection. A failed cancellation prevents a replacement until cleanup succeeds.
+An abandoned new connection also loses its pending session, including credentials
+that registration saved before the relay expired. Signing in again must return
+the requested account. Disconnect invalidates outstanding sign-in work before
+removing the session; a late reply cannot reconnect it. Repeating disconnect for
+an old account leaves the current account's session intact.
+
 The adapter lists chats, reads a chat forward from a `log_id` cursor, reads
 members, follows live message pushes, and reports a 64-bit log id as an opaque
-string. It reports no edits and no deletions, because the platform offers them
+string. It reports no edits and no deletions, because the platform offers neither
 to this client, and an empty message keeps an empty body with its type and
-attachment metadata. Reading never enters the room, so it advances no read
+attachment metadata. The platform message type is retained as an opaque string
+even when there is no text or file. Reading never enters the room, so it advances no read
 watermark. The source never sends, never marks a message read, never evicts the
 person's other devices and never takes a password from another app's cache.
 

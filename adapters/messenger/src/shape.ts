@@ -49,6 +49,10 @@ export function message(value: unknown): Message {
     at: time(source.at),
     text: source.text,
   };
+  if (source.messageType !== undefined) {
+    if (!id(source.messageType)) throw changed('message type');
+    result.messageType = source.messageType;
+  }
   if (source.edited !== undefined && source.edited !== '') result.edited = time(source.edited);
   if (source.decryptionFailed !== undefined) {
     if (typeof source.decryptionFailed !== 'boolean') throw changed('message');

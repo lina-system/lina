@@ -961,11 +961,11 @@ ON CONFLICT(platform,account,author) DO UPDATE SET name=excluded.name,email=excl
 	if !message.Edited.IsZero() {
 		edited = message.Edited.UTC().Format(time.RFC3339Nano)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_record(platform,account,chat,message,revision,event,author,author_name,occurred_at,edited_at,decryption_failed)
-VALUES(?,?,?,?,?,?,?,?,?,?,?)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_record(platform,account,chat,message,revision,event,author,author_name,occurred_at,edited_at,decryption_failed,message_type)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(platform,account,chat,message) DO UPDATE SET revision=excluded.revision,event=excluded.event,
- author=excluded.author,author_name=excluded.author_name,edited_at=excluded.edited_at,decryption_failed=excluded.decryption_failed`,
-		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID, message.Author.ID, message.Author.Name, occurred, edited, boolInt(message.DecryptionFailed)); err != nil {
+ author=excluded.author,author_name=excluded.author_name,edited_at=excluded.edited_at,decryption_failed=excluded.decryption_failed,message_type=excluded.message_type`,
+		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID, message.Author.ID, message.Author.Name, occurred, edited, boolInt(message.DecryptionFailed), message.MessageType); err != nil {
 		return err
 	}
 	// The platform's attachment metadata commits with the record, so the

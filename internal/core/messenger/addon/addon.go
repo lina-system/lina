@@ -140,13 +140,17 @@ func (s *Session) Platform() string { return s.platform }
 func (s *Session) Account() string { return s.key }
 
 // claim records the account the platform named for this session.
-func (s *Session) claim(account string) {
+func (s *Session) claim(account string) error {
 	if account == "" {
-		return
+		return nil
 	}
 	s.ownerMu.Lock()
+	defer s.ownerMu.Unlock()
+	if s.single && s.owner != "" && s.owner != account {
+		return messenger.ErrInvalid
+	}
 	s.owner = account
-	s.ownerMu.Unlock()
+	return nil
 }
 
 // owns reports whether this session serves the account. A session the platform
@@ -154,7 +158,7 @@ func (s *Session) claim(account string) {
 func (s *Session) owns(account string) bool {
 	s.ownerMu.Lock()
 	defer s.ownerMu.Unlock()
-	return account != "" && s.owner == account
+	return s.owner == account
 }
 
 func (a *Adapter) SignIn(ctx context.Context, id messenger.SourceID) (messenger.SignInState, error) {
@@ -302,13 +306,17 @@ func (m *Manager) Start(platform, account string) (*Session, error) {
 	if m.closed {
 		return nil, ErrStopped
 	}
-	if session, ok := m.sessions[key]; ok {
-		session.claim(account)
+	if session, ok := m.sessions[platform+":"+key]; ok {
+		if err := session.claim(account); err != nil {
+			return nil, err
+		}
 		return session, nil
 	}
 	session := newSession(platform, key, key == platform, m.cfg)
-	session.claim(account)
-	m.sessions[key] = session
+	if err := session.claim(account); err != nil {
+		return nil, err
+	}
+	m.sessions[platform+":"+key] = session
 	return session, nil
 }
 
@@ -320,8 +328,8 @@ func (m *Manager) Stop(ctx context.Context, platform, account string) error {
 	}
 	key := m.key(platform, account)
 	m.mu.Lock()
-	session, ok := m.sessions[key]
-	delete(m.sessions, key)
+	session, ok := m.sessions[platform+":"+key]
+	delete(m.sessions, platform+":"+key)
 	m.mu.Unlock()
 	if !ok {
 		return nil
@@ -337,7 +345,7 @@ func (m *Manager) Remove(ctx context.Context, platform, account string) error {
 	}
 	key := m.key(platform, account)
 	m.mu.Lock()
-	session, ok := m.sessions[key]
+	session, ok := m.sessions[platform+":"+key]
 	m.mu.Unlock()
 	// A single-account platform keeps one session and one data directory for
 	// every account of the platform. Ending it for a source that does not own
@@ -392,7 +400,7 @@ func (a *Adapter) forAccount(id messenger.SourceID) error {
 	if id.Platform != a.platform || id.Account == "" {
 		return messenger.ErrInvalid
 	}
-	if !a.single && id.Account != a.key {
+	if !a.single && id.Account != a.key || a.single && !a.session.owns(id.Account) {
 		return messenger.ErrInvalid
 	}
 	return nil

@@ -88,6 +88,8 @@ type Message struct {
 	At     time.Time
 	Edited time.Time
 	Text   string
+	// MessageType keeps the platform's opaque message kind, including empty messages.
+	MessageType string
 	// DecryptionFailed marks a message the platform served but this account
 	// could not decrypt. Its text is empty, and it stays a record with the
 	// flag: it is never read as an empty message someone sent.

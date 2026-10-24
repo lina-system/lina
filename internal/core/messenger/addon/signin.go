@@ -61,7 +61,13 @@ func (s *Session) CancelSignIn(ctx context.Context) error {
 	var result struct {
 		Cancelled bool `json:"cancelled"`
 	}
-	return s.process.call(ctx, "cancelSignIn", nil, &result)
+	if err := s.process.call(ctx, "cancelSignIn", nil, &result); err != nil {
+		return err
+	}
+	if !result.Cancelled {
+		return ErrUpstreamChanged
+	}
+	return nil
 }
 
 // WhoAmI reads the signed-in account's public profile.

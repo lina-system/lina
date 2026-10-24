@@ -6,6 +6,7 @@ package canon
 // keeps the notice from repeating while the gap lasts
 // ([docs/design/integrations.md#sync-and-coverage]).
 const MessengerGapSchema = `
+ALTER TABLE messenger_record ADD COLUMN message_type TEXT NOT NULL DEFAULT '';
 ALTER TABLE messenger_chat ADD COLUMN last_message TEXT NOT NULL DEFAULT '';
 CREATE TABLE messenger_gap (
  platform TEXT NOT NULL, account TEXT NOT NULL, chat TEXT NOT NULL,

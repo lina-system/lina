@@ -26,6 +26,7 @@ export type Message = {
   at: string;
   edited?: string;
   text: string;
+  messageType?: string;
   // decryptionFailed marks a message the platform served but this account
   // could not decrypt. It keeps the record with no text; it is never an empty
   // message that reads as something the person wrote.

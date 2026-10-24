@@ -3,8 +3,8 @@
 // LOCO-shaped fixture. Nothing here contacts KakaoTalk, signs in or reads a
 // session.
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { afterEach, test } from 'node:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -31,13 +31,18 @@ const log = (id, text, overrides = {}) => ({
   author_name: 'Someone',
   message: text,
   attachment: null,
-  sent_at: Date.parse('2026-10-24T09:00:00Z'),
+  sent_at: Date.parse('2026-10-24T09:00:00Z') / 1000,
   ...overrides,
 });
 
-function open(script) {
+const temporary = [];
+afterEach(() => { for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+
+function open(script, customize = () => {}) {
   const dir = mkdtempSync(join(tmpdir(), 'kakaotalk-'));
+  temporary.push(dir);
   const fixture = fixtureSDK(script, dir);
+  customize(fixture.sdk);
   return { dir, fixture, driver: openKakaoTalk(fixture.sdk, { configDir: dir }) };
 }
 
@@ -67,12 +72,12 @@ test('pages read forward from a log id cursor and finish with the newest time', 
     chats: [{ chat_id: '100', type: 11, display_name: 'A friend', title: null, active_members: 2, last_log_id: BIG_LOG_ID }],
     pages: {
       '': {
-        messages: [log('1', 'first'), log('2', 'second', { sent_at: Date.parse('2026-10-24T09:01:00Z') })],
+        messages: [log('1', 'first'), log('2', 'second', { sent_at: Date.parse('2026-10-24T09:01:00Z') / 1000 })],
         next_cursor: '2',
         complete: false,
       },
       '2': {
-        messages: [log(BIG_LOG_ID, 'third', { author_id: 7788, author_name: 'Me', sent_at: Date.parse('2026-10-24T09:02:00Z') })],
+        messages: [log(BIG_LOG_ID, 'third', { author_id: 7788, author_name: 'Me', sent_at: Date.parse('2026-10-24T09:02:00Z') / 1000 })],
         next_cursor: BIG_LOG_ID,
         complete: true,
       },
@@ -139,15 +144,15 @@ test('live pushes carry the message a page would read', async () => {
     chats: [{ chat_id: '100', type: 11, display_name: 'A friend', title: null, active_members: 2, last_log_id: BIG_LOG_ID }],
   }));
   const events = [];
+  await driver.signInState();
   const stop = driver.live(event => events.push(event));
-  await new Promise(resolve => setTimeout(resolve, 5));
   fixture.deliver({
     method: 'MSG',
     body: {
       chatId: '100',
       chatLog: {
         logId: BIG_LOG_ID, type: 1, authorId: 42, authorName: 'Someone',
-        message: 'live', attachment: null, sendAt: Date.parse('2026-10-24T10:00:00Z'),
+        message: 'live', attachment: null, sendAt: Date.parse('2026-10-24T10:00:00Z') / 1000,
       },
     },
   });
@@ -180,7 +185,7 @@ test('sign-in runs on the tablet slot through the passcode the person confirms o
   assert.deepEqual(step, { state: 'needs_sign_in', show: { kind: 'code', value: '4821' } });
   // The registration finishes in the background while the person confirms the
   // code on their phone.
-  await new Promise(resolve => setTimeout(resolve, 20));
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(await driver.signInState(), 'signed_in');
   assert.deepEqual(await driver.whoami(), { id: '7788', name: 'Me' });
   assert.ok(fixture.calls.includes('registerDevice'));
@@ -190,26 +195,29 @@ test('sign-in runs on the tablet slot through the passcode the person confirms o
 test('a live subscription that cannot start reports its end', async () => {
   const { driver } = open(signedIn({ session: { error: 'session refused' } }));
   const events = [];
-  let ended = null;
+  const ended = Promise.withResolvers();
   const stop = driver.live(
     event => events.push(event),
-    error => { ended = error; },
+    error => { ended.resolve(error); },
   );
-  await new Promise(resolve => setTimeout(resolve, 20));
+  const cause = await ended.promise;
   stop();
   assert.equal(events.length, 0);
-  assert.match(String(ended?.message ?? ended), /session refused/);
+  assert.equal(cause.code, 'source_failing');
 });
 
 test('a cancelled sign-in is not resumed by the next connection', async () => {
+  const registration = Promise.withResolvers();
   const { driver } = open({
     login: {
       attempts: [{ authenticated: false, next_action: 'provide_passcode' }, { authenticated: true, account_id: '7788', user_id: '7788' }],
       passcode: '4821',
-      registration: { delayMs: 30 },
     },
     profile: { user_id: '7788', nickname: 'Me' },
     chats: [],
+  }, sdk => {
+    const register = sdk.registerDevice;
+    sdk.registerDevice = async (...args) => { await registration.promise; return register(...args); };
   });
   await driver.beginSignIn();
   await driver.answer('email', 'person@example.test');
@@ -219,7 +227,8 @@ test('a cancelled sign-in is not resumed by the next connection', async () => {
   // The person walks away: the abandoned attempt is dropped, including the
   // registration still in flight, so the next connection sees no passcode.
   await driver.cancelSignIn();
-  await new Promise(resolve => setTimeout(resolve, 60));
+  registration.resolve();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(await driver.signInState(), 'needs_sign_in');
   const again = await driver.beginSignIn();
   assert.deepEqual(again.prompt, { key: 'email', kind: 'text', text: 'KakaoTalk email' });
@@ -267,6 +276,7 @@ test('an unknown chat class refuses the source rather than guessing its kind', a
 // recorded SDK. Every SDK call the driver made must be one the allowlist names.
 test('no SDK method outside the read allowlist is ever reached', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'kakaotalk-boundary-'));
+  temporary.push(dir);
   writeFileSync(join(dir, 'script.json'), JSON.stringify(signedIn({
     chats: [{ chat_id: '100', type: 11, display_name: 'A friend', title: null, active_members: 2, last_log_id: BIG_LOG_ID }],
     pages: {
@@ -335,14 +345,17 @@ test('no SDK method outside the read allowlist is ever reached', async t => {
 });
 
 test('the phone confirmation keeps showing its code until the tablet is registered', async () => {
+  const registration = Promise.withResolvers();
   const { driver } = open({
     login: {
       attempts: [{ authenticated: false, next_action: 'provide_passcode' }, { authenticated: true, account_id: '7788', user_id: '7788' }],
       passcode: '4821',
-      registration: { delayMs: 40 },
     },
     profile: { user_id: '7788', nickname: 'Me' },
     chats: [],
+  }, sdk => {
+    const register = sdk.registerDevice;
+    sdk.registerDevice = async (...args) => { await registration.promise; return register(...args); };
   });
   assert.deepEqual(await driver.beginSignIn(), {
     state: 'needs_sign_in', prompt: { key: 'email', kind: 'text', text: 'KakaoTalk email' },
@@ -355,8 +368,79 @@ test('the phone confirmation keeps showing its code until the tablet is register
   // answer is refused rather than starting another login.
   assert.deepEqual((await driver.beginSignIn()).show, { kind: 'code', value: '4821' });
   await assert.rejects(driver.answer('password', 'again'), /sign-in in progress/);
-  for (let i = 0; i < 40 && (await driver.signInState()) !== 'signed_in'; i++) {
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
+  registration.resolve();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal((await driver.beginSignIn()).state, 'signed_in');
+});
+
+test('fresh credentials initialize the client before reporting signed in', async () => {
+  const { driver } = open({ login: { attempts: [{ authenticated: true, user_id: '7788' }] } });
+  await driver.beginSignIn();
+  await driver.answer('email', 'person@example.test');
+  assert.equal((await driver.answer('password', 'synthetic-password')).state, 'signed_in');
+  assert.equal((await driver.whoami()).id, '7788');
+  assert.deepEqual(await driver.listChats(), []);
+});
+
+test('stored-session login recovers on the next read after a transient failure', async () => {
+  let calls = 0;
+  const { driver } = open(signedIn(), sdk => {
+    const Client = sdk.KakaoTalkClient;
+    sdk.KakaoTalkClient = class extends Client {
+      async login(...args) {
+        if (++calls === 1) throw Object.assign(new Error('temporary'), { code: 'ETIMEDOUT' });
+        return super.login(...args);
+      }
+    };
+  });
+  assert.equal(await driver.signInState(), 'failing');
+  assert.equal(await driver.signInState(), 'signed_in');
+  assert.equal(calls, 2);
+});
+
+test('cancellation invalidates an in-flight password login before it saves credentials', async () => {
+  const started = Promise.withResolvers(), release = Promise.withResolvers();
+  const { driver, fixture } = open({}, sdk => {
+    sdk.attemptLogin = async () => {
+      started.resolve();
+      await release.promise;
+      return { authenticated: true, user_id: '7788', credentials: {
+        access_token: 'synthetic', user_id: '7788', device_uuid: 'fixture', device_type: 'tablet',
+      } };
+    };
+  });
+  await driver.beginSignIn();
+  await driver.answer('email', 'old@example.test');
+  const answer = driver.answer('password', 'synthetic-password');
+  await started.promise;
+  await driver.cancelSignIn();
+  assert.equal((await driver.beginSignIn()).prompt.key, 'email');
+  release.resolve();
+  await assert.rejects(answer, error => error.code === 'invalid_request');
+  assert.ok(!fixture.calls.includes('setAccount'));
+  assert.equal((await driver.beginSignIn()).prompt.key, 'email');
+});
+
+test('background registration rejection becomes a failed sign-in', async () => {
+  const rejected = Promise.withResolvers();
+  const { driver } = open({ login: { attempts: [{ authenticated: false, next_action: 'provide_passcode' }], passcode: '4821' } }, sdk => {
+    sdk.registerDevice = async () => { await rejected.promise; throw new Error('synthetic failure'); };
+  });
+  await driver.beginSignIn();
+  await driver.answer('email', 'person@example.test');
+  assert.equal((await driver.answer('password', 'synthetic-password')).show.value, '4821');
+  rejected.resolve();
+  // Let the settled rejection and its handler run, without a timing assumption.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(await driver.signInState(), 'failing');
+  assert.equal((await driver.beginSignIn()).prompt.key, 'email');
+});
+
+test('an empty message retains its platform type even without a file attachment', async () => {
+  const { driver } = open(signedIn({ pages: { '': {
+    messages: [log('1', '', { type: 71 })], next_cursor: '1', complete: true,
+  } } }));
+  const page = await driver.page('100', '');
+  assert.equal(page.messages[0].messageType, '71');
+  assert.equal(page.messages[0].text, '');
 });

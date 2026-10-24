@@ -248,7 +248,7 @@ func TestSignInAgainKeepsAcceptance(t *testing.T) {
 // An answer without a live connection-bound attempt is refused, and a relay
 // stops accepting answers after its lifetime.
 func TestAnswerNeedsALiveAttempt(t *testing.T) {
-	h := newHarness(t, map[string][]string{"beginSignIn": {emailPrompt}, "answer": {passwordPrompt}})
+	h := newHarness(t, map[string][]string{"beginSignIn": {emailPrompt}, "answer": {passwordPrompt}, "cancelSignIn": {cancelled}})
 	if _, err := h.service.Answer(t.Context(), "connection", "email", "person@example.test"); !errors.Is(err, kakaotalk.ErrNoAttempt) {
 		t.Fatalf("answer before connect: %v", err)
 	}
@@ -272,8 +272,9 @@ func TestAnswerNeedsALiveAttempt(t *testing.T) {
 // being shown the first one's prompt; a failed attempt frees the flow.
 func TestOneConnectionHoldsTheSignIn(t *testing.T) {
 	h := newHarness(t, map[string][]string{
-		"beginSignIn": {emailPrompt, emailPrompt},
-		"answer":      {passwordPrompt, failing},
+		"beginSignIn":  {emailPrompt, emailPrompt},
+		"answer":       {passwordPrompt, failing},
+		"cancelSignIn": {cancelled},
 	})
 	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
 		t.Fatal(err)
@@ -295,7 +296,7 @@ func TestOneConnectionHoldsTheSignIn(t *testing.T) {
 	if err != nil || step.State != messenger.NeedsSignIn || step.Prompt == nil || step.Prompt.Key != "email" {
 		t.Fatalf("second connection after a failed attempt %+v, %v", step, err)
 	}
-	if ops := h.script.ops(); len(ops) != 4 || ops[0] != "beginSignIn" || ops[3] != "beginSignIn" {
+	if ops := h.script.ops(); len(ops) != 5 || ops[0] != "beginSignIn" || ops[3] != "cancelSignIn" || ops[4] != "beginSignIn" {
 		t.Fatalf("refused connections reached the add-on: %v", ops)
 	}
 }
@@ -465,6 +466,9 @@ func TestDisconnectEndsASignInStillInFlight(t *testing.T) {
 	if got := <-signed; !errors.Is(got.err, kakaotalk.ErrNoAttempt) {
 		t.Fatalf("a sign-in finished after its disconnect: %+v, %v", got.step, got.err)
 	}
+	if _, err := os.Stat(addon.DataDir(h.root, kakaotalk.Platform, kakaotalk.Platform)); !os.IsNotExist(err) {
+		t.Fatalf("late completion recreated the disconnected session: %v", err)
+	}
 	sources, err := service.Sources(t.Context())
 	if err != nil || len(sources) != 1 || sources[0].State != messenger.StateDisconnected {
 		t.Fatalf("source after the race: %+v, %v", sources, err)
@@ -530,5 +534,130 @@ func TestAdapterBindsTheSourcePlatform(t *testing.T) {
 	}
 	if got := adapter.Capabilities(); got.CursorKind != "log-id" || got.Edits || got.Deletions || len(got.Writes) != 0 {
 		t.Fatalf("capabilities %+v", got)
+	}
+}
+
+func TestExpiredAnswerResetsTheAddonBeforeReplacement(t *testing.T) {
+	h := newHarness(t, map[string][]string{
+		"beginSignIn": {emailPrompt, emailPrompt}, "cancelSignIn": {cancelled},
+	})
+	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
+		t.Fatal(err)
+	}
+	h.now = h.now.Add(11 * time.Minute)
+	if _, err := h.service.Answer(t.Context(), "first", "email", "old@example.test"); !errors.Is(err, kakaotalk.ErrNoAttempt) {
+		t.Fatalf("expired answer: %v", err)
+	}
+	if _, err := h.service.Connect(t.Context(), "second", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(h.script.ops(), ","); got != "beginSignIn,cancelSignIn,beginSignIn" {
+		t.Fatalf("replacement reused an unreset flow: %s", got)
+	}
+}
+
+func TestReplacementRequiresConfirmedCancellation(t *testing.T) {
+	h := newHarness(t, map[string][]string{
+		"beginSignIn":  {emailPrompt, emailPrompt},
+		"cancelSignIn": {`{"id":"","ok":false,"error":"source_failing"}`, cancelled},
+	})
+	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
+		t.Fatal(err)
+	}
+	h.now = h.now.Add(11 * time.Minute)
+	if _, err := h.service.Connect(t.Context(), "second", true); err == nil {
+		t.Fatal("a failed reset transferred the pending sign-in")
+	}
+	if _, err := h.service.Connect(t.Context(), "second", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(h.script.ops(), ","); got != "beginSignIn,cancelSignIn,cancelSignIn,beginSignIn" {
+		t.Fatalf("reset was not retried: %s", got)
+	}
+}
+
+func TestSignInCannotChangeTheSourceAccount(t *testing.T) {
+	h := newHarness(t, map[string][]string{
+		"beginSignIn": {signedIn, signedIn, signedIn}, "whoami": {me, otherMe, me},
+	})
+	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.service.Disconnect(t.Context(), "7788"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.Connect(t.Context(), "second", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.SignIn(t.Context(), "again", "7799"); err == nil {
+		t.Fatal("sign-in reconnected a historical account instead of the requested source")
+	}
+	sources, err := h.service.Sources(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range sources {
+		if source.Account == "7788" && source.State != messenger.StateDisconnected {
+			t.Fatalf("historical account revived: %+v", source)
+		}
+	}
+}
+
+func TestOneOutstandingStepPerConnection(t *testing.T) {
+	h := newHarness(t, map[string][]string{"beginSignIn": {emailPrompt}, "answer": {passwordPrompt}})
+	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
+		t.Fatal(err)
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	h.script.setHold(func(op string) {
+		if op == "answer" {
+			close(started)
+			<-release
+		}
+	})
+	done := make(chan error, 1)
+	go func() { _, err := h.service.Answer(t.Context(), "first", "email", "person@example.test"); done <- err }()
+	<-started
+	_, err := h.service.Connect(t.Context(), "first", true)
+	close(release)
+	if !errors.Is(err, kakaotalk.ErrSignInBusy) {
+		t.Fatalf("overlapping step: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type retryRemoval struct {
+	kakaotalk.Sessions
+	calls int
+}
+
+func (s *retryRemoval) Remove(ctx context.Context, platform, account string) error {
+	s.calls++
+	if s.calls == 1 {
+		return errors.New("temporary removal failure")
+	}
+	return s.Sessions.Remove(ctx, platform, account)
+}
+
+func TestDisconnectRetriesFailedSessionRemoval(t *testing.T) {
+	h := newHarness(t, map[string][]string{"beginSignIn": {signedIn}, "whoami": {me}})
+	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
+		t.Fatal(err)
+	}
+	sessions := &retryRemoval{Sessions: h.manager}
+	service := kakaotalk.NewService(kakaotalk.Config{Person: person, Store: h.store, Sessions: sessions})
+	if err := service.Disconnect(t.Context(), "7788"); err == nil {
+		t.Fatal("removal failure hidden")
+	}
+	if err := service.Disconnect(t.Context(), "7788"); err != nil {
+		t.Fatal(err)
+	}
+	if sessions.calls != 2 {
+		t.Fatalf("removal retried %d times, want 2 calls", sessions.calls)
+	}
+	if _, err := os.Stat(addon.DataDir(h.root, kakaotalk.Platform, kakaotalk.Platform)); !os.IsNotExist(err) {
+		t.Fatalf("credentials survived retry: %v", err)
 	}
 }
