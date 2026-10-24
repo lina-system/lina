@@ -13,14 +13,23 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/embedding"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
 const VectorCandidates = 100
+const EmbeddingBatchSize = 32
+
+var ErrVectorsUnavailable = errors.New("recall_vectors_unavailable")
+
+// VectorConfig binds a derived index to one endpoint/model/dimension. The
+// adapter lives above recall in the Core layers and supplies this value.
+type VectorConfig struct {
+	Endpoint, Model string
+	Dimension       int
+}
 
 type Embedder interface {
-	Config() embedding.Config
+	VectorConfig() VectorConfig
 	Embed(context.Context, []string) ([][]float32, error)
 }
 
@@ -39,9 +48,9 @@ func NewVectors(ctx context.Context, db Canon, readEvent ReadEvent, adapter Embe
 	if adapter == nil {
 		return v, nil
 	}
-	cfg := adapter.Config().Defaults()
-	if cfg.Validate() != nil {
-		return nil, embedding.ErrInvalid
+	cfg := adapter.VectorConfig()
+	if cfg.Endpoint == "" || cfg.Model == "" || cfg.Dimension < 1 || cfg.Dimension > 4096 {
+		return nil, ErrInvalid
 	}
 	err := db.Write(ctx, func(tx *canon.Tx) error {
 		var model, endpoint string
@@ -77,9 +86,9 @@ func (v *Vectors) generation(ctx context.Context, tx *canon.Tx) (int64, bool, er
 	var ready, dimension int
 	var model, endpoint string
 	err := tx.QueryRowContext(ctx, "SELECT generation,ready,model,dimension,endpoint FROM search_index_config WHERE name='recall'").Scan(&generation, &ready, &model, &dimension, &endpoint)
-	cfg := v.adapter.Config().Defaults()
+	cfg := v.adapter.VectorConfig()
 	if err == nil && (model != cfg.Model || dimension != cfg.Dimension || endpoint != cfg.Endpoint) {
-		err = embedding.ErrUnavailable
+		err = ErrVectorsUnavailable
 	}
 	return generation, ready == 1, err
 }
@@ -105,7 +114,7 @@ func (v *Vectors) DrainBatch(ctx context.Context) (int, error) {
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT q.sequence,d.id,d.kind,d.source_id,d.text_hash FROM recall_embed_pending q JOIN recall_doc d ON d.id=q.doc WHERE q.sequence>? ORDER BY q.sequence LIMIT ?`, v.after, embedding.BatchSize)
+		rows, err := tx.QueryContext(ctx, `SELECT q.sequence,d.id,d.kind,d.source_id,d.text_hash FROM recall_embed_pending q JOIN recall_doc d ON d.id=q.doc WHERE q.sequence>? ORDER BY q.sequence LIMIT ?`, v.after, EmbeddingBatchSize)
 		if err != nil {
 			return err
 		}
@@ -214,7 +223,7 @@ func (v *Vectors) DrainBatch(ctx context.Context) (int, error) {
 			return err
 		}
 		if current != generation {
-			return embedding.ErrUnavailable
+			return ErrVectorsUnavailable
 		}
 		kept := docs[:0]
 		texts = texts[:0]
@@ -241,11 +250,11 @@ func (v *Vectors) DrainBatch(ctx context.Context) (int, error) {
 			return 0, err
 		}
 		if len(vectors) != len(docs) {
-			return 0, embedding.ErrUnavailable
+			return 0, ErrVectorsUnavailable
 		}
 		for _, vec := range vectors {
-			if !validVector(vec, v.adapter.Config().Defaults().Dimension) {
-				return 0, embedding.ErrUnavailable
+			if !validVector(vec, v.adapter.VectorConfig().Dimension) {
+				return 0, ErrVectorsUnavailable
 			}
 		}
 	}
@@ -324,7 +333,7 @@ func (v *Vectors) Query(ctx context.Context, scope Scope, text string) ([]string
 		var err error
 		generation, ready, err = v.generation(ctx, tx)
 		if err == nil && !ready {
-			err = embedding.ErrUnavailable
+			err = ErrVectorsUnavailable
 		}
 		return err
 	})
@@ -337,8 +346,8 @@ func (v *Vectors) Query(ctx context.Context, scope Scope, text string) ([]string
 	if err != nil {
 		return nil, err
 	}
-	if len(vectors) != 1 || !validVector(vectors[0], v.adapter.Config().Defaults().Dimension) {
-		return nil, embedding.ErrUnavailable
+	if len(vectors) != 1 || !validVector(vectors[0], v.adapter.VectorConfig().Dimension) {
+		return nil, ErrVectorsUnavailable
 	}
 	at := scope.At
 	if at == 0 {
@@ -362,7 +371,7 @@ func (v *Vectors) Query(ctx context.Context, scope Scope, text string) ([]string
 			return err
 		}
 		if !ready || current != generation {
-			return embedding.ErrUnavailable
+			return ErrVectorsUnavailable
 		}
 		rows, err := tx.QueryContext(ctx, prefix, args...)
 		if err != nil {

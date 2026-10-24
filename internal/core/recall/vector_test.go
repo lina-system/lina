@@ -44,8 +44,8 @@ type fakeEmbeddings struct {
 	during           func()
 }
 
-func (f *fakeEmbeddings) Config() embedding.Config {
-	return embedding.Config{Endpoint: "http://localhost/embeddings", Model: f.model, Dimension: f.dimension}
+func (f *fakeEmbeddings) VectorConfig() recall.VectorConfig {
+	return recall.VectorConfig{Endpoint: "http://localhost/embeddings", Model: f.model, Dimension: f.dimension}
 }
 func (f *fakeEmbeddings) Embed(_ context.Context, texts []string) ([][]float32, error) {
 	f.calls++
