@@ -46,16 +46,20 @@ const (
 )
 
 type Observation struct {
-	QuotaReset     int64              `json:"quota_reset,omitempty"`
-	Criterion      *CriterionEvidence `json:"criterion,omitempty"`
-	Tasks          []Task             `json:"tasks,omitempty"`
-	Status         Outcome            `json:"status"`
-	Handle         string             `json:"handle,omitempty"`
-	Head           string             `json:"head,omitempty"`
-	Proof          Proof              `json:"proof"`
-	PR             PRState            `json:"pr"`
-	EffectsSettled bool               `json:"effects_settled"`
-	Code           string             `json:"code,omitempty"`
+	QuotaReset int64              `json:"quota_reset,omitempty"`
+	Criterion  *CriterionEvidence `json:"criterion,omitempty"`
+	Tasks      []Task             `json:"tasks,omitempty"`
+	// Wait and Decision are what a liveness manager turn can record besides tasks.
+	// A turn that records none of the three leaves the goal blocked.
+	Wait           *Wait   `json:"wait,omitempty"`
+	Decision       string  `json:"decision,omitempty"`
+	Status         Outcome `json:"status"`
+	Handle         string  `json:"handle,omitempty"`
+	Head           string  `json:"head,omitempty"`
+	Proof          Proof   `json:"proof"`
+	PR             PRState `json:"pr"`
+	EffectsSettled bool    `json:"effects_settled"`
+	Code           string  `json:"code,omitempty"`
 }
 type Config struct {
 	Records       Definitions

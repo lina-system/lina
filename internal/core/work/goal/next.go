@@ -220,6 +220,8 @@ type Action struct {
 	ObservedAt           int64           `json:"observed_at"`
 	ObserverEpoch        uint64          `json:"observer_epoch"`
 	Receipt              json.RawMessage `json:"receipt,omitempty"`
+	// OpenCriteria names the unmet done condition for one liveness manager turn.
+	OpenCriteria []string `json:"open_criteria,omitempty"`
 }
 type State struct {
 	Goals   []Goal   `json:"goals"`
