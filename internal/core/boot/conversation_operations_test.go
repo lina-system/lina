@@ -207,6 +207,9 @@ func TestConversationRegistrationSurface(t *testing.T) {
 					want[kind] = "conversation"
 				}
 				want[protocol.KindLauncherRequest] = "launcher"
+				for _, kind := range []protocol.Kind{protocol.KindBindingGet, protocol.KindBindingMove, protocol.KindBindingStatsGet, protocol.KindBindingExport} {
+					want[kind] = "conversation"
+				}
 				for _, kind := range []protocol.Kind{protocol.KindStop, protocol.KindRunningGet, protocol.KindFollowUp, protocol.KindMultiTaskControl} {
 					want[kind] = "running"
 				}

@@ -245,9 +245,19 @@ func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationR
 		return err
 	}
 	chipLine := ""
-	if input, err := view.journal().Get(ctx, parent); err == nil {
-		if chip := view.chipFor(ctx, input); chip != nil && chip.Show {
-			chipLine = channelChipText(chip)
+	// A control command is not a message about an item; its reply carries
+	// only the control answer.
+	claimed := 0
+	if err := view.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT count(*) FROM channel_steering WHERE inbox_id=?", inboxNumber(parent)).Scan(&claimed)
+	}); err != nil {
+		return err
+	}
+	if claimed == 0 {
+		if input, err := view.journal().Get(ctx, parent); err == nil {
+			if chip := view.chipFor(ctx, input); chip != nil && chip.Show {
+				chipLine = channelChipText(chip)
+			}
 		}
 	}
 	for _, id := range ids {
