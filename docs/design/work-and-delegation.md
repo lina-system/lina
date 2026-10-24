@@ -786,8 +786,8 @@ finding; the repository may configure the count. Passes already recorded on late
 runs count toward that threshold when an older failure is reported. A fail/pass/fail
 sequence within 48 hours marks it `flaky` and keeps it open pending that recovery
 evidence. The window includes the pass start, including a pass reported after
-both failures, and earlier failure heads stay available when a failure is
-reported late.
+both failures. A failure head retained between that pair does not hide it,
+and earlier failure heads stay available when a failure is reported late.
 Each finding has one reusable status comment, and a closed finding can reopen
 at most once per 24 hours; failures during that cooldown update the comment.
 They do not block unrelated pull requests. The [foundation policy](../policy/foundation.md)
@@ -948,6 +948,15 @@ Every worker adapter offers the work engine the same operations:
 - report the worker's remaining quota where it exposes one; unknown is a value
 
 **Text-form tool calls.** Across LINA's own model routes ([go-core.md](go-core.md#model-path-and-accounts)) and coding workers (ACP and Codex adapters), one rule governs a turn that ends with a text-form tool call (`[tool_use …]`, `<tool_use>`, `<function_calls><invoke>`, `<antml:invoke>`, `<tool_call>`) and no real tool call ([text-tool-calls.md](../research/text-tool-calls.md)): Core detects it at the end of the turn, never shows it as progress or a completed reply, and handles it by (1) parsing it into a real call when the arguments are complete valid JSON (or complete named parameters) and the tool is allowed in the active declaration set (matching the declared name, or the declared name after stripping one leading `_`), else (2) starting a fresh session on the same worker (in the same worktree and branch) with a short state summary. There is no nudging loop in the contaminated session and no silent hand-off to another worker.
+
+Worker adapters hold assistant message text until the terminal boundary, while
+native tool, thought and plan activity remains available. The private text buffer
+is bounded to 1 MiB and 256 message items; overflow fails the turn without
+publishing a partial assistant message. Only the active session declarations for
+`read_projection`, `ask`, `coordinate`, `submit_receipt` and `check_inbox` can be
+recovered. A recovered call uses the ordinary task-bound tool bridge and must
+receive Core's answer before completion is released. A rejected tool response is
+a failed turn, never successful completion.
 
 The shared detector is evaluated before it is connected to worker adapters. Its
 replay covers each observed format, exact and single-underscore tool names,
@@ -1252,7 +1261,7 @@ Added workers participate in normal dispatch authority, readiness and receipts.
   incomplete protocol stream or an unfinished request keeps the outcome unknown. Loading or resuming a session
   does not reconcile an unknown turn after a Core crash. A second settled death
   creates the existing decision row and cannot start a third worker.
-  When a `session/prompt` reply ends a turn with a text-form tool call in its assistant message and no real tool call in that turn, Core applies the adapter-boundary rule ([Adapter boundary](#adapter-boundary); [text-tool-calls.md](../research/text-tool-calls.md)): it never records that text as `worker_report` progress or a completed turn, parses and dispatches the call when its arguments are complete and it names an allowed LINA session work tool, and otherwise opens a fresh session (`session/new`, never `session/load` or `session/resume` of the contaminated session) on the same ACP worker in the same worktree and branch with a short state summary. There is no nudging loop in the contaminated session and no silent hand-off to another worker.
+  When a `session/prompt` reply ends a turn with a text-form tool call in its assistant message and no real tool call in that turn, Core applies the adapter-boundary rule ([Adapter boundary](#adapter-boundary); [text-tool-calls.md](../research/text-tool-calls.md)): it never records that text as `worker_report` progress or a completed turn, parses and dispatches the call when its arguments are complete and it names an allowed LINA session work tool, and otherwise opens a fresh session (`session/new`, never `session/load` or `session/resume` of the contaminated session) on the same ACP worker in the same worktree and branch with a short state summary. There is no nudging loop in the contaminated session and no silent hand-off to another worker. A worker forwarding the provider's `stop` spelling is eligible only when the complete reply failed the client's stop-reason validation and the assistant text is a recognized text-form call; other invalid replies remain failures.
 - **Quota and typed failures.** ACP defines no quota signal. The adapter reads, in this order: the JSON-RPC error of `session/new` (-32000 means needs sign-in) or of `session/prompt` (a worker failure with code `prompt_failed`); the stop reason (`refusal`, `max_tokens` and `max_turn_requests` are worker errors naming it); the JetBrains session-failure extension where the worker advertises it (rate limited, quota exhausted, sign-in required); and the vendor rate-limit metadata that a profile names, such as Claude Code's `usage_update._meta["_claude/rateLimit"]`. Anything else is unknown, and LINA's own usage accounting applies ([runtime.md](runtime.md#usage-and-cost)).
   Core opts into only AIR v1 `sessionFailure` and accepts it only when the
   initialize response advertises it. Its error-severity category/actions map

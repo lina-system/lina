@@ -42,7 +42,9 @@ origin, replay, visibility class), matches, ranks and limits without reading a
 published source body. A scope can also restrict only event candidates by
 speaker, which keeps memory items eligible; `recall_person` uses it to read the
 person's own events and never an agent's or tool's words as evidence about the
-person. Vector candidates go through the same scope predicates and the same
+person. `PersonMemory` keeps only memory items whose subject is the person,
+before ranking and the limit; `recall_person` and person-only memory search set
+it. Vector candidates go through the same scope predicates and the same
 restricted-event list before fusion. Query terms are literal, whitespace split,
 at most eight, and any term may match. Documents holding more terms come first
 by BM25 over the pair table; documents found only through the trigram table follow;
@@ -68,9 +70,9 @@ for events and items together, materializes the item set in one scoped read, and
 reads an event's text only for the results that remain. Its cost follows the
 hits, not the number of person events.
 
-Person-model queries set `PersonOnly`, which filters person-authored events and
-person-subject memory items before ranking and the limit, including queued
-sources. General recall keeps its wider kind/speaker filters. Event bodies in
+Person-model queries set `EventSpeakerKind` and `PersonMemory` to filter
+person-authored events and person-subject memory items before ranking and the
+limit, including queued sources. General recall keeps its wider kind/speaker filters. Event bodies in
 materials have a nullable inline body; search resolves those through the bound
 reader or reports unavailable bytes without failing the whole result list.
 

@@ -2389,9 +2389,16 @@ type Adapter interface {
 - A process group kill is the stop.
   A cut turn's effects are unknown until `Snapshot` and a read of GitHub settle them.
 - Implementation notes: [C-29 work tools and approvals](../../internal/core/worker/REFERENCE.md#c-29-work-tools-and-approvals).
-- Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection); for ACP, the same declarations through the session-scoped `lina worker-tools` MCP server.
+- Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection, check inbox); for ACP, the same declarations through the session-scoped `lina worker-tools` MCP server.
   Other adapters build a receipt from the final result and the pull request and mark it adapter-derived.
 - A worker turn that ends with a text-form tool call and no real tool call follows the same rule as LINA's model routes ([C-43](#model-path-and-accounts); [work-and-delegation.md](work-and-delegation.md#adapter-boundary); [text-tool-calls.md](../research/text-tool-calls.md)): Core detects it, never emits it as `worker_report` progress or a completed turn, and handles it by (1) parsing and dispatching it as a real call when the arguments are complete and the tool is an allowed LINA session work tool, else (2) starting a fresh session (`thread/start` on Codex, `session/new` on ACP — never `thread/resume`, `session/load` or `session/resume` of the contaminated thread) on the same worker in the same worktree and branch with a short state summary. There is no nudging loop and no silent hand-off to another worker.
+- Dispatch supplies the session work-tool declarations only to adapters that
+  advertise work tools. Text-call recovery uses the same authenticated bridge
+  and pending-request lifetime as native calls. The failed turn and the fresh
+  recovery intent commit together before another process starts. The intent
+  retains the selected worker, worktree and branch, bypasses transcript restore,
+  and consumes the existing once-only recovery allowance. A second unrecoverable
+  text-call turn creates the existing decision row, with no third automatic start.
 - The delegated-task store records the requesting agent and conversation, done condition, artifact roots and whether application is required.
   A run binds its task, generation, worker, thread, turn and observing node.
   Admission appends an event and updates the active-run reservation in one fenced canon transaction; a task cannot admit a second active run.
