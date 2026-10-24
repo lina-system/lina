@@ -142,6 +142,10 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 				i.Links = append(i.Links, link)
 			}
 		}
+		// A code goal is stored as its project record. The person selects that project.
+		if i.Kind == "goal" {
+			i.Kind = "project"
+		}
 		s.Items = append(s.Items, i)
 	}
 	if err = errors.Join(rows.Err(), rows.Close()); err != nil {

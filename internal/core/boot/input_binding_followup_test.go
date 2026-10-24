@@ -488,11 +488,21 @@ func TestReviseCodeGoalChecksChosenRecord(t *testing.T) {
 	}
 	chosenID, chosenRecord, chosenRevision := admit("goal-a", "chosen outcome")
 	otherID, _, otherRevision := admit("goal-b", "other outcome")
-	if chosenRecord != "goal:"+chosenID {
+	wantRecord, ok := goaleng.ProjectRecordID(chosenID)
+	if !ok || chosenRecord != wantRecord {
 		t.Fatalf("record id = %s", chosenRecord)
 	}
-	if _, err := r.saveModelBinding(t.Context(), input, "binding-person:goal-choice", []binding.Choice{{Quote: input.Body.Text(), Target: binding.Target{Class: "existing", ID: chosenRecord, Kind: "goal"}}}, "person"); err != nil {
+	if _, err := r.saveModelBinding(t.Context(), input, "binding-person:goal-choice", []binding.Choice{{Quote: input.Body.Text(), Target: binding.Target{Class: "existing", ID: chosenRecord, Kind: "project"}}}, "person"); err != nil {
 		t.Fatal(err)
+	}
+	missing := questionCall(t, tools, "revise_code_goal", "revise-missing", map[string]any{
+		"goal_id": "missing-goal", "revision": chosenRevision,
+		"outcome": "hijacked outcome", "done": "checks pass",
+		"scope":    map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+		"criteria": []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+	})
+	if missing.Code != loop.Denied || !strings.Contains(string(missing.Output), "input_target_pending") {
+		t.Fatalf("unresolved goal ran: %+v", missing)
 	}
 	revised := questionCall(t, tools, "revise_code_goal", "revise-other", map[string]any{
 		"goal_id": otherID, "revision": otherRevision,

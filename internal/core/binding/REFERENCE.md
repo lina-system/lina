@@ -21,8 +21,9 @@ a later read, progress check, or follow-up may name that existing item; any
 other item stays pending. A model follow-up to a worker task uses the agent
 message path. `worker_input` and `worker_interrupt` resolve their session to
 that task before the person's choice is checked. A code goal tool resolves
-`goal_id` to the `goal:` record id before the same check. The binding snapshot
-includes that record. Steering execution uses the selected input's runtime, so a
+`goal_id` through the goal package's project record id before the same check.
+The binding snapshot includes that record as a project. A goal id that does
+not resolve is refused. Steering execution uses the selected input's runtime, so a
 channel follow-up keeps that channel source.
 
 Target questions store their choice with the existing durable question record.

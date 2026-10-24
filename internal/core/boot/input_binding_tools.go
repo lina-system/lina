@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/waiting"
+	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -175,6 +176,7 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 	str := func(key string) string { var v string; _ = json.Unmarshal(args[key], &v); return v }
 	id, title, kind := "", "", ""
 	var taskTitles []string
+	goalRecord := false
 	switch c.Name {
 	case "read_record", "write_record":
 		id = str("id")
@@ -220,12 +222,15 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		title = str("title")
 		kind = "todo"
 	case "revise_code_goal", "submit_step_graph", "read_step_graph":
-		// The work engine stores the project record as goal: plus the goal id.
-		// Binding candidates use that record id.
-		goalID := str("goal_id")
-		if goalID != "" {
-			id = "goal:" + goalID
+		// Resolve through the goal package. A goal that does not resolve must
+		// not skip the person's chosen project.
+		recordID, ok := goal.ProjectRecordID(str("goal_id"))
+		if !ok {
+			result := bindingFailure(c.ID, errBindingPending)
+			return &result
 		}
+		id = recordID
+		goalRecord = true
 	case "prepare_work":
 		id = str("task_id")
 		title = str("title")
@@ -309,6 +314,10 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		target = binding.Target{Class: "new", Kind: kind, Parent: choice.Target.Parent}
 	}
 	if target.Class == "" {
+		if goalRecord {
+			result := bindingFailure(c.ID, errBindingPending)
+			return &result
+		}
 		return nil
 	} // Original tool supplies its authorization/not-found error.
 	// Observing a candidate is not a resolution of the original request.
