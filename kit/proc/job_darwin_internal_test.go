@@ -72,9 +72,12 @@ func TestOwnerResolvesTheJobDirectory(t *testing.T) {
 		t.Fatalf("relative directory = %q, %v", got, err)
 	}
 	// A symlink followed by ".." is resolved by the kernel, not lexically here:
-	// "link/.." must arrive uncleaned so it selects the symlink's parent.
-	if got, err := ownerDirectory("link/.."); err != nil || got != filepath.Join(wd, "link/..") || strings.HasSuffix(got, "/..") == false {
-		t.Fatalf("relative directory with a symlink = %q, %v", got, err)
+	// "link/.." must arrive uncleaned so it selects the symlink's parent. The
+	// expectation is built by concatenation because filepath.Join would clean
+	// the ".." away and make this check pass for the wrong implementation.
+	want := wd + string(filepath.Separator) + "link" + string(filepath.Separator) + ".."
+	if got, err := ownerDirectory("link/.."); err != nil || got != want {
+		t.Fatalf("relative directory with a symlink = %q, %v; want %q", got, err, want)
 	}
 	if got, err := ownerDirectory("/tmp"); err != nil || got != "/tmp" {
 		t.Fatalf("absolute directory = %q, %v", got, err)
