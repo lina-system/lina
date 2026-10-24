@@ -94,8 +94,8 @@ func TestConversationQueuesSummaryOnlyAfterDelivery(t *testing.T) {
 			r, p := turnRuntime(t)
 			r.route.Adapter = usageTurnProvider{p}
 			// Keep the completed request above the unchanged preparation trigger
-			// even though enabled-tool instructions no longer duplicate schemas.
-			queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 7500), guard.EntryOwner, "")
+			// with room for binding schemas before the response crosses that trigger.
+			queuedContextEvent(t, r, "archive", strings.Repeat("archive ", 6500), guard.EntryOwner, "")
 			queuedContextEvent(t, r, "archive-reply", "Archived.", guard.EntryAgent, "")
 			input, inbox := admitTurnInput(t, r, "finish-current-work")
 			count := func(table string) int {

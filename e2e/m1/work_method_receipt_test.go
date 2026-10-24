@@ -2,6 +2,7 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/authority"
+	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/kit/tools"
 )
@@ -78,6 +81,14 @@ func TestWorkMethodReceiptThroughInstalledCore(t *testing.T) {
 	}))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
+	// The shipped starters declare no fill keys (preset-work-methods.md), so
+	// seed a preset that declares the key this test fills.
+	core := start(true)
+	c, _ := conversationClient(t, h)
+	person := c.Welcome.PersonID
+	c.Close()
+	h.stopCore(core)
+	seedWorkMethodAgent(t, h, person)
 	var firstSource, firstRevision string
 	for turn := 0; turn < 2; turn++ {
 		core := start(true)
@@ -166,4 +177,47 @@ func TestWorkMethodReceiptThroughInstalledCore(t *testing.T) {
 	if calls.Load() != 4 {
 		t.Fatalf("provider calls=%d, want 4", calls.Load())
 	}
+}
+
+// Seed a synthetic preset while the installed Core is stopped. Shipped
+// starters declare no fill keys, so the receipt test declares its own.
+func seedWorkMethodAgent(t *testing.T, h *harness, person string) string {
+	t.Helper()
+	ctl, err := ctlfiles.Open(h.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctl.Close()
+	if err := ctl.Acquire(); err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := ctl.Epoch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := canon.Open(h.ctx, canon.Config{Path: filepath.Join(h.root, "canon", "canon.sqlite"), Epoch: epoch, Controls: ctl, Migrations: boot.ApplicationMigrations()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	store, err := agents.Open(h.root, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	preset := agents.Preset{ID: "work-method-fixture", Core: "Synthetic work-method agent", DefaultVoice: "Plain", WorkMethod: `{"schema":1,"ask":{"form":"choices"},"fill":["ask.form"]}`}
+	if err := store.UpdatePreset(h.ctx, preset, person); err != nil {
+		t.Fatal(err)
+	}
+	a, err := store.Create(h.ctx, agents.Create{Name: "Work method fixture", PersonID: person, Preset: preset.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Write(h.ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(h.ctx, "UPDATE agent_first_run SET agent_id=? WHERE singleton=1", a.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return a.ID
 }
