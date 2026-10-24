@@ -62,13 +62,14 @@ The same query means different things per index: "abc" finds the substring in co
 | --- | --- | --- |
 | Standing profile | up to 32 standing memory items, newest first, with no query | every live turn (`boot/conversation_memory.go:53`) |
 | `query_records` | records index, ordered by id | live turns (`exec/records.go:128`) |
-| `ledger.Store.Search` | ledger index | tests only; no production caller |
-| `recall_person` | memory index, then a scan of every person event of the agent, read one at a time and matched in Go (`exec/memory_ledger.go:57-103`) | replay only (`boot/replay_reads.go:73`) |
-| `expand` | summary coverage and events | replay only (`boot/replay_reads.go:43`); `compaction.Expansion.Read` (`compaction/expansion.go:49`) has no production caller |
-| Memory management | `memory.Store.Recall` | TUI memory screens (`boot/management.go:146-202`) |
+| `ledger.Store.Search` | the shared recall index, event kind | tests only; no production caller |
+| `recall_person` | the shared recall index over memory items and events, one ranked list | replay only (`boot/replay_reads.go:73`) |
+| `expand` | `compaction.Expansion` over summary coverage and events | replay only (`boot/replay_reads.go:43`) |
+| Memory management | `memory.Store.Recall`, text match through the shared index | TUI memory screens (`boot/management.go:146-202`) |
 | Agent exchange | common memory items, no query | exchange turns (`boot/exchange_runtime.go:44`) |
 
-A live turn today recalls nothing by topic: no ledger search, no expand, no `recall_person`, and no query against the memory index. [Recall with evidence](../design/conversation-and-memory.md#recall-with-evidence) describes all four.
+After #871 every one of these reads goes through the shared index; a live turn
+still recalls nothing by topic until #873 ([Recall with evidence](../design/conversation-and-memory.md#recall-with-evidence)).
 
 ### Findings
 
@@ -334,3 +335,31 @@ Filed in M2. Each names its area so dispatch can keep other work out of it, and 
 | 7 | #876 | Drop the old indexes and copies | canon, ledger, memory, records, compaction | #870, #871, #872, #873, #875 |
 
 The benchmark can start now, and step 0 as soon as #839 merges. Steps 1 to 5 touch canon, memory, compaction, ledger and records, which no refactor phase holds after #839. Step 6 edits `internal/core/boot/conversation_memory.go` and the tool family table, so it waits for phases 11 (#825) and 18 (#833). No issue edits `docs/design/go-core.md` while phases 28 and 29 (#843, #844) hold it; as-built notes go to the package docs.
+
+### Vector cost (#874)
+
+The generated 100-turn store benchmark, with a local fake OpenAI-compatible
+endpoint returning 1,024-dimensional float32 vectors, measured:
+
+| Measure | Observed |
+| --- | ---: |
+| Indexed documents | 1,932 (1,830 events, 100 memory items, 2 summaries) |
+| Vector payload | 7,913,472 bytes; 4,096 bytes/document |
+| sqlite-vec shadow trees | 8,462,336 bytes; about 4,380 bytes/document |
+| Background embedding calls | 61; 0.61 calls/turn with batches of at most 32 |
+| Query embedding calls | 100; 1 call/turn when one recall is requested per turn |
+| Reciprocal-rank fusion constant | 60 |
+
+Command: `go test ./internal/core/storebench -run '^$' -bench '^BenchmarkStore$' -benchtime=1x -storebench-turns=100 -storebench-vectors`.
+Payload size excludes SQLite metadata and chunk allocation; the shadow-tree row
+includes them. These calls describe a completed backfill and one query per turn,
+not a live workload's batching cadence. With no endpoint there are no embedding
+calls. The fake endpoint measures storage and integration, not semantic quality.
+
+The private #849 parity set was not supplied for this implementation run, so its
+recall at 12 and default-model comparison remain outstanding. The earlier
+[reference study](autorag-reference.md#question-shape) measured 0.41 for pair
+BM25 and 0.61 for fusion on the person's questions; those are reference results,
+not measurements of this implementation. The default retains that study's
+`BAAI/bge-m3` candidate. Its tokenizer/input bound still needs comparison with
+this adapter's 4,096-character bound through #1117.
