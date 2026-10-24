@@ -258,6 +258,63 @@ func TestLivenessManagerWaitHoldsTheGoal(t *testing.T) {
 	}
 }
 
+func TestLivenessRecordedWaitExpiresIntoTheRow(t *testing.T) {
+	t.Parallel()
+	_, db := testJournal(t)
+	clock := time.Unix(100, 0)
+	now := func() time.Time { return clock }
+	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Admit(t.Context(), oneGoal()); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err := e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Actions) != 1 || s.Actions[0].Kind != PlanGoal || s.Actions[0].State != "queued" {
+		t.Fatalf("queued wait turn: %+v", s.Actions)
+	}
+	if _, err = e.Claim(t.Context(), s.Actions[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Report(t.Context(), s.Actions[0].ID, 1, Observation{Status: OutcomeSucceeded, Wait: &Wait{Reason: "reply", Wake: "mail.changed", Until: 500}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err = e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Goals) != 1 || s.Goals[0].State != GoalWaiting || len(s.Goals[0].Waits) != 1 {
+		t.Fatalf("wait did not hold before its deadline: %+v", s.Goals)
+	}
+	clock = time.Unix(500, 0)
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err = e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := s.Goals[0]
+	if g.State != GoalBlocked || len(g.Waits) != 0 || g.ManagerTurns != 1 || !strings.Contains(g.BlockedReason, "all changes run") || !strings.Contains(g.BlockedReason, "could not find a way") {
+		t.Fatalf("expired wait: %+v", g)
+	}
+	for _, a := range s.Actions {
+		if a.State != "finished" {
+			t.Fatalf("expiry queued more work: %+v", a)
+		}
+	}
+}
+
 func TestLivenessManagerDecisionBecomesTheRow(t *testing.T) {
 	t.Parallel()
 	_, db := testJournal(t)

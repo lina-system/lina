@@ -524,8 +524,10 @@ func Derive(state State, now time.Time) (Plan, error) {
 			}
 			continue
 		}
+		// A recorded wait holds the goal only until its deadline. After that the
+		// liveness pass below applies again, instead of keeping an expired wait.
 		for _, w := range g.Waits {
-			if w.Recorded && namedWait(w) {
+			if w.Recorded && namedWait(w) && w.Until > now.Unix() {
 				w.GoalID = g.ID
 				plan.Waits = append(plan.Waits, w)
 			}
