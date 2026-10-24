@@ -31,6 +31,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 	"github.com/thisisjun786/lina/internal/core/messenger/teams"
+	"github.com/thisisjun786/lina/internal/core/messenger/webex"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/results"
@@ -89,6 +90,7 @@ type conversationRuntime struct {
 	dispatchMu      *sync.RWMutex
 	removals        *retract.Store
 	teams           *teams.Service
+	webex           *webex.Service
 	messenger       *messenger.Service
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
@@ -305,6 +307,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
+	if err = r.initWebex(relay, channelTransport); err != nil {
+		return nil, err
+	}
 	if err = r.initTeams(relay, channelTransport); err != nil {
 		return nil, err
 	}
@@ -448,6 +453,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.webex != nil {
+		r.webex.Close()
+	}
 	if r.teams != nil {
 		r.teams.Close()
 	}

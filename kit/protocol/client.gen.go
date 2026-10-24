@@ -124,6 +124,8 @@ const (
 	KindLocalTaskResult      Kind = "local_task_result"
 	KindTeamsRequest         Kind = "teams_request"
 	KindTeamsResult          Kind = "teams_result"
+	KindWebexRequest         Kind = "webex_request"
+	KindWebexResult          Kind = "webex_result"
 )
 
 type A2aCallStatus struct {
@@ -1676,6 +1678,26 @@ type WebResult struct {
 	Configured bool   `json:"configured"`
 	Provider   string `json:"provider"`
 }
+type WebexRequest struct {
+	Account      *string `json:"account,omitempty"`
+	ClientID     *string `json:"client_id,omitempty"`
+	ClientSecret *string `json:"client_secret,omitempty"`
+	Operation    *string `json:"operation,omitempty"`
+	Platform     *string `json:"platform,omitempty"`
+}
+type WebexResult struct {
+	Account   *string        `json:"account,omitempty"`
+	Operation *string        `json:"operation,omitempty"`
+	Platform  *string        `json:"platform,omitempty"`
+	Sources   *[]WebexSource `json:"sources,omitempty"`
+	Status    *string        `json:"status,omitempty"`
+}
+type WebexSource struct {
+	Account  string  `json:"account"`
+	Failure  *string `json:"failure,omitempty"`
+	Platform string  `json:"platform"`
+	State    string  `json:"state"`
+}
 type Welcome struct {
 	Agents          []Agent      `json:"agents"`
 	Capabilities    []Capability `json:"capabilities"`
@@ -1882,6 +1904,8 @@ func (LocalTask) isPayload()            {}
 func (LocalTaskResult) isPayload()      {}
 func (TeamsRequest) isPayload()         {}
 func (TeamsResult) isPayload()          {}
+func (WebexRequest) isPayload()         {}
+func (WebexResult) isPayload()          {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -2353,6 +2377,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p TeamsResult
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindWebexRequest:
+		var p WebexRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWebexResult:
+		var p WebexResult
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -2508,7 +2540,9 @@ const clientSchemaJSON = `{
         "local_task",
         "local_task_result",
         "teams_request",
-        "teams_result"
+        "teams_result",
+        "webex_request",
+        "webex_result"
       ]
     },
     "message_id": {
@@ -4637,6 +4671,38 @@ const clientSchemaJSON = `{
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "webex_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/webex_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "webex_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/webex_result"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -6321,21 +6387,21 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "waiting_answer": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6813,14 +6879,14 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "memory_import_progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "memory_promotion_batch": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -7001,7 +7067,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "agent_talk_subscribe": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -7063,7 +7129,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "task_cancel": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -7562,14 +7628,14 @@ const clientSchemaJSON = `{
       ]
     },
     "saved_reference": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "save_destination": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -11658,6 +11724,185 @@ const clientSchemaJSON = `{
         "operation"
       ],
       "additionalProperties": false
+    },
+    "webex_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "configure",
+            "sign_in",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "webex"
+          ]
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "client_secret": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "account": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "configure"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "platform",
+              "client_id",
+              "client_secret"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "sign_in"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "platform"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "disconnect"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "account"
+            ]
+          }
+        }
+      ]
+    },
+    "webex_source": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "connected",
+            "needs_sign_in",
+            "failing",
+            "unreachable",
+            "import_only",
+            "disconnected"
+          ]
+        },
+        "failure": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "account",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "webex_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "configure",
+            "sign_in",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "configured",
+            "connected",
+            "needs_sign_in",
+            "disconnected"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/webex_source"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "list"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sources"
+            ]
+          }
+        }
+      ]
     }
   }
 }

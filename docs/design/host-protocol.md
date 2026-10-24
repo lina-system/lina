@@ -696,6 +696,21 @@ callback address and expiry are checked in Core. Completion reports connection
 status, including unsupported tenant consent. Source records and coverage use
 the existing messenger store, independently of the client lifetime.
 
+### Webex source settings
+
+The owner-only `webex` 1.0 capability provides `webex_request` and
+`webex_result`. `configure` takes `platform: "webex"`, `client_id` and
+`client_secret`; `sign_in` takes `platform: "webex"`; `disconnect` takes the
+platform account ID. `list` returns source account IDs, states and sanitized
+failure causes. Every operation requires the owner's eligible decider at the
+current epoch. Secret values are input-only and never appear in results.
+
+Sign-in uses `sign_in_relay` on the same connection. Core retains PKCE, state
+and the ten-minute attempt; another connection cannot finish or replace it.
+`cannot_listen` selects the registered port 8400 and accepts a pasted callback
+URL. Completion reports `connected` and the verified platform account ID.
+The source reader continues independently of that client connection.
+
 ## Deferred
 
 - The JSON Schema to TypeScript type generator: chosen before the first LINA app work ([surfaces.md](surfaces.md#app-front-end)).
