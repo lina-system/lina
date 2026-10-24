@@ -14,8 +14,30 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
+
+// drainRecall publishes queued sources the way Core's background drain does;
+// this package no longer reads the old ledger index.
+func drainRecall(t *testing.T, db *canon.Store) {
+	t.Helper()
+	drain := recall.New(db, nil)
+	for {
+		var pending int
+		if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_pending").Scan(&pending)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if pending == 0 {
+			return
+		}
+		if _, err := drain.DrainBatch(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestKoreanSearch(t *testing.T) {
 	t.Parallel()
@@ -56,6 +78,7 @@ func TestKoreanSearch(t *testing.T) {
 	other := input("other-agent")
 	other.AgentID, other.ConversationID, other.Body = "other", "other-conversation", "도서관에서 공부를 했다."
 	admit(t, s, guard.EntryOwner, other)
+	drainRecall(t, db)
 	for _, reopened := range []bool{false, true} {
 		if reopened {
 			if err := db.Close(t.Context()); err != nil {
@@ -143,6 +166,7 @@ func TestKoreanSearchMigrationAndMetadata(t *testing.T) {
 	}
 	cfg.Migrations, cfg.Epoch = all, cfg.Epoch+1
 	db = open(t, cfg)
+	drainRecall(t, db)
 	s := ledger.New(db, nil)
 	for _, query := range []string{"도서관", "공부"} {
 		hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: query})
@@ -159,11 +183,18 @@ func TestKoreanSearchMigrationAndMetadata(t *testing.T) {
 			t.Fatalf("metadata: %q %q", tokenizer, fallback)
 		}
 		var pending int
-		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM ledger_search_pending").Scan(&pending); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_pending").Scan(&pending); err != nil {
 			return err
 		}
 		if pending != 0 {
-			t.Fatal("backfill did not drain pending records")
+			t.Fatal("shared index did not drain pending records")
+		}
+		var docs int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_doc WHERE kind='event' AND source_id='old'").Scan(&docs); err != nil {
+			return err
+		}
+		if docs != 1 {
+			t.Fatal("shared index missing migrated source")
 		}
 		return nil
 	}); err != nil {
@@ -194,9 +225,16 @@ func TestKoreanSearchFiltersBeforeLimitAndKeepsReplayOptIn(t *testing.T) {
 		if err != nil || len(hits) != 1 || hits[0].ID != "original" {
 			t.Fatalf("filters before limit: %v %v", hits, err)
 		}
+		// A copy is one lineage with its original, so the original represents
+		// it even when copies are asked for (One recall entry).
 		q.IncludeReplay = true
 		hits, err = s.Search(t.Context(), q)
-		if err != nil || len(hits) != 1 || hits[0].ID != "replay" {
+		if err != nil || len(hits) != 1 || hits[0].ID != "original" {
+			t.Fatalf("copy lineage: %v %v", hits, err)
+		}
+		// Asked for, a copy is reached when its original is out of scope.
+		q.Since = input("").OccurredAt.Add(30 * time.Second)
+		if hits, err := s.Search(t.Context(), q); err != nil || len(hits) != 1 || hits[0].ID != "replay" {
 			t.Fatalf("replay opt-in: %v %v", hits, err)
 		}
 		q.Since = input("").OccurredAt.Add(time.Hour)
@@ -241,6 +279,7 @@ func TestKoreanSearchIsolatesPeopleAndTheirReplies(t *testing.T) {
 		in.Body = "도서관에서 공부를 한다."
 		admit(t, s, guard.EntryOwner, in)
 		in.ID, in.PersonID = person+"-reply", ""
+		in.Body = "도서관에서 공부를 한다. 답변."
 		admit(t, s, guard.EntryAgent, in)
 		in = input(person + "-ambiguous")
 		in.PersonID, in.ConversationID, in.Body = person, "ambiguous", "도서관에서 공부한다."
