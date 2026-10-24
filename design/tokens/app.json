@@ -1,0 +1,87 @@
+{
+  "$description": "App extensions to the pinned Core DTCG tokens. SPDX-License-Identifier: Apache-2.0",
+  "$extensions": {
+    "lina.wordWrap": "word-phrase",
+    "lina.spring": {
+      "mass": 1,
+      "stiffness": 260,
+      "damping": 28
+    }
+  },
+  "type": {
+    "titleSize": {
+      "$type": "dimension",
+      "$value": {
+        "value": 28,
+        "unit": "px"
+      }
+    },
+    "labelSize": {
+      "$type": "dimension",
+      "$value": {
+        "value": 14,
+        "unit": "px"
+      }
+    },
+    "codeNative": {
+      "$type": "fontFamily",
+      "$value": [
+        "JetBrainsMono",
+        "monospace"
+      ]
+    }
+  },
+  "space": {
+    "compact": {
+      "$type": "dimension",
+      "$value": {
+        "value": 4,
+        "unit": "px"
+      },
+      "$extensions": {
+        "lina.cells": 1
+      }
+    }
+  },
+  "border": {
+    "width": {
+      "$type": "dimension",
+      "$value": {
+        "value": 1,
+        "unit": "px"
+      }
+    },
+    "focusWidth": {
+      "$type": "dimension",
+      "$value": {
+        "value": 2,
+        "unit": "px"
+      }
+    }
+  },
+  "control": {
+    "minimum": {
+      "$type": "dimension",
+      "$value": {
+        "value": 48,
+        "unit": "px"
+      }
+    }
+  },
+  "icon": {
+    "grid": {
+      "$type": "dimension",
+      "$value": {
+        "value": 24,
+        "unit": "px"
+      }
+    },
+    "stroke": {
+      "$type": "dimension",
+      "$value": {
+        "value": 2,
+        "unit": "px"
+      }
+    }
+  }
+}
