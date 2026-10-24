@@ -8,6 +8,7 @@ import (
 )
 
 func TestCorrectedPlanReplacesObsoleteRunnableWork(t *testing.T) {
+	t.Parallel()
 	for _, id := range []string{"a", "replacement"} {
 		t.Run(id, func(t *testing.T) {
 			g := oneGoal(readyTask("a"))
@@ -33,6 +34,7 @@ func TestCorrectedPlanReplacesObsoleteRunnableWork(t *testing.T) {
 }
 
 func TestCorrectedPlanPreservesOnlyUnaffectedResults(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"instructions", "repository", "base", "area", "deps"} {
 		t.Run(field, func(t *testing.T) {
 			a, b, c, keep := readyTask("a"), readyTask("b"), readyTask("c"), readyTask("keep")
@@ -79,6 +81,7 @@ func TestCorrectedPlanPreservesOnlyUnaffectedResults(t *testing.T) {
 }
 
 func TestCorrectedPlanSettlesRetiredClaimWithoutReplaying(t *testing.T) {
+	t.Parallel()
 	for _, replacementID := range []string{"a", "replacement"} {
 		t.Run(replacementID, func(t *testing.T) {
 			e := revisionEngine(t, readyTask("a"), readyTask("queued"))
@@ -160,6 +163,7 @@ func TestCorrectedPlanSettlesRetiredClaimWithoutReplaying(t *testing.T) {
 }
 
 func TestCorrectedScopeCanReachManager(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	g := revisionSnapshot(t, e).Goals[0]
 	r, rev, err := e.cfg.Records.Read(t.Context(), g.RecordID)
@@ -179,6 +183,7 @@ func TestCorrectedScopeCanReachManager(t *testing.T) {
 }
 
 func TestEmptyCorrectedPlanRetiresEveryTask(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	old, err := e.Claim(t.Context(), revisionAction(t, e, "a", Assign).ID)
 	if err != nil {
@@ -200,6 +205,7 @@ func TestEmptyCorrectedPlanRetiresEveryTask(t *testing.T) {
 }
 
 func TestRetiredMergeKeepsOldRepositorySlotUntilRead(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("old"), readyTask("next"))
 	for _, id := range []string{"old", "next"} {
 		revisionReport(t, e, id, Assign, Observation{Status: OutcomeSucceeded, Head: "head-" + id, EffectsSettled: true})
@@ -245,6 +251,7 @@ func TestRetiredMergeKeepsOldRepositorySlotUntilRead(t *testing.T) {
 }
 
 func TestCorrectionPlanKeepsAcceptedLateReceiptTerminal(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	old := revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "old-head", EffectsSettled: true})
 	revisionEdit(t, e)
@@ -281,6 +288,7 @@ func TestCorrectionPlanKeepsAcceptedLateReceiptTerminal(t *testing.T) {
 }
 
 func TestCompletedCorrectionHistoryCannotReopenRetiredMerge(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "old-head", EffectsSettled: true})
 	revisionReport(t, e, "a", InspectPR, revisionPR("old-head"))

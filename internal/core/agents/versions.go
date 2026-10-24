@@ -22,7 +22,8 @@ import (
 // Each agent owns a bare Git repository. Immutable refs retain saved commits;
 // canon selects the published revision. No mutable branch pointer lets a stale
 // writer replace the live persona. HEAD anchors the initial revision.
-func privateDirs(root *os.Root, path string) error {
+func (s *Store) privateDirs(path string) error {
+	root := s.root
 	parent := "."
 	for _, part := range strings.Split(path, string(filepath.Separator)) {
 		name := filepath.Join(parent, part)
@@ -36,19 +37,28 @@ func privateDirs(root *os.Root, path string) error {
 		if !info.IsDir() || info.Mode().Perm() != 0700 {
 			return ErrInvalid
 		}
-		if err := syncDir(root, parent); err != nil {
+		if err := s.syncDir(parent); err != nil {
 			return err
 		}
 		parent = name
 	}
 	return nil
 }
-func syncDir(root *os.Root, path string) error {
-	f, err := root.Open(path)
+func (s *Store) sync(f *os.File) error {
+	if s.noSync {
+		return nil
+	}
+	if s.syncFile != nil {
+		return s.syncFile(f)
+	}
+	return f.Sync()
+}
+func (s *Store) syncDir(path string) error {
+	f, err := s.root.Open(path)
 	if err != nil {
 		return err
 	}
-	return errors.Join(f.Sync(), f.Close())
+	return errors.Join(s.sync(f), f.Close())
 }
 
 // Core's control-file lock excludes other live writers. This lock also keeps
@@ -83,14 +93,14 @@ func (s *Store) immutable(path string, data []byte) (err error) {
 	defer versionFiles.RUnlock()
 	root := s.root
 	dir := filepath.Dir(path)
-	if err := privateDirs(root, dir); err != nil {
+	if err := s.privateDirs(dir); err != nil {
 		return err
 	}
 	if exists, err := existingImmutable(root, path, data); exists {
 		if err != nil {
 			return err
 		}
-		return syncDir(root, dir)
+		return s.syncDir(dir)
 	}
 	temporary := filepath.Join(dir, temporaryPrefix+newID())
 	f, err := root.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
@@ -102,7 +112,7 @@ func (s *Store) immutable(path string, data []byte) (err error) {
 		if errors.Is(removed, os.ErrNotExist) {
 			removed = nil
 		}
-		err = errors.Join(err, removed, syncDir(root, dir))
+		err = errors.Join(err, removed, s.syncDir(dir))
 	}()
 	write := s.writeFile
 	if write == nil {
@@ -113,7 +123,7 @@ func (s *Store) immutable(path string, data []byte) (err error) {
 		err = io.ErrShortWrite
 	}
 	if err == nil {
-		err = f.Sync()
+		err = s.sync(f)
 	}
 	err = errors.Join(err, f.Close())
 	if err != nil {
@@ -132,14 +142,14 @@ func (s *Store) immutable(path string, data []byte) (err error) {
 			return os.ErrNotExist
 		}
 	}
-	return syncDir(root, dir)
+	return s.syncDir(dir)
 }
 
-func recoverTemporaries(root *os.Root) error {
+func (s *Store) recoverTemporaries() error {
 	versionFiles.Lock()
 	defer versionFiles.Unlock()
 	directories := make(map[string]bool)
-	err := fs.WalkDir(root.FS(), "versions/agents", func(path string, entry fs.DirEntry, err error) error {
+	err := fs.WalkDir(s.root.FS(), "versions/agents", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -147,7 +157,7 @@ func recoverTemporaries(root *os.Root) error {
 		if !temporary || !validID(suffix) || !entry.Type().IsRegular() {
 			return nil
 		}
-		if err := root.Remove(path); err != nil {
+		if err := s.root.Remove(path); err != nil {
 			return err
 		}
 		directories[filepath.Dir(path)] = true
@@ -157,7 +167,7 @@ func recoverTemporaries(root *os.Root) error {
 		return err
 	}
 	for dir := range directories {
-		if err := syncDir(root, dir); err != nil {
+		if err := s.syncDir(dir); err != nil {
 			return err
 		}
 	}

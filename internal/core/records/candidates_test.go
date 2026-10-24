@@ -15,6 +15,7 @@ import (
 )
 
 func TestCandidateOccupiedPaths(t *testing.T) {
+	t.Parallel()
 	for _, interrupted := range []bool{false, true} {
 		name := "normal"
 		if interrupted {
@@ -89,6 +90,7 @@ func proposal(source, title string) CandidateInput {
 }
 
 func TestCandidateDeterministicGate(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, person, body, quote, title string
 		entry                            guard.Entry
@@ -125,6 +127,7 @@ func TestCandidateDeterministicGate(t *testing.T) {
 	}
 }
 func TestCandidateConcurrentEquivalentsAndClassRejections(t *testing.T) {
+	t.Parallel()
 	s, root, db := setup(t)
 	in := proposal("source-0", "Send the notes")
 	seedCandidateSource(t, db, in.Source, in.Quotation, actor.Person, guard.EntryOwner)
@@ -179,6 +182,7 @@ func TestCandidateConcurrentEquivalentsAndClassRejections(t *testing.T) {
 	}
 }
 func TestCandidateCrashDoesNotDuplicateAddition(t *testing.T) {
+	t.Parallel()
 	s, root, db := setup(t)
 	in := proposal("source", "Send notes")
 	seedCandidateSource(t, db, in.Source, in.Quotation, actor.Person, guard.EntryOwner)
@@ -206,6 +210,7 @@ func TestCandidateCrashDoesNotDuplicateAddition(t *testing.T) {
 	}
 }
 func TestCandidateMissingSourceCannotBeAutoAdded(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	c, err := s.ProposeCandidate(t.Context(), actor, proposal("missing", "Send notes"))
 	if err != nil || c.Status != "pending" {
@@ -213,6 +218,7 @@ func TestCandidateMissingSourceCannotBeAutoAdded(t *testing.T) {
 	}
 }
 func TestCandidateSourceRecheckedInsidePublicationFence(t *testing.T) {
+	t.Parallel()
 	s, _, db := setup(t)
 	in := proposal("source", "Send notes")
 	seedCandidateSource(t, db, in.Source, in.Quotation, actor.Person, guard.EntryOwner)
@@ -237,6 +243,7 @@ func TestCandidateSourceRecheckedInsidePublicationFence(t *testing.T) {
 }
 
 func TestCandidateReplayAliasCannotRestoreUndoneSource(t *testing.T) {
+	t.Parallel()
 	s, _, db := setup(t)
 	in := proposal("source", "Send notes")
 	seedCandidateSource(t, db, in.Source, in.Quotation, actor.Person, guard.EntryOwner)

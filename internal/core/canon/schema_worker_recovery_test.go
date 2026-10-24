@@ -4,6 +4,7 @@ package canon
 import "testing"
 
 func TestWorkerRecoveryUpgradePreservesPublishedQuestions(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	// Published dev installs questions at 51, before worker recovery exists.
 	cfg.Migrations = append(append([]Migration{}, Migrations()[:50]...), Migration{Version: 51, SQL: conversationQuestionsSchema})

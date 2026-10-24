@@ -105,7 +105,7 @@ Layers under `internal/core/`:
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
 | L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `recall` (shared derived index writer and queued fill) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
+| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `localmodel`, `exec`, `exchange`, `messenger`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install`, `miniapps` |
 | L5 | `boot`, `supervise` |
 
 The separate worker has its own downward import layers.
@@ -265,6 +265,9 @@ If the filesystem context cannot be isolated, startup refuses before binding.
 
 The root, `system/` and `system/core/` must be owned by the current user and private (0700); existing unsafe paths are refused, not chmodded.
 Control records must be regular files at 0600, owned by that user, without symbolic or hard links.
+A read validates both the opened file and its directory entry before consuming bytes.
+If an atomic replacement unlinks the opened inode or changes the entry, the reader closes it and reopens the record after a short pause, with at most eight attempts and all checks repeated.
+An unsafe replacement or continuous replacement fails closed.
 Records larger than 64 KiB, malformed JSON objects and invalid epochs stop startup with exit 78.
 The epoch file contains only its canonical decimal digits, with no whitespace; overflow refuses the start and preserves the record.
 Linux filesystem validation permits ext-family, XFS, Btrfs, tmpfs, overlay, F2FS, ZFS, NILFS, ReiserFS and JFS.
@@ -329,7 +332,7 @@ The reconcile table follows [runtime.md](runtime.md#recovery) and [main-authorit
 | Model request or partial stream | Discarded; the turn is `interrupted` and not replayed; one plain line in the conversation |
 | Tool intent with no receipt | `unknown`; never run again; an irreversible one waits for the person |
 | Node effect, Node not back | `unknown` until the Node reports |
-| Worker turn cut by the restart | `unknown`; settled by reading the thread |
+| Worker turn cut by the restart | `unknown`; settled by reading the thread, or by a completion committed for that exact turn before the cut |
 | Pending approval | Stopped; a late button is answered stale |
 | Background run that was working | Resumed once from its checkpoint; a second cut lands it failed or partial |
 | Outbound channel send, outcome unknown | Not sent again |
@@ -683,6 +686,7 @@ It saves each set of four layers and its work-method record as a Git commit in a
 Immutable `refs/revisions/<commit>` retain saved versions; `HEAD` anchors the first version and canon selects the current one.
 Each immutable file is written and synced in a private temporary file beside its destination, then installed without replacing an existing file and followed by a directory sync.
 Opening the store removes abandoned temporary files; concurrent writers compare only fully published bytes.
+Core opens the store without options, so every saved file is synced. A test may open a throwaway root with `agents.NoSync()` to skip those fsyncs; it never changes what Core writes.
 Unpublished objects after a failed write are never applied.
 `Prepare(turn, agent)` verifies the saved bytes and durably pins one revision to that turn; repeating it after a restart returns that revision, while a later turn selects the latest published revision.
 This is the persona part of preparation, not evidence that account, context or model-policy preparation succeeded.
@@ -1116,6 +1120,7 @@ Container ids are resolved by a trusted ownership-checking lookup, never treated
 The initial records writer saves one Markdown file with typed result data and provenance under `versions/records/`, and one Git commit for saved version 1.
 Names are human slugs with collision suffixes, never record ids.
 Before changing a tracked file, index or ref, the records writer journals the intended parent/commit, file and blob ids in canon and retains a durable token for its Git index lock.
+Core opens the repository without options, so every object, index and ref write is synced. A test may open a throwaway root with `records.NoSync()` to skip those fsyncs; it never changes what Core writes.
 Reopening completes only that exact interrupted publication, checks all other working files, and releases only a lock with its own token; different target bytes, a different ref or a foreign lock are refused.
 Recovery repairs repository consistency so later saves can proceed, while the original unknown effect remains for reconciliation without redispatch.
 It checks the repository head against a canon checkpoint and verifies tracked working files; it refuses both committed and uncommitted outside changes instead of silently incorporating them.
@@ -1499,6 +1504,7 @@ An observed concurrent change returns unknown and keeps the recovery information
 A completed receipt describes the final observation, not future writes through another process's open descriptor.
 Captures remain readable through file reads after reopening and participate in workspace manifest revisions.
 A recovery-like directory name is not proof of worker ownership and never hides its files from a command receipt; this also keeps later writes through captured open inodes observable.
+Worker-reserved capture slots are recorded in the private version store and accounted separately from the 10,000-entry workspace manifest limit, so retained captures cannot exhaust workspace manifest snapshots on their own.
 These live captures share the workspace's access scope, whereas the immutable before/after version store remains private to the file worker.
 Restore from a saved-version id uses its immutable bytes and the current destination revision.
 A multi-file patch is prevalidated but is not a filesystem transaction: an interrupted commit is unknown with retained recovery information.
@@ -1560,6 +1566,7 @@ It has three classes of data: canonical rows; FTS tables written in the same tra
 One writer goroutine owns one write connection.
 Readers open `query_only`.
 WAL and `synchronous=FULL`.
+Core always opens canon that way; only a test that opens its own throwaway state root may set `Config.NoSync`, which keeps WAL but drops commit sync through `synchronous=OFF`.
 No transaction spans a model, tool, Node or network call.
 Migrations are forward-only.
 The SQLite binding is chosen by [V2](runtime.md#runtime-acceptance) against four needs: FTS5, the online backup API, an optional sqlite-vec load verified against a manifest digest, and static builds.
@@ -2356,7 +2363,7 @@ type Adapter interface {
 - Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches).
   Claude Code, Cursor, Gemini CLI, Grok and added agents through the one ACP adapter of C-60.
   Antigravity as a headless child with streaming output.
-  The Claude Code headless adapter below remains until the worker evaluation chooses between it and the ACP profile.
+  The Claude Code headless adapter below stays an explicit selection; the worker evaluation kept the ACP profile ([worker-evaluation.md](../../evidence/worker-evaluation.md)).
 - Implementation notes: [C-29 session integration](../../internal/core/worker/REFERENCE.md#c-29-session-integration).
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)).
   Approvals go to the originating conversation.

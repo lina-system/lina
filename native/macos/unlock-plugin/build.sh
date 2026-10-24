@@ -7,7 +7,7 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")" && pwd)
-: "${LINA_TEAM_ID:?set LINA_TEAM_ID to LINA's Developer ID team identifier}"
+: "${LINA_TEAM_ID:?set LINA_TEAM_ID to the Developer ID team identifier}"
 identity=${LINA_SIGN_IDENTITY:--}
 broker=${LINA_BROKER_ID:-com.lina.lock-broker}
 bundle="$root/build/LinaUnlock.bundle"
@@ -37,7 +37,7 @@ xcrun --sdk macosx clang \
   "$root/src/engine_from_callbacks.c" \
   "$root/src/darwin_host.c" \
   "$root/src/plugin_darwin.c" \
-  -framework Security -framework CoreFoundation
+  -framework Security -framework CoreFoundation -lbsm
 
 sign=(--force --options runtime --sign "$identity" --identifier com.lina.locked-screen.unlock)
 if [[ "$identity" != - ]]; then

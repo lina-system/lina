@@ -25,6 +25,20 @@ func markdownTranscript(m *shellModel) string {
 	return strings.TrimRight(strings.Join(content[region.Y:region.Y+region.Height], "\n"), "\n")
 }
 
+func TestVisibleMarkdownText(t *testing.T) {
+	bullet := conversationShell().styles.listBullet()
+	for _, tc := range []struct{ source, want string }{
+		{"**굵게 bold**", "굵게 bold"},
+		{"[문서](https://example.com/docs)", "문서"},
+		{"- 첫 항목\n- 둘째", bullet + " 첫 항목\n" + bullet + " 둘째"},
+		{"* 첫째\n* 둘째", bullet + " 첫째\n" + bullet + " 둘째"},
+	} {
+		if got := VisibleMarkdown(tc.source, bullet); got != tc.want {
+			t.Fatalf("VisibleMarkdown(%q) = %q, want %q", tc.source, got, tc.want)
+		}
+	}
+}
+
 func TestConversationMarkdownElements(t *testing.T) {
 	cases := []struct{ name, source, plain string }{
 		{"bold", "**굵게 bold**", "굵게 bold"},

@@ -77,6 +77,9 @@ func Migrations() []Migration {
 		{Version: 62, SQL: a2aSchema},
 		{Version: 63, SQL: retractCiteSchema},
 		{Version: 64, SQL: MiniAppsSchema},
+		{Version: 65, SQL: MessengerSchema},
+		{Version: 66, SQL: EventErasureSchema},
+		{Version: 67, SQL: ModelServedSchema},
 	}
 }
 
@@ -122,8 +125,10 @@ var publishedMigrationTables = []struct {
 	{58, "recall_doc"}, {58, "recall_text"}, {58, "recall_pair"}, {58, "recall_pending"},
 	{60, "recall_conversation_scope"},
 	{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
-	{62, "a2a_tasks"}, {62, "a2a_messages"},
 	{64, "mini_app"}, {64, "mini_app_revision"}, {64, "mini_app_change"}, {64, "mini_app_event"},
+	{65, "messenger_source"}, {65, "messenger_chat"}, {65, "messenger_coverage"},
+	{65, "messenger_record"}, {65, "messenger_record_revision"}, {65, "messenger_effect"},
+	{67, "model_served"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is

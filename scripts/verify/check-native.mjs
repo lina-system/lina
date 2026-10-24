@@ -21,6 +21,7 @@ const targets = [
       'src/engine_from_callbacks.c',
       'src/plugin_darwin.c',
       'tests/fake_host.c',
+      'tests/fake_log.c',
       'tests/test_decide.c',
       'tests/test_deadline.c',
       'tests/test_mechanism.c',
@@ -73,11 +74,19 @@ export function compileArgs(root, binary, target = targets[0]) {
   ];
 }
 
-export function check({ root = toplevel(process.cwd()), cc = compiler(), log = console.log } = {}) {
+export function check({ root = toplevel(process.cwd()), cc = compiler(), bash = process.env.BASH || 'bash', log = console.log } = {}) {
   if (!cc) return { status: 1, output: 'no C compiler found: set CC or install cc' };
   const missing = targets.flatMap(target =>
     target.sources.map(name => join(root, target.directory, name)).filter(name => !existsSync(name)));
   if (missing.length) return { status: 1, output: 'missing sources:\n' + missing.join('\n') };
+  // The bundle script only runs on macOS, so nothing else reads it. An
+  // unterminated quote keeps it from starting at all, and a shell parse is the
+  // only check the Linux foundation can make of it.
+  const bundle = join(root, 'native/macos/unlock-plugin', 'build.sh');
+  const parsed = spawnSync(bash, ['-n', bundle], { encoding: 'utf8', timeout: 30_000 });
+  if (parsed.status !== 0) {
+    return { status: 1, output: `${parsed.stdout ?? ''}${parsed.stderr ?? ''}${bash} -n exited with ${parsed.status ?? parsed.error?.message}` };
+  }
   const directory = mkdtempSync(join(tmpdir(), 'lina-native-'));
   try {
     for (const target of targets) {

@@ -2,7 +2,9 @@
 package compaction
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -192,5 +194,40 @@ func TestBoundaryRetainsCompleteTurns(t *testing.T) {
 	segment, err = p.boundarySegment(v)
 	if err != nil || len(segment.Verbatim) != 0 || len(segment.Records) != len(v.History) {
 		t.Fatalf("oversized turn was partially retained: %+v %v", segment, err)
+	}
+}
+
+func TestOnePassRewritesHistoryOnce(t *testing.T) {
+	p, v := fixturePass()
+	p.Policy.KeepUserTokens = 100
+	original := strings.Repeat("x", 2200)
+	v.History = append(v.History,
+		Record{ID: "call", Item: provider.Item(`{"type":"function_call","call_id":"c","name":"read_file","arguments":"{}"}`)},
+		Record{ID: "output", Item: provider.Item(`{"type":"function_call_output","call_id":"c","output":"` + original + `"}`), Note: "read_file completed"},
+	)
+	p.Policy.KeepToolTokens = 1
+	summarized, published := 0, 0
+	p.Summarize = func(_ context.Context, s PassSegment) (Text, error) {
+		summarized++
+		// The summary reads the original output, never the deterministic note.
+		raw, _ := json.Marshal(s.Records)
+		if !strings.Contains(string(raw), original) {
+			t.Fatal("summary lost the original tool output")
+		}
+		return Text{Requests: "open", Topics: "topic", Actions: "none", Values: "42", Omitted: "detail"}, nil
+	}
+	p.Publish = func(context.Context, PassSegment, Text) (Published, error) {
+		published++
+		return Published{ID: "root", Item: message("summary")}, nil
+	}
+	out, err := p.Fit(t.Context(), v, false)
+	if err != nil || summarized != 1 || published != 1 {
+		t.Fatalf("pass rewrote history more than once: summaries=%d publications=%d err=%v", summarized, published, err)
+	}
+	if out.Sizes.Total >= out.Sizes.Threshold || len(out.Request.Items) != len(v.Fixed)+1+1+len(v.Packet) {
+		t.Fatalf("final request did not rewrite the history once: %+v %d items", out.Sizes, len(out.Request.Items))
+	}
+	if !bytes.Equal(out.Request.Items[1], message("summary")) {
+		t.Fatal("the rewritten request did not carry the new root")
 	}
 }

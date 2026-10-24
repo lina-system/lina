@@ -8,6 +8,7 @@ import (
 )
 
 func TestDoingIsDurableFencedAndNotCompletion(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	startFixture(t, s)
 	observed := doing.Snapshot{Line: "Login · Running tests", Busy: true, Since: time.Unix(1, 0).UTC()}

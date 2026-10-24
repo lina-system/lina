@@ -733,6 +733,21 @@ acyclic dependencies. The result stream replaces the whole card on update;
 An `unknown` confirmation effect is not success. It is settled only by observing
 the exact saved records, never by automatically repeating publication.
 
+### Local model capability
+
+`local_model` version `1.0` adds `local_task` and `local_task_result` to client 1.0.
+A task is one of `intent`, `autocomplete`, `rewrite`, `title`, `classify`, `extract`,
+or `summary`, plus the text. Optional `preference` is `auto`, `local`, or `main`.
+Optional `schema` is a closed JSON Schema object of strings, integers, and booleans.
+Optional `images` is a count and `tools` names tools the task needs. `mac_local`
+records that those tools are on this Mac. A task that names tools still uses
+the main model, because this route does not call tools. The result names the route, the reason, the
+provider, the model, and `served_id`. Structured success returns `object`.
+Unstructured success returns `text`. A schema miss returns neither. The effect
+is `none`. An invalid schema is malformed. When neither model can serve, the
+reply is unavailable. The task text is not written to the ledger. Routing and
+fallback are in [On-device Apple model](runtime.md#on-device-apple-model).
+
 ## Operational work control
 
 The negotiated `work` capability, version `1.0`, installs `work_switch_request` and
@@ -822,6 +837,21 @@ for flat cards and count only the cards they fold or omit. Without it, cards
 follow row order; unknown or repeated refs are ignored, and any unlisted cards
 follow in row order. These fields are additive in client 1.0; old clients ignore
 them and new clients accept their absence.
+
+An optional `row` on a line marks a row of a line: a task or a run drawn inside
+the 일 or 목표 that owns it. A row is not a line. It is indented under its line by
+`depth`, it is never a card, and neither the running count nor the digest counts
+it. A client that receives no `row` treats every non-goal row as a card, which is
+what an older Core means.
+
+An optional `counts` object in `progress` and `progress_update` carries Core's
+running count: `running` and `waiting` are the numbers of lines in those states,
+never the number of rows. A row counts for the 일 or run it belongs to, so the
+count follows the 일 the person reads and not the workers. A line whose row waits
+on the person counts as waiting for them. A client draws this count where it
+shows progress and does not recount the rows; a client that receives no count
+counts the cards it draws, which is all an older Core allows. These fields are
+additive in client 1.0.
 
 A `progress_update` replaces the overview atomically, retaining the normal topic
 cursor and snapshot/replay behavior. A changed full waiting list advances this

@@ -88,6 +88,7 @@ func count(t *testing.T, db *canon.Store, table string) int {
 	return n
 }
 func TestMalformedNeverAppends(t *testing.T) {
+	t.Parallel()
 	s, db, _, _ := setup(t)
 	p := proposal()
 	p.Body = json.RawMessage(`{"blocks":[],"from_summary":null}`)
@@ -99,6 +100,7 @@ func TestMalformedNeverAppends(t *testing.T) {
 	}
 }
 func TestReadRevisionAndStaleReplacement(t *testing.T) {
+	t.Parallel()
 	s, db, _, _ := setup(t)
 	c := present(t, s)
 	if len([]rune(c.Text)) != 12 {
@@ -128,6 +130,7 @@ func TestReadRevisionAndStaleReplacement(t *testing.T) {
 	}
 }
 func TestDoubleSaveAndReopen(t *testing.T) {
+	t.Parallel()
 	s, db, cfg, w := setup(t)
 	c := present(t, s)
 	req := result.SaveRequest{ID: c.ID, Revision: 1, Destination: result.Destination{Kind: "resource"}}
@@ -186,6 +189,7 @@ func TestDoubleSaveAndReopen(t *testing.T) {
 	}
 }
 func TestSaveStaleAndUnsupported(t *testing.T) {
+	t.Parallel()
 	s, _, _, w := setup(t)
 	c := present(t, s)
 	p := proposal()
@@ -208,6 +212,7 @@ func TestSaveStaleAndUnsupported(t *testing.T) {
 	}
 }
 func TestUnknownSaveNeverRepeats(t *testing.T) {
+	t.Parallel()
 	s, _, _, w := setup(t)
 	c := present(t, s)
 	w.err = errors.New("interrupted publication")
@@ -223,6 +228,7 @@ func TestUnknownSaveNeverRepeats(t *testing.T) {
 }
 
 func TestLargePreviewStaysInLedgerAndMasksBeforeReturn(t *testing.T) {
+	t.Parallel()
 	s, db, _, _ := setup(t)
 	p := proposal()
 	text := strings.Repeat("Long content. ", 2000) + " password=example-secret"

@@ -12,6 +12,7 @@ import (
 )
 
 func TestGoalDefinitionLivesInRecordsNotExecutionLedger(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {
@@ -69,6 +70,7 @@ func TestGoalDefinitionLivesInRecordsNotExecutionLedger(t *testing.T) {
 	}
 }
 func TestRecordEditFencesGoalUntilManagerInterpretsRevision(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, _ := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	g := oneGoal(readyTask("a"))
@@ -119,6 +121,7 @@ func (p *pausedDefinitionCommit) Write(ctx context.Context, f func(*canon.Tx) er
 }
 
 func TestRecordRefreshKeepsInflightReportDefinition(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, _ := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	g := oneGoal(readyTask("a"))
@@ -174,6 +177,7 @@ func TestRecordRefreshKeepsInflightReportDefinition(t *testing.T) {
 }
 
 func TestUnplannedRecordCorrectionStaysBlockedAcrossRestart(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	cfg := Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }}
 	e, _ := NewEngine(cfg)

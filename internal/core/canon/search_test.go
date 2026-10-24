@@ -8,6 +8,7 @@ import (
 )
 
 func TestHangulBigrams(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, text string
 		want       []string
@@ -27,6 +28,7 @@ func TestHangulBigrams(t *testing.T) {
 }
 
 func TestTrigramPhraseIsLiteral(t *testing.T) {
+	t.Parallel()
 	db, err := OpenSQLite(t.Context(), filepath.Join(t.TempDir(), "search.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -49,6 +51,7 @@ func TestTrigramPhraseIsLiteral(t *testing.T) {
 }
 
 func TestSQLiteHangulBigrams(t *testing.T) {
+	t.Parallel()
 	db, err := OpenSQLite(t.Context(), filepath.Join(t.TempDir(), "bigrams.sqlite"))
 	if err != nil {
 		t.Fatal(err)
