@@ -8,6 +8,7 @@ import (
 )
 
 func TestDevelopmentCatalogAndMethodRouting(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, builtin.Builtins())
 	catalog, err := s.Catalog(t.Context())
 	if err != nil {
@@ -52,6 +53,7 @@ func TestDevelopmentCatalogAndMethodRouting(t *testing.T) {
 }
 
 func TestDevelopmentMethodPinsCatalogOverride(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, builtin.Builtins())
 	original, err := s.ResolveMethod(t.Context(), "", "qa")
 	if err != nil {
