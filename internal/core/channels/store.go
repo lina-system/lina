@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -20,7 +21,17 @@ var (
 	ErrCursor   = errors.New("channel cursor changed")
 	ErrEmpty    = errors.New("channel queue has no ready message")
 	ErrConflict = errors.New("channel record changed")
+	// ErrRetry marks a dispatch a subscriber cannot store yet but can store
+	// later, such as a live edit held behind an unsettled write. The session
+	// replays it instead of acknowledging it or failing.
+	ErrRetry = errors.New("channel dispatch retry")
 )
+
+// Retry asks the shared session to replay the dispatch behind err.
+func Retry(err error) error { return fmt.Errorf("%w: %w", ErrRetry, err) }
+
+// Retryable reports whether err asks for a replay.
+func Retryable(err error) bool { return errors.Is(err, ErrRetry) }
 
 type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
@@ -260,5 +271,19 @@ func RecordReceipt(ctx context.Context, tx *canon.Tx, a Address, agent, id, prev
 		row = inboxID
 	}
 	_, err = tx.ExecContext(ctx, "INSERT INTO channel_receipts(bot,native_id,cursor,address,agent,inbox_id) VALUES(?,?,?,?,?,?)", a.Bot.Key(), id, cursor, a.Key(), agent, row)
+	return err
+}
+
+// NoteReceipt records a handled native event without moving the shared session
+// checkpoint. A transport whose session serves more than one subscriber leaves
+// the checkpoint to the session owner, which advances it only after every
+// subscriber admits the dispatch; a checkpoint that moved earlier would skip
+// an event the other subscriber never stored.
+func NoteReceipt(ctx context.Context, tx *canon.Tx, a Address, agent, id, cursor string, inboxID int64) error {
+	var row any
+	if inboxID > 0 {
+		row = inboxID
+	}
+	_, err := tx.ExecContext(ctx, "INSERT INTO channel_receipts(bot,native_id,cursor,address,agent,inbox_id) VALUES(?,?,?,?,?,?)", a.Bot.Key(), id, cursor, a.Key(), agent, row)
 	return err
 }
