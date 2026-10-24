@@ -190,3 +190,12 @@ rest; the source still returns to connected.
 revision carries the attachment with in `messenger_attachment` and passes the
 chat, message and attachment id to the adapter. It refuses a disconnected
 source and a deleted record.
+
+## Search and embedding consent
+
+Core binds the person's identity to `recall`, `expand` and `messenger_chats`.
+The shared recall package owns filtering, evidence pages, coverage and message
+windows. Source embedding is off until the person calls `SetEmbedding`, exposed
+by `lina embedding messenger`; each chat's switch can further exclude it.
+Neither sync nor a model tool grants that consent. Window work is queued in the
+same transaction as admission, edits, removal and chat embedding changes.

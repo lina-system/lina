@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
@@ -232,5 +233,81 @@ func TestRecallPersonCountsRememberedEventOnce(t *testing.T) {
 	answer, err := flow.RecallPerson(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, PersonRecall{Question: "What drink?", Query: "tea", At: 100})
 	if err != nil || len(answer.Sources) != 1 {
 		t.Fatalf("source counted through memory and ledger: %+v %v", answer, err)
+	}
+}
+
+func TestRecallReadsMaterialBackedEvent(t *testing.T) {
+	db := memoryDB(t)
+	materials := &sourceMaterials{bodies: map[ledger.Material]string{}}
+	events := ledger.New(db, materials)
+	body := "observatory " + strings.Repeat("telescope ", 2000)
+	event, err := events.Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "large", ConversationID: "conversation", PersonID: "person", AgentID: "A", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Material.ID == "" {
+		t.Fatal("fixture not material-backed")
+	}
+	read := func(ctx context.Context, id string) (string, error) {
+		e, err := events.Get(ctx, id)
+		return e.Body.DerivedText(), err
+	}
+	for _, available := range []bool{true, false} {
+		var reader recall.ReadEvent
+		if available {
+			reader = read
+		}
+		hits, err := recall.Search(t.Context(), db, reader, recall.Scope{Person: "person", Agent: "A"}, recall.Query{Text: "observatory"})
+		if err != nil || len(hits) != 1 {
+			t.Fatalf("available=%v hits=%d err=%v", available, len(hits), err)
+		}
+		if hits[0].Unavailable == available || available && !strings.Contains(hits[0].Excerpt, "observatory") {
+			t.Fatalf("material result: %+v", hits[0])
+		}
+	}
+}
+
+func TestRecallPersonFiltersBeforeLimit(t *testing.T) {
+	db := memoryDB(t)
+	events := ledger.New(db, nil)
+	flow := NewMemory(db, nil, nil)
+	admit := func(id string, entry guard.Entry, body string) {
+		in := ledger.Input{ID: id, Locator: id, ConversationID: "conversation", AgentID: "A", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: body}
+		if entry == guard.EntryOwner {
+			in.PersonID = "person"
+		}
+		if _, err := events.Admit(t.Context(), entry, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	admit("person-source", guard.EntryOwner, "tea "+strings.Repeat("context ", 100))
+	admit("memory-source", guard.EntryOwner, "tea preference "+strings.Repeat("context ", 100))
+	write := rememberInput("tea preference")
+	write.Item.Evidence[0].ID = "memory-source"
+	good, err := flow.Remember(t.Context(), write)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < RecallItemLimit+2; i++ {
+		id := fmt.Sprintf("other-%d", i)
+		entry := []guard.Entry{guard.EntryAgent, guard.EntryTool, guard.EntryForwarded, guard.EntryAutomation}[i%4]
+		admit(id, entry, fmt.Sprintf("tea other%d", i))
+		write := rememberInput(fmt.Sprintf("tea world%d", i))
+		write.Item.Subject = memory.Subject{Kind: memory.World, ID: id}
+		write.Item.Evidence[0].ID = "person-source"
+		if _, err := flow.Remember(t.Context(), write); err != nil {
+			t.Fatal(err)
+		}
+	}
+	answer, err := flow.RecallPerson(t.Context(), memory.RecallScope{Person: "person", Agent: "A"}, PersonRecall{Question: "What tea?", Query: "tea", At: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, source := range answer.Sources {
+		ids[source.ID] = true
+	}
+	if len(ids) != 2 || !ids["event:person-source"] || !ids["memory:"+good.ID] {
+		t.Fatalf("person evidence displaced by other sources: %v", ids)
 	}
 }

@@ -52,13 +52,16 @@ type Scope struct {
 	// records carry no speaker of their own, so recall_person uses this to keep
 	// agent and tool words out of the evidence about the person while items
 	// stay eligible.
-	EventSpeakerKind guard.SpeakerKind
+	EventSpeakerKind                guard.SpeakerKind
+	Origin                          string
+	CommonOnly                      bool
+	Platform, Account, Chat, Author string
+	// PersonOnly selects person-authored events and person-subject memory items.
+	PersonOnly bool
 	// PersonMemory limits memory candidates to items whose subject is the
 	// person. recall_person sets it so an item about a third party or the
 	// world is never evidence about the person.
 	PersonMemory bool
-	Origin       string
-	CommonOnly   bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
 	// with its lineage, so it surfaces only when its original is not a
 	// candidate: a copy appears only when asked, through its original.
@@ -141,6 +144,9 @@ func validScope(scope Scope) error {
 	if !utf8.ValidString(scope.Agent) || strings.ContainsRune(scope.Agent, 0) {
 		return ErrInvalid
 	}
+	if scope.Origin != "messenger" && (scope.Platform != "" || scope.Account != "" || scope.Chat != "" || scope.Author != "") {
+		return ErrInvalid
+	}
 	for _, kind := range scope.Kinds {
 		switch kind {
 		case Event, Summary, Memory, Record:
@@ -168,6 +174,16 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	terms := queryTerms(query.Text)
 	if len(terms) == 0 {
 		return nil, nil
+	}
+	// Embed outside ranking and resolve failure before selecting the lexical
+	// candidate bound. With no usable vectors the original query is unchanged.
+	if query.Vectors != nil {
+		ids, err := query.Vectors(ctx, scope, query.Text)
+		if err != nil || len(ids) == 0 {
+			query.Vectors = nil
+		} else {
+			query.Vectors = func(context.Context, Scope, string) ([]string, error) { return ids, nil }
+		}
 	}
 	var pairPhrases, pairMatches, trigramPhrases []string
 	var shortTerms []string
@@ -267,10 +283,32 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	var external []Hit
 	if query.EventText != nil {
 		var err error
-		external, err = pendingEventText(ctx, db, scope, at, restricted, terms, query.EventText)
+		external, err = pendingEventText(ctx, db, scope, kinds, at, restricted, terms, query.EventText)
 		if err != nil {
 			return nil, err
 		}
+	}
+	// Material-backed hits have no inline body, so the pending scan above
+	// cannot see them. They still have to be candidates before lineage
+	// exclusion and the limit, or a queued copy is returned beside its original.
+	materialUnion := ""
+	if len(external) > 0 {
+		ids := make([]string, len(external))
+		for i, hit := range external {
+			ids[i] = hit.ID
+		}
+		encoded, err := jsonArray(ids)
+		if err != nil {
+			return nil, err
+		}
+		materialUnion = `
+ UNION ALL
+ SELECT NULL AS id,'event',s.source_id,s.revision,s.occurred_at,s.holder,s.conversation,NULL AS text_hash,s.replay,
+  NULL AS score,0 AS paired,0 AS trigram,` + olderS + ` AS older
+ FROM recall_source s
+ WHERE s.kind='event' AND s.source_id IN (SELECT value FROM json_each(?))`
+		args = append(args, olderSArgs...)
+		args = append(args, encoded)
 	}
 	statement := `WITH ` + strings.Join(with, ",\n") + `,
 candidates AS MATERIALIZED (
@@ -283,6 +321,7 @@ candidates AS MATERIALIZED (
   NULL AS score,0 AS paired,0 AS trigram,` + olderS + ` AS older
  FROM recall_source s JOIN recall_pending q ON q.kind=s.kind AND q.source_id=s.source_id
  WHERE ` + strings.Join(pendingWhere, "\n AND ") + `
+` + materialUnion + `
 ),
 ` + lineageCTE(lineageEvents) + `
 dedup AS (
@@ -294,9 +333,12 @@ SELECT kind,source_id,revision,occurred_at,holder,older FROM dedup WHERE twin=1 
 ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianday(occurred_at) DESC, source_id`
 	args = append(args, boolInt(scope.History))
 	limit := query.Limit
+	if query.Vectors != nil {
+		limit = VectorCandidates
+	}
 	if limit > 0 {
 		statement += " LIMIT ?"
-		args = append(args, limit+len(external))
+		args = append(args, limit)
 	}
 	var hits []Hit
 	err := db.Read(ctx, func(tx *canon.Tx) error {
@@ -323,10 +365,6 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 	if err != nil {
 		return nil, err
 	}
-	hits = append(hits, external...)
-	if limit > 0 && len(hits) > limit {
-		hits = hits[:limit]
-	}
 	if query.Vectors != nil {
 		return fuse(ctx, db, scope, query, hits)
 	}
@@ -336,7 +374,13 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 // pendingEventText reads the derived text of queued events whose body lives in
 // material, so a caller with material access sees them before the background
 // drain publishes them. The scan is bounded by the queue, never the corpus.
-func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, restricted bool, terms []term, readEvent ReadEvent) ([]Hit, error) {
+// Events the caller did not ask for are not read: the live recall tool always
+// supplies a reader, and a memory or record query must not grow event hits
+// while those events are still queued.
+func pendingEventText(ctx context.Context, db Canon, scope Scope, kinds []Kind, at int64, restricted bool, terms []term, readEvent ReadEvent) ([]Hit, error) {
+	if !containsKind(kinds, Event) {
+		return nil, nil
+	}
 	var lowered []string
 	for _, t := range terms {
 		if t.runes >= 3 || t.pair {
@@ -419,7 +463,10 @@ func lineageFilter(enabled bool) string {
 	if !enabled {
 		return ""
 	}
-	return ` WHERE c.kind<>'event' OR c.id NOT IN (SELECT d.id FROM candidates d JOIN derived x ON x.id=d.source_id)`
+	// A queued candidate has no recall_doc row, so its row id is NULL. Putting
+	// that NULL into NOT IN drops every event. source_id is set for both
+	// published and queued candidates, and derived.id is that same identity.
+	return ` WHERE c.kind<>'event' OR c.source_id NOT IN (SELECT x.id FROM derived x)`
 }
 
 // restrictedCTE lists the events protected by a private or never-leaves memory
@@ -445,11 +492,23 @@ func holderCondition(scope Scope, alias string) string {
 // scopeWhere applies the scope before matching. It is shared by the published
 // index and the still-queued sources so both see the same filters.
 func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias string) ([]string, []any) {
-	where := []string{alias + ".person=?", holderCondition(scope, alias)}
+	var where []string
 	var args []any
-	args = append(args, scope.Person)
-	if !scope.CommonOnly && scope.Agent != "" {
-		args = append(args, scope.Agent)
+	if scope.Origin == "messenger" {
+		where = append(where, `EXISTS(SELECT 1 FROM messenger_record mr JOIN messenger_source ms ON ms.platform=mr.platform AND ms.account=mr.account JOIN retract_visible_event me ON me.id=mr.event WHERE mr.event=`+alias+`.source_id AND mr.state='live' AND ms.person=?)`)
+		args = append(args, scope.Person)
+		for _, filter := range []struct{ column, value string }{{"platform", scope.Platform}, {"account", scope.Account}, {"chat", scope.Chat}, {"author", scope.Author}} {
+			if filter.value != "" {
+				where = append(where, `EXISTS(SELECT 1 FROM messenger_record mf WHERE mf.event=`+alias+`.source_id AND mf.`+filter.column+`=?)`)
+				args = append(args, filter.value)
+			}
+		}
+	} else {
+		where = append(where, alias+".person=?", holderCondition(scope, alias), "coalesce(json_extract("+alias+".origin,'$.kind'),'')<>'messenger'")
+		args = append(args, scope.Person)
+		if !scope.CommonOnly && scope.Agent != "" {
+			args = append(args, scope.Agent)
+		}
 	}
 	where = append(where, alias+".kind IN ("+placeholders(len(kinds))+")")
 	for _, kind := range kinds {
@@ -474,6 +533,10 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	if scope.EventSpeakerKind != "" {
 		where = append(where, "("+alias+".kind<>'event' OR "+alias+".speaker_kind=?)")
 		args = append(args, string(scope.EventSpeakerKind))
+	}
+	if scope.PersonOnly {
+		where = append(where, `((`+alias+`.kind='event' AND `+alias+`.speaker_kind='person')
+ OR (`+alias+`.kind='memory' AND EXISTS(SELECT 1 FROM memory_item m WHERE m.id=`+alias+`.source_id AND m.subject_kind='person')))`)
 	}
 	if scope.Origin != "" {
 		where = append(where, "json_extract("+alias+".origin,'$.kind')=?")
@@ -583,8 +646,11 @@ func lineage(ctx context.Context, db Canon, scope Scope, hits []Hit) ([]Hit, err
 // fuse merges the full-text list and the vector hook by reciprocal rank.
 func fuse(ctx context.Context, db Canon, scope Scope, query Query, text []Hit) ([]Hit, error) {
 	ids, err := query.Vectors(ctx, scope, query.Text)
-	if err != nil {
-		return nil, err
+	if err != nil || len(ids) == 0 {
+		if query.Limit > 0 && len(text) > query.Limit {
+			text = text[:query.Limit]
+		}
+		return lineage(ctx, db, scope, text)
 	}
 	type key struct {
 		kind Kind
@@ -620,7 +686,10 @@ func fuse(ctx context.Context, db Canon, scope Scope, query Query, text []Hit) (
 		if !out[i].OccurredAt.Equal(out[j].OccurredAt) {
 			return out[i].OccurredAt.After(out[j].OccurredAt)
 		}
-		return out[i].ID < out[j].ID
+		if out[i].ID != out[j].ID {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Kind < out[j].Kind
 	})
 	if query.Limit > 0 && len(out) > query.Limit {
 		out = out[:query.Limit]
@@ -636,18 +705,21 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 	if err != nil {
 		return nil, err
 	}
+	kinds := kindsOf(scope)
 	at := scope.At
 	if at == 0 {
 		at = time.Now().Unix()
 	}
-	where, args := scopeWhere(scope, kindsOf(scope), at, scope.Projection || scope.ExternalModel, "d")
-	where = append(where, "d.source_id IN (SELECT value FROM json_each(?))")
-	args = append(args, encoded)
-	prefix := ""
-	if cte, cteArgs := restrictedCTE(scope); cte != "" {
-		prefix = "WITH " + cte + " "
-		args = append(cteArgs, args...)
+	where, args := scopeWhere(scope, kinds, at, scope.Projection || scope.ExternalModel, "d")
+	where = append(where, "(d.source_id IN (SELECT value FROM json_each(?)) OR d.kind||char(0)||d.source_id IN (SELECT value FROM json_each(?)))")
+	args = append(args, encoded, encoded)
+	older, olderArgs := olderExpr(kinds, at, "d")
+	if !scope.History {
+		where = append(where, "("+older+")=0")
+		args = append(args, olderArgs...)
 	}
+	prefix, prefixArgs := restrictedPrefix(scope)
+	args = append(append(prefixArgs, olderArgs...), args...)
 	order := map[string]int{}
 	for i, id := range ids {
 		if _, ok := order[id]; !ok {
@@ -656,7 +728,7 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 	}
 	var hits []Hit
 	err = db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, prefix+`SELECT d.source_id,d.kind,d.revision,d.occurred_at,d.holder FROM recall_doc d
+		rows, err := tx.QueryContext(ctx, prefix+` SELECT d.source_id,d.kind,d.revision,d.occurred_at,d.holder,`+older+` FROM recall_doc d
    WHERE `+strings.Join(where, " AND "), args...)
 		if err != nil {
 			return err
@@ -665,9 +737,11 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		for rows.Next() {
 			var h Hit
 			var occurred string
-			if err := rows.Scan(&h.ID, &h.Kind, &h.Revision, &occurred, &h.Holder); err != nil {
+			var olderValue int
+			if err := rows.Scan(&h.ID, &h.Kind, &h.Revision, &occurred, &h.Holder, &olderValue); err != nil {
 				return err
 			}
+			h.Older = olderValue == 1
 			h.OccurredAt, _ = time.Parse(time.RFC3339Nano, occurred)
 			hits = append(hits, h)
 		}
@@ -676,7 +750,13 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 	if err != nil {
 		return nil, err
 	}
-	sort.SliceStable(hits, func(i, j int) bool { return order[hits[i].ID] < order[hits[j].ID] })
+	rank := func(h Hit) int {
+		if n, ok := order[string(h.Kind)+"\x00"+h.ID]; ok {
+			return n
+		}
+		return order[h.ID]
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return rank(hits[i]) < rank(hits[j]) })
 	return hits, nil
 }
 
@@ -818,7 +898,7 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 			}
 			return text, nil
 		}
-		return body.String, nil
+		return maskDerived(body.String, spans)
 	case Memory:
 		var text string
 		err := db.Read(ctx, func(tx *canon.Tx) error {

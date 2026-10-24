@@ -158,6 +158,57 @@ func TestSearchOneHitPerIdenticalTextAndReplayOptIn(t *testing.T) {
 	}
 }
 
+// A matching copy that is still queued has no recall_doc row, so its candidate
+// id is NULL. Lineage must exclude that copy by source id. Using the nullable
+// row id in NOT IN drops every event, including indexed matches that do not
+// derive from it.
+func TestSearchQueuedDerivedEventKeepsIndexedMatches(t *testing.T) {
+	t.Run("view_of", func(t *testing.T) {
+		db := database(t)
+		base := time.Unix(1700000000, 0)
+		admitAt(t, db, "source", "conversation", "owner", "agent", "도서관 원문", base, "")
+		admitAt(t, db, "other", "conversation", "owner", "agent", "도서관 산책", base.Add(time.Second), "")
+		write(t, db, eventSQL, "view", "도서관 보기")
+		write(t, db, "INSERT INTO ev_rel(event_id,target_id,kind,ordinal) VALUES('view','source','view_of',0)")
+		if n := count(t, db, "SELECT count(*) FROM recall_pending WHERE kind='event' AND source_id='view'"); n != 1 {
+			t.Fatalf("view not queued: %d", n)
+		}
+		if n := count(t, db, "SELECT count(*) FROM recall_doc WHERE kind='event' AND source_id='view'"); n != 0 {
+			t.Fatalf("view already published: %d", n)
+		}
+		scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+		assertLineageIDs(t, db, scope, "queued view")
+		drain(t, db)
+		assertLineageIDs(t, db, scope, "published view")
+	})
+	t.Run("replay_of", func(t *testing.T) {
+		db := database(t)
+		base := time.Unix(1700000000, 0)
+		admitAt(t, db, "source", "conversation", "owner", "agent", "도서관 원문", base, "")
+		admitAt(t, db, "other", "conversation", "owner", "agent", "도서관 산책", base.Add(time.Second), "")
+		write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,body)
+ SELECT 'copy',conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,id,'도서관 복사' FROM conv_event WHERE id='source'`)
+		if n := count(t, db, "SELECT count(*) FROM recall_pending WHERE kind='event' AND source_id='copy'"); n != 1 {
+			t.Fatalf("copy not queued: %d", n)
+		}
+		scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+		assertLineageIDs(t, db, scope, "queued replay hidden by default")
+		scope.IncludeReplay = true
+		assertLineageIDs(t, db, scope, "queued replay")
+		drain(t, db)
+		assertLineageIDs(t, db, scope, "published replay")
+	})
+}
+
+func assertLineageIDs(t *testing.T, db *canon.Store, scope recall.Scope, label string) {
+	t.Helper()
+	ids := searchIDs(t, db, scope, "도서관", 0)
+	sort.Strings(ids)
+	if !reflect.DeepEqual(ids, []string{"other", "source"}) {
+		t.Fatalf("%s: %v", label, ids)
+	}
+}
+
 func TestSearchLineageKeepsEventAsItemCitation(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)
@@ -342,6 +393,98 @@ func TestSearchReadsMaterialBackedEventBody(t *testing.T) {
 	if !strings.Contains(results[0].Excerpt, "도서관") {
 		t.Fatalf("material excerpt: %q", results[0].Excerpt)
 	}
+}
+
+// A queued event whose body lives in material is read through EventText.
+// That read follows the requested kinds, and a matching view or replay of
+// another candidate counts once with that candidate before the limit.
+func TestSearchMaterialEventHonorsKindsAndLineage(t *testing.T) {
+	texts := map[string]string{}
+	read := func(_ context.Context, id string) (string, error) {
+		text, ok := texts[id]
+		if !ok {
+			return "", recall.ErrBytesUnavailable
+		}
+		return text, nil
+	}
+	insertMaterial := func(t *testing.T, db *canon.Store, id, at, body string) {
+		t.Helper()
+		texts[id] = body
+		write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES(?,'conversation','owner','agent','person','{"kind":"tui"}',?,'2026-01-02T00:00:00Z','observed','{"kind":"native"}','asset',1)`, id, at)
+	}
+
+	t.Run("kinds", func(t *testing.T) {
+		db := database(t)
+		base := time.Unix(1700000000, 0)
+		admitAt(t, db, "evidence", "conversation", "owner", "agent", "근거 문장", base, "")
+		item := remember(t, db, "agent", "", "도서관 기억", memory.Local, "evidence")
+		insertMaterial(t, db, "paper", "2026-01-03T00:00:00Z", "도서관 자료")
+		memoryOnly := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Memory}}
+		if ids := searchIDsRead(t, db, memoryOnly, "도서관", 0, read); !reflect.DeepEqual(ids, []string{item}) {
+			t.Fatalf("memory query returned a queued material event: %v", ids)
+		}
+		events := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+		if ids := searchIDsRead(t, db, events, "도서관", 0, read); !reflect.DeepEqual(ids, []string{"paper"}) {
+			t.Fatalf("event query missed the queued material event: %v", ids)
+		}
+	})
+
+	t.Run("view_of", func(t *testing.T) {
+		db := database(t)
+		base := time.Unix(1700000000, 0)
+		admitAt(t, db, "source", "conversation", "owner", "agent", "도서관 원문", base, "")
+		admitAt(t, db, "other", "conversation", "owner", "agent", "도서관 산책", base.Add(time.Second), "")
+		insertMaterial(t, db, "view", "2026-01-03T00:00:00Z", "도서관 보기")
+		write(t, db, "INSERT INTO ev_rel(event_id,target_id,kind,ordinal) VALUES('view','source','view_of',0)")
+		scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+		ids := searchIDsRead(t, db, scope, "도서관", 0, read)
+		sort.Strings(ids)
+		if !reflect.DeepEqual(ids, []string{"other", "source"}) {
+			t.Fatalf("queued material view counted separately: %v", ids)
+		}
+		// Limit 3 leaves a spare slot. The copy must not fill it.
+		if ids = searchIDsRead(t, db, scope, "도서관", 3, read); len(ids) != 2 || slices.Contains(ids, "view") {
+			t.Fatalf("queued material view used a result slot: %v", ids)
+		}
+	})
+
+	t.Run("replay_of", func(t *testing.T) {
+		db := database(t)
+		base := time.Unix(1700000000, 0)
+		admitAt(t, db, "source", "conversation", "owner", "agent", "도서관 원문", base, "")
+		texts["copy"] = "도서관 복사"
+		write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,material_id,material_revision)
+ VALUES('copy','conversation','owner','agent','person','{"kind":"tui"}','2026-01-03T00:00:00Z','2026-01-03T00:00:00Z','observed','{"kind":"native"}','source','asset',1)`)
+		scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}, IncludeReplay: true}
+		if ids := searchIDsRead(t, db, scope, "도서관", 0, read); !reflect.DeepEqual(ids, []string{"source"}) {
+			t.Fatalf("queued material replay counted separately: %v", ids)
+		}
+	})
+
+	t.Run("both_queued", func(t *testing.T) {
+		db := database(t)
+		insertMaterial(t, db, "source", "2026-01-02T00:00:00Z", "도서관 원문")
+		insertMaterial(t, db, "view", "2026-01-03T00:00:00Z", "도서관 보기")
+		write(t, db, "INSERT INTO ev_rel(event_id,target_id,kind,ordinal) VALUES('view','source','view_of',0)")
+		scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+		if ids := searchIDsRead(t, db, scope, "도서관", 0, read); !reflect.DeepEqual(ids, []string{"source"}) {
+			t.Fatalf("two queued material events counted separately: %v", ids)
+		}
+	})
+}
+
+func searchIDsRead(t *testing.T, db *canon.Store, scope recall.Scope, text string, limit int, read recall.ReadEvent) []string {
+	t.Helper()
+	hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: text, Limit: limit, EventText: read})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.ID)
+	}
+	return ids
 }
 
 func TestSearchVectorsFuseIntoTheRankedList(t *testing.T) {

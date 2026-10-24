@@ -24,9 +24,10 @@ type Canon interface {
 // It is called only after the read transaction has closed.
 type ReadEvent func(context.Context, string) (string, error)
 type Store struct {
-	db        Canon
-	readEvent ReadEvent
-	after     int64
+	db          Canon
+	readEvent   ReadEvent
+	after       int64
+	windowAfter int64
 }
 
 func New(db Canon, readEvent ReadEvent) *Store { return &Store{db: db, readEvent: readEvent} }
@@ -97,7 +98,7 @@ func (s *Store) DrainBatch(ctx context.Context) (int, error) {
 	}
 	if len(batch) == 0 {
 		s.after = 0
-		return 0, nil
+		return s.drainWindows(ctx)
 	}
 	s.after = batch[len(batch)-1].sequence
 	completed := 0

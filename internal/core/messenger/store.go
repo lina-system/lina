@@ -1167,15 +1167,17 @@ func (s *Store) writeProgress(ctx context.Context, tx *canon.Tx, source Source, 
 	// A page whose adapter states no coverage keeps the default: an opaque
 	// cursor that survives a restart and history as deep as the platform serves.
 	depth, durable := "", 1
+	var interval, window time.Duration
 	if page.Coverage != nil {
+		interval, window = page.Coverage.Interval, page.Coverage.ReadWindow
 		depth = page.Coverage.HistoryDepth
 		durable = boolInt(page.Coverage.CursorSurvivesRestart)
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_coverage(platform,account,chat,read_from,read_through,read_at,messages,history_depth,cursor_survives_restart)
-VALUES(?,?,?,?,?,?,?,?,?)
+	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_coverage(platform,account,chat,read_from,read_through,read_at,messages,history_depth,cursor_survives_restart,interval_ns,window_ns)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(platform,account,chat,read_from,read_through) DO UPDATE SET read_at=excluded.read_at,messages=excluded.messages,
- history_depth=excluded.history_depth,cursor_survives_restart=excluded.cursor_survives_restart`,
-		source.Platform, source.Account, chat, string(from), through.UTC().Format(time.RFC3339Nano), readAt, messages, depth, durable)
+ history_depth=excluded.history_depth,cursor_survives_restart=excluded.cursor_survives_restart,interval_ns=excluded.interval_ns,window_ns=excluded.window_ns`,
+		source.Platform, source.Account, chat, string(from), through.UTC().Format(time.RFC3339Nano), readAt, messages, depth, durable, int64(interval), int64(window))
 	return err
 }
 
