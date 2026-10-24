@@ -38,6 +38,24 @@ func projectWaiting(payload protocol.Payload) *state.WaitingSummary {
 	return summary
 }
 
+// workCount reads Core's running count. A Core that sends no count leaves the
+// client to count the cards it draws, which is all an older Core allows.
+func (m *shellModel) workCount() (running, waiting int) {
+	for _, b := range m.content.Blocks {
+		if b.Topic == "progress" && b.Work != nil && b.Work.Counts != nil {
+			return b.Work.Counts.Running, b.Work.Counts.Waiting
+		}
+	}
+	for _, c := range m.workCards() {
+		if c.Waiting > 0 || c.State == protocol.RunningStateNeedsInput {
+			waiting++
+		} else if c.State == protocol.RunningStateInProgress {
+			running++
+		}
+	}
+	return running, waiting
+}
+
 func (m *shellModel) homeWaiting() *state.WaitingSummary {
 	if m.hasCapability("waiting") && m.hasCapability("progress") {
 		for _, block := range m.content.Blocks {
