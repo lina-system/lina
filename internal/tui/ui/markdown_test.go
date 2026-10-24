@@ -20,7 +20,9 @@ import (
 )
 
 func markdownTranscript(m *shellModel) string {
-	content := strings.Split(m.View().Content, "\n")
+	// Markdown goldens describe the content before the viewport canvas adds
+	// padding and restores default colours after nested styles.
+	content := strings.Split(m.viewContent(true), "\n")
 	region := m.conversationPlan().Conversation
 	return strings.TrimRight(strings.Join(content[region.Y:region.Y+region.Height], "\n"), "\n")
 }
