@@ -659,6 +659,9 @@ func senderObservation(source Source, plan recordPlan) (identity.Observation, bo
 	}
 	switch message.Route {
 	case RoutePerson, RouteParticipant:
+		// A person or an external participant is observed below.
+	case RouteAutomation, RouteSystem:
+		return identity.Observation{}, false
 	default:
 		return identity.Observation{}, false
 	}
