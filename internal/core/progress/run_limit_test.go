@@ -16,6 +16,7 @@ import (
 // TestQueuedGoalLineShowsReasonAndPlace checks that a goal waiting for a run
 // slot says why and which place it holds, and that its place follows rank.
 func TestQueuedGoalLineShowsReasonAndPlace(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)

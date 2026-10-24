@@ -19,6 +19,7 @@ import (
 // the line fields the progress topic publishes: what it is doing now, when its
 // work started and its numbered stage entries.
 func TestGoalLineCarriesNowStartAndStages(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -157,6 +158,7 @@ func admitGoal(t *testing.T, engine *goal.Engine) {
 // TestPausedGoalLineAndRankOrder checks the two values the person's commands
 // change on a line: a paused goal says so in Now, and goal lines follow rank.
 func TestPausedGoalLineAndRankOrder(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)

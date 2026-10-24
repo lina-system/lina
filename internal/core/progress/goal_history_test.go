@@ -16,6 +16,7 @@ import (
 )
 
 func TestInitialGoalStagesDoNotScaleWithUnrelatedHistory(t *testing.T) {
+	// Cannot call t.Parallel: AllocsPerRun counts process-wide allocations.
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)

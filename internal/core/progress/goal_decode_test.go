@@ -12,6 +12,7 @@ import (
 )
 
 func TestProgressGoalDecodeKeepsDisplayWithoutExecutionBriefs(t *testing.T) {
+	// Cannot call t.Parallel: AllocsPerRun counts process-wide allocations.
 	g := goal.Goal{ID: "goal", Person: "person", Agent: "agent", Turn: "turn", CreatedAt: 100, State: goal.GoalRunning, AttentionID: "attention", StepGraph: &goal.StepGraph{GoalID: "goal", Revision: 3}}
 	for i := range 82 {
 		id := fmt.Sprintf("step-%02d", i)
@@ -69,6 +70,7 @@ func TestProgressGoalDecodeKeepsDisplayWithoutExecutionBriefs(t *testing.T) {
 }
 
 func TestProgressGoalDecodeKeepsAbsentGraphAndRejectsMalformedDisplay(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{`{}`, `{"tasks":null,"step_graph":null}`, `{"tasks":[],"step_graph":{"revision":1,"steps":[]}}`} {
 		var full goal.Goal
 		if err := json.Unmarshal([]byte(raw), &full); err != nil {

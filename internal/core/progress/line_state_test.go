@@ -17,6 +17,7 @@ import (
 // then the goal's own state. The count reads these states, so a line without
 // one cannot be counted.
 func TestGoalLineCarriesItsLineState(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)

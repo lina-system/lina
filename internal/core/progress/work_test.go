@@ -14,6 +14,7 @@ import (
 )
 
 func TestWorkUnitsDropsSeenCompletionAndRereadsGeneration(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -97,6 +98,7 @@ func TestWorkUnitsDropsSeenCompletionAndRereadsGeneration(t *testing.T) {
 }
 
 func TestReadyForReviewIsNotACompletionVerdict(t *testing.T) {
+	t.Parallel()
 	for _, verdict := range []string{"", "verified"} {
 		units := UnplannedWork(map[string]work.Card{
 			"task": {Task: work.Task{ID: "task", Title: "Prepare materials", RequiresApply: true}, State: "ready_for_review", Verdict: verdict, Run: &work.Run{Generation: 1}},
@@ -116,6 +118,7 @@ func TestReadyForReviewIsNotACompletionVerdict(t *testing.T) {
 }
 
 func TestUnplannedWorkDoesNotInventPlanValues(t *testing.T) {
+	t.Parallel()
 	cards := map[string]work.Card{
 		"goal": {Task: work.Task{ID: "goal", Title: "Goal"}},
 		"task": {Task: work.Task{ID: "task", GoalID: "goal", Title: "Task"}, State: "done", Verdict: "verified", Run: &work.Run{Generation: 1}, Receipt: &work.Receipt{Outcome: "ready_for_review"}, TurnStatus: "completed"},

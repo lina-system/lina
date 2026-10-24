@@ -23,6 +23,7 @@ import (
 // actions dispatch in its own turn. A card handed off outside any goal stays a
 // line of its own.
 func TestDispatchedStepCardsAreRowsOfTheirGoal(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)

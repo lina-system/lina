@@ -25,6 +25,7 @@ import (
 // TestStageListNumbersByLongestChain generates step graphs and checks that each
 // stage holds exactly the steps of one longest-chain depth.
 func TestStageListNumbersByLongestChain(t *testing.T) {
+	t.Parallel()
 	r := rand.New(rand.NewPCG(11, 12))
 	for n := range 300 {
 		steps := randomSteps(r, 1+r.IntN(24))
@@ -86,6 +87,7 @@ func TestStageListNumbersByLongestChain(t *testing.T) {
 // TestStageListCollapsesParallelSteps checks that a parallel group is one entry
 // whose label names its first step and the number of the others.
 func TestStageListCollapsesParallelSteps(t *testing.T) {
+	t.Parallel()
 	r := rand.New(rand.NewPCG(21, 22))
 	for n := range 300 {
 		steps := randomSteps(r, 2+r.IntN(30))
@@ -125,6 +127,7 @@ func TestStageListCollapsesParallelSteps(t *testing.T) {
 // that a done stage never reopens or renumbers, and that a step admitted later
 // lands at least one stage past the leading run of done stages.
 func TestStageListKeepsDoneStages(t *testing.T) {
+	t.Parallel()
 	r := rand.New(rand.NewPCG(31, 32))
 	for n := range 200 {
 		steps := randomSteps(r, 1+r.IntN(8))
@@ -249,6 +252,7 @@ func checkDoneStages(t *testing.T, n int, before, after []Stage, steps []Step) {
 // TestStageListIsDeterministic checks that the same ledger gives the same list
 // whatever order the steps of each revision arrive in.
 func TestStageListIsDeterministic(t *testing.T) {
+	t.Parallel()
 	r := rand.New(rand.NewPCG(41, 42))
 	for n := range 200 {
 		revisions := randomRevisions(r)
@@ -278,6 +282,7 @@ func TestStageListIsDeterministic(t *testing.T) {
 }
 
 func TestStageListSpecialEntries(t *testing.T) {
+	t.Parallel()
 	list, err := Stages(nil, goal.GoalDefining, design.Korean)
 	if err != nil || len(list) != 1 || list[0].Kind != KindDesign || list[0].Label != "설계" || list[0].State != StepNext {
 		t.Fatalf("defining list = %+v, %v", list, err)
@@ -302,6 +307,7 @@ func TestStageListSpecialEntries(t *testing.T) {
 }
 
 func TestStageListRejectsInvalidGraph(t *testing.T) {
+	t.Parallel()
 	cases := map[string][]Step{
 		"cycle":   {{ID: "a", Name: "A", DependsOn: []string{"b"}}, {ID: "b", Name: "B", DependsOn: []string{"a"}}},
 		"unknown": {{ID: "a", Name: "A", DependsOn: []string{"missing"}}},
@@ -311,6 +317,7 @@ func TestStageListRejectsInvalidGraph(t *testing.T) {
 	}
 	for name, steps := range cases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			if _, err := Stages([]Revision{{Steps: steps}}, goal.GoalRunning, design.Korean); !errors.Is(err, ErrStageGraph) {
 				t.Fatalf("error = %v", err)
 			}
@@ -321,6 +328,7 @@ func TestStageListRejectsInvalidGraph(t *testing.T) {
 // TestGoalStagesReadsTheLedger checks that the list comes from the committed
 // step graph revisions and the observed task states, and repeats after a restart.
 func TestGoalStagesReadsTheLedger(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -553,6 +561,7 @@ func (s stageDefinitions) Commit(ctx context.Context, c goal.DefinitionChange, p
 }
 
 func TestStageListClosesSupersededStepAndKeepsItsStage(t *testing.T) {
+	t.Parallel()
 	rev := func(steps ...Step) Revision { return Revision{Steps: steps} }
 	first := []Step{
 		{ID: "a", Name: "원인 찾기", State: StepDone},

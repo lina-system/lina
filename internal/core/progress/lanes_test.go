@@ -15,6 +15,7 @@ import (
 )
 
 func TestLanesPageScopeAndCurrentGeneration(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)

@@ -8,6 +8,7 @@ import (
 )
 
 func TestDoingLineFromWorkerRecords(t *testing.T) {
+	t.Parallel()
 	var c work.Card
 	if err := json.Unmarshal([]byte(`{"task":{"id":"task","title":"Repair login"},"state":"working","active":true,"run":{"id":"run"},"doing":{"line":"Login repair · Running tests","busy":true,"since":"2026-10-23T00:00:00Z"}}`), &c); err != nil {
 		t.Fatal(err)
