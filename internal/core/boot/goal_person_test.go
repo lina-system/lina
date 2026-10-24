@@ -86,11 +86,28 @@ func TestGoalTaskListRowsFollowTheGoalTasks(t *testing.T) {
 }
 
 // The running list is rebuilt on every run change and once a second. A goal's
-// tasks share one record, so the build must not decode it again per task.
+// tasks share one record and its actions one table, so the build must not read
+// either again per task.
 func TestGoalTaskListBuildIsLinearInTasks(t *testing.T) {
 	allocs := func(tasks int) float64 {
 		db := goalTaskListDB(t)
-		saveListGoal(t, db, listGoal("goal", "person", tasks))
+		g := listGoal("goal", "person", tasks)
+		for i := range g.Tasks {
+			g.Tasks[i].Kind = goal.BackgroundStep
+			g.Tasks[i].Attempt = 1
+			action := goal.Action{ID: fmt.Sprintf("action-%d", i), GoalID: g.ID, TaskID: g.Tasks[i].ID, Kind: goal.Assign, Attempt: 1, StepKind: goal.BackgroundStep, State: "running"}
+			raw, err := json.Marshal(action)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = db.Write(t.Context(), func(tx *canon.Tx) error {
+				_, err := tx.ExecContext(t.Context(), "INSERT INTO work_records(kind,id,version,body) VALUES('action',?,1,?)", action.ID, raw)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		saveListGoal(t, db, g)
 		list := runs.NewRunningList(db, map[string]runs.ListSource{"goal": goalTaskList{}})
 		return testing.AllocsPerRun(3, func() {
 			snapshot, err := list.Build(context.Background(), "person")
