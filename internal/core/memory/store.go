@@ -21,9 +21,12 @@ type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
 }
 type Store struct {
-	db     Canon
-	quotes QuoteReader
+	db      Canon
+	quotes  QuoteReader
+	vectors recall.VectorQuery
 }
+
+func (s *Store) WithVectors(query recall.VectorQuery) *Store { s.vectors = query; return s }
 
 func New(db Canon) *Store       { return &Store{db: db} }
 func normalize(s string) string { return strings.Join(strings.Fields(strings.ToLower(s)), " ") }
@@ -392,8 +395,13 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 		limit = 100
 	}
 	// Text matching is the one recall entry's job. The item, holder, validity
-	// and evidence filters below stay here; recall supplies the matching ids.
+	// and evidence filters below stay here; recall supplies the matching ids
+	// already ranked. Those filters may drop a hit. They do not reorder the
+	// hits that remain, and the caller's limit applies to that order.
 	var matched string
+	var rankOrder map[string]int
+	sqlAfter := q.After
+	sqlLimit := limit
 	if len(q.IDs) > 0 {
 		raw, err := json.Marshal(q.IDs)
 		if err != nil {
@@ -406,12 +414,17 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			CommonOnly: scope.CommonOnly, History: q.History, At: q.At,
 			Projection: scope.Projection, ExternalModel: scope.ExternalModel,
 			PersonMemory: q.PersonOnly || relationship,
-		}, recall.Query{Text: q.Text})
+		}, recall.Query{Text: q.Text, Vectors: s.vectors})
 		if err != nil {
 			return nil, err
 		}
 		ids := make([]string, 0, len(found))
+		rankOrder = make(map[string]int, len(found))
 		for _, hit := range found {
+			if _, seen := rankOrder[hit.ID]; seen {
+				continue
+			}
+			rankOrder[hit.ID] = len(ids)
 			ids = append(ids, hit.ID)
 		}
 		if len(ids) == 0 {
@@ -422,6 +435,8 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			return nil, err
 		}
 		matched = string(raw)
+		sqlAfter = ""
+		sqlLimit = len(ids)
 	}
 	var hits []Hit
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
@@ -437,7 +452,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			match = "EXISTS(SELECT 1 FROM json_each(?) WHERE value=e.id)"
 			args = append(args, matched)
 		}
-		args = append(args, q.After, q.After, q.After, q.After, limit)
+		args = append(args, sqlAfter, sqlAfter, sqlAfter, sqlAfter, sqlLimit)
 		rows, err := tx.QueryContext(ctx, `WITH candidates AS MATERIALIZED (
    SELECT m.id,m.sequence,m.record,m.normalized,
    (SELECT max(r.sequence) FROM memory_revision r WHERE r.item_id=m.id) AS priority,
@@ -469,7 +484,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			}
 
 			hits = append(hits, hit)
-			if len(hits) == limit {
+			if len(hits) == sqlLimit {
 				break
 			}
 		}
@@ -477,6 +492,26 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 	})
 	if err != nil {
 		return nil, err
+	}
+	if rankOrder != nil {
+		slices.SortStableFunc(hits, func(a, b Hit) int { return rankOrder[a.ID] - rankOrder[b.ID] })
+		if q.After != "" {
+			cut := -1
+			for i, hit := range hits {
+				if hit.ID == q.After {
+					cut = i
+					break
+				}
+			}
+			if cut < 0 {
+				hits = nil
+			} else {
+				hits = hits[cut+1:]
+			}
+		}
+		if len(hits) > limit {
+			hits = hits[:limit]
+		}
 	}
 	for i := range hits {
 		hits[i].Evidence, err = s.Quotes(ctx, scope, "memory", hits[i].ID, hits[i].Revision, hits[i].Evidence)

@@ -42,6 +42,7 @@ func runImportHermes(args []string) int {
 		return nil
 	})
 	rehearse := flags.Bool("rehearse", false, "print rehearsal only, without writing canon")
+	embed := flags.Bool("embed", false, "send the reported imported events to the configured embedding endpoint")
 	confirm := flags.Bool("confirm-import", false, "confirm source profile, destination and owner maps, then import")
 	promote := flags.String("promote", "", "reviewed cluster ids, all, or none; accepting attests that the quotes concern the person")
 	horizon := flags.Int64("horizon", 0, "exclude dated nonrecurring candidates before this Unix timestamp")
@@ -65,7 +66,7 @@ func runImportHermes(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	err := importHermes(ctx, *root, *source, *lcm, *state, *sidecars, hermes.Profile{ID: *profile, AgentID: *agent, PersonID: *person}, *owner, ownerChannels, *rehearse, *confirm, *promote, hermes.PromotionPolicy{Horizon: *horizon}, os.Stdin, os.Stdout)
+	err := importHermes(ctx, *root, *source, *lcm, *state, *sidecars, hermes.Profile{ID: *profile, AgentID: *agent, PersonID: *person}, *owner, ownerChannels, *rehearse, *confirm, *promote, hermes.PromotionPolicy{Horizon: *horizon}, os.Stdin, os.Stdout, *embed)
 	if errors.Is(err, ctlfiles.ErrLocked) {
 		fmt.Fprintln(os.Stderr, "lina import-hermes: Core is running. Stop Core first, then rerun the command.")
 		return 69
@@ -77,7 +78,7 @@ func runImportHermes(args []string) int {
 	return 0
 }
 
-func importHermes(ctx context.Context, root, source, lcm, state, sidecarsDir string, profile hermes.Profile, owner string, ownerChannels []string, rehearse, confirm bool, promote string, policy hermes.PromotionPolicy, input io.Reader, output io.Writer) error {
+func importHermes(ctx context.Context, root, source, lcm, state, sidecarsDir string, profile hermes.Profile, owner string, ownerChannels []string, rehearse, confirm bool, promote string, policy hermes.PromotionPolicy, input io.Reader, output io.Writer, embed ...bool) error {
 	source, err := filepath.EvalSymlinks(source)
 	if err != nil {
 		return err
@@ -155,6 +156,9 @@ func importHermes(ctx context.Context, root, source, lcm, state, sidecarsDir str
 	encode.SetIndent("", "  ")
 	if err = encode.Encode(struct{ Rehearsal hermes.RehearsalReport }{report}); err != nil {
 		return err
+	}
+	if len(embed) > 0 && embed[0] {
+		fmt.Fprintf(output, "Embedding enabled for up to %d imported events at the configured endpoint.\n", report.Events)
 	}
 	if rehearse {
 		return nil
@@ -269,6 +273,11 @@ func importHermes(ctx context.Context, root, source, lcm, state, sidecarsDir str
 	seal, err := plan.Seal(ctx, db, capture)
 	if err != nil {
 		return err
+	}
+	if len(embed) > 0 && embed[0] {
+		if err = consentImportBatch(ctx, db, request.BatchID); err != nil {
+			return err
+		}
 	}
 	batches, err := plan.PromotionBatches(policy)
 	if err != nil {

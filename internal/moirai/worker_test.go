@@ -237,3 +237,39 @@ func TestRunReturnsReadFailureAndJoinsActiveWork(t *testing.T) {
 		t.Fatal("read failure did not cancel and join active work")
 	}
 }
+
+type embeddingOnlyCore struct {
+	entered  chan struct{}
+	canceled chan struct{}
+}
+
+func (c *embeddingOnlyCore) Embed(ctx context.Context) (jobapi.EmbeddingResult, error) {
+	close(c.entered)
+	<-ctx.Done()
+	close(c.canceled)
+	return jobapi.EmbeddingResult{}, ctx.Err()
+}
+func (c *embeddingOnlyCore) Aux(context.Context, jobapi.AuxRequest) (jobapi.AuxResult, error) {
+	return jobapi.AuxResult{}, nil
+}
+func (c *embeddingOnlyCore) Apply(context.Context, jobapi.Proposal) (jobapi.Applied, error) {
+	return jobapi.Applied{}, nil
+}
+func (c *embeddingOnlyCore) Report(context.Context, string, jobapi.JobState) error { return nil }
+
+// A blocked embedding endpoint belongs to the worker lifetime and is joined on cancellation.
+func TestEmbeddingJobCancellation(t *testing.T) {
+	c := &embeddingOnlyCore{make(chan struct{}), make(chan struct{})}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); (Worker{Core: c}).runEmbeddings(ctx, time.Second) }()
+	<-c.entered
+	cancel()
+	<-done
+	select {
+	case <-c.canceled:
+	default:
+		t.Fatal("embedding request outlived worker")
+	}
+}

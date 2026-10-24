@@ -173,7 +173,7 @@ func (s RecallScope) Holders() []Holder {
 
 type Query struct {
 	Kind       Kind     // Optional kind filter, applied before ranking and limits.
-	After      string   // Optional last item identity in the current revision order.
+	After      string   // Optional last item. Text queries continue in recall rank; other queries continue in revision order.
 	ID         string   // Optional exact identity, filtered before the result limit.
 	IDs        []string // Optional identity set from the shared index, already ranked.
 	Text       string

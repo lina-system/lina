@@ -105,7 +105,7 @@ Layers under `internal/core/`:
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
 | L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `textcall` (terminal call parsing and offline replay scoring), `recall` (shared derived index writer and queued fill) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `localmodel`, `exec`, `exchange`, `messenger`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install`, `miniapps` |
+| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `localmodel`, `embedding` (non-chat endpoint adapter), `exec`, `exchange`, `messenger`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install`, `miniapps` |
 | L5 | `boot`, `supervise`, `methodreplay` |
 
 The separate worker has its own downward import layers.
@@ -1863,7 +1863,7 @@ func (s RecallScope) Holders() []Holder  // the agent and "all"; filtered before
 ```
 
 The memory store keeps the current item and immutable revision snapshots in canon.
-`RecallScope` also binds the person and whether the read is a projection or goes to an external model; SQL excludes other holders and people before text matching or a result limit.
+`RecallScope` also binds the person and whether the read is a projection or goes to an external model; SQL excludes other holders and people before text matching or a result limit. A text query materializes the shared index's ranked ids and applies the caller's limit in that order, including continuation from `after`.
 Local views can read the person's named scope classes; projections exclude `private` and `never-leaves`.
 External model calls exclude `never-leaves`; raw ledger fallback and other items citing the same protected event cannot bypass that restriction.
 Protected event ids are collected across the person's holders without exposing those holders' records, then applied to the authorized candidates.

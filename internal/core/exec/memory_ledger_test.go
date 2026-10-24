@@ -175,6 +175,63 @@ func TestRememberLargeSourceAndReplayKeepsOneLineage(t *testing.T) {
 	}
 }
 
+func TestRecallPersonOmitsAgentAndToolEvents(t *testing.T) {
+	db := memoryDB(t)
+	events := ledger.New(db, nil)
+	flow := NewMemory(db, nil, nil)
+	base := time.Unix(10, 0)
+	admit := func(entry guard.Entry, id, body, locator string, at time.Time) {
+		t.Helper()
+		in := ledger.Input{ID: id, ConversationID: "conversation", AgentID: "A", ParentID: "event", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Body: body, Locator: locator}
+		if entry == guard.EntryOwner {
+			in.PersonID = "person"
+			in.ParentID = ""
+		}
+		if _, err := events.Admit(t.Context(), entry, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	admit(guard.EntryOwner, "event", "likes tea", "", base)
+	admit(guard.EntryAgent, "reply", "noted that you like tea", "", base.Add(time.Second))
+	admit(guard.EntryTool, "tool", "tool output likes tea", "fixture:tool", base.Add(2*time.Second))
+	if _, err := flow.Remember(t.Context(), rememberInput("likes tea")); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := flow.RecallPerson(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, PersonRecall{Question: "What drink?", Query: "tea", At: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var memoryHits int
+	for _, source := range answer.Sources {
+		if strings.HasPrefix(source.ID, "memory:") {
+			memoryHits++
+		}
+		if source.ID == "event:reply" || source.ID == "event:tool" {
+			t.Fatalf("non-person event admitted as a person source: %+v", answer.Sources)
+		}
+	}
+	if memoryHits != 1 || len(answer.Sources) != 1 {
+		t.Fatalf("person recall sources: %+v", answer.Sources)
+	}
+}
+
+func TestRecallPersonCountsRememberedEventOnce(t *testing.T) {
+	db := memoryDB(t)
+	events := ledger.New(db, nil)
+	flow := NewMemory(db, nil, nil)
+	_, err := events.Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "event", ConversationID: "conversation", AgentID: "A", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: "likes tea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := flow.Remember(t.Context(), rememberInput("likes tea")); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := flow.RecallPerson(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, PersonRecall{Question: "What drink?", Query: "tea", At: 100})
+	if err != nil || len(answer.Sources) != 1 {
+		t.Fatalf("source counted through memory and ledger: %+v %v", answer, err)
+	}
+}
+
 func TestRecallPersonRanksOnlyItemsAboutThePerson(t *testing.T) {
 	db := memoryDB(t)
 	events := ledger.New(db, nil)
@@ -215,22 +272,5 @@ func TestRecallPersonRanksOnlyItemsAboutThePerson(t *testing.T) {
 	}
 	if len(answer.Sources) != 1 || answer.Sources[0].ID != "memory:"+person.ID {
 		t.Fatalf("person item: %+v", answer.Sources)
-	}
-}
-
-func TestRecallPersonCountsRememberedEventOnce(t *testing.T) {
-	db := memoryDB(t)
-	events := ledger.New(db, nil)
-	flow := NewMemory(db, nil, nil)
-	_, err := events.Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "event", ConversationID: "conversation", AgentID: "A", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: "likes tea"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := flow.Remember(t.Context(), rememberInput("likes tea")); err != nil {
-		t.Fatal(err)
-	}
-	answer, err := flow.RecallPerson(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, PersonRecall{Question: "What drink?", Query: "tea", At: 100})
-	if err != nil || len(answer.Sources) != 1 {
-		t.Fatalf("source counted through memory and ledger: %+v %v", answer, err)
 	}
 }

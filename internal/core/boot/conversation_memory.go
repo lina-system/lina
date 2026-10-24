@@ -142,5 +142,5 @@ func (r *conversationRuntime) validateModelContext(ctx context.Context, epoch ui
 
 // memoryStore resolves evidence through the same ledger/material reader as turns.
 func (r *conversationRuntime) memoryStore() *memory.Store {
-	return memory.New(r.db).WithQuotes(ledger.New(r.db, r.materials).Citation)
+	return memory.New(r.db).WithQuotes(ledger.New(r.db, r.materials).Citation).WithVectors(r.vectorQuery())
 }
