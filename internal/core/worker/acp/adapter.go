@@ -79,6 +79,8 @@ type Adapter struct {
 	effectSeen        bool
 	transportEnded    bool
 	held              []wire.Update
+	message           worker.TurnText
+	realTool          bool
 }
 
 var _ worker.Adapter = (*Adapter)(nil)
@@ -288,6 +290,8 @@ func (a *Adapter) beginLocked(ctx context.Context, text string) (worker.Thread, 
 	a.result.StopReason = ""
 	a.terminal = nil
 	a.effectSeen = false
+	a.realTool = false
+	a.message = worker.TurnText{}
 	a.transportEnded = false
 	th := a.thread
 	result, err := a.client.StartPrompt(ctx, wire.PromptRequest{SessionID: wire.SessionID(th.ID), Prompt: []wire.ContentBlock{{Text: &wire.ContentBlockText{Text: text}}}})
@@ -368,7 +372,7 @@ func (a *Adapter) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 	// A negotiated stop with a complete prompt reply can park an effect-free
 	// worker. Connection recovery still requires #751's joined transport.
 	typedStop := finish != nil && (finish.Failure == worker.RateLimitFailure || finish.Failure == worker.QuotaFailure || finish.Failure == worker.LoginFailure)
-	effectsKnown := finish != nil && (a.transportEnded || typedStop) && !a.effectSeen && !a.uncertainEffects && len(pending) == 0
+	effectsKnown := finish != nil && (a.transportEnded || typedStop || finish.Code == worker.TextCallFailure) && !a.effectSeen && !a.uncertainEffects && len(pending) == 0
 	observation := a.doing.Snapshot()
 	return worker.ThreadSnapshot{Doing: &observation, Finish: finish, EffectsKnown: effectsKnown, Thread: a.thread, State: a.state, Worker: a.Name(), Version: a.version, Workdir: a.spec.Workdir, Capabilities: a.Capabilities(), Output: a.result.Output, Pending: pending}, nil
 }

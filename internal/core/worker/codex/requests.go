@@ -21,6 +21,7 @@ type serverRequest struct {
 	answered   bool
 	resolved   bool
 	turnScoped bool
+	textFinish *worker.Finish
 }
 
 // requestKey compares JSON-RPC IDs without floating-point conversion. A JSON
@@ -136,6 +137,9 @@ func (s *Session) serverRequest(raw []byte, f frame) error {
 	if len(s.requests) >= 256 {
 		return errors.New("too many Codex server requests in one turn")
 	}
+	// A server request is protocol activity, including native tools that ask
+	// permission before their item notification arrives. Never replay over it.
+	s.realTool = true
 	s.nextRequest++
 	id := fmt.Sprintf("codex:%d:%d", s.generation, s.nextRequest)
 	req := worker.Request{ID: id, Method: f.Method, Params: append(json.RawMessage(nil), f.Params...)}
@@ -232,6 +236,23 @@ func (s *Session) Answer(ctx context.Context, t worker.Thread, a worker.Answer) 
 		return err
 	}
 	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if r.textFinish != nil {
+		var result struct {
+			Success bool `json:"success"`
+		}
+		_ = json.Unmarshal(a.Result, &result)
+		if !result.Success {
+			r.textFinish = &worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure, Code: "text_tool_dispatch_failed"}
+		}
+		delete(s.requests, a.RequestID)
+		s.revision++
+		err := s.publish(worker.Event{Thread: t, Kind: worker.ProgressEvent, Progress: &worker.Progress{Phase: "server_request_resolved", ItemID: a.RequestID}})
+		if err == nil {
+			err = s.completeText(*r.textFinish)
+		}
 		s.mu.Unlock()
 		return err
 	}

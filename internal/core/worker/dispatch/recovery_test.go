@@ -7,6 +7,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/kit/lease"
 	"strings"
 	"testing"
 	"time"
@@ -233,5 +234,35 @@ func TestDispatchCancellationSurvivesStaleObservation(t *testing.T) {
 	}
 	if next := recoveryRecord(saved[0]); next.State != "finished" || next.Recoveries != 0 {
 		t.Fatalf("canceled work recovered: %+v", next)
+	}
+}
+
+func TestTextCallRecoveryPinsWorkerAndFreshSession(t *testing.T) {
+	th := worker.Thread{ID: "contaminated", TurnID: "turn", TaskID: "task", AttemptID: "task:1"}
+	r := Record{ID: "task", State: "running", Worker: "codex", Thread: &th, Attempt: 1, Snapshot: &worker.ThreadSnapshot{Thread: th, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure, Code: worker.TextCallFailure}, EffectsKnown: true}}
+	next := recoveryRecord(r)
+	if next.State != "queued" || !next.FreshSession || next.RecoveryWorker != "codex" || next.Recoveries != 1 {
+		t.Fatalf("not a fresh recovery: %+v", next)
+	}
+	s := &Service{cfg: Config{Workers: []Factory{{Name: "other", Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
+		t.Fatal("replacement worker opened")
+		return nil, nil, nil
+	}}, CodexFactory("fixture")}}}
+	got := s.workersFor(next)
+	if len(got) != 1 || got[0].Name != "codex" {
+		t.Fatalf("worker choice widened: %+v", got)
+	}
+	// Persisted restart intent survives serialization; the next settled failure
+	// consumes no additional automatic attempt and is presented as a decision.
+	raw, _ := json.Marshal(next)
+	var restored Record
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatal(err)
+	}
+	restored.Snapshot = r.Snapshot
+	restored.Attempt = 2
+	final := recoveryRecord(restored)
+	if final.State != "decision" || final.Recoveries != 1 || final.DecisionAt == 0 {
+		t.Fatalf("second failure restarted: %+v", final)
 	}
 }
