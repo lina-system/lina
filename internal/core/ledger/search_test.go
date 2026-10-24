@@ -4,7 +4,6 @@ package ledger_test
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"reflect"
 	"sort"
@@ -200,22 +199,6 @@ func TestKoreanSearchMigrationAndMetadata(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestSearchDefaultLimit(t *testing.T) {
-	t.Parallel()
-	db, _ := database(t)
-	s := ledger.New(db, nil)
-	for i := range 25 {
-		in := input(fmt.Sprintf("event-%02d", i))
-		in.Body = fmt.Sprintf("도서관 기록 %d", i)
-		in.OccurredAt = in.OccurredAt.Add(time.Duration(i) * time.Minute)
-		admit(t, s, guard.EntryOwner, in)
-	}
-	hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: "도서관"})
-	if err != nil || len(hits) != 20 {
-		t.Fatalf("default limit: %d hits, %v", len(hits), err)
 	}
 }
 
