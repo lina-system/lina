@@ -146,6 +146,8 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 						text, err = r.a2aRunningSummary(ctx, s.PersonID, ref.ID)
 					} else if ref.Source == "session" {
 						text, err = r.workerRunningSummary(ctx, s.PersonID, ref.ID, offset)
+					} else if ref.Source == "goal" {
+						text, next, err = r.goalResultPage(ctx, s.PersonID, ref.ID, offset)
 					} else {
 						text, next, err = b.service.ResultPage(ctx, s.PersonID, ref.ID, offset)
 					}
