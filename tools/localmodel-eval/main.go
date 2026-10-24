@@ -159,10 +159,10 @@ func main() {
 	for _, c := range set.Cases {
 		row := caseResult{ID: c.ID, Kind: c.Kind}
 		if deps.Local != nil {
-			row.Local = runPath(ctx, l, deps, c, localmodel.ForceLocal, *warmup, *repeat, *timeout)
+			row.Local = runPath(ctx, l, pathDeps(deps, localRoute), c, localmodel.ForceLocal, localRoute, *warmup, *repeat, *timeout)
 		}
 		if deps.Main != nil {
-			row.Main = runPath(ctx, l, deps, c, localmodel.ForceMain, *warmup, *repeat, *timeout)
+			row.Main = runPath(ctx, l, pathDeps(deps, mainRoute), c, localmodel.ForceMain, mainRoute, *warmup, *repeat, *timeout)
 		}
 		results = append(results, row)
 	}
@@ -210,6 +210,22 @@ func loadSet(path string) (Set, error) {
 	return set, nil
 }
 
+// The two measured paths. A sample belongs to exactly one of them.
+const (
+	localRoute = string(localmodel.RouteLocal)
+	mainRoute  = string(localmodel.RouteMain)
+)
+
+// pathDeps keeps the measured paths apart. The local column has no main model
+// to fall back to and the main column has no helper, so a schema miss or an
+// unavailable helper is a local miss instead of a silent main-model answer.
+func pathDeps(all localmodel.Deps, route string) localmodel.Deps {
+	if route == localRoute {
+		return localmodel.Deps{Profile: all.Profile, Local: all.Local}
+	}
+	return localmodel.Deps{Main: all.Main}
+}
+
 func (c Case) input() string {
 	if strings.TrimSpace(c.Prompt) != "" {
 		return c.Prompt
@@ -226,7 +242,9 @@ func knownKind(kind string) bool {
 	return false
 }
 
-func runPath(ctx context.Context, l lease.Lease, deps localmodel.Deps, c Case, preference string, warmup, repeat int, timeout time.Duration) pathResult {
+// runPath measures one path. want names the route every run must take; a run
+// served elsewhere is a miss, never a sample of the other path.
+func runPath(ctx context.Context, l lease.Lease, deps localmodel.Deps, c Case, preference, want string, warmup, repeat int, timeout time.Duration) pathResult {
 	out := pathResult{Latencies: make([]float64, 0, repeat)}
 	task := localmodel.Task{Kind: c.Kind, Text: c.input(), Schema: c.Schema, Preference: preference}
 	for range warmup {
@@ -245,6 +263,10 @@ func runPath(ctx context.Context, l lease.Lease, deps localmodel.Deps, c Case, p
 		out.Answer = answer(outcome)
 		out.Route, out.Reason = outcome.Row.Route, outcome.Row.Reason
 		out.Provider, out.Model = string(outcome.Row.Provider), outcome.Row.Model
+		if outcome.Row.Route != want {
+			out.Failures = append(out.Failures, failure{Run: run, Detail: fmt.Sprintf("served by %s, wanted %s", outcome.Row.Route, want)})
+			continue
+		}
 		if err := score(c, outcome); err != nil {
 			out.Failures = append(out.Failures, failure{Run: run, Detail: err.Error()})
 			continue
