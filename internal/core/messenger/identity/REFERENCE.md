@@ -91,7 +91,7 @@ validity covers the time asked about: a confirmed phone or email link ends when
 the identifier moves, exactly as an exact one does. `Confirm` and `Correct` keep
 the cutoff a move recorded — the answer settles the record, not how long the
 identifier was theirs — so answering again brings nothing back that the move
-retracted. Ambiguity is derived, never stored.
+retracted. Ambiguity is derived from all observed identifiers within the link window, never stored. Ending a window preserves unresolved conflicts within it; disjoint links do not conflict. Confirmation of a rejected or removed link reactivates the existing record without erasing its bounds. A new confirmed destination inherits the known bounds and identifier signals.
 
 ## Person actions and repair
 
@@ -109,8 +109,7 @@ transaction, so an item keeps its evidence, holder and scope.
 
 What a link produced is recorded in `identity_artifact` (memory items, and the
 kind reserved for people-record entries) and a citation of the link as external
-evidence counts too. The removal list is durable and idempotent, so it runs after
-the link's own transaction; a failure surfaces and the link is already unusable.
+evidence counts too. Migration 78 adds `identity_repair`: pending item ids are written with the link change and requeue in canon. Delivery through the removal list follows commit; `Rematch` drains pending repairs before matching at startup and on scheduled passes. Delivery acknowledges already-hidden or deleted items without submitting a duplicate `Forget` transition. A failure remains pending and is returned to the caller; it is never reported as completed repair.
 
 A repair leaves one row per identity in `identity_requeue`, from the source's
 learning watermark or, without one, the identity's first sighting. Extraction

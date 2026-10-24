@@ -32,7 +32,7 @@ var (
 
 // MatcherVersion names the matcher that made a link. A change to the matcher
 // changes this string, and the evaluation runs again for it.
-const MatcherVersion = "identity-matcher/1"
+const MatcherVersion = "identity-matcher/2"
 
 // Kind is the kind of an identifier a platform shows for an author.
 type Kind string

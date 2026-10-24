@@ -90,6 +90,7 @@ func Migrations() []Migration {
 		{Version: 75, SQL: DiscordSessionsSchema},
 		{Version: 76, SQL: MessengerPendingSchema},
 		{Version: 77, SQL: IdentitySchema},
+		{Version: 78, SQL: IdentityRepairSchema},
 	}
 }
 
@@ -150,6 +151,7 @@ var publishedMigrationTables = []struct {
 	{77, "identity_question"}, {77, "identity_question_candidate"}, {77, "identity_artifact"}, {77, "identity_merge"},
 	{77, "identity_merge_link"}, {77, "identity_merge_alias"}, {77, "identity_merge_artifact"},
 	{77, "identity_requeue"},
+	{78, "identity_repair"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is

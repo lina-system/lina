@@ -96,3 +96,12 @@ CREATE TABLE identity_requeue (
  PRIMARY KEY(platform,scope,user,from_at)
 );
 `
+
+// IdentityRepairSchema persists repair intent with the link change. Delivery
+// through the removal journal can then resume after interruption.
+const IdentityRepairSchema = `
+CREATE TABLE identity_repair (
+ person TEXT NOT NULL, link TEXT NOT NULL, item TEXT NOT NULL,
+ PRIMARY KEY(person,link,item)
+);
+`
