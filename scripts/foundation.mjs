@@ -42,7 +42,7 @@ export function selectFoundation({ cwd = process.cwd(), range, full = false, eve
     if (!head) throw new Error('Unknown candidate revision: ' + requested.head);
     if (head !== resolveCommit(root, 'HEAD')) throw new Error('Candidate ' + head + ' is not the checked-out HEAD; check out the candidate first.');
     scope = scopeFor({ base: full ? '' : requested.base ?? defaultBase(root, head), head, full, cwd: root });
-    scope = { ...scope, event, e2e: full || event !== 'pull_request' || e2e };
+    scope = { ...scope, event, e2e: event !== 'push' && (full || event !== 'pull_request' || e2e) };
     const whitespace = scope.base ? git(root, ['diff', '--check', scope.base, scope.head])
       : git(root, ['show', '--format=', '--check', scope.head]);
     if (whitespace.status !== 0) throw new Error((whitespace.stdout + whitespace.stderr).trim());
