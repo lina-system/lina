@@ -511,6 +511,34 @@ func seedPanelCorpus(t *testing.T, h *harness, fixture panelFixture, n, waiting 
 		}
 		goals[i] = goalID
 	}
+	// Managed goals are the project cards; their worker tasks are detail rows.
+	// Record the fixture's person wait on the owning step as well, so Core
+	// derives the card's wait from the goal journal after startup/replay.
+	journal := goal.NewJournal(db)
+	for _, goalID := range goals[n-waiting:] {
+		err := journal.Update(h.ctx, goal.Transition{ID: goalID + ":fixture-wait", Kind: "fixture.person_wait", At: time.Now().Unix()}, func(v *goal.View) error {
+			r, ok := v.Get("goal", goalID)
+			if !ok {
+				return fmt.Errorf("fixture goal %s is missing", goalID)
+			}
+			var g goal.Goal
+			if err := json.Unmarshal(r.Body, &g); err != nil {
+				return err
+			}
+			if len(g.Tasks) == 0 {
+				return fmt.Errorf("fixture goal %s has no steps", goalID)
+			}
+			g.Tasks[0].Stage = goal.TaskNeedsPerson
+			raw, err := json.Marshal(g)
+			if err != nil {
+				return err
+			}
+			return v.Put("goal", goalID, raw)
+		})
+		if err != nil {
+			t.Fatalf("%s: record person wait: %v", goalID, err)
+		}
+	}
 	cards := make([]panelCard, 0, n)
 	if err := db.Write(h.ctx, func(tx *canon.Tx) error {
 		for i := range n {
@@ -571,7 +599,7 @@ func seedPanelCorpus(t *testing.T, h *harness, fixture panelFixture, n, waiting 
 					return err
 				}
 			}
-			cards = append(cards, panelCard{ID: id, Name: name, State: card.State, Graph: graph.ID, Goal: goalID, Commit: cardCommit(events)})
+			cards = append(cards, panelCard{ID: goalID, Name: name, State: card.State, Graph: graph.ID, Goal: goalID, Commit: cardCommit(events)})
 		}
 		return nil
 	}); err != nil {

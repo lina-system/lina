@@ -7,6 +7,7 @@ import (
 )
 
 func TestPublishedMigrationTablesMatchSQL(t *testing.T) {
+	t.Parallel()
 	db, err := OpenSQLite(t.Context(), filepath.Join(t.TempDir(), "catalog.sqlite"))
 	if err != nil {
 		t.Fatal(err)

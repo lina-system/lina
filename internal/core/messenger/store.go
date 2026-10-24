@@ -342,9 +342,6 @@ func validEffectState(state string) bool {
 	return false
 }
 
-// recordKey identifies one message inside one chat.
-type recordKey struct{ platform, account, chat, message string }
-
 type recordRow struct {
 	revision   int
 	event      string
@@ -406,7 +403,7 @@ func parseTime(text string) (time.Time, error) {
 }
 
 type effectRow struct {
-	agent, state, message string
+	agent, state string
 }
 
 func (s *Store) effectsFor(ctx context.Context, source Source, chat string, ids []string) (map[string]effectRow, error) {

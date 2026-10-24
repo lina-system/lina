@@ -28,6 +28,7 @@ func sharedAncestorTasks(count int) []Task {
 }
 
 func TestDeriveSharedAncestorDepths(t *testing.T) {
+	t.Parallel()
 	tasks := sharedAncestorTasks(128)
 	deep := tasks[len(tasks)-1]
 	peer := readyTask("a-peer")
@@ -54,6 +55,7 @@ func TestDeriveSharedAncestorDepths(t *testing.T) {
 }
 
 func TestDeriveDepthsBelongToGoalAndSnapshot(t *testing.T) {
+	t.Parallel()
 	tasks := sharedAncestorTasks(4)
 	deep := tasks[len(tasks)-1]
 	older := oneGoal(tasks...)
@@ -103,6 +105,7 @@ func BenchmarkDeriveSharedAncestors(b *testing.B) {
 }
 
 func TestDeriveWideSharedAncestorDAG(t *testing.T) {
+	t.Parallel()
 	var tasks []Task
 	var parents []string
 	// 128 completed ancestors encode over 4^31 paths. Ranking the four

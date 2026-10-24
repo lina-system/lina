@@ -51,6 +51,7 @@ func testJournal(t *testing.T) (*Journal, *testStore) {
 }
 
 func TestJournalConcurrentTransitionsLoseNoReservations(t *testing.T) {
+	t.Parallel()
 	j, _ := testJournal(t)
 	var wg sync.WaitGroup
 	for i := range 12 {
@@ -78,6 +79,7 @@ func TestJournalConcurrentTransitionsLoseNoReservations(t *testing.T) {
 }
 
 func TestJournalCommitReplayRollbackAndRebuild(t *testing.T) {
+	t.Parallel()
 	j, db := testJournal(t)
 	event := Transition{ID: "admit:g", Kind: "goal.admitted", At: 1, Data: json.RawMessage(`{"goal":"g"}`)}
 	calls := 0
@@ -141,6 +143,7 @@ func TestJournalCommitReplayRollbackAndRebuild(t *testing.T) {
 }
 
 func TestReconcilerStartupCommitAndSafetySweep(t *testing.T) {
+	t.Parallel()
 	j, _ := testJournal(t)
 	ticks := make(chan time.Time)
 	passes := make(chan int, 10)

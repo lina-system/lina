@@ -12,6 +12,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
@@ -27,10 +28,13 @@ type Canon interface {
 }
 
 type Transition struct {
-	ID   string          `json:"id"`
-	Kind string          `json:"kind"`
-	At   int64           `json:"at"`
-	Data json.RawMessage `json:"data,omitempty"`
+	// RecordedAt is Core's admission clock, independent of the source's At.
+	// It is written inside the committing transaction; legacy entries omit it.
+	RecordedAt string          `json:"recorded_at,omitempty"`
+	ID         string          `json:"id"`
+	Kind       string          `json:"kind"`
+	At         int64           `json:"at"`
+	Data       json.RawMessage `json:"data,omitempty"`
 }
 
 type Record struct {
@@ -128,6 +132,7 @@ func (j *Journal) Update(ctx context.Context, event Transition, apply func(*View
 	if j.db == nil || strings.TrimSpace(event.ID) == "" || strings.TrimSpace(event.Kind) == "" || event.At <= 0 || len(event.Data) > 0 && !json.Valid(event.Data) || apply == nil {
 		return ErrInvalid
 	}
+	event.RecordedAt = ""
 	input, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -141,6 +146,7 @@ func (j *Journal) Update(ctx context.Context, event Transition, apply func(*View
 			if json.Unmarshal(previous, &saved) != nil {
 				return ErrInvalid
 			}
+			saved.Event.RecordedAt = ""
 			original, e := json.Marshal(saved.Event)
 			if e != nil {
 				return e
@@ -165,6 +171,7 @@ func (j *Journal) Update(ctx context.Context, event Transition, apply func(*View
 			changes = append(changes, r)
 		}
 		sort.Slice(changes, func(i, k int) bool { return key(changes[i].Kind, changes[i].ID) < key(changes[k].Kind, changes[k].ID) })
+		event.RecordedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		body, err := json.Marshal(entry{Event: event, Changes: changes})
 		if err != nil {
 			return err

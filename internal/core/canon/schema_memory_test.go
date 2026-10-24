@@ -7,6 +7,7 @@ import (
 )
 
 func TestMemoryMigrationPreservesDataAndReopens(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	all := Migrations()
 	index := -1

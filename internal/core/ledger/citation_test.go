@@ -11,6 +11,7 @@ import (
 )
 
 func TestCitationScopeAndUTF8Boundaries(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	store := ledger.New(db, nil)
 	in := input("citation")

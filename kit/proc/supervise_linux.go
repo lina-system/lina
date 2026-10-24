@@ -53,9 +53,27 @@ func newProcess(c Command) (process, error) {
 	}
 	n := len(c.ExtraFiles)
 	p.cmd = command(Command{Path: exe, Args: []string{"proc-supervise", "--control-fd", strconv.Itoa(3 + n), "--status-fd", strconv.Itoa(4 + n), "--files", strconv.Itoa(n)}, Dir: c.Dir, Stdin: c.Stdin, Stdout: c.Stdout, Stderr: c.Stderr})
+	p.cmd.Env = supervisorEnvironment()
 	p.cmd.ExtraFiles = append(append([]*os.File{}, c.ExtraFiles...), p.childControl, p.childStatus)
 	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return p, nil
+}
+
+// The supervisor is this executable re-executed, so in a race build it runs
+// under the race detector, which sleeps for a second before every process
+// exit (GORACE atexit_sleep_ms). That sleep would delay every command by a
+// second and make race builds unusable for tests that run many commands. The
+// command's own environment travels over the control descriptor, so only the
+// supervisor is affected; the host's other detector options are preserved.
+func supervisorEnvironment() []string {
+	options := strings.Fields(os.Getenv("GORACE"))
+	kept := options[:0]
+	for _, option := range options {
+		if !strings.HasPrefix(option, "atexit_sleep_ms=") {
+			kept = append(kept, option)
+		}
+	}
+	return []string{"GORACE=" + strings.Join(append(kept, "atexit_sleep_ms=0"), " ")}
 }
 
 func (p *supervisorProcess) start() error {

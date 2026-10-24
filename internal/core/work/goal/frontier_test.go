@@ -9,6 +9,7 @@ import (
 )
 
 func TestFrontierWaitDoesNotConsumeWorkerCapacity(t *testing.T) {
+	t.Parallel()
 	wait := readyTask("a")
 	wait.Area, wait.Base, wait.Worker = "", "", ""
 	wait.Resources = Resources{}
@@ -32,6 +33,7 @@ func TestFrontierWaitDoesNotConsumeWorkerCapacity(t *testing.T) {
 }
 
 func TestFrontierBackgroundLandingReleasesDependent(t *testing.T) {
+	t.Parallel()
 	a, b := readyTask("a"), readyTask("b")
 	a.Stage = TaskDone
 	if err := json.Unmarshal([]byte(`{"kind":"background","background":{"Goal":"Read","Scope":"catalog","NotTouch":"files","Done":"Read complete","Result":"notes","Checks":[{"Name":"read","Kind":"claimed"}]},"result":{"revision":"material:1","ref":"material","passed":true}}`), &a); err != nil {
@@ -51,6 +53,7 @@ func TestFrontierBackgroundLandingReleasesDependent(t *testing.T) {
 }
 
 func TestFrontierResultsOnlyGoalHasVerificationRevision(t *testing.T) {
+	t.Parallel()
 	a, b := readyTask("a"), readyTask("b")
 	for _, x := range []*Task{&a, &b} {
 		x.Kind = WaitStep
@@ -77,6 +80,7 @@ func TestFrontierResultsOnlyGoalHasVerificationRevision(t *testing.T) {
 }
 
 func TestFrontierAggregateCriterionAcrossRepositories(t *testing.T) {
+	t.Parallel()
 	a := readyTask("a")
 	a.Kind = WaitStep
 	a.Wait = &StepWait{At: 1}

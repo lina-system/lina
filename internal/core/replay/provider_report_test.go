@@ -32,6 +32,7 @@ func (s *reportStream) Meta() provider.Meta { return s.meta }
 func (s *reportStream) Close() error        { return nil }
 func count64(n int64) *int64                { return &n }
 func TestProviderReportMeasuresActualOutputAndUnknownUsage(t *testing.T) {
+	t.Parallel()
 	now := time.Unix(0, 0)
 	report := ProviderReport{Version: 1}
 	stream := report.Observe("turn-1", 1, "responses_api_key", func() time.Time { return now }, func() (provider.Stream, error) {
@@ -54,6 +55,7 @@ func TestProviderReportMeasuresActualOutputAndUnknownUsage(t *testing.T) {
 	}
 }
 func TestProviderReportFailureAndLifetimeAccounting(t *testing.T) {
+	t.Parallel()
 	report := ProviderReport{Version: 1}
 	s := report.Observe("turn-1", 1, "claude", time.Now, func() (provider.Stream, error) {
 		return &reportStream{meta: provider.Meta{Usage: provider.Usage{Input: count64(100), Cached: count64(40), CacheWrite: count64(20), CacheByLifetime: map[provider.CacheLifetime]provider.CacheUsage{provider.Cache1Hour: {Write: count64(20)}, provider.Cache5Minutes: {Read: count64(4)}}}}, failure: errors.New("private provider body")}, nil
@@ -76,6 +78,7 @@ func TestProviderReportFailureAndLifetimeAccounting(t *testing.T) {
 }
 
 func TestRejectFailsTheRowAndKeepsItsMeasurement(t *testing.T) {
+	t.Parallel()
 	report := ProviderReport{Version: 1}
 	s := report.Observe("summary", 1, "chatgpt", time.Now, func() (provider.Stream, error) {
 		return &reportStream{meta: provider.Meta{Usage: provider.Usage{Input: count64(101), Cached: count64(70)}}, events: []provider.Event{{Kind: provider.ToolCallReady, Call: &provider.ToolCall{ID: "call"}}}}, nil
@@ -97,6 +100,7 @@ func TestRejectFailsTheRowAndKeepsItsMeasurement(t *testing.T) {
 	Reject(&reportStream{}, "summary_tool_call")
 }
 func TestProviderReportClaudeAPIKeyPlainInput(t *testing.T) {
+	t.Parallel()
 	report := ProviderReport{Version: 1}
 	s := report.Observe("turn-1", 1, "claude_api_key", time.Now, func() (provider.Stream, error) {
 		return &reportStream{meta: provider.Meta{Usage: provider.Usage{Input: count64(100), Cached: count64(40), CacheWrite: count64(20), CacheByLifetime: map[provider.CacheLifetime]provider.CacheUsage{provider.Cache1Hour: {Write: count64(20)}}}}, events: []provider.Event{{Kind: provider.Terminal}}}, nil
@@ -116,6 +120,7 @@ func TestProviderReportClaudeAPIKeyPlainInput(t *testing.T) {
 }
 
 func TestProviderCompareAlignsMissingRequestsAndRejectsDifferentSources(t *testing.T) {
+	t.Parallel()
 	a := ProviderReport{Version: 1, Source: "same", Requests: []RequestReport{{Turn: "1", Round: 1, Input: count64(9)}}}
 	b := ProviderReport{Version: 1, Source: "same", Requests: []RequestReport{{Turn: "1", Round: 1, Input: count64(8)}, {Turn: "1", Round: 2}}}
 	var out strings.Builder

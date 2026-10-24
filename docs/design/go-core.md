@@ -105,7 +105,7 @@ Layers under `internal/core/`:
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
 | L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `recall` (shared derived index writer and queued fill) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `messenger`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
+| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `localmodel`, `exec`, `exchange`, `messenger`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install`, `miniapps` |
 | L5 | `boot`, `supervise` |
 
 The separate worker has its own downward import layers.
@@ -2363,7 +2363,7 @@ type Adapter interface {
 - Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches).
   Claude Code, Cursor, Gemini CLI, Grok and added agents through the one ACP adapter of C-60.
   Antigravity as a headless child with streaming output.
-  The Claude Code headless adapter below remains until the worker evaluation chooses between it and the ACP profile.
+  The Claude Code headless adapter below stays an explicit selection; the worker evaluation kept the ACP profile ([worker-evaluation.md](../../evidence/worker-evaluation.md)).
 - Implementation notes: [C-29 session integration](../../internal/core/worker/REFERENCE.md#c-29-session-integration).
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)).
   Approvals go to the originating conversation.
