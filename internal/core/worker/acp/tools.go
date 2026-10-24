@@ -159,6 +159,7 @@ func (s *toolServer) call(request clientapi.WorkerToolRequest) clientapi.WorkerT
 		// An acknowledgement can precede the requested action. Retain admission
 		// for the whole turn even after answerTool removes the pending call.
 		a.effectSeen = true
+		a.realTool = true
 	default:
 		delete(a.pending, id)
 		a.mu.Unlock()

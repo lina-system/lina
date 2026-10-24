@@ -176,6 +176,49 @@ func TestRememberLargeSourceAndReplayKeepsOneLineage(t *testing.T) {
 	}
 }
 
+func TestRecallPersonRanksOnlyItemsAboutThePerson(t *testing.T) {
+	db := memoryDB(t)
+	events := ledger.New(db, nil)
+	flow := NewMemory(db, nil, nil)
+	_, err := events.Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "event", ConversationID: "conversation", AgentID: "A", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: "my friends drink tea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	person, err := flow.Remember(t.Context(), rememberInput("likes tea"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	others := map[string]bool{}
+	for i := range RecallItemLimit {
+		write := rememberInput(fmt.Sprintf("friend %d likes tea tea tea", i))
+		write.Item.Subject = memory.Subject{Kind: memory.ThirdParty, ID: fmt.Sprintf("friend-%d", i)}
+		receipt, err := flow.Remember(t.Context(), write)
+		if err != nil {
+			t.Fatal(err)
+		}
+		others["memory:"+receipt.ID] = true
+	}
+	world := rememberInput("the tea shop sells tea")
+	world.Item.Subject = memory.Subject{Kind: memory.World, ID: "tea-shop"}
+	receipt, err := flow.Remember(t.Context(), world)
+	if err != nil {
+		t.Fatal(err)
+	}
+	others["memory:"+receipt.ID] = true
+	answer, err := flow.RecallPerson(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, PersonRecall{Question: "What drink?", Query: "tea", At: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range answer.Sources {
+		if others[source.ID] {
+			t.Fatalf("item about someone else used as person evidence: %+v", answer.Sources)
+		}
+	}
+	if len(answer.Sources) != 1 || answer.Sources[0].ID != "memory:"+person.ID {
+		t.Fatalf("person item: %+v", answer.Sources)
+	}
+}
+
 func TestRecallPersonCountsRememberedEventOnce(t *testing.T) {
 	db := memoryDB(t)
 	events := ledger.New(db, nil)

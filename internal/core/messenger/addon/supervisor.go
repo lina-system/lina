@@ -308,6 +308,9 @@ func (p *process) live(ctx context.Context, deliver func(messenger.Event) error)
 		p.stopLive(current)
 	}()
 	if err := p.call(ctx, "live", nil, nil); err != nil {
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return nil
+		}
 		return err
 	}
 	select {

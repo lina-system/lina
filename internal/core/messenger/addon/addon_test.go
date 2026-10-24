@@ -34,9 +34,10 @@ type script struct {
 	// liveEvent is written after the answer to a live request, so a test can
 	// observe the subscription Core established. stopSeen signals the first stop
 	// request, so a test synchronizes on the add-on instead of a delay.
-	liveEvent string
-	stopSeen  chan struct{}
-	stopOnce  sync.Once
+	liveEvent   string
+	liveStarted chan struct{}
+	stopSeen    chan struct{}
+	stopOnce    sync.Once
 }
 
 func (s *script) Run(ctx context.Context, l lease.Lease, command sandbox.Command, _ []string) error {
@@ -54,6 +55,9 @@ func (s *script) Run(ctx context.Context, l lease.Lease, command sandbox.Command
 		s.mu.Lock()
 		s.requests = append(s.requests, request)
 		op, _ := request["op"].(string)
+		if op == "live" && s.liveStarted != nil {
+			close(s.liveStarted)
+		}
 		if op == "stop" && s.stopSeen != nil {
 			s.stopOnce.Do(func() { close(s.stopSeen) })
 		}
@@ -524,6 +528,39 @@ func TestFinishedRequestKeepsTheAccountProcess(t *testing.T) {
 // TestStoppingALiveReaderStopsItsSubscription proves Core tells the add-on to
 // end a subscription it no longer reads, and that the account's process keeps
 // serving afterwards.
+func TestStoppingALiveReaderBeforeAcknowledgement(t *testing.T) {
+	t.Parallel()
+	s := &script{
+		responses: map[string][]string{
+			"signIn": {`{"id":"","ok":true,"result":{"state":"signed_in"}}`},
+		},
+		liveStarted: make(chan struct{}),
+		stopSeen:    make(chan struct{}),
+	}
+	adapter := session(t, s).Adapter()
+	id := messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		select {
+		case <-s.liveStarted:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	if err := adapter.Live(ctx, id, func(messenger.Event) error { return nil }); err != nil {
+		t.Fatalf("live returned %v", err)
+	}
+	select {
+	case <-s.stopSeen:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the add-on was never told to end the starting subscription")
+	}
+	if state, err := adapter.SignIn(t.Context(), id); err != nil || state != messenger.SignedIn {
+		t.Fatalf("the account stopped serving: %v, %v", state, err)
+	}
+}
+
 func TestStoppingALiveReaderStopsItsSubscription(t *testing.T) {
 	t.Parallel()
 	s := &script{
