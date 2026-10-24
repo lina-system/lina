@@ -171,6 +171,7 @@ func (r *conversationRuntime) seedHistory(ctx context.Context) error {
 			key := e.Origin.Locator
 			p.EchoKey = &key
 			p.PersonID = &r.person
+			p.Binding = r.chipFor(ctx, e)
 		}
 		if err = r.publish(ctx, protocol.KindItemDone, e.ID, p); err != nil {
 			return err
