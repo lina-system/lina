@@ -8,6 +8,7 @@ import (
 )
 
 func TestDirectoryAreaIntersections(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		a, b string
 		want bool
@@ -34,6 +35,7 @@ func TestDirectoryAreaIntersections(t *testing.T) {
 }
 
 func TestDirectoryAreaAdmissionAndLease(t *testing.T) {
+	t.Parallel()
 	for _, area := range []string{"src", "src/*"} {
 		t.Run(area, func(t *testing.T) {
 			s, _ := testStore(t)
