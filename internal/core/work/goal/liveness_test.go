@@ -393,7 +393,7 @@ func TestLivenessManagerTaskStartsWork(t *testing.T) {
 			return Observation{Status: OutcomeSucceeded, Tasks: []Task{readyTask("next")}}, nil
 		case Assign:
 			return Observation{Status: OutcomeSucceeded, Head: "head-next", EffectsSettled: true}, nil
-		case Resume, InspectPR, Merge, RunQA, RepairConflict, RepairQA, Deploy, Verify, Observe, Decide, CheckCriterion, ContinueWorker:
+		case Resume, InspectPR, Merge, RunQA, RepairConflict, RepairQA, Deploy, Verify, Observe, Decide, CheckCriterion, ContinueWorker, ReadSource:
 			return Observation{}, fmt.Errorf("unexpected %s", a.Kind)
 		default:
 			return Observation{}, fmt.Errorf("unexpected %s", a.Kind)

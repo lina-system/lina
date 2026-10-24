@@ -28,7 +28,11 @@ import (
 type scenarioClock struct{ now time.Time }
 
 // tuiFixtures scripts the peer against the shell's own hello offers, so a
-// capability added to the shell cannot silently drift from the TUI e2e.
+// capability added to the shell cannot silently drift from the TUI e2e. Keep
+// the shared conformance corpus unchanged: the TUI scenario explicitly offers
+// its implemented capabilities, which Core may grant or not. A refused 1.1
+// handshake reconnects once with the legacy envelope, so hello-legacy.json
+// carries the same offers without the fields only a newer minor version defines.
 func tuiFixtures(t *testing.T) fstest.MapFS {
 	t.Helper()
 	capabilities := ui.Capabilities()
