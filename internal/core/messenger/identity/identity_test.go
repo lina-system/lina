@@ -124,9 +124,14 @@ func usable(t *testing.T, f *fixture, id identity.Identity) []identity.Link {
 
 func (f *fixture) item(t *testing.T, subject, content string) memory.Item {
 	t.Helper()
+	return f.itemIn(t, "native:agent", subject, content)
+}
+
+func (f *fixture) itemIn(t *testing.T, conversation, subject, content string) memory.Item {
+	t.Helper()
 	event := "event-" + content
 	if _, err := f.events.Admit(t.Context(), guard.EntryOwner, ledger.Input{
-		ID: event, ConversationID: "native:agent", AgentID: "agent", PersonID: "person",
+		ID: event, ConversationID: conversation, AgentID: "agent", PersonID: "person",
 		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: f.now, RecordedAt: f.now,
 		TimeQuality: "recorded", Body: content, Locator: event,
 	}); err != nil {
@@ -1102,6 +1107,147 @@ func TestProposalsComeInOneBatchOfAtMostFive(t *testing.T) {
 			t.Fatalf("proposal = %+v", proposal)
 		}
 	}
+}
+
+// TestCorrectSupersedesCompetingLinks pins the person's correction as the
+// settlement of the identity. Confirming B supersedes an exact link to A;
+// correcting that retained link to C must remove B and retract what B produced,
+// so the sender is not usable as two people.
+func TestCorrectSupersedesCompetingLinks(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-anna", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340009", Source: "iMessage profile"}}},
+		{Record: "person-ben"},
+		{Record: "person-cara"},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, imessage("+821012340009"), "Anna", phone("+821012340009", "iMessage profile"))
+	anna := usable(t, f, imessage("+821012340009"))
+	if len(anna) != 1 || anna[0].Record != "person-anna" {
+		t.Fatalf("exact link = %+v", anna)
+	}
+	annaItem := f.itemIn(t, "chat-anna", "person-anna", "attributed to Anna")
+	benItem := f.itemIn(t, "chat-ben", "person-ben", "attributed to Ben")
+	if err := f.store.RecordArtifact(t.Context(), anna[0].ID, "item", annaItem.ID); err != nil {
+		t.Fatal(err)
+	}
+	confirmed, err := f.store.Confirm(t.Context(), imessage("+821012340009"), "person-ben", "that is Ben")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.RecordArtifact(t.Context(), confirmed.ID, "item", benItem.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Correct(t.Context(), anna[0].ID, "person-cara"); err != nil {
+		t.Fatal(err)
+	}
+	got := usable(t, f, imessage("+821012340009"))
+	if len(got) != 1 || got[0].ID != anna[0].ID || got[0].Record != "person-cara" || got[0].Class != identity.Confirmed {
+		t.Fatalf("usable = %+v, want only the corrected link to Cara", got)
+	}
+	if visible(t, f, annaItem.ID) || visible(t, f, benItem.ID) {
+		t.Fatal("a competing link's item stayed visible")
+	}
+	for _, link := range links(t, f, imessage("+821012340009")) {
+		if link.ID == confirmed.ID && link.State != identity.Removed {
+			t.Fatalf("confirmed link = %+v, want removed", link)
+		}
+	}
+}
+
+// TestMergeMovesForgottenItems pins a forgotten item to the merge. Forgetting
+// leaves the item trashed, and the merge must carry it to the surviving record
+// without restoring it. Restoring afterward shows it there. Undoing the merge
+// puts it back still forgotten. A permanently deleted item is already gone.
+func TestMergeMovesForgottenItems(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-a", Names: []string{"Anna"}},
+		{Record: "person-b", Names: []string{"Ann"}},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	kept := f.itemIn(t, "chat-kept", "person-a", "still known")
+	forgotten := f.itemIn(t, "chat-forgotten", "person-a", "forgotten before the merge")
+	gone := f.itemIn(t, "chat-gone", "person-a", "permanently deleted")
+	later := f.itemIn(t, "chat-later", "person-a", "deleted after the merge")
+	if err := f.removal.Forget(t.Context(), retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: forgotten.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Delete(t.Context(), retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: gone.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	merge, err := f.store.Merge(t.Context(), "person-a", "person-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subject(t, f, kept.ID) != "person-b" || itemState(t, f, kept.ID) != "active" {
+		t.Fatalf("kept item subject=%s state=%s", subject(t, f, kept.ID), itemState(t, f, kept.ID))
+	}
+	if subject(t, f, forgotten.ID) != "person-b" || itemState(t, f, forgotten.ID) != "trashed" {
+		t.Fatalf("forgotten item subject=%s state=%s, want person-b still trashed", subject(t, f, forgotten.ID), itemState(t, f, forgotten.ID))
+	}
+	if visible(t, f, forgotten.ID) {
+		t.Fatal("the merge restored a forgotten item")
+	}
+	var journaled int
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM identity_merge_artifact WHERE merge=? AND item=?", merge, forgotten.ID).Scan(&journaled)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if journaled != 1 {
+		t.Fatalf("forgotten item journaled %d times, want 1", journaled)
+	}
+	var deletedJournaled int
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM identity_merge_artifact WHERE merge=? AND item=?", merge, gone.ID).Scan(&deletedJournaled)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if deletedJournaled != 0 {
+		t.Fatal("a permanently deleted item was journaled")
+	}
+	if subject(t, f, later.ID) != "person-b" {
+		t.Fatal("the item deleted after the merge did not follow it")
+	}
+	if err := f.removal.Delete(t.Context(), retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: later.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.store.UndoMerge(t.Context(), merge); err != nil {
+		t.Fatal(err)
+	}
+	if subject(t, f, forgotten.ID) != "person-a" || itemState(t, f, forgotten.ID) != "trashed" {
+		t.Fatalf("undo subject=%s state=%s, want person-a still trashed", subject(t, f, forgotten.ID), itemState(t, f, forgotten.ID))
+	}
+
+	merge, err = f.store.Merge(t.Context(), "person-a", "person-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Restore(t.Context(), retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: forgotten.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	if subject(t, f, forgotten.ID) != "person-b" || itemState(t, f, forgotten.ID) != "active" || !visible(t, f, forgotten.ID) {
+		t.Fatalf("restored item subject=%s state=%s visible=%t", subject(t, f, forgotten.ID), itemState(t, f, forgotten.ID), visible(t, f, forgotten.ID))
+	}
+	if subject(t, f, kept.ID) != "person-b" {
+		t.Fatal("the second merge lost the active item")
+	}
+}
+
+func itemState(t *testing.T, f *fixture, item string) string {
+	t.Helper()
+	var state string
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT state FROM memory_item WHERE id=?", item).Scan(&state)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return state
 }
 
 func TestStoreRejectsAnIncompleteObservation(t *testing.T) {

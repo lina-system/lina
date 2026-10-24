@@ -11,8 +11,9 @@ import (
 // the caller's transaction. Sender identity uses it when two records merge,
 // when a record splits, and when a link moves to the right record, so an item
 // follows the identity of its evidence. It never changes the person, the
-// holder, the scope or the evidence, and it writes a new revision like any
-// other change.
+// holder, the scope, the evidence or the state, and it writes a new revision
+// like any other change. A forgotten item moves still forgotten. A missing
+// item, including one that was permanently deleted, is sql.ErrNoRows.
 func ReassignSubject(ctx context.Context, tx *canon.Tx, person, itemID, from, to string) (Item, error) {
 	if !present(person) || !present(itemID) || !present(from) || !present(to) || from == to {
 		return Item{}, ErrInvalid
@@ -21,7 +22,7 @@ func ReassignSubject(ctx context.Context, tx *canon.Tx, person, itemID, from, to
 	if err != nil {
 		return Item{}, err
 	}
-	if item.Person != person || item.Subject.Kind != ThirdParty || item.Subject.ID != from || item.State != Active {
+	if item.Person != person || item.Subject.Kind != ThirdParty || item.Subject.ID != from || (item.State != Active && item.State != Trashed) {
 		return Item{}, ErrInvalid
 	}
 	item.Subject.ID = to

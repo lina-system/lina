@@ -99,10 +99,15 @@ retracted. Ambiguity is derived from all observed identifiers within the link wi
 and answers the open question. `Reject` keeps the link. `Remove` marks it
 removed, retracts the items it produced through `retract.Store`, and queues only
 that identity. `Correct` moves the identity to the right record, retracts what
-the old link produced and requeues that identity.
+the old link produced and requeues that identity. It also supersedes every
+other active link of that identity and retracts what those links produced, so
+a retained link cannot become a second usable attribution.
 
 `Merge` records both record ids, moves the links and the items of the first
-record to the second, and `UndoMerge` puts each back on the record it came from.
+record to the second, and `UndoMerge` puts each surviving item back on the
+record it came from. A forgotten item moves still forgotten and is journaled
+with the merge; undo puts it back still forgotten. A permanently deleted item
+has no row and is left out.
 `Split` moves the identities the person chooses and the items their evidence
 produced. Item moves run through `memory.ReassignSubject` in the same
 transaction, so an item keeps its evidence, holder and scope.
