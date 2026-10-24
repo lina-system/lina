@@ -33,7 +33,6 @@ func summarizeOnce(t *testing.T, p Pass, v View) (Fitted, int, error) {
 }
 
 // message("…") overhead is 28 bytes: {"role":"user","content":""}.
-const messageOverhead = 28
 
 func TestColdBoundaryCompactsEarlyAndWarmBoundaryDoesNot(t *testing.T) {
 	// 29 fixed + 29 input + (28 + 664) history = 750, between P and the trigger.

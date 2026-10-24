@@ -10,6 +10,7 @@ import (
 )
 
 func TestEveryActionKindHasSpec(t *testing.T) {
+	t.Parallel()
 	// Read the declared constants, not a second hand-maintained list: a new
 	// kind must fail this test even if nobody adds it to the expectations below.
 	pkgs, err := packages.Load(&packages.Config{Mode: packages.NeedTypes, Context: t.Context()}, ".")
@@ -50,6 +51,7 @@ func TestEveryActionKindHasSpec(t *testing.T) {
 }
 
 func TestActionKindClassification(t *testing.T) {
+	t.Parallel()
 	// Preserve the worker and external-effect sets from before the table.
 	want := map[ActionKind]kindSpec{
 		Assign:         {worker: true, externalEffect: true},

@@ -7,6 +7,7 @@ import (
 )
 
 func TestGoalCorrectionPreservesAndUpdatesServiceRepository(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {
@@ -45,6 +46,7 @@ func TestGoalCorrectionPreservesAndUpdatesServiceRepository(t *testing.T) {
 }
 
 func TestGoalCorrectionKeepsBindingFromLatestCanonicalRevision(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {

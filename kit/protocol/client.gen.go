@@ -108,6 +108,8 @@ const (
 	KindMockResponse         Kind = "mock_response"
 	KindMiniAppRequest       Kind = "mini_app_request"
 	KindMiniAppResult        Kind = "mini_app_result"
+	KindLocalTask            Kind = "local_task"
+	KindLocalTaskResult      Kind = "local_task_result"
 )
 
 type A2aCallStatus struct {
@@ -589,6 +591,24 @@ type LauncherResult struct {
 	AgentID        string `json:"agent_id"`
 	ConversationID string `json:"conversation_id"`
 	RequestID      string `json:"request_id"`
+}
+type LocalTask struct {
+	Images     *json.Number `json:"images,omitempty"`
+	MacLocal   *bool        `json:"mac_local,omitempty"`
+	Preference *string      `json:"preference,omitempty"`
+	Schema     *string      `json:"schema,omitempty"`
+	Task       string       `json:"task"`
+	Text       string       `json:"text"`
+	Tools      *[]string    `json:"tools,omitempty"`
+}
+type LocalTaskResult struct {
+	Model    string  `json:"model"`
+	Object   *string `json:"object,omitempty"`
+	Provider string  `json:"provider"`
+	Reason   string  `json:"reason"`
+	Route    string  `json:"route"`
+	ServedID string  `json:"served_id"`
+	Text     *string `json:"text,omitempty"`
 }
 type MemoryEvidence struct {
 	Quote     *string          `json:"quote,omitempty"`
@@ -1697,6 +1717,8 @@ func (MockRequest) isPayload()          {}
 func (MockResponse) isPayload()         {}
 func (MiniAppRequest) isPayload()       {}
 func (MiniAppResult) isPayload()        {}
+func (LocalTask) isPayload()            {}
+func (LocalTaskResult) isPayload()      {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -2104,6 +2126,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p MiniAppResult
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindLocalTask:
+		var p LocalTask
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindLocalTaskResult:
+		var p LocalTaskResult
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -2243,7 +2273,9 @@ const clientSchemaJSON = `{
         "mock_request",
         "mock_response",
         "mini_app_request",
-        "mini_app_result"
+        "mini_app_result",
+        "local_task",
+        "local_task_result"
       ]
     },
     "message_id": {
@@ -4114,6 +4146,38 @@ const clientSchemaJSON = `{
               }
             }
           ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "local_task"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/local_task"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "local_task_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/local_task_result"
+          }
         }
       }
     }
@@ -8433,6 +8497,45 @@ const clientSchemaJSON = `{
       ],
       "additionalProperties": false
     },
+    "progress_stage_worker": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/running_state"
+        }
+      },
+      "required": [
+        "name",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage_refs": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "steps"
+      ],
+      "additionalProperties": false
+    },
     "progress_row": {
       "type": "object",
       "properties": {
@@ -10407,42 +10510,115 @@ const clientSchemaJSON = `{
       ],
       "additionalProperties": false
     },
-    "progress_stage_worker": {
+    "local_task": {
       "type": "object",
       "properties": {
-        "name": {
-          "type": "string"
+        "task": {
+          "type": "string",
+          "enum": [
+            "intent",
+            "autocomplete",
+            "rewrite",
+            "title",
+            "classify",
+            "extract",
+            "summary"
+          ]
         },
-        "state": {
-          "$ref": "#/$defs/running_state"
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "schema": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8192
+        },
+        "preference": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "local",
+            "main"
+          ]
+        },
+        "images": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "tools": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "mac_local": {
+          "type": "boolean"
         }
       },
       "required": [
-        "name",
-        "state"
+        "task",
+        "text"
       ],
       "additionalProperties": false
     },
-    "progress_stage_refs": {
+    "local_task_result": {
       "type": "object",
       "properties": {
-        "kind": {
+        "route": {
+          "type": "string",
+          "enum": [
+            "local",
+            "main"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "fit",
+            "forced",
+            "schema_miss",
+            "unavailable",
+            "over_context",
+            "tools",
+            "image",
+            "kind",
+            "guided",
+            "empty"
+          ]
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "text": {
           "type": "string"
         },
-        "number": {
-          "type": "integer",
-          "minimum": 1
+        "object": {
+          "type": "string"
         },
-        "steps": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+        "served_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
         }
       },
       "required": [
-        "kind",
-        "steps"
+        "route",
+        "reason",
+        "provider",
+        "model",
+        "served_id"
       ],
       "additionalProperties": false
     }

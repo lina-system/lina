@@ -4,6 +4,7 @@ package canon
 import "testing"
 
 func TestWorkerDispatchAppendsAfterMergeAuthority(t *testing.T) {
+	t.Parallel()
 	migrations := Migrations()
 	if len(migrations) < 31 || migrations[29] != (Migration{Version: 30, SQL: mergesSchema}) || migrations[30] != (Migration{Version: 31, SQL: WorkerDispatchSchema}) {
 		t.Fatal("worker dispatch must append at version 31 after unchanged merge authority version 30")

@@ -7,6 +7,7 @@ import (
 )
 
 func TestNamingMigrationPreservesExistingMemory(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = migrationsBefore(t, namingSchema)
 	db := openStore(t, cfg)

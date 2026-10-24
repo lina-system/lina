@@ -106,7 +106,9 @@
         "mock_request",
         "mock_response",
         "mini_app_request",
-        "mini_app_result"
+        "mini_app_result",
+        "local_task",
+        "local_task_result"
       ]
     },
     "message_id": {
@@ -1977,6 +1979,38 @@
               }
             }
           ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "local_task"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/local_task"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "local_task_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/local_task_result"
+          }
         }
       }
     }
@@ -6296,6 +6330,45 @@
       ],
       "additionalProperties": false
     },
+    "progress_stage_worker": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/running_state"
+        }
+      },
+      "required": [
+        "name",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage_refs": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "steps"
+      ],
+      "additionalProperties": false
+    },
     "progress_row": {
       "type": "object",
       "properties": {
@@ -8270,42 +8343,115 @@
       ],
       "additionalProperties": false
     },
-    "progress_stage_worker": {
+    "local_task": {
       "type": "object",
       "properties": {
-        "name": {
-          "type": "string"
+        "task": {
+          "type": "string",
+          "enum": [
+            "intent",
+            "autocomplete",
+            "rewrite",
+            "title",
+            "classify",
+            "extract",
+            "summary"
+          ]
         },
-        "state": {
-          "$ref": "#/$defs/running_state"
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384
+        },
+        "schema": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8192
+        },
+        "preference": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "local",
+            "main"
+          ]
+        },
+        "images": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "tools": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "mac_local": {
+          "type": "boolean"
         }
       },
       "required": [
-        "name",
-        "state"
+        "task",
+        "text"
       ],
       "additionalProperties": false
     },
-    "progress_stage_refs": {
+    "local_task_result": {
       "type": "object",
       "properties": {
-        "kind": {
+        "route": {
+          "type": "string",
+          "enum": [
+            "local",
+            "main"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "fit",
+            "forced",
+            "schema_miss",
+            "unavailable",
+            "over_context",
+            "tools",
+            "image",
+            "kind",
+            "guided",
+            "empty"
+          ]
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "text": {
           "type": "string"
         },
-        "number": {
-          "type": "integer",
-          "minimum": 1
+        "object": {
+          "type": "string"
         },
-        "steps": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+        "served_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
         }
       },
       "required": [
-        "kind",
-        "steps"
+        "route",
+        "reason",
+        "provider",
+        "model",
+        "served_id"
       ],
       "additionalProperties": false
     }
