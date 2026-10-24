@@ -31,6 +31,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 	"github.com/thisisjun786/lina/internal/core/messenger/identity"
+	"github.com/thisisjun786/lina/internal/core/messenger/kakaotalk"
 	"github.com/thisisjun786/lina/internal/core/messenger/teams"
 	"github.com/thisisjun786/lina/internal/core/messenger/webex"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
@@ -94,6 +95,7 @@ type conversationRuntime struct {
 	webex           *webex.Service
 	telegram        *telegramControl
 	messenger       *messenger.Service
+	kakao           *kakaotalk.Service
 	senderIdentity  *identity.Store
 	messengerAddon  AddonStarter
 	messengerStop   context.CancelFunc
@@ -321,6 +323,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	if err = r.initA2A(relay); err != nil {
+		return nil, err
+	}
+	if err := addOperations(&r.identity, clientsrv.KakaoTalkOperations(r)); err != nil {
 		return nil, err
 	}
 	if err := addOperations(&r.identity, clientsrv.AccountOperations(r.person, r.accounts, relay)); err != nil {

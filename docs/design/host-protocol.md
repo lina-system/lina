@@ -720,6 +720,32 @@ and the ten-minute attempt; another connection cannot finish or replace it.
 URL. Completion reports `connected` and the verified platform account ID.
 The source reader continues independently of that client connection.
 
+### KakaoTalk source settings
+
+The owner-only `kakaotalk` 1.0 capability provides `kakaotalk_request` and
+`kakaotalk_result`. `card` takes no field beyond the operation and returns the
+connect card's terms and the documents they cite. `connect` takes `accept: true`
+and starts the add-on's own sign-in; `sign_in` takes the platform account ID to
+sign in again; `answer` takes `prompt` and `value`; `disconnect` takes the
+platform account ID; `list` returns the platform account ID, state, sanitized
+failure cause and accepted term. Every operation requires the owner's eligible
+decider at the current epoch.
+
+A sign-in step is returned in `step`: `state` is `signed_in`,
+`needs_sign_in` or `failing`, `prompt` names the add-on's own question with its
+kind (`text` or `secret`), and `show` carries a `code` the person confirms on
+their phone. Prompt answers and passcodes are transient: they travel only on
+the connection that accepted the terms, are never stored, and the relay ends
+after ten minutes. While one connection holds the add-on's pending sign-in,
+another connection's `connect` or `sign_in` is refused with `not_authorized`,
+and an expired relay cancels its flow before the next one begins.
+An overlapping step on the same connection is also `not_authorized`. Cleanup
+failure returns `unavailable` and retains the reservation until cleanup succeeds.
+Signing in again cannot change the source account. Disconnect invalidates any
+outstanding completion, and repeating it for a historical account leaves the
+current session intact.
+The source reader continues independently of that client connection.
+
 ## Deferred
 
 - The JSON Schema to Dart type generator and its pinned input manifest: owned by [lina-system/lina-app#6](https://github.com/lina-system/lina-app/issues/6) and verified by the app repository's foundation gate ([lina-app#3](https://github.com/lina-system/lina-app/issues/3), [surfaces.md](surfaces.md#app-front-end)).

@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/messenger/addon"
+	"github.com/thisisjun786/lina/internal/core/messenger/kakaotalk"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/update"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -115,5 +116,7 @@ func messengerAddon(root, socket string) *addon.Manager {
 	if !filepath.IsAbs(node) || !filepath.IsAbs(program) {
 		node, program = "", ""
 	}
-	return addon.NewManager(addon.Config{Node: node, Program: program, StateRoot: root, Socket: socket})
+	// KakaoTalk is one account per main: its session outlives the sign-in's
+	// pending account, so the add-on's data directory keeps the session it saved.
+	return addon.NewManager(addon.Config{Node: node, Program: program, StateRoot: root, Socket: socket, SingleAccount: []string{kakaotalk.Platform}})
 }

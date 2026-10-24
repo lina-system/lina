@@ -17,7 +17,7 @@ export type Author = { id: string; name: string };
 
 export type Attachment = { id: string; name: string; mimeType: string; size: number };
 
-export type Chat = { id: string; name: string; kind: string; firstMessageAt?: string };
+export type Chat = { id: string; name: string; kind: string; firstMessageAt?: string; lastMessageId?: string };
 
 export type Message = {
   id: string;
@@ -26,6 +26,7 @@ export type Message = {
   at: string;
   edited?: string;
   text: string;
+  messageType?: string;
   // decryptionFailed marks a message the platform served but this account
   // could not decrypt. It keeps the record with no text; it is never an empty
   // message that reads as something the person wrote.
@@ -70,7 +71,11 @@ export type Prompt = { key: string; kind: 'text' | 'secret'; text: string };
 // the value and keeps none of it.
 export type SignInStep = { state: SignInState; prompt?: Prompt; show?: { kind: 'url' | 'code'; value: string } };
 
-export type LiveEvent = { event: 'message'; message: Message } | { event: 'deletion'; deletion: Deletion };
+// A live event names the chat it belongs to; a push carries no page position,
+// so Core admits it without moving that chat's cursor.
+export type LiveEvent =
+  | { event: 'message'; chat: string; message: Message }
+  | { event: 'deletion'; chat: string; deletion: Deletion };
 
 export type Driver = {
   readonly platform: string;
@@ -78,6 +83,10 @@ export type Driver = {
   signInState(): Promise<SignInState>;
   beginSignIn(): Promise<SignInStep>;
   answer(key: string, value: string): Promise<SignInStep>;
+  // cancelSignIn discards a sign-in the person abandoned, so the next one
+  // begins its own flow instead of resuming it. A driver without one keeps
+  // its flow until the process restarts.
+  cancelSignIn?(): Promise<void>;
   listChats(): Promise<Chat[]>;
   page(chat: string, cursor: string): Promise<Page>;
   members(chat: string): Promise<Author[]>;
@@ -90,7 +99,7 @@ export type Driver = {
 // OPS is the whole dispatch table. Every entry is a read, a sign-in step or a
 // control request; there is no operation that names an SDK method.
 export const OPS = Object.freeze([
-  'hello', 'signIn', 'beginSignIn', 'answer', 'listChats', 'page', 'members', 'whoami', 'live', 'stop', 'quit',
+  'hello', 'signIn', 'beginSignIn', 'answer', 'cancelSignIn', 'listChats', 'page', 'members', 'whoami', 'live', 'stop', 'quit',
 ] as const);
 
 export type Op = (typeof OPS)[number];
@@ -100,6 +109,7 @@ const FIELDS: Record<Op, readonly string[]> = {
   signIn: ['id', 'op'],
   beginSignIn: ['id', 'op'],
   answer: ['id', 'op', 'prompt', 'value'],
+  cancelSignIn: ['id', 'op'],
   listChats: ['id', 'op'],
   page: ['id', 'op', 'chat', 'cursor'],
   members: ['id', 'op', 'chat'],
