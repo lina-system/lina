@@ -103,7 +103,7 @@ func TestPartialLandingDerivesOneFollowUpScopedToTheGap(t *testing.T) {
 	if assigns != 2 {
 		t.Fatalf("a second partial started another run: %d", assigns)
 	}
-	if !QuestionsHandled(task.ResearchGap, nil, task.ResearchOpen) {
+	if !QuestionsHandled(task.ResearchGap, nil, task.ResearchOpen, "") {
 		t.Fatal("rubric does not count the open question as handled")
 	}
 }
@@ -163,7 +163,7 @@ func TestUnresolvedCitationHoldsTheDocumentCriterion(t *testing.T) {
 	if err != nil || len(p.Close) != 1 {
 		t.Fatalf("resolved citation did not close the goal: %+v %v", p, err)
 	}
-	if !QuestionsHandled([]string{"the fee"}, nil, []ResearchOpen{{Question: "the fee", Reason: "The sources do not state it."}}) {
+	if !QuestionsHandled([]string{"the fee"}, nil, []ResearchOpen{{Question: "the fee", Reason: "The sources do not state it."}}, "") || !QuestionsHandled([]string{"the fee"}, nil, nil, "the fee is 12") || QuestionsHandled(nil, nil, nil, "") || QuestionsHandled([]string{"the fee"}, nil, nil, "notes") {
 		t.Fatal("open question did not count as handled")
 	}
 }

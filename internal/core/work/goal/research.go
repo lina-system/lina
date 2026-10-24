@@ -24,9 +24,10 @@ type ResearchPartial struct {
 	MaterialRevision int64          `json:"material_revision,omitempty"`
 }
 
-// QuestionsHandled reports whether every gap question is answered or marked
-// open with a reason. A question that is no longer missing counts as answered.
-func QuestionsHandled(gap, missing []string, open []ResearchOpen) bool {
+// QuestionsHandled reports whether every listed gap question is answered in the
+// result or marked open with a reason. Dropping a question from the missing
+// list is not an answer, and a run that never named a gap is not a judgment.
+func QuestionsHandled(gap, missing []string, open []ResearchOpen, body string) bool {
 	still := map[string]bool{}
 	for _, q := range missing {
 		q = strings.TrimSpace(q)
@@ -41,19 +42,21 @@ func QuestionsHandled(gap, missing []string, open []ResearchOpen) bool {
 			marked[q] = true
 		}
 	}
-	if len(gap) == 0 {
-		return len(still) == 0
-	}
+	listed := false
 	for _, q := range gap {
 		q = strings.TrimSpace(q)
 		if q == "" {
 			continue
 		}
-		if still[q] && !marked[q] {
+		listed = true
+		if marked[q] {
+			continue
+		}
+		if still[q] || !strings.Contains(body, q) {
 			return false
 		}
 	}
-	return true
+	return listed
 }
 
 func applyResearchPartial(g *Goal, t *Task, o Observation) error {

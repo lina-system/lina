@@ -219,9 +219,13 @@ func (d *codeGoalDriver) researchCriterion(ctx context.Context, s goal.State, g 
 		if a.Check.Kind != goal.JudgmentEvidence || strings.TrimSpace(a.Check.Rubric) == "" {
 			return goal.Observation{}, nil, goal.ErrInvalid
 		}
-		proof.Passed = goal.QuestionsHandled(t.ResearchGap, latest.Artifact.Missing, researchOpen(latest))
+		proof.Passed = goal.QuestionsHandled(t.ResearchGap, latest.Artifact.Missing, researchOpen(latest), latest.Artifact.Body)
 		collected.Rubric = a.Check.Rubric
-		collected.Judgment = "each question is answered or marked open with its reason"
+		if proof.Passed {
+			collected.Judgment = "each question is answered or marked open with its reason"
+		} else {
+			collected.Judgment = "the listed questions are not answered or marked open"
+		}
 		collected.Output = collected.Judgment
 	default:
 		return goal.Observation{}, nil, goal.ErrInvalid
@@ -333,7 +337,7 @@ func backgroundResultAccepted(t goal.Task, r runs.Record) bool {
 	case runs.Complete:
 		return true
 	case runs.Partial:
-		return goal.QuestionsHandled(t.ResearchGap, r.Artifact.Missing, researchOpen(r))
+		return goal.QuestionsHandled(t.ResearchGap, r.Artifact.Missing, researchOpen(r), r.Artifact.Body)
 	case runs.Failed, runs.Cancelled, runs.InputNeeded:
 		return false
 	}
