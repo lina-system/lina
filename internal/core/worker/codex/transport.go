@@ -77,6 +77,10 @@ type Session struct {
 	finished                map[string]bool
 	finishEvents            map[string]bool // Notifications emitted, distinct from terminal readback.
 	tools                   map[string]bool
+	toolDeclarations        []worker.Tool
+	text                    worker.TurnText
+	realTool                bool
+	textHandled             bool
 	requests                map[string]*serverRequest
 	nextRequest             uint64
 	startingTurn            bool

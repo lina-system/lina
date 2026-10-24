@@ -1,0 +1,155 @@
+# internal/core/messenger/identity implementation notes
+
+Design authority: [conversation-and-memory.md](../../../../docs/design/conversation-and-memory.md#sender-identity),
+[materials-and-knowledge.md](../../../../docs/design/materials-and-knowledge.md#knowledge-documents-and-people-records)
+and the evaluation in [messengers.md](../../../../docs/research/messengers.md#identity-evaluation).
+These notes record how this package meets them; they do not restate the contract.
+
+## Reference: murmur's people model
+
+The port keeps murmur's shape and adds links and identifiers. Murmur was read
+read-only in `~/code/murmur` (schema, `reads.py`, README) on 2026-10-23.
+
+| Item | Seen in murmur | Inferred for LINA | Unknown |
+| --- | --- | --- | --- |
+| Person key | `people(source, account, author_id)` with `author_name`; one row per author per account | The identity key is `(platform, scope, user)`, where scope is the workspace or tenant a platform scopes ids by and `user` is the id or the handle | How Slack and Teams spell a workspace id in every payload |
+| Names | `author_name` is the latest value seen; `people` reports past names with room counts | Names are kept per time seen and never used as an identifier | Whether a platform reports a rename as an edit or a new author |
+| Merging | Never merges by name, nickname or photo; `people` returns identities as they are | Two records merge only on an exact identifier or the person's answer, with both ids kept | Whether murmur's operator ever merged rows by hand |
+| Cross-platform linking | None: identities stay per `(source, account, author_id)` | A shared phone or email, or a contact card, links on its own; the person's answer links anything else | Which of the person's platforms show an email for other people today |
+| Ambiguity | Not modelled | A shared family phone, a team mailbox, a contact card with two numbers, two links to one identity, or a reused number make a link unusable and ask the person once | How often each case occurs in the person's own sources |
+| Repair | Not modelled, because nothing is learned from senders | Removing or correcting a link retracts what cites it and requeues only that identity | How many items one identity produces before the gate is on |
+
+Hermes, Honcho, LCM-X and CRW were named in the porting rule but are absent in
+this environment (`~/.hermes` does not exist; `~/crw` holds briefs, reports and
+an unrelated workflow repository). Nothing was taken from them, and no behaviour
+here is inferred from them.
+
+## Identity key
+
+An identity is `(platform, scope, user)`. `scope` is the messenger source's
+workspace when the platform scopes its user ids by one; Core records it on
+`messenger_source.workspace` and passes it to every observation. iMessage and
+WhatsApp key senders by handle, so the handle is both the `user` and an
+identifier of the identity.
+
+The same identity seen in two chats or two sources is one identity. Every
+admission of a person's or an external participant's record observes the author
+inside the page's transaction (`messenger.Store.WithIdentities`); bots and
+platform notices are not observed. The person's own account (`Self`) is recorded
+so it is known, and is never linked as another person.
+
+Core composes one identity store per conversation and gives it to every reader
+it starts: the messenger sync loop, the built-in Teams service and the built-in
+Webex service. A people record added after messages arrived links on the sync
+loop's next pass, and on the Teams worker's next pass.
+
+## Identifiers
+
+Phone numbers are E.164 and emails are lower case; a number without a country
+code is refused rather than guessed, and an identifier that does not normalize
+is dropped instead of failing the page. Each identifier keeps its source and its
+first and last sighting. A link made on an identifier is valid from the earliest
+sighting of that identifier.
+
+## Matching
+
+The matcher is pure over a people snapshot read before the transaction; the
+write happens inside it. It runs on every observation and again for every known
+identity at Core start (`Rematch`).
+
+1. Candidate records are the people records that list one of the identity's
+   identifiers. More than one candidate is ambiguous (`shared_identifier`): a
+   family phone, a team mailbox, or a contact card listing two people's numbers.
+2. An identity with an active exact or confirmed link to another record is
+   ambiguous (`two_links`).
+3. An identifier another identity already showed is a move. Both platforms
+   keyed by that number (iMessage and WhatsApp) keep linking on their own; a
+   handle that reuses an identifier only an identifier link held (a recycled
+   number) is ambiguous (`identifier_reused`) and ends the earlier link's
+   validity at the new sighting. The end is the earliest sighting of the move:
+   evidence can arrive out of order, so a backfilled earlier sighting moves the
+   end back, records the signal and its source, bumps the revision and writes a
+   `moved` change; nothing moves the end later. Items the earlier link produced
+   inside the newly invalid window are retracted through the one retraction
+   path after the transaction commits, and only that identity's messages from
+   the window's start are queued again. An item cites the link either as an
+   artifact it produced or as external evidence, and the repair covers both. A
+   link that had no end yet is ended the same way: the first cutoff invalidates
+   every moment from the move on, so an item it produced afterwards is retracted
+   and that identity is queued from the cutoff. One `identity_requeue` row per
+   identity remains, at the earliest start any repair needs.
+4. Otherwise exactly one candidate makes an `exact` link with every shared
+   identifier as a signal; a contact-card source adds a `contact_card` signal.
+
+Weak signals never make a usable link. With no exact candidate, a single record
+whose name or alias matches a display name makes a `proposed` link; two records
+with the same name propose nothing. A rejection or a removal is kept and that
+proposal never returns. Proposals are offered in one batch of at most five.
+
+A link is usable when it is `confirmed`, or `exact` and unambiguous, and its
+validity covers the time asked about: a confirmed phone or email link ends when
+the identifier moves, exactly as an exact one does. `Confirm` and `Correct` keep
+the cutoff a move recorded — the answer settles the record, not how long the
+identifier was theirs — so answering again brings nothing back that the move
+retracted. Ambiguity is derived from all observed identifiers within the link window, never stored. Ending a window preserves unresolved conflicts within it; disjoint links do not conflict. Confirmation of a rejected or removed link reactivates the existing record without erasing its bounds. A new confirmed destination inherits the known bounds and identifier signals.
+
+## Person actions and repair
+
+`Confirm` writes a confirmed link with the person's words as the answer signal
+and answers the open question. `Reject` keeps the link. `Remove` marks it
+removed, retracts the items it produced through `retract.Store`, and queues only
+that identity. `Correct` moves the identity to the right record, retracts what
+the old link produced and requeues that identity.
+
+`Merge` records both record ids, moves the links and the items of the first
+record to the second, and `UndoMerge` puts each back on the record it came from.
+`Split` moves the identities the person chooses and the items their evidence
+produced. Item moves run through `memory.ReassignSubject` in the same
+transaction, so an item keeps its evidence, holder and scope.
+
+What a link produced is recorded in `identity_artifact` (memory items, and the
+kind reserved for people-record entries) and a citation of the link as external
+evidence counts too. Migration 79 adds `identity_repair`: pending item ids are written with the link change and requeue in canon. Delivery through the removal list follows commit; `Rematch` drains pending repairs before matching at startup and on scheduled passes. Delivery acknowledges already-hidden or deleted items without submitting a duplicate `Forget` transition. A failure remains pending and is returned to the caller; it is never reported as completed repair.
+
+A repair leaves one row per identity in `identity_requeue`, from the source's
+learning watermark or, without one, the identity's first sighting. Extraction
+about matched senders (#1077) reads it; nothing else is queued.
+
+## People records
+
+A people record is a record of kind `person` under an area or a resource. Its
+aliases, kept when two records merge, are the front matter's `names`; its contact
+data sits in its own `## Contacts` section with the source of each item
+([materials-and-knowledge.md](../../../../docs/design/materials-and-knowledge.md#knowledge-documents-and-people-records)):
+
+```
+## Contacts
+
+- phone +82 10-1234-0001 — iMessage profile 2026-01-02
+- email anna@example.com — Slack profile 2026-01-02
+```
+
+`records.Store.People` returns only the owner's active records; the title takes
+part in name proposals. An archived record is not matched, and a malformed line
+inside the contact section is refused rather than guessed at.
+
+## Evaluation
+
+`testdata/identity/synthetic.json` holds the hard cases; `lina identity-eval`
+runs it and prints the measures. `--private <dir>` runs the owner's labelled
+export and writes `counts.json` with counts and rates only. The files are
+`people.json` (the same shape as the set's `people`), `identities.json` (`SetIdentity`
+without `expect`) and `labels.json` (`{"<platform>/<scope>/<user>": "<record id>"|"unknown"|"self"}`).
+
+`Evaluate` replaces the store's people source with the set's, observes every
+identity in arrival order (`observed_at`, defaulting to `at`, so a backfill can
+be seen after a later sighting), and then measures. A `windows` entry names a
+period in which a link to a record must not be usable; it pins the end of a link
+whose identifier moved. It removes one link as its repair check, so a store is
+measured once.
+
+## Not in this increment
+
+Learning about matched senders, including writing items and `identity_artifact`
+rows, is #1077 and stays off until the gate holds. The person's actions reach no
+client surface here.

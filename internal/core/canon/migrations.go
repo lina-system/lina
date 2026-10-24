@@ -90,8 +90,10 @@ func Migrations() []Migration {
 		{Version: 75, SQL: DiscordSessionsSchema},
 		{Version: 76, SQL: MessengerPendingSchema},
 		{Version: 77, SQL: recallSearchSchema},
-		{Version: 78, SQL: recallVectorsSchema},
-		{Version: 79, SQL: messengerRecallSchema},
+		{Version: 78, SQL: IdentitySchema},
+		{Version: 79, SQL: IdentityRepairSchema},
+		{Version: 80, SQL: recallVectorsSchema},
+		{Version: 81, SQL: messengerRecallSchema},
 	}
 }
 
@@ -147,8 +149,14 @@ var publishedMigrationTables = []struct {
 	{72, "messenger_attachment"},
 	{75, "discord_sessions"},
 	{76, "messenger_relation_pending"}, {76, "messenger_deletion_pending"},
-	{78, "recall_vec"}, {78, "recall_embed_pending"}, {78, "recall_embed_consent"},
-	{79, "messenger_embed_source"}, {79, "messenger_window"}, {79, "messenger_window_pending"},
+	{78, "identity_sender"}, {78, "identity_identifier"}, {78, "identity_name"},
+	{78, "identity_link"}, {78, "identity_link_signal"}, {78, "identity_link_change"},
+	{78, "identity_question"}, {78, "identity_question_candidate"}, {78, "identity_artifact"}, {78, "identity_merge"},
+	{78, "identity_merge_link"}, {78, "identity_merge_alias"}, {78, "identity_merge_artifact"},
+	{78, "identity_requeue"},
+	{79, "identity_repair"},
+	{80, "recall_vec"}, {80, "recall_embed_pending"}, {80, "recall_embed_consent"},
+	{81, "messenger_embed_source"}, {81, "messenger_window"}, {81, "messenger_window_pending"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is
