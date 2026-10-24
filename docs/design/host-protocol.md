@@ -780,6 +780,19 @@ person is `out_of_scope`; a command on a final goal returns `stale_revision`;
 during recovery the request returns `unavailable`. The progress topic publishes
 the changed line, its order and its Now as it does for any other work change.
 
+The same capability installs `work_limit_request` and `work_limit_result` for the
+person's run limit ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)).
+A request has `operation` (`limit_up`, `limit_down`, `limit_auto` or
+`limit_set`) and, only for `limit_set`, a `value` from 1 to 1024. Only an
+eligible owner connection may call it. `limit_up` and `limit_down` move one step
+from the limit the last pass applied, and `limit_auto` returns the limit to
+automatic. The result returns `automatic`, the applied `limit` and the `reason`
+the applied limit stands at (`slot`, `quota` or `load`). The choice is recorded
+with the request's message identity and applies on the next scheduling pass; a
+choice that changes nothing records no command and answers effect state `none`.
+The `progress` and `progress_update` payloads carry the same applied limit as
+`limit`, so a client shows what Core decided.
+
 ### Worker approval origin
 
 A worker `approval_request` may carry `conversation_id`, identifying the

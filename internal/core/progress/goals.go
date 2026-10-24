@@ -129,6 +129,10 @@ func goalNow(g goal.Goal, stages []Stage, language design.Language) string {
 		}
 		return working[0].Name
 	}
+	// A goal waiting for a run slot says why and which place it holds.
+	if place := queuePlace(g, language); place != "" {
+		return place
+	}
 	switch g.State {
 	case goal.GoalDefining:
 		return design.Text(language, "progress.design")
@@ -142,6 +146,18 @@ func goalNow(g goal.Goal, stages []Stage, language design.Language) string {
 		return design.Text(language, "progress.waiting_word")
 	}
 	return design.Text(language, "progress.waiting_word")
+}
+
+// queuePlace is a queued goal's one reason and its place in rank order.
+func queuePlace(g goal.Goal, language design.Language) string {
+	if g.QueuePlace <= 0 {
+		return ""
+	}
+	text, ok := design.Lookup(language, "progress.queue."+g.QueueReason)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(text, g.QueuePlace)
 }
 
 // goalNext names the entry after the current one. The current entry is what the

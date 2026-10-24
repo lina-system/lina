@@ -30,6 +30,12 @@ func (c *Client) WorkControl(ctx context.Context, request protocol.WorkControlRe
 	return c.request(ctx, protocol.KindWorkControlRequest, request)
 }
 
+// WorkLimit sends the person's run limit choice once; Receive owns the
+// correlated result.
+func (c *Client) WorkLimit(ctx context.Context, request protocol.WorkLimitRequest) (string, error) {
+	return c.request(ctx, protocol.KindWorkLimitRequest, request)
+}
+
 // Work sends an owner operation once; Receive owns the correlated result.
 func (c *Client) Work(ctx context.Context, request protocol.WorkSwitchRequest) (string, error) {
 	return c.request(ctx, protocol.KindWorkSwitchRequest, request)
