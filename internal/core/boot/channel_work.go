@@ -260,6 +260,14 @@ func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationR
 			}
 		}
 	}
+	// The chip names the item the person's message is about, so it rides with
+	// the reply to that message, not with a worker follow-up.
+	replyID := ""
+	for _, id := range ids {
+		if item, err := view.journal().Get(ctx, id); err == nil && item.ParentID == parent {
+			replyID = id
+		}
+	}
 	for _, id := range ids {
 		item, err := view.journal().Get(ctx, id)
 		if err != nil {

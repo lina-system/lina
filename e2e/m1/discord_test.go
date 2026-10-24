@@ -288,6 +288,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 				return
 			}
 			count := sendCalls.Add(1)
+			t.Logf("send[%d] %q", count, body.Content)
 			if blocked.Load() {
 				w.WriteHeader(403)
 				fmt.Fprintf(w, `{"code":%d}`, scenario.Blocked)
