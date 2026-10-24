@@ -53,12 +53,13 @@ type Scope struct {
 	// agent and tool words out of the evidence about the person while items
 	// stay eligible.
 	EventSpeakerKind guard.SpeakerKind
-	// PersonMemory limits memory candidates to items whose subject is the
-	// person. recall_person sets it so an item about a third party or the
-	// world is never evidence about the person.
+	Origin           string
+	CommonOnly       bool
+	// PersonOnly restricts person-model queries to person-authored events and
+	// person-subject memory items, before ranking and the result limit.
+	PersonOnly bool
+	// PersonMemory limits only memory candidates to person-subject items.
 	PersonMemory bool
-	Origin       string
-	CommonOnly   bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
 	// with its lineage, so it surfaces only when its original is not a
 	// candidate: a copy appears only when asked, through its original.
@@ -197,7 +198,7 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	restricted := scope.Projection || scope.ExternalModel
 	var with []string
 	var withArgs []any
-	if cte, cteArgs := restrictedCTE(scope); cte != "" {
+	if cte, cteArgs := RestrictionCTE(scope); cte != "" {
 		with = append(with, cte)
 		withArgs = append(withArgs, cteArgs...)
 	}
@@ -387,7 +388,7 @@ func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, rest
 		"NOT EXISTS(SELECT 1 FROM recall_doc x WHERE x.kind=s.kind AND x.source_id=s.source_id)",
 		"s.body IS NULL")
 	prefix := ""
-	if cte, cteArgs := restrictedCTE(scope); cte != "" {
+	if cte, cteArgs := RestrictionCTE(scope); cte != "" {
 		prefix = "WITH RECURSIVE " + cte + " "
 		args = append(cteArgs, args...)
 	}
@@ -458,52 +459,11 @@ func lineageFilter(enabled bool) string {
 	return ` WHERE c.kind<>'event' OR c.source_id NOT IN (SELECT x.id FROM derived x)`
 }
 
-// restrictedCTE lists protected sources and their citation dependents for the
-// caller's person. Empty when the scope reads everything.
-func restrictedCTE(scope Scope) (string, []any) {
-	if !scope.Projection && !scope.ExternalModel {
-		return "", nil
-	}
-	return restrictedSources(scope)
-}
-
 func holderCondition(scope Scope, alias string) string {
 	if scope.CommonOnly || scope.Agent == "" {
 		return alias + ".holder='all'"
 	}
 	return alias + ".holder IN (?,'all')"
-}
-
-// Follow protected memory to its evidence, then protect every current view
-// that depends on any of those sources. A replay copy or view_of event carries
-// its original's text, so protection also spreads both ways along those links
-// before anything cites them. Typed identities and UNION terminate cycles
-// without confusing equal ids belonging to different source kinds.
-func restrictedSources(scope Scope) (string, []any) {
-	return `sensitive(kind,id) AS (
- SELECT 'memory',m.id FROM memory_item m WHERE m.person=?
-  AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))
- UNION
- SELECT c.target_kind,c.target_id FROM cite c JOIN sensitive s ON c.view_kind=s.kind AND c.view_id=s.id
-  WHERE c.dropped_revision IS NULL
-), copied(child,parent) AS MATERIALIZED (
- SELECT e.id,e.replay_of FROM recall_doc d JOIN conv_event e ON e.id=d.source_id
-  WHERE d.person=? AND d.kind='event' AND d.replay=1 AND coalesce(e.replay_of,'')<>''
- UNION ALL
- SELECT e.id,e.replay_of FROM recall_pending q JOIN conv_event e ON e.id=q.source_id
-  WHERE q.kind='event' AND coalesce(e.replay_of,'')<>''
- UNION ALL
- SELECT event_id,target_id FROM ev_rel WHERE kind='view_of'
-), restricted(kind,id) AS (
- SELECT kind,id FROM sensitive
- UNION
- SELECT c.view_kind,c.view_id FROM cite c JOIN restricted r ON c.target_kind=r.kind AND c.target_id=r.id
-  WHERE c.dropped_revision IS NULL
- UNION
- SELECT 'event',l.child FROM copied l JOIN restricted r ON r.kind='event' AND r.id=l.parent
- UNION
- SELECT 'event',l.parent FROM copied l JOIN restricted r ON r.kind='event' AND r.id=l.child
-)`, []any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel), scope.Person}
 }
 
 // RestrictedEvents returns the events a Projection or ExternalModel scope
@@ -515,7 +475,7 @@ func RestrictedEvents(ctx context.Context, tx *canon.Tx, scope Scope) (map[strin
 	if !scope.Projection && !scope.ExternalModel {
 		return ids, nil
 	}
-	fragment, args := restrictedSources(scope)
+	fragment, args := RestrictionCTE(scope)
 	rows, err := tx.QueryContext(ctx, "WITH RECURSIVE "+fragment+" SELECT id FROM restricted WHERE kind='event'", args...)
 	if err != nil {
 		return nil, err
@@ -731,7 +691,7 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		args = append(args, olderArgs...)
 	}
 	prefix := ""
-	if fragment, prefixArgs := restrictedCTE(scope); fragment != "" {
+	if fragment, prefixArgs := RestrictionCTE(scope); fragment != "" {
 		prefix = "WITH RECURSIVE " + fragment + " "
 		args = append(prefixArgs, args...)
 	}

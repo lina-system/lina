@@ -78,8 +78,9 @@ reader or reports unavailable bytes without failing the whole result list.
 
 Restricted-source selection follows protected memory to its evidence, then
 walks current citations back to every dependent memory, record and summary.
-A replay copy or `view_of` event carries its original's text, so protection
-also spreads both ways along `replay_of` and `view_of` links, indexed or queued.
+Protected evidence follows replay and `view_of` links to original sources;
+protection then reaches their dependent views, indexed or queued, without
+restricting those views' independent sources.
 `RestrictedEvents` returns the event ids of that set, so a live read by id,
 such as `expand`, refuses exactly the events search leaves out.
 Typed source identities preserve the boundary across nested summary children.
@@ -93,3 +94,14 @@ ranking, identical-text collapse, lineage, scope and visibility classes,
 retraction, summary navigation, excerpt bounds and the vector hook. The opt-in
 store benchmark Core test proves startup fill and socket memory writes/forget
 with the normal running Core.
+
+`restrictions.go` owns `RestrictionCTE`, the canonical SQL relation shared by
+search candidate selection, memory projections, expansion and replay/export
+validation. `SourceRestricted` queries that relation for exact references.
+Protected memory follows current citations to its sources; replay/view links
+and event material locators participate in the same traversal. The reverse
+walk reaches every dependent view, including all view targets. Typed identities
+and recursive UNION terminate cycles. Legacy memory records without citation
+rows contribute their canonical JSON evidence to the same relation. Each
+reader retains its own identity,
+revision, removal and availability checks; no restriction cache is persisted.

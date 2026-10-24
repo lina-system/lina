@@ -11,8 +11,20 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/kit/loop"
 )
+
+func sourceRestriction(ctx context.Context, tx *canon.Tx, scope Scope, kind, id string) error {
+	restricted, err := recall.SourceRestricted(ctx, tx, recall.Scope{Person: scope.Person, Projection: true}, kind, id)
+	if err != nil {
+		return err
+	}
+	if restricted {
+		return Exclusion("restricted_content")
+	}
+	return nil
+}
 
 // Tool references are read from the registered structured result shapes, never
 // extracted from prose. A later forgotten source invalidates the whole turn,
@@ -204,6 +216,9 @@ func recallReference(ctx context.Context, tx *canon.Tx, scope Scope, kind, id, r
 		}
 		return memoryReference(ctx, tx, scope, id, version, map[string]bool{})
 	}
+	if err := sourceRestriction(ctx, tx, scope, kind, id); err != nil {
+		return err
+	}
 	var refs []canon.Citation
 	if kind == "summary" {
 		version, parseErr := strconv.ParseInt(revision, 10, 64)
@@ -244,6 +259,9 @@ func memoryReference(ctx context.Context, tx *canon.Tx, scope Scope, id string, 
 	}
 	visiting[id] = true
 	defer delete(visiting, id)
+	if err := sourceRestriction(ctx, tx, scope, "memory", id); err != nil {
+		return err
+	}
 	var data []byte
 	err := tx.QueryRowContext(ctx, `SELECT r.record FROM retract_visible_memory m JOIN memory_revision r ON r.item_id=m.id
  WHERE m.id=? AND r.revision=? AND m.person=? AND (m.holder='all' OR m.holder=?) AND m.state='active' AND m.scope='local'`, id, revision, scope.Person, scope.Agent).Scan(&data)
@@ -279,6 +297,9 @@ func evidenceReference(ctx context.Context, tx *canon.Tx, scope Scope, ref memor
 	case memory.MemoryItem:
 		return memoryReference(ctx, tx, scope, ref.ID, ref.Revision, visiting)
 	case memory.Material:
+		if err := sourceRestriction(ctx, tx, scope, "material", ref.ID); err != nil {
+			return err
+		}
 		var n int
 		err := tx.QueryRowContext(ctx, `SELECT count(*) FROM assets a JOIN asset_revisions r ON r.asset_id=a.id WHERE a.id=? AND r.revision=? AND a.person_id=? AND a.agent_id=? AND a.trashed_at=0`, ref.ID, ref.Revision, scope.Person, scope.Agent).Scan(&n)
 		if err != nil {

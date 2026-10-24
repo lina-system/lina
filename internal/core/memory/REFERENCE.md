@@ -97,7 +97,7 @@ Synthetic package tests and `e2e/m1/memory-jobs.json` exercise these operations 
 
 `RestrictedEvents` returns the event ids that the person's `private` and
 `never-leaves` items rest on, so a common item or a raw ledger read cannot
-bypass another holder's scope. It is `recall.RestrictedEvents`, the event part
+bypass another holder's scope. It uses recall's `RestrictionCTE`, the event part
 of the rule recall search applies, so the set also holds every replay copy and
 `view_of` event linked to that evidence. It reads the current `cite` rows of
 those items instead of decoding every record's evidence JSON; only ids leave
@@ -116,3 +116,7 @@ Installed-Core acceptance runs a real `remember_name` tool call against a
 scripted provider and resolves its material-backed evidence through management
 before and after restart. Package fixtures cover import, legacy revisions,
 secret spans, cross-agent reads and tombstones.
+
+Memory candidate reads and `RestrictedEvents` share recall's `RestrictionCTE`.
+This applies scope through memory chains and copied events before candidate
+limits, including direct item/profile/relationship reads without a text query.
