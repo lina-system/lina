@@ -38,8 +38,8 @@ a fifth of the main model's wait.
 - `classify`: the model labels everything `personal` when the right label is
   `admin` or `health`, although the prompt names all four labels. The two lines
   it gets right are the ones whose answer is `personal` or `work`.
-- `autocomplete`: it answers a question back instead of continuing the line, and
-  once continued a shopping line with "준비하겠습니다" instead of "보내".
+- `autocomplete`: it writes a complete sentence about the line instead of the
+  continuation, and where the line called for "보내" it wrote "준비하겠습니다".
 - `intent`: one of four lines (a to-do with a date and time) was read as
   `open_app` in half its runs.
 - `extract` and `summary` were correct in every run on both paths. Guided
@@ -63,7 +63,8 @@ go build -o ~/localmodel-eval ./tools/localmodel-eval
   -repeat 10 -warmup 1 -out measurements.json
 ```
 
-The set is `testdata/localmodel-eval/set.json`. `line` is what the person typed;
+The set is `testdata/localmodel-eval/set.json`, version 1, 28 cases. `line` is
+what the person typed;
 `prompt`, when present, is the exact input the caller sends, because a schema of
 plain strings has no place to carry the vocabulary a classification or an intent
 needs. Dates are absolute so no case depends on the clock. A case is correct
