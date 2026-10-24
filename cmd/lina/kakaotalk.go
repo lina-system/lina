@@ -71,8 +71,10 @@ func runKakaoTalk(args []string) int {
 	}
 	defer c.Close()
 	// The terminal supplies answers to the add-on's own prompts. Values are
-	// written to the request and dropped; a secret is read without echo.
-	terminal := term.IsTerminal(os.Stdin)
+	// written to the request and dropped; a secret is read without echo. One
+	// reader spans every step, so input piped for several prompts is not lost
+	// between them.
+	prompts := newAnswers(os.Stdin, term.IsTerminal(os.Stdin))
 	// poll repeats the operation that started the relay while the phone
 	// confirms the tablet; an answer is never resent.
 	poll := request
@@ -121,15 +123,14 @@ func runKakaoTalk(args []string) int {
 			return 1
 		}
 		if step.Show != nil {
-			fmt.Fprintf(os.Stderr, "Confirm this code on your phone: %s (then press Enter)\n", step.Show.Value)
-			if _, err = bufio.NewReader(io.LimitReader(os.Stdin, 2)).ReadString('\n'); err != nil && err != io.EOF {
+			if !prompts.wait(fmt.Sprintf("Confirm this code on your phone: %s (then press Enter)", step.Show.Value)) {
 				return 74
 			}
 			// A repeated step shows the same code while the phone confirms.
 			request = poll
 			continue
 		}
-		value, ok := readAnswer(os.Stdin, terminal, step.Prompt.Kind == "secret", step.Prompt.Text)
+		value, ok := prompts.read(step.Prompt.Kind == "secret", step.Prompt.Text)
 		if !ok {
 			return 1
 		}
@@ -137,27 +138,67 @@ func runKakaoTalk(args []string) int {
 	}
 }
 
-// readAnswer prints the add-on's own prompt and reads one line. A secret is
-// read without echo, so a password never shows on the terminal.
-func readAnswer(in io.Reader, terminal, secret bool, prompt string) (string, bool) {
+// maxAnswer bounds one typed line.
+const maxAnswer = 4096
+
+// answers reads the add-on's own prompts from one stream. The buffered reader
+// is shared by every step, so a pipe that supplies several answers at once
+// keeps the lines it has already read.
+type answers struct {
+	file     *os.File
+	reader   *bufio.Reader
+	terminal bool
+}
+
+func newAnswers(file *os.File, terminal bool) *answers {
+	var in io.Reader = file
+	return &answers{file: file, reader: bufio.NewReader(in), terminal: terminal}
+}
+
+// line reads one line of at most maxAnswer bytes and leaves the rest of the
+// stream for the next step.
+func (a *answers) line() ([]byte, error) {
+	var out []byte
+	for len(out) < maxAnswer {
+		chunk, err := a.reader.ReadSlice('\n')
+		out = append(out, chunk...)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return out, err
+	}
+	return out[:maxAnswer], nil
+}
+
+// read prints the add-on's own prompt and returns one answer. A secret is read
+// without echo and kept as typed: only the line ending is removed, because a
+// leading or trailing space can be part of the credential. Other answers are
+// trimmed.
+func (a *answers) read(secret bool, prompt string) (string, bool) {
 	fmt.Fprint(os.Stderr, prompt+": ")
 	var line []byte
 	var err error
-	if secret && terminal {
-		line, err = term.ReadSecret(os.Stdin)
+	if secret && a.terminal && a.file != nil {
+		line, err = term.ReadSecret(a.file)
 		fmt.Fprintln(os.Stderr)
 	} else {
-		line, err = bufio.NewReader(io.LimitReader(in, 4097)).ReadBytes('\n')
+		line, err = a.line()
 	}
 	if err != nil && err != io.EOF {
 		return "", false
 	}
 	if secret {
-		// A password is sent as typed: only the line ending is removed, because
-		// a leading or trailing space can be part of the credential.
 		value := strings.TrimRight(string(line), "\r\n")
 		return value, value != ""
 	}
 	value := strings.TrimSpace(string(line))
 	return value, value != ""
+}
+
+// wait shows a line and consumes one line, such as the Enter after the person
+// confirms a code on their phone.
+func (a *answers) wait(text string) bool {
+	fmt.Fprintln(os.Stderr, text)
+	_, err := a.line()
+	return err == nil || err == io.EOF
 }

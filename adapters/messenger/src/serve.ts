@@ -84,6 +84,11 @@ export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream |
         const value = await driverOrOpen();
         return await value.answer(request.prompt, request.value);
       }
+      case 'cancelSignIn': {
+        const value = await driverOrOpen();
+        if (value.cancelSignIn) await value.cancelSignIn();
+        return { cancelled: true };
+      }
       case 'listChats': {
         const value = await driverOrOpen();
         return { chats: (await value.listChats()).map(checkedChat) };

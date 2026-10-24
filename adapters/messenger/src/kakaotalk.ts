@@ -123,6 +123,9 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
   let shown = '';
   let confirming = false;
   let registering: Promise<void> | null = null;
+  // generation counts sign-in attempts. A cancelled or replaced attempt stops
+  // writing state, so an abandoned background registration cannot revive it.
+  let generation = 0;
 
   const connect = async (): Promise<void> => {
     if (signedIn) return;
@@ -216,7 +219,9 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
       // registration then finishes in the background; nothing of it is kept.
       shown = code.passcode;
       confirming = true;
-      registering = confirm().finally(() => {
+      const mine = generation;
+      registering = confirm(mine).finally(() => {
+        if (mine !== generation) return;
         confirming = false;
         registering = null;
       });
@@ -227,15 +232,18 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
     return { state: 'failing' };
   };
 
-  const confirm = async (): Promise<void> => {
+  const confirm = async (mine: number): Promise<void> => {
     if (!pending) return;
-    const registration = await sdk.registerDevice(pending.email, pending.password, '', pending.deviceUuid);
+    const attempt = pending;
+    const registration = await sdk.registerDevice(attempt.email, attempt.password, '', attempt.deviceUuid);
+    if (mine !== generation) return;
     if (registration.error) {
       failure = registration.error;
       pending = null;
       return;
     }
-    const result = await sdk.attemptLogin(pending.email, pending.password, pending.deviceUuid, 'tablet', false);
+    const result = await sdk.attemptLogin(attempt.email, attempt.password, attempt.deviceUuid, 'tablet', false);
+    if (mine !== generation) return;
     if (!result.authenticated) {
       failure = result.error ?? 'login failed';
       pending = null;
@@ -298,6 +306,23 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
     },
 
     signInState,
+
+    // cancelSignIn drops the attempt the person walked away from: the pending
+    // credentials, the shown passcode and a registration still in flight. The
+    // next connection then begins its own flow instead of resuming this one.
+    async cancelSignIn(): Promise<void> {
+      generation += 1;
+      pending = null;
+      shown = '';
+      failure = '';
+      confirming = false;
+      registering = null;
+      try {
+        await credentials.clearPendingLogin();
+      } catch {
+        // A record that cannot be cleared still leaves this attempt dropped.
+      }
+    },
 
     async beginSignIn(): Promise<SignInStep> {
       try {

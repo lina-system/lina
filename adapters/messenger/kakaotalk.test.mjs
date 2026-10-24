@@ -201,6 +201,31 @@ test('a live subscription that cannot start reports its end', async () => {
   assert.match(String(ended?.message ?? ended), /session refused/);
 });
 
+test('a cancelled sign-in is not resumed by the next connection', async () => {
+  const { driver } = open({
+    login: {
+      attempts: [{ authenticated: false, next_action: 'provide_passcode' }, { authenticated: true, account_id: '7788', user_id: '7788' }],
+      passcode: '4821',
+      registration: { delayMs: 30 },
+    },
+    profile: { user_id: '7788', nickname: 'Me' },
+    chats: [],
+  });
+  await driver.beginSignIn();
+  await driver.answer('email', 'person@example.test');
+  assert.deepEqual(await driver.answer('password', 'synthetic-password'), {
+    state: 'needs_sign_in', show: { kind: 'code', value: '4821' },
+  });
+  // The person walks away: the abandoned attempt is dropped, including the
+  // registration still in flight, so the next connection sees no passcode.
+  await driver.cancelSignIn();
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(await driver.signInState(), 'needs_sign_in');
+  const again = await driver.beginSignIn();
+  assert.deepEqual(again.prompt, { key: 'email', kind: 'text', text: 'KakaoTalk email' });
+  assert.equal(again.show, undefined);
+});
+
 test('a rejected password starts a new attempt instead of staying failed', async () => {
   const { driver, fixture } = open({
     login: {

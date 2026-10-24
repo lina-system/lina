@@ -103,6 +103,10 @@ type Config struct {
 type Service struct {
 	cfg Config
 
+	// flow serializes the sign-in steps, so an abandoned attempt is cancelled
+	// before a replacement begins on the same add-on session.
+	flow sync.Mutex
+
 	mu       sync.Mutex
 	attempts map[string]*attempt
 	// holder is the connection whose sign-in the add-on is running. The
@@ -205,8 +209,10 @@ func (s *Service) SignIn(ctx context.Context, connection, account string) (Step,
 // Only the connection that holds the platform's pending flow may begin, resume
 // or answer it; another connection is refused until it ends or expires.
 func (s *Service) begin(ctx context.Context, connection string, pending *attempt, fresh bool) (Step, error) {
+	s.flow.Lock()
+	defer s.flow.Unlock()
 	s.mu.Lock()
-	s.expireLocked()
+	expired := s.expireLocked()
 	if s.holder != "" && s.holder != connection {
 		s.mu.Unlock()
 		return Step{}, ErrSignInBusy
@@ -227,6 +233,11 @@ func (s *Service) begin(ctx context.Context, connection string, pending *attempt
 	}
 	s.holder = connection
 	s.mu.Unlock()
+	// The add-on keeps one pending flow per account, so an abandoned attempt
+	// must be dropped before this connection begins its own.
+	for _, abandoned := range expired {
+		s.cancel(ctx, abandoned)
+	}
 	session, err := s.cfg.Sessions.Start(Platform, pending.account)
 	if err != nil {
 		return Step{}, err
@@ -240,6 +251,8 @@ func (s *Service) begin(ctx context.Context, connection string, pending *attempt
 
 // Answer relays one typed value to the same add-on session and keeps nothing.
 func (s *Service) Answer(ctx context.Context, connection, prompt, value string) (Step, error) {
+	s.flow.Lock()
+	defer s.flow.Unlock()
 	s.mu.Lock()
 	s.expireLocked()
 	pending, ok := s.attempts[connection]
@@ -341,23 +354,43 @@ func (s *Service) Disconnect(ctx context.Context, account string) error {
 		return err
 	}
 	s.mu.Lock()
+	abandoned := []*attempt{}
 	for connection, pending := range s.attempts {
 		if pending.account == account {
+			abandoned = append(abandoned, pending)
 			s.releaseLocked(connection)
 		}
 	}
 	s.mu.Unlock()
+	// A sign-in for this account is over: its flow must not outlive it.
+	for _, pending := range abandoned {
+		s.cancel(ctx, pending)
+	}
 	return s.cfg.Sessions.Remove(ctx, Platform, account)
 }
 
-// expireLocked drops relays past their lifetime. It requires s.mu.
-func (s *Service) expireLocked() {
+// expireLocked drops relays past their lifetime and returns them, so the
+// caller can cancel their add-on flow. It requires s.mu.
+func (s *Service) expireLocked() []*attempt {
 	current := s.now()
+	var expired []*attempt
 	for connection, pending := range s.attempts {
 		if !current.Before(pending.expires) {
+			expired = append(expired, pending)
 			s.releaseLocked(connection)
 		}
 	}
+	return expired
+}
+
+// cancel drops an abandoned attempt's flow in the add-on. A session that
+// cannot be started has no flow to cancel.
+func (s *Service) cancel(ctx context.Context, abandoned *attempt) {
+	session, err := s.cfg.Sessions.Start(Platform, abandoned.account)
+	if err != nil {
+		return
+	}
+	_ = session.CancelSignIn(ctx)
 }
 
 // releaseLocked ends one relay and, when it held the platform's flow, frees it

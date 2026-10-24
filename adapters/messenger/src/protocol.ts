@@ -82,6 +82,10 @@ export type Driver = {
   signInState(): Promise<SignInState>;
   beginSignIn(): Promise<SignInStep>;
   answer(key: string, value: string): Promise<SignInStep>;
+  // cancelSignIn discards a sign-in the person abandoned, so the next one
+  // begins its own flow instead of resuming it. A driver without one keeps
+  // its flow until the process restarts.
+  cancelSignIn?(): Promise<void>;
   listChats(): Promise<Chat[]>;
   page(chat: string, cursor: string): Promise<Page>;
   members(chat: string): Promise<Author[]>;
@@ -94,7 +98,7 @@ export type Driver = {
 // OPS is the whole dispatch table. Every entry is a read, a sign-in step or a
 // control request; there is no operation that names an SDK method.
 export const OPS = Object.freeze([
-  'hello', 'signIn', 'beginSignIn', 'answer', 'listChats', 'page', 'members', 'whoami', 'live', 'stop', 'quit',
+  'hello', 'signIn', 'beginSignIn', 'answer', 'cancelSignIn', 'listChats', 'page', 'members', 'whoami', 'live', 'stop', 'quit',
 ] as const);
 
 export type Op = (typeof OPS)[number];
@@ -104,6 +108,7 @@ const FIELDS: Record<Op, readonly string[]> = {
   signIn: ['id', 'op'],
   beginSignIn: ['id', 'op'],
   answer: ['id', 'op', 'prompt', 'value'],
+  cancelSignIn: ['id', 'op'],
   listChats: ['id', 'op'],
   page: ['id', 'op', 'chat', 'cursor'],
   members: ['id', 'op', 'chat'],

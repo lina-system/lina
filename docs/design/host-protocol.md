@@ -737,7 +737,8 @@ kind (`text` or `secret`), and `show` carries a `code` the person confirms on
 their phone. Prompt answers and passcodes are transient: they travel only on
 the connection that accepted the terms, are never stored, and the relay ends
 after ten minutes. While one connection holds the add-on's pending sign-in,
-another connection's `connect` or `sign_in` is refused with `not_authorized`.
+another connection's `connect` or `sign_in` is refused with `not_authorized`,
+and an expired relay cancels its flow before the next one begins.
 The source reader continues independently of that client connection.
 
 ## Deferred

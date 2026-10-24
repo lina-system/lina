@@ -129,6 +129,7 @@ const (
 	passwordPrompt = `{"id":"","ok":true,"result":{"state":"needs_sign_in","prompt":{"key":"password","kind":"secret","text":"KakaoTalk password"}}}`
 	passcode       = `{"id":"","ok":true,"result":{"state":"needs_sign_in","show":{"kind":"code","value":"4821"}}}`
 	failing        = `{"id":"","ok":true,"result":{"state":"failing"}}`
+	cancelled      = `{"id":"","ok":true,"result":{"cancelled":true}}`
 	me             = `{"id":"","ok":true,"result":{"author":{"id":"7788","name":"Me"}}}`
 	// The driver's descriptor travels with the sign-in state Core already asks for.
 	withDescriptor = `{"id":"","ok":true,"result":{"state":"signed_in","capabilities":{"historyDepth":"platform-window","cursorKind":"log-id","edits":false,"deletions":false,"liveEvents":true,"intervalSeconds":900,"readWindowSeconds":172800}}}`
@@ -287,13 +288,18 @@ func TestOneConnectionHoldsTheSignIn(t *testing.T) {
 // A flow past its lifetime stops holding the platform, so the next connection
 // begins rather than waiting for a relay nobody will answer.
 func TestAnExpiredSignInFreesTheFlow(t *testing.T) {
-	h := newHarness(t, map[string][]string{"beginSignIn": {emailPrompt, emailPrompt}})
+	h := newHarness(t, map[string][]string{"beginSignIn": {emailPrompt, emailPrompt}, "cancelSignIn": {cancelled}})
 	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
 		t.Fatal(err)
 	}
 	h.now = h.now.Add(11 * time.Minute)
 	if _, err := h.service.Connect(t.Context(), "second", true); err != nil {
 		t.Fatalf("an expired flow kept holding the platform: %v", err)
+	}
+	// The abandoned attempt's flow is dropped before the replacement begins,
+	// so the new connection starts its own instead of resuming it.
+	if ops := h.script.ops(); len(ops) != 3 || ops[0] != "beginSignIn" || ops[1] != "cancelSignIn" || ops[2] != "beginSignIn" {
+		t.Fatalf("the expired flow was not cancelled before the replacement: %v", ops)
 	}
 }
 

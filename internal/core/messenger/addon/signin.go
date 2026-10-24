@@ -55,6 +55,15 @@ func (s *Session) Answer(ctx context.Context, prompt, value string) (SignInStep,
 	return s.signInStep(ctx, "answer", map[string]any{"prompt": prompt, "value": value})
 }
 
+// CancelSignIn drops a sign-in the person abandoned, so the next connection
+// begins its own flow instead of resuming the abandoned one.
+func (s *Session) CancelSignIn(ctx context.Context) error {
+	var result struct {
+		Cancelled bool `json:"cancelled"`
+	}
+	return s.process.call(ctx, "cancelSignIn", nil, &result)
+}
+
 // WhoAmI reads the signed-in account's public profile.
 func (s *Session) WhoAmI(ctx context.Context) (messenger.Author, error) {
 	var result struct {
