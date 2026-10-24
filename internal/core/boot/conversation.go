@@ -92,6 +92,7 @@ type conversationRuntime struct {
 	removals        *retract.Store
 	teams           *teams.Service
 	webex           *webex.Service
+	telegram        *telegramControl
 	messenger       *messenger.Service
 	senderIdentity  *identity.Store
 	messengerAddon  AddonStarter
@@ -313,6 +314,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.initWebex(relay, channelTransport); err != nil {
 		return nil, err
 	}
+	if err = r.initTelegram(); err != nil {
+		return nil, err
+	}
 	if err = r.initTeams(relay, channelTransport); err != nil {
 		return nil, err
 	}
@@ -459,6 +463,9 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	if r.webex != nil {
 		r.webex.Close()
 	}
+	if r.telegram != nil {
+		r.telegram.close()
+	}
 	if r.teams != nil {
 		r.teams.Close()
 	}
@@ -473,6 +480,10 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+	if r.messenger != nil {
+		r.messenger.Close()
+		r.messenger = nil
 	}
 	if r.messengerAddon != nil {
 		if err := r.messengerAddon.Close(ctx); err != nil {
