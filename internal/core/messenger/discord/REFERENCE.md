@@ -20,7 +20,9 @@ read again for this increment.
 - **Inferred for LINA:** the source reuses that transport instead of growing a
   second Discord client. One Gateway session per bot token serves a channel
   connection and a bot-mode source together, and each receives every event.
-  The source's durable cursor is its chat cursor in `messenger_chat`; live
+  The shared Gateway checkpoint is durable in `discord_sessions`, independent
+  of channel connections, and advances after every subscriber accepts a dispatch.
+  The source's history cursor is its chat cursor in `messenger_chat`; live
   events are newer than the last page, and a later page read admits them again
   without adding anything.
   Core's `boot` composition supplies the REST client and Gateway listener through

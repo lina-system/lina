@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -35,6 +36,9 @@ type Removals interface {
 
 // Store owns the source registry and messenger admission.
 type Store struct {
+	// liveMu orders live admission against switches and disconnection, including
+	// deletions that use the retraction path in a separate transaction.
+	liveMu    sync.Mutex
 	db        *canon.Store
 	materials ledger.Materials
 	removals  Removals
@@ -96,6 +100,8 @@ func (s State) valid() bool {
 // Disconnect stops sync for a source and marks it disconnected. Its records
 // stay; the caller deletes the credentials it holds.
 func (s *Store) Disconnect(ctx context.Context, person, platform, account string) error {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
 	return s.setState(ctx, person, platform, account, StateDisconnected, "")
 }
 
@@ -115,7 +121,7 @@ func (s *Store) setState(ctx context.Context, person, platform, account string, 
 		return ErrInvalid
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET state=?,failure=? WHERE person=? AND platform=? AND account=?", string(state), cause, person, platform, account)
+		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET state=?,failure=? WHERE person=? AND platform=? AND account=? AND (state<>'disconnected' OR ?='disconnected')", string(state), cause, person, platform, account, string(state))
 		if err != nil {
 			return err
 		}
@@ -271,6 +277,8 @@ ON CONFLICT(platform,account,chat) DO UPDATE SET name=excluded.name,kind=exclude
 
 // SetSwitches leaves a chat out of sync, learning or embedding.
 func (s *Store) SetSwitches(ctx context.Context, person, platform, account, chat string, switches Switches) error {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
 	if !validName(person) || !validName(platform) || !validName(account) || !validName(chat) {
 		return ErrInvalid
 	}
@@ -463,36 +471,40 @@ func (s *Store) AdmitEvent(ctx context.Context, source Source, event Event) (Pag
 	if (event.Message == nil) == (event.Deletion == nil) {
 		return PageResult{}, ErrInvalid
 	}
-	from, err := s.chatCursor(ctx, source, event.Chat)
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	connected, err := s.liveConnected(ctx, source)
 	if err != nil {
 		return PageResult{}, err
 	}
-	page := Page{Next: from, HasMore: true}
+	if !connected {
+		return PageResult{}, ErrNotConnected
+	}
+	var enabled bool
+	if err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM messenger_chat WHERE platform=? AND account=? AND chat=? AND sync=1)", source.Platform, source.Account, event.Chat).Scan(&enabled)
+	}); err != nil {
+		return PageResult{}, err
+	}
+	if !enabled {
+		return PageResult{}, nil
+	}
+	page := Page{HasMore: true}
 	if event.Message != nil {
 		page.Messages = []Message{*event.Message}
 	}
 	if event.Deletion != nil {
 		page.Deletions = []Deletion{*event.Deletion}
 	}
-	result, err := s.AdmitPage(ctx, source, event.Chat, from, page)
-	return result, err
+	return s.admit(ctx, source, event.Chat, "", page, false)
 }
 
-// chatCursor reads the chat's committed cursor. A chat the source has not
-// listed has no cursor and takes live events only after a page read.
-func (s *Store) chatCursor(ctx context.Context, source Source, chat string) (Cursor, error) {
-	var cursor Cursor
+func (s *Store) liveConnected(ctx context.Context, source Source) (bool, error) {
+	var connected bool
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		var text string
-		err := tx.QueryRowContext(ctx, "SELECT cursor FROM messenger_chat WHERE platform=? AND account=? AND chat=?",
-			source.Platform, source.Account, chat).Scan(&text)
-		cursor = Cursor(text)
-		return err
+		return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM messenger_source WHERE person=? AND platform=? AND account=? AND state IN ('connected','failing'))", source.Person, source.Platform, source.Account).Scan(&connected)
 	})
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	return cursor, err
+	return connected, err
 }
 
 // ErrPageWaiting reports a page held back because an own-account message matches
@@ -516,6 +528,14 @@ func (s *Store) pendingEffects(ctx context.Context, source Source, chat string) 
 // cursor and coverage in one canon transaction. Reading the same messages again
 // adds nothing. A message missing from a page changes nothing.
 func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from Cursor, page Page) (PageResult, error) {
+	return s.admit(ctx, source, chat, from, page, true)
+}
+
+// admit commits one page. advance is false for live admission, which stores the
+// records but leaves the cursor and coverage to the scheduled read: a live event
+// is newer than the last page, and a cursor moved from a stale read would rewind
+// a chat whose scheduled page committed in the meantime.
+func (s *Store) admit(ctx context.Context, source Source, chat string, from Cursor, page Page, advance bool) (PageResult, error) {
 	if !validName(source.Person) || !validName(source.Platform) || !validName(source.Account) || !validName(chat) {
 		return PageResult{}, ErrInvalid
 	}
@@ -601,7 +621,10 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		result.Deleted = deleted
 	}
 	if len(plans) == 0 && len(repairs) == 0 {
-		// Nothing new: still record the completed read and advance the cursor.
+		// Nothing new: only a scheduled read advances progress.
+		if !advance {
+			return result, nil
+		}
 		return result, s.commitProgress(ctx, source, chat, from, page, 0)
 	}
 	if len(plans) == 0 {
@@ -610,6 +633,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 				if _, err := tx.ExecContext(ctx, `UPDATE messenger_record SET state='deleted',deleted_at=? WHERE platform=? AND account=? AND chat=? AND message=? AND state='live'`, s.now().UTC().Format(time.RFC3339Nano), source.Platform, source.Account, chat, id); err != nil {
 					return err
 				}
+			}
+			if !advance {
+				return nil
 			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, 0)
 		}); err != nil {
@@ -642,6 +668,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 				if _, err := tx.ExecContext(ctx, `UPDATE messenger_record SET state='deleted',deleted_at=? WHERE platform=? AND account=? AND chat=? AND message=? AND state='live'`, s.now().UTC().Format(time.RFC3339Nano), source.Platform, source.Account, chat, id); err != nil {
 					return err
 				}
+			}
+			if !advance {
+				return nil
 			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, len(plans))
 		}

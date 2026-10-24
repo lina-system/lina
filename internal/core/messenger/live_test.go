@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 )
 
@@ -109,8 +110,7 @@ func TestDisconnectStopsTheLiveReader(t *testing.T) {
 	if err := f.store.Disconnect(t.Context(), "person", source.Platform, source.Account); err != nil {
 		t.Fatal(err)
 	}
-	// The next schedule notices the source is gone and stops its reader.
-	service.SyncAll(t.Context(), nil)
+	// Disconnect must stop the reader without another scheduled read.
 	select {
 	case <-adapter.stopped:
 	case <-time.After(10 * time.Second):
@@ -192,4 +192,59 @@ func (a *liveAdapter) FetchAttachment(context.Context, messenger.SourceID, strin
 
 func (a *liveAdapter) Capabilities() messenger.Capabilities {
 	return messenger.Capabilities{Edits: true, Deletions: true, LiveEvents: true}
+}
+
+func TestLiveEventsHonorCurrentSwitchAndSourceState(t *testing.T) {
+	for _, stop := range []string{"sync", "disconnect"} {
+		t.Run(stop, func(t *testing.T) {
+			f := newFixture(t)
+			source := f.connect(t)
+			old := message("old", messenger.RouteParticipant, f.now, "retained")
+			if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{Messages: []messenger.Message{old}, Next: "page-1"}); err != nil {
+				t.Fatal(err)
+			}
+			if stop == "sync" {
+				if err := f.store.SetSwitches(t.Context(), "person", source.Platform, source.Account, "dm-1", messenger.Switches{}); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := f.store.Disconnect(t.Context(), "person", source.Platform, source.Account); err != nil {
+				t.Fatal(err)
+			}
+			fresh := message("new", messenger.RouteParticipant, f.now, "excluded")
+			for _, event := range []messenger.Event{{Chat: "dm-1", Message: &fresh}, {Chat: "dm-1", Deletion: &messenger.Deletion{Message: "old", At: f.now}}} {
+				_, err := f.store.AdmitEvent(t.Context(), source, event)
+				if err != nil && !errors.Is(err, messenger.ErrNotConnected) {
+					t.Fatal(err)
+				}
+			}
+			if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE message='new' OR state='deleted'"); n != 0 {
+				t.Fatalf("disabled live admission changed %d records", n)
+			}
+		})
+	}
+}
+
+func TestLiveAdmissionDoesNotOverwriteNewerProgress(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	// The trigger models a scheduled progress commit after live admission reads
+	// its inputs, deterministically, without racing goroutines or sleeping.
+	if err := f.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `CREATE TRIGGER scheduled_progress BEFORE INSERT ON messenger_record BEGIN
+ UPDATE messenger_chat SET cursor='newer-page' WHERE chat='dm-1'; END;`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := message("new", messenger.RouteParticipant, f.now, "live")
+	if _, err := f.store.AdmitEvent(t.Context(), source, messenger.Event{Chat: "dm-1", Message: &m}); err != nil {
+		t.Fatal(err)
+	}
+	chats, err := f.store.Chats(t.Context(), "person", source.Platform, source.Account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chats[0].Cursor != "newer-page" {
+		t.Fatalf("live admission overwrote progress: %q", chats[0].Cursor)
+	}
 }

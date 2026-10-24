@@ -180,7 +180,29 @@ func (s *Service) watch(ctx context.Context, source Source) {
 	w := &watcher{cancel: cancel}
 	s.watching[key] = w
 	s.mu.Unlock()
-	go s.follow(reader, source, key, w)
+	go func() {
+		// Observe committed registry changes independently of scheduled network I/O.
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for {
+				changed := s.store.db.Changed()
+				connected, err := s.store.liveConnected(reader, source)
+				if err != nil || !connected {
+					cancel()
+					return
+				}
+				select {
+				case <-reader.Done():
+					return
+				case <-changed:
+				}
+			}
+		}()
+		s.follow(reader, source, key, w)
+		cancel()
+		<-done
+	}()
 }
 
 // retain stops the live readers of sources that are no longer connected and
@@ -239,7 +261,7 @@ func (s *Service) follow(ctx context.Context, source Source, key string, w *watc
 			}
 			return err
 		})
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || errors.Is(err, ErrNotConnected) {
 			return
 		}
 		if err != nil && !errors.Is(err, ErrPageWaiting) {

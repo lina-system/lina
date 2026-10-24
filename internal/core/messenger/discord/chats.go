@@ -38,6 +38,9 @@ type channel struct {
 	Name     string `json:"name"`
 	Type     int    `json:"type"`
 	ParentID string `json:"parent_id"`
+	Metadata struct {
+		ArchiveTimestamp string `json:"archive_timestamp"`
+	} `json:"thread_metadata"`
 }
 
 type threads struct {
@@ -139,7 +142,11 @@ func (a *Adapter) archived(ctx context.Context, parent string) ([]channel, error
 		if !page.HasMore || len(page.Threads) == 0 {
 			return all, nil
 		}
-		query.Set("before", page.Threads[len(page.Threads)-1].ID)
+		before := page.Threads[len(page.Threads)-1].Metadata.ArchiveTimestamp
+		if before == "" || before == query.Get("before") {
+			return nil, messenger.ErrInvalid
+		}
+		query.Set("before", before)
 	}
 }
 

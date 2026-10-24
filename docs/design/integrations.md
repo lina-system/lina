@@ -551,7 +551,7 @@ A channel is an external messaging platform through which the person talks with 
 ### Transport
 
 - The gateway is outbound only, like plugin connections (see Plugin rules). Telegram is read by long polling and Discord by the Gateway session, with interactions received on that session and never at an endpoint URL. There is no webhook mode in the first design, because it would need a public listener ([runtime.md](runtime.md#remote-access)).
-- LINA Core owns exactly one poller or Gateway session per bot token, and only the main runs it. After a restart the previous generation is fenced ([runtime.md](runtime.md#recovery)).
+- LINA Core owns exactly one poller or Gateway session per bot token, and only the main runs it. The last subscriber leaving cancels the session, including a pending connection attempt. After a restart the previous generation is fenced ([runtime.md](runtime.md#recovery)).
 - The adapter's cursor, such as the Telegram update offset, is stored durably before an update is acted on. The platform's ids (update, interaction and message ids) are the idempotency keys of inbound events, so a repeated event is handled once.
 - When the main was down for longer than the platform keeps undelivered messages, LINA tells the person that messages may have been missed.
 
@@ -690,7 +690,7 @@ The gateway core (#97) implements the adapter boundary, pairing, bindings, admis
 
 Pairing codes contain 128 random bits, are stored only as SHA-256 hashes, expire after five minutes and work once. A replacement code invalidates the previous code; it does not authorize transferring an existing pairing to a different platform user. The control flow establishes the owner's person id and the adapter supplies the platform's numeric sender id and private chat. Default owner-only admission checks that pairing, the most specific binding and its read scope. External participants do not start turns in this increment; the optional addressed-participant mode is not exposed yet.
 
-Admission uses the bot account and native event id as its durable deduplication key, independently of the currently bound conversation. The cursor comparison, receipt and accepted inbox row commit together. Repeated events do not rewind the cursor, and refused input advances the cursor without starting a turn. Dispatch happens only after commit and is never automatically repeated after an error or crash. A stored receipt acknowledges storage, not successful turn execution.
+Admission uses the bot account and native event id as its durable deduplication key, independently of the currently bound conversation. The cursor comparison, receipt and accepted inbox row commit together for a single-consumer transport. For a shared Discord session, each channel receipt and accepted inbox row commit together; the session checkpoint advances after every subscriber accepts the dispatch. Repeated events do not rewind the cursor, and refused input advances the cursor without starting a turn. Dispatch happens only after commit and is never automatically repeated after an error or crash. A stored receipt acknowledges storage, not successful turn execution.
 
 The outbound queue receives a ledger reference and already shaped parts, requires that reference to name a committed agent event in the bound conversation, checks current pairing, binding and reply provenance, and records each send attempt before calling the adapter. One bot/chat has at most one in-flight send, including across its topics. A refusal before delivery retains the same part and its retry-after deadline; an uncertain outcome terminates the message without resending any part. Restart converts in-flight attempts to unknown before adapters run. A permanent block marks the chat unreachable and stops queued delivery. Binding removal and agent deletion prevent queued sends from starting. Queue records retain the reply and its delivery outcome for the consuming app view; this increment adds no client endpoint, platform transport or approval-button handler.
 
@@ -708,10 +708,10 @@ A messenger source is one of the person's own messenger accounts that LINA reads
 
 - Connecting a source is the person's act. LINA never connects one on its own and never looks for messenger apps, sessions or exports on the machine.
 - A source is one account on one platform. It records the person it belongs to, the account's platform user id, its mode (official or unofficial), its adapter and its state: connected, needs sign-in, failing with its cause, unreachable (its Node is away), import-only, or disconnected.
-- A source holds chats. Each chat records its platform id, name, kind (direct, group, channel or thread), the time of its first message when known, its cursor and its coverage. The person can leave a chat out of sync, out of learning or out of embedding.
+- A source holds chats. Each chat records its platform id, name, kind (direct, group, channel or thread), the time of its first message when known, its cursor and its coverage. The person can leave a chat out of sync, out of learning or out of embedding. The sync switch also gates live messages, edits and deletions.
 - What a source reads becomes messenger records in canon ([conversation-and-memory.md](conversation-and-memory.md#messenger-records)). There is no second database.
 - Every agent can search a connected source, as every agent can use an enabled plugin. The person can name the agents that may read a source instead.
-- When a channel connection and a bot-mode source use the same bot token, Core still runs one Gateway session or poller for that token and gives each its events.
+- When a channel connection and a bot-mode source use the same bot token, Core still runs one Gateway session or poller for that token and gives each its events. Discord advances its durable session checkpoint only after every subscriber accepts the dispatch, and retains that checkpoint across reconnects even when only a source uses the token.
 
 ### Platforms
 
@@ -779,7 +779,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 
 ### Sync and coverage
 
-- Core reads each source on its schedule or from its live events. The records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Reading the same messages again adds nothing.
+- Core reads each source on its schedule or from its live events. For a scheduled page, the records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Live admission leaves that pagination cursor and coverage unchanged. Reading the same messages again adds nothing.
 - A chat's first fill reads back as far as the platform allows.
 - A message missing from a later read is never treated as deleted. Edits and deletions the platform reports follow [Messenger records](conversation-and-memory.md#messenger-records).
 - Each chat is fresh, stale (no complete read within its interval) or in a gap (the time since its last complete read passed the platform's read window, so messages may be lost). A gap is shown on the source and told to the person once. An archive import can fill it later.
@@ -794,7 +794,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 
 ### Disconnecting and deleting
 
-- Disconnecting stops sync at once and deletes the source's credentials or the add-on's session. The records stay, searchable as the person's history and labelled with the disconnected source.
+- Disconnecting stops sync at once, stops live readers without waiting for the next scheduled read, refuses further live admission, and deletes the source's credentials or the add-on's session. The records stay, searchable as the person's history and labelled with the disconnected source.
 - Deleting a source's records, a chat or one record is the person's deletion of conversation content ([conversation-and-memory.md](conversation-and-memory.md#deleting-a-conversation)). A tombstone keeps the legacy reference, so a later sync or import does not bring the content back.
 
 ## GitHub

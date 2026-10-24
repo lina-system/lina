@@ -59,8 +59,7 @@ func Listen(ctx context.Context, l Listener) error {
 	if l.DB == nil || !l.Bot.Valid() || !l.Token.Ready() || l.Handle == nil {
 		return channels.ErrInvalid
 	}
-	h := joinHub(l)
-	m := h.attach(l.Intents, l.Handle)
+	h, m := joinHub(l)
 	defer h.detach(m)
 	select {
 	case err := <-m.done:
@@ -109,13 +108,27 @@ var hubs = struct {
 	byKey map[hubKey]*hub
 }{byKey: map[hubKey]*hub{}}
 
-func joinHub(l Listener) *hub {
+func joinHub(l Listener) (*hub, *member) {
 	key := hubKey{db: l.DB, bot: l.Bot.Key()}
 	hubs.Lock()
 	defer hubs.Unlock()
-	if h := hubs.byKey[key]; h != nil && !h.stopped() {
-		return h
+	for {
+		h := hubs.byKey[key]
+		if h == nil {
+			break
+		}
+		if !h.stopped() {
+			return h, h.attach(l.Intents, l.Handle)
+		}
+		// Wait for the old socket to close before publishing its replacement.
+		hubs.Unlock()
+		<-h.done
+		hubs.Lock()
+		if hubs.byKey[key] == h {
+			delete(hubs.byKey, key)
+		}
 	}
+
 	tr := l.Transport
 	if tr == nil {
 		tr = http.DefaultTransport
@@ -126,8 +139,9 @@ func joinHub(l Listener) *hub {
 		stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	hubs.byKey[key] = h
+	m := h.attach(l.Intents, l.Handle)
 	go h.loop()
-	return h
+	return h, m
 }
 
 func (h *hub) attach(intents Intents, handle Handler) *member {
@@ -144,6 +158,8 @@ func (h *hub) attach(intents Intents, handle Handler) *member {
 }
 
 func (h *hub) detach(m *member) {
+	// Serialize the last detach with attaching a new subscriber.
+	hubs.Lock()
 	h.mu.Lock()
 	before := h.unionLocked()
 	for i, x := range h.members {
@@ -152,22 +168,25 @@ func (h *hub) detach(m *member) {
 			break
 		}
 	}
-	changed := before != h.unionLocked()
 	empty := len(h.members) == 0
-	h.mu.Unlock()
-	if changed {
-		h.interrupt()
-	}
 	if empty {
 		h.stopOnce.Do(func() { close(h.stop) })
-		// Unregister before waiting, so a subscriber arriving now opens a new
-		// session instead of joining the one that is closing.
+	}
+	if empty || before != h.unionLocked() {
+		if h.socket != nil {
+			h.socket()
+		}
+	}
+	h.mu.Unlock()
+	hubs.Unlock()
+	if empty {
+		<-h.done
 		hubs.Lock()
-		if hubs.byKey[hubKey{db: h.db, bot: h.bot.Key()}] == h {
-			delete(hubs.byKey, hubKey{db: h.db, bot: h.bot.Key()})
+		key := hubKey{db: h.db, bot: h.bot.Key()}
+		if hubs.byKey[key] == h {
+			delete(hubs.byKey, key)
 		}
 		hubs.Unlock()
-		<-h.done
 	}
 }
 
@@ -220,9 +239,12 @@ func (h *hub) loop() {
 }
 
 func (h *hub) fail(err error) {
+	hubs.Lock()
+	h.stopOnce.Do(func() { close(h.stop) })
 	h.mu.Lock()
 	members := append([]*member(nil), h.members...)
 	h.mu.Unlock()
+	hubs.Unlock()
 	for _, m := range members {
 		select {
 		case m.done <- err:
@@ -231,9 +253,11 @@ func (h *hub) fail(err error) {
 	}
 }
 
-// deliver passes one dispatch to every subscriber in join order. A refusal
-// stops the session, so no subscriber advances past a frame another one could
-// not store.
+// deliver passes one dispatch to every subscriber in join order, then advances
+// the shared checkpoint. A refusal stops the session before the checkpoint
+// moves, so the next session resumes at this dispatch and every subscriber
+// sees it again. Discord cannot page a deletion a second time, so a checkpoint
+// that moved past a dispatch another subscriber could not store would lose it.
 func (h *hub) deliver(ctx context.Context, kind string, data json.RawMessage, cursor string) error {
 	h.mu.Lock()
 	members := append([]*member(nil), h.members...)
@@ -243,17 +267,28 @@ func (h *hub) deliver(ctx context.Context, kind string, data json.RawMessage, cu
 			return err
 		}
 	}
-	return nil
+	return h.db.Write(ctx, func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO discord_sessions(bot,cursor) VALUES(?,?) ON CONFLICT(bot) DO UPDATE SET cursor=excluded.cursor", h.bot.Key(), cursor); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor=? WHERE bot=?", cursor, h.bot.Key())
+		return err
+	})
 }
 
-// resume reads the durable channel cursor, when this bot has a channel row.
+// resume reads the shared durable checkpoint, including source-only sessions.
+// Older installations fall back to their channel cursor until the first dispatch.
 func (h *hub) resume(ctx context.Context) cursor {
 	h.mu.Lock()
 	position := h.position
 	h.mu.Unlock()
 	var saved string
 	err := h.db.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, "SELECT cursor FROM channel_connections WHERE bot=?", h.bot.Key()).Scan(&saved)
+		err := tx.QueryRowContext(ctx, "SELECT cursor FROM discord_sessions WHERE bot=?", h.bot.Key()).Scan(&saved)
+		if errors.Is(err, sql.ErrNoRows) {
+			return tx.QueryRowContext(ctx, "SELECT cursor FROM channel_connections WHERE bot=?", h.bot.Key()).Scan(&saved)
+		}
+		return err
 	})
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return position
@@ -276,6 +311,9 @@ func (h *hub) keep(position cursor) {
 func (h *hub) reset(ctx context.Context) error {
 	h.keep(cursor{})
 	return h.db.Write(ctx, func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO discord_sessions(bot,cursor) VALUES(?,'') ON CONFLICT(bot) DO UPDATE SET cursor=''", h.bot.Key()); err != nil {
+			return err
+		}
 		_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor='' WHERE bot=?", h.bot.Key())
 		return err
 	})
@@ -284,20 +322,27 @@ func (h *hub) reset(ctx context.Context) error {
 // serve runs one socket until it closes. A nil return means the requested
 // intents changed, so the caller replaces the socket with a fresh Identify.
 func (h *hub) serve(asked Intents) error {
-	position := h.resume(context.Background())
-	dialCtx, cancelDial := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.mu.Lock()
+	if h.stopped() || h.unionLocked() != asked {
+		h.mu.Unlock()
+		return nil
+	}
+	h.socket = cancel
+	h.mu.Unlock()
+	position := h.resume(ctx)
+	dialCtx, cancelDial := context.WithTimeout(ctx, 30*time.Second)
 	conn, _, err := websocket.Dial(dialCtx, "wss://gateway.discord.gg/?v=10&encoding=json", &websocket.DialOptions{HTTPClient: h.http})
 	cancelDial()
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		return errUnavailable
 	}
 	defer conn.CloseNow()
 	conn.SetReadLimit(1 << 20)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	h.mu.Lock()
-	h.socket = cancel
-	h.mu.Unlock()
 	helloCtx, cancelHello := context.WithTimeout(ctx, 30*time.Second)
 	var hello frame
 	err = wsjson.Read(helloCtx, conn, &hello)

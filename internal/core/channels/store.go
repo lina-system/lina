@@ -262,3 +262,17 @@ func RecordReceipt(ctx context.Context, tx *canon.Tx, a Address, agent, id, prev
 	_, err = tx.ExecContext(ctx, "INSERT INTO channel_receipts(bot,native_id,cursor,address,agent,inbox_id) VALUES(?,?,?,?,?,?)", a.Bot.Key(), id, cursor, a.Key(), agent, row)
 	return err
 }
+
+// NoteReceipt records a handled native event without moving the shared session
+// checkpoint. A transport whose session serves more than one subscriber leaves
+// the checkpoint to the session owner, which advances it only after every
+// subscriber admits the dispatch; a checkpoint that moved earlier would skip
+// an event the other subscriber never stored.
+func NoteReceipt(ctx context.Context, tx *canon.Tx, a Address, agent, id, cursor string, inboxID int64) error {
+	var row any
+	if inboxID > 0 {
+		row = inboxID
+	}
+	_, err := tx.ExecContext(ctx, "INSERT INTO channel_receipts(bot,native_id,cursor,address,agent,inbox_id) VALUES(?,?,?,?,?,?)", a.Bot.Key(), id, cursor, a.Key(), agent, row)
+	return err
+}

@@ -566,3 +566,47 @@ func TestAdapterRejectsOtherSource(t *testing.T) {
 		}
 	}
 }
+
+func TestArchivedThreadsUseArchiveTimestamp(t *testing.T) {
+	calls := 0
+	f := newFixture(t, func(r *http.Request) *http.Response {
+		switch r.URL.Path {
+		case "/users/@me/guilds":
+			return reply(r, 200, guilds)
+		case "/guilds/g1/channels":
+			return reply(r, 200, `[{"id":"100","name":"general","type":0}]`)
+		case "/guilds/g1/threads/active":
+			return reply(r, 200, archivedThreads)
+		case "/channels/100/threads/archived/public":
+			calls++
+			if calls == 1 {
+				return reply(r, 200, `{"threads":[{"id":"900","type":11,"thread_metadata":{"archive_timestamp":"2026-10-23T12:00:00+00:00"}}],"has_more":true}`)
+			}
+			if r.URL.Query().Get("before") != "2026-10-23T12:00:00+00:00" {
+				t.Errorf("archive cursor = %q", r.URL.Query().Get("before"))
+				return reply(r, 400, `{}`)
+			}
+			return reply(r, 200, `{"threads":[{"id":"950","type":11}],"has_more":false}`)
+		}
+		t.Errorf("unexpected path %s", r.URL.Path)
+		return reply(r, 404, `{}`)
+	})
+	chats, err := f.adapter.ListChats(t.Context(), messenger.SourceID{Platform: "discord", Account: "123456"})
+	if err != nil || len(chats) != 3 || calls != 2 {
+		t.Fatalf("chats=%+v calls=%d err=%v", chats, calls, err)
+	}
+}
+
+func TestPollAndComponentOnlyMessagesHaveAvailableContent(t *testing.T) {
+	for _, field := range []string{`"poll":{"question":{"text":"Lunch?"}}`, `"components":[{"type":1}]`} {
+		t.Run(field, func(t *testing.T) {
+			f := newFixture(t, func(r *http.Request) *http.Response {
+				return reply(r, 200, `[{"id":"901","channel_id":"100","type":0,"author":{"id":"201"},`+field+`}]`)
+			})
+			page, err := f.adapter.Page(t.Context(), messenger.SourceID{Platform: "discord", Account: "123456"}, "100", "")
+			if err != nil || len(page.Messages) != 1 {
+				t.Fatalf("page=%+v err=%v", page, err)
+			}
+		})
+	}
+}

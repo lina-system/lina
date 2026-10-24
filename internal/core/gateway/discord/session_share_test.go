@@ -136,6 +136,79 @@ func TestOneGatewaySessionServesAChannelAndASource(t *testing.T) {
 	}
 }
 
+// A channel receipt must not acknowledge a dispatch that the source refused.
+func TestSharedCheckpointWaitsForEverySubscriber(t *testing.T) {
+	f := setup(t, nil)
+	h := &hub{bot: f.a.bot, db: f.db}
+	in := gateway.New(f.db, func(context.Context, gateway.Delivery) error { return nil })
+	h.members = []*member{{handle: func(ctx context.Context, kind string, data json.RawMessage, at string) error {
+		return f.a.dispatch(ctx, in, kind, data, at)
+	}}, {handle: func(_ context.Context, kind string, _ json.RawMessage, _ string) error {
+		if kind == "MESSAGE_DELETE" {
+			return errResponse
+		}
+		return nil
+	}}}
+	// Use the cursor's actual wire shape, independent of field tag spelling.
+	position := cursor{Session: "session-1", Seq: 2, Intents: baseIntents}
+	raw, _ := json.Marshal(position)
+	first := string(raw)
+	if err := h.deliver(t.Context(), "MESSAGE_CREATE", json.RawMessage(`{"id":"1","channel_id":"100","author":{"id":"200"},"content":"hello"}`), first); err != nil {
+		t.Fatal(err)
+	}
+	position.Seq = 3
+	raw, _ = json.Marshal(position)
+	if err := h.deliver(t.Context(), "MESSAGE_DELETE", json.RawMessage(`{"id":"1","channel_id":"100"}`), string(raw)); err == nil {
+		t.Fatal("refused dispatch succeeded")
+	}
+	next := &hub{bot: f.a.bot, db: f.db}
+	if got := next.resume(t.Context()); got.Seq != 2 {
+		t.Fatalf("shared checkpoint = %+v, want seq 2", got)
+	}
+}
+
+// No channel connection exists for a source-only bot. Recreating the hub must
+// retain its last completely delivered dispatch, including after invalidation.
+func TestSourceOnlyCheckpointSurvivesHubRecreation(t *testing.T) {
+	f := setup(t, nil)
+	bot := channels.Bot{Platform: "discord", Account: "987654"}
+	h := &hub{bot: bot, db: f.db}
+	position := cursor{Session: "source-session", Seq: 7, Intents: baseIntents | IntentMessageContent}
+	raw, _ := json.Marshal(position)
+	if err := h.deliver(t.Context(), "MESSAGE_DELETE", nil, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	h.keep(position)
+	next := &hub{bot: bot, db: f.db}
+	if got := next.resume(t.Context()); got != position {
+		t.Fatalf("recreated checkpoint = %+v, want %+v", got, position)
+	}
+	if err := next.reset(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := (&hub{bot: bot, db: f.db}).resume(t.Context()); got.Session != "" {
+		t.Fatalf("reset retained session: %+v", got)
+	}
+}
+
+func TestLastBaseSubscriberCancelsSocket(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	h := &hub{stop: make(chan struct{}), done: make(chan struct{}), socket: cancel}
+	m := &member{intents: baseIntents}
+	h.members = []*member{m}
+	go func() { <-ctx.Done(); close(h.done) }()
+	detached := make(chan struct{})
+	go func() { h.detach(m); close(detached) }()
+	select {
+	case <-detached:
+	case <-time.After(time.Second):
+		cancel()
+		<-detached
+		t.Fatal("last base-intent subscriber did not cancel the socket")
+	}
+}
+
 func waitMembers(t *testing.T, db channels.Canon, bot channels.Bot, want int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

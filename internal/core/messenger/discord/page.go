@@ -37,8 +37,10 @@ type message struct {
 		Type     string `json:"content_type"`
 		Size     int64  `json:"size"`
 	} `json:"attachments"`
-	Stickers []json.RawMessage `json:"sticker_items"`
-	Embeds   []json.RawMessage `json:"embeds"`
+	Stickers   []json.RawMessage `json:"sticker_items"`
+	Embeds     []json.RawMessage `json:"embeds"`
+	Components []json.RawMessage `json:"components"`
+	Poll       *json.RawMessage  `json:"poll"`
 }
 
 // Message types that carry a person's, a bot's or a platform's words.
@@ -131,7 +133,7 @@ func (a *Adapter) record(m message, person string) (messenger.Message, error) {
 // missingText reports a message whose words the platform withheld. Discord
 // answers with empty content when the privileged message-content intent is not
 // granted; a message that genuinely has no words carries attachments, a
-// sticker or an embed.
+// sticker, embed, poll or components.
 func missingText(m message) bool {
 	if m.Content != "" {
 		return false
@@ -141,7 +143,7 @@ func missingText(m message) bool {
 	default:
 		return false
 	}
-	return len(m.Attachments) == 0 && len(m.Stickers) == 0 && len(m.Embeds) == 0
+	return len(m.Attachments) == 0 && len(m.Stickers) == 0 && len(m.Embeds) == 0 && len(m.Components) == 0 && m.Poll == nil
 }
 
 // route derives the speaker from the platform's own data.
