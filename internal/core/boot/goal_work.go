@@ -157,7 +157,12 @@ func (r *conversationRuntime) linkGoalWaitingOn(ctx context.Context, g work.Goal
 		return err
 	}
 	if w.Wake == "" {
-		if todo.WaitingOn == nil || todo.WaitingOn.Who != w.Who || todo.WaitingOn.Since != w.Since || todo.WaitingOn.NextCheck != w.NextCheck {
+		if todo.WaitingOn == nil {
+			return nil
+		}
+		// A pending clear saved before the fields were recorded has an empty
+		// identity and still clears. A recorded identity clears only itself.
+		if (w.Who != "" || w.Since != "" || w.NextCheck != "") && (todo.WaitingOn.Who != w.Who || todo.WaitingOn.Since != w.Since || todo.WaitingOn.NextCheck != w.NextCheck) {
 			return nil
 		}
 		todo.WaitingOn = nil

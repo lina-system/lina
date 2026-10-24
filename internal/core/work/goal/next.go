@@ -182,8 +182,30 @@ type Goal struct {
 }
 
 // ClearedWait is one linked 할 일 to clear after its outside wait ends.
+// A persisted entry may be the to-do id alone, from before the fields were stored.
 type ClearedWait struct {
-	TodoID, Who, Since, NextCheck string
+	TodoID    string `json:"todo_id"`
+	Who       string `json:"who,omitempty"`
+	Since     string `json:"since,omitempty"`
+	NextCheck string `json:"next_check,omitempty"`
+}
+
+func (c *ClearedWait) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var id string
+		if err := json.Unmarshal(data, &id); err != nil {
+			return err
+		}
+		*c = ClearedWait{TodoID: id}
+		return nil
+	}
+	type fields ClearedWait
+	var decoded fields
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*c = ClearedWait(decoded)
+	return nil
 }
 
 type ActionKind string
