@@ -88,7 +88,7 @@ func ValidateChoice(s State, text string, c Choice) error {
 	if err := validateTarget(s, c.Target, "target"); err != nil {
 		return err
 	}
-	if c.Action != "" && !slices.Contains([]string{"read", "edit", "steer", "start", "send", "pay", "delete"}, c.Action) {
+	if c.Action != "" && !slices.Contains([]string{"read", "edit", "steer", "start", "send", "pay", "delete", "stop"}, c.Action) {
 		return ErrChoice
 	}
 	if len(c.Tied) == 1 || len(c.Tied) > 5 {
@@ -119,7 +119,7 @@ func NeedsQuestion(s State, c Choice) bool {
 		return false
 	}
 	switch c.Action {
-	case "start", "send", "pay", "delete":
+	case "start", "send", "pay", "delete", "stop":
 		return true
 	case "steer":
 		for _, target := range c.Tied {

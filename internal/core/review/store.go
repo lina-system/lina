@@ -3,7 +3,6 @@ package review
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -26,6 +25,7 @@ type Record struct {
 	Key
 	Task       string    `json:"task"`
 	Receipt    string    `json:"receipt"`
+	ReturnOf   string    `json:"return_of,omitempty"`
 	Generation int       `json:"generation"`
 	State      string    `json:"state"`
 	Cause      string    `json:"cause,omitempty"`
@@ -45,6 +45,9 @@ func normalized(k Key) (Key, error) {
 }
 
 // Claim commits before any manager call. An interrupted claim is never replayed.
+// One review is requested per pull request. The only second request accepted is
+// the head produced by that review's single work-definition return: it carries
+// ReturnOf, the returned receipt, and the next generation of the same task.
 func (s *Store) Claim(ctx context.Context, r Record) error {
 	var err error
 	r.Key, err = normalized(r.Key)
@@ -60,12 +63,17 @@ func (s *Store) Claim(ctx context.Context, r Record) error {
 	r.Evidence = ""
 	r.Findings = nil
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		_, err := GetIn(ctx, tx, r.Key)
-		if err == nil {
-			return ErrDuplicate
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		prior, err := reviewsFor(ctx, tx, r.Key)
+		if err != nil {
 			return err
+		}
+		for _, p := range prior {
+			if p.Head == r.Head {
+				return ErrDuplicate
+			}
+		}
+		if len(prior) > 0 && !continuationOf(prior, r) {
+			return ErrDuplicate
 		}
 		raw, err := json.Marshal(r)
 		if err != nil {
@@ -74,6 +82,40 @@ func (s *Store) Claim(ctx context.Context, r Record) error {
 		_, err = tx.ExecContext(ctx, "INSERT INTO work_reviews(repository,pr_number,head,record) VALUES(?,?,?,?)", r.Repository, r.Number, r.Head, raw)
 		return err
 	})
+}
+
+// reviewsFor returns every review already claimed for the pull request. The
+// primary key's leading columns cover this read.
+func reviewsFor(ctx context.Context, tx *canon.Tx, k Key) ([]Record, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT record FROM work_reviews WHERE repository=? AND pr_number=?", k.Repository, k.Number)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var records []Record
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var r Record
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
+// continuationOf accepts exactly the one review of the head the return
+// produced: the same task's next generation, naming the returned receipt, after
+// a needs_changes verdict. A third request finds no such allowance.
+func continuationOf(prior []Record, r Record) bool {
+	if len(prior) != 1 || r.ReturnOf == "" || r.ReturnOf == r.Receipt {
+		return false
+	}
+	p := prior[0]
+	return p.Receipt == r.ReturnOf && p.Task == r.Task && p.Verdict == "needs_changes" && r.Generation == p.Generation+1
 }
 func GetIn(ctx context.Context, tx *canon.Tx, key Key) (Record, error) {
 	k, err := normalized(key)
@@ -100,7 +142,7 @@ func FinishIn(ctx context.Context, tx *canon.Tx, r Record) error {
 	if err != nil {
 		return err
 	}
-	if prior.State != "checking" || prior.Task != r.Task || prior.Receipt != r.Receipt || prior.Generation != r.Generation {
+	if prior.State != "checking" || prior.Task != r.Task || prior.Receipt != r.Receipt || prior.ReturnOf != r.ReturnOf || prior.Generation != r.Generation {
 		return ErrState
 	}
 	switch r.State {
@@ -108,7 +150,13 @@ func FinishIn(ctx context.Context, tx *canon.Tx, r Record) error {
 		if (r.Verdict != "verified" && r.Verdict != "needs_changes") || strings.TrimSpace(r.Evidence) == "" {
 			return ErrState
 		}
-	case "blocked", "unverified":
+	case "blocked":
+		// A blocked review runs no model call, so its findings are Core's own
+		// evidence and carry no verdict. Unverified keeps none.
+		if r.Verdict != "" || r.Cause == "" {
+			return ErrState
+		}
+	case "unverified":
 		if r.Verdict != "" || len(r.Findings) != 0 || r.Cause == "" {
 			return ErrState
 		}

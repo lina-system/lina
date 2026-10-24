@@ -34,6 +34,7 @@ func TestNormalizeChoicesAcceptsModelShapes(t *testing.T) {
 		{"title", `{"target":{"id":"Library"}}`, Choice{Request: -1, Target: Target{Class: "existing", ID: "library", Kind: "project"}}},
 		{"name", `{"target":"정원"}`, Choice{Request: -1, Target: Target{Class: "existing", ID: "garden", Kind: "project"}}},
 		{"object", `{"target":{"class":"existing","id":"planting","kind":"task"},"action":"follow"}`, Choice{Request: -1, Target: Target{Class: "existing", ID: "planting", Kind: "task"}, Action: "steer"}},
+		{"stop", `{"target":"planting","action":"stop"}`, Choice{Request: -1, Target: Target{Class: "existing", ID: "planting", Kind: "task"}, Action: "stop"}},
 		{"new-kind-word", `{"target":"new todo"}`, Choice{Request: -1, Target: Target{Class: "new", Kind: "todo"}}},
 		{"parent-dropped", `{"target":{"class":"new","kind":"todo","parent":"planting"}}`, Choice{Request: -1, Target: Target{Class: "new", Kind: "todo"}}},
 		{"new-with-match", `{"target":{"class":"new","kind":"todo","id":"garden"}}`, Choice{Request: -1, Target: Target{Class: "existing", ID: "garden", Kind: "project"}}},

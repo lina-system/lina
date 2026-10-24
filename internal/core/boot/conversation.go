@@ -343,10 +343,20 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err := addOperations(&r.identity, clientsrv.WorkOperations(r)); err != nil {
 		return nil, err
 	}
+	if err := addOperations(&r.identity, clientsrv.WorkControlOperations(r)); err != nil {
+		return nil, err
+	}
+	if err := addOperations(&r.identity, clientsrv.WorkLimitOperations(r)); err != nil {
+		return nil, err
+	}
 	if err = r.startWorkerLanes(); err != nil {
 		return nil, err
 	}
 	if err = r.startWorkWaiting(ctx); err != nil {
+		return nil, err
+	}
+	// Recovered runs can create agent views, which retain this shared runtime.
+	if err = r.startMiniApps(ctx, tailnetIP); err != nil {
 		return nil, err
 	}
 
@@ -426,9 +436,6 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	if err = r.startTimers(ctx); err != nil {
-		return nil, err
-	}
-	if err = r.startMiniApps(ctx, tailnetIP); err != nil {
 		return nil, err
 	}
 	if err = r.resumeWorkerCompletions(ctx); err != nil {

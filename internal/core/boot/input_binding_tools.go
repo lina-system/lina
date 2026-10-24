@@ -5,18 +5,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -176,7 +177,17 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				if result := r.bindWorkCall(ctx, input, ref.Request, s.turnID, clean); result != nil {
 					return *result
 				}
-				result := tool.Execute(ctx, clean)
+				exec := tool
+				// A selected steering input keeps its runtime and channel source
+				// through execution, not only through the binding gate.
+				if (name == "follow_work" || name == "read_work_progress") && (r != s.runtime || input.ID != s.input.ID) {
+					prepared := map[string]loop.Tool{}
+					if _, err := r.prepareBindingWorkTools(s.turnID, &toolPreparation{event: input}, prepared); err != nil {
+						return bindingFailure(c.ID, err)
+					}
+					exec = prepared[name]
+				}
+				result := exec.Execute(ctx, clean)
 				if result.Code == loop.OK {
 					if err := r.recordCreatedBinding(ctx, input, ref.Request, s.turnID, clean, result); err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Unknown, Output: json.RawMessage(`{"code":"input_binding_receipt_failed"}`)}
@@ -207,6 +218,22 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 	if choice.Question != "" || choice.Cancelled {
 		result := bindingFailure(c.ID, errBindingPending)
 		return &result
+	}
+	// A reply that did not settle still has the parent's retained tie. A control
+	// action must ask before it uses the recommendation.
+	if len(choice.Tied) < 2 && (choice.Target.Class == "" || choice.Target.Class == "none") && input.Surface.ReplyTo != "" {
+		parent, err := r.currentInputChoices(ctx, ledger.Event{ID: input.Surface.ReplyTo})
+		if err != nil {
+			result := bindingFailure(c.ID, err)
+			return &result
+		}
+		for _, earlier := range parent {
+			if len(earlier.Tied) > 1 && earlier.Question == "" && !earlier.Cancelled {
+				choice.Tied = earlier.Tied
+				choice.Target = earlier.Tied[0]
+				break
+			}
+		}
 	}
 	if _, err := r.journal().Get(ctx, "binding-tool:"+turnID+":"+c.ID); err == nil {
 		return nil
@@ -239,6 +266,7 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 	str := func(key string) string { var v string; _ = json.Unmarshal(args[key], &v); return v }
 	id, title, kind := "", "", ""
 	var taskTitles []string
+	goalRecord := false
 	switch c.Name {
 	case "read_record", "write_record":
 		id = str("id")
@@ -250,6 +278,10 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		id = str("id")
 		if c.Name == "follow_work" {
 			id, err = r.followTargetTask(ctx, id)
+		} else if taskID, ok := workerFollowTask(id); ok && taskID != id {
+			if _, e := r.work.Get(ctx, taskID); e == nil {
+				id = taskID
+			}
 		}
 	case "worker_input", "worker_interrupt":
 		// A worker session steers the task it controls. Resolving it here keeps
@@ -273,8 +305,16 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 	case "propose_candidate":
 		title = str("title")
 		kind = "todo"
-	case "revise_code_goal":
-		id = str("goal_id")
+	case "revise_code_goal", "submit_step_graph", "read_step_graph":
+		// Resolve through the goal package. A goal that does not resolve must
+		// not skip the person's chosen project.
+		recordID, ok := goal.ProjectRecordID(str("goal_id"))
+		if !ok {
+			result := bindingFailure(c.ID, errBindingPending)
+			return &result
+		}
+		id = recordID
+		goalRecord = true
 	case "prepare_work":
 		id = str("task_id")
 		title = str("title")
@@ -362,6 +402,10 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		target = binding.Target{Class: "new", Kind: kind, Parent: choice.Target.Parent}
 	}
 	if target.Class == "" {
+		if goalRecord {
+			result := bindingFailure(c.ID, errBindingPending)
+			return &result
+		}
 		return nil
 	} // Original tool supplies its authorization/not-found error.
 	// Observing a candidate is not a resolution of the original request.
@@ -405,15 +449,28 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					if err := authority.CheckPreset(ctx, r.db, r.epoch, authority.PolicyRequest{Key: "preset:follow:" + turnID + ":" + c.ID, Person: r.person, Agent: r.agent, TaskID: turnID, Tool: c.Name, Target: a.ID, Class: tools.WorkerEffect, Arguments: json.RawMessage(c.Arguments)}); err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}
+					event := ledger.Event{}
+					if preparation != nil {
+						event = preparation.event
+					}
+					if taskID, ok := workerFollowTask(a.ID); ok {
+						if _, err := r.work.Get(ctx, taskID); err == nil {
+							return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
+						}
+					}
 					var source json.RawMessage
 					if r.channelBinding != nil {
 						var e gateway.Inbound
 						if preparation == nil {
 							return loop.Result{ID: c.ID, Code: loop.Denied}
 						}
-						err := r.db.Read(ctx, func(tx *canon.Tx) error {
+						receiptID, err := r.channelReceiptEventID(ctx, preparation.event)
+						if err != nil {
+							return loop.Result{ID: c.ID, Code: loop.Denied}
+						}
+						err = r.db.Read(ctx, func(tx *canon.Tx) error {
 							var raw []byte
-							err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", preparation.event.ID).Scan(&raw)
+							err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
 							if err != nil {
 								return err
 							}
@@ -424,15 +481,7 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 						}
 						source, _ = json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: e.Sender, Direct: e.Direct, Addressed: e.Addressed})
 					}
-					id := a.ID
-					if card, err := r.work.Get(ctx, id); err == nil {
-						generation := 0
-						if card.Run != nil {
-							generation = card.Run.Generation
-						}
-						id = fmt.Sprintf("task:%s:%d", card.Task.ID, generation)
-					}
-					_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: id, Text: a.Text}}, source)
+					_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: a.ID, Text: a.Text}}, source)
 					if err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}
@@ -460,6 +509,63 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 		provider.ToolDecl(`{"type":"function","name":"read_work_progress","description":"Answer progress questions from the current item's progress line, never remembered status. Unknown stays unknown. Names the input's work target.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}}`),
 		provider.ToolDecl(`{"type":"function","name":"follow_work","description":"Send a follow-up to the named running task or background run under its existing controls. Resolve a risky target tie with bind_input first; a pending instruction must not be sent. This does not cancel work.","parameters":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}`),
 	}, nil
+}
+
+func workerFollowTask(id string) (string, bool) {
+	raw := id
+	prefixed := false
+	if rest, ok := strings.CutPrefix(raw, "task:"); ok {
+		raw, prefixed = rest, true
+	}
+	if i := strings.LastIndexByte(raw, ':'); i > 0 {
+		suffix := raw[i+1:]
+		if n, err := strconv.Atoi(suffix); err == nil && n >= 0 && strconv.Itoa(n) == suffix {
+			return raw[:i], true
+		}
+	}
+	if prefixed {
+		return raw, raw != ""
+	}
+	return id, id != ""
+}
+
+// followWorkerTask delivers a model follow-up as an agent message. The
+// coordination allowance replenishes once for the person input, not per call.
+func (r *conversationRuntime) followWorkerTask(ctx context.Context, input ledger.Event, turnID, callID, taskID, text string) loop.Result {
+	card, err := r.work.Get(ctx, taskID)
+	if err != nil || card.Run == nil || r.workers == nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	var entry *workerSession
+	for _, candidate := range r.workers.entries() {
+		if candidate.thread.ID == card.Run.ThreadID {
+			entry = candidate
+			break
+		}
+	}
+	if entry == nil || entry.adapter == nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	snap, err := entry.adapter.Snapshot(ctx, entry.thread)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	raw, _ := json.Marshal(workerArgs{Session: entry.thread.ID, Turn: snap.Thread.TurnID, Generation: snap.Thread.ProcessGeneration, Binding: snap.Thread.BindingEpoch, Text: text})
+	in, err := workerSchema("worker_input", raw)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	// The registry is shared. Check and deliver as the requester so an
+	// unrelated conversation cannot steer or speak as the owner.
+	if !entry.origin.workerConversation(r) {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	ctx = context.WithValue(ctx, workerCallIdentityKey{}, "binding-follow:"+turnID+":"+callID)
+	result, err := r.workerOperation(ctx, "worker_input", turnID, input, in)
+	if err != nil || result.State != tools.Applied {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	return loop.Result{ID: callID, Code: loop.OK, Output: json.RawMessage(`{"state":"submitted"}`)}
 }
 
 func createsBindingItem(name string) bool {
@@ -492,28 +598,7 @@ func (r *conversationRuntime) recordCreatedBinding(ctx context.Context, input le
 		if c.Target.Class != "new" {
 			return nil
 		}
-		var receipt struct {
-			ID       string   `json:"id"`
-			RecordID string   `json:"record_id"`
-			TaskID   string   `json:"task_id"`
-			Result   []string `json:"result"`
-		}
-		if json.Unmarshal(result.Output, &receipt) != nil {
-			return nil
-		}
-		c.CreatedID = receipt.ID
-		if receipt.RecordID != "" {
-			c.CreatedID = receipt.RecordID
-		}
-		switch call.Name {
-		case "prepare_work":
-			c.CreatedID = receipt.TaskID
-		case "schedule_work":
-			// The gate binds this call to its first task's title.
-			if len(receipt.Result) > 0 {
-				c.CreatedID = receipt.Result[0]
-			}
-		}
+		c.CreatedID = createdBindingID(result.Output)
 		if c.CreatedID == "" {
 			return nil
 		}
@@ -521,15 +606,85 @@ func (r *conversationRuntime) recordCreatedBinding(ctx context.Context, input le
 	})
 }
 
+// prepare_work returns a workspace with task_id. schedule_work returns task
+// ids under result. One id becomes the focus; several stay unresolved.
+func createdBindingID(output json.RawMessage) string {
+	var receipt struct {
+		ID       string          `json:"id"`
+		RecordID string          `json:"record_id"`
+		TaskID   string          `json:"task_id"`
+		Result   json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal(output, &receipt) != nil {
+		return ""
+	}
+	if receipt.RecordID != "" {
+		return receipt.RecordID
+	}
+	if receipt.ID != "" {
+		return receipt.ID
+	}
+	if receipt.TaskID != "" {
+		return receipt.TaskID
+	}
+	if len(receipt.Result) == 0 {
+		return ""
+	}
+	var one string
+	if json.Unmarshal(receipt.Result, &one) == nil && one != "" {
+		return one
+	}
+	var many []string
+	if json.Unmarshal(receipt.Result, &many) == nil && len(many) == 1 && many[0] != "" {
+		return many[0]
+	}
+	return ""
+}
+
+// An answer event keeps the original channel receipt on its parent chain.
+func (r *conversationRuntime) channelReceiptEventID(ctx context.Context, event ledger.Event) (string, error) {
+	current := event
+	seen := map[string]bool{}
+	for {
+		if strings.HasPrefix(current.ID, "channel-input:") {
+			return current.ID, nil
+		}
+		if current.ID != "" {
+			if seen[current.ID] {
+				return "", channels.ErrDenied
+			}
+			seen[current.ID] = true
+		}
+		parentID := current.ParentID
+		if parentID == "" || seen[parentID] {
+			return "", channels.ErrDenied
+		}
+		if strings.HasPrefix(parentID, "channel-input:") {
+			return parentID, nil
+		}
+		parent, err := r.journal().Get(ctx, parentID)
+		if err != nil {
+			return "", err
+		}
+		if parent.AgentID != event.AgentID || parent.ConversationID != event.ConversationID || parent.Surface.Kind != "channel" || parent.Origin.Kind != "native" || parent.ReplayOf != "" {
+			return "", channels.ErrDenied
+		}
+		if parent.ScaffoldKind != "question_answer" && parent.ScaffoldKind != "worker_completion" {
+			return "", channels.ErrDenied
+		}
+		current = parent
+	}
+}
+
 func bindingAction(name string) string {
 	switch name {
-	case "follow_work", "worker_input", "worker_interrupt":
-		// Stopping a worker is steering the running task it controls. A retained
-		// tie must ask before cancellation, the same as any other steer.
+	case "follow_work", "worker_input":
 		return "steer"
-	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start":
+	case "worker_interrupt", "cancel_timer":
+		return "stop"
+	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start", "submit_step_graph", "build_mock", "revise_code_goal", "call_tool", "refresh_work":
 		return "start"
-	case "send_handoff":
+	case "send_handoff", "remote_agent", "begin_artifact_change":
 		return "send"
 	case "trash_record":
 		return "delete"

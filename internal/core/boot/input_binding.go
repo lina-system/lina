@@ -92,7 +92,13 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 			return s, e
 		}
 		for _, c := range choices {
-			if c.Question == "" && !c.Cancelled {
+			// A retained tie or a pending question is still ambiguous. Clear the
+			// admission target so that fallback cannot become the next focus.
+			if c.Question != "" || len(c.Tied) > 1 {
+				s.Focus = binding.Target{Class: "none"}
+				continue
+			}
+			if !c.Cancelled {
 				s.Focus = c.Target
 				if c.CreatedID != "" {
 					s.Focus = binding.Target{Class: "existing", ID: c.CreatedID, Kind: c.Target.Kind}
@@ -114,7 +120,7 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 	}
 	// The person's work queue is shared by their agents. Record projections are
 	// refreshed by the records writer before publication becomes visible.
-	rows, err := tx.QueryContext(ctx, `SELECT t.id,t.title,t.kind,t.state,coalesce(a.last_activity,''),coalesce(v.fields,'{}') FROM records_text t LEFT JOIN records_activity a ON a.id=t.id LEFT JOIN records_todo v ON v.id=t.id WHERE t.person=? AND t.kind IN ('initiative','project','todo')`, input.PersonID)
+	rows, err := tx.QueryContext(ctx, `SELECT t.id,t.title,t.kind,t.state,coalesce(a.last_activity,''),coalesce(v.fields,'{}') FROM records_text t LEFT JOIN records_activity a ON a.id=t.id LEFT JOIN records_todo v ON v.id=t.id WHERE t.person=? AND t.kind IN ('initiative','project','todo','goal')`, input.PersonID)
 	if err != nil {
 		return s, err
 	}
@@ -142,12 +148,16 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 				i.Links = append(i.Links, link)
 			}
 		}
+		// A code goal is stored as its project record. The person selects that project.
+		if i.Kind == "goal" {
+			i.Kind = "project"
+		}
 		s.Items = append(s.Items, i)
 	}
 	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
 		return s, err
 	}
-	rows, err = tx.QueryContext(ctx, `SELECT c.record,coalesce((SELECT json_extract(e.record,'$.recorded_at') FROM work_ledger e WHERE e.task_id=c.task_id ORDER BY e.seq DESC LIMIT 1),'') FROM work_cards c WHERE json_extract(c.record,'$.task.person_id')=?`, input.PersonID)
+	rows, err = tx.QueryContext(ctx, `SELECT c.record,coalesce((SELECT json_extract(e.record,'$.recorded_at') FROM work_ledger e WHERE e.task_id=c.task_id ORDER BY e.seq DESC LIMIT 1),'') FROM work_cards c WHERE json_extract(c.record,'$.task.person_id')=? OR (coalesce(json_extract(c.record,'$.task.person_id'),'')='' AND EXISTS (SELECT 1 FROM conv_event e WHERE e.speaker_kind='person' AND e.person_id=? AND e.agent_id=json_extract(c.record,'$.task.agent_id') AND e.conversation_id=json_extract(c.record,'$.task.conversation_id')))`, input.PersonID, input.PersonID)
 	if err != nil {
 		return s, err
 	}
@@ -346,29 +356,54 @@ func bindingTarget(ctx context.Context, tx *canon.Tx, input ledger.Event, ref st
 	if !errors.Is(err, sql.ErrNoRows) {
 		return binding.Target{}, err
 	}
-	var inputID string
-	err = tx.QueryRowContext(ctx, `SELECT b.parent_id FROM conv_event e JOIN conv_event b ON b.parent_id=CASE WHEN e.speaker_kind='person' THEN e.id ELSE e.parent_id END AND b.scaffold_kind=? WHERE e.id=? AND e.conversation_id=? AND e.agent_id=?`, inputBindingKind, ref, input.ConversationID, input.AgentID).Scan(&inputID)
+	var raw, personEvent string
+	err = tx.QueryRowContext(ctx, `SELECT b.body, CASE WHEN e.speaker_kind='person' THEN e.id ELSE e.parent_id END FROM conv_event e JOIN conv_event b ON b.parent_id=CASE WHEN e.speaker_kind='person' THEN e.id ELSE e.parent_id END AND b.scaffold_kind=? WHERE e.id=? AND e.conversation_id=? AND e.agent_id=?`, inputBindingKind, ref, input.ConversationID, input.AgentID).Scan(&raw, &personEvent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return binding.Target{}, nil
 	}
 	if err != nil {
 		return binding.Target{}, err
 	}
-	choices, err := readInputChoices(ctx, tx, ledger.Event{ID: inputID})
+	var d binding.Decision
+	if err = json.Unmarshal([]byte(raw), &d); err != nil {
+		return binding.Target{}, err
+	}
+	choices, err := readInputChoices(ctx, tx, ledger.Event{ID: personEvent})
 	if err != nil {
 		return binding.Target{}, err
 	}
-	var target binding.Target
+	return overlayChoiceTarget(d.Target, choices), nil
+}
+
+// A later choice replaces the admission target. One created identity is that
+// target. Several targets, or a target still waiting on the person, do not
+// settle a reply.
+func overlayChoiceTarget(base binding.Target, choices []binding.Choice) binding.Target {
+	if len(choices) == 0 {
+		return base
+	}
+	var settled binding.Target
+	have := false
 	for _, c := range choices {
-		if c.Question != "" || c.Cancelled {
-			continue
+		if c.Cancelled || c.Question != "" || len(c.Tied) > 1 {
+			return binding.Target{}
 		}
-		target = c.Target
+		target := c.Target
 		if c.CreatedID != "" {
 			target = binding.Target{Class: "existing", ID: c.CreatedID, Kind: c.Target.Kind}
 		}
+		if target.Class == "" {
+			return binding.Target{}
+		}
+		if have && target != settled {
+			return binding.Target{}
+		}
+		settled, have = target, true
 	}
-	return target, nil
+	if !have {
+		return binding.Target{}
+	}
+	return settled
 }
 
 // Several bundled runs remain unresolved, even when they share a delivery.
