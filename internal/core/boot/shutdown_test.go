@@ -33,7 +33,7 @@ func TestStopDuringSocketPublication(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				reached := false
-				err := boot.Run(ctx, boot.Config{StateRoot: root, Socket: socket, Work: &boot.WorkConfig{Installed: true}, AfterStep: func(at boot.Step, _ boot.Snapshot) error {
+				err := boot.Run(ctx, boot.Config{NoSync: true, StateRoot: root, Socket: socket, Work: &boot.WorkConfig{Installed: true}, AfterStep: func(at boot.Step, _ boot.Snapshot) error {
 					if at == step {
 						// A successful connect precedes Serve and final sentinel
 						// publication. Cancel at this exact boundary, without sleeps.
@@ -82,7 +82,7 @@ func TestStopDuringPublicationPreservesRealFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	failure := errors.New("publication failure")
-	err := boot.Run(ctx, boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), AfterStep: func(step boot.Step, _ boot.Snapshot) error {
+	err := boot.Run(ctx, boot.Config{NoSync: true, StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), AfterStep: func(step boot.Step, _ boot.Snapshot) error {
 		if step == boot.SocketBound {
 			cancel()
 			return errors.Join(ctx.Err(), failure)
@@ -107,7 +107,7 @@ func TestStopDuringPublicationPreservesCleanupFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	failure := errors.New("event close failed")
-	err := boot.Run(ctx, boot.Config{
+	err := boot.Run(ctx, boot.Config{NoSync: true,
 		StateRoot: root, Socket: filepath.Join(root, "run/core.sock"),
 		Services: boot.Services{OpenEvents: func(context.Context) (boot.Events, error) { return shutdownFailureEvents{failure}, nil }},
 		AfterStep: func(step boot.Step, _ boot.Snapshot) error {
@@ -131,7 +131,7 @@ func TestStopDuringWorkStartup(t *testing.T) {
 			root := stateRoot(t)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			cfg := boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Work: &boot.WorkConfig{Driver: func(*goal.Engine) (goal.Driver, error) { cancel(); return stopWorkDriver{}, failure }}}
+			cfg := boot.Config{NoSync: true, StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Work: &boot.WorkConfig{Driver: func(*goal.Engine) (goal.Driver, error) { cancel(); return stopWorkDriver{}, failure }}}
 			err := boot.Run(ctx, cfg)
 			if failure == nil && err != nil {
 				t.Fatalf("stop during work initialization failed: %v", err)
