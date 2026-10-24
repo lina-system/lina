@@ -104,7 +104,9 @@ is already retracted, or whose row is gone, stays as it is. The link change and 
 retraction commits the link and writes no removal-list line. A failure rolls
 the link change back with the retraction. When the removal list already has
 the line, recovery replays the journaled link change and requeue with the
-retraction before reads reopen.
+retraction before reads reopen. That line records ids and the resulting
+state, not the person's answer or other signal text. Restore replays it
+the same way.
 
 A repair leaves one row per identity in `identity_requeue`, from the source's
 learning watermark or, without one, the identity's first sighting. Extraction

@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
+	"github.com/thisisjun786/lina/internal/core/messenger/identity"
 	"github.com/thisisjun786/lina/internal/core/retract"
 )
 
@@ -44,7 +45,7 @@ func reconcileRestoredCanon(ctx context.Context, path, root string, epoch uint64
 		return err
 	}
 	defer func() { result = errors.Join(result, db.Close(context.Background())) }()
-	removals, err := retract.Open(ctx, retract.Config{Canon: db, Root: root})
+	removals, err := retract.Open(ctx, retract.Config{Canon: db, Root: root, Repair: identity.ReplayRepair})
 	if err != nil {
 		return err
 	}

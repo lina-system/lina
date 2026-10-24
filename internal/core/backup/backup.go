@@ -18,6 +18,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/messenger/identity"
 	"github.com/thisisjun786/lina/internal/core/retract"
 )
 
@@ -87,7 +88,7 @@ func Create(ctx context.Context, cfg Config) (result Manifest, err error) {
 	if err = boundary("removals"); err != nil {
 		return result, err
 	}
-	removals, err := retract.Open(ctx, retract.Config{Canon: cfg.Canon, Root: cfg.Root})
+	removals, err := retract.Open(ctx, retract.Config{Canon: cfg.Canon, Root: cfg.Root, Repair: identity.ReplayRepair})
 	if err != nil {
 		return result, err
 	}

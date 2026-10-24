@@ -14,7 +14,8 @@ import (
 
 // repairIntent is the link change journaled with a retraction. Recovery writes
 // these rows when the canon transaction rolled back after the removal list
-// reached disk. The fields are ids and actions, never message content.
+// reached disk. The fields are ids and actions. Answer text and signal values
+// stay in canon, not in this append-only list.
 type repairIntent struct {
 	Version  int             `json:"version"`
 	Links    []repairLink    `json:"links,omitempty"`
@@ -36,16 +37,9 @@ type repairLink struct {
 	State     string         `json:"state"`
 	From      string         `json:"valid_from"`
 	Through   string         `json:"valid_through"`
-	Action    string         `json:"action"`
-	Actor     string         `json:"actor"`
-	At        string         `json:"at"`
-	Signals   []repairSignal `json:"signals,omitempty"`
-}
-
-type repairSignal struct {
-	Kind   string `json:"kind"`
-	Source string `json:"source"`
-	Value  string `json:"value"`
+	Action    string `json:"action"`
+	Actor     string `json:"actor"`
+	At        string `json:"at"`
 }
 
 type repairDrop struct {
@@ -67,7 +61,6 @@ type repairQuestion struct {
 	Scope    string `json:"scope"`
 	User     string `json:"user"`
 	State    string `json:"state"`
-	Answer   string `json:"answer"`
 }
 
 // repairIntent reads the link rows a repair just wrote so the removal list can
@@ -111,8 +104,8 @@ WHERE platform=? AND scope=? AND user=? AND reason=? AND queued_at=?`,
 	}
 	if question {
 		var row repairQuestion
-		err := tx.QueryRowContext(ctx, `SELECT platform,scope,user,state,answer FROM identity_question WHERE platform=? AND scope=? AND user=?`,
-			id.Platform, id.Scope, id.User).Scan(&row.Platform, &row.Scope, &row.User, &row.State, &row.Answer)
+		err := tx.QueryRowContext(ctx, `SELECT platform,scope,user,state FROM identity_question WHERE platform=? AND scope=? AND user=?`,
+			id.Platform, id.Scope, id.User).Scan(&row.Platform, &row.Scope, &row.User, &row.State)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
 		}
@@ -134,22 +127,7 @@ FROM identity_link WHERE id=?`, linkID).Scan(&link.ID, &link.Platform, &link.Sco
 		return repairLink{}, err
 	}
 	err = tx.QueryRowContext(ctx, `SELECT action,actor,at FROM identity_link_change WHERE link=? AND revision=?`, linkID, link.Revision).Scan(&link.Action, &link.Actor, &link.At)
-	if err != nil {
-		return repairLink{}, err
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT kind,source,value FROM identity_link_signal WHERE link=? ORDER BY kind,source,value`, linkID)
-	if err != nil {
-		return repairLink{}, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var signal repairSignal
-		if err := rows.Scan(&signal.Kind, &signal.Source, &signal.Value); err != nil {
-			return repairLink{}, err
-		}
-		link.Signals = append(link.Signals, signal)
-	}
-	return link, rows.Err()
+	return link, err
 }
 
 // ReplayRepair writes a journaled link repair. Core runs it while recovering
@@ -184,8 +162,8 @@ ON CONFLICT(platform,scope,user,from_at) DO NOTHING`, row.Platform, row.Scope, r
 	}
 	if intent.Question != nil {
 		row := intent.Question
-		result, err := tx.ExecContext(ctx, `UPDATE identity_question SET state=?,answer=? WHERE platform=? AND scope=? AND user=?`,
-			row.State, row.Answer, row.Platform, row.Scope, row.User)
+		result, err := tx.ExecContext(ctx, `UPDATE identity_question SET state=? WHERE platform=? AND scope=? AND user=?`,
+			row.State, row.Platform, row.Scope, row.User)
 		if err != nil {
 			return err
 		}
@@ -194,9 +172,9 @@ ON CONFLICT(platform,scope,user,from_at) DO NOTHING`, row.Platform, row.Scope, r
 			return err
 		}
 		if n == 0 {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO identity_question(platform,scope,user,reason,asked_at,state,answer) VALUES(?,?,?,'','',?,?)
-ON CONFLICT(platform,scope,user) DO UPDATE SET state=excluded.state, answer=excluded.answer`,
-				row.Platform, row.Scope, row.User, row.State, row.Answer); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO identity_question(platform,scope,user,reason,asked_at,state,answer) VALUES(?,?,?,'','',?,'')
+ON CONFLICT(platform,scope,user) DO UPDATE SET state=excluded.state`,
+				row.Platform, row.Scope, row.User, row.State); err != nil {
 				return err
 			}
 		}
@@ -238,12 +216,6 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 	if write {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO identity_link_change(link,revision,action,class,state,record,actor,at) VALUES(?,?,?,?,?,?,?,?)`,
 			link.ID, link.Revision, link.Action, link.Class, link.State, link.Record, link.Actor, link.At); err != nil {
-			return err
-		}
-	}
-	for _, signal := range link.Signals {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO identity_link_signal(link,kind,source,value) VALUES(?,?,?,?)`,
-			link.ID, signal.Kind, signal.Source, signal.Value); err != nil {
 			return err
 		}
 	}
