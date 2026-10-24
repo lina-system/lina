@@ -33,7 +33,7 @@ Fixed before the runs, as the research note requires.
 | --- | --- |
 | Host | Linux 7.0.0-38-generic, x86-64, 24 CPUs |
 | Toolchains | Go 1.27.3, Node.js 24.20.0, Git 2.53.0 |
-| Fixture | [testdata/worker-eval](../testdata/worker-eval/README.md), seed commit `574da8d7de5c242f5dbf5f099806d31ab4c4502e` |
+| Fixture | [testdata/worker-eval](../testdata/worker-eval/README.md), seed commit `1ee46b1db3246eef42d155bccdbe45bca411f161` from `setup.sh seed` |
 | Task | [task.md](../testdata/worker-eval/task.md): add `Multiply` and its test, run the suite, commit once, no push |
 | Cancel task | [task-cancel.md](../testdata/worker-eval/task-cancel.md): run a two-minute tagged test, then the suite |
 | Isolation | A fresh worktree per run from the seed; the person's own install and sign-in; nothing imposed on the worker |
