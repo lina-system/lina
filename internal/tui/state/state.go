@@ -51,6 +51,15 @@ type Block struct {
 type WorkSummary struct {
 	Cards  []WorkCard
 	Counts *WorkCount
+	// Limit is the run limit Core applied, when Core reports one. A limit the
+	// person set is shown; automatic is not.
+	Limit *WorkLimit
+}
+
+// WorkLimit is the run limit Core's last pass applied.
+type WorkLimit struct {
+	Automatic bool
+	Value     int
 }
 
 // WorkCount is the number of lines that are running and of lines waiting for
@@ -62,6 +71,7 @@ type WorkCard struct {
 	Started, Finished time.Time
 	State             protocol.RunningState
 	Waiting           int
+	Paused            bool
 	Stages            []WorkStage
 }
 

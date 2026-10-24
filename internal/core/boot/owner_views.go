@@ -334,6 +334,12 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 			state := protocol.RunningState(v.State)
 			line.State = &state
 		}
+		// A paused goal reports the person's pause beside its line, so a client
+		// that offers pause and resume sends the opposite without reading text.
+		if v.Paused {
+			paused := true
+			line.Paused = &paused
+		}
 		if entry.Row {
 			row := true
 			line.Row = &row
