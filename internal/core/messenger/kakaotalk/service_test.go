@@ -297,6 +297,72 @@ func TestAnExpiredSignInFreesTheFlow(t *testing.T) {
 	}
 }
 
+// A disconnect ends the account's reads before it removes the add-on session,
+// and a stop that fails leaves both the source and the session in place.
+func TestDisconnectStopsReadsBeforeTheSession(t *testing.T) {
+	h := newHarness(t, map[string][]string{"beginSignIn": {signedIn, signedIn}, "whoami": {me, me}})
+	if _, err := h.service.Connect(t.Context(), "connect", true); err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	sessions := recordedSessions{inner: h.manager, order: &order}
+	stop := func(ctx context.Context, source messenger.Source) error {
+		order = append(order, "stop")
+		return h.store.Disconnect(ctx, source.Person, source.Platform, source.Account)
+	}
+	service := kakaotalk.NewService(kakaotalk.Config{
+		Person: person, Store: h.store, Sessions: sessions, Stop: stop,
+		Now: func() time.Time { return h.now },
+	})
+	if err := service.Disconnect(t.Context(), "7788"); err != nil {
+		t.Fatal(err)
+	}
+	if len(order) != 2 || order[0] != "stop" || order[1] != "remove" {
+		t.Fatalf("disconnect order %v", order)
+	}
+	if sources, _ := service.Sources(t.Context()); len(sources) != 1 || sources[0].State != messenger.StateDisconnected {
+		t.Fatalf("source after disconnect: %+v", sources)
+	}
+
+	// A stop that fails keeps the source and its session: nothing was removed
+	// while a read could still commit.
+	if _, err := service.Connect(t.Context(), "connect", true); err != nil {
+		t.Fatal(err)
+	}
+	order = nil
+	failing := kakaotalk.NewService(kakaotalk.Config{
+		Person: person, Store: h.store, Sessions: sessions, Now: func() time.Time { return h.now },
+		Stop: func(context.Context, messenger.Source) error {
+			order = append(order, "stop")
+			return errors.New("read still running")
+		},
+	})
+	if err := failing.Disconnect(t.Context(), "7788"); err == nil {
+		t.Fatal("a failed stop disconnected the source")
+	}
+	if len(order) != 1 || order[0] != "stop" {
+		t.Fatalf("a failed stop removed the session: %v", order)
+	}
+	if sources, _ := failing.Sources(t.Context()); len(sources) != 1 || sources[0].State != messenger.StateConnected {
+		t.Fatalf("a failed stop changed the source: %+v", sources)
+	}
+}
+
+// recordedSessions records the order of the add-on session calls.
+type recordedSessions struct {
+	inner kakaotalk.Sessions
+	order *[]string
+}
+
+func (s recordedSessions) Start(platform, account string) (*addon.Session, error) {
+	return s.inner.Start(platform, account)
+}
+
+func (s recordedSessions) Remove(ctx context.Context, platform, account string) error {
+	*s.order = append(*s.order, "remove")
+	return s.inner.Remove(ctx, platform, account)
+}
+
 // Disconnect stops the source and removes the add-on's session directory.
 func TestDisconnectRemovesTheAddonSession(t *testing.T) {
 	h := newHarness(t, map[string][]string{"beginSignIn": {signedIn}, "whoami": {me}})

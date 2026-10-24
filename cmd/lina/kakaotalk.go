@@ -129,7 +129,7 @@ func runKakaoTalk(args []string) int {
 			request = poll
 			continue
 		}
-		value, ok := readAnswer(terminal, step.Prompt.Kind == "secret", step.Prompt.Text)
+		value, ok := readAnswer(os.Stdin, terminal, step.Prompt.Kind == "secret", step.Prompt.Text)
 		if !ok {
 			return 1
 		}
@@ -139,7 +139,7 @@ func runKakaoTalk(args []string) int {
 
 // readAnswer prints the add-on's own prompt and reads one line. A secret is
 // read without echo, so a password never shows on the terminal.
-func readAnswer(terminal, secret bool, prompt string) (string, bool) {
+func readAnswer(in io.Reader, terminal, secret bool, prompt string) (string, bool) {
 	fmt.Fprint(os.Stderr, prompt+": ")
 	var line []byte
 	var err error
@@ -147,10 +147,16 @@ func readAnswer(terminal, secret bool, prompt string) (string, bool) {
 		line, err = term.ReadSecret(os.Stdin)
 		fmt.Fprintln(os.Stderr)
 	} else {
-		line, err = bufio.NewReader(io.LimitReader(os.Stdin, 4097)).ReadBytes('\n')
+		line, err = bufio.NewReader(io.LimitReader(in, 4097)).ReadBytes('\n')
 	}
 	if err != nil && err != io.EOF {
 		return "", false
+	}
+	if secret {
+		// A password is sent as typed: only the line ending is removed, because
+		// a leading or trailing space can be part of the credential.
+		value := strings.TrimRight(string(line), "\r\n")
+		return value, value != ""
 	}
 	value := strings.TrimSpace(string(line))
 	return value, value != ""

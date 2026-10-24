@@ -23,7 +23,18 @@ func initKakaoTalk(r *conversationRuntime, cfg *MessengerConfig) {
 	if !ok {
 		return
 	}
-	r.kakao = kakaotalk.NewService(kakaotalk.Config{Person: r.person, Store: messenger.Open(r.db, r.materials, r.removals), Sessions: sessions})
+	store := messenger.Open(r.db, r.materials, r.removals)
+	r.kakao = kakaotalk.NewService(kakaotalk.Config{
+		Person: r.person, Store: store, Sessions: sessions,
+		// Disconnecting stops the source's reads through the messenger
+		// service, so a page read before it cannot commit after it.
+		Stop: func(ctx context.Context, source messenger.Source) error {
+			if r.messenger != nil {
+				return r.messenger.Disconnect(ctx, source)
+			}
+			return store.Disconnect(ctx, source.Person, source.Platform, source.Account)
+		},
+	})
 }
 
 func kakaotalkError(err error) error {

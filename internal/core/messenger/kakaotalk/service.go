@@ -89,6 +89,11 @@ type Config struct {
 	Person   string
 	Store    *messenger.Store
 	Sessions Sessions
+	// Stop ends the source's reads and waits for an admission already under
+	// way. Core supplies the messenger service's Disconnect, so a page read
+	// before the disconnect cannot commit after it. A nil Stop disconnects the
+	// store row alone.
+	Stop func(context.Context, messenger.Source) error
 	// Now overrides the clock for deterministic tests.
 	Now func() time.Time
 }
@@ -321,13 +326,18 @@ func (s *Service) source(ctx context.Context, account string) (*messenger.Source
 	return nil, nil
 }
 
-// Disconnect stops sync for the account, ends its add-on session and deletes
-// the add-on's data directory. Records already read stay.
+// Disconnect stops the account's reads and live events, ends its add-on session
+// and deletes the add-on's data directory. Records already read stay.
 func (s *Service) Disconnect(ctx context.Context, account string) error {
 	if account == "" {
 		return messenger.ErrInvalid
 	}
-	if err := s.cfg.Store.Disconnect(ctx, s.cfg.Person, Platform, account); err != nil {
+	source := messenger.Source{Person: s.cfg.Person, Platform: Platform, Account: account}
+	if s.cfg.Stop != nil {
+		if err := s.cfg.Stop(ctx, source); err != nil {
+			return err
+		}
+	} else if err := s.cfg.Store.Disconnect(ctx, s.cfg.Person, Platform, account); err != nil {
 		return err
 	}
 	s.mu.Lock()
