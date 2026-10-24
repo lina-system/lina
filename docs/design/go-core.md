@@ -1117,6 +1117,7 @@ Container ids are resolved by a trusted ownership-checking lookup, never treated
 The initial records writer saves one Markdown file with typed result data and provenance under `versions/records/`, and one Git commit for saved version 1.
 Names are human slugs with collision suffixes, never record ids.
 Before changing a tracked file, index or ref, the records writer journals the intended parent/commit, file and blob ids in canon and retains a durable token for its Git index lock.
+Core opens the repository without options, so every object, index and ref write is synced. A test may open a throwaway root with `records.NoSync()` to skip those fsyncs; it never changes what Core writes.
 Reopening completes only that exact interrupted publication, checks all other working files, and releases only a lock with its own token; different target bytes, a different ref or a foreign lock are refused.
 Recovery repairs repository consistency so later saves can proceed, while the original unknown effect remains for reconciliation without redispatch.
 It checks the repository head against a canon checkpoint and verifies tracked working files; it refuses both committed and uncommitted outside changes instead of silently incorporating them.

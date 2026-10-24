@@ -899,7 +899,9 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
   contains, so one reported window is that limit. Each stopped limit keeps the
   reset its own row reported, including when usage is still under the cap.
   The worker stays blocked until every stopped limit reaches its own reset or
-  a later measurement shows that same limit below the cap. A newer row for
+  a later measurement shows that same limit below the cap. A recovered limit
+  stays recovered for that stop, even when a later snapshot lacks its newer
+  row. A newer row for
   another window or limit does not clear the stop, and a healthy window's
   reset cannot extend an exhausted one. The snapshot that missed the failure,
   and any older or unknown snapshot, does not clear the stop. Rows from
