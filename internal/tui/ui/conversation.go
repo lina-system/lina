@@ -21,6 +21,8 @@ type conversationView struct {
 	workOffset   int
 	workCompact  bool
 	workFilter   protocol.RunningState
+	// workStop names the card whose stop ask waits for Enter or a cancel.
+	workStop string
 	workStages   workStageView
 	undo         []state.Draft
 	history      *inputHistory

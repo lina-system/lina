@@ -795,6 +795,7 @@ type ProgressLine struct {
 	Name         string           `json:"name"`
 	Next         string           `json:"next"`
 	Now          *string          `json:"now,omitempty"`
+	Paused       *bool            `json:"paused,omitempty"`
 	Percent      *json.Number     `json:"percent,omitempty"`
 	Row          *bool            `json:"row,omitempty"`
 	Stage        string           `json:"stage"`
@@ -8611,6 +8612,9 @@ const clientSchemaJSON = `{
         },
         "state": {
           "$ref": "#/$defs/running_state"
+        },
+        "paused": {
+          "type": "boolean"
         },
         "stage": {
           "type": "string"

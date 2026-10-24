@@ -16,6 +16,8 @@ type Line struct {
 	Kind         string    `json:"kind"`
 	Stage        string    `json:"stage"`
 	State        string    `json:"state,omitempty"`
+	// Paused is the person's pause on a goal line, as Core recorded it.
+	Paused       bool      `json:"paused,omitempty"`
 	Percent      *int      `json:"percent"`
 	JustFinished string    `json:"just_finished"`
 	Next         string    `json:"next"`
@@ -41,6 +43,8 @@ type Unit struct {
 	Now                    string
 	ID, Parent, Kind, Name string
 	State                  string // Optional observed execution state, independent of plan stage.
+	// Paused is the person's pause on a goal line.
+	Paused                 bool
 	Done                   *bool
 	Active, Seen, Landed   bool
 	JustFinished           string
@@ -95,7 +99,7 @@ func Compute(units []Unit) []Entry {
 	}
 	rows := make(map[string]*row, len(units))
 	for _, u := range units {
-		line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
+		line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Paused: u.Paused, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
 		if u.JustFinished != "" {
 			line.JustFinished = u.JustFinished
 		}
