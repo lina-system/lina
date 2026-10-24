@@ -270,7 +270,7 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	args = append(args, indexArgs...)
 	args = append(args, olderSArgs...)
 	args = append(args, queuedArgs...)
-	var external []Hit
+	var external []materialHit
 	if query.EventText != nil && withEvents {
 		var err error
 		external, err = pendingEventText(ctx, db, scope, at, restricted, terms, query.EventText)
@@ -302,7 +302,7 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 	limit := query.Limit
 	if limit > 0 {
 		statement += " LIMIT ?"
-		args = append(args, limit+len(external))
+		args = append(args, limit)
 	}
 	var hits []Hit
 	err := db.Read(ctx, func(tx *canon.Tx) error {
@@ -329,7 +329,17 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 	if err != nil {
 		return nil, err
 	}
-	hits = append(hits, external...)
+	// Queued material hits are not in the FTS tables yet. Rank them with the
+	// indexed matches, by how many query terms they hold and then by time,
+	// before the limit. Appending them and then truncating drops every one
+	// once the indexed list already fills the limit.
+	if len(external) > 0 {
+		cover, err := termCoverage(ctx, db, hits, terms)
+		if err != nil {
+			return nil, err
+		}
+		hits = mergeMaterial(hits, cover, external)
+	}
 	if limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}
@@ -342,7 +352,14 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 // pendingEventText reads the derived text of queued events whose body lives in
 // material, so a caller with material access sees them before the background
 // drain publishes them. The scan is bounded by the queue, never the corpus.
-func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, restricted bool, terms []term, readEvent ReadEvent) ([]Hit, error) {
+// materialHit is a queued material-backed event that matched in memory,
+// with how many of the query's terms its text holds.
+type materialHit struct {
+	Hit
+	coverage int
+}
+
+func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, restricted bool, terms []term, readEvent ReadEvent) ([]materialHit, error) {
 	var lowered []string
 	for _, t := range terms {
 		if t.runes >= 3 || t.pair {
@@ -391,21 +408,158 @@ func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, rest
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Hit, 0, len(queued))
+	out := make([]materialHit, 0, len(queued))
 	for _, h := range queued {
 		text, err := readEvent(ctx, h.ID)
 		if err != nil {
 			continue
 		}
 		text = strings.ToLower(text)
+		n := 0
 		for _, term := range lowered {
 			if strings.Contains(text, term) {
-				out = append(out, h)
-				break
+				n++
 			}
+		}
+		if n > 0 {
+			out = append(out, materialHit{Hit: h, coverage: n})
 		}
 	}
 	return out, nil
+}
+
+func coverageKey(kind Kind, id string) string { return string(kind) + "\x00" + id }
+
+// termCoverage counts how many query terms each already-ranked hit holds.
+// Indexed rows use the same FTS tables as the rank query. Queued inline rows
+// still have a body, so they use that text.
+func termCoverage(ctx context.Context, db Canon, hits []Hit, terms []term) (map[string]int, error) {
+	cover := map[string]int{}
+	var counted []term
+	for _, term := range terms {
+		if term.runes >= 3 || term.pair {
+			counted = append(counted, term)
+		}
+	}
+	if len(hits) == 0 || len(counted) == 0 {
+		return cover, nil
+	}
+	want := map[string]bool{}
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		want[coverageKey(hit.Kind, hit.ID)] = true
+		ids = append(ids, hit.ID)
+	}
+	encoded, err := jsonArray(ids)
+	if err != nil {
+		return nil, err
+	}
+	err = db.Read(ctx, func(tx *canon.Tx) error {
+		indexed := map[string]bool{}
+		rows, err := tx.QueryContext(ctx, `SELECT kind, source_id FROM recall_doc WHERE source_id IN (SELECT value FROM json_each(?))`, encoded)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var kind, id string
+			if err := rows.Scan(&kind, &id); err != nil {
+				rows.Close()
+				return err
+			}
+			indexed[coverageKey(Kind(kind), id)] = true
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, term := range counted {
+			keys, err := docsHolding(ctx, tx, encoded, term)
+			if err != nil {
+				return err
+			}
+			for _, key := range keys {
+				if want[key] && indexed[key] {
+					cover[key]++
+				}
+			}
+		}
+		rows, err = tx.QueryContext(ctx, `SELECT kind, source_id, body FROM recall_source WHERE body IS NOT NULL AND source_id IN (SELECT value FROM json_each(?))`, encoded)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var kind, id, body string
+			if err := rows.Scan(&kind, &id, &body); err != nil {
+				return err
+			}
+			key := coverageKey(Kind(kind), id)
+			if !want[key] || indexed[key] {
+				continue
+			}
+			lower := strings.ToLower(body)
+			for _, term := range counted {
+				if strings.Contains(lower, strings.ToLower(term.text)) {
+					cover[key]++
+				}
+			}
+		}
+		return rows.Err()
+	})
+	return cover, err
+}
+
+func docsHolding(ctx context.Context, tx *canon.Tx, encoded string, term term) ([]string, error) {
+	table, match := "recall_text", "recall_text"
+	if term.pair {
+		table, match = "recall_pair", "recall_pair"
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT d.kind, d.source_id FROM recall_doc d JOIN `+table+` f ON f.rowid=d.id WHERE `+match+` MATCH ? AND d.source_id IN (SELECT value FROM json_each(?))`, canon.TrigramPhrase(term.text), encoded)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var kind, id string
+		if err := rows.Scan(&kind, &id); err != nil {
+			return nil, err
+		}
+		keys = append(keys, coverageKey(Kind(kind), id))
+	}
+	return keys, rows.Err()
+}
+
+// mergeMaterial inserts queued material hits into the ranked list before the
+// limit is applied. More of the query's terms come first; equal coverage
+// keeps the newer event. Indexed hits keep the order BM25 already gave them.
+func mergeMaterial(hits []Hit, cover map[string]int, external []materialHit) []Hit {
+	out := append([]Hit(nil), hits...)
+	for _, ext := range external {
+		at := len(out)
+		for i, hit := range out {
+			if materialOutranks(ext, cover[coverageKey(hit.Kind, hit.ID)], hit) {
+				at = i
+				break
+			}
+		}
+		out = append(out, Hit{})
+		copy(out[at+1:], out[at:])
+		out[at] = ext.Hit
+		cover[coverageKey(ext.Kind, ext.ID)] = ext.coverage
+	}
+	return out
+}
+
+func materialOutranks(ext materialHit, otherCoverage int, other Hit) bool {
+	if ext.coverage != otherCoverage {
+		return ext.coverage > otherCoverage
+	}
+	if !ext.OccurredAt.Equal(other.OccurredAt) {
+		return ext.OccurredAt.After(other.OccurredAt)
+	}
+	return ext.ID < other.ID
 }
 
 // lineageCTE walks each candidate event's replay_of and view_of chain. A
@@ -816,7 +970,9 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 		if !body.Valid {
 			return "", ErrBytesUnavailable
 		}
-		return body.String, nil
+		// Stored spans address the display body. The excerpt is derived text:
+		// flagged secrets are removed, not left as the display placeholder.
+		return maskDerived(body.String, spans)
 	case Memory:
 		var text string
 		err := db.Read(ctx, func(tx *canon.Tx) error {

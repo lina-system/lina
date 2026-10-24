@@ -48,7 +48,8 @@ queued keeps its text in canon; `Match` matches it there, so search does not
 wait for the background drain. A queued event whose body lives in material is
 read through the caller's `EventText` reader, which `ledger.Store.Search` and
 the live recall tool supply; it is read only when the requested kinds include
-events. `recall_doc.text_hash` collapses events with
+events. Those hits join the ranked list before the limit, by how many query
+terms they hold and then by newer time. `recall_doc.text_hash` collapses events with
 identical derived text inside one conversation to the earliest of them. An
 event whose `replay_of` or `view_of` chain reaches another candidate is
 represented by that candidate, matched by source id so a queued event without
@@ -58,8 +59,9 @@ replay copy is a candidate only when the scope asks for copies, and even then
 its lineage counts once: a copy appears when its original is out of scope.
 Under `Projection` or `ExternalModel`, a summary or record is out when it
 cites a protected event or a summary that reaches one at any depth.
-`recall.Search` adds the bounded masked excerpt and the citations in force at
-the result's revision. `VectorQuery` is the fusion hook for #874.
+`recall.Search` adds the bounded excerpt of derived text, applying an inline
+event's stored secret spans so the display placeholder is removed, and the
+citations in force at the result's revision. `VectorQuery` is the fusion hook for #874.
 
 Memory items, events and records are the same list: `exec.Memory` asks `Match`
 for events and items together, materializes the item set in one scoped read, and
@@ -74,7 +76,8 @@ reader or reports unavailable bytes without failing the whole result list.
 
 Tests cover atomic native writes, queued sources and exclusions, generation
 fencing, batch bounds, migrations, records revisions, Korean parity, any-term
-ranking, identical-text collapse, lineage, scope and visibility classes,
-retraction, summary navigation, excerpt bounds and the vector hook. The opt-in
+ranking, queued material hits before the limit, identical-text collapse,
+lineage, scope and visibility classes, retraction, summary navigation, excerpt
+bounds, explicit secret spans in excerpts and the vector hook. The opt-in
 store benchmark Core test proves startup fill and socket memory writes/forget
 with the normal running Core.

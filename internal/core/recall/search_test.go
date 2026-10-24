@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/recall"
+	"github.com/thisisjun786/lina/kit/secret"
 )
 
 func admitAt(t *testing.T, db *canon.Store, id, conversation, person, agent, body string, at time.Time, replayOf string) {
@@ -207,6 +208,110 @@ func TestSearchQueuedMaterialEventFollowsKinds(t *testing.T) {
 		if !reflect.DeepEqual(ids, tc.want) {
 			t.Fatalf("kinds %v: %v, want %v", tc.kinds, ids, tc.want)
 		}
+	}
+}
+
+func TestSearchQueuedMaterialRanksBeforeLimit(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	for i, id := range []string{"old-a", "old-b", "old-c"} {
+		admitAt(t, db, id, "conversation", "owner", "agent", "도서관 "+id, base.Add(time.Duration(i)*time.Second), "")
+	}
+	const material = "material-both"
+	at := base.Add(time.Hour).UTC().Format(time.RFC3339Nano)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES(?,'conversation','owner','agent','person','{}',?,?,'observed','{"kind":"native"}','asset',1)`, material, at, at)
+	read := func(context.Context, string) (string, error) { return "도서관 여행", nil }
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관 여행", Limit: 3, EventText: read})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) == 0 || hits[0].ID != material {
+		t.Fatalf("all-term material hit dropped by the limit: %v", hitIDs(hits))
+	}
+
+	// An equal match that is newer than the indexed hits takes the newest slot.
+	for i, id := range []string{"both-a", "both-b", "both-c"} {
+		admitAt(t, db, id, "conversation", "owner", "agent", "공원 산책 "+id, base.Add(time.Duration(i)*time.Second), "")
+	}
+	const newer = "material-newer"
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES(?,'conversation','owner','agent','person','{}',?,?,'observed','{"kind":"native"}','asset',1)`, newer, at, at)
+	read = func(_ context.Context, id string) (string, error) {
+		if id == newer {
+			return "공원 산책", nil
+		}
+		return "도서관 여행", nil
+	}
+	hits, err = recall.Match(t.Context(), db, scope, recall.Query{Text: "공원 산책", Limit: 3, EventText: read})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) == 0 || hits[0].ID != newer {
+		t.Fatalf("newer material hit dropped by the limit: %v", hitIDs(hits))
+	}
+
+	// Fewer terms than the indexed matches stays behind them and outside the limit.
+	const partial = "material-partial"
+	earlier := base.Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES(?,'conversation','owner','agent','person','{}',?,?,'observed','{"kind":"native"}','asset',1)`, partial, earlier, earlier)
+	read = func(_ context.Context, id string) (string, error) {
+		if id == partial {
+			return "공원", nil
+		}
+		if id == newer {
+			return "공원 산책", nil
+		}
+		return "도서관 여행", nil
+	}
+	ids := hitIDs(mustMatchLimit(t, db, scope, "공원 산책", 3, read))
+	for _, id := range ids {
+		if id == partial {
+			t.Fatalf("weaker material hit occupied a limited slot: %v", ids)
+		}
+	}
+}
+
+func hitIDs(hits []recall.Hit) []string {
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.ID)
+	}
+	return ids
+}
+
+func mustMatchLimit(t *testing.T, db *canon.Store, scope recall.Scope, text string, limit int, read recall.ReadEvent) []recall.Hit {
+	t.Helper()
+	hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: text, Limit: limit, EventText: read})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hits
+}
+
+func TestSearchInlineExcerptAppliesStoredSecretSpans(t *testing.T) {
+	db := database(t)
+	body := "도서관 암호는 푸른고래입니다"
+	start := len("도서관 암호는 ")
+	at := time.Unix(1700000000, 0)
+	_, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "secret-inline", ConversationID: "conversation", PersonID: "owner", AgentID: "agent",
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: at, RecordedAt: at, TimeQuality: "observed",
+		Body: body, SecretSpans: []secret.Span{{Start: start, End: start + len("푸른고래")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	results, err := recall.Search(t.Context(), db, nil, scope, recall.Query{Text: "도서관"})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("search: %+v %v", results, err)
+	}
+	excerpt := results[0].Excerpt
+	if !strings.Contains(excerpt, "도서관") || strings.Contains(excerpt, "푸른고래") || strings.Contains(excerpt, secret.Placeholder) {
+		t.Fatalf("excerpt kept the display placeholder: %q", excerpt)
 	}
 }
 
