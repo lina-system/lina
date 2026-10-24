@@ -415,6 +415,33 @@ func TestSameNameForTwoPeopleProposesNothing(t *testing.T) {
 	}
 }
 
+func TestOlderObservationExtendsTheLinkValidity(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-anna", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "iMessage profile"}}},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, imessage("+821012340001"), "Anna", phone("+821012340001", "iMessage profile"))
+	if len(usable(t, f, imessage("+821012340001"))) != 1 {
+		t.Fatal("the identity did not link")
+	}
+	// History arrives in descending order: an older sighting of the same
+	// identifier proves it belonged to this identity then too.
+	f.now = at(3)
+	observe(t, f, imessage("+821012340001"), "Anna", phone("+821012340001", "iMessage profile"))
+	after := links(t, f, imessage("+821012340001"))
+	if len(after) != 1 {
+		t.Fatalf("links = %+v", after)
+	}
+	if !after[0].ValidFrom.Equal(at(3)) {
+		t.Fatalf("valid from = %v, want the older sighting", after[0].ValidFrom)
+	}
+	if !after[0].Usable(at(5)) {
+		t.Fatal("a message from the older period is not usable")
+	}
+}
+
 func TestConfirmRecordsTheAnswerAndMakesTheLinkUsable(t *testing.T) {
 	t.Parallel()
 	people := identity.StaticPeople{
@@ -446,6 +473,42 @@ func TestConfirmRecordsTheAnswerAndMakesTheLinkUsable(t *testing.T) {
 	}
 	if changes != 1 {
 		t.Fatalf("changes = %d, want the person's confirmed link", changes)
+	}
+}
+
+func TestConfirmRepairsTheLinkItSupersedes(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-anna", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "iMessage profile"}}},
+		{Record: "person-ben"},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, imessage("+821012340001"), "Anna", phone("+821012340001", "iMessage profile"))
+	anna := usable(t, f, imessage("+821012340001"))
+	if len(anna) != 1 || anna[0].Record != "person-anna" {
+		t.Fatalf("exact link = %+v", anna)
+	}
+	item := f.item(t, "person-anna", "wrongly attributed")
+	if err := f.store.RecordArtifact(t.Context(), anna[0].ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Confirm(t.Context(), imessage("+821012340001"), "person-ben", "that is Ben"); err != nil {
+		t.Fatal(err)
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("the superseded link's item stayed visible")
+	}
+	requeues, err := f.store.Requeues(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeues) != 1 || requeues[0].Identity != imessage("+821012340001") {
+		t.Fatalf("requeues = %+v", requeues)
+	}
+	remaining := usable(t, f, imessage("+821012340001"))
+	if len(remaining) != 1 || remaining[0].Record != "person-ben" {
+		t.Fatalf("usable = %+v", remaining)
 	}
 }
 

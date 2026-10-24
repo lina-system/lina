@@ -678,6 +678,11 @@ func senderObservation(source Source, plan recordPlan) (identity.Observation, bo
 	for _, identifier := range message.Author.Identifiers {
 		observation.Identifiers = append(observation.Identifiers, identity.SeenIdentifier{Kind: identity.Kind(identifier.Kind), Value: identifier.Value, Source: identifier.Source, At: observation.At})
 	}
+	// The profile email is evidence of who the author is, not the identity key.
+	// Adapters that read directory profiles fill it and not Identifiers.
+	if email := strings.TrimSpace(message.Author.Email); email != "" {
+		observation.Identifiers = append(observation.Identifiers, identity.SeenIdentifier{Kind: identity.Email, Value: email, Source: "profile", At: observation.At})
+	}
 	return observation, true
 }
 

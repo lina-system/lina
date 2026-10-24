@@ -358,8 +358,11 @@ ON CONFLICT(platform,scope,user) DO UPDATE SET self=max(identity_sender.self,exc
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO identity_identifier(platform,scope,user,kind,value,source,first_seen,last_seen)
 VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(platform,scope,user,kind,value,source) DO UPDATE SET last_seen=excluded.last_seen
-WHERE excluded.last_seen>identity_identifier.last_seen`,
+ON CONFLICT(platform,scope,user,kind,value,source) DO UPDATE SET
+ first_seen=CASE WHEN julianday(excluded.first_seen)<julianday(identity_identifier.first_seen)
+  THEN excluded.first_seen ELSE identity_identifier.first_seen END,
+ last_seen=CASE WHEN julianday(excluded.last_seen)>julianday(identity_identifier.last_seen)
+  THEN excluded.last_seen ELSE identity_identifier.last_seen END`,
 			observation.Identity.Platform, observation.Identity.Scope, observation.Identity.User, string(identifier.Kind), identifier.Value,
 			identifier.Source, formatTime(seenAt), formatTime(seenAt)); err != nil {
 			return err
@@ -440,6 +443,9 @@ WHERE excluded.last_seen>identity_identifier.last_seen`,
 			break
 		}
 		if activeRecord != "" {
+			if err := s.extendValidity(ctx, tx, links, target, validFrom(stored, signals), at); err != nil {
+				return err
+			}
 			break
 		}
 		if err := s.insertLink(ctx, tx, observation.Identity, target, Exact, MatcherVersion, at, validFrom(stored, signals), signals); err != nil {
@@ -509,6 +515,30 @@ func validFrom(stored []storedIdentifier, signals []Signal) time.Time {
 		}
 	}
 	return earliest
+}
+
+// extendValidity lowers the link's start to an older sighting of an identifier
+// it rests on, so a message from that period is usable. Later sightings never
+// shorten a link's validity.
+func (s *Store) extendValidity(ctx context.Context, tx *canon.Tx, links []Link, record string, earliest, at time.Time) error {
+	if earliest.IsZero() {
+		return nil
+	}
+	for _, link := range links {
+		if link.State != Active || link.Record != record || (link.Class != Exact && link.Class != Confirmed) {
+			continue
+		}
+		if !link.ValidFrom.IsZero() && !earliest.Before(link.ValidFrom) {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE identity_link SET valid_from=?,revision=revision+1 WHERE id=?", formatTime(earliest), link.ID); err != nil {
+			return err
+		}
+		if err := writeChange(ctx, tx, link.ID, link.Revision+1, "extend", link.Class, Active, record, MatcherVersion, at); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) insertLink(ctx context.Context, tx *canon.Tx, id Identity, record string, class Class, maker string, at, from time.Time, signals []Signal) error {
@@ -760,6 +790,7 @@ func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) 
 	}
 	at := s.now()
 	var confirmed Link
+	var superseded []supersededLink
 	err := s.db.Write(ctx, func(tx *canon.Tx) error {
 		links, err := s.linksTx(ctx, tx, id)
 		if err != nil {
@@ -785,7 +816,7 @@ func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) 
 			return err
 		}
 		// The person's answer settles the identity: a link the matcher made to
-		// another record is superseded.
+		// another record is superseded and repaired like any wrong match.
 		for _, link := range links {
 			if link.State != Active || link.Record == record {
 				continue
@@ -794,6 +825,16 @@ func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) 
 				return err
 			}
 			if err := writeChange(ctx, tx, link.ID, link.Revision+1, "superseded", link.Class, Removed, link.Record, s.person, at); err != nil {
+				return err
+			}
+			items, err := s.citingItems(ctx, tx, link.ID)
+			if err != nil {
+				return err
+			}
+			superseded = append(superseded, supersededLink{id: link.ID, items: items})
+		}
+		if len(superseded) > 0 {
+			if _, err := s.requeueTx(ctx, tx, id, at, "link superseded"); err != nil {
 				return err
 			}
 		}
@@ -817,7 +858,19 @@ func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) 
 	if confirmed.ID == "" {
 		return Link{}, ErrNotFound
 	}
+	for _, link := range superseded {
+		if _, err := s.retract(ctx, link.id, link.items, false); err != nil {
+			return Link{}, err
+		}
+	}
 	return confirmed, nil
+}
+
+// supersededLink is a link the person's answer replaced, with the items it
+// produced, retracted after the answer commits.
+type supersededLink struct {
+	id    string
+	items []string
 }
 
 // Reject keeps the person's refusal: the link is no longer usable and never

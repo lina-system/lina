@@ -68,3 +68,38 @@ func TestAdmittedPageRecordsTheSenderIdentity(t *testing.T) {
 		t.Fatalf("identities in the workspace = %d, want 2", scopes)
 	}
 }
+
+// TestAdmittedPageUsesTheProfileEmailAsEvidence proves an adapter's profile
+// email is an identifier the matcher can use. The Teams adapter fills
+// Author.Email from directory profiles and never fills Identifiers, so the
+// email has to reach the observation.
+func TestAdmittedPageUsesTheProfileEmailAsEvidence(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{{
+		Record:      "person-ben",
+		Identifiers: []identity.SeenIdentifier{{Kind: identity.Email, Value: "ben@example.com", Source: "Google contacts"}},
+	}}
+	f := newFixture(t)
+	sender := identity.Open(f.db, "person", people, f.removal).WithClock(func() time.Time { return f.now })
+	f.store = f.store.WithIdentities(sender)
+	source := messenger.Source{Person: "person", Platform: "teams", Account: "account-1", Workspace: "tenant-1",
+		Mode: messenger.ModeOfficial, Adapter: "teams", State: messenger.StateConnected, ConnectedAt: f.now}
+	if err := f.store.Connect(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.UpsertChats(t.Context(), source, []messenger.Chat{{ID: "dm-1", Name: "Direct", Kind: "direct"}}); err != nil {
+		t.Fatal(err)
+	}
+	external := messenger.Message{ID: "m-1", Route: messenger.RouteParticipant, At: f.now, Text: "hello",
+		Author: messenger.Author{ID: "U-ben", Name: "Ben", Email: "Ben@Example.com"}}
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{Messages: []messenger.Message{external}}); err != nil {
+		t.Fatal(err)
+	}
+	links, err := sender.Links(t.Context(), identity.Identity{Platform: "teams", Scope: "tenant-1", User: "U-ben"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 || links[0].Record != "person-ben" || links[0].Class != identity.Exact || !links[0].Usable(f.now) {
+		t.Fatalf("links = %+v", links)
+	}
+}
