@@ -51,7 +51,11 @@ The runner is `tools/localmodel-eval`. It drives the same
 `internal/core/localmodel.Serve` and the same `kit/provider/applefm` and
 `kit/provider/responses` adapters Core uses, so the table measures the shipped
 route, not a copy of it. Each case is forced to the path being measured, so both
-paths see the identical input and schema.
+paths see the identical input and schema. Each path also runs with only its own
+model wired: a local schema miss or an unavailable helper cannot reach the main
+model, and a run the route does send elsewhere counts as a miss rather than a
+sample of the other path. Both columns therefore show what their own path
+answered.
 
 ```sh
 # on the desk Mac, in a checkout of this branch
