@@ -11,6 +11,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/compaction"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/grant"
@@ -67,6 +68,12 @@ func (r *conversationRuntime) replayReads(source replay.Source, ep replay.Episod
 			Events []replay.Event `json:"events"`
 			Next   int            `json:"next"`
 		}{events, next})
+	})
+	if err := add(spec, handler); err != nil {
+		return nil, err
+	}
+	spec, handler = r.recallTool(func(ctx context.Context, hit recall.Result) error {
+		return source.RecallVisible(ctx, replay.Scope{Person: r.person, Agent: r.agent}, string(hit.Kind), hit.ID, hit.Revision, hit.Citations)
 	})
 	if err := add(spec, handler); err != nil {
 		return nil, err

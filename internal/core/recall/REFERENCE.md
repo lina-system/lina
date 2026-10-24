@@ -42,9 +42,7 @@ origin, replay, visibility class), matches, ranks and limits without reading a
 published source body. A scope can also restrict only event candidates by
 speaker, which keeps memory items eligible; `recall_person` uses it to read the
 person's own events and never an agent's or tool's words as evidence about the
-person. `PersonMemory` keeps only memory items whose subject is the person,
-before ranking and the limit; `recall_person` and person-only memory search set
-it. Vector candidates go through the same scope predicates and the same
+person. Vector candidates go through the same scope predicates and the same
 restricted-event list before fusion. Query terms are literal, whitespace split,
 at most eight, and any term may match. Documents holding more terms come first
 by BM25 over the pair table; documents found only through the trigram table follow;
@@ -52,23 +50,51 @@ ties go to the newer `occurred_at`. A short term reaches memory items and
 records by a literal scan of the already scoped set. A source that is still
 queued keeps its text in canon; `Match` matches it there, so search does not
 wait for the background drain. A queued event whose body lives in material is
-read through the caller's `EventText` reader, which only `ledger.Store.Search`
-supplies. `recall_doc.text_hash` collapses events with
-identical derived text inside one conversation to the earliest of them. A
+read through the caller's `EventText` reader, which `ledger.Store.Search` and
+the live recall tool supply; it is read only when the requested kinds include
+events. Those hits join the ranked list before the limit, by how many query
+terms they hold and then by newer time. `recall_doc.text_hash` collapses events with
+identical derived text inside one conversation to the earliest of them. An
+event whose `replay_of` or `view_of` chain reaches another candidate is
+represented by that candidate, matched by source id so a queued event without
+an index row collapses the same way. A
 returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
 its lineage counts once: a copy appears when its original is out of scope.
-`recall.Search` adds the bounded masked excerpt and the citations in force at
-the result's revision. `VectorQuery` is the fusion hook for #874.
+Under `Projection` or `ExternalModel`, a summary or record is out when it
+cites a protected event or a summary that reaches one at any depth.
+`recall.Search` adds the bounded excerpt of derived text, applying an inline
+event's stored secret spans so the display placeholder is removed, and the
+citations in force at the result's revision. `VectorQuery` is the fusion hook for #874.
+Its candidates pass the same scope and validity filters as a full-text match
+before they join the list.
 
 Memory items, events and records are the same list: `exec.Memory` asks `Match`
 for events and items together, materializes the item set in one scoped read, and
 reads an event's text only for the results that remain. Its cost follows the
 hits, not the number of person events.
 
+Person-model queries set `PersonOnly`, which filters person-authored events and
+person-subject memory items before ranking and the limit, including queued
+sources. General recall keeps its wider kind/speaker filters. Event bodies in
+materials have a nullable inline body; search resolves those through the bound
+reader or reports unavailable bytes without failing the whole result list.
+
+Restricted-source selection follows protected memory to its evidence, then
+walks current citations back to every dependent memory, record and summary.
+A replay copy or `view_of` event carries its original's text, so protection
+also spreads both ways along `replay_of` and `view_of` links, indexed or queued.
+Replay export applies that same chain to a recorded event reference before it
+returns the excerpt.
+Typed source identities preserve the boundary across nested summary children.
+The same scope predicate applies before limiting indexed, queued and vector-hook
+candidates. Internal reads retain their scope, while projection also excludes
+private evidence. The recursive union terminates citation cycles.
+
 Tests cover atomic native writes, queued sources and exclusions, generation
 fencing, batch bounds, migrations, records revisions, Korean parity, any-term
-ranking, identical-text collapse, lineage, scope and visibility classes,
-retraction, summary navigation, excerpt bounds and the vector hook. The opt-in
+ranking, queued material hits before the limit, identical-text collapse,
+lineage, scope and visibility classes, retraction, summary navigation, excerpt
+bounds, explicit secret spans in excerpts and the vector hook. The opt-in
 store benchmark Core test proves startup fill and socket memory writes/forget
 with the normal running Core.

@@ -151,14 +151,30 @@ func eventValue(e ledger.Event) Event {
 // visible gates original sources before reading content. Forgotten evidence and
 // copies follow canon's existing revocation projection; scope is checked across
 // holders so a common copy cannot launder a private source into an export.
+// Private and never-leaves evidence hides every replay_of or view_of neighbor
+// of the named event, in either direction, so a recorded copy cannot outlive
+// protection of its original.
 func visible(ctx context.Context, tx *canon.Tx, scope Scope, id string) error {
 	var n int
-	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM retract_visible_event e WHERE e.id=? AND e.agent_id=?
+	err := tx.QueryRowContext(ctx, `WITH RECURSIVE copied(child,parent) AS (
+  SELECT id, replay_of FROM conv_event WHERE coalesce(replay_of,'')<>''
+  UNION
+  SELECT event_id, target_id FROM ev_rel WHERE kind='view_of'
+), lineage(id) AS (
+  SELECT ?
+  UNION
+  SELECT c.child FROM copied c JOIN lineage l ON l.id=c.parent
+  UNION
+  SELECT c.parent FROM copied c JOIN lineage l ON l.id=c.child
+)
+SELECT count(*) FROM retract_visible_event e WHERE e.id=? AND e.agent_id=?
  AND (e.material_id IS NULL OR EXISTS(SELECT 1 FROM assets a JOIN asset_revisions r ON r.asset_id=a.id WHERE a.id=e.material_id AND r.revision=e.material_revision AND a.trashed_at=0))
  AND NOT EXISTS(SELECT 1 FROM retract_block b WHERE b.person=? AND b.conversation_id=e.conversation_id)
  AND NOT EXISTS(SELECT 1 FROM conv_event other WHERE other.conversation_id=e.conversation_id AND other.speaker_kind='person' AND other.person_id<>?)
  AND EXISTS(SELECT 1 FROM conv_event owner WHERE owner.conversation_id=e.conversation_id AND owner.agent_id=e.agent_id AND owner.speaker_kind='person' AND owner.person_id=?)
- AND NOT EXISTS(SELECT 1 FROM memory_item m,json_each(m.record,'$.evidence') x WHERE m.person=? AND m.scope IN ('private','never-leaves') AND json_extract(x.value,'$.kind')='event' AND json_extract(x.value,'$.id')=e.id)`, id, scope.Agent, scope.Person, scope.Person, scope.Person, scope.Person).Scan(&n)
+ AND NOT EXISTS(SELECT 1 FROM memory_item m, json_each(m.record,'$.evidence') x, lineage l
+  WHERE m.person=? AND m.scope IN ('private','never-leaves')
+  AND json_extract(x.value,'$.kind')='event' AND json_extract(x.value,'$.id')=l.id)`, id, id, scope.Agent, scope.Person, scope.Person, scope.Person, scope.Person).Scan(&n)
 	if err != nil {
 		return err
 	}

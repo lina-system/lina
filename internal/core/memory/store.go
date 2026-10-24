@@ -404,8 +404,8 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 		found, err := recall.Match(ctx, s.db, recall.Scope{
 			Person: scope.Person, Agent: scope.Agent, Kinds: []recall.Kind{recall.Memory},
 			CommonOnly: scope.CommonOnly, History: q.History, At: q.At,
+			PersonOnly: q.PersonOnly || relationship,
 			Projection: scope.Projection, ExternalModel: scope.ExternalModel,
-			PersonMemory: q.PersonOnly || relationship,
 		}, recall.Query{Text: q.Text})
 		if err != nil {
 			return nil, err
@@ -542,10 +542,26 @@ func restrictedEvents(ctx context.Context, tx *canon.Tx, scope RecallScope) (map
 	// Only event ids leave this query; candidate records still use RecallScope.
 	// The citation index supplies the item's current evidence without decoding
 	// or copying the record JSON.
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT c.target_id
+	// The same ancestry as recall: a replay copy or view_of of protected
+	// evidence is protected too, in either direction, so expand cannot read
+	// the copy by id after search has hidden it.
+	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE sensitive(id) AS (
+  SELECT DISTINCT c.target_id
   FROM cite c JOIN memory_item m ON m.id=c.view_id
   WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL
-  AND m.person=? AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))`,
+  AND m.person=? AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))
+), copied(child,parent) AS (
+  SELECT id, replay_of FROM conv_event WHERE coalesce(replay_of,'')<>''
+  UNION
+  SELECT event_id, target_id FROM ev_rel WHERE kind='view_of'
+), restricted(id) AS (
+  SELECT id FROM sensitive
+  UNION
+  SELECT c.child FROM copied c JOIN restricted r ON r.id=c.parent
+  UNION
+  SELECT c.parent FROM copied c JOIN restricted r ON r.id=c.child
+)
+SELECT id FROM restricted`,
 		scope.Person, scope.Projection, scope.ExternalModel)
 	if err != nil {
 		return nil, err

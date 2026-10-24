@@ -93,26 +93,33 @@ func TestExportMasksSecretKeysInRecordedJSON(t *testing.T) {
 
 func TestReplayLocalReadRunsLiveWithoutRecordedResult(t *testing.T) {
 	t.Parallel()
-	readCalls, rounds := 0, 0
-	call := provider.ToolCall{ID: "read", Name: "expand", Arguments: `{"id":"event"}`}
-	tool := loop.Tool{Validate: func(provider.ToolCall) (string, error) { return "", nil }, Execute: func(context.Context, provider.ToolCall) loop.Result {
-		readCalls++
-		return loop.Result{ID: call.ID, Code: loop.OK, Output: json.RawMessage(`{"text":"current visible source"}`)}
-	}}
-	_, err := Run(t.Context(), RunConfig{Request: provider.Request{Tools: []provider.ToolDecl{json.RawMessage(`{"type":"function","name":"expand"}`)}}, Calls: []Call{{Call: call}}, Reads: map[string]loop.Tool{"expand": tool}, Stream: func(_ context.Context, r provider.Request) (provider.Stream, error) {
-		rounds++
-		if rounds == 1 {
-			raw, _ := json.Marshal(map[string]any{"type": "function_call", "call_id": call.ID, "name": call.Name, "arguments": call.Arguments})
-			return &stream{[]provider.Event{{Kind: provider.ItemDone, Item: raw}, {Kind: provider.ToolCallReady, Call: &call}, {Kind: provider.Terminal}}}, nil
-		}
-		raw, _ := json.Marshal(r.Items)
-		if !strings.Contains(string(raw), "current visible source") {
-			t.Fatal("live result missing")
-		}
-		return &stream{[]provider.Event{{Kind: provider.Terminal}}}, nil
-	}})
-	if err != nil || readCalls != 1 || rounds != 2 {
-		t.Fatalf("reads=%d rounds=%d err=%v", readCalls, rounds, err)
+	for _, name := range []string{"expand", "recall", "recall_person"} {
+		t.Run(name, func(t *testing.T) {
+			if !LocalRead(name) {
+				t.Fatal("sandbox broker refuses the read family")
+			}
+			readCalls, rounds := 0, 0
+			call := provider.ToolCall{ID: "read", Name: name, Arguments: `{"id":"event"}`}
+			tool := loop.Tool{Validate: func(provider.ToolCall) (string, error) { return "", nil }, Execute: func(context.Context, provider.ToolCall) loop.Result {
+				readCalls++
+				return loop.Result{ID: call.ID, Code: loop.OK, Output: json.RawMessage(`{"text":"current visible source"}`)}
+			}}
+			_, err := Run(t.Context(), RunConfig{Request: provider.Request{Tools: []provider.ToolDecl{json.RawMessage(`{"type":"function","name":"` + name + `"}`)}}, Calls: []Call{{Call: call}}, Reads: map[string]loop.Tool{name: tool}, Stream: func(_ context.Context, r provider.Request) (provider.Stream, error) {
+				rounds++
+				if rounds == 1 {
+					raw, _ := json.Marshal(map[string]any{"type": "function_call", "call_id": call.ID, "name": call.Name, "arguments": call.Arguments})
+					return &stream{[]provider.Event{{Kind: provider.ItemDone, Item: raw}, {Kind: provider.ToolCallReady, Call: &call}, {Kind: provider.Terminal}}}, nil
+				}
+				raw, _ := json.Marshal(r.Items)
+				if !strings.Contains(string(raw), "current visible source") {
+					t.Fatal("live result missing")
+				}
+				return &stream{[]provider.Event{{Kind: provider.Terminal}}}, nil
+			}})
+			if err != nil || readCalls != 1 || rounds != 2 {
+				t.Fatalf("reads=%d rounds=%d err=%v", readCalls, rounds, err)
+			}
+		})
 	}
 }
 

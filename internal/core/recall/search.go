@@ -48,17 +48,11 @@ type Scope struct {
 	Conversation string
 	Since, Until time.Time
 	SpeakerKind  guard.SpeakerKind
-	// EventSpeakerKind restricts event candidates only. Memory items and
-	// records carry no speaker of their own, so recall_person uses this to keep
-	// agent and tool words out of the evidence about the person while items
-	// stay eligible.
-	EventSpeakerKind guard.SpeakerKind
-	// PersonMemory limits memory candidates to items whose subject is the
-	// person. recall_person sets it so an item about a third party or the
-	// world is never evidence about the person.
-	PersonMemory bool
 	Origin       string
 	CommonOnly   bool
+	// PersonOnly restricts person-model queries to person-authored events and
+	// person-subject memory items, before ranking and the result limit.
+	PersonOnly bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
 	// with its lineage, so it surfaces only when its original is not a
 	// candidate: a copy appears only when asked, through its original.
@@ -189,7 +183,7 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 		return nil, nil
 	}
 	kinds := kindsOf(scope)
-	lineageEvents := containsKind(kinds, Event)
+	withEvents := containsKind(kinds, Event)
 	at := scope.At
 	if at == 0 {
 		at = time.Now().Unix()
@@ -197,9 +191,10 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	restricted := scope.Projection || scope.ExternalModel
 	var with []string
 	var withArgs []any
-	if cte, cteArgs := restrictedCTE(scope); cte != "" {
-		with = append(with, cte)
-		withArgs = append(withArgs, cteArgs...)
+	if restricted {
+		fragment, args := restrictedSources(scope)
+		with = append(with, fragment)
+		withArgs = append(withArgs, args...)
 	}
 	if len(pairPhrases) > 0 {
 		with = append(with, `pair AS MATERIALIZED (SELECT rowid AS doc, bm25(recall_pair) AS score FROM recall_pair WHERE recall_pair MATCH ?)`)
@@ -264,15 +259,15 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	args = append(args, indexArgs...)
 	args = append(args, olderSArgs...)
 	args = append(args, queuedArgs...)
-	var external []Hit
-	if query.EventText != nil {
+	var external []materialHit
+	if query.EventText != nil && withEvents {
 		var err error
 		external, err = pendingEventText(ctx, db, scope, at, restricted, terms, query.EventText)
 		if err != nil {
 			return nil, err
 		}
 	}
-	statement := `WITH ` + strings.Join(with, ",\n") + `,
+	statement := `WITH RECURSIVE ` + strings.Join(with, ",\n") + `,
 candidates AS MATERIALIZED (
  SELECT d.id,d.kind,d.source_id,d.revision,d.occurred_at,d.holder,d.conversation,d.text_hash,d.replay,
   p.score AS score,(p.doc IS NOT NULL) AS paired,(t.doc IS NOT NULL) AS trigram,` + olderD + ` AS older
@@ -284,19 +279,19 @@ candidates AS MATERIALIZED (
  FROM recall_source s JOIN recall_pending q ON q.kind=s.kind AND q.source_id=s.source_id
  WHERE ` + strings.Join(pendingWhere, "\n AND ") + `
 ),
-` + lineageCTE(lineageEvents) + `
+` + lineageCTE(withEvents) + `
 dedup AS (
  SELECT c.id,c.kind,c.source_id,c.revision,c.occurred_at,c.holder,c.conversation,c.score,c.paired,c.trigram,c.older,
   CASE WHEN c.kind='event' AND c.text_hash IS NOT NULL AND c.replay=0 THEN row_number() OVER (
    PARTITION BY c.conversation,c.text_hash ORDER BY julianday(c.occurred_at),c.source_id) ELSE 1 END AS twin
- FROM candidates c` + lineageFilter(lineageEvents) + `)
+ FROM candidates c` + lineageFilter(withEvents) + `)
 SELECT kind,source_id,revision,occurred_at,holder,older FROM dedup WHERE twin=1 AND (?=1 OR older=0)
 ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianday(occurred_at) DESC, source_id`
 	args = append(args, boolInt(scope.History))
 	limit := query.Limit
 	if limit > 0 {
 		statement += " LIMIT ?"
-		args = append(args, limit+len(external))
+		args = append(args, limit)
 	}
 	var hits []Hit
 	err := db.Read(ctx, func(tx *canon.Tx) error {
@@ -323,7 +318,17 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 	if err != nil {
 		return nil, err
 	}
-	hits = append(hits, external...)
+	// Queued material hits are not in the FTS tables yet. Rank them with the
+	// indexed matches, by how many query terms they hold and then by time,
+	// before the limit. Placing every one after the indexed list drops them
+	// once that list already fills the limit.
+	if len(external) > 0 {
+		cover, err := termCoverage(ctx, db, hits, terms)
+		if err != nil {
+			return nil, err
+		}
+		hits = mergeMaterial(hits, cover, external)
+	}
 	if limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}
@@ -336,7 +341,14 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 // pendingEventText reads the derived text of queued events whose body lives in
 // material, so a caller with material access sees them before the background
 // drain publishes them. The scan is bounded by the queue, never the corpus.
-func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, restricted bool, terms []term, readEvent ReadEvent) ([]Hit, error) {
+// materialHit is a queued material-backed event that matched in memory,
+// with how many of the query's terms its text holds.
+type materialHit struct {
+	Hit
+	coverage int
+}
+
+func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, restricted bool, terms []term, readEvent ReadEvent) ([]materialHit, error) {
 	var lowered []string
 	for _, t := range terms {
 		if t.runes >= 3 || t.pair {
@@ -351,10 +363,13 @@ func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, rest
 		"NOT EXISTS(SELECT 1 FROM recall_doc x WHERE x.kind=s.kind AND x.source_id=s.source_id)",
 		"s.body IS NULL")
 	prefix := ""
-	if cte, cteArgs := restrictedCTE(scope); cte != "" {
-		prefix = "WITH " + cte + " "
-		args = append(cteArgs, args...)
+	var prefixArgs []any
+	if restricted {
+		fragment, values := restrictedSources(scope)
+		prefix = "WITH RECURSIVE " + fragment + " "
+		prefixArgs = values
 	}
+	args = append(prefixArgs, args...)
 	var queued []Hit
 	err := db.Read(ctx, func(tx *canon.Tx) error {
 		rows, err := tx.QueryContext(ctx, prefix+`SELECT s.source_id,s.revision,s.occurred_at,s.holder
@@ -379,21 +394,158 @@ func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, rest
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Hit, 0, len(queued))
+	out := make([]materialHit, 0, len(queued))
 	for _, h := range queued {
 		text, err := readEvent(ctx, h.ID)
 		if err != nil {
 			continue
 		}
 		text = strings.ToLower(text)
+		n := 0
 		for _, term := range lowered {
 			if strings.Contains(text, term) {
-				out = append(out, h)
-				break
+				n++
 			}
+		}
+		if n > 0 {
+			out = append(out, materialHit{Hit: h, coverage: n})
 		}
 	}
 	return out, nil
+}
+
+func coverageKey(kind Kind, id string) string { return string(kind) + "\x00" + id }
+
+// termCoverage counts how many query terms each already-ranked hit holds.
+// Indexed rows use the same FTS tables as the rank query. Queued inline rows
+// still have a body, so they use that text.
+func termCoverage(ctx context.Context, db Canon, hits []Hit, terms []term) (map[string]int, error) {
+	cover := map[string]int{}
+	var counted []term
+	for _, term := range terms {
+		if term.runes >= 3 || term.pair {
+			counted = append(counted, term)
+		}
+	}
+	if len(hits) == 0 || len(counted) == 0 {
+		return cover, nil
+	}
+	want := map[string]bool{}
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		want[coverageKey(hit.Kind, hit.ID)] = true
+		ids = append(ids, hit.ID)
+	}
+	encoded, err := jsonArray(ids)
+	if err != nil {
+		return nil, err
+	}
+	err = db.Read(ctx, func(tx *canon.Tx) error {
+		indexed := map[string]bool{}
+		rows, err := tx.QueryContext(ctx, `SELECT kind, source_id FROM recall_doc WHERE source_id IN (SELECT value FROM json_each(?))`, encoded)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var kind, id string
+			if err := rows.Scan(&kind, &id); err != nil {
+				rows.Close()
+				return err
+			}
+			indexed[coverageKey(Kind(kind), id)] = true
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, term := range counted {
+			keys, err := docsHolding(ctx, tx, encoded, term)
+			if err != nil {
+				return err
+			}
+			for _, key := range keys {
+				if want[key] && indexed[key] {
+					cover[key]++
+				}
+			}
+		}
+		rows, err = tx.QueryContext(ctx, `SELECT kind, source_id, body FROM recall_source WHERE body IS NOT NULL AND source_id IN (SELECT value FROM json_each(?))`, encoded)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var kind, id, body string
+			if err := rows.Scan(&kind, &id, &body); err != nil {
+				return err
+			}
+			key := coverageKey(Kind(kind), id)
+			if !want[key] || indexed[key] {
+				continue
+			}
+			lower := strings.ToLower(body)
+			for _, term := range counted {
+				if strings.Contains(lower, strings.ToLower(term.text)) {
+					cover[key]++
+				}
+			}
+		}
+		return rows.Err()
+	})
+	return cover, err
+}
+
+func docsHolding(ctx context.Context, tx *canon.Tx, encoded string, term term) ([]string, error) {
+	table, match := "recall_text", "recall_text"
+	if term.pair {
+		table, match = "recall_pair", "recall_pair"
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT d.kind, d.source_id FROM recall_doc d JOIN `+table+` f ON f.rowid=d.id WHERE `+match+` MATCH ? AND d.source_id IN (SELECT value FROM json_each(?))`, canon.TrigramPhrase(term.text), encoded)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var kind, id string
+		if err := rows.Scan(&kind, &id); err != nil {
+			return nil, err
+		}
+		keys = append(keys, coverageKey(Kind(kind), id))
+	}
+	return keys, rows.Err()
+}
+
+// mergeMaterial inserts queued material hits into the ranked list before the
+// limit is applied. More of the query's terms come first; equal coverage
+// keeps the newer event. Indexed hits keep the order BM25 already gave them.
+func mergeMaterial(hits []Hit, cover map[string]int, external []materialHit) []Hit {
+	out := append([]Hit(nil), hits...)
+	for _, ext := range external {
+		at := len(out)
+		for i, hit := range out {
+			if materialOutranks(ext, cover[coverageKey(hit.Kind, hit.ID)], hit) {
+				at = i
+				break
+			}
+		}
+		out = append(out, Hit{})
+		copy(out[at+1:], out[at:])
+		out[at] = ext.Hit
+		cover[coverageKey(ext.Kind, ext.ID)] = ext.coverage
+	}
+	return out
+}
+
+func materialOutranks(ext materialHit, otherCoverage int, other Hit) bool {
+	if ext.coverage != otherCoverage {
+		return ext.coverage > otherCoverage
+	}
+	if !ext.OccurredAt.Equal(other.OccurredAt) {
+		return ext.OccurredAt.After(other.OccurredAt)
+	}
+	return ext.ID < other.ID
 }
 
 // lineageCTE walks each candidate event's replay_of and view_of chain. A
@@ -419,20 +571,7 @@ func lineageFilter(enabled bool) string {
 	if !enabled {
 		return ""
 	}
-	return ` WHERE c.kind<>'event' OR c.id NOT IN (SELECT d.id FROM candidates d JOIN derived x ON x.id=d.source_id)`
-}
-
-// restrictedCTE lists the events protected by a private or never-leaves memory
-// item for the caller's person. Empty when the scope reads everything.
-func restrictedCTE(scope Scope) (string, []any) {
-	if !scope.Projection && !scope.ExternalModel {
-		return "", nil
-	}
-	return `restricted AS (
-  SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
-  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
-   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves')))`,
-		[]any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel)}
+	return ` WHERE c.kind<>'event' OR c.source_id NOT IN (SELECT x.id FROM derived x)`
 }
 
 func holderCondition(scope Scope, alias string) string {
@@ -440,6 +579,38 @@ func holderCondition(scope Scope, alias string) string {
 		return alias + ".holder='all'"
 	}
 	return alias + ".holder IN (?,'all')"
+}
+
+// Follow protected memory to its evidence, then protect every current view
+// that depends on any of those sources. A replay copy or view_of event carries
+// its original's text, so protection also spreads both ways along those links
+// before anything cites them. Typed identities and UNION terminate cycles
+// without confusing equal ids belonging to different source kinds.
+func restrictedSources(scope Scope) (string, []any) {
+	return `sensitive(kind,id) AS (
+ SELECT 'memory',m.id FROM memory_item m WHERE m.person=?
+  AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))
+ UNION
+ SELECT c.target_kind,c.target_id FROM cite c JOIN sensitive s ON c.view_kind=s.kind AND c.view_id=s.id
+  WHERE c.dropped_revision IS NULL
+), copied(child,parent) AS MATERIALIZED (
+ SELECT e.id,e.replay_of FROM recall_doc d JOIN conv_event e ON e.id=d.source_id
+  WHERE d.person=? AND d.kind='event' AND d.replay=1 AND coalesce(e.replay_of,'')<>''
+ UNION ALL
+ SELECT e.id,e.replay_of FROM recall_pending q JOIN conv_event e ON e.id=q.source_id
+  WHERE q.kind='event' AND coalesce(e.replay_of,'')<>''
+ UNION ALL
+ SELECT event_id,target_id FROM ev_rel WHERE kind='view_of'
+), restricted(kind,id) AS (
+ SELECT kind,id FROM sensitive
+ UNION
+ SELECT c.view_kind,c.view_id FROM cite c JOIN restricted r ON c.target_kind=r.kind AND c.target_id=r.id
+  WHERE c.dropped_revision IS NULL
+ UNION
+ SELECT 'event',l.child FROM copied l JOIN restricted r ON r.kind='event' AND r.id=l.parent
+ UNION
+ SELECT 'event',l.parent FROM copied l JOIN restricted r ON r.kind='event' AND r.id=l.child
+)`, []any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel), scope.Person}
 }
 
 // scopeWhere applies the scope before matching. It is shared by the published
@@ -471,9 +642,9 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 		where = append(where, alias+".speaker_kind=?")
 		args = append(args, string(scope.SpeakerKind))
 	}
-	if scope.EventSpeakerKind != "" {
-		where = append(where, "("+alias+".kind<>'event' OR "+alias+".speaker_kind=?)")
-		args = append(args, string(scope.EventSpeakerKind))
+	if scope.PersonOnly {
+		where = append(where, `((`+alias+`.kind='event' AND `+alias+`.speaker_kind='person')
+ OR (`+alias+`.kind='memory' AND EXISTS(SELECT 1 FROM memory_item m WHERE m.id=`+alias+`.source_id AND m.subject_kind='person')))`)
 	}
 	if scope.Origin != "" {
 		where = append(where, "json_extract("+alias+".origin,'$.kind')=?")
@@ -489,21 +660,9 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	if containsKind(kinds, Memory) {
 		where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item v WHERE v.id=`+alias+`.source_id AND v.valid_from<=?))`)
 		args = append(args, at)
-		if scope.PersonMemory {
-			where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item p WHERE p.id=`+alias+`.source_id AND p.subject_kind='person'))`)
-		}
-		if restricted {
-			where = append(where, `(`+alias+`.kind<>'memory' OR NOT EXISTS(SELECT 1 FROM memory_item s WHERE s.id=`+alias+`.source_id
-   AND ((?=1 AND s.scope IN ('private','never-leaves')) OR (?=1 AND s.scope='never-leaves'))))`)
-			args = append(args, boolInt(scope.Projection), boolInt(scope.ExternalModel))
-			where = append(where, `(`+alias+`.kind<>'memory' OR NOT EXISTS(SELECT 1 FROM cite c2 JOIN restricted r2 ON r2.id=c2.target_id
-   WHERE c2.view_kind='memory' AND c2.view_id=`+alias+`.source_id AND c2.dropped_revision IS NULL))`)
-		}
 	}
 	if restricted {
-		where = append(where, `(`+alias+`.kind<>'event' OR NOT EXISTS(SELECT 1 FROM restricted r WHERE r.id=`+alias+`.source_id))`)
-		where = append(where, `(`+alias+`.kind NOT IN ('summary','record') OR NOT EXISTS(SELECT 1 FROM cite c3 JOIN restricted r3 ON r3.id=c3.target_id
-   WHERE c3.view_kind=`+alias+`.kind AND c3.view_id=`+alias+`.source_id AND c3.dropped_revision IS NULL))`)
+		where = append(where, "NOT EXISTS(SELECT 1 FROM restricted r WHERE r.kind="+alias+".kind AND r.id="+alias+".source_id)")
 	}
 	return where, args
 }
@@ -628,6 +787,8 @@ func fuse(ctx context.Context, db Canon, scope Scope, query Query, text []Hit) (
 	return lineage(ctx, db, scope, out)
 }
 
+// byIDs loads vector candidates. They pass the same scope and validity
+// filters as a full-text match, then keep the vector order.
 func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -636,18 +797,31 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 	if err != nil {
 		return nil, err
 	}
+	kinds := kindsOf(scope)
 	at := scope.At
 	if at == 0 {
 		at = time.Now().Unix()
 	}
-	where, args := scopeWhere(scope, kindsOf(scope), at, scope.Projection || scope.ExternalModel, "d")
+	restricted := scope.Projection || scope.ExternalModel
+	where, whereArgs := scopeWhere(scope, kinds, at, restricted, "d")
 	where = append(where, "d.source_id IN (SELECT value FROM json_each(?))")
-	args = append(args, encoded)
-	prefix := ""
-	if cte, cteArgs := restrictedCTE(scope); cte != "" {
-		prefix = "WITH " + cte + " "
-		args = append(cteArgs, args...)
+	whereArgs = append(whereArgs, encoded)
+	// History keeps a past or superseded item and marks it Older. Otherwise the
+	// same predicate drops it, matching a full-text match.
+	older, olderArgs := olderExpr(kinds, at, "d")
+	if !scope.History {
+		where = append(where, "("+older+")=0")
+		whereArgs = append(whereArgs, olderArgs...)
 	}
+	prefix := ""
+	var args []any
+	if restricted {
+		fragment, prefixArgs := restrictedSources(scope)
+		prefix = "WITH RECURSIVE " + fragment + " "
+		args = append(args, prefixArgs...)
+	}
+	args = append(args, olderArgs...)
+	args = append(args, whereArgs...)
 	order := map[string]int{}
 	for i, id := range ids {
 		if _, ok := order[id]; !ok {
@@ -656,7 +830,7 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 	}
 	var hits []Hit
 	err = db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, prefix+`SELECT d.source_id,d.kind,d.revision,d.occurred_at,d.holder FROM recall_doc d
+		rows, err := tx.QueryContext(ctx, prefix+`SELECT d.source_id,d.kind,d.revision,d.occurred_at,d.holder,`+older+` FROM recall_doc d
    WHERE `+strings.Join(where, " AND "), args...)
 		if err != nil {
 			return err
@@ -665,10 +839,12 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		for rows.Next() {
 			var h Hit
 			var occurred string
-			if err := rows.Scan(&h.ID, &h.Kind, &h.Revision, &occurred, &h.Holder); err != nil {
+			var past int
+			if err := rows.Scan(&h.ID, &h.Kind, &h.Revision, &occurred, &h.Holder, &past); err != nil {
 				return err
 			}
 			h.OccurredAt, _ = time.Parse(time.RFC3339Nano, occurred)
+			h.Older = past == 1
 			hits = append(hits, h)
 		}
 		return rows.Err()
@@ -818,7 +994,9 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 			}
 			return text, nil
 		}
-		return body.String, nil
+		// Stored spans address the display body. The excerpt is derived text:
+		// flagged secrets are removed, not left as the display placeholder.
+		return maskDerived(body.String, spans)
 	case Memory:
 		var text string
 		err := db.Read(ctx, func(tx *canon.Tx) error {
