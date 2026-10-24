@@ -65,7 +65,9 @@ reference on the event stays the live one, so a source connected later joins the
 imported records. One run admits one row per platform key, murmur's archive value
 wins over a live value, a changed row without a later edit is reported as a
 conflict, and a record whose stored speaker kind differs from the confirmed map
-gets a new revision that supersedes it.
+gets a new revision that supersedes it. A record whose reply or thread target is
+in the same run is admitted after that target, whatever their source order, so
+its relation survives; a cycle of replies keeps the relations it can.
 
 ## Coverage
 
