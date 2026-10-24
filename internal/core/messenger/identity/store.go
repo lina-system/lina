@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -293,6 +294,17 @@ type Observer struct {
 	store  *Store
 	people []Person
 	now    time.Time
+	// moved holds links whose end moved back to an earlier sighting. Their
+	// invalidated items are retracted after the transaction commits.
+	moved []movedLink
+}
+
+// movedLink is a link whose end moved back to an earlier sighting, with the
+// items that cited it inside the newly invalid window.
+type movedLink struct {
+	id       string
+	items    []string
+	requeued bool
 }
 
 // Prepare reads the people records once for a matching transaction.
@@ -310,7 +322,27 @@ func (s *Store) Observe(ctx context.Context, observation Observation) error {
 	if err != nil {
 		return err
 	}
-	return s.db.Write(ctx, func(tx *canon.Tx) error { return observer.ObserveTx(ctx, tx, observation) })
+	if err := s.db.Write(ctx, func(tx *canon.Tx) error { return observer.ObserveTx(ctx, tx, observation) }); err != nil {
+		return err
+	}
+	return observer.Repair(ctx)
+}
+
+// Repair retracts the items a moved cutoff invalidated, through the one
+// retraction path. It runs after the transaction that recorded the move, so a
+// failed retraction leaves the link already unusable.
+func (o *Observer) Repair(ctx context.Context) error {
+	if o == nil || o.store == nil {
+		return nil
+	}
+	moved := o.moved
+	o.moved = nil
+	for _, link := range moved {
+		if _, err := o.store.retract(ctx, link.id, link.items, link.requeued); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ObserveTx records one sender, its names and its identifiers, then matches it.
@@ -414,9 +446,11 @@ ON CONFLICT(platform,scope,user,kind,value,source) DO UPDATE SET
 			reason = ReasonIdentifierReused
 			target, signals = "", nil
 			offered = append(offered, linkRecords(otherLinks)...)
-			if err := s.endValidity(ctx, tx, otherLinks, identifier.Kind, identifier.Value, at); err != nil {
+			moved, err := s.endValidity(ctx, tx, otherLinks, identifier, at)
+			if err != nil {
 				return err
 			}
+			o.moved = append(o.moved, moved...)
 		}
 	}
 	active := 0
@@ -633,30 +667,118 @@ func (s *Store) namesTx(ctx context.Context, tx *canon.Tx, id Identity) ([]strin
 }
 
 // endValidity ends the earlier link's validity when an identifier moves to
-// another identity.
-func (s *Store) endValidity(ctx context.Context, tx *canon.Tx, links []Link, kind Kind, value string, at time.Time) error {
+// another identity. The end is the earliest sighting of the move: evidence can
+// arrive out of order, so a backfilled earlier sighting moves the end back, and
+// nothing ever moves it later. A link that already ended returns the items it
+// produced inside the newly invalid window, for the caller to retract after the
+// transaction commits.
+func (s *Store) endValidity(ctx context.Context, tx *canon.Tx, links []Link, identifier storedIdentifier, at time.Time) ([]movedLink, error) {
+	var moved []movedLink
 	for _, link := range links {
-		if link.State != Active || !link.ValidThrough.IsZero() {
+		if link.State != Active {
 			continue
 		}
 		used := false
 		for _, signal := range link.Signals {
-			if signal.Kind == string(kind) && signal.Value == value {
+			if signal.Kind == string(identifier.Kind) && signal.Value == identifier.Value {
 				used = true
 				break
 			}
 		}
-		if !used || (!link.ValidFrom.IsZero() && !at.After(link.ValidFrom)) {
+		if !used {
+			continue
+		}
+		if link.ValidThrough.IsZero() {
+			if !link.ValidFrom.IsZero() && !at.After(link.ValidFrom) {
+				continue
+			}
+		} else if !at.Before(link.ValidThrough) {
+			// The move is already recorded at or before this sighting.
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE identity_link SET valid_through=?,revision=revision+1 WHERE id=?", formatTime(at), link.ID); err != nil {
-			return err
+			return nil, err
+		}
+		if err := writeSignals(ctx, tx, link.ID, []Signal{{Kind: string(identifier.Kind), Source: identifier.Source, Value: identifier.Value}}); err != nil {
+			return nil, err
 		}
 		if err := writeChange(ctx, tx, link.ID, link.Revision+1, "moved", link.Class, link.State, link.Record, MatcherVersion, at); err != nil {
-			return err
+			return nil, err
+		}
+		if link.ValidThrough.IsZero() {
+			// The link had no end yet, so nothing it produced became invalid.
+			continue
+		}
+		items, err := s.citingItemsBetween(ctx, tx, link.ID, at, link.ValidThrough)
+		if err != nil {
+			return nil, err
+		}
+		requeued, err := s.requeueFromTx(ctx, tx, link.Identity, at, "link validity moved")
+		if err != nil {
+			return nil, err
+		}
+		moved = append(moved, movedLink{id: link.ID, items: items, requeued: requeued})
+	}
+	return moved, nil
+}
+
+// citingItemsBetween lists the memory items a link produced whose evidence falls
+// in [from, through). An item with no evidence time cannot be placed in the
+// window and is left alone.
+func (s *Store) citingItemsBetween(ctx context.Context, tx *canon.Tx, linkID string, from, through time.Time) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT a.id, m.record FROM identity_artifact a
+JOIN retract_visible_memory m ON m.id=a.id AND m.person=?
+WHERE a.link=? AND a.kind='item'`, s.person, linkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			return nil, err
+		}
+		var item memory.Item
+		if json.Unmarshal(raw, &item) != nil {
+			continue
+		}
+		if inWindow(from, through, item.ValidFrom) {
+			items = append(items, id)
+			continue
+		}
+		for _, evidence := range item.Evidence {
+			if inWindow(from, through, evidence.OccurredAt) {
+				items = append(items, id)
+				break
+			}
 		}
 	}
-	return nil
+	return items, rows.Err()
+}
+
+// inWindow reports whether a unix second falls in [from, through).
+func inWindow(from, through time.Time, unix int64) bool {
+	if unix == 0 {
+		return false
+	}
+	at := time.Unix(unix, 0).UTC()
+	return !at.Before(from) && at.Before(through)
+}
+
+// requeueFromTx queues only this identity's messages from one time, which is the
+// start of a window a repair invalidated.
+func (s *Store) requeueFromTx(ctx context.Context, tx *canon.Tx, id Identity, from time.Time, reason string) (bool, error) {
+	if from.IsZero() {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO identity_requeue(platform,scope,user,from_at,reason,queued_at) VALUES(?,?,?,?,?,?)
+ON CONFLICT(platform,scope,user,from_at) DO NOTHING`,
+		id.Platform, id.Scope, id.User, formatTime(from), reason, formatTime(s.now())); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // assess derives an exact link's ambiguity from the identity's current

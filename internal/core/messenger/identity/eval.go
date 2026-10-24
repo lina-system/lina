@@ -25,6 +25,7 @@ type Set struct {
 	People      []SetPerson    `json:"people"`
 	Identities  []SetIdentity  `json:"identities"`
 	Ambiguities []SetAmbiguity `json:"ambiguities,omitempty"`
+	Windows     []SetWindow    `json:"windows,omitempty"`
 }
 
 // SetPerson is one people record in a set.
@@ -48,9 +49,23 @@ type SetIdentity struct {
 	User        string       `json:"user"`
 	Self        bool         `json:"self,omitempty"`
 	At          string       `json:"at"`
+	ObservedAt  string       `json:"observed_at,omitempty"`
 	Names       []string     `json:"names,omitempty"`
 	Identifiers []SetContact `json:"identifiers,omitempty"`
 	Expect      string       `json:"expect"`
+}
+
+// SetWindow is a period in which a link to a record must not be usable: the
+// evidence of the identifier's move arrived out of order, and the link's end
+// must be the earliest move, not the sighting that arrived first.
+type SetWindow struct {
+	Platform string `json:"platform"`
+	Scope    string `json:"scope,omitempty"`
+	User     string `json:"user"`
+	Record   string `json:"record"`
+	From     string `json:"from"`
+	Until    string `json:"until"`
+	Why      string `json:"why,omitempty"`
 }
 
 // SetAmbiguity is one ambiguity the set plants: this identity must be flagged
@@ -79,6 +94,8 @@ type Measures struct {
 	AmbiguitiesFlagged  int
 	Proposals           int
 	ProposalTop1        int
+	Windows             int
+	WindowsRejected     int
 	Repair              RepairMeasure
 }
 
@@ -126,9 +143,10 @@ func (m Measures) WrongRateBound() float64 {
 }
 
 // Gate reports whether the matcher may be used for learning: no wrong usable
-// link and every planted ambiguity flagged.
+// link, every planted ambiguity flagged, and every moved-identifier window
+// rejected.
 func (m Measures) Gate() bool {
-	return m.WrongLinks == 0 && m.AmbiguitiesFlagged == m.Ambiguities
+	return m.WrongLinks == 0 && m.AmbiguitiesFlagged == m.Ambiguities && m.WindowsRejected == m.Windows
 }
 
 // LoadSet reads an evaluation set.
@@ -161,10 +179,28 @@ func ParseSet(data []byte) (Set, error) {
 		if _, err := time.Parse(time.RFC3339, identity.At); err != nil {
 			return Set{}, ErrInvalid
 		}
+		if identity.ObservedAt != "" {
+			if _, err := time.Parse(time.RFC3339, identity.ObservedAt); err != nil {
+				return Set{}, ErrInvalid
+			}
+		}
 		for _, contact := range identity.Identifiers {
 			if _, err := Normalize(contact.Kind, contact.Value); err != nil {
 				return Set{}, fmt.Errorf("%w: %s %q", ErrInvalid, contact.Kind, contact.Value)
 			}
+		}
+	}
+	for _, window := range set.Windows {
+		if !(Identity{Platform: window.Platform, Scope: window.Scope, User: window.User}).valid() || window.Record == "" {
+			return Set{}, ErrInvalid
+		}
+		from, err := time.Parse(time.RFC3339, window.From)
+		if err != nil {
+			return Set{}, ErrInvalid
+		}
+		until, err := time.Parse(time.RFC3339, window.Until)
+		if err != nil || !until.After(from) {
+			return Set{}, ErrInvalid
 		}
 	}
 	return set, nil
@@ -206,7 +242,15 @@ func Evaluate(ctx context.Context, store *Store, set Set) (Measures, error) {
 	}
 	run := store.WithPeople(people)
 	identities := append([]SetIdentity(nil), set.Identities...)
-	sort.SliceStable(identities, func(i, j int) bool { return identities[i].At < identities[j].At })
+	// Evidence can arrive out of order: a backfill is observed after a later
+	// sighting. ObservedAt is the arrival order; At stays the sighting time.
+	arrival := func(identity SetIdentity) string {
+		if identity.ObservedAt != "" {
+			return identity.ObservedAt
+		}
+		return identity.At
+	}
+	sort.SliceStable(identities, func(i, j int) bool { return arrival(identities[i]) < arrival(identities[j]) })
 	var latest time.Time
 	for _, identity := range identities {
 		at, err := time.Parse(time.RFC3339, identity.At)
@@ -215,6 +259,9 @@ func Evaluate(ctx context.Context, store *Store, set Set) (Measures, error) {
 		}
 		if at.After(latest) {
 			latest = at
+		}
+		if seen, err := time.Parse(time.RFC3339, arrival(identity)); err == nil && seen.After(latest) {
+			latest = seen
 		}
 		observation := Observation{
 			Identity: Identity{Platform: identity.Platform, Scope: identity.Scope, User: identity.User},
@@ -232,7 +279,7 @@ func Evaluate(ctx context.Context, store *Store, set Set) (Measures, error) {
 		}
 	}
 	now := latest.Add(time.Second)
-	measures := Measures{Identities: len(identities), Ambiguities: len(set.Ambiguities)}
+	measures := Measures{Identities: len(identities), Ambiguities: len(set.Ambiguities), Windows: len(set.Windows)}
 	for _, identity := range identities {
 		id := Identity{Platform: identity.Platform, Scope: identity.Scope, User: identity.User}
 		links, err := run.Links(ctx, id)
@@ -273,12 +320,46 @@ func Evaluate(ctx context.Context, store *Store, set Set) (Measures, error) {
 			measures.AmbiguitiesFlagged++
 		}
 	}
+	for _, window := range set.Windows {
+		rejected, err := windowRejected(ctx, run, window)
+		if err != nil {
+			return Measures{}, err
+		}
+		if rejected {
+			measures.WindowsRejected++
+		}
+	}
 	repair, err := measureRepair(ctx, run, set, now)
 	if err != nil {
 		return Measures{}, err
 	}
 	measures.Repair = repair
 	return measures, nil
+}
+
+// windowRejected reports whether a link to the window's record is unusable at
+// every moment of the window, including its end.
+func windowRejected(ctx context.Context, store *Store, window SetWindow) (bool, error) {
+	from, err := time.Parse(time.RFC3339, window.From)
+	if err != nil {
+		return false, err
+	}
+	until, err := time.Parse(time.RFC3339, window.Until)
+	if err != nil {
+		return false, err
+	}
+	links, err := store.Links(ctx, Identity{Platform: window.Platform, Scope: window.Scope, User: window.User})
+	if err != nil {
+		return false, err
+	}
+	for _, moment := range []time.Time{from, from.Add(until.Sub(from) / 2), until} {
+		for _, link := range links {
+			if link.Record == window.Record && link.Usable(moment) {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
 }
 
 func ambiguityFlagged(ctx context.Context, store *Store, ambiguity SetAmbiguity, now time.Time) (bool, error) {
@@ -362,6 +443,10 @@ func measureRepair(ctx context.Context, store *Store, set Set, now time.Time) (R
 	if err := store.RecordArtifact(ctx, chosen.ID, "item", stored.ID); err != nil {
 		return repair, err
 	}
+	before, err := store.Requeues(ctx)
+	if err != nil {
+		return repair, err
+	}
 	result, err := store.Remove(ctx, chosen.ID)
 	if err != nil {
 		return repair, err
@@ -372,7 +457,16 @@ func measureRepair(ctx context.Context, store *Store, set Set, now time.Time) (R
 	if err != nil {
 		return repair, err
 	}
+	// Only the rows this repair queued count; a repair earlier in the run may
+	// have left its own.
+	seen := map[string]bool{}
+	for _, requeue := range before {
+		seen[requeue.Identity.String()+"\x00"+requeue.From.Format(time.RFC3339Nano)] = true
+	}
 	for _, requeue := range requeues {
+		if seen[requeue.Identity.String()+"\x00"+requeue.From.Format(time.RFC3339Nano)] {
+			continue
+		}
 		if requeue.Identity == chosen.Identity {
 			repair.Requeued++
 		} else {
@@ -480,7 +574,7 @@ func WriteCounts(path string, measures Measures) error {
 
 // Report is the person-facing one-line summary of a synthetic run.
 func Report(m Measures) string {
-	return fmt.Sprintf("usable links %d, wrong %d, precision %.3f; linked automatically %.3f; ambiguities %d/%d flagged; proposals %d, top-1 %.3f; repair clean %t; bound 3/n %.4f; gate %t",
+	return fmt.Sprintf("usable links %d, wrong %d, precision %.3f; linked automatically %.3f; ambiguities %d/%d flagged; proposals %d, top-1 %.3f; moved windows %d/%d rejected; repair clean %t; bound 3/n %.4f; gate %t",
 		m.UsableLinks, m.WrongLinks, m.Precision(), m.LinkedShare(), m.AmbiguitiesFlagged, m.Ambiguities,
-		m.Proposals, m.ProposalTop1Rate(), m.Repair.Clean, m.WrongRateBound(), m.Gate())
+		m.Proposals, m.ProposalTop1Rate(), m.WindowsRejected, m.Windows, m.Repair.Clean, m.WrongRateBound(), m.Gate())
 }

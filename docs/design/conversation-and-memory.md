@@ -238,7 +238,7 @@ LINA learns about another person from their messages only when it knows who sent
 
 - A link is usable for learning when it is `confirmed`, or when it is `exact` and unambiguous.
 - A link is ambiguous when its identifier points to more than one people record (a shared family phone, a team mailbox), when the identity has links to two records, or when the people record has another link that conflicts with it. An ambiguous link is not usable, and the person is asked once, with the other matches by number.
-- A phone or email link holds for the time the identifier was seen with the identity. A number that moves to another identity ends the earlier link's validity at that time.
+- A phone or email link holds for the time the identifier was seen with the identity. A number that moves to another identity ends the earlier link's validity at that time. Evidence can arrive out of order, so the end is the earliest sighting of the move: a backfilled earlier sighting moves the end back, and nothing ever moves it later. Items the earlier link produced inside a window that a moved end invalidates are retracted through the one retraction path, and only that identity's messages in that window are queued for extraction again.
 - Weak signals never make a usable link. A `proposed` link only asks the person, in batches of three to five ([Learning the person](#learning-the-person)). A rejected proposal is kept so that it does not return.
 
 **Links are records.** A link is canon: the identity, the people record, the class, each signal with its source, who or which matcher version made it, the time, its revision and its state. The person can confirm, reject or remove any link. Every change is recorded with the person and the time.

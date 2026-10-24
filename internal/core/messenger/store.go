@@ -713,14 +713,16 @@ func (s *Store) admit(ctx context.Context, source Source, chat string, from Curs
 		return result, nil
 	}
 	var observe func(context.Context, *canon.Tx, identity.Observation) error
+	var observer *identity.Observer
 	if s.identities != nil {
 		for _, plan := range plans {
 			if _, ok := senderObservation(source, plan); ok {
-				observer, err := s.identities.Prepare(ctx)
+				prepared, err := s.identities.Prepare(ctx)
 				if err != nil {
 					return PageResult{}, err
 				}
-				observe = observer.ObserveTx
+				observer = prepared
+				observe = prepared.ObserveTx
 				break
 			}
 		}
@@ -767,6 +769,14 @@ func (s *Store) admit(ctx context.Context, source Source, chat string, from Curs
 	})
 	if _, err := events.AdmitBatch(ctx, batch); err != nil {
 		return PageResult{}, err
+	}
+	if observer != nil {
+		// A move that ended an earlier link at an earlier sighting retracts what
+		// that link produced inside the newly invalid window, through the one
+		// retraction path, once the page's own write has committed.
+		if err := observer.Repair(ctx); err != nil {
+			return PageResult{}, err
+		}
 	}
 	for _, plan := range plans {
 		if plan.added {

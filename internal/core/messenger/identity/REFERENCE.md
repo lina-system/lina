@@ -38,6 +38,11 @@ inside the page's transaction (`messenger.Store.WithIdentities`); bots and
 platform notices are not observed. The person's own account (`Self`) is recorded
 so it is known, and is never linked as another person.
 
+Core composes one identity store per conversation and gives it to every reader
+it starts: the messenger sync loop, the built-in Teams service and the built-in
+Webex service. A people record added after messages arrived links on the sync
+loop's next pass, and on the Teams worker's next pass.
+
 ## Identifiers
 
 Phone numbers are E.164 and emails are lower case; a number without a country
@@ -61,7 +66,13 @@ identity at Core start (`Rematch`).
    keyed by that number (iMessage and WhatsApp) keep linking on their own; a
    handle that reuses an identifier only an identifier link held (a recycled
    number) is ambiguous (`identifier_reused`) and ends the earlier link's
-   validity at the new sighting.
+   validity at the new sighting. The end is the earliest sighting of the move:
+   evidence can arrive out of order, so a backfilled earlier sighting moves the
+   end back, records the signal and its source, bumps the revision and writes a
+   `moved` change; nothing moves the end later. Items the earlier link produced
+   inside the newly invalid window are retracted through the one retraction
+   path after the transaction commits, and only that identity's messages from
+   the window's start are queued again.
 4. Otherwise exactly one candidate makes an `exact` link with every shared
    identifier as a signal; a contact-card source adds a `contact_card` signal.
 
@@ -123,12 +134,14 @@ export and writes `counts.json` with counts and rates only. The files are
 without `expect`) and `labels.json` (`{"<platform>/<scope>/<user>": "<record id>"|"unknown"|"self"}`).
 
 `Evaluate` replaces the store's people source with the set's, observes every
-identity in time order, and then measures. It removes one link as its repair
-check, so a store is measured once.
+identity in arrival order (`observed_at`, defaulting to `at`, so a backfill can
+be seen after a later sighting), and then measures. A `windows` entry names a
+period in which a link to a record must not be usable; it pins the end of a link
+whose identifier moved. It removes one link as its repair check, so a store is
+measured once.
 
 ## Not in this increment
 
 Learning about matched senders, including writing items and `identity_artifact`
-rows, is #1077 and stays off until the gate holds. Matching a newly created
-people record without restarting Core is not wired: Core rematches at start and
-on every observation. The person's actions reach no client surface here.
+rows, is #1077 and stays off until the gate holds. The person's actions reach no
+client surface here.

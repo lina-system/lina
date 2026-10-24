@@ -80,6 +80,20 @@ func observe(t *testing.T, f *fixture, id identity.Identity, name string, identi
 	}
 }
 
+// observeAt records one sighting at the platform's time, which may be earlier
+// than when Core saw it.
+func observeAt(t *testing.T, f *fixture, id identity.Identity, seen time.Time, name string, identifiers ...identity.SeenIdentifier) {
+	t.Helper()
+	observation := identity.Observation{Identity: id, At: seen}
+	if name != "" {
+		observation.Names = []identity.NameSeen{{Value: name, At: seen}}
+	}
+	observation.Identifiers = identifiers
+	if err := f.store.Observe(t.Context(), observation); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func phone(value, source string) identity.SeenIdentifier {
 	return identity.SeenIdentifier{Kind: identity.Phone, Value: value, Source: source}
 }
@@ -126,7 +140,7 @@ func (f *fixture) item(t *testing.T, subject, content string) memory.Item {
 			Subject:  memory.Subject{Kind: memory.ThirdParty, ID: subject},
 			Evidence: []memory.Evidence{{Kind: memory.Event, ID: event, Precision: memory.Exact}},
 		}}, func(context.Context, *canon.Tx, memory.Evidence) (memory.Origin, error) {
-			return memory.Origin{Person: "person", Agent: "agent", Speaker: guard.Person, Scope: memory.Private, Quote: content}, nil
+			return memory.Origin{Person: "person", Agent: "agent", Speaker: guard.Person, Scope: memory.Private, Quote: content, OccurredAt: f.now.Unix()}, nil
 		})
 		return err
 	})
@@ -366,6 +380,87 @@ func TestRecycledNumberEndsTheEarlierValidity(t *testing.T) {
 	question, found, err := f.store.Question(t.Context(), imessage("+821066660001"))
 	if err != nil || !found || question.Reason != identity.ReasonIdentifierReused {
 		t.Fatalf("question = %+v found=%t err=%v", question, found, err)
+	}
+}
+
+// TestBackfilledSightingMovesTheCutoffBack covers evidence that arrives out of
+// order: a number seen on Discord in January moves to iMessage in March, and a
+// February sighting of the number arrives afterwards. The earlier link ends at
+// the earliest move, never at the later sighting, and what the link produced in
+// the newly invalid window is retracted and queued again for that identity.
+func TestBackfilledSightingMovesTheCutoffBack(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660001"
+	people := identity.StaticPeople{{Record: "person-old", Identifiers: []identity.SeenIdentifier{
+		{Kind: identity.Phone, Value: number, Source: "Discord profile 2020"},
+	}}}
+	f := newFixture(t, people)
+	jan := time.Date(2026, 1, 10, 9, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
+	mar := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+	f.now = jan
+	observe(t, f, discord("d-old"), "Old owner", phone(number, "Discord profile"))
+	earlier := links(t, f, discord("d-old"))
+	if len(earlier) != 1 {
+		t.Fatalf("links = %d, want the Discord link", len(earlier))
+	}
+	f.now = mar
+	observe(t, f, imessage(number), "New owner", phone(number, "iMessage profile"))
+	if got := links(t, f, discord("d-old")); len(got) != 1 || !got[0].ValidThrough.Equal(mar) {
+		t.Fatalf("the Discord link did not end at the March sighting: %+v", got)
+	}
+	// Learning about the sender wrote an item from a February message.
+	f.now = feb
+	item := f.item(t, "person-old", "an item from February")
+	if err := f.store.RecordArtifact(t.Context(), earlier[0].ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The February sighting arrives after the March one, as a backfill does.
+	f.now = mar.Add(time.Hour)
+	observeAt(t, f, imessage(number), feb, "New owner", phone(number, "iMessage profile"))
+
+	got := links(t, f, discord("d-old"))
+	if len(got) != 1 {
+		t.Fatalf("links = %d, want the Discord link", len(got))
+	}
+	if !got[0].ValidThrough.Equal(feb) {
+		t.Fatalf("valid through = %v, want the earlier February sighting", got[0].ValidThrough)
+	}
+	if got[0].ValidThrough.After(mar) {
+		t.Fatal("the cutoff moved later than the March sighting")
+	}
+	for _, moment := range []time.Time{feb.Add(24 * time.Hour), mar.Add(-time.Second)} {
+		if got[0].Usable(moment) {
+			t.Fatalf("the link is usable at %v, inside the window the number had moved", moment)
+		}
+	}
+	if !got[0].Usable(jan.Add(24 * time.Hour)) {
+		t.Fatal("the link is not usable while the number was still Discord's")
+	}
+	if got[0].Revision != 3 {
+		t.Fatalf("revision = %d, want the create and the two cutoffs", got[0].Revision)
+	}
+	var action, signalSource, signalValue string
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		if err := tx.QueryRowContext(t.Context(), "SELECT action FROM identity_link_change WHERE link=? AND revision=?", got[0].ID, got[0].Revision).Scan(&action); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(t.Context(), "SELECT source,value FROM identity_link_signal WHERE link=? AND kind='phone' AND value=?", got[0].ID, number).Scan(&signalSource, &signalValue)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if action != "moved" || signalValue != number {
+		t.Fatalf("change = %q signal = %q/%q", action, signalSource, signalValue)
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("an item from the invalid window stayed visible")
+	}
+	requeues, err := f.store.Requeues(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeues) != 1 || requeues[0].Identity != discord("d-old") || !requeues[0].From.Equal(feb) {
+		t.Fatalf("requeues = %+v, want only the Discord identity from February", requeues)
 	}
 }
 

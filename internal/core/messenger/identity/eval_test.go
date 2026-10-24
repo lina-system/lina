@@ -44,6 +44,9 @@ func TestSyntheticSetHasNoWrongUsableLinkAndFlagsEveryAmbiguity(t *testing.T) {
 	if measures.Proposals == 0 || measures.ProposalTop1Rate() != 1 {
 		t.Fatalf("proposals = %d top-1 = %v", measures.Proposals, measures.ProposalTop1Rate())
 	}
+	if measures.Windows == 0 || measures.WindowsRejected != measures.Windows {
+		t.Fatalf("moved windows = %d/%d rejected", measures.WindowsRejected, measures.Windows)
+	}
 	if !measures.Repair.Clean {
 		t.Fatalf("repair = %+v", measures.Repair)
 	}
