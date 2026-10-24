@@ -43,9 +43,10 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 	if err != nil {
 		return nil, err
 	}
-	units := make([]Unit, 0, len(goals))
+	visible := goals[:0]
+	ids := map[string]bool{}
 	for _, g := range goals {
-		if g.Person != "" && g.Person != person {
+		if g.Person != person {
 			continue
 		}
 		if _, ok := agents[g.Agent]; !ok {
@@ -55,12 +56,28 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 		if g.State == goal.GoalDone || g.State == goal.GoalStopped {
 			continue
 		}
+		visible = append(visible, g)
+		ids[g.ID] = true
+	}
+	if len(visible) == 0 {
+		return nil, nil
+	}
+	history, err := stepGraphRevisions(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	started, err := cardStarts(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	units := make([]Unit, 0, len(visible))
+	for _, g := range visible {
 		name := ""
 		if title != nil {
 			name = title(g.ID)
 		}
 		language := design.ConversationLanguage(name, design.English)
-		stages, err := GoalStages(ctx, tx, g.ID, person, language)
+		stages, err := stagesForGoal(g, history[g.ID], started, language)
 		if err != nil {
 			return nil, err
 		}

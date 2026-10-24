@@ -51,6 +51,22 @@ It observes active dispatch bindings and retained worker.Live sessions outside
 canon and rechecks that the same session/turn survived the observation. An ended
 session is omitted, and an unsuccessful observation remains unknown.
 
+### Event-to-card latency
+
+#771 uses the managed project lines and row membership from #767. The
+execution state and Now both come from observed steps.
+
+A progress overview reads graph revision history and work-card start times
+once per canon snapshot, indexing history by goal and start times by step. `GoalStages` and the overview
+share the same stage projection. This removes repeated decoding of every
+other goal's history without retaining a cache across transactions.
+
+`TestM3WorkPanelEventLatency` uses the fixed graph/name corpus, actual Core
+step reports and eight TUI PTYs. Each sample joins the durable work-engine
+event's precise admission time to the first complete renderer write showing
+its changed card. The scenario logs every sample and enforces the T-16 budget
+per language, glyph and width combination.
+
 ### C-55 running count increment
 
 #767 makes the running count follow lines, not rows.
