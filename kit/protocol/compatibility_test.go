@@ -88,6 +88,17 @@ func TestOlderSchemaClientReceivesPresentationAdditions(t *testing.T) {
 	}
 	progress["properties"], _ = json.Marshal(progressFields)
 	defs["progress_line"], _ = json.Marshal(progress)
+	for name, field := range map[string]string{"progress_stage_step": "workers", "progress_row": "stage_refs"} {
+		var object map[string]json.RawMessage
+		_ = json.Unmarshal(defs[name], &object)
+		var properties map[string]json.RawMessage
+		_ = json.Unmarshal(object["properties"], &properties)
+		delete(properties, field)
+		object["properties"], _ = json.Marshal(properties)
+		defs[name], _ = json.Marshal(object)
+	}
+	delete(defs, "progress_stage_worker")
+	delete(defs, "progress_stage_refs")
 	for _, name := range []string{"progress", "progress_update"} {
 		var object map[string]json.RawMessage
 		_ = json.Unmarshal(defs[name], &object)
@@ -153,6 +164,8 @@ func TestOldClient(t *testing.T) {
  }
  for _,name:=range []string{"State","StartedAt","FinishedAt","Now"} { if _,present:=reflect.TypeFor[ProgressLine]().FieldByName(name);present {t.Fatalf("test client knows %s",name)} }
  if _,present:=reflect.TypeFor[ProgressUpdate]().FieldByName("CardOrder");present {t.Fatal("test client knows card_order")}
+ if _,present:=reflect.TypeFor[ProgressStageStep]().FieldByName("Workers");present {t.Fatal("test client knows stage workers")}
+ if _,present:=reflect.TypeFor[ProgressRow]().FieldByName("StageRefs");present {t.Fatal("test client knows stage refs")}
  if slices.Contains(clientSchema.Properties["kind"].Enum, "tool_activity") { t.Fatal("test client knows tool_activity") }
  var client ClientDecoder
  for _, name := range []string{"phase_tool", "tool_started", "tool_finished_ok", "activity_snapshot", "phase_snapshot", "phase_streaming", "item_done", "running_localized", "running_snapshot"} {
@@ -194,6 +207,12 @@ func TestOldClient(t *testing.T) {
   if _, err := json.Marshal(got); err != nil { t.Fatalf("old decoded envelope cannot be encoded: %v", err) }
  }
  data, err := os.ReadFile(filepath.Join(os.Getenv("PROTOCOL_FIXTURES"), "normal", "progress_update.json")); if err != nil { t.Fatal(err) }
+ var stageClient ClientDecoder
+ stageFrame, err := stageClient.Decode(data); if err != nil {t.Fatal(err)}
+ stageUpdate := stageFrame.Payload.(ProgressUpdate)
+ stageFound := false
+ if stageUpdate.Rows != nil {for _,row:=range *stageUpdate.Rows {if row.Line.Stages != nil {for _,entry:=range *row.Line.Stages {if entry.Steps != nil && len(*entry.Steps)>0 {stageFound=true}}}}}
+ if !stageFound {t.Fatal("old stage client lost known entries while ignoring worker/ref additions")}
  var envelope map[string]any
  if err := json.Unmarshal(data, &envelope); err != nil { t.Fatal(err) }
  envelope["payload"] = map[string]any{"card_order": []string{"session:fixture"}, "rows": []any{map[string]any{"ref":"session:fixture", "line":map[string]any{"name":"Fixture job", "kind":"project", "state":"failed", "started_at":"2026-01-01T00:00:00Z", "finished_at":"2026-01-01T00:42:00Z", "now":"Checking result", "stage":"unknown", "just_finished":"unknown", "next":"unknown", "waiting":0, "depth":0}}}}
