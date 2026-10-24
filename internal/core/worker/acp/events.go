@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
+	"github.com/thisisjun786/lina/internal/core/textcall"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	wire "github.com/thisisjun786/lina/kit/acp"
 )
@@ -91,6 +93,17 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 			for len(requests) > 0 {
 				<-requests
 			}
+			// Some ACP workers forward the provider's terminal "stop" spelling.
+			// Accept only the client's exact enum-validation failure; malformed
+			// responses, RPC errors and transport failures stay failures.
+			if result.Err != nil && string(result.Response.StopReason) == "stop" && result.Err.Error() == `ACP unknown stop reason "stop"` {
+				a.mu.Lock()
+				detected := worker.DetectTextCall(a.message.Text(), "stop", a.realTool, a.spec.Tools).Detected
+				a.mu.Unlock()
+				if detected {
+					result.Err = nil
+				}
+			}
 			if result.Err != nil {
 				failure := worker.ConnectionFailure
 				var remote *wire.RPCError
@@ -134,6 +147,7 @@ func (a *Adapter) prompt(th worker.Thread, replies <-chan wire.PromptResult) {
 				}
 			case wire.StopReasonRefusal, wire.StopReasonMaxTokens, wire.StopReasonMaxTurnRequests:
 			}
+			f = a.classifyText(th, string(result.Response.StopReason), f)
 			a.finish(th, f)
 			return
 		case <-a.life.Done():
@@ -150,19 +164,21 @@ func (a *Adapter) update(th worker.Thread, u wire.Update) bool {
 	if v.ToolCall != nil || v.ToolCallUpdate != nil || len(v.Unrecognized) > 0 {
 		a.effectSeen = true
 	}
+	if v.ToolCall != nil || v.ToolCallUpdate != nil {
+		a.realTool = true
+	}
+	if v.AgentMessageChunk != nil {
+		if v.AgentMessageChunk.Content.Text != nil {
+			a.message.Add("assistant", v.AgentMessageChunk.Content.Text.Text, false)
+		}
+		a.mu.Unlock()
+		return true
+	}
 	raw, _ := json.Marshal(v)
 	a.doing.Record("acp", raw, time.Now())
 	a.mu.Unlock()
 	p := worker.Progress{}
 	switch {
-	case v.AgentMessageChunk != nil:
-		p.Phase = "message"
-		if v.AgentMessageChunk.Content.Text != nil {
-			p.Text = v.AgentMessageChunk.Content.Text.Text
-		}
-		a.mu.Lock()
-		a.result.Output += p.Text
-		a.mu.Unlock()
 	case v.AgentThoughtChunk != nil:
 		p.Phase = "thought"
 		if v.AgentThoughtChunk.Content.Text != nil {
@@ -235,5 +251,40 @@ func (a *Adapter) emit(e worker.Event) bool {
 		return true
 	case <-a.life.Done():
 		return false
+	}
+}
+
+// A recovered call uses the same authenticated bridge and pending lifetime as
+// an MCP call. Core acknowledges it before the adapter releases completion.
+func (a *Adapter) classifyText(th worker.Thread, stop string, f worker.Finish) worker.Finish {
+	a.mu.Lock()
+	text := a.message.Text()
+	decision := worker.DetectTextCall(text, stop, a.realTool, a.spec.Tools)
+	overflow := a.message.Overflow
+	a.message = worker.TurnText{}
+	if !decision.Detected {
+		a.result.Output = text
+	}
+	a.mu.Unlock()
+	if overflow {
+		return worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure, Code: "assistant_text_limit"}
+	}
+	switch decision.Action {
+	case textcall.Dispatch:
+		response := a.tools.call(clientapi.WorkerToolRequest{Token: a.tools.token, Method: "tools/call", Name: decision.Call.Name, Arguments: decision.Call.Arguments})
+		var result struct {
+			IsError bool `json:"isError"`
+		}
+		if response.Error != "" || json.Unmarshal(response.Result, &result) != nil || result.IsError {
+			return worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure, Code: "text_tool_dispatch_failed"}
+		}
+		return worker.Finish{Status: worker.Done, Code: "text_tool_call_recovered"}
+	case textcall.Restart:
+		return worker.Finish{Status: worker.Failed, Failure: worker.WorkerFailure, Code: worker.TextCallFailure}
+	default:
+		if text != "" {
+			a.emit(worker.Event{Thread: th, Kind: worker.ProgressEvent, Progress: &worker.Progress{Phase: "message", Text: text}})
+		}
+		return f
 	}
 }
