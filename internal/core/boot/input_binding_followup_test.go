@@ -1598,6 +1598,28 @@ func TestCreatedCodeGoalStaysOnSelectedProject(t *testing.T) {
 	}
 }
 
+func TestProgressLookupKeepsLiteralGoalID(t *testing.T) {
+	rows := []protocol.ProgressRow{
+		{Ref: "foo", Line: protocol.ProgressLine{Name: "bare"}},
+		{Ref: "goal:foo", Line: protocol.ProgressLine{Name: "literal"}},
+	}
+	line, ok := progressLineForID(rows, "goal:foo")
+	if !ok {
+		t.Fatal("goal:foo had no progress line")
+	}
+	got, _ := line.(protocol.ProgressLine)
+	if got.Name != "literal" {
+		t.Fatalf("lookup stripped goal:foo and returned %q", got.Name)
+	}
+	record, ok := progressLineForID([]protocol.ProgressRow{{Ref: "library", Line: protocol.ProgressLine{Name: "library work"}}}, "goal:library")
+	if !ok {
+		t.Fatal("project record id lost the goal line")
+	}
+	if got, _ := record.(protocol.ProgressLine); got.Name != "library work" {
+		t.Fatalf("record fallback: %q", got.Name)
+	}
+}
+
 func TestReadWorkProgressResolvesCodeGoalRecord(t *testing.T) {
 	r, _ := turnRuntime(t)
 	dev := workAgentFixture(t, r)
