@@ -73,14 +73,14 @@ func TestOwnerResolvesTheJobDirectory(t *testing.T) {
 	if got, err := ownerDirectory(""); err != nil || got != wd {
 		t.Fatalf("unset directory = %q, %v; want %q", got, err, wd)
 	}
-	if got, err := ownerDirectory("relative/dir"); err != nil || got != filepath.Join(wd, "relative/dir") {
+	if got, err := ownerDirectory("relative/dir"); err != nil || got != strings.TrimSuffix(wd, "/")+"/relative/dir" {
 		t.Fatalf("relative directory = %q, %v", got, err)
 	}
 	// A symlink followed by ".." is resolved by the kernel, not lexically here:
 	// "link/.." must arrive uncleaned so it selects the symlink's parent. The
 	// expectation is built by concatenation because filepath.Join would clean
 	// the ".." away and make this check pass for the wrong implementation.
-	want := wd + string(filepath.Separator) + "link" + string(filepath.Separator) + ".."
+	want := strings.TrimSuffix(wd, string(filepath.Separator)) + string(filepath.Separator) + "link" + string(filepath.Separator) + ".."
 	if got, err := ownerDirectory("link/.."); err != nil || got != want {
 		t.Fatalf("relative directory with a symlink = %q, %v; want %q", got, err, want)
 	}
@@ -92,6 +92,42 @@ func TestOwnerResolvesTheJobDirectory(t *testing.T) {
 	}
 	if got := ownerEnvironment([]string{"A=1"}); len(got) != 1 || got[0] != "A=1" {
 		t.Fatalf("explicit environment = %#v", got)
+	}
+}
+
+// TestJobMainDropsAnUnclaimedJob proves a helper that never reaches the owner
+// still removes the job. The control socket is absent, as it is when the owner
+// dies after loading the job and before the handshake.
+func TestJobMainDropsAnUnclaimedJob(t *testing.T) {
+	dir, err := os.MkdirTemp("", "lina-proc-unclaimed-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	payload, err := json.Marshal(jobRequest{
+		Path: "/bin/test", Ctl: filepath.Join(dir, "ctl.sock"),
+		Label: "com.lina.proc.unclaimed-test", Domain: "gui/501", Temp: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "request.json")
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := JobMain([]string{"--request", path}, io.Discard); code != 70 {
+		t.Fatalf("exit = %d, want 70", code)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, err := os.Stat(dir)
+		if os.IsNotExist(err) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job directory %s remains after the owner was already gone", dir)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
