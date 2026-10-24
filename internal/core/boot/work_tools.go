@@ -127,7 +127,11 @@ func (r *conversationRuntime) prepareGoalWorkTools(turnID string, _ *toolPrepara
 	bindings["revise_code_goal"] = loop.Tool{
 		Validate: func(c provider.ToolCall) (string, error) {
 			in, err := decodeGoalCorrection(c.Arguments)
-			return "goal:" + in.GoalID, err
+			recordID, ok := work.ProjectRecordID(in.GoalID)
+			if err == nil && !ok {
+				err = work.ErrInvalid
+			}
+			return recordID, err
 		},
 		Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
 			in, err := decodeGoalCorrection(c.Arguments)

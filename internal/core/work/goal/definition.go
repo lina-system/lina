@@ -158,6 +158,16 @@ func parseDefinition(r DefinitionRecord, person, agent string) (Definition, erro
 	}
 	return d, nil
 }
+
+// ProjectRecordID is the project record that stores a goal's definition.
+// An empty goal id does not resolve.
+func ProjectRecordID(goalID string) (string, bool) {
+	if goalID == "" {
+		return "", false
+	}
+	return "goal:" + goalID, true
+}
+
 func (e *Engine) prepareDefinition(ctx context.Context, g *Goal) error {
 	if e.cfg.Records == nil {
 		return ErrInvalid
@@ -166,7 +176,11 @@ func (e *Engine) prepareDefinition(ctx context.Context, g *Goal) error {
 		return ErrInvalid
 	}
 	// Stable id makes an interrupted record publication recoverable on admission.
-	g.RecordID = "goal:" + g.ID
+	recordID, ok := ProjectRecordID(g.ID)
+	if !ok {
+		return ErrInvalid
+	}
+	g.RecordID = recordID
 	r, rev, err := e.cfg.Records.Read(ctx, g.RecordID)
 	if errors.Is(err, ErrDefinitionMissing) {
 		_, err = e.cfg.Records.Commit(ctx, DefinitionChange{ID: g.RecordID, Path: "projects/" + actionID(Action{GoalID: g.ID}) + ".md", Data: definitionBytes(*g)}, g.Person, g.Agent)

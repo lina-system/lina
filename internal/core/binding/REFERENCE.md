@@ -9,3 +9,32 @@ The snapshot reads the previous binding and the last exchange through `retract_v
 The current binding enters the mandatory Waiting group of the ContextPacket. Steering carries its own binding at drain. Request evidence retains an `input-binding-v1` source and reconstructs it from the authorized ledger for replay. Record activity is a disposable projection of Git commit times.
 
 `TestM2InputBindingInstalledCore` creates and reads a to-do through record tools, checks an exact reference and an offered option during a live turn, restarts Core, retries the consumed input and binds a card input. Rule tests cover normalization, ambiguity, finished work, aging and candidate priority. Core tests cover transactional rollback, context assembly and the synthetic production replay.
+
+Model choices are append-only `input_binding_choice` events keyed by the actual
+call and input. `Choice.Request` addresses a request ordinal; the admission event
+is retained. Current choices overlay those events, and a created receipt supplies
+the next focus identity. `input-choice-v1` context sources reconstruct immutable
+choice bytes for request replay.
+
+A person-selected new target keeps that decider. Once its created id is recorded,
+a later read, progress check, or follow-up may name that existing item; any
+other item stays pending. In one response, `bind_input` commits before a later
+work call: the work call's scheduling key is the binding key, a newline, and
+its own target. Other targets still run beside that update. A model follow-up to a worker task uses the agent
+message path. `worker_input` and `worker_interrupt` resolve their session to
+that task before the person's choice is checked. A code goal tool resolves
+`goal_id` through the goal package's project record id before the same check.
+The binding snapshot includes that record as a project. `dispatch_code_goal`
+records a new project; the definition file keeps kind goal, and the snapshot
+presents the created record as a project so a later read or correction matches
+the person's choice. A goal id that does
+not resolve is refused. Steering execution uses the selected input's runtime, so a
+channel follow-up keeps that channel source and work preparation keeps that
+channel binding. A system turn that consumes person steering still offers
+binding.
+
+Target questions store their choice with the existing durable question record.
+Their resolution appends the selected or cancelled binding in the same transaction
+as the answer inbox event. General skipped-question defaults never resolve them.
+The optional Atropos judge receives a closed candidate list and revision; its
+accepted choices, probabilities and observed latency are ledger evidence.

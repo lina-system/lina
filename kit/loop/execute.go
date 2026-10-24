@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/thisisjun786/lina/kit/provider"
@@ -115,11 +116,20 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 	}
 	for i, c := range calls {
 		done := make(chan struct{})
-		previous := last[targets[i]]
+		var waits []<-chan struct{}
 		if targets[i] != "" {
+			if previous := last[targets[i]]; previous != nil {
+				waits = append(waits, previous)
+			}
+			// A key "gate\nrest" waits for the latest earlier "gate", then keeps
+			// its own chain. Callers use this so a binding update commits before
+			// a later work call without serializing other targets.
+			if gate := schedulingBarrier(targets, i); gate != "" {
+				if ch := last[gate]; ch != nil {
+					waits = append(waits, ch)
+				}
+			}
 			last[targets[i]] = done
-		} else {
-			previous = nil
 		}
 		wg.Go(func() {
 			defer close(done)
@@ -128,7 +138,10 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 			// dispatched, its returned result describes the committed receipt.
 			if !blocked[i] {
 				r = Result{ID: c.ID, Code: Aborted}
-				if previous != nil {
+				for _, previous := range waits {
+					if runCtx.Err() != nil {
+						break
+					}
 					select {
 					case <-previous:
 					case <-runCtx.Done():
@@ -157,4 +170,21 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 	}
 	wg.Wait()
 	return results, errors.Join(failure, context.Cause(runCtx))
+}
+
+// schedulingBarrier is the longest earlier key K such that this key is K plus
+// a newline plus a remainder. Waiting for K orders a dependent call after that
+// update without joining unrelated keys.
+func schedulingBarrier(targets []string, i int) string {
+	var gate string
+	for j := 0; j < i; j++ {
+		t := targets[j]
+		if t == "" || t == targets[i] || !strings.HasPrefix(targets[i], t+"\n") {
+			continue
+		}
+		if len(t) > len(gate) {
+			gate = t
+		}
+	}
+	return gate
 }
