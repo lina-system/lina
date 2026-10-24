@@ -2332,7 +2332,7 @@ The stage list is how the person sees the steps of a goal: a short numbered list
   Failed observations remain unknown, and ended or replaced sessions disappear. A retained idle session can remain under work being
   handled, with the waiting state. The client retains step selection by its
   opaque ref, separately from the display-only stage line.
-- **Updates.** Core recomputes the stage list and Now in the transaction that commits an event of the goal, and publishes the changed line and list on the progress topic ([host-protocol.md](host-protocol.md)) within 250 ms (P) of that commit. A recomputation that changes nothing publishes nothing.
+- **Updates.** Core recomputes the stage list and Now in the transaction that commits an event of the goal, and publishes the changed line and list on the progress topic ([host-protocol.md](host-protocol.md)) within 250 ms (P) of that commit. A recomputation that changes nothing publishes nothing. A burst of commits is coalesced into one publish at most 100 ms apart; an isolated commit publishes at once, with no coalescing delay. The projection reads the ledger and sources without taking the commit writer, so a publish never delays the commit that follows it.
 
 ### Running list
 
