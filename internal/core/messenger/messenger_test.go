@@ -254,6 +254,80 @@ func TestOwnWriteReturnsAsAgentRecord(t *testing.T) {
 	}
 }
 
+// A channel root and its replies can arrive on one page, with the reply listed
+// first. The reply still records replies_to and in_thread to that root.
+func TestSamePageRootAndReplyKeepRelations(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	root := message("root", messenger.RouteParticipant, f.now, "thread root")
+	reply := message("reply", messenger.RouteParticipant, f.now.Add(time.Minute), "answer")
+	reply.ReplyTo = "root"
+	reply.Thread = "root"
+	orphan := message("orphan", messenger.RouteParticipant, f.now.Add(2*time.Minute), "no root")
+	orphan.ReplyTo = "missing"
+	orphan.Thread = "missing"
+	result, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{reply, orphan, root}, Next: "c1",
+	})
+	if err != nil || result.Added != 3 {
+		t.Fatalf("admit: %+v %v", result, err)
+	}
+	rootEvent := f.eventsFor(t, source, "dm-1", "root")
+	replyEvent := f.eventsFor(t, source, "dm-1", "reply")
+	if !relationTargets(replyEvent, "replies_to", rootEvent.ID) || !relationTargets(replyEvent, "in_thread", rootEvent.ID) {
+		t.Fatalf("reply relations: %+v", replyEvent.Relations)
+	}
+	orphanEvent := f.eventsFor(t, source, "dm-1", "orphan")
+	if len(orphanEvent.Relations) != 0 {
+		t.Fatalf("missing target still linked: %+v", orphanEvent.Relations)
+	}
+	later := message("later", messenger.RouteParticipant, f.now.Add(3*time.Minute), "after")
+	later.ReplyTo = "root"
+	later.Thread = "root"
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "c1", messenger.Page{
+		Messages: []messenger.Message{later}, Next: "c2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	laterEvent := f.eventsFor(t, source, "dm-1", "later")
+	if !relationTargets(laterEvent, "replies_to", rootEvent.ID) || !relationTargets(laterEvent, "in_thread", rootEvent.ID) {
+		t.Fatalf("committed root: %+v", laterEvent.Relations)
+	}
+}
+
+func relationTargets(event ledger.Event, kind, target string) bool {
+	for _, relation := range event.Relations {
+		if relation.Kind == kind && relation.TargetID == target {
+			return true
+		}
+	}
+	return false
+}
+
+// Two messages that reply to each other still commit. A cycle keeps the one
+// relation that can name an event already written.
+func TestMutualRepliesOnOnePageStillCommit(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	first := message("a", messenger.RouteParticipant, f.now, "first")
+	second := message("b", messenger.RouteParticipant, f.now.Add(time.Minute), "second")
+	first.ReplyTo, first.Thread = "b", "b"
+	second.ReplyTo, second.Thread = "a", "a"
+	result, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{first, second}, Next: "c1",
+	})
+	if err != nil || result.Added != 2 {
+		t.Fatalf("admit: %+v %v", result, err)
+	}
+	a := f.eventsFor(t, source, "dm-1", "a")
+	b := f.eventsFor(t, source, "dm-1", "b")
+	aToB := relationTargets(a, "replies_to", b.ID)
+	bToA := relationTargets(b, "replies_to", a.ID)
+	if aToB == bToA {
+		t.Fatalf("cycle kept both or neither: a=%+v b=%+v", a.Relations, b.Relations)
+	}
+}
+
 // An edit is a new event that supersedes the earlier one; the earlier stays.
 func TestEditSupersedesAndEarlierStays(t *testing.T) {
 	f := newFixture(t)
