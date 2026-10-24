@@ -148,7 +148,9 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 				i.Links = append(i.Links, link)
 			}
 		}
-		// A code goal is stored as its project record. The person selects that project.
+		// The definition file keeps kind goal. A new code goal is selected as a
+		// project, so the binding identity uses that kind and the created record
+		// stays usable.
 		if i.Kind == "goal" {
 			i.Kind = "project"
 		}

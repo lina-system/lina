@@ -369,7 +369,7 @@ A rule decides the item, not what the message does to it. Whether the message an
 
 Word lists and timing do not bind. In the owner's data, status, memory and new-work words decided the target poorly, and so did arrival while the agent was busy: about four in ten of those messages were not steers. Input that arrives during a turn still reaches that turn as steering input ([runtime.md](runtime.md#conversation-loop)) and is bound like any other.
 
-**The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
+**The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. When it appears before a work call in the same response, that update commits before the work call runs. Other targets in the response still run beside it. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
 
 `bind_input` records request ordinals and exact input excerpts. Choices append
 system events to the admission binding; retries retain the same event and question.
@@ -389,12 +389,20 @@ that request's focus. Several created tasks stay unresolved. When the person
 has selected a new target and creation has recorded its id, a later record
 read, progress read, or follow-up of that created item stays on the same
 request. Naming a different item does not replace the person's choice.
+A code goal created for a new project stays on that choice. Its definition
+file keeps kind goal, and the snapshot presents the record as a project, so a
+later read or correction of the created record is the same identity. A progress
+read of that record returns the goal's current progress line. The binding check
+still uses the record id.
 A resumed channel request recovers the original channel receipt through the
 answer's parent chain before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
 permissions. A tool executed for that steering input uses the steering runtime
-and event, so a channel follow-up keeps that channel's source. Reading a tied
+and event, so a channel follow-up keeps that channel's source and work
+preparation keeps that channel's binding. A system turn that consumes
+person steering still offers binding; a call that stays on the system
+event does not borrow the person's target gate. Reading a tied
 candidate does not resolve the original ambiguity. A retained tie, including a
 read that has not asked a question, does not settle a reply or the next focus.
 A reply that stays unresolved keeps that tie, so a later control asks before it
@@ -405,7 +413,7 @@ ContextPacket and remain reconstructible from their ledger sources.
 **When to ask.** The agent asks which item only when both hold:
 
 - two targets still tie after the rules and its own reading;
-- a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, stop a worker, or send, pay or delete.
+- a wrong pick would do something a move cannot undo: steer a running task or run, steer a task waiting on the person's input, start work that runs at once, stop a worker, or send, pay or delete.
 
 It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
 
@@ -425,7 +433,7 @@ Core checks a retained tie again when a later tool would make it irreversible.
 
 **Admission and context.** Native person input and its initial system binding event commit together, before acknowledgement or turn dispatch. The binding is structured canon metadata stored inline, including full candidate titles; large work metadata must not prevent admission or require filesystem I/O inside the transaction. Admission reads the prior binding and the last exchange through the retraction-visible projection, so a withdrawn input neither restores focus nor refreshes its age. A notice's run identity comes from its durable delivery record, never from a notice body that may be stored as a material. Retrying an input reuses that event; input admitted during a turn keeps its own event and supplies its binding at the next model round. A binding records `no-rule` and an unresolved choice when no Core rule holds, alongside a fresh-focus or none default. It does not authorize an action. Existing pending input from an earlier Core version receives a binding before preparation resumes.
 
-Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A code goal record is a project candidate under its record id. A prepared task whose record has no person id is included when its agent and conversation belong to that person. A task recorded for someone else is not. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
+Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A code goal record is a project candidate under its record id. A progress read of that id returns the goal's progress line; the binding check keeps the record id. A prepared task whose record has no person id is included when its agent and conversation belong to that person. A task recorded for someone else is not. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
 
 Client input may carry optional `reply_to`, `card` and `thread` references. Core resolves them within the authenticated conversation and the person's work queue. Platform reply ids are resolved within their channel address. An unresolved or foreign reference supplies no rule. General questions may explicitly mark a yes-or-no form; free text is never inferred to be that form.
 
