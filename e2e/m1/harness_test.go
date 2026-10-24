@@ -24,6 +24,12 @@ import (
 
 const operationTimeout = 10 * time.Second
 
+// Installed Core compiles its embedded SQLite Wasm module before it binds the
+// socket, so a boot costs more than one protocol operation on a loaded shard.
+// Every Core start waits with this budget; the retry loop still ends at the
+// first successful connection rather than on elapsed time.
+const startupTimeout = time.Minute
+
 var commandBuilds struct {
 	sync.Mutex
 	directory string
@@ -318,7 +324,9 @@ func (h *harness) startCore() *process {
 
 func (h *harness) connect(core *process) net.Conn {
 	h.t.Helper()
-	return h.connectWithin(core, operationTimeout)
+	// Every caller waits for a just-started or restarted Core, so the socket
+	// bound is a startup cost, not the protocol operation deadline.
+	return h.connectWithin(core, startupTimeout)
 }
 func (h *harness) connectWithin(core *process, budget time.Duration) net.Conn {
 	h.t.Helper()
