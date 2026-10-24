@@ -521,7 +521,7 @@ func TestAttachmentsStayOnWebexHosts(t *testing.T) {
 	defer srv.Close()
 	adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
 	signIn(t, adapter)
-	if _, err := adapter.FetchAttachment(t.Context(), source, "room-1", "https://example.com/file.png"); err == nil {
+	if _, err := adapter.FetchAttachment(t.Context(), source, "room-1", "message-1", "https://example.com/file.png"); err == nil {
 		t.Fatal("an attachment from another host was fetched")
 	}
 }

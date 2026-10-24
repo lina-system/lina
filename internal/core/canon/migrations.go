@@ -88,8 +88,9 @@ func Migrations() []Migration {
 		{Version: 73, SQL: MessengerReadCoverageSchema},
 		{Version: 74, SQL: MessengerOwnerSchema},
 		{Version: 75, SQL: DiscordSessionsSchema},
-		{Version: 76, SQL: recallSearchSchema},
-		{Version: 77, SQL: recallVectorsSchema},
+		{Version: 76, SQL: MessengerPendingSchema},
+		{Version: 77, SQL: recallSearchSchema},
+		{Version: 78, SQL: recallVectorsSchema},
 	}
 }
 
@@ -144,7 +145,8 @@ var publishedMigrationTables = []struct {
 	{71, "binding_effects"}, {71, "binding_moves"},
 	{72, "messenger_attachment"},
 	{75, "discord_sessions"},
-	{77, "recall_vec"}, {77, "recall_embed_pending"}, {77, "recall_embed_consent"},
+	{76, "messenger_relation_pending"}, {76, "messenger_deletion_pending"},
+	{78, "recall_vec"}, {78, "recall_embed_pending"}, {78, "recall_embed_consent"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is

@@ -238,7 +238,7 @@ func (s *Store) orderImport(ctx context.Context, source Source, chat string, pla
 	out := make([]importPlan, len(ordered))
 	for i, node := range ordered {
 		plan := plans[node.index]
-		plan.relations = node.relations
+		plan.relations, plan.waiting = node.relations, node.waiting
 		out[i] = plan
 	}
 	return out, nil
