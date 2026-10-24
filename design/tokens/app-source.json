@@ -1,0 +1,19 @@
+{
+  "$description": "Reconciled app source provenance. SPDX-License-Identifier: Apache-2.0",
+  "repository": "lina-system/lina-app",
+  "revision": "69d2a324ab09d0ad9405b78bb782cffe24e2c2a9",
+  "pullRequest": 101,
+  "coreBaseline": "83de7a325186e0c16c8fcbaf768e4455ccb5ad0b",
+  "coreReconciledAt": "a3ede8487bc0508ac689cb5dedd0d5ab9fb76351",
+  "sha256": {
+    "app.json": "29911090eeb30fd786946ef51d151e29aa41f0362a7fb771c39240819b5b315f",
+    "dark.json": "5ff6073fe9b6d4c4ce8a2cca2072dd6a8182f4b5391580e99bf52f4591f7f822",
+    "high-contrast.json": "7b53e7c903ec1ce6612788bed0b3ab8a76f6f19dd54a29d1942d11deb8271b28",
+    "icons.json": "83c6795e3b104654b9f7a7b529f16172881557156ba51e02cbeb4ac0f9bcc681",
+    "light.json": "54c0fef2bff2e56d1dae67a72573cd6cd92b99a8a8c1a61f56a514f027b7297a",
+    "upstream.json": "caa15fbd7aa1743d2a136f9437dd563e536027a507ccb2b92afafb4dd09f566e",
+    "core/light.json": "a3e48109d03b33cf78de41708e5367aeac124a26b5381587a4529f3086061e7d",
+    "core/dark.json": "d50ade9545f54575e9257f9f024b2924c249fb9210c68d2f8ca52eb81c13d2ed",
+    "core/high-contrast.json": "3efd6c17ce6bf0ff8f3491bc5cda6590ca9126faf7cdbcae394d2af1d78bd8fc"
+  }
+}

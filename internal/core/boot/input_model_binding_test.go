@@ -2,6 +2,7 @@
 package boot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/intakereplay"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -461,6 +463,69 @@ func TestModelBindingRecoveredSteeringTargets(t *testing.T) {
 	}
 }
 
+func TestModelBindingBareGenerationFollowsChosenTask(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "task-a", Title: "First task", Kind: "task", State: "running", LastActivity: now},
+		{ID: "task-b", Title: "Second task", Kind: "task", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "bare-generation", "Change the format.")
+	chosen := binding.Target{Class: "existing", ID: "task-b", Kind: "task"}
+	if _, err := r.saveModelBinding(t.Context(), input, "person-choice", []binding.Choice{{Quote: input.Body.Text(), Target: chosen}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	call := func(id string) *loop.Result {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]any{"id": id, "text": "Change the format."})
+		return r.bindWorkCall(t.Context(), input, 0, "turn:"+input.ID, provider.ToolCall{ID: id, Name: "follow_work", Arguments: string(raw)})
+	}
+	if got := call("task-a:1"); got == nil || got.Code != loop.Denied {
+		t.Fatalf("bare generation steered the other task: %+v", got)
+	}
+	if got := call("task-b:1"); got != nil {
+		t.Fatalf("bare generation refused the chosen task: %+v", got)
+	}
+}
+
+func TestModelBindingPrefixedTaskMatchesDelivery(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "task:a", Title: "Prefixed task", Kind: "task", State: "running", LastActivity: now},
+		{ID: "a", Title: "Plain task", Kind: "task", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "prefixed-task", "Change the format.")
+	chosen := binding.Target{Class: "existing", ID: "task:a", Kind: "task"}
+	if _, err := r.saveModelBinding(t.Context(), input, "person-choice", []binding.Choice{{Quote: input.Body.Text(), Target: chosen}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	delivered, resolveErr := r.followTaskID(t.Context(), "task:a")
+	raw, _ := json.Marshal(map[string]any{"id": "task:a", "text": "Change the format."})
+	got := r.bindWorkCall(t.Context(), input, 0, "turn:"+input.ID, provider.ToolCall{ID: "follow", Name: "follow_work", Arguments: string(raw)})
+	if resolveErr != nil {
+		if got == nil || got.Code == loop.OK {
+			t.Fatalf("unresolved task:a was allowed: %+v", got)
+		}
+		return
+	}
+	if delivered == chosen.ID {
+		if got != nil {
+			t.Fatalf("follow of the selected task was refused: %+v", got)
+		}
+		return
+	}
+	if got == nil || got.Code != loop.Denied {
+		t.Fatalf("follow resolved to %s but was not rejected: %+v", delivered, got)
+	}
+}
+
 func TestModelBindingReplyUsesEffectiveTarget(t *testing.T) {
 	for _, creation := range []string{"model", "prepare_work", "schedule_work"} {
 		t.Run(creation, func(t *testing.T) {
@@ -730,6 +795,53 @@ func TestModelBindingNewWorkTargetsHaveDistinctLabels(t *testing.T) {
 	}
 	if !strings.Contains(q.Choices[0], "task") || !strings.Contains(q.Choices[0], "North garden") || !strings.Contains(q.Choices[1], "task") || !strings.Contains(q.Choices[1], "South library") {
 		t.Fatalf("labels do not name kind and parent: %#v", q.Choices)
+	}
+}
+
+// A task may be named like a generation reference. The gate and execution share
+// one resolver, so the follow-up reaches the task the person selected, and an
+// unmatched suffix still falls back to the task it qualifies.
+
+func TestModelBindingRetryKeepsCompletedParent(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "beds", Title: "Beds", Kind: "project", State: "active", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "under-project", "Add a bed task.")
+	tools := modelBindingTools(t, r, input)
+	args := map[string]any{"bindings": []any{map[string]any{"target": map[string]string{"class": "new", "kind": "todo", "parent": "beds"}}}}
+	first := questionCall(t, tools, "bind_input", "under-beds", args)
+	var saved struct {
+		Bindings []binding.Choice `json:"bindings"`
+	}
+	if first.Code != loop.OK || json.Unmarshal(first.Output, &saved) != nil || len(saved.Bindings) != 1 || saved.Bindings[0].Target.Parent != "beds" {
+		t.Fatalf("first call: %+v", first)
+	}
+	record, rev, err := r.records.Read(t.Context(), "beds")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Data = bytes.Replace(record.Data, []byte("state: active"), []byte("state: completed"), 1)
+	if _, err = r.records.Commit(t.Context(), records.Change{ID: record.ID, Path: record.Path, Base: rev, Data: record.Data}, records.Actor{Person: r.person, Agent: r.agent}); err != nil {
+		t.Fatal(err)
+	}
+	again := questionCall(t, tools, "bind_input", "under-beds", args)
+	saved = struct {
+		Bindings []binding.Choice `json:"bindings"`
+	}{}
+	if again.Code != loop.OK || json.Unmarshal(again.Output, &saved) != nil || len(saved.Bindings) != 1 || saved.Bindings[0].Target.Parent != "beds" {
+		t.Fatalf("retry after the parent completed: %+v", again)
+	}
+	fresh := questionCall(t, tools, "bind_input", "new-after-close", args)
+	saved = struct {
+		Bindings []binding.Choice `json:"bindings"`
+	}{}
+	if fresh.Code != loop.OK || json.Unmarshal(fresh.Output, &saved) != nil || len(saved.Bindings) != 1 || saved.Bindings[0].Target.Parent != "" {
+		t.Fatalf("new call kept a completed parent: %+v", fresh)
 	}
 }
 
