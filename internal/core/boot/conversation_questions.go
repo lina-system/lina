@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/binding"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -168,6 +170,9 @@ func (r *conversationRuntime) conversationQuestionCard(ctx context.Context, pers
 		return protocol.Question{}, waiting.ErrPerson
 	}
 	card := &protocol.DecisionCard{ID: q.ID, Revision: "1", Agent: r.questionDecisions().AgentName(q.Agent), Summary: q.Question, Recommendation: &q.Recommendation, Targets: []protocol.DecisionTarget{{Name: "Default", Value: q.Default}}}
+	if q.Binding != nil {
+		card.Targets = []protocol.DecisionTarget{}
+	}
 	visible, err := r.questionVisible(ctx, q)
 	if err != nil {
 		return protocol.Question{}, err
@@ -251,6 +256,9 @@ func (r *conversationRuntime) answerConversationQuestion(ctx context.Context, pe
 		if !visible {
 			return errQuestionWithdrawn
 		}
+		if err := resolveTargetBinding(ctx, tx, input, q, d); err != nil {
+			return err
+		}
 		value := d.Value
 		if d.Kind == "declined" {
 			value = design.Text(eventLanguage(input), "decline")
@@ -259,6 +267,14 @@ func (r *conversationRuntime) answerConversationQuestion(ctx context.Context, pe
 			value = design.Text(eventLanguage(input), "notice.run_cancelled")
 		}
 		body := q.Question + "\n" + design.Text(eventLanguage(input), "notice.question_answer") + value
+		if q.Binding != nil {
+			choices, err := readInputChoices(ctx, tx, input)
+			if err != nil {
+				return err
+			}
+			raw, _ := json.Marshal(choices[q.Binding.Request])
+			body += "\nHeld request: " + string(raw) + "\nResume only the explicitly selected request after checking its current state and authority."
+		}
 		masked, err := secrets.Mask(body)
 		if err != nil {
 			return err
@@ -398,7 +414,7 @@ func (g *questionTurn) check(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if q.Resolution == nil {
+		if q.Resolution == nil && q.Binding == nil {
 			return errors.New("pending_question_needs_resolution")
 		}
 	}
@@ -481,6 +497,30 @@ func (g *questionTurn) tool() loop.Tool {
 			if !visible {
 				return loop.Result{ID: c.ID, Code: loop.Invalid, Output: json.RawMessage(`{"code":"question_withdrawn"}`)}
 			}
+			if q.Binding != nil && in.Kind != "related" {
+				if in.Kind != "answered" {
+					return bindingFailure(c.ID, errBindingPending)
+				}
+				index := -1
+				for n, label := range q.Choices {
+					if binding.Fold(strings.TrimSpace(in.Quote)) == binding.Fold(label) || strings.TrimSpace(in.Quote) == strconv.Itoa(n+1) {
+						index = n
+					}
+				}
+				if index < 0 || in.Value != q.Choices[index] {
+					return bindingFailure(c.ID, binding.ErrChoice)
+				}
+				revision, value := "1", q.Choices[index]
+				values := protocol.FormValues{"answer": {String: &value}}
+				outcome, err := r.answerConversationQuestion(ctx, r.person, protocol.QuestionAnswer{CardID: &q.ID, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}, input.ID)
+				if err != nil || outcome != protocol.DecisionOutcomeResolved {
+					return loop.Result{ID: c.ID, Code: loop.Invalid}
+				}
+				q, err = s.Get(ctx, q.ID)
+				if err != nil {
+					return loop.Result{ID: c.ID, Code: loop.Failed}
+				}
+			}
 			if q.Resolution == nil && in.Kind != "related" {
 				d := waiting.QuestionResolution{Kind: in.Kind, Input: input.ID, Value: in.Value, At: time.Now().UTC()}
 				if in.Kind == "default_applied" {
@@ -527,7 +567,7 @@ func (g *questionTurn) tool() loop.Tool {
 	}
 }
 func resolveQuestionDeclaration() provider.ToolDecl {
-	return provider.ToolDecl(`{"type":"function","name":"resolve_question","description":"Before other tools or your final reply, account for each pending question using the current person input or owner steering received during this turn. Quote the input that answers it or changes the topic. A related assessment must cover the latest consumed input before work can continue; quoting an older follow-up does not account for newer steering. Use answered with the person's value, related if they ask a related follow-up without answering, or default_applied if they move to an unrelated topic. Core applies the stored default, closes the question and records a notice. Continue the original work with that value. No resolution grants effect authority.","parameters":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["answered","related","default_applied"]},"quote":{"type":"string"},"value":{"type":"string"}},"required":["id","kind","quote"],"additionalProperties":false}}`)
+	return provider.ToolDecl(`{"type":"function","name":"resolve_question","description":"Before other tools or your final reply, account for each pending question using the current person input or owner steering received during this turn. Quote the input that answers it or changes the topic. A related assessment must cover the latest consumed input before work can continue; quoting an older follow-up does not account for newer steering. Use answered with the person's value, related if they ask a related follow-up without answering, or default_applied if they move to an unrelated topic. For a binding question, quote an exact offered label or number and use its label as value; unrelated turns leave it pending and default_applied is refused. Other questions apply the stored default, close and record a notice. Continue the original work with that value. No resolution grants effect authority.","parameters":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["answered","related","default_applied"]},"quote":{"type":"string"},"value":{"type":"string"}},"required":["id","kind","quote"],"additionalProperties":false}}`)
 }
 
 type questionTransaction struct{ tx *canon.Tx }
