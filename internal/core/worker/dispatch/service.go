@@ -44,6 +44,7 @@ type Record struct {
 	ParentRefs        string                     `json:"parent_refs,omitempty"`
 	WorkRefs          string                     `json:"work_refs,omitempty"`
 	RecoveryThread    *worker.Thread             `json:"recovery_thread,omitempty"`
+	FreshSession      bool                       `json:"fresh_session,omitempty"`
 	RecoveryWorker    string                     `json:"recovery_worker,omitempty"`
 	Restored          bool                       `json:"restored,omitempty"`
 	Attempt           int                        `json:"attempt,omitempty"`

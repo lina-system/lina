@@ -85,6 +85,15 @@ func (s *Session) notification(raw []byte) error {
 			s.finishEvents = map[string]bool{}
 		}
 		s.finishEvents[turn] = true
+		if s.snapshot.Thread.TurnID == turn {
+			for _, item := range p.Turn.Items {
+				s.textItem(item)
+			}
+			handled, err := s.finishText(f)
+			if err != nil || handled {
+				return err
+			}
+		}
 		s.finished[turn] = true
 		s.clearRequests(turn)
 		if s.snapshot.Thread.TurnID == turn {
@@ -95,11 +104,18 @@ func (s *Session) notification(raw []byte) error {
 	case n.ItemAgentMessageDelta != nil:
 		p := n.ItemAgentMessageDelta.Params
 		thread, turn = p.ThreadId, p.TurnId
-		event.Kind = worker.ProgressEvent
-		event.Progress = &worker.Progress{ItemID: p.ItemId, Phase: "delta", Text: p.Delta}
+		if !s.textBinding(thread, turn) {
+			return nil
+		}
+		s.text.Add(p.ItemId, p.Delta, false)
+		return nil
 	case n.ItemStarted != nil:
 		p := n.ItemStarted.Params
 		thread, turn = p.ThreadId, p.TurnId
+		if !s.textBinding(thread, turn) {
+			return nil
+		}
+		s.textItem(p.Item)
 		event.Kind = worker.ProgressEvent
 		phase := "started"
 		switch {
@@ -118,13 +134,14 @@ func (s *Session) notification(raw []byte) error {
 		thread, turn = p.ThreadId, p.TurnId
 		event.Kind = worker.ProgressEvent
 		event.Progress = &worker.Progress{Phase: "item_completed"}
-		if p.Item.AgentMessage != nil {
-			event.Progress.ItemID = p.Item.AgentMessage.ID
-			event.Progress.Text = p.Item.AgentMessage.Text
-			if thread == s.snapshot.Thread.ID && turn == s.snapshot.Thread.TurnID {
-				s.snapshot.Output = p.Item.AgentMessage.Text
-			}
+		if !s.textBinding(thread, turn) {
+			return nil
 		}
+		s.textItem(p.Item)
+		if p.Item.AgentMessage != nil {
+			return nil
+		}
+
 	case n.ThreadTokenUsageUpdated != nil:
 		p := n.ThreadTokenUsageUpdated.Params
 		thread, turn = p.ThreadId, p.TurnId
