@@ -19,6 +19,7 @@ import (
 )
 
 var (
+	ErrNeedsSignIn  = errors.New("messenger_needs_sign_in")
 	ErrInvalid      = errors.New("invalid_messenger_source")
 	ErrNotFound     = sql.ErrNoRows
 	ErrNotConnected = errors.New("messenger_source_not_connected")

@@ -269,7 +269,7 @@ conversations.
 
 | Capability | What the client can do |
 | --- | --- |
-| Conversation | Start a conversation with an agent, send a message, interrupt, read history, subscribe to events, receive connect and disconnect notices |
+| Conversation | Start a conversation with an agent, send a message, interrupt, read history, subscribe to events, receive connect and disconnect notices; read a message's binding chip and its move choices, move a binding, read the move count and export its replay cases |
 | Launcher | Send a one-line message to the last or a named agent's main conversation, receive its short form and a message locator ([Launcher capability](#launcher-capability)) |
 | Agent management | List the main's agents, create an agent from a preset or a description, rename, tune and delete an agent. LINA Core records each change with the person id. |
 | Work records | List, read, capture, edit, complete and reorder 목표 (goal), 일 (project), 할 일 (to-do), 계속 챙기는 것 (area) and memos; read the views (오늘 (today), 예정 (upcoming), 언제든 (anytime), 나중에 (later), the flow board) and the candidates; answer a proposal to add or split, and undo a promotion, an addition or an archive. Each is a request to LINA Core, and LINA Core computes the views. |
@@ -695,6 +695,21 @@ using the app's registered localhost callback at port 8400. State, issuer,
 callback address and expiry are checked in Core. Completion reports connection
 status, including unsupported tenant consent. Source records and coverage use
 the existing messenger store, independently of the client lifetime.
+
+### Webex source settings
+
+The owner-only `webex` 1.0 capability provides `webex_request` and
+`webex_result`. `configure` takes `platform: "webex"`, `client_id` and
+`client_secret`; `sign_in` takes `platform: "webex"`; `disconnect` takes the
+platform account ID. `list` returns source account IDs, states and sanitized
+failure causes. Every operation requires the owner's eligible decider at the
+current epoch. Secret values are input-only and never appear in results.
+
+Sign-in uses `sign_in_relay` on the same connection. Core retains PKCE, state
+and the ten-minute attempt; another connection cannot finish or replace it.
+`cannot_listen` selects the registered port 8400 and accepts a pasted callback
+URL. Completion reports `connected` and the verified platform account ID.
+The source reader continues independently of that client connection.
 
 ## Deferred
 
