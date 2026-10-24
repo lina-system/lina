@@ -732,6 +732,35 @@ A messenger source is one of the person's own messenger accounts that LINA reads
 - The connect card of an unofficial platform says in plain words that the platform's terms forbid automating a personal account, links the term, says that even reading may get the account limited, and says that LINA will only read. The person accepts before connecting, and LINA records the acceptance with the person and the date.
 - LINA never takes tokens, cookies or passwords from other apps or browsers, never signs in as an official client with that client's id or secret, never scripts a developer portal and never evicts the person's other devices. Reading never marks a message read, shows presence or typing, or joins or leaves a chat.
 
+### Microsoft Teams source
+
+Teams reads work and school accounts through Microsoft Graph v1.0 with the
+person's public Entra app and tenant ID. Core requests delegated chat, channel,
+member and basic profile read scopes plus offline access; it requests no write
+permission. The client browser relay uses authorization code with PKCE S256,
+one-use state and a ten-minute, connection-bound attempt. The tenant-specific
+Entra authority is fixed before sign-in. A supplied response issuer must match
+that authority; Entra responses without `iss` remain bound to that one authority.
+Tokens live in the person's secret store and refresh before expiry or once after
+a 401. There is no fallback account or Microsoft-owned client registration.
+
+Core polls each account independently and resumes it after restart. Graph paging
+links must stay on the same collection, and HTTP redirects are refused. Core
+contacts only `graph.microsoft.com` and `login.microsoftonline.com`; browser
+consent and the client's loopback callback are outside the Core HTTP client.
+Chat-message reads pair `lastModifiedDateTime` filters with matching descending
+ordering. Channel-message and reply endpoints do not support those filters, so
+Core pages them and filters locally. A complete traversal advances the durable
+watermark; a failed page advances neither records nor cursor. Explicit soft
+deletions retract records, and absent messages do not imply deletion.
+
+Senders use tenant-qualified platform IDs. Profile emails are retained as
+identity evidence, never a replacement key or a name-based merge. A tenant that
+blocks the app or withholds delegated consent reports `unsupported` with a short
+reason; it is not retried through another service. Transient failures retain the
+cursor and obey Retry-After. Disconnect cancels the account worker before deleting
+its tokens and leaves the previously read history available.
+
 ### Messenger adapter boundary
 
 Each platform has one adapter. An adapter offers: its sign-in state; listing chats; reading a page of a chat from a cursor, oldest first; members; live events where the platform has them; fetching one attachment on request; and a static capability descriptor (history depth, cursor kind, edit and deletion signals, live events and write verbs). Only adapters of official platforms have write verbs. A ported adapter is LINA's own Go code, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
