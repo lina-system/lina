@@ -48,6 +48,7 @@ func crashDB(t *testing.T, root string, epoch uint64) *canon.Store {
 	return openDB(t, canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: epoch, Controls: controls, Migrations: canon.Migrations()})
 }
 func TestRecordingCrashChild(t *testing.T) {
+	t.Parallel()
 	root := os.Getenv("LINA_REPLY_CRASH_ROOT")
 	if root == "" {
 		return
@@ -59,6 +60,7 @@ func TestRecordingCrashChild(t *testing.T) {
 	t.Fatalf("crash boundary not reached: %v", err)
 }
 func TestReplyAndCardCrashAtomicity(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"before", "after"} {
 		t.Run(phase, func(t *testing.T) {
 			root := t.TempDir()
