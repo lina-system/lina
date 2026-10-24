@@ -19,6 +19,9 @@ import (
 var errNoChange = errors.New("work_no_change")
 var ErrNeedsPerson = errors.New("work_needs_person")
 
+// ErrPaused holds a queued continuation for resume instead of retiring it.
+var ErrPaused = errors.New("work_paused")
+
 // Driver is a trusted integration boundary, never model-provided code. It must
 // recheck authority and exact target at dispatch, and return observed evidence,
 // not a command exit code. Execute honors the durable action id as its receipt
@@ -144,6 +147,16 @@ func snapshotView(v *View) (State, error) {
 		}
 		s.Actions = append(s.Actions, x)
 	}
+	for _, r := range v.Records("limit") {
+		var x RunLimitRecord
+		if err := decodeLimit(r, &x); err != nil {
+			return s, err
+		}
+		if s.Limits == nil {
+			s.Limits = map[string]RunLimit{}
+		}
+		s.Limits[r.ID] = x.RunLimit
+	}
 	return s, nil
 }
 func (e *Engine) Snapshot(ctx context.Context) (State, error) {
@@ -228,7 +241,7 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 	if err := validateGoal(g); err != nil {
 		return err
 	}
-	if g.StepGraph != nil || g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || len(g.MergedRevisions) > 0 || g.Deployment != (Proof{}) || g.Verification != (Proof{}) {
+	if g.StepGraph != nil || g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || len(g.MergedRevisions) > 0 || g.Deployment != (Proof{}) || g.Verification != (Proof{}) || g.Rank != 0 || g.Paused || g.QueuePlace != 0 || g.QueueReason != "" {
 		return ErrInvalid
 	}
 	for _, t := range g.Tasks {
@@ -249,6 +262,17 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 		if _, ok := v.Get("goal", g.ID); ok {
 			return ErrConflict
 		}
+		rank := 1
+		for _, r := range v.Records("goal") {
+			var other Goal
+			if err := json.Unmarshal(r.Body, &other); err != nil {
+				return err
+			}
+			if other.Person == g.Person && other.State != GoalDone && other.State != GoalStopped && other.Rank >= rank {
+				rank = other.Rank + 1
+			}
+		}
+		g.Rank = rank
 		return put(v, "goal", g.ID, g)
 	})
 }
@@ -343,23 +367,38 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 				}
 			}
 		}
+		queue := map[string]QueuePlace{}
+		for _, q := range p.Queues {
+			queue[q.GoalID] = q
+		}
 		for i := range s.Goals {
 			g := &s.Goals[i]
-			waits := []Wait{}
-			for _, w := range p.Waits {
-				if w.GoalID != g.ID {
-					continue
-				}
-				for _, old := range g.Waits {
-					if old.TaskID == w.TaskID && old.Reason == w.Reason && old.Wake == w.Wake {
-						w.Until = old.Until
-						break
-					}
-				}
-				waits = append(waits, w)
+			// A goal's place and reason are this pass's projection: a goal that
+			// started, paused or ended carries neither.
+			g.QueuePlace, g.QueueReason = 0, ""
+			if q, ok := queue[g.ID]; ok && g.State != GoalDone && g.State != GoalStopped {
+				g.QueuePlace, g.QueueReason = q.Place, q.Reason
 			}
-			g.Waits = waits
-			if g.State != GoalDone && g.State != GoalStopped {
+			// A paused goal keeps its waits, including their deadlines, until it
+			// is resumed. Its in-progress step settles through its receipt.
+			waits := g.Waits
+			if !g.Paused {
+				waits = []Wait{}
+				for _, w := range p.Waits {
+					if w.GoalID != g.ID {
+						continue
+					}
+					for _, old := range g.Waits {
+						if old.TaskID == w.TaskID && old.Reason == w.Reason && old.Wake == w.Wake {
+							w.Until = old.Until
+							break
+						}
+					}
+					waits = append(waits, w)
+				}
+				g.Waits = waits
+			}
+			if g.State != GoalDone && g.State != GoalStopped && !g.Paused {
 				allLanded := len(g.Tasks) > 0
 				for _, t := range g.Tasks {
 					allLanded = allLanded && t.Stage == TaskDone
@@ -409,6 +448,17 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 				return err
 			}
 		}
+		// The pass records the limit it applied, so a client, the line and the
+		// next pass read the same number and reason.
+		for person, limit := range p.RunLimits {
+			record := RunLimitRecord{RunLimit: s.Limits[person], Current: limit.Current, Reason: limit.Reason}
+			if record.RunLimit.Value == 0 {
+				record.RunLimit = RunLimit{Automatic: true}
+			}
+			if err = put(v, "limit", person, record); err != nil {
+				return err
+			}
+		}
 		if len(v.changes) == 0 {
 			return errNoChange
 		}
@@ -439,13 +489,19 @@ func (e *Engine) Claim(ctx context.Context, id string) (Action, error) {
 		if err = e.hydrate(&g); err != nil {
 			return err
 		}
-		if g.State == GoalDone || g.State == GoalStopped {
+		// A stopped goal may still claim a queued read of an existing effect.
+		if g.State == GoalDone || g.State == GoalStopped && a.ObserveActionID == "" {
 			return ErrConflict
 		}
 		if changedInputs(g, a) || a.ObserveActionID == "" && !currentActionTarget(g, a) {
 			return ErrConflict
 		}
 		if g.DefinitionPending && a.Kind != PlanGoal && a.ObserveActionID == "" {
+			return ErrConflict
+		}
+		// A paused goal dispatches nothing new. A claimed step from before the
+		// pause is observed, never replayed or extended.
+		if g.Paused && a.ObserveActionID == "" {
 			return ErrConflict
 		}
 		if reserves(a) && a.ObserveActionID == "" {
@@ -465,12 +521,17 @@ func (e *Engine) Claim(ctx context.Context, id string) (Action, error) {
 					others = append(others, other)
 				}
 			}
-			eligible := false
 			now := e.cfg.Now()
-			for _, n := range s.Nodes {
-				if n.ID == a.NodeID && n.Workers[t.Worker] && n.QuotaReset[t.Worker] <= now.Unix() && Slots(n, others, a.Resources, now) > 0 {
-					eligible = true
-					break
+			// The person may have lowered the limit, or capacity may have fallen,
+			// since this award was derived. A goal that is now past the limit
+			// keeps no unstarted step; steps already running are untouched.
+			eligible := false
+			if !runLimitBlocks(s, g.Person, g.ID, a.ID, now) {
+				for _, n := range s.Nodes {
+					if n.ID == a.NodeID && n.Workers[t.Worker] && n.QuotaReset[t.Worker] <= now.Unix() && Slots(n, others, a.Resources, now) > 0 {
+						eligible = true
+						break
+					}
 				}
 			}
 			if !eligible {
@@ -550,6 +611,29 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		}
 		if a.State == "finished" {
 			return ErrConflict
+		}
+		// A confirmed stop is final. A report that arrives afterwards settles its
+		// receipt and reservation; it never reopens the goal or its tasks, so a
+		// late planning result cannot restart the work the person stopped.
+		if g.State == GoalStopped {
+			// Only a worker action owns its task's settlement. Clearing it on
+			// an inspection would retain an area lease that can never merge.
+			if t != nil && workerAction(a.Kind) {
+				t.EffectsSettled = o.EffectsSettled
+				if err = put(v, "goal", g.ID, g); err != nil {
+					return err
+				}
+			}
+			// An uncertain execution stays observable until its outcome is
+			// settled, so its reservation is never lost by the stop alone.
+			a.State = "unknown"
+			if o.Handle != "" {
+				a.Handle = o.Handle
+			}
+			if effectSettled(a, o) || !hasExternalEffect(a) && (o.Status == OutcomeSucceeded || o.Status == OutcomeFailed || o.Status == OutcomeConflict || o.Status == OutcomeNeedsPerson) {
+				a.State = "finished"
+			}
+			return put(v, "action", id, a)
 		}
 		switch o.Status {
 		case OutcomeQuota:
@@ -923,6 +1007,18 @@ func (e *Engine) awaitAuthorization(ctx context.Context, claimed Action) error {
 		if err = e.hydrate(&g); err != nil {
 			return err
 		}
+		if g.State == GoalStopped {
+			// Authorization refused before any dispatch and the person has
+			// stopped the goal: nothing will run, so the award is retired
+			// instead of holding its reservation for a goal that cannot use it.
+			restoreUndispatchedTask(&g, a)
+			a.State = "finished"
+			a.Superseded, a.RetirementReconciled = true, true
+			if err = put(v, "action", a.ID, a); err != nil {
+				return err
+			}
+			return put(v, "goal", g.ID, g)
+		}
 		a.State = "awaiting_authorization"
 		a.Receipt = encode(Observation{Status: OutcomeNeedsPerson, EffectsSettled: true})
 		if a.Signal != claimed.Signal {
@@ -1113,7 +1209,16 @@ func (e *Engine) CanContinue(ctx context.Context, id string) (bool, error) {
 		}
 		for _, g := range state.Goals {
 			if g.ID == a.GoalID {
-				return g.State != GoalDone && g.State != GoalStopped && !staleInputs(g, a), nil
+				// A paused goal starts no new execution, including the automatic
+				// replacement of a failed worker; its existing effect is still
+				// observed and settled.
+				if g.State == GoalDone || g.State == GoalStopped || staleInputs(g, a) {
+					return false, nil
+				}
+				if g.Paused {
+					return false, ErrPaused
+				}
+				return true, nil
 			}
 		}
 	}

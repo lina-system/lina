@@ -77,3 +77,17 @@ func Parse(raw []byte) ([]Finding, error) {
 	}
 	return reply.Findings, nil
 }
+
+// maxFindings is FindingsSchema's maxItems. Core-computed lists stay within it
+// so FinishIn can record them.
+const maxFindings = 256
+
+// findingAccepted reports whether one finding satisfies FindingsSchema and Parse.
+func findingAccepted(f Finding) bool {
+	raw, err := json.Marshal(map[string]any{"findings": []Finding{f}})
+	if err != nil {
+		return false
+	}
+	_, err = Parse(raw)
+	return err == nil
+}

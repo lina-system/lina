@@ -42,6 +42,8 @@ func main() {
 			os.Exit(runReplay(os.Args[2:]))
 		case "intake-replay":
 			os.Exit(runIntakeReplay(os.Args[2:]))
+		case "method-replay":
+			os.Exit(runMethodReplay(os.Args[2:]))
 		case "teams":
 			os.Exit(runTeams(os.Args[2:]))
 		case "a2a":
@@ -66,6 +68,6 @@ func main() {
 			os.Exit(tools.Main(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
-	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|update|backup|restore|import-hermes|import-murmur|doctor|replay|provider-replay|intake-replay|export|identity-eval|a2a|teams|version|file-tool|worker-tools|proc-supervise|proc-job>")
+	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|update|backup|restore|import-hermes|import-murmur|doctor|replay|provider-replay|intake-replay|method-replay|export|identity-eval|a2a|teams|version|file-tool|worker-tools|proc-supervise|proc-job>")
 	os.Exit(64)
 }

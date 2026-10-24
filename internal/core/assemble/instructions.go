@@ -12,6 +12,22 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
+// TUIInstructions is the installed conversation's instruction text: the fixed
+// persona prefix, the surface description and the prepared agent's projection.
+func TUIInstructions(persona agents.Preparation, tools []provider.ToolDecl) (string, error) {
+	text, err := Instructions(persona, tools)
+	if err != nil {
+		return "", err
+	}
+	return TUIComposition(text), nil
+}
+
+// TUIComposition wraps an already built instruction block as the TUI surface
+// presents it. Recorded v1 requests keep their own build and use this wrapper.
+func TUIComposition(text string) string {
+	return PersonaCoreV1 + "\n" + TUIFormatting + "\n\n" + text
+}
+
 // Instructions projects the prepared agent and the actual request declarations.
 // JSON escaping keeps names and layer text inside their respective blocks.
 func Instructions(persona agents.Preparation, tools []provider.ToolDecl) (string, error) {

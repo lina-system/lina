@@ -57,6 +57,7 @@ func TestCompletionPreservesChannelScope(t *testing.T) {
 	for _, kind := range []string{"unchanged", "tools-revoked", "memory-widened", "thread-rebound", "private"} {
 		t.Run(kind, func(t *testing.T) {
 			r := controlRuntime(t)
+			installDispatchRecord(t, r)
 			ctx := t.Context()
 			must := func(err error) {
 				t.Helper()
@@ -165,6 +166,7 @@ func TestCompletionRejectsMissingOrigin(t *testing.T) {
 
 func TestDelegatedFileCompletionReturnsToRequester(t *testing.T) {
 	r := controlRuntime(t)
+	installDispatchRecord(t, r)
 	first, err := r.agents.FirstRun(t.Context(), r.person, true)
 	if err != nil {
 		t.Fatal(err)

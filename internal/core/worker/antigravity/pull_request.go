@@ -37,11 +37,8 @@ func (p PullRequest) FailureReason() string {
 	var reasons []string
 	for _, c := range p.Checks {
 		failed := c.Type == "StatusContext" && (c.State == "FAILURE" || c.State == "ERROR")
-		if c.Type == "CheckRun" && c.Status == "COMPLETED" {
-			switch c.Conclusion {
-			case "FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE", "STARTUP_FAILURE":
-				failed = true
-			}
+		if c.Type == "CheckRun" && c.Status == "COMPLETED" && terminalConclusion(c.Conclusion) {
+			failed = true
 		}
 		if failed {
 			reasons = append(reasons, "Required check failed: "+c.Name)
@@ -83,24 +80,48 @@ var repositoryName = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 // Verify establishes only delivery readiness for this exact branch/head. Merge
 // and design acceptance remain Core's separate judgment, never an adapter act.
 func (p PullRequest) Verify(repository, branch, base, head string) error {
+	blocked, _ := p.Readiness(repository, branch, base, head)
+	return blocked
+}
+
+// Readiness separates waits and identity mismatches from terminal negative
+// check evidence. Failures names only required checks that will not turn green
+// again, so a pending or missing check is never reported as a finding.
+func (p PullRequest) Readiness(repository, branch, base, head string) (blocked error, failures []string) {
 	if !repositoryName.MatchString(repository) || p.Number <= 0 || p.URL != fmt.Sprintf("https://github.com/%s/pull/%d", repository, p.Number) || p.State != "OPEN" || p.Draft || p.Branch != branch || p.Base != base || p.Head != head || len(head) != 40 || strings.Trim(head, "0123456789abcdef") != "" {
-		return errors.New("pull request identity or head mismatch")
+		return errors.New("pull request identity or head mismatch"), nil
 	}
 	if len(p.Checks) == 0 {
-		return errors.New("pull request checks missing")
+		return errors.New("pull request checks missing"), nil
 	}
 	for _, c := range p.Checks {
-		if c.Type == "CheckRun" {
-			if c.Status != "COMPLETED" || c.Conclusion != "SUCCESS" {
-				return errors.New("pull request checks not green")
+		switch c.Type {
+		case "CheckRun":
+			if c.Status == "COMPLETED" && c.Conclusion == "SUCCESS" {
+				continue
 			}
-		} else if c.Type == "StatusContext" {
-			if c.State != "SUCCESS" {
-				return errors.New("pull request status not green")
+			if c.Status == "COMPLETED" && terminalConclusion(c.Conclusion) {
+				failures = append(failures, c.Name)
 			}
-		} else {
-			return errors.New("unknown pull request check")
+			if blocked == nil {
+				blocked = errors.New("pull request checks not green")
+			}
+		case "StatusContext":
+			if c.State == "SUCCESS" {
+				continue
+			}
+			if c.State == "FAILURE" || c.State == "ERROR" {
+				failures = append(failures, c.Name)
+			}
+			if blocked == nil {
+				blocked = errors.New("pull request status not green")
+			}
+		default:
+			return errors.New("unknown pull request check"), nil
 		}
+	}
+	if blocked != nil {
+		return blocked, failures
 	}
 	reviewed := false
 	for _, r := range p.Reviews {
@@ -108,19 +129,27 @@ func (p PullRequest) Verify(repository, branch, base, head string) error {
 			continue
 		}
 		if r.State == "CHANGES_REQUESTED" || blocking.MatchString(r.Body) {
-			return errors.New("blocking pull request review")
+			return errors.New("blocking pull request review"), nil
 		}
 		reviewed = reviewed || r.State == "APPROVED" || r.State == "COMMENTED"
 	}
 	if !reviewed {
-		return errors.New("current head review missing")
+		return errors.New("current head review missing"), nil
 	}
 	for _, c := range p.Comments {
 		if c.CommitID == head && blocking.MatchString(c.Body) {
-			return errors.New("blocking inline review")
+			return errors.New("blocking inline review"), nil
 		}
 	}
-	return nil
+	return nil, nil
+}
+
+func terminalConclusion(conclusion string) bool {
+	switch conclusion {
+	case "FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE", "STARTUP_FAILURE":
+		return true
+	}
+	return false
 }
 
 // ReadPullRequest reads only fixed gh operations. The selector is the task

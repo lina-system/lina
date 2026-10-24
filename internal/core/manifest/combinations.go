@@ -128,6 +128,7 @@ func ClientCombinationsFor(target string) []Combination {
 		Evidence: []string{
 			"go test ./e2e/m1 -run TestM3PlanDrafting",
 			"go test ./e2e/m1 -run TestM3OperationalSwitch",
+			"go test ./e2e/m1 -run TestM3WorkCommandsInstalledCore",
 			"go test ./e2e/m1 -run TestM2TUIRecordsInstalledCore",
 			"go test ./e2e/m1 -run TestM2ProgressWaitingInstalledCore",
 			"go test ./e2e/m1 -run TestM3WorkerLanes",
