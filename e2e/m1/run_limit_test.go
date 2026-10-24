@@ -249,12 +249,12 @@ func TestM3RunLimitInstalledCore(t *testing.T) {
 	if got := workStarts(t, root); len(got) != 2 {
 		t.Fatalf("a lower limit started or stopped work: %v", got)
 	}
-	// Automatic on a loaded host: the limit becomes the goals already running
-	// plus what the host carries, so with two running and one carried it stays
-	// two and admits no new start, while the waiting goal's reason becomes the
-	// host load. Steps in progress run on.
-	writeWorkLoad(t, root, 2)
-	awaitHostLoad(t, ctx, root, 2)
+	// Automatic on a fully loaded host: the limit is the goals already running
+	// plus what the host still carries, so with two running and nothing carried
+	// it stays two and admits no new start, while the waiting goal's reason
+	// becomes the host load. Steps in progress run on.
+	writeWorkLoad(t, root, 3)
+	awaitHostLoad(t, ctx, root, 3)
 	if result := limit("limit_auto", nil); !result.Automatic {
 		t.Fatalf("limit_auto = %+v", result)
 	}

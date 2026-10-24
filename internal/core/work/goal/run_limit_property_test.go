@@ -219,7 +219,7 @@ func runLimitOracle(choice RunLimit, nodes []Node, now time.Time, running int) (
 	if quotaBlocked {
 		reason = ReasonQuota
 	}
-	return max(1, total, running), reason
+	return max(1, total+running), reason
 }
 
 // freeSteps is what the reports can still place, in the same step units.

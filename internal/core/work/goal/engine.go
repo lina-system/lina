@@ -19,6 +19,9 @@ import (
 var errNoChange = errors.New("work_no_change")
 var ErrNeedsPerson = errors.New("work_needs_person")
 
+// ErrPaused holds a queued continuation for resume instead of retiring it.
+var ErrPaused = errors.New("work_paused")
+
 // Driver is a trusted integration boundary, never model-provided code. It must
 // recheck authority and exact target at dispatch, and return observed evidence,
 // not a command exit code. Execute honors the durable action id as its receipt
@@ -486,7 +489,8 @@ func (e *Engine) Claim(ctx context.Context, id string) (Action, error) {
 		if err = e.hydrate(&g); err != nil {
 			return err
 		}
-		if g.State == GoalDone || g.State == GoalStopped {
+		// A stopped goal may still claim a queued read of an existing effect.
+		if g.State == GoalDone || g.State == GoalStopped && a.ObserveActionID == "" {
 			return ErrConflict
 		}
 		if changedInputs(g, a) || a.ObserveActionID == "" && !currentActionTarget(g, a) {
@@ -607,6 +611,29 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		}
 		if a.State == "finished" {
 			return ErrConflict
+		}
+		// A confirmed stop is final. A report that arrives afterwards settles its
+		// receipt and reservation; it never reopens the goal or its tasks, so a
+		// late planning result cannot restart the work the person stopped.
+		if g.State == GoalStopped {
+			// Only a worker action owns its task's settlement. Clearing it on
+			// an inspection would retain an area lease that can never merge.
+			if t != nil && workerAction(a.Kind) {
+				t.EffectsSettled = o.EffectsSettled
+				if err = put(v, "goal", g.ID, g); err != nil {
+					return err
+				}
+			}
+			// An uncertain execution stays observable until its outcome is
+			// settled, so its reservation is never lost by the stop alone.
+			a.State = "unknown"
+			if o.Handle != "" {
+				a.Handle = o.Handle
+			}
+			if effectSettled(a, o) || !hasExternalEffect(a) && (o.Status == OutcomeSucceeded || o.Status == OutcomeFailed || o.Status == OutcomeConflict || o.Status == OutcomeNeedsPerson) {
+				a.State = "finished"
+			}
+			return put(v, "action", id, a)
 		}
 		switch o.Status {
 		case OutcomeQuota:
@@ -980,6 +1007,18 @@ func (e *Engine) awaitAuthorization(ctx context.Context, claimed Action) error {
 		if err = e.hydrate(&g); err != nil {
 			return err
 		}
+		if g.State == GoalStopped {
+			// Authorization refused before any dispatch and the person has
+			// stopped the goal: nothing will run, so the award is retired
+			// instead of holding its reservation for a goal that cannot use it.
+			restoreUndispatchedTask(&g, a)
+			a.State = "finished"
+			a.Superseded, a.RetirementReconciled = true, true
+			if err = put(v, "action", a.ID, a); err != nil {
+				return err
+			}
+			return put(v, "goal", g.ID, g)
+		}
 		a.State = "awaiting_authorization"
 		a.Receipt = encode(Observation{Status: OutcomeNeedsPerson, EffectsSettled: true})
 		if a.Signal != claimed.Signal {
@@ -1170,7 +1209,16 @@ func (e *Engine) CanContinue(ctx context.Context, id string) (bool, error) {
 		}
 		for _, g := range state.Goals {
 			if g.ID == a.GoalID {
-				return g.State != GoalDone && g.State != GoalStopped && !staleInputs(g, a), nil
+				// A paused goal starts no new execution, including the automatic
+				// replacement of a failed worker; its existing effect is still
+				// observed and settled.
+				if g.State == GoalDone || g.State == GoalStopped || staleInputs(g, a) {
+					return false, nil
+				}
+				if g.Paused {
+					return false, ErrPaused
+				}
+				return true, nil
 			}
 		}
 	}

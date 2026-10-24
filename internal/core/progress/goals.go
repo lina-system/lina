@@ -3,7 +3,6 @@ package progress
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -27,12 +26,12 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 	var goals []goal.Goal
 	for rows.Next() {
 		var raw []byte
-		var g goal.Goal
 		if err = rows.Scan(&raw); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		if err = json.Unmarshal(raw, &g); err != nil {
+		g, err := decodeProgressGoal(raw)
+		if err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -58,7 +57,11 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 			continue
 		}
 		visible = append(visible, g)
-		ids[g.ID] = true
+		// Revision one has no earlier placement to retain. Its complete graph
+		// and newest task states already live in this snapshot's goal record.
+		if g.StepGraph == nil || g.StepGraph.Revision != 1 {
+			ids[g.ID] = true
+		}
 		turns[g.ID] = g.Turn
 	}
 	if len(visible) == 0 {

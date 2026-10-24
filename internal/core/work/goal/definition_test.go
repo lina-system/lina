@@ -3,6 +3,7 @@ package goal
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -10,6 +11,49 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
+
+func TestGoalSentencesDoNotDecodeExecutionGraph(t *testing.T) {
+	_, db := testJournal(t)
+	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := oneGoal(readyTask("first"))
+	if err := e.Admit(t.Context(), g); err != nil {
+		t.Fatal(err)
+	}
+	read := func(engine *Engine) {
+		titles, err := engine.GoalSentences(t.Context())
+		if err != nil || len(titles) != 1 || titles[g.ID] != g.Summary {
+			t.Fatalf("canonical title lost: %v, %v", titles, err)
+		}
+	}
+	before := testing.AllocsPerRun(3, func() { read(e) })
+	if err := e.journal.Update(t.Context(), Transition{ID: "many-steps", Kind: "fixture", At: 100}, func(v *View) error {
+		current, err := loadGoal(v, g.ID)
+		if err != nil {
+			return err
+		}
+		for i := range 82 {
+			current.Tasks = append(current.Tasks, readyTask(fmt.Sprintf("task-%d", i)))
+		}
+		return put(v, "goal", current.ID, current)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	after := testing.AllocsPerRun(3, func() { read(e) })
+	t.Logf("title lookup: %.0f allocations for one step, %.0f for 83", before, after)
+	if after > 2*before {
+		t.Fatalf("title lookup decodes execution state: %.0f -> %.0f allocations", before, after)
+	}
+	// Restarted readers have no cached definition and must still recover the
+	// same title from its canonical record, with the saved owner and revision.
+	restarted, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	read(restarted)
+}
 
 func TestGoalDefinitionLivesInRecordsNotExecutionLedger(t *testing.T) {
 	t.Parallel()

@@ -2,6 +2,7 @@
 package goal
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -64,6 +65,18 @@ func (e *Engine) Command(ctx context.Context, c GoalCommand) (Goal, bool, error)
 		Command   Command `json:"command"`
 		Confirmed bool    `json:"confirmed"`
 	}{c.Goal, c.Person, c.Command, c.Confirmed})}
+	// A resent message keeps the command it committed: its original instant and
+	// its one ledger record. A different payload under the same identity is
+	// refused rather than overwriting the first choice.
+	if committed, ok, err := e.journal.Committed(ctx, event.ID); err != nil {
+		return Goal{}, false, err
+	} else if ok {
+		if !bytes.Equal(committed.Data, event.Data) {
+			return Goal{}, false, ErrConflict
+		}
+		g, err := e.readGoal(ctx, c.Goal)
+		return g, true, err
+	}
 	err := e.journal.Update(ctx, event, func(v *View) error {
 		r, ok := v.Get("goal", c.Goal)
 		if !ok {
@@ -94,7 +107,7 @@ func (e *Engine) Command(ctx context.Context, c GoalCommand) (Goal, bool, error)
 			// Undispatched work never runs for a stopped goal, and its award must
 			// not keep a node slot reserved. A claimed effect settles by reading
 			// its outcome, so only queued work and an authority wait retire here.
-			if err := retireStoppedActions(v, &g); err != nil {
+			if err := retireStoppedActions(v, &g, event.At); err != nil {
 				return err
 			}
 		case CommandPause, CommandResume:
@@ -140,24 +153,30 @@ func (e *Engine) Command(ctx context.Context, c GoalCommand) (Goal, bool, error)
 		return Goal{}, false, err
 	}
 	if out.ID == "" {
-		// A resent command runs no callback; answer with the committed goal.
-		var read error
-		read = e.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
-			v, err := readView(ctx, tx)
-			if err != nil {
-				return err
-			}
-			r, ok := v.Get("goal", c.Goal)
-			if !ok {
-				return ErrNotFound
-			}
-			return decodeGoal(r, &out)
-		})
-		if read != nil {
-			return Goal{}, false, read
+		// A no-op transition runs no callback; answer with the committed goal.
+		g, err := e.readGoal(ctx, c.Goal)
+		if err != nil {
+			return Goal{}, false, err
 		}
+		out = g
 	}
 	return out, changed, nil
+}
+
+func (e *Engine) readGoal(ctx context.Context, id string) (Goal, error) {
+	var g Goal
+	err := e.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+		v, err := readView(ctx, tx)
+		if err != nil {
+			return err
+		}
+		r, ok := v.Get("goal", id)
+		if !ok {
+			return ErrNotFound
+		}
+		return decodeGoal(r, &g)
+	})
+	return g, err
 }
 
 func decodeGoal(r Record, g *Goal) error {
@@ -240,18 +259,33 @@ func hasChanges(v *View) bool { return len(v.changes) > 0 }
 // retireStoppedActions closes every undispatched award of a stopped goal in the
 // same transaction, so its reservations are released with the stop. A claimed
 // action keeps its receipt and reservation until its effect is observed.
-func retireStoppedActions(v *View, g *Goal) error {
+func retireStoppedActions(v *View, g *Goal, now int64) error {
 	for _, r := range v.Records("action") {
 		var a Action
 		if err := json.Unmarshal(r.Body, &a); err != nil {
 			return err
 		}
-		if a.GoalID != g.ID || a.ObserveActionID != "" || a.State != "queued" && a.State != "awaiting_authorization" {
+		if a.GoalID != g.ID {
 			continue
 		}
-		restoreUndispatchedTask(g, a)
-		a.State = "finished"
-		a.Superseded, a.RetirementReconciled = true, true
+		if a.State == "needs_person" {
+			// A stopped goal cannot receive a person's wake. A settled worker
+			// releases capacity; an uncertain effect must keep being observed.
+			if settledRefusal(a) {
+				a.State = "finished"
+				a.Superseded, a.RetirementReconciled = true, true
+			} else {
+				a.State = "unknown"
+				a.Deadline = now
+			}
+		} else {
+			if a.ObserveActionID != "" || a.State != "queued" && a.State != "awaiting_authorization" {
+				continue
+			}
+			restoreUndispatchedTask(g, a)
+			a.State = "finished"
+			a.Superseded, a.RetirementReconciled = true, true
+		}
 		if err := put(v, "action", a.ID, a); err != nil {
 			return err
 		}

@@ -192,6 +192,35 @@ func (j *Journal) Update(ctx context.Context, event Transition, apply func(*View
 	}
 	return err
 }
+
+// Committed reads the transition recorded under id. A resend of the same
+// message keeps its original transition, including the instant it committed,
+// whatever the local retry time is.
+func (j *Journal) Committed(ctx context.Context, id string) (Transition, bool, error) {
+	var out Transition
+	found := false
+	err := j.db.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		err := tx.QueryRowContext(ctx, "SELECT body FROM work_events WHERE id=?", id).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var saved entry
+		if err := json.Unmarshal(raw, &saved); err != nil {
+			return ErrInvalid
+		}
+		if saved.Event.ID != id {
+			return ErrInvalid
+		}
+		out, found = saved.Event, true
+		return nil
+	})
+	return out, found, err
+}
+
 func putRecord(ctx context.Context, tx *canon.Tx, r Record) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO work_records(kind,id,version,body) VALUES(?,?,?,?)
  ON CONFLICT(kind,id) DO UPDATE SET version=excluded.version,body=excluded.body`, r.Kind, r.ID, r.Version, r.Body)

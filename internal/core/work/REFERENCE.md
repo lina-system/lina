@@ -114,4 +114,10 @@ derives nothing for a paused, stopped or done goal. A claim on a paused goal
 returns a claim conflict without changing the action, so a resumed goal claims
 its already-committed award instead of spending a second attempt.
 `progress.Goals` reads the same rank and pause flag for the line's order and Now,
-so a restart rebuilds the identical projection.
+so a restart rebuilds the identical projection. A resent message compares its
+stable identity and payload with the committed transition, so a retry at a later
+second keeps one record instead of conflicting on its timestamp. A report that
+settles after a confirmed stop keeps its receipt and releases its reservation
+but never reopens the goal; a paused goal refuses recovery authorization as well
+as new claims. Derivation drops a stopped goal's write-area lease once its
+effects are settled and keeps it while an outcome is still unknown.

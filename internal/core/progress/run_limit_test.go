@@ -89,7 +89,7 @@ func TestQueuedGoalLineShowsReasonAndPlace(t *testing.T) {
 		t.Fatalf("rank order = %+v", read)
 	}
 	if got, want := read[1].Line.Now, "Waiting for a slot · #1"; got != want {
-		t.Fatalf("queued Now = %q, want %q", got, want)
+		t.Fatalf("queued Now = %q, want %q; lines = %+v", got, want, read)
 	}
 	if read[0].Line.Now == read[1].Line.Now {
 		t.Fatalf("the running goal shows a queue place: %+v", read)

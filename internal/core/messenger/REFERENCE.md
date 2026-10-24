@@ -25,6 +25,14 @@ adds nothing still commits its cursor and coverage in one transaction.
 The page is the unit of resumption: a page that never commits leaves the cursor
 where it was, so the next read sees it again.
 
+Reply and thread targets are resolved before that batch is written, by the
+same placement an import run uses. A target already committed in the chat uses
+that record's event. A target on the same page is written first, and the reply
+names that event. Each target names one revision: when a committed target is
+edited on the same page, the relation names the new revision only. A target that is neither committed nor on this page adds no
+relation, and the message is still kept. A cycle keeps the relations that can
+name an event already written.
+
 ## Speaker kind
 
 The adapter's `Route` is the only input: `person`, `automation`, `system` and
@@ -72,7 +80,9 @@ reference on the event stays the live one, so a source connected later joins the
 imported records. One run admits one row per platform key, murmur's archive value
 wins over a live value, a changed row without a later edit is reported as a
 conflict, and a record whose stored speaker kind differs from the confirmed map
-gets a new revision that supersedes it.
+gets a new revision that supersedes it. A record whose reply or thread target is
+in the same run is admitted after that target, whatever their source order, so
+its relation survives; a cycle of replies keeps the relations it can.
 
 ## Coverage
 

@@ -4,6 +4,7 @@ package persona_test
 import (
 	"encoding/json"
 	"io/fs"
+	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -53,16 +54,45 @@ func replaceMethodField(t *testing.T, data []byte, field, value string) []byte {
 	return result
 }
 
+// sameRecord compares two records by parsed value, since canonical JSON orders
+// object keys differently from the record literal a preset writes.
+func sameRecord(t *testing.T, a, b, key string) bool {
+	t.Helper()
+	var left, right map[string]any
+	first, err := persona.ParseWorkMethod([]byte(a), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := persona.ParseWorkMethod([]byte(b), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if json.Unmarshal([]byte(first), &left) != nil || json.Unmarshal([]byte(second), &right) != nil {
+		t.Fatal("record is not an object")
+	}
+	return reflect.DeepEqual(left, right)
+}
+
 func TestReleaseWorkMethodsRejectDrift(t *testing.T) {
+	// The shipped records carry the mechanism fields (declared tool groups,
+	// worker dispatch, work-kind ownership) and no reply-shaping override: the
+	// M4-4 replay measured that tailoring and it did not ship, so the finding is
+	// M4-2's and a re-tuned record lands through that design change.
 	for _, starter := range persona.Starters() {
 		t.Run(starter.Key, func(t *testing.T) {
 			path := starter.Key + "/work-method-v1.json"
 			source := releaseSource(t)
 			original := source[path].Data
 			values := persona.WorkMethodValues(string(original))
+			if string(values["tools.declare_first"]) == `[]` {
+				t.Fatalf("shipped record declares no tool groups: %s", original)
+			}
+			if string(values["reply.candidates"]) != `1` {
+				t.Fatalf("shipped record carries a reply override: %s", values["reply.candidates"])
+			}
 			changes := map[string]string{
-				"tools.declare_first": `[]`,
-				"handoff.owns":        `[]`,
+				"tools.declare_first": `["work"]`,
+				"handoff.owns":        `["code"]`,
 				"handoff.check_back":  `false`,
 				"background_runs":     `["reading"]`,
 				"reply.candidates":    `2`,
@@ -73,12 +103,6 @@ func TestReleaseWorkMethodsRejectDrift(t *testing.T) {
 			}
 			if starter.Key == "dev" {
 				changes["workers.dispatch"] = `false`
-			}
-			if starter.Key == "life" {
-				changes["reply.comparison"] = `"verdict-then-card"`
-			}
-			if starter.Key == "lina" || starter.Key == "knowledge" {
-				changes["ask.form"] = `"narrowed"`
 			}
 			for field, raw := range values {
 				if strings.HasPrefix(field, "done.") {
@@ -100,38 +124,31 @@ func TestReleaseWorkMethodsRejectDrift(t *testing.T) {
 					if _, err := persona.ParseWorkMethod(data, starter.Key); err != nil {
 						t.Fatal("drift fixture must remain schema-valid", err)
 					}
+					if string(data) == string(original) {
+						t.Fatal("drift fixture changed nothing")
+					}
 					source[path].Data = data
 					if err := persona.Validate(source); err == nil {
-						t.Fatal("release accepted a schema-valid change to starter values")
+						t.Fatal("release accepted a tailored starter record")
 					}
 				})
 			}
-			t.Run("tool order", func(t *testing.T) {
-				var groups []string
-				if err := json.Unmarshal(values["tools.declare_first"], &groups); err != nil || len(groups) < 2 {
-					t.Fatal("expected ordered tool groups", err)
+			t.Run("reordered tool groups", func(t *testing.T) {
+				data := replaceMethodField(t, original, "tools.declare_first", `["terminal","work"]`)
+				if _, err := persona.ParseWorkMethod(data, starter.Key); err != nil {
+					t.Fatal("drift fixture must remain schema-valid", err)
 				}
-				groups[0], groups[1] = groups[1], groups[0]
-				raw, _ := json.Marshal(groups)
-				source[path].Data = replaceMethodField(t, original, "tools.declare_first", string(raw))
+				source[path].Data = data
 				if err := persona.Validate(source); err == nil {
-					t.Fatal("release accepted reordered tools")
+					t.Fatal("release accepted declared tool groups")
 				}
 			})
-			t.Run("empty record", func(t *testing.T) {
+			t.Run("empty record refused", func(t *testing.T) {
 				source[path].Data = []byte(persona.EmptyWorkMethod(starter.Key))
 				if err := persona.Validate(source); err == nil {
-					t.Fatal("release accepted an empty starter record")
+					t.Fatal("release accepted a record that drops the mechanism fields")
 				}
 			})
-			if len(persona.WorkMethodFillKeys(string(original))) != 0 {
-				t.Run("removed fill", func(t *testing.T) {
-					source[path].Data = replaceMethodField(t, original, "fill", `[]`)
-					if err := persona.Validate(source); err == nil {
-						t.Fatal("release accepted removal of fill declarations")
-					}
-				})
-			}
 		})
 	}
 }

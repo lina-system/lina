@@ -802,7 +802,8 @@ The result returns the `goal_id`, the `operation`, the goal's lifecycle `state`,
 whether it is `paused`, and its `rank`. The command is recorded durably with the
 request's message identity and applies on the next scheduling pass; the result
 reports the committed projection and dispatches no effect. A resent message
-keeps one recorded command. A choice that changes nothing, such as a move at the
+keeps one recorded command and its original instant, whatever the retry time,
+and a different choice under a used identity is refused. A choice that changes nothing, such as a move at the
 first or last place, a pause of a paused goal or a stop of a stopped goal,
 records no command and answers its current projection with effect state `none`;
 a recorded choice answers `applied`. A malformed field

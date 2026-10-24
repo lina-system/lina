@@ -212,6 +212,14 @@ func (e *Engine) hydrate(g *Goal) error {
 	return nil
 }
 
+type goalSentenceRef struct {
+	ID             string `json:"id"`
+	Person         string `json:"person"`
+	Agent          string `json:"agent"`
+	RecordID       string `json:"record_id"`
+	RecordRevision string `json:"record_revision"`
+}
+
 // GoalSentences returns each goal's canonical sentence, keyed by goal id.
 // The execution ledger does not store that prose. A missing or unreadable
 // definition omits only that goal. A ledger failure, or any other records
@@ -226,7 +234,9 @@ func (e *Engine) GoalSentences(ctx context.Context) (map[string]string, error) {
 	}
 	titles := map[string]string{}
 	for _, row := range rows {
-		var g Goal
+		// The title is in its definition; decoding tasks and receipts here
+		// repeats execution work for every progress refresh.
+		var g goalSentenceRef
 		if err = json.Unmarshal(row.Body, &g); err != nil {
 			return nil, err
 		}
@@ -244,7 +254,7 @@ func (e *Engine) GoalSentences(ctx context.Context) (map[string]string, error) {
 	return titles, nil
 }
 
-func (e *Engine) goalSentence(ctx context.Context, g Goal) (string, error) {
+func (e *Engine) goalSentence(ctx context.Context, g goalSentenceRef) (string, error) {
 	if cached, ok := e.definitions.Load(definitionKey{g.RecordID, g.RecordRevision}); ok {
 		saved := cached.(savedDefinition)
 		if saved.revision == g.RecordRevision {

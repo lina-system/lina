@@ -99,7 +99,7 @@ func runLimitFor(choice RunLimit, nodes []Node, now time.Time, running int) Limi
 	if quotaBlocked {
 		reason = ReasonQuota
 	}
-	return LimitState{Current: max(running, carried, 1), Reason: reason, Automatic: true}
+	return LimitState{Current: max(running+carried, 1), Reason: reason, Automatic: true}
 }
 
 // inProgressGoals maps each person to the goals whose worker step already holds
