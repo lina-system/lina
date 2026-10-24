@@ -84,6 +84,56 @@ const options = mock => ({ api: mock.api, repository: 'owner/repo', milestone: 3
   before: head(0), runUrl: 'https://github.com/owner/repo/actions/runs/1',
   isAncestor: async (a, b) => Number(a[0]) <= Number(b[0]) });
 
+const localIdentity = input => ({ machine: 'qa-linux', head: input.plan.head,
+  started: input.plan.started, logPath: '/qa/runs/' + input.plan.head });
+const localOptions = (mock, input, history = []) => ({ ...options(mock), ...input,
+  runId: undefined, runUrl: undefined, localRun: localIdentity(input), localHistory: history,
+  api: async (...args) => {
+    assert.ok(!args[1].includes('/actions/'), 'local QA must not read Actions history');
+    return mock.api(...args);
+  } });
+
+test('local reports use the same recovery, flaky and reopen rules as Actions', async () => {
+  const ci = github();
+  const local = github();
+  for (const [result, n] of [['fail', 1], ['pass', 2], ['fail', 3], ['pass', 4], ['pass', 5], ['pass', 6], ['fail', 7], ['pass', 8], ['fail', 9]]) {
+    const input = fixture(result, n);
+    await reconcileQA({ ...options(ci), ...input, requiredPasses: 1 });
+    await reconcileQA({ ...localOptions(local, input), requiredPasses: 1 });
+    const state = issue => JSON.parse(/<!-- foundation-qa:(.*) -->/.exec(issue.body)[1]);
+    assert.deepEqual(state(local.issues[0]), state(ci.issues[0]));
+    assert.equal(local.issues[0].state, ci.issues[0].state);
+    assert.deepEqual(local.issues[0].labels, ci.issues[0].labels);
+  }
+  assert.match(local.issues[0].body, /qa-linux/);
+  assert.match(local.issues[0].body, /\/qa\/runs\//);
+  assert.equal(local.comments.length, 1);
+});
+
+test('local stored descendant results suppress a recovered late failure', async () => {
+  const mock = github();
+  const history = [4, 2, 3].map(n => {
+    const input = fixture('pass', n);
+    return { ...input, repository: 'owner/repo', branch: 'dev', localRun: localIdentity(input) };
+  });
+  await reconcileQA(localOptions(mock, fixture(), history));
+  assert.equal(mock.issues.length, 0);
+  history[0].records[0].digest = 'stale';
+  await assert.rejects(reconcileQA(localOptions(mock, fixture(), history)), /result/i);
+});
+
+test('local identity and plan integrity fail closed before issue writes', async () => {
+  for (const field of ['head', 'started', 'machine', 'logPath', 'digest', 'tree']) {
+    const mock = github();
+    const input = fixture();
+    const opts = localOptions(mock, input);
+    if (['digest', 'tree'].includes(field)) opts.plan[field] = 'invalid';
+    else opts.localRun[field] = field === 'started' ? 0 : '';
+    await assert.rejects(reconcileQA(opts));
+    assert.equal(mock.writes.length, 0, field);
+  }
+});
+
 test('a single pass after failure stays open and three distinct passing heads close it', async () => {
   const mock = github();
   const opts = options(mock);

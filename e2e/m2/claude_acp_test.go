@@ -46,10 +46,16 @@ process.exit(result.status ?? 1);
 
 }
 
+// A first-use install may spend the installer's three-minute bound before the
+// worker exists, so this scenario needs that bound plus the Core starts,
+// dispatch and assertions the shared harness performs. The package watchdog
+// stays at six minutes.
+const claudeACPScenarioTimeout = 4 * time.Minute
+
 // The wrapper and SDK are the real pinned npm packages. Only Claude's stream,
 // the model and GitHub are synthetic. Core installs and drives the whole chain.
 func TestClaudeACPThroughRunningCore(t *testing.T) {
-	runACPWorkersThroughRunningCore(t, []acpScenario{{name: "pinned-claude", worker: "claude-acp", binary: "claude", mode: "success", script: claudeStreamStub, bundleFiles: claudeACPBundle,
+	runACPWorkersThroughRunningCore(t, []acpScenario{{name: "pinned-claude", worker: "claude-acp", binary: "claude", mode: "success", timeout: claudeACPScenarioTimeout, script: claudeStreamStub, bundleFiles: claudeACPBundle,
 		beforeDispatch: func(t *testing.T, root string) {
 			if _, err := os.Stat(filepath.Join(root, "npm-calls")); !os.IsNotExist(err) {
 				t.Fatal("installed before first use", err)
