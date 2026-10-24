@@ -740,10 +740,6 @@ func replaceOverflowCount(panel []string, count int) []string {
 	return out
 }
 
-func appendGraphMark(panel []string) []string {
-	return append(append([]string{}, panel...), "    └ 연쇄")
-}
-
 func reversed(values []string) []string {
 	out := append([]string{}, values...)
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
