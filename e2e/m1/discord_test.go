@@ -34,8 +34,8 @@ import (
 // matching build manifest, runs production Core boot in a separate process, and
 // controls it through the generated socket protocol. Synthetic outbound
 // Gateway/REST and Responses endpoints demonstrate channel input, read tools,
-// background results, deduplication, shaping, blocked state and restart without
-// live credentials.
+// the binding chip, background results, deduplication, shaping, blocked state
+// and restart without live credentials.
 func TestM2DiscordCore(t *testing.T) {
 	t.Parallel()
 
@@ -560,6 +560,16 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	if strings.Join(parts, "") != reply || !strings.HasSuffix(parts[0], "\n\n") {
 		t.Fatalf("reply split lost paragraph: lengths %d %d", len(parts[0]), len(parts[1]))
 	}
+	// A channel reply names the item the message is about in one line and
+	// reaches the move list with /move.
+	select {
+	case text := <-sent:
+		if !strings.Contains(text, "Read the skill inventory") || !strings.Contains(text, "/move") {
+			t.Fatalf("binding chip missing the item or /move: %s", text)
+		}
+	case <-h.ctx.Done():
+		t.Fatal("binding chip did not reach Discord")
+	}
 	select {
 	case text := <-sent:
 		if !strings.Contains(text, workResult) {
@@ -586,7 +596,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	})
 	c.conn.Close()
 	h.stopCore(core)
-	if modelCalls.Load() != 6 || sendCalls.Load() != 4 {
+	if modelCalls.Load() != 6 || sendCalls.Load() != 5 {
 		t.Fatalf("duplicate/external dispatch: model=%d sends=%d", modelCalls.Load(), sendCalls.Load())
 	}
 	core = start()
@@ -603,7 +613,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	})
 	c.conn.Close()
 	h.stopCore(core)
-	if modelCalls.Load() != 6 || sendCalls.Load() != 4 {
+	if modelCalls.Load() != 6 || sendCalls.Load() != 5 {
 		t.Fatal("restart replayed work")
 	}
 }
