@@ -446,6 +446,28 @@ func references(ctx context.Context, tx *canon.Tx, e Event) error {
 	return nil
 }
 
+// AppendStructure adds a replies_to or in_thread relation to an event that was
+// admitted before its target existed. Both events must be in one conversation.
+// The relation is added once; the event row itself does not change.
+func AppendStructure(ctx context.Context, tx *canon.Tx, eventID string, r Relation) error {
+	if !safeID(eventID) || !safeID(r.TargetID) || eventID == r.TargetID || r.Ordinal != 0 || (r.Kind != "replies_to" && r.Kind != "in_thread") {
+		return ErrInvalid
+	}
+	var from, to string
+	if err := tx.QueryRowContext(ctx, "SELECT conversation_id FROM conv_event WHERE id=?", eventID).Scan(&from); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, "SELECT conversation_id FROM conv_event WHERE id=?", r.TargetID).Scan(&to); err != nil {
+		return err
+	}
+	if from != to {
+		return ErrInvalid
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO ev_rel(event_id,target_id,kind,ordinal) SELECT ?,?,?,0
+WHERE NOT EXISTS(SELECT 1 FROM ev_rel WHERE event_id=? AND target_id=? AND kind=? AND ordinal=0)`, eventID, r.TargetID, r.Kind, eventID, r.TargetID, r.Kind)
+	return err
+}
+
 // Get reads one committed snapshot of metadata, relations and spans. Material
 // I/O happens after that transaction ends and never holds the canon writer.
 // Missing/unverifiable bytes return the metadata with BytesUnavailable and an

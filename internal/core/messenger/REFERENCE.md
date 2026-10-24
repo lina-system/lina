@@ -33,6 +33,13 @@ edited on the same page, the relation names the new revision only. A target that
 relation, and the message is still kept. A cycle keeps the relations that can
 name an event already written.
 
+A target that is neither committed nor in the batch waits in
+`messenger_relation_pending`. When that target is admitted, the same
+transaction appends the relation to each waiting reply's current event through
+`ledger.AppendStructure` and clears the rows. A reply that is deleted first
+gains nothing. A target in the same batch never waits, so a cycle still keeps
+one direction.
+
 ## Speaker kind
 
 The adapter's `Route` is the only input: `person`, `automation`, `system` and
@@ -58,6 +65,14 @@ The removal-list line keeps `messenger/<platform>/<account>` and
 `<chat>/<message>`; the record row stays as a `deleted` tombstone, so a later
 read or import adds nothing. A message absent from a later read is not a
 deletion and stays visible.
+
+A deletion without a chat (`DeleteSourceMessages`, or a live event with an
+empty chat) whose id no record in the allowed chats holds, tombstones included,
+is kept in `messenger_deletion_pending` with its chat prefixes and time. Page
+and live admission read that table for the page's ids; a match in an allowed
+chat becomes a page deletion, so the message is written as a tombstone and the
+row is cleared. Import does not read it; a retained id stays until a page or
+live event names that message.
 
 `retract.Open` now also resolves event targets. It accepts only events whose
 origin is `messenger`, because deletion of a native conversation has its own
@@ -160,3 +175,18 @@ change ledger attribution or create an automatic person merge.
 Live events and history pages serialize revision planning and commit through a
 cancellable, per-source admission lock. Platform requests happen outside that
 lock, so waiting for a provider does not hold up live admission.
+
+`Service` counts each source's running syncs and live admissions. `Disconnect`
+marks the source stopping, cancels its reads and live reader, and waits for
+that source's count to reach zero or for its context to end. Another source's
+request or rate-limit wait is never waited on. A cancelled disconnect returns
+the context error and leaves the source connected.
+
+An adapter returns `ErrChatUnavailable` from `Page` for a chat the account can
+no longer read. `Sync` skips that chat without moving its cursor and reads the
+rest; the source still returns to connected.
+
+`Service.FetchAttachment` looks up the message a visible record's current
+revision carries the attachment with in `messenger_attachment` and passes the
+chat, message and attachment id to the adapter. It refuses a disconnected
+source and a deleted record.

@@ -200,13 +200,15 @@ type SourceID struct {
 type Adapter interface {
 	SignIn(context.Context, SourceID) (SignInState, error)
 	ListChats(context.Context, SourceID) ([]Chat, error)
-	// Page reads one page of a chat from a cursor, oldest first.
+	// Page reads one page of a chat from a cursor, oldest first. It returns
+	// ErrChatUnavailable when the account can no longer read that chat.
 	Page(context.Context, SourceID, string, Cursor) (Page, error)
 	Members(context.Context, SourceID, string) ([]Author, error)
 	// Live delivers events the platform pushes, until ctx ends.
 	Live(context.Context, SourceID, func(Event) error) error
-	// FetchAttachment reads one attachment on request.
-	FetchAttachment(context.Context, SourceID, string, string) (io.ReadCloser, error)
+	// FetchAttachment reads one attachment on request. It names the chat, the
+	// message the attachment came with and the attachment id.
+	FetchAttachment(ctx context.Context, source SourceID, chat, message, attachment string) (io.ReadCloser, error)
 	Capabilities() Capabilities
 }
 
