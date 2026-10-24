@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -70,12 +71,13 @@ func TestOwnerResolvesTheJobDirectory(t *testing.T) {
 	if got, err := ownerDirectory("relative/dir"); err != nil || got != strings.TrimSuffix(wd, "/")+"/relative/dir" {
 		t.Fatalf("relative directory = %q, %v", got, err)
 	}
-	// A symlink followed by ".." is resolved by the kernel, not lexically here.
-	// filepath.Join would clean "link/.." away and the comparison would reject
-	// the path the kernel must receive.
-	wantLink := strings.TrimSuffix(wd, "/") + "/link/.."
-	if got, err := ownerDirectory("link/.."); err != nil || got != wantLink {
-		t.Fatalf("relative directory with a symlink = %q, %v; want %q", got, err, wantLink)
+	// A symlink followed by ".." is resolved by the kernel, not lexically here:
+	// "link/.." must arrive uncleaned so it selects the symlink's parent. The
+	// expectation is built by concatenation because filepath.Join would clean
+	// the ".." away and make this check pass for the wrong implementation.
+	want := strings.TrimSuffix(wd, string(filepath.Separator)) + string(filepath.Separator) + "link" + string(filepath.Separator) + ".."
+	if got, err := ownerDirectory("link/.."); err != nil || got != want {
+		t.Fatalf("relative directory with a symlink = %q, %v; want %q", got, err, want)
 	}
 	if got, err := ownerDirectory("/tmp"); err != nil || got != "/tmp" {
 		t.Fatalf("absolute directory = %q, %v", got, err)
