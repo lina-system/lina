@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/binding"
@@ -16,11 +17,13 @@ import (
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/gateway"
+	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -604,7 +607,7 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					// its worker is not registered. Sending that card to the
 					// live path drops the follow-up. Keep the offline mailbox.
 					if session, ok := strings.CutPrefix(a.ID, "session:"); ok && !r.workerSessionLive(session) {
-						return r.followSubmitted(ctx, preparation, turnID, c.ID, a.ID, a.Text)
+						return r.followOfflineSession(ctx, event, turnID, c.ID, session, a.Text)
 					}
 					if _, err := r.work.Get(ctx, taskID); err == nil {
 						return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
@@ -669,9 +672,61 @@ func (r *conversationRuntime) workerSessionLive(session string) bool {
 	return ok
 }
 
-// followSubmitted stores a follow-up through the scoped run controls. A
-// session reference reaches the worker mailbox, including one retained only
-// in recovery after restart.
+// followOfflineSession stores a model follow-up for a session that is only in
+// the recovery record. The message keeps agent provenance and the same
+// per-input coordination allowance as a live follow-up.
+func (r *conversationRuntime) followOfflineSession(ctx context.Context, input ledger.Event, turnID, callID, session, text string) loop.Result {
+	records, err := (recovery.Recovery{DB: r.db}).Records(ctx)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	var rec recovery.Record
+	found := false
+	for _, candidate := range records {
+		if candidate.Thread.ID == session && candidate.Person == r.person && candidate.Agent == r.agent && candidate.Conversation == r.conversation {
+			rec = candidate
+			found = true
+			break
+		}
+	}
+	if !found || rec.Thread.TaskID == "" {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	name := rec.Worker
+	if name == "" {
+		name = "codex"
+	}
+	id := "binding-follow:" + turnID + ":" + callID
+	if input.SpeakerKind == guard.Person && input.ID != "" {
+		if err = worker.ResetMessages(ctx, r.db, rec.Thread.TaskID, "person:"+input.ID); err != nil {
+			return loop.Result{ID: callID, Code: loop.Denied}
+		}
+	}
+	if err = worker.AdmitMessage(ctx, r.db, rec.Thread.TaskID, id, text); err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	source, err := r.channelSteeringSource(ctx, input)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	mailbox := name + ":" + session
+	message := work.SteeringMessage{Sender: r.agent, SpeakerKind: string(guard.Agent), ID: steeringID(r.person, mailbox, id), Session: mailbox, TaskID: rec.Thread.TaskID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Text: text, Tier: offlineDelivery(name).Tier, Mechanism: offlineDelivery(name).Mechanism, SentAt: time.Now().UTC(), Source: source}
+	if _, err = r.work.StoreSteering(ctx, message); err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	reason := "session_down"
+	state := "held"
+	if rec.Canceled {
+		reason = "session_gone"
+		state = "refused"
+	}
+	if err = r.work.SteeringState(ctx, mailbox, message.ID, state, reason, message.SentAt); err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	return loop.Result{ID: callID, Code: loop.OK, Output: json.RawMessage(`{"state":"submitted"}`)}
+}
+
+// followSubmitted stores a follow-up through the scoped run controls.
 func (r *conversationRuntime) followSubmitted(ctx context.Context, preparation *toolPreparation, turnID, callID, runID, text string) loop.Result {
 	event := ledger.Event{}
 	if preparation != nil {

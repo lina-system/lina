@@ -39,8 +39,9 @@ A person-selected new target keeps that decider. Once its created id is recorded
 a later read, progress check, or follow-up may name that existing item; any
 other item stays pending. A model follow-up to a worker task uses the agent
 message path and the requesting conversation. A follow-up to a session retained
-after restart is stored for offline delivery when that worker is not running,
-even though its task card still exists. An unrelated conversation is
+after restart is stored as an agent message for offline delivery when that
+worker is not running, even though its task card still exists. It uses the
+same per-input coordination allowance as a live follow-up. An unrelated conversation is
 refused before delivery. `worker_input` and `worker_interrupt` resolve their session to
 that task before the person's choice is checked. `worker_interrupt` is a stop:
 a retained tie asks which task before cancellation. `submit_step_graph` starts

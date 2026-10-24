@@ -112,12 +112,17 @@ func TestFollowWorkRetainedSessionKeepsOfflineDelivery(t *testing.T) {
 	}
 	input := questionPersonInput(t, r, "retained-follow", "Change the format.")
 	tools := modelBindingTools(t, r, input)
-	got := questionCall(t, tools, "follow_work", "retained", map[string]string{"id": "session:session-retained", "text": "Change the format."})
-	if got.Code != loop.OK {
-		t.Fatalf("retained session follow-up: %+v", got)
+	for i := range 13 {
+		got := questionCall(t, tools, "follow_work", "retained-"+string(rune('a'+i)), map[string]string{"id": "session:session-retained", "text": "Change the format."})
+		if i < 12 && got.Code != loop.OK {
+			t.Fatalf("retained session follow-up %d: %+v", i, got)
+		}
+		if i == 12 && got.Code == loop.OK {
+			t.Fatal("another retained follow-up replenished the coordination allowance")
+		}
 	}
 	messages, err := r.work.SteeringMessages(t.Context(), "codex:session-retained")
-	if err != nil || len(messages) != 1 || messages[0].Text != "Change the format." || messages[0].TaskID != "task-a" {
+	if err != nil || len(messages) != 12 || messages[0].Text != "Change the format." || messages[0].TaskID != "task-a" || messages[0].SpeakerKind != "agent" || messages[0].Sender != r.agent {
 		t.Fatalf("offline delivery: %+v %v", messages, err)
 	}
 }
