@@ -86,7 +86,7 @@ func (r *conversationRuntime) followRunWithSource(ctx context.Context, s clients
 		return clientsrv.Result{}, malformedManagement()
 	}
 	if workerReference(p.RunID) {
-		err := r.ownerWorkerControl(ctx, s, p.RunID, p.ConversationID, e.MessageID, p.Text)
+		err := r.ownerWorkerControlFrom(ctx, s, p.RunID, p.ConversationID, e.MessageID, p.Text, source)
 		return clientsrv.Result{Kind: protocol.KindFollowUp, Effect: protocol.EffectApplied, Payload: p}, err
 	}
 	record, err := r.controlledRun(ctx, s, p.RunID, p.ConversationID)
