@@ -31,6 +31,9 @@ type script struct {
 	mu        sync.Mutex
 	responses map[string][]string
 	requests  []map[string]any
+	// hold, when set, runs before an operation's answer is written. A test uses
+	// it to keep one request in flight while it acts on the service.
+	hold func(op string)
 }
 
 func (s *script) Run(_ context.Context, _ lease.Lease, command sandbox.Command, _ []string) error {
@@ -52,7 +55,11 @@ func (s *script) Run(_ context.Context, _ lease.Lease, command sandbox.Command, 
 		}
 		line := queue[0]
 		s.responses[op] = queue[1:]
+		hold := s.hold
 		s.mu.Unlock()
+		if hold != nil {
+			hold(op)
+		}
 		id, _ := request["id"].(string)
 		if _, err := writer.WriteString(strings.ReplaceAll(line, `"id":""`, `"id":"`+id+`"`) + "\n"); err != nil {
 			return err
@@ -62,6 +69,13 @@ func (s *script) Run(_ context.Context, _ lease.Lease, command sandbox.Command, 
 		}
 	}
 	return nil
+}
+
+// setHold installs the gate the run loop calls before it answers an operation.
+func (s *script) setHold(hold func(op string)) {
+	s.mu.Lock()
+	s.hold = hold
+	s.mu.Unlock()
 }
 
 func (s *script) ops() []string {

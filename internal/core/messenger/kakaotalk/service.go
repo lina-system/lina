@@ -210,38 +210,24 @@ func (s *Service) SignIn(ctx context.Context, connection, account string) (Step,
 // or answer it; another connection is refused until it ends or expires.
 func (s *Service) begin(ctx context.Context, connection string, pending *attempt, fresh bool) (Step, error) {
 	s.flow.Lock()
-	defer s.flow.Unlock()
-	s.mu.Lock()
-	expired := s.expireLocked()
-	if s.holder != "" && s.holder != connection {
-		s.mu.Unlock()
-		return Step{}, ErrSignInBusy
-	}
-	resumed := false
-	if !fresh {
-		if live, ok := s.attempts[connection]; ok && live.account == pending.account {
-			pending, resumed = live, true
-		}
-	}
-	if !resumed && fresh && len(s.attempts) >= maxAttempts {
-		s.mu.Unlock()
-		return Step{}, messenger.ErrInvalid
-	}
-	if !resumed {
-		pending.expires = s.now().Add(attemptLifetime)
-		s.attempts[connection] = pending
-	}
-	s.holder = connection
-	s.mu.Unlock()
+	pending, expired, err := s.register(connection, pending, fresh)
 	// The add-on keeps one pending flow per account, so an abandoned attempt
 	// must be dropped before this connection begins its own.
 	for _, abandoned := range expired {
 		s.cancel(ctx, abandoned)
 	}
-	session, err := s.cfg.Sessions.Start(Platform, pending.account)
 	if err != nil {
+		s.flow.Unlock()
 		return Step{}, err
 	}
+	session, err := s.cfg.Sessions.Start(Platform, pending.account)
+	if err != nil {
+		s.flow.Unlock()
+		return Step{}, err
+	}
+	// The add-on call runs with the flow free, so a disconnect is not held up
+	// by it; finish takes the flow again to commit.
+	s.flow.Unlock()
 	step, err := session.BeginSignIn(ctx)
 	if err != nil {
 		return Step{}, err
@@ -249,22 +235,49 @@ func (s *Service) begin(ctx context.Context, connection string, pending *attempt
 	return s.finish(ctx, connection, pending, step)
 }
 
+// register starts or resumes the connection's relay and returns it, along with
+// the relays it expired. Only the connection that holds the platform's pending
+// flow may begin, resume or answer it; another connection is refused until it
+// ends or expires. It requires s.flow, held by the caller while it runs.
+func (s *Service) register(connection string, pending *attempt, fresh bool) (*attempt, []*attempt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	expired := s.expireLocked()
+	if s.holder != "" && s.holder != connection {
+		return nil, expired, ErrSignInBusy
+	}
+	if !fresh {
+		if live, ok := s.attempts[connection]; ok && live.account == pending.account {
+			return live, expired, nil
+		}
+	}
+	if fresh && len(s.attempts) >= maxAttempts {
+		return nil, expired, messenger.ErrInvalid
+	}
+	pending.expires = s.now().Add(attemptLifetime)
+	s.attempts[connection] = pending
+	s.holder = connection
+	return pending, expired, nil
+}
+
 // Answer relays one typed value to the same add-on session and keeps nothing.
 func (s *Service) Answer(ctx context.Context, connection, prompt, value string) (Step, error) {
 	s.flow.Lock()
-	defer s.flow.Unlock()
 	s.mu.Lock()
 	s.expireLocked()
 	pending, ok := s.attempts[connection]
 	held := s.holder == connection
 	s.mu.Unlock()
 	if !ok || !held || !s.now().Before(pending.expires) {
+		s.flow.Unlock()
 		return Step{}, ErrNoAttempt
 	}
 	session, err := s.cfg.Sessions.Start(Platform, pending.account)
 	if err != nil {
+		s.flow.Unlock()
 		return Step{}, err
 	}
+	s.flow.Unlock()
 	step, err := session.Answer(ctx, prompt, value)
 	if err != nil {
 		return Step{}, err
@@ -273,7 +286,9 @@ func (s *Service) Answer(ctx context.Context, connection, prompt, value string) 
 }
 
 // finish records the source once the platform names the account, and settles
-// the reload of a source that already exists.
+// the reload of a source that already exists. It takes s.flow for the commit:
+// the add-on call ran with the flow free, and a disconnect that landed while
+// the platform was answering must not be undone by a later Connect.
 func (s *Service) finish(ctx context.Context, connection string, pending *attempt, step addon.SignInStep) (Step, error) {
 	out := Step{State: step.State}
 	if step.Prompt != nil {
@@ -284,9 +299,13 @@ func (s *Service) finish(ctx context.Context, connection string, pending *attemp
 	}
 	if step.State != messenger.SignedIn {
 		if step.State == messenger.Failing {
+			s.flow.Lock()
 			s.mu.Lock()
-			s.releaseLocked(connection)
+			if s.liveLocked(connection, pending) {
+				s.releaseLocked(connection)
+			}
 			s.mu.Unlock()
+			s.flow.Unlock()
 		}
 		return out, nil
 	}
@@ -300,6 +319,21 @@ func (s *Service) finish(ctx context.Context, connection string, pending *attemp
 	}
 	if author.ID == "" || len(author.ID) > 512 {
 		return Step{}, messenger.ErrInvalid
+	}
+	// Claim the platform's one session for the account the platform named, so a
+	// later disconnect of another source cannot end it.
+	if _, err := s.cfg.Sessions.Start(Platform, author.ID); err != nil {
+		return Step{}, err
+	}
+	s.flow.Lock()
+	defer s.flow.Unlock()
+	s.mu.Lock()
+	live := s.liveLocked(connection, pending)
+	s.mu.Unlock()
+	if !live {
+		// The relay ended while the platform was answering, so there is nothing
+		// to record: the person disconnected or the attempt expired.
+		return Step{}, ErrNoAttempt
 	}
 	source := messenger.Source{Person: s.cfg.Person, Platform: Platform, Account: author.ID, Mode: messenger.ModeUnofficial,
 		Adapter: AdapterName, State: messenger.StateConnected, ConnectedAt: s.now()}
@@ -340,10 +374,28 @@ func (s *Service) source(ctx context.Context, account string) (*messenger.Source
 }
 
 // Disconnect stops the account's reads and live events, ends its add-on session
-// and deletes the add-on's data directory. Records already read stay.
+// and deletes the add-on's data directory. Records already read stay. Where LINA
+// keeps one add-on session for the whole platform, the session and its data
+// directory belong to the source the platform named, so only that source ends
+// them: for any other account the store row is updated alone.
 func (s *Service) Disconnect(ctx context.Context, account string) error {
 	if account == "" {
 		return messenger.ErrInvalid
+	}
+	// The flow is held for the whole disconnect: a sign-in still being answered
+	// must not commit a source after this.
+	s.flow.Lock()
+	defer s.flow.Unlock()
+	// Read the source's state first: an account that is already disconnected has
+	// no platform session to end, and the one session may belong to the account
+	// that is connected.
+	existing, err := s.source(ctx, account)
+	if err != nil {
+		return err
+	}
+	owner, err := s.sessionOwner(ctx)
+	if err != nil {
+		return err
 	}
 	source := messenger.Source{Person: s.cfg.Person, Platform: Platform, Account: account}
 	if s.cfg.Stop != nil {
@@ -366,7 +418,39 @@ func (s *Service) Disconnect(ctx context.Context, account string) error {
 	for _, pending := range abandoned {
 		s.cancel(ctx, pending)
 	}
+	if existing == nil || existing.State == messenger.StateDisconnected || owner != account {
+		return nil
+	}
 	return s.cfg.Sessions.Remove(ctx, Platform, account)
+}
+
+// sessionOwner returns the account of the one connected source, if exactly one
+// is connected. Where LINA keeps one add-on session for the whole platform, that
+// source owns the session and its data directory. An account whose state is
+// unclear owns nothing, so a disconnect never ends a session on a guess.
+func (s *Service) sessionOwner(ctx context.Context) (string, error) {
+	sources, err := s.Sources(ctx)
+	if err != nil {
+		return "", err
+	}
+	owner := ""
+	for _, source := range sources {
+		if source.State == messenger.StateDisconnected {
+			continue
+		}
+		if owner != "" {
+			return "", nil
+		}
+		owner = source.Account
+	}
+	return owner, nil
+}
+
+// liveLocked reports whether pending is still the connection's live relay, the
+// relay that holds the platform's pending flow. It requires s.mu.
+func (s *Service) liveLocked(connection string, pending *attempt) bool {
+	current, ok := s.attempts[connection]
+	return ok && current == pending && s.holder == connection && s.now().Before(current.expires)
 }
 
 // expireLocked drops relays past their lifetime and returns them, so the

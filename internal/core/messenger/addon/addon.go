@@ -78,6 +78,12 @@ type Session struct {
 	capsMu sync.Mutex
 	// caps is the platform driver's descriptor, read once per session.
 	caps *messenger.Capabilities
+
+	ownerMu sync.Mutex
+	// owner is the account the platform named for this session. One session and
+	// one data directory serve a single-account platform, so they belong to the
+	// account that signed in rather than to whoever stops the session first.
+	owner string
 }
 
 // NewSession starts one add-on process for an account. It returns a session
@@ -132,6 +138,24 @@ func (s *Session) Platform() string { return s.platform }
 // Account is the session's own identity: the account, or the platform where
 // LINA keeps one session for it.
 func (s *Session) Account() string { return s.key }
+
+// claim records the account the platform named for this session.
+func (s *Session) claim(account string) {
+	if account == "" {
+		return
+	}
+	s.ownerMu.Lock()
+	s.owner = account
+	s.ownerMu.Unlock()
+}
+
+// owns reports whether this session serves the account. A session the platform
+// has not named yet belongs to no source.
+func (s *Session) owns(account string) bool {
+	s.ownerMu.Lock()
+	defer s.ownerMu.Unlock()
+	return account != "" && s.owner == account
+}
 
 func (a *Adapter) SignIn(ctx context.Context, id messenger.SourceID) (messenger.SignInState, error) {
 	if err := a.forAccount(id); err != nil {
@@ -279,9 +303,11 @@ func (m *Manager) Start(platform, account string) (*Session, error) {
 		return nil, ErrStopped
 	}
 	if session, ok := m.sessions[key]; ok {
+		session.claim(account)
 		return session, nil
 	}
 	session := newSession(platform, key, key == platform, m.cfg)
+	session.claim(account)
 	m.sessions[key] = session
 	return session, nil
 }
@@ -310,6 +336,15 @@ func (m *Manager) Remove(ctx context.Context, platform, account string) error {
 		return nil
 	}
 	key := m.key(platform, account)
+	m.mu.Lock()
+	session, ok := m.sessions[key]
+	m.mu.Unlock()
+	// A single-account platform keeps one session and one data directory for
+	// every account of the platform. Ending it for a source that does not own
+	// it would end the owner's session and delete the session it stored.
+	if ok && session.single && !session.owns(account) {
+		return nil
+	}
 	if err := m.Stop(ctx, platform, account); err != nil {
 		return err
 	}
