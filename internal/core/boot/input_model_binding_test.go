@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -323,6 +324,63 @@ func TestModelBindingReadDoesNotResolveRiskyTie(t *testing.T) {
 	run, err := r.background.service.Get(t.Context(), b.ID)
 	if err != nil || len(run.FollowUps) != 0 {
 		t.Fatalf("pending steer reached run: notes=%d err=%v", len(run.FollowUps), err)
+	}
+}
+
+func TestModelBindingWorkerInputFollowsPersonTarget(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "task-a", Title: "First task", Kind: "task", State: "running", LastActivity: now},
+		{ID: "task-b", Title: "Second task", Kind: "task", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	// Sessions belong to another person so the live owner view does not observe
+	// these handles; only the binding gate reads them here.
+	foreign := &conversationRuntime{person: "person:elsewhere"}
+	sessions := map[string]string{"session-a": "task-a", "session-b": "task-b", "session-o": "turn:owner-start"}
+	r.workers.mu.Lock()
+	for id, task := range sessions {
+		r.workers.sessions[id] = &workerSession{thread: worker.Thread{ID: id, TaskID: task}, origin: foreign}
+	}
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		for id := range sessions {
+			delete(r.workers.sessions, id)
+		}
+		r.workers.mu.Unlock()
+	})
+	input := questionPersonInput(t, r, "worker-steer-target", "Change the format.")
+	tools := modelBindingTools(t, r, input)
+	b := binding.Target{Class: "existing", ID: "task-b", Kind: "task"}
+	if _, err := r.saveModelBinding(t.Context(), input, "worker-person-choice", []binding.Choice{{Quote: input.Body.Text(), Target: b}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	call := func(session string) *loop.Result {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]any{"session": session, "turn": "turn-1", "generation": 1, "binding": 1, "text": "Change the format."})
+		return r.bindWorkCall(t.Context(), input, 0, "turn:"+input.ID, provider.ToolCall{ID: "steer-" + session, Name: "worker_input", Arguments: string(raw)})
+	}
+	if result := call("session-a"); result == nil || result.Code != loop.Denied {
+		t.Fatalf("a worker for another task accepted the person's request: %+v", result)
+	}
+	if result := call("session-b"); result != nil {
+		t.Fatalf("the person's chosen task was refused: %+v", *result)
+	}
+	// An owner-started session names a conversation turn, not a work item, so it
+	// stays open to the original tool's own checks.
+	if result := call("session-o"); result != nil {
+		t.Fatalf("an owner-started session was refused: %+v", *result)
+	}
+	if got := questionCall(t, tools, "worker_input", "wrapped-steer", map[string]any{"session": "session-a", "turn": "turn-1", "generation": 1, "binding": 1, "text": "Change the format."}); got.Code != loop.Denied {
+		t.Fatalf("the tool wrapper delivered a steer to another task: %+v", got)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) != 1 || choices[0].Target != b || choices[0].Decider != "person" {
+		t.Fatalf("the person's choice changed: %+v %v", choices, err)
 	}
 }
 

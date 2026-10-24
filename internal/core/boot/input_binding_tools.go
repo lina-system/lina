@@ -245,6 +245,11 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		}
 	case "read_work_progress", "follow_work":
 		id = str("id")
+	case "worker_input", "worker_interrupt":
+		// A worker session steers the task it controls. Resolving it here keeps
+		// a person's chosen target authoritative: the tool cannot deliver the
+		// instruction to another task in the same conversation.
+		id = r.workerSessionTask(str("session"))
 	case "schedule_work":
 		var tasks []struct {
 			What string `json:"what"`
@@ -503,4 +508,22 @@ func bindingAction(name string) string {
 		return "delete"
 	}
 	return ""
+}
+
+// workerSessionTask resolves a worker session to the work item it controls.
+// An owner-started session carries a conversation turn as its task id and names
+// no work item, so it resolves to "" and the original tool keeps its own checks.
+func (r *conversationRuntime) workerSessionTask(session string) string {
+	if r.workers == nil || session == "" {
+		return ""
+	}
+	r.workers.mu.Lock()
+	entry := r.workers.sessions[session]
+	r.workers.mu.Unlock()
+	if entry == nil {
+		return ""
+	}
+	entry.control.Lock()
+	defer entry.control.Unlock()
+	return entry.thread.TaskID
 }

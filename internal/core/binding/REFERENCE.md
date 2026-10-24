@@ -22,6 +22,12 @@ id, an exact title, `new` or `none`, an absent or inexact excerpt becomes the
 input text, and kind and parent words are mapped to stored values. Only a target
 naming no open item, or more than one, returns a correction with the allowed ids.
 
+A work tool that names its target appends the same kind of choice, so the
+message's item follows what the tool acts on. A worker session resolves to the
+work item it controls, which keeps a person's chosen target authoritative for
+`worker_input` and `worker_interrupt`: a session for another task in the same
+conversation is refused while a chosen target is in effect.
+
 Target questions store their choice with the existing durable question record.
 Their resolution appends the selected or cancelled binding in the same transaction
 as the answer inbox event. General skipped-question defaults never resolve them.
