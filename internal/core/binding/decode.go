@@ -303,7 +303,7 @@ func NormalizeKind(kind string) string {
 
 func normalizeAction(action string) string {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "read", "edit", "steer", "start", "send", "pay", "delete":
+	case "read", "edit", "steer", "start", "send", "pay", "delete", "stop":
 		return strings.ToLower(strings.TrimSpace(action))
 	case "follow", "follow-up", "follow_up", "message", "reply":
 		return "steer"

@@ -43,6 +43,7 @@ func evidenceEngine(t *testing.T, d *evidenceDriver, state GoalState) (*Engine, 
 }
 
 func TestCheckingRereadsEveryEvidenceAndReopensChangedTarget(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"unchanged", "changed", "unreadable", "signal-during-read"} {
 		t.Run(mode, func(t *testing.T) {
 			var e *Engine
@@ -90,6 +91,7 @@ func TestCheckingRereadsEveryEvidenceAndReopensChangedTarget(t *testing.T) {
 }
 
 func TestCompletedEvidenceRefreshAndChangeHintAreDurable(t *testing.T) {
+	t.Parallel()
 	d := &evidenceDriver{read: func(_ Action, old CriterionEvidence) (CriterionEvidence, error) {
 		old.Collected = &CollectedEvidence{Output: "changed", Record: []byte(`{"revision":2}`)}
 		return old, nil
@@ -120,6 +122,7 @@ func TestCompletedEvidenceRefreshAndChangeHintAreDurable(t *testing.T) {
 }
 
 func TestTargetChangeFencesAnInFlightCriterion(t *testing.T) {
+	t.Parallel()
 	e, g := evidenceEngine(t, &evidenceDriver{}, GoalChecking)
 	if err := e.TargetChanged(t.Context(), "begin", g.Criteria[0].Check.Target); err != nil {
 		t.Fatal(err)
@@ -146,6 +149,7 @@ func TestTargetChangeFencesAnInFlightCriterion(t *testing.T) {
 }
 
 func TestPluginPassedFlagCannotOverrideExpectedRecord(t *testing.T) {
+	t.Parallel()
 	g := finishedGoal()
 	g.Criteria = []Criterion{{ID: "event", Statement: "Event at 09:00", Check: CriterionCheck{Kind: ReadEvidence, Method: "calendar.read", Target: "calendar:event", Expected: []byte(`{"time":"09:00"}`)}}}
 	c := g.Criteria[0]
@@ -163,6 +167,7 @@ func TestPluginPassedFlagCannotOverrideExpectedRecord(t *testing.T) {
 	}
 }
 
+// stays serial: its two-second dispatch deadline fails when the test shares the process with the other package tests.
 func TestSlowEvidenceDoesNotBlockAnotherGoal(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	assigned := make(chan Action, 1)
@@ -211,6 +216,7 @@ func TestSlowEvidenceDoesNotBlockAnotherGoal(t *testing.T) {
 }
 
 func TestEvidenceInvalidationRetiresAuthorizationWait(t *testing.T) {
+	t.Parallel()
 	e, g := evidenceEngine(t, &evidenceDriver{}, GoalChecking)
 	if err := e.TargetChanged(t.Context(), "first", g.Criteria[0].Check.Target); err != nil {
 		t.Fatal(err)
@@ -244,6 +250,7 @@ func TestEvidenceInvalidationRetiresAuthorizationWait(t *testing.T) {
 }
 
 func TestChangedRoundDuringAuthorizationCannotRefreshOldCheck(t *testing.T) {
+	t.Parallel()
 	e, g := evidenceEngine(t, &evidenceDriver{}, GoalChecking)
 	if err := e.TargetChanged(t.Context(), "first", g.Criteria[0].Check.Target); err != nil {
 		t.Fatal(err)
@@ -275,6 +282,7 @@ func TestChangedRoundDuringAuthorizationCannotRefreshOldCheck(t *testing.T) {
 }
 
 func TestStartupDerivationDoesNotStartEvidenceCommands(t *testing.T) {
+	t.Parallel()
 	d := &evidenceDriver{read: func(_ Action, old CriterionEvidence) (CriterionEvidence, error) {
 		t.Error("startup ran an external reader")
 		return old, nil

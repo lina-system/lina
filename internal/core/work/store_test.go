@@ -61,6 +61,7 @@ func startFixture(t *testing.T, s *Service) {
 }
 
 func TestOneActiveRunConcurrent(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	if err := s.Create(t.Context(), taskFixture()); err != nil {
 		t.Fatal(err)
@@ -90,6 +91,7 @@ func TestOneActiveRunConcurrent(t *testing.T) {
 	}
 }
 func TestReceiptProvenanceAndBinding(t *testing.T) {
+	t.Parallel()
 	cases := map[string]func(*Receipt){"missing": func(r *Receipt) { r.Provenance = nil }, "task": func(r *Receipt) { r.Provenance[0].TaskID = "other" }, "node": func(r *Receipt) { r.Provenance[0].NodeID = "other" }, "hash": func(r *Receipt) { r.Provenance[0].SHA256 = strings.Repeat("b", 64) }, "time": func(r *Receipt) { r.Provenance[0].ObservedAt = time.Time{} }, "artifact": func(r *Receipt) { r.Provenance[0].ArtifactID = "" }, "generation": func(r *Receipt) { r.ExecutionGeneration = 2 }, "thread": func(r *Receipt) { r.TurnRef.ThreadID = "other" }, "manifest digest": func(r *Receipt) { r.RevisionHash = strings.Repeat("b", 64) }, "event identity": func(r *Receipt) { r.EventID = strings.Repeat("b", 32) }, "outside scope": func(r *Receipt) {
 		r.Manifest[0].Path = "/outside/report.txt"
 		r.Provenance[0].Path = r.Manifest[0].Path
@@ -114,6 +116,7 @@ func TestReceiptProvenanceAndBinding(t *testing.T) {
 	}
 }
 func TestProjectionRebuildAndAcceptance(t *testing.T) {
+	t.Parallel()
 	s, db := testStore(t)
 	startFixture(t, s)
 	ctx := t.Context()
@@ -167,6 +170,7 @@ func TestProjectionRebuildAndAcceptance(t *testing.T) {
 	}
 }
 func TestGenerationDoesNotInheritAcceptance(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	ctx := t.Context()
 	task := taskFixture()
@@ -211,6 +215,7 @@ func TestGenerationDoesNotInheritAcceptance(t *testing.T) {
 }
 
 func TestRestartPreservesActiveReservation(t *testing.T) {
+	t.Parallel()
 	s, db := testStore(t)
 	startFixture(t, s)
 	ctx := t.Context()
@@ -236,6 +241,7 @@ func TestRestartPreservesActiveReservation(t *testing.T) {
 }
 
 func TestReceiptWithWallClockRetries(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	startFixture(t, s)
 	r := receiptFixture()
@@ -250,6 +256,7 @@ func TestReceiptWithWallClockRetries(t *testing.T) {
 }
 
 func TestReceiptAndEndOrder(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	startFixture(t, s)
 	ctx := t.Context()
@@ -280,6 +287,7 @@ func TestReceiptAndEndOrder(t *testing.T) {
 }
 
 func TestApplyRequiresMatchingVerifiedReceipt(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	ctx := t.Context()
 	task := taskFixture()

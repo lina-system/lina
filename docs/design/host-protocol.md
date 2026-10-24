@@ -295,7 +295,7 @@ use a `task:` prefix and bind the execution generation; `running_get` with `open
 summary, and `dismiss` hides only landed cards. These read/open/dismiss operations
 do not submit worker receipts, start executions or write Core verdicts.
 
-Version 1.0 of `client` has at least these kinds: `hello` and `welcome`; starting a conversation; sending input; interrupting; reading history; subscribing to events; the stream events, which are an output delta, an item done and the turn state; an approval request and its answer; a question and its answer, where a question may carry a flat form (the name of the asking plugin and fields that are text, a number, yes or no, or a choice) and its answer is accept with the values, decline or cancel; a result, and the requests to read, edit and save one; the running list of background runs and delegated tasks with its updates, a stop and a follow-up; the background notice that delivers a landing into a conversation; the progress view with its changes and its digest; the waiting list, its changes and the answer to a row; a request for Details and its result; a readiness failure that names the preparation step that failed ([conversation-and-memory.md](conversation-and-memory.md)); agent management requests and their results; work record requests and their results; account requests and their results; memory requests and their results, including the progress of an import and a promotion batch; channel management requests, their results and channel state notices; agent talk log entries and their expansion; and an error. The Approval, Agent management, Work records, Memory, Accounts, Results, Progress, Waiting list, Details, Channels and Agent exchanges capabilities are part of version 1.0. Their payload fields are set in the schema (see Deferred).
+Version 1.0 of `client` has at least these kinds: `hello` and `welcome`; starting a conversation; sending input; interrupting; reading history; subscribing to events; the stream events, which are an output delta, an item done and the turn state; an approval request and its answer; a question and its answer, where a question may carry a flat form (the name of the asking plugin and fields that are text, a number, yes or no, or a choice) and its answer is accept with the values, decline or cancel; a result, and the requests to read, edit and save one; the running list of background runs and delegated tasks with its updates, a stop and a follow-up; the background notice that delivers a landing into a conversation; the progress view with its changes and its digest; the waiting list, its changes and the answer to a row; a request for Details and its result; a readiness failure that names the preparation step that failed ([conversation-and-memory.md](conversation-and-memory.md)); agent management requests and their results; work record requests and their results; account requests and their results; memory requests and their results, including the progress of an import and a promotion batch; channel management requests, their results and channel state notices; agent talk log entries and their expansion; and an error. The Approval, Agent management, Work records, Work commands, Memory, Accounts, Results, Progress, Waiting list, Details, Channels and Agent exchanges capabilities are part of version 1.0. Their payload fields are set in the schema (see Deferred).
 
 The `web` capability (1.0) uses `web_request` and `web_result` for [provider setup](web-tools.md#provider-setup). A request has required `operation` (`status`, `set`, or `clear`) and an optional `key`, accepted only for `set`. The key is limited to 512 bytes and never appears in the response, a stream or history. The result has `provider: "firecrawl"` and `configured: boolean`. Core binds the secret-store entry to the connection's owner and requires an eligible decider for set and clear. Invalid field combinations are malformed; credential changes during an active turn return unavailable. This capability is available without a model route and grants no tool or network authority.
 
@@ -680,6 +680,22 @@ the running handlers. This design registers no kind or supported combination;
 peers without that implemented capability must refuse the operation. A2A
 messages are never inserted wholesale into a host envelope to bypass validation.
 
+### Teams source settings
+
+The owner-only `teams` 1.0 capability provides `teams_request` and `teams_result`.
+`configure` takes a connection `id`, `tenant` and `client_id`; `list` returns
+public connection metadata, state and reason. `sign_in`, `disconnect` and `chats`
+take `id`. `switches` also takes `chat`, `sync`, `learn` and `embed`. Core binds the
+person and current epoch from the authenticated session and requires an eligible
+decider. Tokens never travel in settings results or conversation content.
+
+Sign-in shares the client browser relay on that same connection. A listening
+client supplies its port; a client reporting `cannot_listen` can paste the URL
+using the app's registered localhost callback at port 8400. State, issuer,
+callback address and expiry are checked in Core. Completion reports connection
+status, including unsupported tenant consent. Source records and coverage use
+the existing messenger store, independently of the client lifetime.
+
 ## Deferred
 
 - The JSON Schema to TypeScript type generator: chosen before the first LINA app work ([surfaces.md](surfaces.md#app-front-end)).
@@ -733,6 +749,21 @@ acyclic dependencies. The result stream replaces the whole card on update;
 An `unknown` confirmation effect is not success. It is settled only by observing
 the exact saved records, never by automatically repeating publication.
 
+### Local model capability
+
+`local_model` version `1.0` adds `local_task` and `local_task_result` to client 1.0.
+A task is one of `intent`, `autocomplete`, `rewrite`, `title`, `classify`, `extract`,
+or `summary`, plus the text. Optional `preference` is `auto`, `local`, or `main`.
+Optional `schema` is a closed JSON Schema object of strings, integers, and booleans.
+Optional `images` is a count and `tools` names tools the task needs. `mac_local`
+records that those tools are on this Mac. A task that names tools still uses
+the main model, because this route does not call tools. The result names the route, the reason, the
+provider, the model, and `served_id`. Structured success returns `object`.
+Unstructured success returns `text`. A schema miss returns neither. The effect
+is `none`. An invalid schema is malformed. When neither model can serve, the
+reply is unavailable. The task text is not written to the ledger. Routing and
+fallback are in [On-device Apple model](runtime.md#on-device-apple-model).
+
 ## Operational work control
 
 The negotiated `work` capability, version `1.0`, installs `work_switch_request` and
@@ -753,6 +784,46 @@ including release with active runs, return `stale_revision`; malformed records
 return `malformed`, absent tasks or switches return `out_of_scope`, and an
 ineligible connection returns `not_authorized`. Unknown or canceled outcomes
 are reconciled through status before explicit rollback; they never mean success.
+
+### Work commands
+
+The same negotiated `work` capability at version `1.0` installs
+`work_control_request` and `work_control_result` for the person's order, pause,
+resume and stop choices ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)).
+Every request has `operation` (`rank_up`, `rank_down`, `pause`, `resume` or
+`stop`) and the `goal_id` it concerns. Only an eligible owner connection may call
+it. Core takes the person and the input message identity from the authenticated
+transport, never from the payload.
+
+- `rank_up` and `rank_down`, `pause` and `resume` accept no other field.
+- `stop` requires `confirm`, and an absent or false `confirm` is `malformed`.
+
+The result returns the `goal_id`, the `operation`, the goal's lifecycle `state`,
+whether it is `paused`, and its `rank`. The command is recorded durably with the
+request's message identity and applies on the next scheduling pass; the result
+reports the committed projection and dispatches no effect. A resent message
+keeps one recorded command and its original instant, whatever the retry time,
+and a different choice under a used identity is refused. A choice that changes nothing, such as a move at the
+first or last place, a pause of a paused goal or a stop of a stopped goal,
+records no command and answers its current projection with effect state `none`;
+a recorded choice answers `applied`. A malformed field
+combination is `malformed`; a goal that does not exist or belongs to another
+person is `out_of_scope`; a command on a final goal returns `stale_revision`;
+during recovery the request returns `unavailable`. The progress topic publishes
+the changed line, its order and its Now as it does for any other work change.
+
+The same capability installs `work_limit_request` and `work_limit_result` for the
+person's run limit ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)).
+A request has `operation` (`limit_up`, `limit_down`, `limit_auto` or
+`limit_set`) and, only for `limit_set`, a `value` from 1 to 1024. Only an
+eligible owner connection may call it. `limit_up` and `limit_down` move one step
+from the limit the last pass applied, and `limit_auto` returns the limit to
+automatic. The result returns `automatic`, the applied `limit` and the `reason`
+the applied limit stands at (`slot`, `quota` or `load`). The choice is recorded
+with the request's message identity and applies on the next scheduling pass; a
+choice that changes nothing records no command and answers effect state `none`.
+The `progress` and `progress_update` payloads carry the same applied limit as
+`limit`, so a client shows what Core decided.
 
 ### Worker approval origin
 
@@ -806,6 +877,28 @@ line holds no identity at all. A line without a stage list omits the field, whic
 older clients ignore. The stage word of a goal line is the label of its current
 stage entry.
 
+A work card carries the stages of its canonical goal link when that goal has
+the same person and agent. Missing or foreign links leave its list unknown.
+Core reuses the goal projection from the same canon snapshot; a client never
+joins cards to graphs by display names or row positions.
+For a manager-owned dispatch card, Core instead validates its stored goal
+action against the original person, agent, conversation and turn, and the
+card's recorded manager. This supplies the goal link without changing the
+card's owner or granting a manager access through an arbitrary goal id.
+
+The optional `stage_refs` on a progress row carries each entry's `kind`, optional
+`number`, and `steps`: opaque step refs in the same order as its displayed steps.
+These navigation refs stay outside `line` and never appear in panel text. A
+client without refs can still display entries, but cannot infer a step identity
+from its name. The optional `workers` on a displayed step is a list of `name`
+and `state` (`running_state`) pairs, without process or thread ids. It contains
+only active dispatch bindings or retained live sessions linked by that scoped
+step's canonical session handle. Active bindings also match the dispatch's
+original person and agent, independently of its manager persona. Core observes adapters outside canon, checks
+the bound turn, and drops ended or replaced sessions. An unsuccessful or stale
+observation reads unknown. Idle retained sessions read waiting. These additions
+grant no execution or worker-control authority.
+
 The optional `started_at` and `finished_at` fields are RFC 3339 instants recorded
 by Core; `now` is Core's short current-activity line. The TUI applies its snapshot
 clock offset when displaying elapsed minutes. Missing timestamps remain unknown,
@@ -822,6 +915,21 @@ for flat cards and count only the cards they fold or omit. Without it, cards
 follow row order; unknown or repeated refs are ignored, and any unlisted cards
 follow in row order. These fields are additive in client 1.0; old clients ignore
 them and new clients accept their absence.
+
+An optional `row` on a line marks a row of a line: a task or a run drawn inside
+the 일 or 목표 that owns it. A row is not a line. It is indented under its line by
+`depth`, it is never a card, and neither the running count nor the digest counts
+it. A client that receives no `row` treats every non-goal row as a card, which is
+what an older Core means.
+
+An optional `counts` object in `progress` and `progress_update` carries Core's
+running count: `running` and `waiting` are the numbers of lines in those states,
+never the number of rows. A row counts for the 일 or run it belongs to, so the
+count follows the 일 the person reads and not the workers. A line whose row waits
+on the person counts as waiting for them. A client draws this count where it
+shows progress and does not recount the rows; a client that receives no count
+counts the cards it draws, which is all an older Core allows. These fields are
+additive in client 1.0.
 
 A `progress_update` replaces the overview atomically, retaining the normal topic
 cursor and snapshot/replay behavior. A changed full waiting list advances this

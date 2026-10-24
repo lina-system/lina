@@ -64,3 +64,7 @@ blocks when replaying recorded requests. Loader receipts and declaration order
 remain unchanged. Large committed authored results survive a later request-size
 refusal, with the diagnostic kept as a separate system notice. The TUI prefers
 the authored result by default and exposes notice Details through card navigation.
+
+### Throwaway test runtimes
+
+`startConversation` takes test-only `runtimeOption` values. `throwawayState()` opens canon with `Config.NoSync`, agents with `NoSync()` and records with `NoSync()` for roots the test deletes, so fixture setup stops paying a disk sync per starter revision or record commit. `boot.Config.NoSync` is the test seam that selects it: the boot tests set it for their temporary state roots, `cmd/lina` never sets it, and no argument or environment variable reaches it. `ReplayIntakeCase` passes it directly because it deletes its own private root before returning. Tests that need durable canon or agents behaviour live in those packages and do not use the option.

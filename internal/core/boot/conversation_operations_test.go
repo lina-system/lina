@@ -169,7 +169,7 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				}
 				route.Adapter = &turnProvider{}
 			}
-			r, err := startConversation(t.Context(), root, "registration", 1, ctl, route, lifecycle.NewRegistry(nil), "owner", nil, nil, "")
+			r, err := startConversation(t.Context(), root, "registration", 1, ctl, route, lifecycle.NewRegistry(nil), "owner", nil, nil, "", throwawayState())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -183,10 +183,13 @@ func TestConversationRegistrationSurface(t *testing.T) {
 			// from the registration helpers: it guards the installed surface.
 			want := map[protocol.Kind]string{
 				protocol.KindAccountRequest: "accounts", protocol.KindSignInListening: "sign_in_relay", protocol.KindSignInRedirect: "sign_in_relay",
+				protocol.KindTeamsRequest:  "teams",
 				protocol.KindRecordRequest: "records", protocol.KindWebRequest: "web", protocol.KindA2aRequest: "a2a",
 				protocol.KindExportRequest: "replay", protocol.KindReplayRequest: "replay",
 				protocol.KindApprovalAnswer: "waiting", protocol.KindQuestionAnswer: "waiting", protocol.KindWaitingGet: "waiting",
-				protocol.KindWorkSwitchRequest: "work", protocol.KindProgressGet: "worker_lanes",
+				protocol.KindWorkSwitchRequest: "work", protocol.KindWorkControlRequest: "work",
+				protocol.KindWorkLimitRequest: "work",
+				protocol.KindProgressGet: "worker_lanes",
 				protocol.KindChannelRequest: "channels", protocol.KindAgentTalkGet: "exchanges", protocol.KindAgentTalkExpand: "exchanges",
 				protocol.KindAgentRequest: "agents", protocol.KindMemoryRequest: "memory",
 				protocol.KindPlanRequest: "planning", protocol.KindProgressDigestGet: "progress",

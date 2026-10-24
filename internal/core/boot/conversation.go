@@ -30,6 +30,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/messenger"
+	"github.com/thisisjun786/lina/internal/core/messenger/teams"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/results"
@@ -44,6 +45,7 @@ import (
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/provider/applefm"
 	builtin "github.com/thisisjun786/lina/skills"
 )
 
@@ -85,6 +87,7 @@ type conversationRuntime struct {
 	replaySocket    string
 	dispatchMu      *sync.RWMutex
 	removals        *retract.Store
+	teams           *teams.Service
 	messenger       *messenger.Service
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
@@ -137,6 +140,8 @@ type conversationRuntime struct {
 	lanes                       *lane.Manager
 	topics                      *clientsrv.Topics
 	route                       *modelpath.ResponsesConfig
+	onDevice                    *applefm.Adapter
+	onDeviceProfile             applefm.Profile
 	activities                  *lifecycle.ActivityRegistry
 	person, agent, conversation string
 	identity                    clientsrv.Identity
@@ -153,11 +158,27 @@ type conversationRuntime struct {
 
 func conversationPath(root string) string { return filepath.Join(root, "canon", "canon.sqlite") }
 
-func startConversation(ctx context.Context, root, main string, epoch uint64, controls *ctlfiles.Store, route *modelpath.ResponsesConfig, activities *lifecycle.ActivityRegistry, person string, transport, channelTransport http.RoundTripper, tailnetIP string) (*conversationRuntime, error) {
+// runtimeOption adjusts a throwaway test runtime. Startup passes no options, so
+// its canon and persona files stay durable.
+type runtimeOption func(*runtimeOptions)
+
+type runtimeOptions struct{ throwaway bool }
+
+// throwawayState skips fsyncs for a state root the test deletes, which keeps
+// fixture setup off the disk's sync path.
+func throwawayState() runtimeOption {
+	return func(options *runtimeOptions) { options.throwaway = true }
+}
+
+func startConversation(ctx context.Context, root, main string, epoch uint64, controls *ctlfiles.Store, route *modelpath.ResponsesConfig, activities *lifecycle.ActivityRegistry, person string, transport, channelTransport http.RoundTripper, tailnetIP string, options ...runtimeOption) (*conversationRuntime, error) {
+	var chosen runtimeOptions
+	for _, option := range options {
+		option(&chosen)
+	}
 	if err := os.MkdirAll(filepath.Dir(conversationPath(root)), 0700); err != nil {
 		return nil, err
 	}
-	db, err := canon.Open(ctx, canon.Config{Path: conversationPath(root), Epoch: epoch, Controls: controls, Migrations: ApplicationMigrations()})
+	db, err := canon.Open(ctx, canon.Config{Path: conversationPath(root), Epoch: epoch, Controls: controls, Migrations: ApplicationMigrations(), NoSync: chosen.throwaway})
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +193,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 			r.Close(context.Background())
 		}
 	}()
-	r.agents, err = agents.Open(root, db)
+	var agentOptions []agents.Option
+	if chosen.throwaway {
+		agentOptions = append(agentOptions, agents.NoSync())
+	}
+	r.agents, err = agents.Open(root, db, agentOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +242,11 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err != nil {
 		return nil, err
 	}
-	r.records, err = records.Open(root, db)
+	var recordOptions []records.Option
+	if chosen.throwaway {
+		recordOptions = append(recordOptions, records.NoSync())
+	}
+	r.records, err = records.Open(root, db, recordOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -275,6 +304,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
+	if err = r.initTeams(relay, channelTransport); err != nil {
+		return nil, err
+	}
 	if err = r.initA2A(relay); err != nil {
 		return nil, err
 	}
@@ -311,10 +343,20 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err := addOperations(&r.identity, clientsrv.WorkOperations(r)); err != nil {
 		return nil, err
 	}
+	if err := addOperations(&r.identity, clientsrv.WorkControlOperations(r)); err != nil {
+		return nil, err
+	}
+	if err := addOperations(&r.identity, clientsrv.WorkLimitOperations(r)); err != nil {
+		return nil, err
+	}
 	if err = r.startWorkerLanes(); err != nil {
 		return nil, err
 	}
 	if err = r.startWorkWaiting(ctx); err != nil {
+		return nil, err
+	}
+	// Recovered runs can create agent views, which retain this shared runtime.
+	if err = r.startMiniApps(ctx, tailnetIP); err != nil {
 		return nil, err
 	}
 
@@ -396,9 +438,6 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startTimers(ctx); err != nil {
 		return nil, err
 	}
-	if err = r.startMiniApps(ctx, tailnetIP); err != nil {
-		return nil, err
-	}
 	if err = r.resumeWorkerCompletions(ctx); err != nil {
 		return nil, err
 	}
@@ -408,6 +447,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.teams != nil {
+		r.teams.Close()
+	}
 	if r.miniApps != nil {
 		r.miniApps.host.Close()
 		r.miniApps = nil

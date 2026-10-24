@@ -1,0 +1,25 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "local_task",
+  "message_id": "local-task-example",
+  "attempt_id": "local-task-example-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "client",
+    "id": "client-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "none",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "task": "intent",
+    "text": "open safari"
+  }
+}

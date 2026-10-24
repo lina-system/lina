@@ -12,6 +12,7 @@ import (
 )
 
 func TestTypedReplyShapesAndBudgets(t *testing.T) {
+	t.Parallel()
 	table := json.RawMessage(`{"columns":[{"name":"Choice","type":"text","unit":""}],"rows":[["A"],["B"]]}`)
 	shapes := reply.Shapes{Status: "verdict-first", Comparison: "verdict-then-card", Candidates: 1, ThirdParty: "recipient-only"}
 	for _, tc := range []struct {
@@ -65,6 +66,7 @@ func TestTypedReplyShapesAndBudgets(t *testing.T) {
 }
 
 func TestComparisonCompletionKeepsCard(t *testing.T) {
+	t.Parallel()
 	c := config()
 	c.Shapes = &reply.Shapes{Status: "verdict-first", Comparison: "verdict-then-table", Candidates: 1, ThirdParty: "recipient-only"}
 	r := result.Result{

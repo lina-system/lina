@@ -7,6 +7,7 @@ import (
 )
 
 func TestFailedReconciliationBlocksReadsUntilReplay(t *testing.T) {
+	t.Parallel()
 	s := openStore(t, storeConfig(t))
 	failure := errors.New("durable removal awaits SQLite replay")
 	if err := s.Reconcile(func(RecoveryWrite) error { return failure }); !errors.Is(err, failure) {
@@ -29,6 +30,7 @@ func TestFailedReconciliationBlocksReadsUntilReplay(t *testing.T) {
 }
 
 func TestReconciliationWaitsForPriorReaderAndPublishesAtomically(t *testing.T) {
+	t.Parallel()
 	s := openStore(t, storeConfig(t))
 	entered, release, complete := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() { complete <- s.Read(t.Context(), func(*Tx) error { close(entered); <-release; return nil }) }()

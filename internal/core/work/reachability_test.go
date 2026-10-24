@@ -27,6 +27,7 @@ func sharedAncestorTasks(n int) []Task {
 }
 
 func TestDependencyReachabilityTraversalBound(t *testing.T) {
+	t.Parallel()
 	const n = 256
 	tasks := sharedAncestorTasks(n)
 	graph := map[string][]string{}
@@ -59,6 +60,7 @@ func TestDependencyReachabilityTraversalBound(t *testing.T) {
 }
 
 func TestSharedAncestorGraphAdmission(t *testing.T) {
+	t.Parallel()
 	for _, reverse := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reverse=%t", reverse), func(t *testing.T) {
 			tasks := sharedAncestorTasks(256)
@@ -89,6 +91,7 @@ func TestSharedAncestorGraphAdmission(t *testing.T) {
 }
 
 func TestSharedAncestorGraphRejectsAtomically(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"missing", "cycle", "unordered"} {
 		t.Run(kind, func(t *testing.T) {
 			s, db := testStore(t)

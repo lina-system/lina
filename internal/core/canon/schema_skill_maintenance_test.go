@@ -7,6 +7,7 @@ import (
 )
 
 func TestSkillMaintenanceMigrationPreservesExistingSkills(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	all := Migrations()
 	index := -1
@@ -68,6 +69,7 @@ INSERT INTO work_waiting_decisions(round_id,kind,message_id,record) VALUES('roun
 }
 
 func TestSkillMaintenancePublishedCatalogRejectsMismatchedTables(t *testing.T) {
+	t.Parallel()
 	for _, table := range []string{"skill_maintenance", "skill_maintenance_members", "skill_maintenance_notices"} {
 		for _, missing := range []bool{false, true} {
 			mode := "premature"

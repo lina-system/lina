@@ -21,6 +21,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/internal/design"
+	"github.com/thisisjun786/lina/internal/tui/ui"
 )
 
 type alphaRecoveryReply struct {
@@ -140,16 +141,28 @@ func alphaRecoveredReplyVisible(request, reply, screen string) bool {
 		return false
 	}
 	// Long replies scroll their beginning out of view. Require a substantial
-	// suffix of the committed answer, not a topic already present in the request.
-	runes := []rune(alphaQuestionText(reply))
-	if len(runes) == 0 {
-		return false
+	// suffix of the painted answer, not a topic already present in the request.
+	// The committed body is Markdown source; the frame shows list markers and
+	// link labels from the conversation renderer.
+	painted := alphaQuestionText(screen)
+	tokens := design.Dark()
+	for _, bullet := range []string{tokens.GlyphUnicodeAction, tokens.GlyphAsciiAction} {
+		runes := []rune(alphaQuestionText(ui.VisibleMarkdown(reply, bullet)))
+		if len(runes) == 0 {
+			continue
+		}
+		if len(runes) > 64 {
+			runes = runes[len(runes)-64:]
+		}
+		suffix := string(runes)
+		if strings.Contains(alphaQuestionText(ui.VisibleMarkdown(request, bullet)), suffix) {
+			continue
+		}
+		if strings.Contains(painted, suffix) {
+			return true
+		}
 	}
-	if len(runes) > 64 {
-		runes = runes[len(runes)-64:]
-	}
-	suffix := string(runes)
-	return !strings.Contains(alphaQuestionText(request), suffix) && strings.Contains(alphaQuestionText(screen), suffix)
+	return false
 }
 
 func TestAlphaRecoveredReplyRequiresResultText(t *testing.T) {
@@ -180,6 +193,32 @@ func TestAlphaRecoveredReplyRequiresResultText(t *testing.T) {
 	long := strings.Repeat("Earlier result paragraph. ", 20) + ending
 	if !alphaRecoveredReplyVisible(request, long, ending+"\n"+live) {
 		t.Fatal("visible end of a long result was rejected")
+	}
+	// The screen paints list markers and link labels. The committed reply still
+	// has the Markdown source, and that source must not hide a delivered ending.
+	bullet, ascii := design.Dark().GlyphUnicodeAction, design.Dark().GlyphAsciiAction
+	summary := "검토가 끝났습니다.\n- 흙이 마르면 물을 줍니다\n- 뿌리가 깊으면 더 줍니다"
+	painted := "검토가 끝났습니다.\n" + bullet + " 흙이 마르면 물을 줍니다\n" + bullet + " 뿌리가 깊으면 더 줍니다"
+	if !alphaRecoveredReplyVisible(request, summary, request+"\n"+painted+"\n"+live) {
+		t.Fatal("rendered bullet summary was rejected")
+	}
+	paintedASCII := "검토가 끝났습니다.\n" + ascii + " 흙이 마르면 물을 줍니다\n" + ascii + " 뿌리가 깊으면 더 줍니다"
+	if !alphaRecoveredReplyVisible(request, summary, request+"\n"+paintedASCII+"\n"+live) {
+		t.Fatal("ASCII bullet summary was rejected")
+	}
+	stars := "검토가 끝났습니다.\n* 흙이 마르면 물을 줍니다\n* 뿌리가 깊으면 더 줍니다"
+	if !alphaRecoveredReplyVisible(request, stars, request+"\n"+painted+"\n"+live) {
+		t.Fatal("rendered star list was rejected")
+	}
+	linked := "정리한 기준은 [물 주기 안내](https://example.com/water)에 있습니다."
+	if !alphaRecoveredReplyVisible(request, linked, request+"\n정리한 기준은 물 주기 안내에 있습니다.\n"+live) {
+		t.Fatal("rendered markdown link was rejected")
+	}
+	if alphaRecoveredReplyVisible(request, linked, request+"\n"+linked+"\n"+live) {
+		t.Fatal("unrendered link syntax was treated as the painted reply")
+	}
+	if alphaRecoveredReplyVisible(request, linked, request+"\n정리한 기준은 다른 문장입니다.\n"+live) {
+		t.Fatal("missing link label was accepted")
 	}
 }
 

@@ -72,7 +72,7 @@ func TestWorkAuthorityRecoveryScopesInterruptedCalls(t *testing.T) {
 				}
 				r.epoch++
 				call.Auth.Epoch = r.epoch
-				r.db, err = canon.Open(t.Context(), canon.Config{Path: filepath.Join(r.root, "canon.sqlite"), Epoch: r.epoch, Controls: r.controls, Migrations: ApplicationMigrations()})
+				r.db, err = canon.Open(t.Context(), canon.Config{Path: filepath.Join(r.root, "canon.sqlite"), Epoch: r.epoch, Controls: r.controls, Migrations: ApplicationMigrations(), NoSync: true})
 				if err != nil {
 					t.Fatal(err)
 				}

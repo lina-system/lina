@@ -72,6 +72,16 @@ func (r *conversationRuntime) startMiniApps(ctx context.Context, tailnet string)
 	return nil
 }
 
+// miniAppService returns the process-wide registry. Boot creates conversation
+// views for owners and channels before the registry starts, so they resolve it
+// through the root; a copy taken at creation would stay nil for them.
+func (r *conversationRuntime) miniAppService() *miniAppRuntime {
+	if r.router != nil && r.router.root != nil {
+		return r.router.root.miniApps
+	}
+	return r.miniApps
+}
+
 // miniAppReads maps a declared Core read name to the read Core already serves.
 // The closed set is the whole vocabulary an app may name.
 type miniAppReads struct{ r *conversationRuntime }
@@ -186,6 +196,15 @@ func (m miniAppEffects) arguments(ctx context.Context, req miniapps.EffectReques
 		}
 		todo := *row.Todo
 		todo.State = "completed"
+		// Core owns the series anchor, completed count, exhaustion and the
+		// completion record. write_record rejects them as arguments, restores the
+		// counters from the saved record and writes the completion for this occurrence.
+		todo.Completion = nil
+		if row.Todo.Repeat != nil {
+			repeat := *row.Todo.Repeat
+			repeat.Start, repeat.Completed, repeat.Exhausted = "", 0, false
+			todo.Repeat = &repeat
+		}
 		write := coreexec.RecordWrite{ID: row.ID, Revision: row.Revision, Kind: row.Kind, Title: row.Title, Note: row.Note, Todo: &todo}
 		raw, err := json.Marshal(write)
 		if err != nil {
@@ -390,7 +409,7 @@ func (r *conversationRuntime) miniAppTool(turnID string) loop.Tool {
 // agent. Only the person-facing client records allow, deny, keep, undo and
 // remove; the model reaches the same registry through this tool.
 func (r *conversationRuntime) miniAppOp(ctx context.Context, p miniAppCall, key string) (any, error) {
-	if r.miniApps == nil {
+	if r.miniAppService() == nil {
 		return nil, miniapps.ErrUnavailable
 	}
 	files := make(map[string][]byte, len(p.Files))
@@ -400,13 +419,13 @@ func (r *conversationRuntime) miniAppOp(ctx context.Context, p miniAppCall, key 
 	person, agent := r.person, r.agent
 	switch p.Op {
 	case "list":
-		return r.miniApps.svc.List(ctx, person)
+		return r.miniAppService().svc.List(ctx, person)
 	case "create":
-		return r.miniApps.svc.Create(ctx, person, agent, miniapps.CreateRequest{Name: p.Name, Request: p.Request, Checklist: p.Checklist, Manifest: *p.Manifest, Files: files, StoreShape: p.StoreShape, Key: key})
+		return r.miniAppService().svc.Create(ctx, person, agent, miniapps.CreateRequest{Name: p.Name, Request: p.Request, Checklist: p.Checklist, Manifest: *p.Manifest, Files: files, StoreShape: p.StoreShape, Key: key})
 	case "change":
-		return r.miniApps.svc.Change(ctx, person, p.App, miniapps.ChangeRequest{Request: p.Request, Checklist: p.Checklist, Manifest: *p.Manifest, Files: files, StoreShape: p.StoreShape})
+		return r.miniAppService().svc.Change(ctx, person, p.App, miniapps.ChangeRequest{Request: p.Request, Checklist: p.Checklist, Manifest: *p.Manifest, Files: files, StoreShape: p.StoreShape})
 	case "history":
-		return r.miniApps.svc.History(ctx, person, p.App)
+		return r.miniAppService().svc.History(ctx, person, p.App)
 	}
 	return nil, miniapps.ErrInvalid
 }
@@ -416,7 +435,7 @@ func miniAppDeclaration() provider.ToolDecl {
 }
 
 func (r *conversationRuntime) prepareMiniAppTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {
-	if r.miniApps == nil {
+	if r.miniAppService() == nil {
 		return nil, nil
 	}
 	bindings["mini_app"] = r.miniAppTool(turnID)
@@ -434,7 +453,7 @@ func (r *conversationRuntime) MiniApp(ctx context.Context, s clientsrv.Session, 
 	if s.Epoch != r.epoch {
 		return out, &clientsrv.OperationError{Code: protocol.ErrorStaleEpoch}
 	}
-	if r.miniApps == nil {
+	if r.miniAppService() == nil {
 		return out, &clientsrv.OperationError{Code: protocol.ErrorUnavailable}
 	}
 	if p.Operation != "list" && (p.App == nil || *p.App == "") {
@@ -452,13 +471,13 @@ func (r *conversationRuntime) MiniApp(ctx context.Context, s clientsrv.Session, 
 	switch p.Operation {
 	case "list":
 		var apps []miniapps.App
-		apps, err = r.miniApps.svc.List(ctx, s.PersonID)
+		apps, err = r.miniAppService().svc.List(ctx, s.PersonID)
 		for _, app := range apps {
 			out.Apps = append(out.Apps, miniAppView(app))
 		}
 	case "open":
 		var view miniapps.OpenView
-		view, err = r.miniApps.host.Open(ctx, s.PersonID, appID)
+		view, err = r.miniAppService().host.Open(ctx, s.PersonID, appID)
 		app := miniAppView(view.App)
 		out.App = &app
 		out.Apps = append(out.Apps, app)
@@ -470,7 +489,7 @@ func (r *conversationRuntime) MiniApp(ctx context.Context, s clientsrv.Session, 
 		}
 	case "history":
 		var revisions []miniapps.Revision
-		revisions, err = r.miniApps.svc.History(ctx, s.PersonID, appID)
+		revisions, err = r.miniAppService().svc.History(ctx, s.PersonID, appID)
 		list := make([]protocol.MiniAppRevision, 0, len(revisions))
 		for _, revision := range revisions {
 			summary := revision.Summary
@@ -484,12 +503,12 @@ func (r *conversationRuntime) MiniApp(ctx context.Context, s clientsrv.Session, 
 		var app miniapps.App
 		var change miniapps.Change
 		if p.Operation == "restore" {
-			change, err = r.miniApps.svc.Restore(ctx, s.PersonID, appID, revision)
+			change, err = r.miniAppService().svc.Restore(ctx, s.PersonID, appID, revision)
 			app = change.App
 		} else if p.Operation == "allow" {
-			app, err = r.miniApps.svc.Allow(ctx, s.PersonID, appID, revision)
+			app, err = r.miniAppService().svc.Allow(ctx, s.PersonID, appID, revision)
 		} else {
-			app, err = r.miniApps.svc.Deny(ctx, s.PersonID, appID, revision)
+			app, err = r.miniAppService().svc.Deny(ctx, s.PersonID, appID, revision)
 		}
 		if err == nil {
 			view := miniAppView(app)
@@ -500,7 +519,7 @@ func (r *conversationRuntime) MiniApp(ctx context.Context, s clientsrv.Session, 
 		switch p.Operation {
 		case "keep":
 			var app miniapps.App
-			app, err = r.miniApps.svc.Keep(ctx, s.PersonID, appID)
+			app, err = r.miniAppService().svc.Keep(ctx, s.PersonID, appID)
 			if err == nil {
 				view := miniAppView(app)
 				out.App = &view
@@ -508,14 +527,14 @@ func (r *conversationRuntime) MiniApp(ctx context.Context, s clientsrv.Session, 
 			}
 		case "undo":
 			var change miniapps.Change
-			change, err = r.miniApps.svc.Undo(ctx, s.PersonID, appID)
+			change, err = r.miniAppService().svc.Undo(ctx, s.PersonID, appID)
 			if err == nil {
 				view := miniAppView(change.App)
 				out.App = &view
 				out.Apps = append(out.Apps, view)
 			}
 		default:
-			err = r.miniApps.svc.Remove(ctx, s.PersonID, appID)
+			err = r.miniAppService().svc.Remove(ctx, s.PersonID, appID)
 		}
 	default:
 		return out, &clientsrv.OperationError{Code: protocol.ErrorMalformed}

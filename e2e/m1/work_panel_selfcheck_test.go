@@ -550,6 +550,12 @@ func syntheticStageView(t *testing.T, fixture panelFixture, card panelCard) pane
 	entries := syntheticStages(t, fixture, "diamond")
 	for i := range entries {
 		entries[i].Open = i == 0
+		if entries[i].Open {
+			entries[i].State = "working"
+			for j := range entries[i].Steps {
+				entries[i].Steps[j].State = "working"
+			}
+		}
 	}
 	view := panelStageView{Card: card.ID, Entries: entries, Rows: syntheticStageRows(entries)}
 	if len(entries) > 0 && len(entries[0].Steps) > 0 {
@@ -738,10 +744,6 @@ func replaceOverflowCount(panel []string, count int) []string {
 		}
 	}
 	return out
-}
-
-func appendGraphMark(panel []string) []string {
-	return append(append([]string{}, panel...), "    └ 연쇄")
 }
 
 func reversed(values []string) []string {
