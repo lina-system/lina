@@ -652,7 +652,7 @@ func bindingAction(name string) string {
 	switch name {
 	case "follow_work", "worker_input":
 		return "steer"
-	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start":
+	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start", "submit_step_graph":
 		return "start"
 	case "send_handoff":
 		return "send"

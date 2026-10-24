@@ -722,6 +722,70 @@ func TestReadWorkProgressResolvesTaskGeneration(t *testing.T) {
 	}
 }
 
+func TestSubmitStepGraphHoldsTiedStart(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dev := workAgentFixture(t, r)
+	r.agent, r.conversation = dev, "main:"+dev
+	if err := r.startWork(t.Context(), &WorkConfig{Driver: func(*goaleng.Engine) (goaleng.Driver, error) { return parkedWorkDriver{}, nil }}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.workEngine.close(t.Context()) })
+	input := questionPersonInput(t, r, "graph-tie", "Continue the chosen project.")
+	tools := modelBindingTools(t, r, input)
+	admit := func(id, outcome string) (goalID, recordID string) {
+		t.Helper()
+		got := questionCall(t, tools, "dispatch_code_goal", id, map[string]any{
+			"outcome": outcome, "done": "checks pass",
+			"scope":             map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+			"criteria":          []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+			"no_service_reason": "library",
+			"tasks":             []any{},
+		})
+		if got.Code != loop.OK {
+			t.Fatalf("admit %s: %+v", id, got)
+		}
+		var fields map[string]string
+		if err := json.Unmarshal(got.Output, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields["goal_id"], fields["record_id"]
+	}
+	chosenID, chosenRecord := admit("graph-a", "chosen project")
+	_, otherRecord := admit("graph-b", "other project")
+	a := binding.Target{Class: "existing", ID: chosenRecord, Kind: "project"}
+	b := binding.Target{Class: "existing", ID: otherRecord, Kind: "project"}
+	if got := questionCall(t, tools, "bind_input", "read-tie", bindingRequest{Bindings: []binding.Choice{{
+		Quote: input.Body.Text(), Target: a, Tied: []binding.Target{a, b}, Action: "read",
+	}}}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) != 1 || choices[0].Question != "" || len(choices[0].Tied) != 2 {
+		t.Fatalf("read tie asked or dropped: %+v %v", choices, err)
+	}
+	got := questionCall(t, tools, "submit_step_graph", "tied-graph", map[string]any{
+		"goal_id": chosenID, "expected_revision": 0,
+		"steps": []any{map[string]any{
+			"id": "change", "name": "Update library", "done": "checks pass",
+			"repository": "repo", "base": "dev", "area": "src/**", "worker": "stub",
+			"resources":  map[string]any{"cpu": 1, "memory_mb": 1, "disk_mb": 1},
+			"depends_on": []any{},
+		}},
+	})
+	if got.Code != loop.Denied || !strings.Contains(string(got.Output), "input_target_pending") {
+		t.Fatalf("tied submission started work: %+v", got)
+	}
+	snap, err := r.workEngine.engine.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range snap.Goals {
+		if g.ID == chosenID && g.StepGraph != nil && g.StepGraph.Revision != 0 {
+			t.Fatalf("ambiguous graph was admitted: %+v", g.StepGraph)
+		}
+	}
+}
+
 func TestWorkCompletionTurnKeepsBindingTools(t *testing.T) {
 	r, _ := turnRuntime(t)
 	now := time.Now().UTC()
