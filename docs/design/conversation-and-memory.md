@@ -1303,7 +1303,7 @@ Imported observations, card lines and legacy summaries stay outside recall, Cont
 
 ### Importing a Hermes install
 
-Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The remaining Hermes import work in [#115](https://github.com/thisisjun786/lina/issues/115), its sub-issues and [#320](https://github.com/thisisjun786/lina/issues/320) keeps its scope under this framing ([#330](https://github.com/thisisjun786/lina/issues/330)). No other source adapter is implemented by this change.
+Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The remaining Hermes import work in [#115](https://github.com/lina-system/lina/issues/115), its sub-issues and [#320](https://github.com/lina-system/lina/issues/320) keeps its scope under this framing ([#330](https://github.com/lina-system/lina/issues/330)). No other source adapter is implemented by this change.
 
 The adapter lives outside Core in `internal/addons/importer/hermes`. The explicit `lina import-hermes` command is its installed entry point; no onboarding or ordinary conversation starts it. Importing remains optional.
 
@@ -1483,7 +1483,7 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 - The bound on the part of a result's text that the model sees, and the size limit of a preview's file bytes held in the ledger: set by measurement during implementation acceptance of the conversation engine.
 - The reply budgets, the size of a tuning step and the reaction classes: starting values set in Reply shape, tuned by measurement with real use and kept per person.
 - Episode format version 1 and its manifest are defined under [Episode export](#episode-export).
-- The fusion constant of `recall` ranking and any weight per kind: starting values set on the [parity set](https://github.com/thisisjun786/lina/issues/849) during implementation acceptance of the shared index, recorded with each change ([research](../research/unified-store.md#recall-quality)).
+- The fusion constant of `recall` ranking and any weight per kind: starting values set on the [parity set](https://github.com/lina-system/lina/issues/849) during implementation acceptance of the shared index, recorded with each change ([research](../research/unified-store.md#recall-quality)).
 
 [lcm-store]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/store.py
 [lcm-compaction]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/compaction.py
