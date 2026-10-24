@@ -376,7 +376,7 @@ func (s *Service) prepareWorkspace(ctx context.Context, e *execution) bool {
 		ownerAgent = r.Origin.Agent
 		manager = r.Origin.Conversation
 	}
-	if err = service.Create(ctx, work.Task{ID: r.ID, PersonID: r.Origin.Person, AgentID: ownerAgent, ConversationID: manager, Title: d.What, Done: d.Done, ArtifactRoots: []string{workdir, taskRoot}, Workspace: &workspace, RequiresApply: true}); err != nil {
+	if err = service.Create(ctx, work.Task{ID: r.ID, PersonID: r.Origin.Person, AgentID: ownerAgent, ConversationID: manager, GoalID: r.GoalID, Title: d.What, Done: d.Done, ArtifactRoots: []string{workdir, taskRoot}, Workspace: &workspace, RequiresApply: true}); err != nil {
 		return false
 	}
 	if !observing {

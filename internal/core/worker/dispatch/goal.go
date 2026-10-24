@@ -34,7 +34,7 @@ func (s *Service) GoalRecord(ctx context.Context, origin Origin, action string) 
 // RunGoal is the trusted goal runner's entry after its durable action claim.
 // It shares admission, preset checks, manager assignment and the worker adapter
 // with dispatch_work. The action key never restarts running or uncertain work.
-func (s *Service) RunGoal(ctx context.Context, origin Origin, action string, d Definition) (Record, error) {
+func (s *Service) RunGoal(ctx context.Context, origin Origin, action, goalID string, d Definition) (Record, error) {
 	if action == "" {
 		return Record{}, work.ErrInvalid
 	}
@@ -80,7 +80,7 @@ func (s *Service) RunGoal(ctx context.Context, origin Origin, action string, d D
 		}
 	}()
 	r.Goal, r.State = true, "running"
-	r.GoalAction = action
+	r.GoalAction, r.GoalID = action, goalID
 	if err := s.save(ctx, r); err != nil {
 		return Record{}, err
 	}

@@ -42,7 +42,7 @@ func (r *conversationRuntime) runGoalWorker(ctx context.Context, g goal.Goal, a 
 	if r.workerDispatch == nil || g.Conversation == "" || g.Turn == "" {
 		return goal.Observation{}, goal.ErrNeedsPerson
 	}
-	record, err := r.workerDispatch.RunGoal(ctx, goalOrigin(g), a.ID, definition)
+	record, err := r.workerDispatch.RunGoal(ctx, goalOrigin(g), a.ID, g.ID, definition)
 	if err != nil {
 		return goal.Observation{}, err
 	}

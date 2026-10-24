@@ -34,6 +34,8 @@ func TestCountFollowsLinesNotRows(t *testing.T) {
 		}
 		units = append(units, Unit{ID: id, Kind: "project", Name: id, State: state, Active: true, Stages: stages, Waiting: waiting})
 	}
+	// A dispatched step's card carries the 일's id rather than the step id.
+	units = append(units, Unit{ID: "dispatch-hash", Parent: "day-0", Kind: "project", Name: "Collect dates", State: "in_progress", Active: true})
 	units = append(units, Unit{ID: "run:survey", Kind: "project", Name: "Read competitor notes", State: "in_progress", Active: true})
 	entries := Compute(units)
 	lines, rows := 0, 0
@@ -44,8 +46,8 @@ func TestCountFollowsLinesNotRows(t *testing.T) {
 		}
 		rows++
 	}
-	if lines != 4 || rows != tasks {
-		t.Fatalf("projection has %d lines and %d rows, want 4 and %d: %+v", lines, rows, tasks, entries)
+	if lines != 4 || rows != tasks+1 {
+		t.Fatalf("projection has %d lines and %d rows, want 4 and %d: %+v", lines, rows, tasks+1, entries)
 	}
 	if got := CountLines(entries); got != (Count{Running: 3, Waiting: 1}) {
 		t.Fatalf("count = %+v, want three running lines and one waiting for the person", got)

@@ -197,7 +197,7 @@ func TestGoalRetriesIncompleteManagerAdmission(t *testing.T) {
 	}
 	defer s.Close(context.Background())
 	for attempt := 1; attempt <= 2; attempt++ {
-		if _, err := s.RunGoal(t.Context(), origin, "action", d); err == nil || manages != attempt {
+		if _, err := s.RunGoal(t.Context(), origin, "action", "goal", d); err == nil || manages != attempt {
 			t.Fatalf("goal skipped incomplete manager admission: calls=%d err=%v", manages, err)
 		}
 		gitFixture(t, d.Repository, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "Move base")

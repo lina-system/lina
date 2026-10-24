@@ -50,12 +50,12 @@ func TestGoalWorkerRetainsUncertainReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close(t.Context())
-	got, err := s.RunGoal(t.Context(), origin, "action", d)
+	got, err := s.RunGoal(t.Context(), origin, "action", "goal", d)
 	if err != nil || got.State != "unknown" || got.Code != r.Code {
 		t.Fatalf("uncertain worker was replayed: %+v %v", got, err)
 	}
 	d.Done = "different goal"
-	if _, err := s.RunGoal(t.Context(), origin, "action", d); err == nil {
+	if _, err := s.RunGoal(t.Context(), origin, "action", "goal", d); err == nil {
 		t.Fatal("receipt key accepted changed work")
 	}
 }
