@@ -1018,6 +1018,7 @@ func checkPause(r *panelRecording) panelVerdict {
 func checkLimit(r *panelRecording) panelVerdict {
 	v := panelVerdict{Check: "E13 limit"}
 	limits := map[int]bool{}
+	automatic := false
 	for _, c := range r.Cases {
 		if c.N != 20 {
 			continue
@@ -1027,7 +1028,11 @@ func checkLimit(r *panelRecording) panelVerdict {
 				continue
 			}
 			v.Input = true
-			limits[pass.Limit] = true
+			if pass.Automatic {
+				automatic = true
+			} else {
+				limits[pass.Limit] = true
+			}
 			// Steps already running when the limit falls finish; nothing new
 			// starts past it, so only a pass that starts a step must stay within
 			// the limit.
@@ -1055,8 +1060,8 @@ func checkLimit(r *panelRecording) panelVerdict {
 			}
 		}
 	}
-	if !v.Input || !limits[1] || !limits[3] || !limits[0] {
-		v.Detail = fmt.Sprintf("limits 1, 3 and automatic were not all recorded (%v)", limits)
+	if !v.Input || !limits[1] || !limits[3] || !automatic {
+		v.Detail = fmt.Sprintf("limits 1, 3 and automatic were not all recorded (%v, automatic %t)", limits, automatic)
 		return v
 	}
 	v.Passed = true

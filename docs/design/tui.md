@@ -628,8 +628,9 @@ and 100x34, including 1, 5, 20 and 50 cards. The latter launches the Codex proto
 fixture through Core, observes the same start and changing person-request activity
 in a real 120x34 PTY, and checks the resulting artifact and restart. The deterministic
 TUI matrix checks two-row clipping, folded/overflow counts and 50 streamed changes
-with a retained draft, focus and reading anchor. Stage-list and scheduling-control
-evaluations remain with their corresponding implementation issues.
+with a retained draft, focus and reading anchor. The scheduling controls are
+checked by `TestM3WorkPanelAdjust`, which sends the panel's own keys to the real
+TUI at 120x34 and reads the pass Core records for each choice.
 
 **Views.** Ctrl+P on the focused panel switches between cards and a compact view of one row per 일: the name, then Now, then the elapsed time right-aligned; Now shrinks first. Left and Right change the state filter: all, needs you, running, waiting, done. The title shows the filter when it is not all, and fold and count rows then count only that state.
 
@@ -649,7 +650,7 @@ The panel boundary and elapsed-time column stay fixed even when a terminal joins
 emoji without mode 2027; correcting those columns preserves the composer cursor
 and emits nothing for an unchanged frame.
 
-**Adjusting.** On a selected card, Shift+Up and Shift+Down move the 일 up or down in priority, Space pauses or resumes it, and Delete asks to stop it: the card's second row asks for Enter to confirm, and any other key cancels. `-` and `+` lower and raise the run limit by one, and `0` returns it to automatic; the title shows the limit only when the person set one. These keys are not letters, so they work while a Korean input method is on. The TUI sends each choice to Core and changes nothing locally: a card moves, pauses or shows its place only when Core's update arrives ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)). While the panel has focus, the footer shows these keys as whole hints (T-10).
+**Adjusting.** On a selected card whose row names its goal, Shift+Up and Shift+Down move the 일 up or down in priority, Space pauses or resumes it, and Delete asks to stop it: the card's second row asks for Enter to confirm, and any other key cancels. The TUI sends the goal the row names, never the card's ref. A card without a goal, such as a background run or a conversation worker, takes none of these keys and the footer omits them. Space and Delete are Toggle keys here, so a held key cannot resume the pause it just set or cancel its own stop ask; Shift+Up, Shift+Down and the limit keys may repeat (T-10). `-` and `+` lower and raise the run limit by one, and `0` returns it to automatic; the title shows the limit only when the person set one. These keys are not letters, so they work while a Korean input method is on. The TUI sends each choice to Core and changes nothing locally: a card moves, pauses or shows its place only when Core's update arrives ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)). While the panel has focus, the footer shows these keys as whole hints (T-10).
 
 **Stage list.** Enter on a card opens the 일 view in the panel: a row with the 일's name and a back mark (`‹`, or `<` in ASCII), then one row per entry of its stage list ([work-and-delegation.md](work-and-delegation.md#stages)):
 
@@ -751,8 +752,21 @@ stage list must match the corpus graph in steps, depth and parallel groups, so a
 lost blocker fails the run — and records every settled 120x34 frame in both
 languages and glyph modes. A check whose input a recording does not supply is
 reported as missing and never as a pass. E6 and E7 run separately in
-`TestM3WorkPanelStages`; E11 to E14 need scheduling-pass recordings from #772
-and #773. E4 and E8 to E9
+`TestM3WorkPanelStages`. E11 to E14 run in `TestM3WorkPanelAdjust`: Core runs in
+a child process, because a run limit is one of the person's choices and Core
+grants it only to a decider outside its own tree. The fixture manager admits the
+corpus 일 and the person's limit before that run starts, a stub worker holds each
+step until the run releases it, and the host report carries the load the run
+sets. Each key goes to the real TUI at 120x34; the run waits for the pass Core
+commits after the key and reads it from the ledger — the rank order it placed,
+the steps it started, each goal's rank, pause, state, queue place and reason,
+and the applied limit with its reason. A pass is marked with the command that
+produced it, so a move, a pause, a resume, a confirmed stop, a cancelled stop and
+a limit change are each read where Core recorded them. The frame that follows
+that pass is recorded beside it. The pause, resume, stop and limit cases run
+under a person's number; the shortage case runs with the automatic limit and a
+host that carries nothing, which is the reason each waiting card shows.
+E4 and E8 to E9
 also run in `TestM3WorkPanelEventLatency`: 50 live corpus graphs remain in
 progress while 50 of the fan-out graph’s 82 parallel steps land. Each stub
 worker writes a result before Core accepts its observation. Eight PTYs observe

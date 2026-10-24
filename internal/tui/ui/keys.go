@@ -42,6 +42,10 @@ var keyBindings = []keyBinding{
 	{"work.view", []string{"Ctrl+P"}, 1, "work.view", "work"},
 	{"work.filter", []string{"Left/Right"}, 2, "work.filter", "work"},
 	{"shortcuts.scroll", []string{"Up/Down"}, 3, "shortcuts.scroll", "work"},
+	{"work.move", []string{"Shift+Up/Down"}, 5, "work.move", "work"},
+	{"work.pause", []string{"Space"}, 6, "work.pause", "work"},
+	{"work.stop", []string{"Delete"}, 7, "work.stop", "work"},
+	{"work.limit", []string{"-/+", "0"}, 8, "work.limit", "work"},
 	{"shortcuts.close", []string{"Esc"}, 4, "shortcuts.close", "work"},
 	{"work.details", []string{"Ctrl+O"}, 5, "work.details", "work"},
 	{"work.expand", []string{"Enter"}, 1, "work.expand", "stages"},
@@ -120,7 +124,14 @@ func (m *shellModel) conversationFooter(showNotice bool) string {
 		line = ansi.Truncate(line, max(0, width-ansi.StringWidth(marker)), "") + marker
 	}
 	var hints []string
+	goal := false
+	if section == "work" {
+		_, goal = m.selectedGoalCard()
+	}
 	for _, binding := range bindingsFor(section) {
+		if !goal && (binding.Action == "work.move" || binding.Action == "work.pause" || binding.Action == "work.stop") {
+			continue
+		}
 		if binding.Hint != "" {
 			hints = append(hints, binding.Keys[0]+" "+design.Text(m.styles.options.Language, binding.Hint))
 		}

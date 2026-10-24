@@ -915,6 +915,7 @@ type ProgressLine struct {
 	Name         string           `json:"name"`
 	Next         string           `json:"next"`
 	Now          *string          `json:"now,omitempty"`
+	Paused       *bool            `json:"paused,omitempty"`
 	Percent      *json.Number     `json:"percent,omitempty"`
 	Row          *bool            `json:"row,omitempty"`
 	Stage        string           `json:"stage"`
@@ -924,6 +925,7 @@ type ProgressLine struct {
 	Waiting      json.Number      `json:"waiting"`
 }
 type ProgressRow struct {
+	GoalID    *string              `json:"goal_id,omitempty"`
 	Line      ProgressLine         `json:"line"`
 	Ref       string               `json:"ref"`
 	StageRefs *[]ProgressStageRefs `json:"stage_refs,omitempty"`
@@ -9313,6 +9315,9 @@ const clientSchemaJSON = `{
         "state": {
           "$ref": "#/$defs/running_state"
         },
+        "paused": {
+          "type": "boolean"
+        },
         "stage": {
           "type": "string"
         },
@@ -9456,6 +9461,9 @@ const clientSchemaJSON = `{
         },
         "line": {
           "$ref": "#/$defs/progress_line"
+        },
+        "goal_id": {
+          "type": "string"
         },
         "stage_refs": {
           "type": "array",

@@ -25,6 +25,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/runs"
+	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -151,7 +152,7 @@ func TestBindingMoveReattachesRecordEffects(t *testing.T) {
 	}
 	// Re-applying the same effect is not a second saved version.
 	effects := []binding.Effect{{Kind: binding.EffectCreate, RecordID: receipt.ID}}
-	outcome, err := r.applyBindingEffect(t.Context(), move.ID, effects[0], binding.Target{Class: "existing", ID: "hallway", Kind: "project"})
+	outcome, _, err := r.applyBindingEffect(t.Context(), move.ID, effects[0], binding.Target{Class: "existing", ID: "hallway", Kind: "project"})
 	if err != nil || !outcome.Moved {
 		t.Fatalf("repeat apply: %+v %v", outcome, err)
 	}
@@ -541,6 +542,7 @@ func TestBindingMoveCombinesEditChain(t *testing.T) {
 	r := runRuntime(t)
 	fixtureRecord(t, r, "plants", "todo", "open", "", "Plants", "Water them.")
 	fixtureRecord(t, r, "lamps", "todo", "open", "", "Lamps", "Replace bulbs.")
+	fixtureRecord(t, r, "pots", "todo", "open", "", "Pots", "Empty.")
 	input := admitForBinding(t, r, "edits", "Plants")
 	for _, write := range []coreexec.RecordWrite{{ID: "plants", Kind: "todo", Title: "Garden plants", Note: "Water them."}, {ID: "plants", Kind: "todo", Title: "Garden plants", Note: "Water daily."}} {
 		before, rev, err := r.records.Read(t.Context(), "plants")
@@ -563,5 +565,202 @@ func TestBindingMoveCombinesEditChain(t *testing.T) {
 	}
 	if got, _ := readRecord(t, r, "lamps"); got != "Garden plants|Water daily." {
 		t.Errorf("lost accumulated edit: %s", got)
+	}
+	if _, err := r.moveBinding(t.Context(), input, binding.Target{Class: "existing", ID: "pots", Kind: "todo"}, "edits-again"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := readRecord(t, r, "lamps"); got != "Lamps|Replace bulbs." {
+		t.Errorf("first destination kept the chain: %s", got)
+	}
+	if got, _ := readRecord(t, r, "pots"); got != "Garden plants|Water daily." {
+		t.Errorf("second destination missed the chain: %s", got)
+	}
+	if got, _ := readRecord(t, r, "plants"); got != "Plants|Water them." {
+		t.Errorf("original changed on the second move: %s", got)
+	}
+}
+
+func readTodo(t *testing.T, r *conversationRuntime, id string) *records.Todo {
+	t.Helper()
+	record, _, err := r.records.Read(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	todo, _, _, err := records.ReadTodo(record.Data)
+	if err != nil || todo == nil {
+		t.Fatalf("todo %s: %v", id, err)
+	}
+	return todo
+}
+
+// A cleared optional field is part of the edit. omitempty drops it from the
+// marshalled to-do, and the destination must still lose that field.
+func TestMergeTodoDropsClearedFields(t *testing.T) {
+	before := &records.Todo{State: "open", Important: true, Deadline: "2026-10-24", DeadlineSource: "person", Tags: []string{"beds"}}
+	edit := &records.Todo{State: "open", Tags: []string{"beds"}}
+	right := &records.Todo{State: "open", Important: true, Deadline: "2026-11-01", DeadlineSource: "person", Tags: []string{"keep"}}
+	got := mergeTodo(before, edit, right)
+	if got.Important || got.Deadline != "" || got.DeadlineSource != "" {
+		t.Fatalf("cleared fields kept: %+v", got)
+	}
+	if len(got.Tags) != 1 || got.Tags[0] != "keep" {
+		t.Fatalf("unrelated field changed: %+v", got)
+	}
+}
+
+func TestBindingMoveTransfersClearedTodoFields(t *testing.T) {
+	r := runRuntime(t)
+	fixtureRecord(t, r, "plants", "todo", "open", "", "Plants", "Water them.")
+	fixtureRecord(t, r, "lamps", "todo", "open", "", "Lamps", "Replace bulbs.")
+	writeTodo := func(id, title, rev string, todo records.Todo) {
+		t.Helper()
+		if _, err := coreexec.WriteRecord(t.Context(), r.records, records.Actor{Person: r.person, Agent: r.agent}, coreexec.RecordWrite{ID: id, Revision: rev, Kind: "todo", Title: title, Note: "Water them.", Todo: &todo}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, rev, err := r.records.Read(t.Context(), "plants")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTodo("plants", "Plants", rev, records.Todo{State: "open", Important: true, Deadline: "2026-10-24", DeadlineSource: "person", Tags: []string{"beds"}})
+	_, lampRev, err := r.records.Read(t.Context(), "lamps")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTodo("lamps", "Lamps", lampRev, records.Todo{State: "open", Important: true, Deadline: "2026-11-01", DeadlineSource: "person", Tags: []string{"keep"}})
+	input := admitForBinding(t, r, "clear-fields", "Plants")
+	before, beforeRev, err := r.records.Read(t.Context(), "plants")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared := coreexec.RecordWrite{ID: "plants", Revision: beforeRev, Kind: "todo", Title: "Plants", Note: "Water them.", Todo: &records.Todo{State: "open", Tags: []string{"beds"}}}
+	receipt, err := coreexec.WriteRecord(t.Context(), r.records, records.Actor{Person: r.person, Agent: r.agent}, cleared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(cleared)
+	recordEffect(t, r, input, "write_record", string(raw), &effectBefore{body: before.Data, revision: beforeRev}, receipt)
+	if _, err = r.moveBinding(t.Context(), input, binding.Target{Class: "existing", ID: "lamps", Kind: "todo"}, "clear-fields"); err != nil {
+		t.Fatal(err)
+	}
+	restored := readTodo(t, r, "plants")
+	if !restored.Important || restored.Deadline != "2026-10-24" || restored.DeadlineSource != "person" {
+		t.Errorf("original lost its fields: %+v", restored)
+	}
+	moved := readTodo(t, r, "lamps")
+	if moved.Important || moved.Deadline != "" || moved.DeadlineSource != "" {
+		t.Errorf("destination kept cleared fields: %+v", moved)
+	}
+	if len(moved.Tags) != 1 || moved.Tags[0] != "keep" {
+		t.Errorf("destination lost an untouched field: %+v", moved)
+	}
+}
+
+// A second move restores the item that holds the edit now, and withdraws a
+// steer from the run that holds it now.
+func TestBindingMoveFollowsCurrentLocation(t *testing.T) {
+	r := runRuntime(t)
+	fixtureRecord(t, r, "plants", "todo", "open", "", "Plants", "Water them.")
+	fixtureRecord(t, r, "lamps", "todo", "open", "", "Lamps", "Replace bulbs.")
+	fixtureRecord(t, r, "pots", "todo", "open", "", "Pots", "Empty.")
+	input := admitForBinding(t, r, "again", "Plants")
+	before, rev, err := r.records.Read(t.Context(), "plants")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := coreexec.RecordWrite{ID: "plants", Revision: rev, Kind: "todo", Title: "Plants", Note: "Water them daily."}
+	receipt, err := coreexec.WriteRecord(t.Context(), r.records, records.Actor{Person: r.person, Agent: r.agent}, write)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(write)
+	recordEffect(t, r, input, "write_record", string(raw), &effectBefore{body: before.Data, revision: rev}, receipt)
+	if _, err = r.moveBinding(t.Context(), input, binding.Target{Class: "existing", ID: "lamps", Kind: "todo"}, "edit-1"); err != nil {
+		t.Fatal(err)
+	}
+	second, err := r.moveBinding(t.Context(), input, binding.Target{Class: "existing", ID: "pots", Kind: "todo"}, "edit-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Effects) != 1 || !second.Effects[0].Moved {
+		t.Fatalf("second edit move: %+v", second.Effects)
+	}
+	if got, _ := readRecord(t, r, "plants"); got != "Plants|Water them." {
+		t.Errorf("original not restored: %s", got)
+	}
+	if got, _ := readRecord(t, r, "lamps"); got != "Lamps|Replace bulbs." {
+		t.Errorf("first destination kept the edit: %s", got)
+	}
+	if got, _ := readRecord(t, r, "pots"); got != "Pots|Water them daily." {
+		t.Errorf("second destination missed the edit: %s", got)
+	}
+	var payload string
+	if err = r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT payload FROM binding_effects WHERE input_event=? AND kind=?", input, binding.EffectEdit).Scan(&payload)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(payload, `"todo":`) {
+		t.Errorf("text-only edit gained a to-do on replay: %s", payload)
+	}
+}
+
+func TestBindingMoveFollowsCurrentSteer(t *testing.T) {
+	r := runRuntime(t)
+	seedRun(t, r, "run-alpha", "Alpha")
+	seedRun(t, r, "run-beta", "Beta")
+	seedRun(t, r, "run-gamma", "Gamma")
+	steer := admitForBinding(t, r, "steer-again", "Alpha")
+	recordEffect(t, r, steer, "follow_work", `{"id":"run-alpha","text":"Use a table."}`, nil, map[string]string{"state": "submitted"})
+	if _, err := r.moveBinding(t.Context(), steer, binding.Target{Class: "existing", ID: "run-beta", Kind: "run"}, "steer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.moveBinding(t.Context(), steer, binding.Target{Class: "existing", ID: "run-gamma", Kind: "run"}, "steer-2"); err != nil {
+		t.Fatal(err)
+	}
+	alpha := strings.Join(runFollowKeys(t, r, "run-alpha"), "\n")
+	beta := strings.Join(runFollowKeys(t, r, "run-beta"), "\n")
+	gamma := strings.Join(runFollowKeys(t, r, "run-gamma"), "\n")
+	if strings.Count(alpha, ":withdraw") != 1 || strings.Contains(alpha, ":deliver") {
+		t.Errorf("original run was steered again: %q", alpha)
+	}
+	if !strings.Contains(beta, ":deliver") || !strings.Contains(beta, ":withdraw") {
+		t.Errorf("first destination was not withdrawn: %q", beta)
+	}
+	if !strings.Contains(gamma, ":deliver") || !strings.Contains(gamma, "Use a table.") || strings.Contains(gamma, ":withdraw") {
+		t.Errorf("second destination: %q", gamma)
+	}
+}
+
+func TestBindingEffectResolvesWorkerSession(t *testing.T) {
+	r := runRuntime(t)
+	done := make(chan struct{})
+	close(done)
+	r.workers = &workerRuntime{sessions: map[string]*workerSession{
+		"thread": {origin: r, thread: worker.Thread{ID: "thread", TaskID: "task-alpha"}, questions: map[string]*workerQuestion{}, close: func() error { return nil }, done: done},
+	}}
+	input := admitForBinding(t, r, "worker-steer", "Alpha")
+	recordEffect(t, r, input, "worker_input", `{"session":"thread","text":"Use a table."}`, nil, map[string]string{"state": "submitted"})
+	recordEffect(t, r, input, "worker_input", `{"session":"missing","text":"Nowhere."}`, nil, map[string]string{"state": "submitted"})
+	var targets []string
+	if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(t.Context(), "SELECT target FROM binding_effects WHERE input_event=? AND kind=? ORDER BY ordinal", input, binding.EffectSteer)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var target string
+			if err = rows.Scan(&target); err != nil {
+				return err
+			}
+			targets = append(targets, target)
+		}
+		return rows.Err()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0] != "task-alpha" {
+		t.Fatalf("worker steer targets = %#v", targets)
 	}
 }

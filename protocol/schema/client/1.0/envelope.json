@@ -6843,6 +6843,9 @@
         "state": {
           "$ref": "#/$defs/running_state"
         },
+        "paused": {
+          "type": "boolean"
+        },
         "stage": {
           "type": "string"
         },
@@ -6986,6 +6989,9 @@
         },
         "line": {
           "$ref": "#/$defs/progress_line"
+        },
+        "goal_id": {
+          "type": "string"
         },
         "stage_refs": {
           "type": "array",
