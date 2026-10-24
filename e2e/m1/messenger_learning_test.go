@@ -214,13 +214,13 @@ type learningAdapter struct {
 	requested []messenger.Cursor
 }
 
-func (a *learningAdapter) SignIn(context.Context) (messenger.SignInState, error) {
+func (a *learningAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
 	return messenger.SignedIn, nil
 }
-func (a *learningAdapter) ListChats(context.Context) ([]messenger.Chat, error) {
+func (a *learningAdapter) ListChats(context.Context, messenger.SourceID) ([]messenger.Chat, error) {
 	return []messenger.Chat{{ID: "dm-1", Name: "Direct", Kind: "direct"}}, nil
 }
-func (a *learningAdapter) Page(ctx context.Context, _ string, cursor messenger.Cursor) (messenger.Page, error) {
+func (a *learningAdapter) Page(ctx context.Context, _ messenger.SourceID, _ string, cursor messenger.Cursor) (messenger.Page, error) {
 	a.mu.Lock()
 	a.requested = append(a.requested, cursor)
 	queue := a.pages[string(cursor)]
@@ -244,9 +244,13 @@ func (a *learningAdapter) Page(ctx context.Context, _ string, cursor messenger.C
 	}
 	return messenger.Page{Next: cursor}, nil
 }
-func (*learningAdapter) Members(context.Context, string) ([]messenger.Author, error) { return nil, nil }
-func (*learningAdapter) Live(context.Context, func(messenger.Event) error) error     { return nil }
-func (*learningAdapter) FetchAttachment(context.Context, string, string) (io.ReadCloser, error) {
+func (*learningAdapter) Members(context.Context, messenger.SourceID, string) ([]messenger.Author, error) {
+	return nil, nil
+}
+func (*learningAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
+	return nil
+}
+func (*learningAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 func (*learningAdapter) Capabilities() messenger.Capabilities {
