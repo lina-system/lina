@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -130,11 +131,11 @@ func TestWorkPanelLimitKeysAndTitle(t *testing.T) {
 		})
 	}
 	m := adjustShell(navigationCards(4))
-	if rows := m.workPanelRows(40, 20); strings.Contains(rows[0], design.Text(design.English, "work.limit")) {
+	if rows := m.workPanelRows(40, 20); rows[0] != design.Text(design.English, "work.title") {
 		t.Fatalf("automatic shows a limit: %q", rows[0])
 	}
 	m.content.Blocks = []state.Block{{Topic: "progress", Work: &state.WorkSummary{Cards: navigationCards(4), Limit: &state.WorkLimit{Value: 3}}}}
-	if rows := m.workPanelRows(40, 20); !strings.Contains(rows[0], "3") {
+	if rows := m.workPanelRows(40, 20); !strings.Contains(rows[0], fmt.Sprintf(design.Text(design.English, "work.limit"), 3)) {
 		t.Fatalf("a set limit is not in the title: %q", rows[0])
 	}
 }

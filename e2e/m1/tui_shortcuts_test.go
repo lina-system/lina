@@ -113,6 +113,9 @@ func TestM1TUIShortcuts(t *testing.T) {
 					if !strings.Contains(screenRows(sheet)[33], design.Text(variant.language, "live")) {
 						t.Fatal("sheet dropped connection word")
 					}
+					if text := screenText(sheet); strings.Contains(text, "%") {
+						t.Fatalf("shortcut sheet shows a format verb:\n%s", text)
+					}
 					h.keys(term, "\x1b")
 					wait(func(s tuiterm.Snapshot) bool {
 						return !s.CursorHidden && strings.Contains(screenText(s), "SHORTCUT-READY")

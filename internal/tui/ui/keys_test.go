@@ -38,6 +38,36 @@ func TestShortcutSheetEmptyDraftAndHelp(t *testing.T) {
 	}
 }
 
+// A sheet label is shown as it is; only the work panel fills a format string.
+// A verb that reaches the sheet would show the person "%d" or a missing-argument
+// artifact, so every entry and section title stays verb-free in both languages.
+func TestShortcutSheetLabelsHaveNoFormatVerbs(t *testing.T) {
+	for _, language := range []design.Language{design.English, design.Korean} {
+		m := conversationShell()
+		m.styles = NewStyles(Options{Language: language})
+		for _, section := range []string{"", "work", "stages", "pager", "commands"} {
+			for _, binding := range bindingsFor(section) {
+				ids := []string{binding.Action}
+				if binding.Hint != "" {
+					ids = append(ids, binding.Hint)
+				}
+				for _, id := range ids {
+					label, ok := design.Lookup(language, id)
+					if !ok {
+						t.Fatalf("%s: %s has no catalog entry", language, id)
+					}
+					if strings.Contains(label, "%") {
+						t.Errorf("%s: %s label %q has a format verb", language, id, label)
+					}
+				}
+			}
+		}
+		if sheet := m.shortcutSheet(); strings.Contains(sheet, "%") {
+			t.Errorf("%s shortcut sheet has a format verb:\n%s", language, sheet)
+		}
+	}
+}
+
 func TestShortcutQuestionRemainsDraftText(t *testing.T) {
 	for _, draft := range []string{"why", " "} {
 		m := conversationShell()
