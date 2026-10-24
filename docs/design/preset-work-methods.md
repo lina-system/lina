@@ -358,7 +358,7 @@ The values in this section are measured, not shipped. The M4-4 replay (#590) pla
 
 ## Implementation
 
-M4-3 (#589) is carried out by these issues, each with one done condition: #611 (the record, its loading, versioned publication and filled values), #612 (the eight starter records), #613 (tool declaration order and worker dispatch), #614 (reply shapes and per-agent breach counters), #615 (ask settings), #616 (done evidence on completions), #617 (hand-off receipts, check-back and artifact ownership), #618 (person names) and #619 (persona-layer changes, after #584).
+M4-3 (#589) is carried out by these issues, each with one done condition: #611 (the record, its loading, versioned publication and filled values), #612 (the eight starter records), #613 (tool declaration order and worker dispatch), #614 (reply shapes and per-agent breach counters), #615 (ask settings), #616 (done evidence on completions), #617 (hand-off receipts, check-back and artifact ownership), #618 (person names) and #619 (persona-layer changes on the starter presets shipped in #584).
 
 ## Measurement
 

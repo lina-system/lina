@@ -49,6 +49,7 @@ var keyBindings = []keyBinding{
 	{"shortcuts.scroll", []string{"Up/Down"}, 3, "shortcuts.scroll", "stages"},
 	{"work.details", []string{"Ctrl+O"}, 4, "work.details", "stages"},
 	{"shortcuts.transcript", []string{"Ctrl+T"}, 15, "shortcuts.transcript", ""},
+	{"binding.move", []string{"Ctrl+B"}, 15, "binding.move", ""},
 	{"shortcuts.close", []string{"Esc", "q", "Ctrl+O"}, 1, "shortcuts.close", "pager"},
 	{"shortcuts.search", []string{"/"}, 2, "shortcuts.search", "pager"},
 	{"shortcuts.next", []string{"n"}, 3, "shortcuts.next", "pager"},

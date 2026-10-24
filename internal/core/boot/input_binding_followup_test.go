@@ -1207,3 +1207,374 @@ func TestSteeredPresentResultKeepsReplyShapes(t *testing.T) {
 		t.Fatalf("reply check lost the turn shapes: %s", check)
 	}
 }
+
+// Six settled targets on the previous input are past the five-answer question.
+// Stopping must ask, then ask again for the rest, and must not interrupt first.
+func TestInheritedTargetsBeyondQuestionLimit(t *testing.T) {
+	r, _ := turnRuntime(t)
+	reserve := t.TempDir()
+	const n = 6
+	ids := make([]string, n)
+	tasks := make([]work.Task, n)
+	for i := range tasks {
+		ids[i] = fmt.Sprintf("wide-%d", i)
+		tasks[i] = work.Task{ID: ids[i], PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: fmt.Sprintf("Wide %d", i), Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+		if err := r.work.Create(t.Context(), tasks[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	last := tasks[n-1]
+	if err := r.work.Start(t.Context(), work.Run{ID: "wide-run", TaskID: last.ID, Generation: 1, Worker: "codex", ThreadID: "wide-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "wide-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "wide-thread", TaskID: last.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "wide-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	words := []string{"one", "two", "three", "four", "five", "six"}
+	parentText := strings.Join(words, " ")
+	parent := questionPersonInput(t, r, "wide-parent", parentText)
+	parentTools := modelBindingTools(t, r, parent)
+	choices := make([]binding.Choice, n)
+	for i := range choices {
+		choices[i] = binding.Choice{Request: i, Quote: words[i], Target: binding.Target{Class: "existing", Kind: "task", ID: ids[i]}}
+	}
+	if got := questionCall(t, parentTools, "bind_input", "wide-bind", bindingRequest{Bindings: choices}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	follow := questionPersonInput(t, r, "wide-stop", "stop it")
+	saved, err := r.journal().Get(t.Context(), inputBindingID(follow.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.Decider != "no-rule" || decision.Target.Class != "none" {
+		t.Fatalf("follow-up settled before the stop: %+v", decision)
+	}
+	followTools := modelBindingTools(t, r, follow)
+	stopped := questionCall(t, followTools, "worker_interrupt", "stop-wide", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "quote": "stop it"})
+	if stopped.Code != loop.Denied || !strings.Contains(string(stopped.Output), "input_target_pending") || probe.interrupts != 0 {
+		t.Fatalf("oversized inherited stop: %+v interrupts=%d", stopped, probe.interrupts)
+	}
+	pending, err := waiting.NewConversationQuestions(r.db).Pending(t.Context(), r.person, r.agent)
+	if err != nil || len(pending) != 1 || pending[0].Binding == nil {
+		t.Fatalf("missing target question: %+v %v", pending, err)
+	}
+	first := pending[0]
+	if len(first.Binding.Tied) != 4 || len(first.Binding.More) != 2 || len(first.Choices) != len(first.Binding.Tied)+1 {
+		t.Fatalf("first page: tied=%d more=%d choices=%d", len(first.Binding.Tied), len(first.Binding.More), len(first.Choices))
+	}
+	for i, target := range first.Binding.Tied {
+		if target.ID != ids[i] {
+			t.Fatalf("first page target %d = %s", i, target.ID)
+		}
+	}
+	route := r.route
+	r.route = nil
+	t.Cleanup(func() { r.route = route })
+	answerChoice := func(q waiting.ConversationQuestion, value string) {
+		t.Helper()
+		revision := "1"
+		values := protocol.FormValues{"answer": {String: &value}}
+		answer := protocol.QuestionAnswer{CardID: &q.ID, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}
+		if outcome, err := r.answerConversationQuestion(t.Context(), r.person, answer, "answer-"+q.ID); err != nil || outcome != protocol.DecisionOutcomeResolved {
+			t.Fatalf("answer %s: %s %v", q.ID, outcome, err)
+		}
+	}
+	answerChoice(first, first.Choices[len(first.Binding.Tied)])
+	if probe.interrupts != 0 {
+		t.Fatal("continuing the question interrupted the worker")
+	}
+	current, err := r.currentInputChoices(t.Context(), follow)
+	if err != nil || len(current) != 1 || current[0].Question == "" || current[0].Question == first.ID {
+		t.Fatalf("continuation did not stay pending: %+v %v", current, err)
+	}
+	second, err := waiting.NewConversationQuestions(r.db).Get(t.Context(), current[0].Question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Binding.Tied) != 2 || len(second.Binding.More) != 0 || len(second.Choices) != 2 || second.Binding.Tied[0].ID != ids[4] || second.Binding.Tied[1].ID != ids[5] {
+		t.Fatalf("second page: %+v choices=%v", second.Binding, second.Choices)
+	}
+	answerChoice(second, second.Choices[1])
+	current, err = r.currentInputChoices(t.Context(), follow)
+	if err != nil || current[0].Question != "" || current[0].Decider != "person" || current[0].Target.ID != last.ID || len(current[0].Tied) != 0 || len(current[0].More) != 0 {
+		t.Fatalf("selected target: %+v %v", current, err)
+	}
+	if probe.interrupts != 0 {
+		t.Fatal("selecting a target interrupted without a new call")
+	}
+	r.route = route
+	again := questionCall(t, followTools, "worker_interrupt", "stop-wide-chosen", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "quote": "stop it"})
+	if again.Code != loop.OK || probe.interrupts != 1 {
+		t.Fatalf("chosen interrupt: %+v interrupts=%d", again, probe.interrupts)
+	}
+}
+
+// The first page is projects and an initiative stays with them in the held
+// set. A running task on the next page must still make a steer ask.
+func TestInheritedSteerAsksWhenRiskyTargetIsOnLaterPage(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	recordIDs := []string{"proj-0", "proj-1", "proj-2", "proj-3", "init-0"}
+	kinds := []string{"project", "project", "project", "project", "initiative"}
+	titles := []string{"North", "South", "East", "West", "Lane"}
+	items := make([]binding.Item, len(recordIDs))
+	for i := range items {
+		items[i] = binding.Item{ID: recordIDs[i], Title: titles[i], Kind: kinds[i], State: "active", LastActivity: now}
+	}
+	if err := r.seedIntakeReplay(t.Context(), binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: items, Surfaces: map[string]string{}}, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	reserve := t.TempDir()
+	task := work.Task{ID: "live-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Live work", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	if err := r.work.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "live-run", TaskID: task.ID, Generation: 1, Worker: "codex", ThreadID: "live-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "live-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "live-thread", TaskID: task.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "live-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	words := []string{"one", "two", "three", "four", "five", "six"}
+	parentText := strings.Join(words, " ")
+	parent := questionPersonInput(t, r, "steer-parent", parentText)
+	parentTools := modelBindingTools(t, r, parent)
+	ids := append(append([]string{}, recordIDs...), task.ID)
+	targetKinds := append(append([]string{}, kinds...), "task")
+	choices := make([]binding.Choice, len(ids))
+	for i := range choices {
+		choices[i] = binding.Choice{Request: i, Quote: words[i], Target: binding.Target{Class: "existing", Kind: targetKinds[i], ID: ids[i]}}
+	}
+	if got := questionCall(t, parentTools, "bind_input", "steer-bind", bindingRequest{Bindings: choices}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	follow := questionPersonInput(t, r, "steer-follow", "nudge it")
+	saved, err := r.journal().Get(t.Context(), inputBindingID(follow.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.Decider != "no-rule" || decision.Target.Class != "none" {
+		t.Fatalf("follow-up settled before the steer: %+v", decision)
+	}
+	followTools := modelBindingTools(t, r, follow)
+	steered := questionCall(t, followTools, "worker_input", "steer-live", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "text": "nudge it"})
+	if steered.Code != loop.Denied || !strings.Contains(string(steered.Output), "input_target_pending") || probe.inputs != 0 {
+		t.Fatalf("later-page steer: %+v inputs=%d", steered, probe.inputs)
+	}
+	pending, err := waiting.NewConversationQuestions(r.db).Pending(t.Context(), r.person, r.agent)
+	if err != nil || len(pending) != 1 || pending[0].Binding == nil {
+		t.Fatalf("missing steer question: %+v %v", pending, err)
+	}
+	first := pending[0]
+	if len(first.Binding.Tied) != 4 || len(first.Binding.More) != 2 {
+		t.Fatalf("steer page: tied=%d more=%d", len(first.Binding.Tied), len(first.Binding.More))
+	}
+	held := false
+	for _, target := range first.Binding.More {
+		if target.ID == task.ID {
+			held = true
+		}
+	}
+	for _, target := range first.Binding.Tied {
+		if target.ID == task.ID {
+			t.Fatal("running task was shown on the first page")
+		}
+	}
+	if !held {
+		t.Fatal("running task was dropped from the later page")
+	}
+}
+
+// A read keeps the paged tie without asking. The next steer must still see
+// the running task that was held for a later page.
+func TestRetainedReadKeepsLaterPageTargets(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	recordIDs := []string{"read-proj-0", "read-proj-1", "read-proj-2", "read-proj-3", "read-init-0"}
+	kinds := []string{"project", "project", "project", "project", "initiative"}
+	titles := []string{"North", "South", "East", "West", "Lane"}
+	items := make([]binding.Item, len(recordIDs))
+	for i := range items {
+		items[i] = binding.Item{ID: recordIDs[i], Title: titles[i], Kind: kinds[i], State: "active", LastActivity: now}
+	}
+	if err := r.seedIntakeReplay(t.Context(), binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: items, Surfaces: map[string]string{}}, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	reserve := t.TempDir()
+	task := work.Task{ID: "read-live-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Live work", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	if err := r.work.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "read-live-run", TaskID: task.ID, Generation: 1, Worker: "codex", ThreadID: "read-live-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "read-live-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "read-live-thread", TaskID: task.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "read-live-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	words := []string{"one", "two", "three", "four", "five", "six"}
+	parent := questionPersonInput(t, r, "read-parent", strings.Join(words, " "))
+	parentTools := modelBindingTools(t, r, parent)
+	ids := append(append([]string{}, recordIDs...), task.ID)
+	targetKinds := append(append([]string{}, kinds...), "task")
+	choices := make([]binding.Choice, len(ids))
+	for i := range choices {
+		choices[i] = binding.Choice{Request: i, Quote: words[i], Target: binding.Target{Class: "existing", Kind: targetKinds[i], ID: ids[i]}}
+	}
+	if got := questionCall(t, parentTools, "bind_input", "read-bind", bindingRequest{Bindings: choices}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	now = time.Now().UTC()
+	look, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "read-look", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui", ReplyTo: parent.ID}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "look it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(t.Context(), inputBindingID(look.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.Decider != "no-rule" || decision.Target.Class != "none" {
+		t.Fatalf("reply settled before the read: %+v", decision)
+	}
+	lookTools := modelBindingTools(t, r, look)
+	if got := questionCall(t, lookTools, "read_work_progress", "read-live", map[string]any{"id": task.ID}); got.Code != loop.OK || probe.inputs != 0 {
+		t.Fatalf("retained read: %+v inputs=%d", got, probe.inputs)
+	}
+	kept, err := r.currentInputChoices(t.Context(), look)
+	if err != nil || len(kept) != 1 || len(kept[0].Tied) != 4 || len(kept[0].More) != 2 || kept[0].Question != "" {
+		t.Fatalf("read did not retain the page: %+v %v", kept, err)
+	}
+	follow := questionPersonInput(t, r, "read-steer", "nudge it")
+	followTools := modelBindingTools(t, r, follow)
+	steered := questionCall(t, followTools, "worker_input", "steer-after-read", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "text": "nudge it"})
+	if steered.Code != loop.Denied || !strings.Contains(string(steered.Output), "input_target_pending") || probe.inputs != 0 {
+		t.Fatalf("steer after retained read: %+v inputs=%d", steered, probe.inputs)
+	}
+	pending, err := waiting.NewConversationQuestions(r.db).Pending(t.Context(), r.person, r.agent)
+	if err != nil || len(pending) != 1 || pending[0].Binding == nil {
+		t.Fatalf("missing question after retained read: %+v %v", pending, err)
+	}
+	held := false
+	for _, target := range append(pending[0].Binding.Tied, pending[0].Binding.More...) {
+		if target.ID == task.ID {
+			held = true
+		}
+	}
+	if !held {
+		t.Fatal("running task was dropped after the retained read")
+	}
+}
+
+// An answer through the root runtime must keep the next page on the persona
+// that asked, or the page is withdrawn.
+func TestLaterPageKeepsQuestionOwner(t *testing.T) {
+	root, _ := turnRuntime(t)
+	dev := workAgentFixture(t, root)
+	view := newConversationView(root, dev, "main:"+dev)
+	const n = 6
+	for i := 0; i < n; i++ {
+		task := work.Task{ID: fmt.Sprintf("owner-wide-%d", i), PersonID: view.person, AgentID: view.agent, ConversationID: view.conversation, Title: fmt.Sprintf("Owner %d", i), Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+		if err := view.work.Create(t.Context(), task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	words := []string{"one", "two", "three", "four", "five", "six"}
+	parent := questionPersonInput(t, view, "owner-parent", strings.Join(words, " "))
+	parentTools := modelBindingTools(t, view, parent)
+	choices := make([]binding.Choice, n)
+	for i := range choices {
+		choices[i] = binding.Choice{Request: i, Quote: words[i], Target: binding.Target{Class: "existing", Kind: "task", ID: fmt.Sprintf("owner-wide-%d", i)}}
+	}
+	if got := questionCall(t, parentTools, "bind_input", "owner-bind", bindingRequest{Bindings: choices}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	follow := questionPersonInput(t, view, "owner-stop", "stop it")
+	followTools := modelBindingTools(t, view, follow)
+	stopped := questionCall(t, followTools, "worker_interrupt", "owner-stop-call", map[string]any{"session": "owner-thread", "turn": "old", "generation": 1, "binding": 1, "quote": "stop it"})
+	if stopped.Code != loop.Denied || !strings.Contains(string(stopped.Output), "input_target_pending") {
+		t.Fatalf("persona stop: %+v", stopped)
+	}
+	pending, err := waiting.NewConversationQuestions(view.db).Pending(t.Context(), view.person, view.agent)
+	if err != nil || len(pending) != 1 || len(pending[0].Binding.More) == 0 {
+		t.Fatalf("persona question: %+v %v", pending, err)
+	}
+	first := pending[0]
+	route := root.route
+	root.route = nil
+	t.Cleanup(func() { root.route = route })
+	value := first.Choices[len(first.Binding.Tied)]
+	revision := "1"
+	values := protocol.FormValues{"answer": {String: &value}}
+	outcome, err := root.answerConversationQuestion(t.Context(), root.person, protocol.QuestionAnswer{CardID: &first.ID, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}, "answer-"+first.ID)
+	if err != nil || outcome != protocol.DecisionOutcomeResolved {
+		t.Fatalf("root answer: %s %v", outcome, err)
+	}
+	current, err := view.currentInputChoices(t.Context(), follow)
+	if err != nil || len(current) != 1 || current[0].Question == "" || current[0].Question == first.ID {
+		t.Fatalf("continuation missing: %+v %v", current, err)
+	}
+	second, err := waiting.NewConversationQuestions(root.db).Get(t.Context(), current[0].Question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Agent != view.agent || second.Conversation != view.conversation || second.Person != view.person {
+		t.Fatalf("later page owner: person=%s agent=%s conversation=%s", second.Person, second.Agent, second.Conversation)
+	}
+	visible, err := view.questionVisible(t.Context(), second)
+	if err != nil || !visible {
+		t.Fatalf("later page withdrawn: visible=%v %v", visible, err)
+	}
+}

@@ -55,4 +55,5 @@ type Decision struct {
 	Decider    string `json:"decider"`
 	Unresolved bool   `json:"unresolved"`
 	FocusFresh bool   `json:"focus_fresh"`
+	Snapshot   *State `json:"snapshot,omitempty"`
 }
