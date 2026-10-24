@@ -853,7 +853,7 @@ func senderObservation(source Source, plan recordPlan) (identity.Observation, bo
 	observation := identity.Observation{
 		Identity: identity.Identity{Platform: source.Platform, Scope: source.Workspace, User: message.Author.ID},
 		At:       message.At,
-		Self:     message.Route == RoutePerson && !plan.ownWrite,
+		Self:     message.Route == RoutePerson,
 	}
 	if message.At.IsZero() {
 		observation.At = time.Now()

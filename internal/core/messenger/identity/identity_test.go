@@ -1038,6 +1038,43 @@ func TestSplitMovesOneIdentityAndItsItems(t *testing.T) {
 	}
 }
 
+func TestSplitMovesAnItemSharedByTwoIdentitiesOnce(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-shared", Identifiers: []identity.SeenIdentifier{
+			{Kind: identity.Phone, Value: "+821012340001", Source: "iMessage profile"},
+			{Kind: identity.Phone, Value: "+821012340002", Source: "iMessage profile"},
+		}},
+		{Record: "person-split"},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, imessage("+821012340001"), "One", phone("+821012340001", "iMessage profile"))
+	observe(t, f, imessage("+821012340002"), "Two", phone("+821012340002", "iMessage profile"))
+	first := usable(t, f, imessage("+821012340001"))
+	second := usable(t, f, imessage("+821012340002"))
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatal("both identities did not link")
+	}
+	item := f.item(t, "person-shared", "said by both accounts")
+	for _, link := range []identity.Link{first[0], second[0]} {
+		if err := f.store.RecordArtifact(t.Context(), link.ID, "item", item.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.store.Split(t.Context(), "person-shared", "person-split", []identity.Identity{imessage("+821012340001"), imessage("+821012340002")}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []identity.Identity{imessage("+821012340001"), imessage("+821012340002")} {
+		if got := links(t, f, id); len(got) != 1 || got[0].Record != "person-split" {
+			t.Fatalf("split link = %+v", got)
+		}
+	}
+	if subject(t, f, item.ID) != "person-split" {
+		t.Fatal("the shared item did not follow its identities")
+	}
+}
+
 func TestCorrectMovesTheLinkAndRetractsItsItems(t *testing.T) {
 	t.Parallel()
 	people := identity.StaticPeople{

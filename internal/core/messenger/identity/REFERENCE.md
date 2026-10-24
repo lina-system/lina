@@ -104,7 +104,7 @@ the old link produced and requeues that identity.
 `Merge` records both record ids, moves the links and the items of the first
 record to the second, and `UndoMerge` puts each back on the record it came from.
 `Split` moves the identities the person chooses and the items their evidence
-produced. Item moves run through `memory.ReassignSubject` in the same
+produced; an item cited by two of the chosen identities moves once. Item moves run through `memory.ReassignSubject` in the same
 transaction, so an item keeps its evidence, holder and scope.
 
 What a link produced is recorded in `identity_artifact` (memory items, and the
@@ -143,7 +143,11 @@ without `expect`) and `labels.json` (`{"<platform>/<scope>/<user>": "<record id>
 
 `Evaluate` replaces the store's people source with the set's, observes every
 identity in arrival order (`observed_at`, defaulting to `at`, so a backfill can
-be seen after a later sighting), and then measures. A `windows` entry names a
+be seen after a later sighting), and then measures each distinct identity once,
+so an identity observed twice counts its links once. A set that labels one
+identity two ways is refused. The private run's gate also needs
+`OwnerSampleUsableLinks` (300) usable links, and `counts.json` records that
+number as `required_usable_links`. A `windows` entry names a
 period in which a link to a record must not be usable; it pins the end of a link
 whose identifier moved. It removes one link as its repair check, so a store is
 measured once.

@@ -69,6 +69,52 @@ func TestAdmittedPageRecordsTheSenderIdentity(t *testing.T) {
 	}
 }
 
+// TestOwnWriteKeepsTheAccountAsTheSelf proves a message LINA sent through the
+// person's account is still the person's own account: it is recorded as the
+// self and never linked or proposed as another person.
+func TestOwnWriteKeepsTheAccountAsTheSelf(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{{
+		Record:      "person-me",
+		Names:       []string{"Me"},
+		Identifiers: []identity.SeenIdentifier{{Kind: identity.Email, Value: "me@example.com", Source: "Google contacts"}},
+	}}
+	f := newFixture(t)
+	sender := identity.Open(f.db, "person", people, f.removal).WithClock(func() time.Time { return f.now })
+	f.store = f.store.WithIdentities(sender)
+	source := messenger.Source{Person: "person", Platform: "slack", Account: "account-1", Workspace: "T-1",
+		Mode: messenger.ModeOfficial, Adapter: "slack", State: messenger.StateConnected, ConnectedAt: f.now}
+	if err := f.store.Connect(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.UpsertChats(t.Context(), source, []messenger.Chat{{ID: "dm-1", Name: "Direct", Kind: "direct"}}); err != nil {
+		t.Fatal(err)
+	}
+	effect := messenger.Effect{ID: "effect-1", Platform: source.Platform, Account: source.Account, Chat: "dm-1",
+		Agent: "agent:main", Verb: "send", ClientID: "client-1", Message: "m-1", State: messenger.EffectSent, CreatedAt: f.now}
+	if err := f.store.RecordEffect(t.Context(), effect); err != nil {
+		t.Fatal(err)
+	}
+	sent := messenger.Message{ID: "m-1", Route: messenger.RoutePerson, At: f.now, Text: "sent by LINA",
+		Author: messenger.Author{ID: "U-me", Name: "Me", Email: "me@example.com"}}
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{Messages: []messenger.Message{sent}}); err != nil {
+		t.Fatal(err)
+	}
+	me := identity.Identity{Platform: "slack", Scope: "T-1", User: "U-me"}
+	if got, err := sender.Links(t.Context(), me); err != nil || len(got) != 0 {
+		t.Fatalf("the person's own account got links: %+v err=%v", got, err)
+	}
+	var self int
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT self FROM identity_sender WHERE platform='slack' AND scope='T-1' AND user='U-me'").Scan(&self)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if self != 1 {
+		t.Fatalf("self = %d, want 1", self)
+	}
+}
+
 // TestAdmittedPageUsesTheProfileEmailAsEvidence proves an adapter's profile
 // email is an identifier the matcher can use. The Teams adapter fills
 // Author.Email from directory profiles and never fills Identifiers, so the
