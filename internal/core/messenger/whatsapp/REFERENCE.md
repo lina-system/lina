@@ -42,6 +42,10 @@ a chat therefore means the range may be missing, not that it can be refetched.
   replay up to 500 messages per chat as live events. A message that arrives
   between a committed page and the seed stays in the buffer and the next page
   read carries it; the scheduled read advances the cursor and coverage.
+- A chat started after the subscription seeded joins it with what it already
+  holds, so only its later messages arrive as live events; the subscription
+  re-lists chats every `chatsMs` (30 seconds). A chat that is never re-listed
+  still reaches the store through the scheduled read, never as a live event.
 - Core admits a live event with `Store.AdmitLive`: one transaction, no cursor
   and no coverage, idempotent by message id, and refused for a chat that is not
   listed or is out of sync. The service lists chats first when a live event

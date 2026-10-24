@@ -806,9 +806,9 @@ the session, the sandbox and sign-in apply.
 
 - The phone pushes its history once, at link time. The first fill reads what the
   phone pushed; WhatsApp does not hand an older conversation over later.
-- Live messages arrive while the account stays linked. Upstream holds at most
-  500 per chat for the running add-on, so a message sent while the add-on is
-  down is missed.
+- Live messages arrive while the account stays linked, including in a
+  conversation started after the link. Upstream holds at most 500 per chat for
+  the running add-on, so a message sent while the add-on is down is missed.
 - Coverage states both plainly: the read depth is what the phone pushed at link
   time, and a gap of more than two read intervals means the range may be lost.
   A chat carries the range its first complete read covered.
