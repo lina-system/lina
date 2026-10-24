@@ -23,13 +23,8 @@ const (
 // Service reads connected sources on their schedule and from their live events.
 // One source's failure never blocks another source or the conversation.
 type Service struct {
-	store *Store
-	// named holds adapters keyed by the name a source records. It decides which
-	// sources this Core serves when the service was composed with a map.
-	named map[string]Adapter
-	// resolve builds one adapter per source account, so two sources on one
-	// platform never share an adapter instance and its connections.
-	resolve  func(Source) (Adapter, error)
+	store    *Store
+	resolve  Resolver
 	interval time.Duration
 
 	mu       sync.Mutex
@@ -56,49 +51,36 @@ func NewService(store *Store, adapters map[string]Adapter, interval time.Duratio
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	service := NewServiceWith(store, func(source Source) (Adapter, error) {
+	return NewServiceWithResolver(store, func(source Source) (Adapter, bool) {
 		adapter, ok := adapters[source.Adapter]
-		if !ok {
-			return nil, ErrInvalid
-		}
-		return adapter, nil
+		return adapter, ok
 	}, interval)
-	service.named = adapters
-	return service
 }
 
-// NewServiceWith composes the sync loop with a provider that resolves the
-// adapter for one source account, so two sources on one platform never share an
-// adapter instance.
-func NewServiceWith(store *Store, resolve func(Source) (Adapter, error), interval time.Duration) *Service {
+// Resolver selects an adapter for the source account.
+type Resolver func(Source) (Adapter, bool)
+
+// NewServiceWithResolver supports account-specific sessions while NewService
+// retains the registry of adapter names used by official platform services.
+func NewServiceWithResolver(store *Store, resolve Resolver, interval time.Duration) *Service {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
 	if resolve == nil {
-		resolve = func(Source) (Adapter, error) { return nil, ErrInvalid }
+		resolve = func(Source) (Adapter, bool) { return nil, false }
 	}
 	return &Service{store: store, resolve: resolve, interval: interval, lastSync: map[string]time.Time{}, watching: map[string]*watcher{}, resolved: map[string]Adapter{}}
 }
 
-// owns reports whether this Core serves the source. A provider decides for
-// itself; a map leaves a source whose adapter name is unknown untouched.
-func (s *Service) owns(source Source) bool {
-	if s.named == nil {
-		return true
-	}
-	_, ok := s.named[source.Adapter]
-	return ok
-}
-
-// adapterFor selects the implementation the source recorded. Lookup is not by
-// platform: two accounts on one platform, or a bot and a personal account, would
-// otherwise share one instance and one read.
+// adapterFor selects the implementation for the source account, creating it
+// once. Lookup is not by platform: two accounts on one platform, or a bot and a
+// personal account, would otherwise share one instance and one read.
 func (s *Service) adapterFor(source Source) (Adapter, bool) {
-	adapter, ok := s.named[source.Adapter]
-	return adapter, ok
+	adapter, err := s.adapter(source)
+	return adapter, err == nil
 }
 
-// adapter returns the source's adapter, creating it once.
+// adapter returns the source's adapter, resolving it once per account.
 func (s *Service) adapter(source Source) (Adapter, error) {
 	key := source.Platform + "\x00" + source.Account
 	s.mu.Lock()
@@ -107,9 +89,9 @@ func (s *Service) adapter(source Source) (Adapter, error) {
 	if ok {
 		return adapter, nil
 	}
-	adapter, err := s.resolve(source)
-	if err != nil {
-		return nil, err
+	adapter, ok = s.resolve(source)
+	if !ok || adapter == nil {
+		return nil, ErrInvalid
 	}
 	s.mu.Lock()
 	if existing, ok := s.resolved[key]; ok {
@@ -121,7 +103,7 @@ func (s *Service) adapter(source Source) (Adapter, error) {
 	return adapter, nil
 }
 
-// Close releases the adapters the provider created.
+// Close releases the adapters the resolver created.
 func (s *Service) Close() {
 	s.mu.Lock()
 	adapters := s.resolved
@@ -176,13 +158,13 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 	connected := make(map[string]bool, len(sources))
 	defer func() { s.retain(connected) }()
 	for _, source := range sources {
-		if !s.owns(source) {
-			continue
-		}
 		// A failing source keeps its schedule: the cause may be a credential or
 		// an unreachable node that the person can fix. A source that needs a
 		// new sign-in waits for the person instead.
 		if source.State != StateConnected && source.State != StateFailing {
+			continue
+		}
+		if _, owned := s.adapterFor(source); !owned {
 			continue
 		}
 		key := source.Platform + "\x00" + source.Account
@@ -200,12 +182,9 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 		s.mu.Lock()
 		s.lastSync[key] = current
 		s.mu.Unlock()
-		switch {
-		case errors.Is(err, ErrInvalid):
-			// This Core does not serve the source; its row stays untouched.
-		case err != nil && ctx.Err() == nil:
+		if err != nil && ctx.Err() == nil {
 			_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
-		case err == nil:
+		} else if err == nil {
 			results[key] = result
 		}
 	}
