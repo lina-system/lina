@@ -20,12 +20,15 @@ const sources = () => readdirSync(sourceDir)
 function harness(t, driver = fixtureDriver(), runtime = {}) {
   const input = new PassThrough(), output = new PassThrough();
   let buffer = '', lines = [];
+  const all = [];
   output.on('data', chunk => {
     buffer += chunk;
     for (;;) {
       const end = buffer.indexOf('\n');
       if (end < 0) break;
-      lines.push(JSON.parse(buffer.slice(0, end)));
+      const line = JSON.parse(buffer.slice(0, end));
+      lines.push(line);
+      all.push(line);
       buffer = buffer.slice(end + 1);
     }
   });
@@ -43,6 +46,7 @@ function harness(t, driver = fixtureDriver(), runtime = {}) {
       return lines;
     },
     lines: () => lines,
+    all: () => all,
   };
 }
 
@@ -115,6 +119,22 @@ test('a response shape the add-on does not know is refused, not passed on', asyn
   assert.deepEqual(frame, { id: 'p', ok: false, error: 'upstream_changed' });
 });
 
+test('a page coverage the add-on does not know is refused', async t => {
+  const h = harness(t, fixtureDriver({ page: { messages: [], deletions: [], next: '', hasMore: false, coverage: { historyDepth: 7 } } }));
+  const [frame] = await h.send({ id: 'p', op: 'page', chat: 'dm-1', cursor: '' });
+  assert.deepEqual(frame, { id: 'p', ok: false, error: 'upstream_changed' });
+});
+
+test('a decryption failure that carries text is refused', async t => {
+  const message = {
+    id: 'm-1', author: { id: 'u-1', name: 'A' }, route: 'external_participant',
+    at: '2026-10-01T00:00:00Z', text: 'visible', decryptionFailed: true,
+  };
+  const h = harness(t, fixtureDriver({ page: { messages: [message], deletions: [], next: '', hasMore: false } }));
+  const [frame] = await h.send({ id: 'p', op: 'page', chat: 'dm-1', cursor: '' });
+  assert.deepEqual(frame, { id: 'p', ok: false, error: 'upstream_changed' });
+});
+
 test('opening an unregistered platform keeps unsupported_platform', async t => {
   let opens = 0;
   const h = harness(t, fixtureDriver(), {
@@ -148,6 +168,17 @@ test('live events reach the caller until the subscription stops', async t => {
   assert.deepEqual(h.lines().find(line => line.event === 'message').message.id, 'm-9');
   await h.send({ id: 's', op: 'stop' });
   assert.equal(h.driver.delivered.length, 1);
+});
+
+test('a live subscription that ends on its own is reported once, by code', async t => {
+  const h = harness(t);
+  await h.send({ id: 'l', op: 'live' });
+  h.driver.end(Object.assign(new Error('socket hang up at /synthetic/host'), { code: 'ECONNRESET' }));
+  h.driver.end(new Refusal('needs_sign_in', 'a second end'));
+  await h.send({ id: 's', op: 'stop' });
+  for (let i = 0; i < 400 && !h.all().some(line => line.id === 's'); i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(h.all().filter(line => line.event === 'ended'), [{ event: 'ended', error: 'failed:ECONNRESET' }]);
+  assert.deepEqual(h.driver.calls.filter(call => call === 'stop'), [], 'an ended subscription is not stopped again');
 });
 
 test('no add-on source names an SDK method outside the read allowlist', () => {
