@@ -43,6 +43,7 @@ import (
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/provider/applefm"
 	builtin "github.com/thisisjun786/lina/skills"
 )
 
@@ -134,6 +135,8 @@ type conversationRuntime struct {
 	lanes                       *lane.Manager
 	topics                      *clientsrv.Topics
 	route                       *modelpath.ResponsesConfig
+	onDevice                    *applefm.Adapter
+	onDeviceProfile             applefm.Profile
 	activities                  *lifecycle.ActivityRegistry
 	person, agent, conversation string
 	identity                    clientsrv.Identity

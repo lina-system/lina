@@ -92,7 +92,7 @@ The adapter set is:
 | oh-my-opencode | Person-selected session records and memory artifacts from the prior tool's workspace or export. | Future. |
 | Honcho | Person-selected workspace peers, cards, conclusions, sessions, summaries and messages through a verified read API or export. | Future standalone adapter. |
 | Hermes | Per-profile lossless-context and host message databases, large-output sidecars and the install's Honcho person data. | First adapter; the owner's M1 continuity test for existing memory and work patterns. |
-| murmur | A stopped murmur data home: its spool and config. Its messages become messenger records, not sealed imported conversations ([conversation-and-memory.md](conversation-and-memory.md#importing-a-murmur-store)). | Planned; the owner's move off murmur. |
+| murmur | A stopped murmur data home: its spool and config. Its messages become messenger records, not sealed imported conversations ([conversation-and-memory.md](conversation-and-memory.md#importing-a-murmur-store)). | Implemented in `internal/addons/importer/murmur`, with `lina import-murmur` as its installed entry point; the owner's move off murmur. |
 | OpenClaw | Person-selected conversation/session records and memory files from a prior install or export. | Future. |
 
 These entries define intended sources, not accepted schemas or available readers. Work now covers Hermes only. Its embedded Honcho reader remains schema-gated; listing a future standalone Honcho adapter does not enable it. Each future adapter must independently verify its formats and implement the common contract before it can be offered.

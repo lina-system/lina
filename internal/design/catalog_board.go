@@ -16,6 +16,10 @@ func init() {
 		"work.title":      {"Work", "작업"},
 		"work.view":       {"View", "보기"},
 		"work.filter":     {"Filter", "필터"},
+		"work.open":       {"Open", "열기"},
+		"work.expand":     {"Expand", "펼치기"},
+		"work.stages":     {"Stages", "단계"},
+		"work.details":    {"Details", "자세히"},
 
 		"work.filter.needs_input": {"Needs you", "확인 필요"},
 		"work.filter.in_progress": {"Running", "진행 중"},

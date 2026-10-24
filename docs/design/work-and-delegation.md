@@ -2321,6 +2321,17 @@ The stage list is how the person sees the steps of a goal: a short numbered list
 - **State of an entry.** An entry has the state of its most urgent step, in the order input needed, failed, stopped, working, waiting, unknown and done. An entry none of whose steps is ready or started is next. A superseded step leaves the counts.
 - **Current stage.** The current stage is the lowest-numbered entry that is not done; it is the line's stage (see Progress line). Because stages never hold work back, a later entry can be working at the same time and shows its own state.
 - **Detail.** A stage that is not done and has a step that is ready or started opens to its steps, which normally means only the current stage. Under each step in progress are its live worker sessions, by worker name and state word only. Done stages and stages that have not started show no steps and no workers. Each step keeps its card and Details.
+
+  A session row requires both the scoped step's recorded session handle and a
+  matching active dispatch binding or retained process-local live session. Ledger history alone cannot claim a
+  worker is still alive after restart. Adapter observations are read outside
+  canon and off the progress publication path. A session-local cache supplies
+  observations for at most five seconds; an absent, expired or different-turn
+  observation is unknown while a bounded asynchronous read refreshes it.
+  Completion wakes the progress publisher without delaying canonical updates.
+  Failed observations remain unknown, and ended or replaced sessions disappear. A retained idle session can remain under work being
+  handled, with the waiting state. The client retains step selection by its
+  opaque ref, separately from the display-only stage line.
 - **Updates.** Core recomputes the stage list and Now in the transaction that commits an event of the goal, and publishes the changed line and list on the progress topic ([host-protocol.md](host-protocol.md)) within 250 ms (P) of that commit. A recomputation that changes nothing publishes nothing.
 
 ### Running list

@@ -192,8 +192,10 @@ func (f *peerFixture) send(t *testing.T, stream bool) (Call, error) {
 	return f.service.Send(t.Context(), f.owner, "stable-call", Input{Connection: "peer", Task: "compute", Text: "compute", Stream: stream})
 }
 func TestPeerResults(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"task", "direct", "stream", "claim", "input", "auth", "leak"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			f := peer(t, mode)
 			call, err := f.send(t, mode == "stream")
 			if mode == "leak" {
@@ -234,6 +236,7 @@ func TestPeerResults(t *testing.T) {
 	}
 }
 func TestUncertainSendNeverRepeats(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "lost")
 	call, err := f.send(t, false)
 	if !errors.Is(err, ErrUnknown) || call.State != "unknown" {
@@ -257,8 +260,10 @@ func TestUncertainSendNeverRepeats(t *testing.T) {
 	}
 }
 func TestAuthorityAndCardFence(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"card", "revoke", "authority"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			f := peer(t, "task")
 			switch mode {
 			case "card":
@@ -277,6 +282,7 @@ func TestAuthorityAndCardFence(t *testing.T) {
 	}
 }
 func TestUncertainCancellation(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "input")
 	call, err := f.send(t, false)
 	if err != nil {
@@ -291,8 +297,10 @@ func TestUncertainCancellation(t *testing.T) {
 	}
 }
 func TestNoCredentialInDurableEvidence(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"leak", "identity-leak"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			f := peer(t, mode)
 			_, _ = f.send(t, false)
 			calls, err := f.service.Undelivered(t.Context())
@@ -308,6 +316,7 @@ func TestNoCredentialInDurableEvidence(t *testing.T) {
 }
 
 func TestUncertainSendReservesWorkAcrossNewCallIDs(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "lost")
 	first, _ := f.send(t, false)
 	_, _ = f.service.Send(t.Context(), f.owner, "different-model-call", Input{Connection: "peer", Task: "compute", Text: "compute"})
@@ -317,6 +326,7 @@ func TestUncertainSendReservesWorkAcrossNewCallIDs(t *testing.T) {
 }
 
 func TestObservationKeepsOriginalTurn(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "input")
 	original, err := f.send(t, false)
 	if err != nil {
@@ -338,6 +348,7 @@ func TestObservationKeepsOriginalTurn(t *testing.T) {
 }
 
 func TestMultipartBinaryEvidence(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	call, err := f.send(t, false)
 	if err != nil {
@@ -354,6 +365,7 @@ func TestMultipartBinaryEvidence(t *testing.T) {
 }
 
 func TestMultipartJSONArtifactIsValidatedAfterAssembly(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	call, err := f.send(t, false)
 	if err != nil {
@@ -377,6 +389,7 @@ func TestMultipartJSONArtifactIsValidatedAfterAssembly(t *testing.T) {
 }
 
 func TestOpaqueTaskIDsAreNotJoinedForSecretDetection(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "short-ids")
 	call, err := f.send(t, false)
 	if err != nil || call.TaskID != "task-task" || call.ContextID != "context-task" || !call.Verified {
@@ -385,6 +398,7 @@ func TestOpaqueTaskIDsAreNotJoinedForSecretDetection(t *testing.T) {
 }
 
 func TestOAuthSettingsScopesRoundTrip(t *testing.T) {
+	t.Parallel()
 	var o OAuth
 	if err := json.Unmarshal([]byte(`{"issuer":"https://issuer.test","scopes":["task"]}`), &o); err != nil || len(o.Scopes) != 1 {
 		t.Fatal("owner OAuth scopes lost", err)
@@ -392,6 +406,7 @@ func TestOAuthSettingsScopesRoundTrip(t *testing.T) {
 }
 
 func TestOwnerReviewCanAdmitAnUnpredictableArtifact(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	connection := f.connection
 	connection.Profiles[0].SHA256 = ""
@@ -408,6 +423,7 @@ func TestOwnerReviewCanAdmitAnUnpredictableArtifact(t *testing.T) {
 }
 
 func TestOwnerVerificationBindsRetainedArtifactAndPerson(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	connection := f.connection
 	connection.Profiles[0].SHA256 = ""
@@ -439,6 +455,7 @@ func TestOwnerVerificationBindsRetainedArtifactAndPerson(t *testing.T) {
 }
 
 func TestTerminalTaskCannotAskForAnotherSend(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	call, err := f.send(t, false)
 	if err != nil {
@@ -451,6 +468,7 @@ func TestTerminalTaskCannotAskForAnotherSend(t *testing.T) {
 }
 
 func TestHTTPBearerSchemeIsCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	c := f.connection
 	c.Card.SecuritySchemes["key"] = json.RawMessage(`{"httpAuthSecurityScheme":{"scheme":"bearer"}}`)
@@ -461,6 +479,7 @@ func TestHTTPBearerSchemeIsCaseInsensitive(t *testing.T) {
 }
 
 func TestRequiredAgentCardFields(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	base, _ := json.Marshal(f.connection.Card)
 	for _, field := range []string{"name", "description", "version", "capabilities", "supportedInterfaces", "defaultInputModes", "defaultOutputModes", "skills"} {
@@ -479,6 +498,7 @@ func TestRequiredAgentCardFields(t *testing.T) {
 }
 
 func TestUncertainTaskCannotFallbackWithChangedInput(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "lost")
 	_, _ = f.send(t, false)
 	_, _ = f.service.Send(t.Context(), f.owner, "new-intent-in-same-task", Input{Connection: "peer", Task: "compute", Text: "compute differently"})
@@ -488,6 +508,7 @@ func TestUncertainTaskCannotFallbackWithChangedInput(t *testing.T) {
 }
 
 func TestEmptyRawArtifactIsRetained(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	call, err := f.send(t, false)
 	if err != nil {
@@ -505,6 +526,7 @@ func TestEmptyRawArtifactIsRetained(t *testing.T) {
 }
 
 func TestUnknownSendCannotFallbackToAnotherConnection(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "lost")
 	other := peer(t, "task")
 	_, _ = f.send(t, false)
@@ -522,6 +544,7 @@ func TestUnknownSendCannotFallbackToAnotherConnection(t *testing.T) {
 }
 
 func TestCardCannotReflectStoredCredentials(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	if _, err := f.send(t, false); err != nil {
 		t.Fatal(err)
@@ -541,6 +564,7 @@ func TestCardCannotReflectStoredCredentials(t *testing.T) {
 }
 
 func TestDiscoveryURLCannotCarryEncodedCredential(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	connection := f.connection
 	encoded := ""
@@ -558,6 +582,7 @@ func TestDiscoveryURLCannotCarryEncodedCredential(t *testing.T) {
 }
 
 func TestMultipartCredentialReflectionIsNeverRetained(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	call, err := f.send(t, false)
 	if err != nil {
@@ -601,6 +626,7 @@ func (b *oauthMutationBackend) Delete(secrets.Key) error { b.body = nil; return 
 func (b *oauthMutationBackend) Close() error             { return nil }
 
 func TestOAuthInstallationFencesConnectionMutation(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	issuer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "oauth-fixture", "token_type": "Bearer", "expires_in": 3600, "scope": "task"})
@@ -661,6 +687,7 @@ func TestOAuthInstallationFencesConnectionMutation(t *testing.T) {
 }
 
 func TestUnchangedEvidenceKeepsOwnerVerification(t *testing.T) {
+	t.Parallel()
 	f := peer(t, "task")
 	connection := f.connection
 	connection.Profiles[0].SHA256 = ""
