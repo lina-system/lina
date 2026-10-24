@@ -784,6 +784,7 @@ Rules, each testable with a scripted provider:
   A cut-off response runs no tool.
 - Every call id gets exactly one result in call order (synthetic for aborted, invalid and denied).
 - Calls of one response run in parallel as the contract says, at most 8 at once (P); two calls that write the same path run in call order.
+  A call may also name another call's write path as its gate; it runs after that call, and gated calls with different paths stay parallel.
 - The idempotency key is built as [host-protocol.md](host-protocol.md#envelope) says, with the task id as scope, or the turn id for an effect asked in a conversation (CP-04).
 - A tool deadline excludes the approval wait.
   A call that needs approval returns `awaiting_person` at once and runs its stored arguments, bound by hash, after the answer.

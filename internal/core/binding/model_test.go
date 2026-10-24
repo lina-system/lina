@@ -84,7 +84,7 @@ func TestNeedsQuestionCountsTargetsHeldForLaterPage(t *testing.T) {
 	if NeedsQuestion(State{Items: items}, quiet) {
 		t.Fatal("a later initiative made a steer ask")
 	}
-	for _, state := range []string{"running", "working", "waiting", "needs_input"} {
+	for _, state := range []string{"running", "working", "waiting", "needs_input", "input_needed"} {
 		risky := Item{ID: "live", Kind: "task", State: state}
 		choice := quiet
 		choice.More = []Target{later, {Class: "existing", Kind: "task", ID: risky.ID}}
@@ -92,6 +92,15 @@ func TestNeedsQuestionCountsTargetsHeldForLaterPage(t *testing.T) {
 		if !NeedsQuestion(State{Items: held}, choice) {
 			t.Fatalf("state %s on a later page did not ask", state)
 		}
+	}
+}
+func TestSteerOnAnInputNeededTaskAsks(t *testing.T) {
+	a := Target{Class: "existing", Kind: "task", ID: "a"}
+	b := Target{Class: "existing", Kind: "task", ID: "b"}
+	// A blocked task card keeps the work state spelling, not the binding one.
+	s := State{Items: []Item{{ID: "a", Kind: "task", State: "input_needed"}, {ID: "b", Kind: "task", State: "done"}}}
+	if !NeedsQuestion(s, Choice{Quote: "steer it", Target: a, Tied: []Target{a, b}, Action: "steer"}) {
+		t.Fatal("an input-needed task did not keep the steer pending")
 	}
 }
 func TestDuplicateNormalizationAndClosedItems(t *testing.T) {

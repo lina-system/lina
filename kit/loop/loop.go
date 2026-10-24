@@ -41,10 +41,14 @@ type Result struct {
 }
 
 // Validate must be pure and return a normalized write target (empty for reads).
-// Execute must respect cancellation; an executor with uncooperative adapters
-// owns their leases and lifetimes even after returning an unknown result.
+// Gate may name another call's write target in the same response; this call
+// starts only after that call finished. It must be pure, must not name this
+// call's own target, and must not form a cycle with another gate. Execute must
+// respect cancellation; an executor with uncooperative adapters owns their
+// leases and lifetimes even after returning an unknown result.
 type Tool struct {
 	Validate func(provider.ToolCall) (string, error)
+	Gate     func(provider.ToolCall) string
 	Execute  func(context.Context, provider.ToolCall) Result
 }
 type StreamFunc func(context.Context, provider.Request) (provider.Stream, error)
