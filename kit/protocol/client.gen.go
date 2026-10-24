@@ -61,6 +61,8 @@ const (
 	KindWorkResult           Kind = "work_result"
 	KindWorkSwitchRequest    Kind = "work_switch_request"
 	KindWorkSwitchResult     Kind = "work_switch_result"
+	KindWorkControlRequest   Kind = "work_control_request"
+	KindWorkControlResult    Kind = "work_control_result"
 	KindAccountRequest       Kind = "account_request"
 	KindAccountResult        Kind = "account_result"
 	KindMemoryRequest        Kind = "memory_request"
@@ -1589,6 +1591,18 @@ type Welcome struct {
 	PersonID        string       `json:"person_id"`
 	ProtocolVersion string       `json:"protocol_version"`
 }
+type WorkControlRequest struct {
+	Confirm   *bool  `json:"confirm,omitempty"`
+	GoalID    string `json:"goal_id"`
+	Operation string `json:"operation"`
+}
+type WorkControlResult struct {
+	GoalID    string      `json:"goal_id"`
+	Operation string      `json:"operation"`
+	Paused    bool        `json:"paused"`
+	Rank      json.Number `json:"rank"`
+	State     string      `json:"state"`
+}
 type WorkRequest struct {
 	AgentID       *string   `json:"agent_id,omitempty"`
 	Base          *string   `json:"base,omitempty"`
@@ -1703,6 +1717,8 @@ func (WorkRequest) isPayload()          {}
 func (WorkResult) isPayload()           {}
 func (WorkSwitchRequest) isPayload()    {}
 func (WorkSwitchResult) isPayload()     {}
+func (WorkControlRequest) isPayload()   {}
+func (WorkControlResult) isPayload()    {}
 func (AccountRequest) isPayload()       {}
 func (AccountResult) isPayload()        {}
 func (MemoryRequest) isPayload()        {}
@@ -1971,6 +1987,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		return p, err
 	case KindWorkSwitchResult:
 		var p WorkSwitchResult
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWorkControlRequest:
+		var p WorkControlRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWorkControlResult:
+		var p WorkControlResult
 		err := json.Unmarshal(data, &p)
 		return p, err
 	case KindAccountRequest:
@@ -2270,6 +2294,8 @@ const clientSchemaJSON = `{
         "work_result",
         "work_switch_request",
         "work_switch_result",
+        "work_control_request",
+        "work_control_result",
         "account_request",
         "account_result",
         "memory_request",
@@ -3875,6 +3901,38 @@ const clientSchemaJSON = `{
         "properties": {
           "payload": {
             "$ref": "#/$defs/work_switch_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_control_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_control_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_result"
           }
         }
       }
@@ -8939,6 +8997,81 @@ const clientSchemaJSON = `{
       "required": [
         "operation",
         "switch_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_control_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "confirm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation",
+        "goal_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_control_result": {
+      "type": "object",
+      "properties": {
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "defining",
+            "running",
+            "waiting",
+            "checking",
+            "done",
+            "stopped",
+            "blocked"
+          ]
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "goal_id",
+        "operation",
+        "state",
+        "paused",
+        "rank"
       ],
       "additionalProperties": false
     },

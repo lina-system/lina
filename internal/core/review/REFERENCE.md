@@ -41,3 +41,4 @@ they do not establish current acceptance or change the contracts.
 Canon migration 48 claims the normalized repository, PR number and head before manager dispatch, binding the task, execution generation and receipt.
 The claim covers the pull request, not one head: any second request is refused unless it names the receipt of the review's single work-definition return and arrives in the same task's next generation. That continuation is checked once; a third request is refused.
 A blocked review may store Core's own findings (failed required checks, out-of-area paths) and never a verdict; an unverified review stores none.
+A scope miss stores one P1 finding per out-of-area path up to the finding schema limit of 256. Paths that do not fit, including paths the finding file rules reject, remain in the scope evidence. One `core-scope-more` finding names that remainder so the stored review can finish.

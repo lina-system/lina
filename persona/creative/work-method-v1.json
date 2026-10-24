@@ -13,11 +13,5 @@
       "creative_artifact",
       "creative_tooling_brief"
     ]
-  },
-  "reply": {
-    "candidates": 3
-  },
-  "fill": [
-    "reply.candidates"
-  ]
+  }
 }

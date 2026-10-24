@@ -637,7 +637,7 @@ type relationNode struct {
 // to or joins the thread of. A relation can name only an event that already
 // exists, so a target still being placed, as in a cycle or a self-reply, gets
 // no relation. AdmitPage and AdmitImport both use this placement.
-func (s *Store) placeRelations(ctx context.Context, source Source, chat string, nodes []relationNode, existing map[string]recordRow) ([]relationNode, error) {
+func (s *Store) placeRelations(ctx context.Context, source Source, chat string, nodes []relationNode) ([]relationNode, error) {
 	index := make(map[string]int, len(nodes))
 	for i, node := range nodes {
 		index[node.id] = i
@@ -660,7 +660,7 @@ func (s *Store) placeRelations(ctx context.Context, source Source, chat string, 
 				}
 			}
 		}
-		relations, err := s.importRelations(ctx, source, chat, Message{ID: node.id, ReplyTo: node.replyTo, Thread: node.thread}, existing, admitted)
+		relations, err := s.importRelations(ctx, source, chat, Message{ID: node.id, ReplyTo: node.replyTo, Thread: node.thread}, admitted)
 		if err != nil {
 			return err
 		}
@@ -692,7 +692,7 @@ func (s *Store) orderRecordPlans(ctx context.Context, source Source, chat string
 		}
 		nodes[i] = relationNode{index: i, id: plan.message.ID, replyTo: plan.message.ReplyTo, thread: plan.message.Thread, revision: plan.revision, previous: previous}
 	}
-	ordered, err := s.placeRelations(ctx, source, chat, nodes, existing)
+	ordered, err := s.placeRelations(ctx, source, chat, nodes)
 	if err != nil {
 		return nil, err
 	}
@@ -703,32 +703,6 @@ func (s *Store) orderRecordPlans(ctx context.Context, source Source, chat string
 		out[i] = plan
 	}
 	return out, nil
-}
-
-func (s *Store) relations(ctx context.Context, source Source, chat string, message Message, existing map[string]recordRow) ([]ledger.Relation, error) {
-	var ids []string
-	for _, id := range []string{message.ReplyTo, message.Thread} {
-		if id != "" {
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	rows, err := s.recordRows(ctx, source, chat, ids)
-	if err != nil {
-		return nil, err
-	}
-	var relations []ledger.Relation
-	for _, target := range []struct{ id, kind string }{{message.ReplyTo, "replies_to"}, {message.Thread, "in_thread"}} {
-		if target.id == "" {
-			continue
-		}
-		if row, ok := rows[target.id]; ok && row.state == "live" && row.visible && row.event != "" {
-			relations = append(relations, ledger.Relation{TargetID: row.event, Kind: target.kind})
-		}
-	}
-	return relations, nil
 }
 
 // admission builds the trusted entry and ledger input of one record.

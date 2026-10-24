@@ -252,6 +252,42 @@ WHERE r.kind=? AND a.message=? AND b.message=?`
 	}
 }
 
+// A reply imported with an edit of its stored target links only the revision
+// this run admits.
+func TestImportLinksOneRevisionOfEditedTarget(t *testing.T) {
+	f := newFixture(t)
+	source, err := f.store.EnsureImportSource(t.Context(), messenger.Source{Person: "person", Platform: "discord", Account: "account-1", Mode: messenger.ModeOfficial, Adapter: "murmur"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := importRecord("99", "uid-99", hashOf("a"), "target", f.now, messenger.RouteParticipant)
+	if _, err := f.store.AdmitImport(t.Context(), source, importBatch(), messenger.ImportChat{Chat: "general", Kind: "group", Records: []messenger.ImportRecord{target}}); err != nil {
+		t.Fatal(err)
+	}
+	edited := importRecord("99", "uid-99", hashOf("b"), "target, edited", f.now, messenger.RouteParticipant)
+	edited.Message.Edited = f.now.Add(time.Hour)
+	reply := importRecord("100", "uid-100", hashOf("c"), "reply", f.now.Add(time.Minute), messenger.RouteParticipant)
+	reply.Message.ReplyTo = "99"
+	reply.Message.Thread = "99"
+	result, err := f.store.AdmitImport(t.Context(), source, importBatch(), messenger.ImportChat{Chat: "general", Kind: "group", Records: []messenger.ImportRecord{reply, edited}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Added != 1 || result.Updated != 1 {
+		t.Fatalf("import = %+v", result)
+	}
+	relation := `SELECT count(*) FROM ev_rel r JOIN messenger_record a ON a.event=r.event_id
+WHERE r.kind=? AND a.message='100' AND r.target_id=(SELECT event FROM messenger_record WHERE message='99')`
+	for _, kind := range []string{"replies_to", "in_thread"} {
+		if n := count(t, f.db, relation, kind); n != 1 {
+			t.Fatalf("%s to the current revision = %d, want 1", kind, n)
+		}
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM ev_rel r JOIN messenger_record a ON a.event=r.event_id WHERE a.message='100'"); n != 2 {
+		t.Fatalf("reply relations = %d, want 2", n)
+	}
+}
+
 // Rows that reply to each other, or to themselves, are admitted without a
 // relation to an event that does not exist yet.
 func TestImportBreaksReplyCycles(t *testing.T) {

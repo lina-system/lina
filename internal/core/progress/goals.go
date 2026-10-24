@@ -91,7 +91,7 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 			return nil, err
 		}
 		// One manager runs one 일, so a managed goal is the 일 the person reads.
-		u := Unit{ID: g.ID, Agent: g.Agent, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages)}
+		u := Unit{ID: g.ID, Agent: g.Agent, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages), Rank: g.Rank}
 		if u.Name == "" {
 			u.Name = design.Text(language, "progress.untitled")
 		}
@@ -144,6 +144,11 @@ func goalNow(g goal.Goal, stages []Stage, language design.Language) string {
 	}
 	if g.State == goal.GoalBlocked || g.AttentionID != "" {
 		return design.Text(language, "progress.needs_you")
+	}
+	// The person's pause comes before a step phrase: a paused goal starts no new
+	// step, and its in-progress step ends its current turn.
+	if g.Paused {
+		return design.Text(language, "progress.paused")
 	}
 	if working := stepsInState(stages, StepWorking); len(working) > 0 {
 		if len(working) > 1 {
