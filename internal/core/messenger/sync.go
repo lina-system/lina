@@ -184,7 +184,6 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 			continue
 		}
 		result, err := s.Sync(ctx, source)
-		s.ensureLive(ctx, source)
 		s.mu.Lock()
 		s.lastSync[key] = current
 		s.mu.Unlock()

@@ -185,6 +185,70 @@ Following the data-pipeline method: the sink key is the legacy reference, every 
 
 The iMessage source replaces murmur's SSH copy once the Mac Node runs it. Discord history imported from exports stays a source in the import-only state until the person connects Discord.
 
+### Owner cutover runbook
+
+1. Finish the [murmur import](../design/conversation-and-memory.md#importing-a-murmur-store)
+   with a stopped copy, review its reconciliation, and retain the backup generation.
+   Start murmur again for the overlap. Keep its original home intact.
+2. Connect KakaoTalk in LINA using `lina kakaotalk --socket <socket> --request <request.json>`.
+   Read the `card` operation first. The `connect` operation requires the person's
+   acceptance and the add-on's tablet passcode flow. Verify the account and chat
+   scope; both collectors must cover the same chats.
+3. Record when both collectors begin covering that scope. Run both for at least
+   seven complete days. Check source freshness, sign-in failures and gaps during
+   the interval. Resolve gaps before choosing a cutover window.
+4. After the window ends and both collectors finish their reads, hand LINA a
+   stable copy of the complete KakaoTalk collector inbox. Preserve all immediate
+   `<chat-id>.jsonl` files, including quiet chats; do not select only matching
+   chats. No database or credentials are needed. Compare with:
+
+   ```sh
+   lina compare-murmur --state-root <lina-state> --person <person-id> \
+     --account <kakao-account-id> --inbox <copied-inbox> \
+     --since <start-RFC3339> --until <end-RFC3339>
+   ```
+
+   Times select message occurrence, inclusive at the start and exclusive at the
+   end. Output is JSON with totals and sorted per-chat counts and difference IDs.
+   `missing_lina` means murmur has an ID that LINA lacks; `missing_murmur` means
+   the reverse. Exit 1 means IDs are missing from LINA; exit 0 means the read
+   succeeded with none missing from LINA, even if murmur lacks some. Exit 64 is
+   invalid usage, 65 is a refused comparison and 74 is an I/O failure. An empty
+   inbox directory is refused. An empty JSONL file is a quiet chat, not proof of
+   continuous collection. The command never certifies cutover from dates alone.
+   Repeated rows, empty messages and stored deletion tombstones count by ID.
+   The input is never written; it must remain stable through the comparison.
+5. Require zero IDs missing from LINA for the full observed interval. Investigate
+   every difference and repeat after recovery. Check the person's usual queries
+   against known results: search with messenger/platform/chat/time filters,
+   expansion into the surrounding transcript, and a known sender's messages.
+   Messenger query support is tracked in #1074; do not cut over until those
+   paths are available and accepted. Synthetic comparison tests do not establish
+   query parity or the owner's acceptance.
+6. The owner stops their actual murmur collector timer and MCP server using
+   their service manager and client configuration. Confirm the timer is inactive
+   and the MCP server no longer starts. LINA never executes those actions.
+   Keep the home for thirty days. If LINA loses coverage, the owner can restart
+   murmur using that untouched home, then reconcile the new overlap.
+7. After thirty days and a final acceptance check, the owner may retire the data
+   home. Record counts only in this note, never IDs, names, messages or paths.
+
+### Cutover evidence
+
+The owner's real overlap and cutover have **not been performed** for #1073.
+No real-account count or collection duration is claimed. Fill in the following
+only after observation; an intended window is not a measurement.
+
+| Evidence | Observed result |
+| --- | --- |
+| Continuous parallel collection duration (at least 7 days) | Not measured |
+| Chats compared | Not measured |
+| murmur IDs / LINA IDs in the overlap | Not measured |
+| IDs missing from LINA / missing from murmur | Not measured |
+| Usual search / transcript / people queries accepted | Not checked; #1074 prerequisite |
+| Collector timer and MCP stopped by owner | Not performed |
+| Data-home retention after cutover | Not started; retain for 30 days |
+
 ## Security review
 
 Method: security-safety-review. Verdict: **HOLD**. This is a design; no code, scan, add-on or sign-in was run.

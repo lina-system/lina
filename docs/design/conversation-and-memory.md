@@ -1480,7 +1480,7 @@ murmur is the owner's earlier store of KakaoTalk, Discord and iMessage messages.
 - **Masking.** Text is masked at admission. LINA keeps no unmasked copy; the murmur spool stays the person's.
 - **Reconciliation.** For each room, the count and the SHA-256 of the sorted murmur UIDs match murmur's own manifest. A second run adds nothing.
 - **Learning.** Imported messages are learned from only when the person turns learning on in the import, whose card states how many of the person's messages it covers and an estimated model cost. Embedding asks once per source.
-- **Cutover.** The person stops murmur's collector after LINA's own sources have matched it over an overlap. LINA never stops, changes or deletes murmur or its data.
+- **Cutover.** The person stops murmur's collector after LINA's own sources have matched it over at least seven days and the person has checked their usual search, transcript and people queries. `lina compare-murmur` compares a stable copy of the KakaoTalk collector's JSONL inbox with Core's records for one explicitly named account and a half-open message-time window `[since, until)`. It reports per-chat counts and IDs missing on either side, without message text or names. Duplicate rows count once; collected IDs kept as tombstones still count. A malformed, incomplete or changing inbox refuses the whole comparison. The command can read alongside Core; it neither collects messages nor proves continuous collection from a requested time window. Keep murmur's data home for thirty days after cutover. LINA never stops, changes or deletes murmur or its data.
 
 ### Correction, retraction and deletion
 

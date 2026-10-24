@@ -865,6 +865,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 - Each chat is fresh, stale (no complete read within its interval) or in a gap (the time since its last complete read passed the platform's read window, so messages may be lost). A gap is shown on the source and told to the person once. An archive import can fill it later.
 - Rates are the adapter's: it honours the platform's retry-after and keeps its cursor.
 - A failing source never blocks conversation or another source.
+- Before retiring murmur, the person runs both collectors for at least seven days and compares their overlap with `lina compare-murmur` ([cutover contract](conversation-and-memory.md#importing-a-murmur-store)). A comparison reads a snapshot of canon and a supplied, stable inbox copy. It reports ID coverage separately from source freshness; zero missing IDs is not evidence that either collector ran continuously.
 
 ### Writes by grant
 

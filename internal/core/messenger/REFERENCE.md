@@ -140,3 +140,31 @@ are tracked by #1070 and the per-platform issues.
 Sender profile emails, when supplied by an adapter, are stored as evidence in
 `messenger_author` with the source account and platform author ID. They do not
 change ledger attribution or create an automatic person merge.
+
+## murmur overlap comparison
+
+Reference read for #1073: murmur `src/murmur/collector.py` (`_record`,
+`_history`, `_collect_amsg`) and `src/murmur/sync_sources.py`
+(`_amsg_kakao_record`), read-only through GitHub on 2026-10-24.
+
+- Seen: one immediate `<chat-id>.jsonl` file per chat. Each newline-terminated
+  collector envelope has `type: message`, source `agent-messenger` or `kakao`,
+  `message_id`, and `timestamp`; sender, text and attachments are unrelated to
+  identity comparison. The canonical ID strips the matching `<chat>-` prefix
+  and retains signed 64-bit log ID digits. The current collector writes UTC
+  timestamps; older envelopes accept epoch seconds. The collector appends
+  unseen IDs, including older IDs, and validates its committed prefix.
+- Inferred: the owner hands over a complete stable copy for one account and
+  chooses an observed overlap. No account identity is present in each envelope,
+  so the explicit LINA account is the comparison scope.
+- Unknown: real-account coverage, the owner's query parity and the actual
+  service names or cutover date. No live store, account or service was read.
+
+`CompareMurmur` reads Core's IDs in one canon read transaction and the explicit
+inbox through a rooted file handle. It bounds each line to 8 MiB, rejects
+symlinks and incomplete lines, and verifies file identity, size, time and SHA-256
+with a second pass before reporting. Unknown envelope metadata is ignored;
+message bodies are never retained in the comparison sets or printed. The
+command uses `canon.OpenReader`, so it does not migrate canon or take its writer
+lock. Read-only SQLite may maintain the shared WAL index while Core is running;
+canonical records are never modified by comparison. No new schema is needed.
