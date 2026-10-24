@@ -213,6 +213,72 @@ func TestImportDeletionIsATombstone(t *testing.T) {
 	}
 }
 
+// A reply that comes before its target in the run still keeps its relation: the
+// target is admitted first, and a second run adds nothing.
+func TestImportKeepsRelationsToLaterTargets(t *testing.T) {
+	f := newFixture(t)
+	source, err := f.store.EnsureImportSource(t.Context(), messenger.Source{Person: "person", Platform: "discord", Account: "account-1", Mode: messenger.ModeOfficial, Adapter: "murmur"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := importRecord("100", "uid-100", hashOf("a"), "reply", f.now, messenger.RouteParticipant)
+	reply.Message.ReplyTo = "99"
+	reply.Message.Thread = "98"
+	thread := importRecord("98", "uid-98", hashOf("b"), "thread start", f.now, messenger.RouteParticipant)
+	target := importRecord("99", "uid-99", hashOf("c"), "target", f.now, messenger.RoutePerson)
+	target.Message.Thread = "98"
+	chat := messenger.ImportChat{Chat: "general", Kind: "group", Records: []messenger.ImportRecord{reply, target, thread}}
+	result, err := f.store.AdmitImport(t.Context(), source, importBatch(), chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Added != 3 {
+		t.Fatalf("import = %+v", result)
+	}
+	relation := `SELECT count(*) FROM ev_rel r
+JOIN messenger_record a ON a.event=r.event_id JOIN messenger_record b ON b.event=r.target_id
+WHERE r.kind=? AND a.message=? AND b.message=?`
+	for _, want := range []struct{ kind, from, to string }{{"replies_to", "100", "99"}, {"in_thread", "100", "98"}, {"in_thread", "99", "98"}} {
+		if n := count(t, f.db, relation, want.kind, want.from, want.to); n != 1 {
+			t.Fatalf("%s %s -> %s = %d, want 1", want.kind, want.from, want.to, n)
+		}
+	}
+	again, err := f.store.AdmitImport(t.Context(), source, importBatch(), chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Wrote() {
+		t.Fatalf("second import wrote %+v", again)
+	}
+}
+
+// Rows that reply to each other, or to themselves, are admitted without a
+// relation to an event that does not exist yet.
+func TestImportBreaksReplyCycles(t *testing.T) {
+	f := newFixture(t)
+	source, err := f.store.EnsureImportSource(t.Context(), messenger.Source{Person: "person", Platform: "discord", Account: "account-1", Mode: messenger.ModeOfficial, Adapter: "murmur"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := importRecord("1", "uid-1", hashOf("a"), "one", f.now, messenger.RouteParticipant)
+	first.Message.ReplyTo = "2"
+	second := importRecord("2", "uid-2", hashOf("b"), "two", f.now, messenger.RouteParticipant)
+	second.Message.ReplyTo = "1"
+	self := importRecord("3", "uid-3", hashOf("c"), "three", f.now, messenger.RouteParticipant)
+	self.Message.ReplyTo = "3"
+	chat := messenger.ImportChat{Chat: "general", Kind: "group", Records: []messenger.ImportRecord{first, second, self}}
+	result, err := f.store.AdmitImport(t.Context(), source, importBatch(), chat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Added != 3 {
+		t.Fatalf("import = %+v", result)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM ev_rel WHERE kind='replies_to'"); n != 1 {
+		t.Fatalf("replies_to relations = %d, want 1", n)
+	}
+}
+
 func hashOf(text string) string {
 	const hexchars = "0123456789abcdef"
 	hash := make([]byte, 64)

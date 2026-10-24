@@ -61,6 +61,17 @@ once per canon snapshot, indexing history by goal and start times by step. `Goal
 share the same stage projection. This removes repeated decoding of every
 other goal's history without retaining a cache across transactions.
 
+Display reads decode only the goal identity and state, task states and sessions,
+and graph names and blockers. Execution briefs, checks and receipts are skipped;
+the resulting value is used only for projection. The current record contains
+the complete first graph revision and its latest task states, so that revision
+needs no historical placement replay. Later revisions and legacy records retain
+the committed history path. Title lookup likewise reads only the definition
+reference and owner before using its revision-bound canonical title.
+Allocation regressions cover large execution briefs, unrelated retained history
+and title lookup as graphs grow; existing ledger tests compare initial and
+revised graphs in the same snapshot.
+
 `TestM3WorkPanelEventLatency` uses the fixed graph/name corpus, actual Core
 step reports and eight TUI PTYs. Each sample joins the durable work-engine
 event's precise admission time to the first complete renderer write showing
