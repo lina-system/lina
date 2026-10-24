@@ -14,6 +14,18 @@ import (
 // reconcile that finds a deadline missed while Core was down. Nothing in that
 // path sends in the person's name.
 
+func queueClear(g *Goal, w Wait) {
+	if w.TodoID == "" {
+		return
+	}
+	for _, c := range g.ClearTodos {
+		if c.TodoID == w.TodoID {
+			return
+		}
+	}
+	g.ClearTodos = append(g.ClearTodos, ClearedWait{TodoID: w.TodoID, Who: w.Who, Since: w.Since, NextCheck: w.NextCheck})
+}
+
 func expiryWait(w Wait) bool {
 	return strings.TrimSpace(w.Recommendation) != "" && strings.TrimSpace(w.Draft) != ""
 }
@@ -158,6 +170,17 @@ func (e *Engine) applyWaitSignal(v *View, s Signal) error {
 	return put(v, "goal", g.ID, g)
 }
 
+// finishFailedSourceRead turns a failed deadline read into the expiry row.
+// The read did not show that the source had closed, so the wait must not stay
+// open with its only deadline read already consumed.
+func finishFailedSourceRead(g *Goal, a Action) error {
+	if a.ReadCause != "deadline" {
+		return nil
+	}
+	open := true
+	return applyWaitRead(g, a, Observation{SourceOpen: &open})
+}
+
 func applyWaitRead(g *Goal, a Action, o Observation) error {
 	if o.SourceOpen == nil || a.ReadCause != "signal" && a.ReadCause != "deadline" {
 		return ErrInvalid
@@ -183,9 +206,7 @@ func applyWaitRead(g *Goal, a Action, o Observation) error {
 		g.BlockedReason = g.DecisionRow
 		g.State = GoalBlocked
 	}
-	if w.TodoID != "" {
-		g.ClearTodos = append(g.ClearTodos, w.TodoID)
-	}
+	queueClear(g, w)
 	g.Waits = append(g.Waits[:idx], g.Waits[idx+1:]...)
 	return nil
 }
@@ -207,9 +228,9 @@ func (e *Engine) syncWaits(ctx context.Context) {
 					live[w.TodoID] = true
 				}
 			}
-			for _, id := range g.ClearTodos {
-				if live[id] || e.cfg.LinkWaitingOn(ctx, g, Wait{TodoID: id}) == nil {
-					_ = e.dropClearTodo(ctx, g.ID, id)
+			for _, c := range g.ClearTodos {
+				if live[c.TodoID] || e.cfg.LinkWaitingOn(ctx, g, Wait{TodoID: c.TodoID, Who: c.Who, Since: c.Since, NextCheck: c.NextCheck}) == nil {
+					_ = e.dropClearTodo(ctx, g.ID, c.TodoID)
 				}
 			}
 		}
@@ -237,10 +258,10 @@ func (e *Engine) dropClearTodo(ctx context.Context, goalID, todoID string) error
 		if err != nil {
 			return err
 		}
-		next := make([]string, 0, len(g.ClearTodos))
+		next := make([]ClearedWait, 0, len(g.ClearTodos))
 		found := false
 		for _, id := range g.ClearTodos {
-			if id == todoID && !found {
+			if id.TodoID == todoID && !found {
 				found = true
 				continue
 			}
