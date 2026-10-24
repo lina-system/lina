@@ -42,8 +42,6 @@ the goal projection in the current canon snapshot and reads closed goals only
 when that projection is absent. Boot also resolves manager-owned dispatch cards
 through the saved worker action and its original owner, conversation and turn.
 Neither path joins by a display name or changes the card's owner or state.
-An explicit child work item keeps its parent as a goal heading; a card matching
-the parent's own graph step stays a row of the managed project.
 
 StageStep keeps the canonical step and session identities internally. Boot emits
 step refs beside the line, and display-only worker names/states inside its steps.

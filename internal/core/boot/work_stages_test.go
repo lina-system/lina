@@ -61,11 +61,17 @@ func TestWorkPanelCardStagesAndLiveWorkers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if card.Task.GoalID != "" && (p.CardOrder == nil || len(*p.CardOrder) != 1 || (*p.CardOrder)[0] != card.Task.ID) {
-			t.Fatalf("goal grouping replaced the work card: %+v", p.CardOrder)
+		ref := card.Task.ID
+		if card.Task.GoalID != "" {
+			if g.Agent == r.agent {
+				ref = g.ID
+			}
+			if p.CardOrder == nil || len(*p.CardOrder) != 1 || (*p.CardOrder)[0] != ref {
+				t.Fatalf("managed work card order = %+v, want %s", p.CardOrder, ref)
+			}
 		}
 		for _, row := range *p.Rows {
-			if row.Ref != card.Task.ID {
+			if row.Ref != ref {
 				continue
 			}
 			raw, _ := json.Marshal(row)

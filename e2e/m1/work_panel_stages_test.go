@@ -186,7 +186,7 @@ func TestM3WorkPanelStages(t *testing.T) {
 	core := start(true)
 	h.stopCore(core)
 	fixture.States = []string{"waiting"}
-	cards := seedPanelCorpus(t, h, fixture, len(fixture.Graphs), 1)
+	cards := seedPanelCorpus(t, h, fixture, len(fixture.Graphs), 0)
 	var main struct {
 		ID string `json:"main_id"`
 	}
