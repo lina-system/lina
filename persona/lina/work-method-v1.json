@@ -18,11 +18,5 @@
       "business_document",
       "coordination"
     ]
-  },
-  "ask": {
-    "form": "choices"
-  },
-  "fill": [
-    "ask.form"
-  ]
+  }
 }

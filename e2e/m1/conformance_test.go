@@ -64,11 +64,11 @@ func assertConformance(t *testing.T, h *harness, mode string) {
 			t.Fatalf("unavailable evidence became a judgment or unfinished claim: %+v calls=%d card=%+v", rr, managerInputs, card)
 		}
 	case "scope":
-		if rr.Verdict != "needs_changes" || card.Verdict != "" || card.State != "input_needed" || !strings.Contains(rr.Evidence, "outside.txt") || len(rr.Findings) != 0 || managerInputs != 0 {
+		if rr.Verdict != "needs_changes" || card.Verdict != "" || card.State != "input_needed" || !strings.Contains(rr.Evidence, "outside.txt") || len(rr.Findings) != 1 || rr.Findings[0].ID != "core-scope-1" || rr.Findings[0].Severity != "P1" || rr.Findings[0].File != "outside.txt" || managerInputs != 0 {
 			t.Fatalf("scope miss called model or lost evidence: %+v calls=%d", rr, managerInputs)
 		}
 	case "failed-check":
-		if rr.State != "blocked" || rr.Cause != "merge_precondition" || rr.Verdict != "" || len(rr.Findings) != 0 || card.Verdict != "" || card.State != "input_needed" || managerInputs != 0 {
+		if rr.State != "blocked" || rr.Cause != "merge_precondition" || rr.Verdict != "" || len(rr.Findings) != 1 || rr.Findings[0].ID != "core-check-1" || rr.Findings[0].Severity != "P1" || !strings.Contains(rr.Findings[0].Claim, "foundation") || card.Verdict != "" || card.State != "input_needed" || managerInputs != 0 {
 			t.Fatalf("failed check became judgment: %+v calls=%d card=%+v", rr, managerInputs, card)
 		}
 	case "prose":

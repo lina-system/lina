@@ -60,7 +60,11 @@ func (r *conversationRuntime) prepareStepGraphTools(engine *work.Engine, binding
 	bindings["submit_step_graph"] = loop.Tool{
 		Validate: func(c provider.ToolCall) (string, error) {
 			in, err := decode(c.Arguments)
-			return "goal:" + in.GoalID, err
+			recordID, ok := work.ProjectRecordID(in.GoalID)
+			if err == nil && !ok {
+				err = work.ErrInvalid
+			}
+			return recordID, err
 		},
 		Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
 			in, err := decode(c.Arguments)
@@ -86,7 +90,14 @@ func (r *conversationRuntime) prepareStepGraphTools(engine *work.Engine, binding
 		return in.GoalID, err
 	}
 	bindings["read_step_graph"] = loop.Tool{
-		Validate: func(c provider.ToolCall) (string, error) { id, err := read(c.Arguments); return "goal:" + id, err },
+		Validate: func(c provider.ToolCall) (string, error) {
+			id, err := read(c.Arguments)
+			recordID, ok := work.ProjectRecordID(id)
+			if err == nil && !ok {
+				err = work.ErrInvalid
+			}
+			return recordID, err
+		},
 		Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
 			id, err := read(c.Arguments)
 			if err != nil {

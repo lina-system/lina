@@ -13,8 +13,5 @@
       "people_record",
       "wiki"
     ]
-  },
-  "ask": {
-    "form": "choices"
   }
 }
