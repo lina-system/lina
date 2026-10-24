@@ -12,12 +12,15 @@ GitHub's contents API. No upstream implementation is copied or executed.
   binds the manager judgment to the delivered head and rejects prose as a
   verdict or finding. Core supplies scope and merge-precondition evidence
   independently of model output.
-- **Unknown:** these files do not establish LINA's once-per-head claim, work
-  definition, base-commit design references or required-check policy. Those
-  behaviors come from LINA's contracts. No review panel or relay is adopted.
+- **Unknown:** these files do not establish LINA's one-review-per-pull-request
+  claim, work definition, base-commit design references or required-check
+  policy. Those behaviors come from LINA's contracts. No review panel or relay
+  is adopted.
 
 The issue's owner correction and #272 select the existing manager check. The
-original C-58 background reviewer and failed-check P1 mapping are superseded.
+original C-58 background reviewer is superseded. The failed-check P1 mapping is
+current: Core records each failed required check as a P1 finding on the blocked
+review, and refuses any second review of the pull request (see C-58).
 No reference review loop is executed; only the finding data boundary is reused.
 
 #144 also read the local CRW `internal/review/finding.go` read-only.
@@ -36,3 +39,5 @@ they do not establish current acceptance or change the contracts.
 ### C-58 review claims migration
 
 Canon migration 48 claims the normalized repository, PR number and head before manager dispatch, binding the task, execution generation and receipt.
+The claim covers the pull request, not one head: any second request is refused unless it names the receipt of the review's single work-definition return and arrives in the same task's next generation. That continuation is checked once; a third request is refused.
+A blocked review may store Core's own findings (failed required checks, out-of-area paths) and never a verdict; an unverified review stores none.
