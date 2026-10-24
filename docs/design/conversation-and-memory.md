@@ -424,6 +424,10 @@ remaining targets. Cancelling or declining cancels the request. The model
 names at most five tied targets and cannot supply the targets Core holds for
 a later page.
 
+Core decides whether a steer must ask from the whole inherited set, including
+targets held for a later page. A running, working, waiting, or needs-input
+task or run anywhere in that set keeps the instruction pending.
+
 When it asks, Core keeps the instruction pending until the person explicitly selects a target or cancels it. Passing over the question, an unrelated turn or a deadline never applies the recommended pick. While the target is unresolved, Core does not deliver the instruction as a steer, start its work (including a step graph or a mock build), stop its worker, or perform its send, payment or deletion. Unrelated conversation and independent work continue. Selecting a target resolves only the binding; execution still requires the usual state and authorization checks ([main-authority.md](main-authority.md#approval)). This exception also applies to the general skipped-question rule in [Applying the record](preset-work-methods.md#applying-the-record).
 
 Target questions use the existing question card and Waiting for me. Their

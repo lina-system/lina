@@ -1271,3 +1271,96 @@ func TestInheritedTargetsBeyondQuestionLimit(t *testing.T) {
 		t.Fatalf("chosen interrupt: %+v interrupts=%d", again, probe.interrupts)
 	}
 }
+
+// The first page is projects and an initiative stays with them in the held
+// set. A running task on the next page must still make a steer ask.
+func TestInheritedSteerAsksWhenRiskyTargetIsOnLaterPage(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	recordIDs := []string{"proj-0", "proj-1", "proj-2", "proj-3", "init-0"}
+	kinds := []string{"project", "project", "project", "project", "initiative"}
+	titles := []string{"North", "South", "East", "West", "Lane"}
+	items := make([]binding.Item, len(recordIDs))
+	for i := range items {
+		items[i] = binding.Item{ID: recordIDs[i], Title: titles[i], Kind: kinds[i], State: "active", LastActivity: now}
+	}
+	if err := r.seedIntakeReplay(t.Context(), binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: items, Surfaces: map[string]string{}}, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	reserve := t.TempDir()
+	task := work.Task{ID: "live-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Live work", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	if err := r.work.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "live-run", TaskID: task.ID, Generation: 1, Worker: "codex", ThreadID: "live-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "live-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "live-thread", TaskID: task.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "live-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	words := []string{"one", "two", "three", "four", "five", "six"}
+	parentText := strings.Join(words, " ")
+	parent := questionPersonInput(t, r, "steer-parent", parentText)
+	parentTools := modelBindingTools(t, r, parent)
+	ids := append(append([]string{}, recordIDs...), task.ID)
+	targetKinds := append(append([]string{}, kinds...), "task")
+	choices := make([]binding.Choice, len(ids))
+	for i := range choices {
+		choices[i] = binding.Choice{Request: i, Quote: words[i], Target: binding.Target{Class: "existing", Kind: targetKinds[i], ID: ids[i]}}
+	}
+	if got := questionCall(t, parentTools, "bind_input", "steer-bind", bindingRequest{Bindings: choices}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	follow := questionPersonInput(t, r, "steer-follow", "nudge it")
+	saved, err := r.journal().Get(t.Context(), inputBindingID(follow.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.Decider != "no-rule" || decision.Target.Class != "none" {
+		t.Fatalf("follow-up settled before the steer: %+v", decision)
+	}
+	followTools := modelBindingTools(t, r, follow)
+	steered := questionCall(t, followTools, "worker_input", "steer-live", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "text": "nudge it"})
+	if steered.Code != loop.Denied || !strings.Contains(string(steered.Output), "input_target_pending") || probe.inputs != 0 {
+		t.Fatalf("later-page steer: %+v inputs=%d", steered, probe.inputs)
+	}
+	pending, err := waiting.NewConversationQuestions(r.db).Pending(t.Context(), r.person, r.agent)
+	if err != nil || len(pending) != 1 || pending[0].Binding == nil {
+		t.Fatalf("missing steer question: %+v %v", pending, err)
+	}
+	first := pending[0]
+	if len(first.Binding.Tied) != 4 || len(first.Binding.More) != 2 {
+		t.Fatalf("steer page: tied=%d more=%d", len(first.Binding.Tied), len(first.Binding.More))
+	}
+	held := false
+	for _, target := range first.Binding.More {
+		if target.ID == task.ID {
+			held = true
+		}
+	}
+	for _, target := range first.Binding.Tied {
+		if target.ID == task.ID {
+			t.Fatal("running task was shown on the first page")
+		}
+	}
+	if !held {
+		t.Fatal("running task was dropped from the later page")
+	}
+}

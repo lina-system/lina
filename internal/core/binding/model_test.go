@@ -69,6 +69,31 @@ func TestQuestionPageKeepsEveryInheritedTarget(t *testing.T) {
 		t.Fatalf("five targets: %d shown, rest %#v", len(shown), rest)
 	}
 }
+
+func TestNeedsQuestionCountsTargetsHeldForLaterPage(t *testing.T) {
+	shown := make([]Target, 4)
+	items := make([]Item, 0, 6)
+	for i := range shown {
+		id := string(rune('a' + i))
+		shown[i] = Target{Class: "existing", Kind: "project", ID: id}
+		items = append(items, Item{ID: id, Kind: "project", State: "active"})
+	}
+	later := Target{Class: "existing", Kind: "initiative", ID: "lane"}
+	items = append(items, Item{ID: later.ID, Kind: "initiative", State: "active"})
+	quiet := Choice{Quote: "steer it", Target: shown[0], Tied: shown, More: []Target{later}, Action: "steer"}
+	if NeedsQuestion(State{Items: items}, quiet) {
+		t.Fatal("a later initiative made a steer ask")
+	}
+	for _, state := range []string{"running", "working", "waiting", "needs_input"} {
+		risky := Item{ID: "live", Kind: "task", State: state}
+		choice := quiet
+		choice.More = []Target{later, {Class: "existing", Kind: "task", ID: risky.ID}}
+		held := append(append([]Item{}, items...), risky)
+		if !NeedsQuestion(State{Items: held}, choice) {
+			t.Fatalf("state %s on a later page did not ask", state)
+		}
+	}
+}
 func TestDuplicateNormalizationAndClosedItems(t *testing.T) {
 	s := State{Items: []Item{{ID: "nfc", Title: "Café", State: "open"}, {ID: "closed", Title: "Cafe\u0301", State: "done"}, {ID: "near", Title: "Another title", State: "open"}}}
 	matches := Duplicates(s, " CAFE\u0301 ", []string{"near"})

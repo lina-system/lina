@@ -152,11 +152,17 @@ func NeedsQuestion(s State, c Choice) bool {
 	case "start", "send", "pay", "delete", "stop":
 		return true
 	case "steer":
-		for _, target := range c.Tied {
-			for _, i := range s.Items {
-				if i.ID == target.ID && (i.Kind == "task" || i.Kind == "run") && slices.Contains([]string{"running", "working", "waiting", "needs_input"}, i.State) {
-					return true
-				}
+		// A target held for a later page still makes a steer ask.
+		return riskySteer(s, c.Tied) || riskySteer(s, c.More)
+	}
+	return false
+}
+
+func riskySteer(s State, targets []Target) bool {
+	for _, target := range targets {
+		for _, i := range s.Items {
+			if i.ID == target.ID && (i.Kind == "task" || i.Kind == "run") && slices.Contains([]string{"running", "working", "waiting", "needs_input"}, i.State) {
+				return true
 			}
 		}
 	}
