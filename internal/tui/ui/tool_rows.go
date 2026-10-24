@@ -46,23 +46,17 @@ func (m *shellModel) toolGroupRows(group toolGroup, width int) []string {
 	if running > 0 {
 		code = "running"
 	}
-	mark := m.styles.tokens.GlyphUnicodeToolOk
+	icon := "success"
 	if code == "running" {
-		mark = m.styles.tokens.GlyphUnicodeToolRunning
+		icon = "working"
 	}
 	if code == "failed" {
-		mark = m.styles.tokens.GlyphUnicodeToolFailed
+		icon = "error"
 	}
+	mark := m.styles.tokens.Icon(icon, m.styles.options.ASCII)
 	count := "×"
 	separator := m.styles.tokens.GlyphUnicodeActivitySeparator
 	if m.styles.options.ASCII {
-		mark = m.styles.tokens.GlyphAsciiToolOk
-		if code == "running" {
-			mark = m.styles.tokens.GlyphAsciiToolRunning
-		}
-		if code == "failed" {
-			mark = m.styles.tokens.GlyphAsciiToolFailed
-		}
 		count = "x"
 		separator = m.styles.tokens.GlyphAsciiActivitySeparator
 	}

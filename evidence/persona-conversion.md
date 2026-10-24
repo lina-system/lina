@@ -42,45 +42,61 @@ shipped pairs also pass structural and budget validation. These checks do not
 establish subjective model fidelity; the source-to-layer comparison is separate
 conversion evidence, and no live model evaluation is claimed.
 
-## M4 judgment revision
+## M4 persona revision
 
 The [starter changes](../docs/design/preset-work-methods.md#starter-records-and-persona-changes)
-refine the converted working layers without replacing their characters. Names,
-address terms, voice markers and examples remain; Arin's correction example now
-uses the same historical honorifics as her other examples. Sion retains firm
-declarative speech and explicitly distinguishes direct checks, estimates,
-unchecked results and attributed reports. No fixed closing line is introduced.
+refine the converted working layers without replacing their characters. The
+M4-4 replay (#590) measured that change set and rejected it, so the shipped
+layers keep the #584 conversion's text and the per-preset subsections remain the
+design target rather than a description of what ships. One correction ships
+because the [presets contract](../docs/design/conversation-and-memory.md#presets)
+requires it independently of the replay: Arin's default voice keeps its
+historical honorific register on every topic, including health, money and
+mistakes, and her correction example uses that same register. No layer carries a
+fixed nothing-to-decide closing, and names, characters and voice markers are
+unchanged.
 
-Seen: the public conversion contained Arin's topic-dependent register switch in
-default voice, and no fixed nothing-to-decide line in Sion's pair. The M4 contract
-requires the switch removed from every layer. Inferred: updating the embedded
-files uses the existing atomic preset revision path; filenames need no change.
+Seen: the #584 conversion placed a topic-dependent register switch in Arin's
+default voice, and no layer carried a fixed nothing-to-decide closing. The
+presets contract forbids both in a persona layer. Inferred: the switch is a
+voice rule, not one of the judgment-rule changes the replay measured, so removing
+it satisfies the presets contract without re-shipping the rejected tailoring.
 Unknown: text checks and scripted-provider acceptance cannot establish model
-response quality. The private replay evaluation remains separate under #590.
+response quality; the private replay remains under #590.
 
-The content comparison against the M4 contract covers each pair:
+The shipped layers were read for every preset: none prescribes a topic-dependent
+register switch or a fixed nothing-to-decide closing, and each keeps its name,
+character, address terms and voice markers. The six default voices other than
+Sion's and Arin's are unchanged.
 
-| Preset | Judgment changes in core | Voice retained |
-| --- | --- | --- |
-| system | No extra barriers around personal tools beyond credentials, deletion, money and publishing; execute available steps; ask before making an exception to an all-agent rule | Selene's dry informal speech and short endings |
-| lina | Read original sources before listing unfinished work or asking about completion; finish legal drafts before requesting Kanna's review | Lina's reserved manner, address term, formal conclusions and softer explanations |
-| dev | Keep peer reports as claims until reproduced; completion refers to execution, not merge | Sion's address term and declarative register, with direct checks, estimates and unchecked results distinguished |
-| knowledge | Give one concrete risk flag instead of leading with warnings; read available sources or records before asking | Rumi's librarian character, informal speech and sparse old-fashioned endings |
-| life | Keep the same voice with explicit safety content; consult recorded dislikes and fixed choices; check owned-device facts before quoting them | Arin's self-reference, address term and historical honorifics, including the correction example |
-| creative | Compare the favourite with stated taste; report handoffs only after sending; rerun reversible work; narrow vague rejection to one question | Cleo's address term, modern informal speech and enthusiast expressions |
-| investing | Finish with stated assumptions; source and date every figure; check that a quoted close is on a trading day | Kai's relaxed informal speech and address term |
-| legal | Flag an unasked legal risk once; round toward stated bounds; use the person's document labels | Kanna's lively informal speech and precise document language |
+The marker checks are required by #619's Done condition: the persona name, its
+character and its voice markers stay unchanged. They compare normalized tokens
+rather than phrases, so the requirement holds without pinning the text.
 
-Both layers were read for each preset: none prescribes a topic-dependent
-register switch or a fixed nothing-to-decide closing. The six default voices
-other than Sion's and Arin's are unchanged. Character introductions and all
-other examples are retained. This is a content comparison, not a model score.
+`TestM4StarterLayersAreShippedRevisions` checks the structure of every pair:
+both versioned revision files are present and usable, each layer has one title
+heading, the core keeps at least four rule paragraphs and the default voice at
+least four examples. `TestM4StarterIdentityAndVoice` checks the markers the issue
+fixes one token at a time: each name, each character word, each address term,
+register word and speech ending. Whitespace, punctuation and symbols are stripped
+from the layer and from the token before the comparison, so `~야/~어/~지`,
+`~야, ~어, ~지` and `야 어 지` are the same three markers and a layer may reword,
+reorder or reseparate them. `TestM4StarterLayersHaveNoTopicSwitchOrClosing`
+checks both layers of every preset for the two prohibitions, matching the topic,
+register and emptiness tokens the same way, so a rewrite of a prohibition passes
+and an instruction to switch or to close fails. `TestM4ChecksCatchRegressions`
+proves each check fails on a violation and accepts a legitimate rewrite,
+including a layer that states the prohibition itself ("do not switch register",
+"do not end with nothing to decide").
 
-`TestShippedStarterRevisionPreservesIdentityAndAgentLayers` tests all eight
-presets as opaque text: the current embedded core, voice and work method must
-reach the next revision together, retaining identity, agent-owned voice and
-growth, prepared history and idempotence. It permits equivalent wording without
-frozen vocabulary. `TestM1ShippedPersonaInstallAndTools` loads each embedded pair
-through installed Core, replaces stale layers, observes the prepared request
-and exercises a real skill tool and its conversation result. These tests prove
-publication and preparation; the content comparison above establishes fidelity.
+None of these requires a phrase. The limit of a token check is stated rather than
+hidden: a single-syllable marker such as `지` matches wherever that syllable
+occurs, so the check catches a layer that drops the marker entirely, not a list
+edit that removes one ending while the syllable survives elsewhere. The meaning
+of the text, including Arin's correction example staying in her register, is
+content review and the #590 replay's subject, not a text assertion.
+
+The checks do not pin the judgment-rule wording: the design does not ship those
+changes, and a required-phrase list fails a legitimate rewrite. A rewrite of a
+shipped layer is a design change and updates this document with it. Model-response
+quality remains a separate replay evaluation under #590.
