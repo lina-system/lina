@@ -57,6 +57,11 @@ func TestACPWorkersThroughRunningCore(t *testing.T) {
 	})
 }
 
+// acpScenarioTimeout bounds one scenario, including every child it starts. A
+// scenario whose work has its own bounded sub-operation passes a total that
+// covers that bound instead of stretching this default.
+const acpScenarioTimeout = 90 * time.Second
+
 type acpScenario struct {
 	profiles                   string
 	startupWarnings            []string
@@ -66,6 +71,7 @@ type acpScenario struct {
 	parallel                   bool
 	answerQuestions            bool
 	environment                []string
+	timeout                    time.Duration
 	setup                      func(*testing.T, string)
 	bundleFiles                func(*testing.T, string, string)
 	beforeDispatch             func(*testing.T, string)
@@ -95,7 +101,11 @@ func runACPWorkersThroughRunningCore(t *testing.T, scenarios []acpScenario) {
 				t.Parallel()
 			}
 			mode := scenario.mode
-			ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+			total := scenario.timeout
+			if total == 0 {
+				total = acpScenarioTimeout
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), total)
 			defer cancel()
 			root, err := os.MkdirTemp("", "lina-acp-")
 			if err != nil {
