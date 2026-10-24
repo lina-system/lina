@@ -58,7 +58,7 @@ only.
 | `/var/db/lina/locked-screen/measured-builds` | A copy of `measured-builds.txt` from the release. |
 | `/var/db/lina/locked-screen/eval-test-mac` | Present only on the eval's test Mac; it waives the build check and nothing else does. |
 | `/var/db/lina/locked-screen/evaluation` | The plug-in's crash marker. The guard removes one older than 5 seconds after the install passes its checks. |
-| `/var/db/lina/locked-screen/restore-retry` | The reason of a restore whose rule write failed. The guard retries it on every pass until it succeeds. |
+| `/var/db/lina/locked-screen/restore-retry` | The reason of a restore whose rule write failed. The guard retries it on every pass until it succeeds; an uninstall that removes the guard removes it too. |
 | `/Library/Security/SecurityAgentPlugins/LinaUnlock.bundle` | The plug-in, copied from the release and checked before the rule names it. |
 | `/Library/PrivilegedHelperTools/com.lina.locked-screen.guard` | The guard. |
 | `/Library/LaunchDaemons/com.lina.locked-screen.guard.plist` | The job that starts it. |
@@ -110,7 +110,9 @@ window, because it was stopped or could not read the session, restores too.
 
 Uninstall leaves a rule someone else wrote alone and reports it. When that rule
 still names LINA's right, the right and the bundle stay as well, so the rule
-never names a missing plug-in; the feature is off either way.
+never names a missing plug-in; the feature is off either way. An uninstall that
+removes the guard also removes `restore-retry`: the rule no longer names LINA,
+and without the guard nothing would clear it before the next install.
 
 ## Guard
 

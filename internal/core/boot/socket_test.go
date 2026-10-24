@@ -189,7 +189,7 @@ func TestSIGKILLBetweenBindAndSentinelPublication(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			ready := false
-			err := boot.Run(ctx, boot.Config{StateRoot: root, Socket: socket, AfterStep: func(step boot.Step, snapshot boot.Snapshot) error {
+			err := boot.Run(ctx, boot.Config{NoSync: true, StateRoot: root, Socket: socket, AfterStep: func(step boot.Step, snapshot boot.Snapshot) error {
 				if step == boot.Ready {
 					ready = true
 					if snapshot.Epoch <= killed.Epoch {
@@ -255,7 +255,7 @@ func TestFailedBindDoesNotClaimSocket(t *testing.T) {
 	socket := filepath.Join(root, "run/core.sock")
 	var before os.FileInfo
 	injected := errors.New("unexpected READY")
-	err := boot.Run(context.Background(), boot.Config{StateRoot: root, Socket: socket, AfterStep: func(step boot.Step, _ boot.Snapshot) error {
+	err := boot.Run(context.Background(), boot.Config{NoSync: true, StateRoot: root, Socket: socket, AfterStep: func(step boot.Step, _ boot.Snapshot) error {
 		if step == boot.SocketPending {
 			before = staleSocket(t, socket)
 		}
@@ -329,7 +329,7 @@ func runToReady(t *testing.T, root, socket string) (bool, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	ready := false
-	err := boot.Run(ctx, boot.Config{StateRoot: root, Socket: socket, AfterStep: func(step boot.Step, _ boot.Snapshot) error {
+	err := boot.Run(ctx, boot.Config{NoSync: true, StateRoot: root, Socket: socket, AfterStep: func(step boot.Step, _ boot.Snapshot) error {
 		if step == boot.Ready {
 			ready = true
 			cancel()

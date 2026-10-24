@@ -16,6 +16,24 @@ func (s Styles) listBullet() string {
 	return s.tokens.GlyphUnicodeAction
 }
 
+// VisibleMarkdown is the sealed conversation text for source. bullet is the
+// surface list marker. Link destinations are omitted. There are no terminal
+// styles and no wrapping; callers compare this with the painted frame.
+func VisibleMarkdown(source, bullet string) string {
+	blocks := parseMarkdown(source, bullet)
+	var out strings.Builder
+	for i, block := range blocks {
+		if i > 0 {
+			out.WriteByte('\n')
+		}
+		out.WriteString(block.Prefix)
+		for _, span := range block.Spans {
+			out.WriteString(span.Text)
+		}
+	}
+	return out.String()
+}
+
 // Rows already fit the shared display-width measurer. Painting only visible
 // rows keeps terminal styles out of parsing, wrapping and the cached source.
 func (s Styles) markdownRow(row render.StyledRow) string {

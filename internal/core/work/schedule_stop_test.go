@@ -7,6 +7,7 @@ import (
 )
 
 func TestScheduledStopKeepsManagedOriginScope(t *testing.T) {
+	t.Parallel()
 	s, db := testStore(t)
 	task := scheduled("managed")
 	task.PersonID, task.AgentID, task.ConversationID = "person", "dev", "manager"
@@ -31,6 +32,7 @@ func TestScheduledStopKeepsManagedOriginScope(t *testing.T) {
 }
 
 func TestScheduledStopRetainsUnsettledReservations(t *testing.T) {
+	t.Parallel()
 	for _, started := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unknown-start", true: "active-turn"}[started], func(t *testing.T) {
 			s, _ := testStore(t)
