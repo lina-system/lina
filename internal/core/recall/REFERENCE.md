@@ -85,7 +85,9 @@ queue and the text backfill drain. Normal incremental writes queue their own
 vectors without blocking reads. Vector candidates pass the same scoped filters
 before distance and limit. Imported-event consent and never-leaves sensitivity
 are checked through current citation ancestors, including event `replay_of` and
-`view_of` derivation edges. Copies cannot bypass restrictions on their originals. Messenger provenance is checked
+`view_of` derivation edges. Copies cannot bypass restrictions on their originals. Derived documents with an
+ancestor event containing secret spans are skipped; only the source event’s
+masked text is eligible. This avoids transferring byte offsets to changed text. Messenger provenance is checked
 through its legacy references as well as the event's origin. Import consent
 stores a conversation's event watermark; future imports are excluded. Consent
 changes and chat embedding switches invalidate vectors and restart backfill.

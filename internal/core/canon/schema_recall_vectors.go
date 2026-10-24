@@ -67,6 +67,8 @@ CREATE VIEW recall_embed_eligible AS
    (a.kind='memory' AND EXISTS(SELECT 1 FROM memory_item m WHERE m.id=a.source_id AND
     (m.scope='never-leaves' OR (json_extract(m.record,'$.basis')='imported' AND NOT EXISTS(
      SELECT 1 FROM cite c WHERE c.view_kind='memory' AND c.view_id=m.id AND c.target_kind='event' AND c.dropped_revision IS NULL)))))
+   OR (a.kind='event' AND (d.kind<>'event' OR d.source_id<>a.source_id)
+    AND EXISTS(SELECT 1 FROM ev_span span WHERE span.event_id=a.source_id AND span.sensitivity='secret'))
    OR (a.kind='event' AND EXISTS(SELECT 1 FROM recall_imported_event e WHERE e.id=a.source_id AND NOT EXISTS(SELECT 1 FROM recall_embed_consent k WHERE k.conversation=e.conversation_id AND e.sequence<=k.through_event)))
    OR (a.kind='event' AND EXISTS(SELECT 1 FROM cite c JOIN memory_item m ON m.id=c.view_id
     WHERE c.view_kind='memory' AND c.target_kind='event' AND c.target_id=a.source_id AND c.dropped_revision IS NULL AND m.scope='never-leaves'))

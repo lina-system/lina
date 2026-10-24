@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/retract"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"reflect"
 	"strings"
 	"testing"
@@ -383,5 +384,26 @@ func TestEmbeddingRestrictionsFollowEventDerivations(t *testing.T) {
 	finishVectors(t, db, v)
 	if f.calls != 0 || vectorCount(t, db) != 0 {
 		t.Fatalf("protected derivations escaped: calls=%d vectors=%d", f.calls, vectorCount(t, db))
+	}
+}
+
+func TestEmbeddingCopiesCannotRecoverFlaggedSecretSpans(t *testing.T) {
+	db := database(t)
+	text := "public canary-value"
+	admit(t, db, "original", text, secrets.Span{Start: len("public "), End: len(text), Sensitivity: "secret"})
+	admitAt(t, db, "copy", "conversation", "owner", "agent", text, time.Unix(1700000001, 0), "original")
+	f := &fakeEmbeddings{model: "test", dimension: 2}
+	v, err := recall.NewVectors(t.Context(), db, nil, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishVectors(t, db, v)
+	for _, sent := range f.texts {
+		if strings.Contains(sent, "canary-value") {
+			t.Fatal("a copy sent its original's flagged secret span")
+		}
+	}
+	if vectorCount(t, db) != 1 {
+		t.Fatal("only the original's masked text is eligible")
 	}
 }
