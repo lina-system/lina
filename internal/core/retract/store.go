@@ -165,6 +165,84 @@ func (s *Store) Epoch(ctx context.Context) (uint64, error) {
 func (s *Store) Forget(ctx context.Context, r Request) error  { return s.change(ctx, r, forget) }
 func (s *Store) Restore(ctx context.Context, r Request) error { return s.change(ctx, r, restore) }
 
+// ForgetDuring runs fn inside the fenced writer that journals a forget.
+// fn may read and write canon and returns the refs to forget. It must not
+// call Read, Write, Reconcile, or another removal. An empty list commits fn
+// and writes no removal-list line. A non-empty list is journaled and applied
+// before that writer commits, so fn's changes and the retraction become
+// visible together. A failure rolls both back. A journal line that reached
+// disk keeps reads closed until recovery replays it.
+func (s *Store) ForgetDuring(ctx context.Context, person string, fn func(*canon.Tx) ([]Ref, error)) error {
+	if person == "" || fn == nil {
+		return ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return canon.ErrClosed
+	}
+	if s.journal == nil || s.journal.failed || s.pending {
+		return ErrRecovery
+	}
+	var requestErr error
+	err := s.db.Reconcile(func(write canon.RecoveryWrite) error {
+		durable := false
+		requestErr = write(ctx, func(tx *canon.Tx) error {
+			refs, err := fn(tx)
+			if err != nil {
+				return err
+			}
+			if len(refs) == 0 {
+				return nil
+			}
+			e := entry{Version: 1, Action: forget, At: s.now().UnixNano(), Person: person}
+			var nonce [16]byte
+			if _, err := rand.Read(nonce[:]); err != nil {
+				return err
+			}
+			e.ID = hex.EncodeToString(nonce[:])
+			for _, ref := range refs {
+				target, err := s.projection.resolve(ctx, tx, ref, person)
+				if err != nil {
+					return err
+				}
+				if err := transition(ctx, tx, target, e); err != nil {
+					return err
+				}
+				e.Targets = append(e.Targets, target)
+			}
+			if s.projection.expand != nil {
+				e.Targets, err = s.projection.expand(ctx, tx, e)
+				if err != nil {
+					return err
+				}
+			}
+			if !e.valid() {
+				return ErrInvalid
+			}
+			// A failed write/sync has an uncertain disk outcome, so close reads even
+			// when no complete line was acknowledged. Recovery validates the bytes.
+			durable = true
+			if err := s.journal.append(e); err != nil {
+				return err
+			}
+			if err := s.fail("after_sync"); err != nil {
+				return err
+			}
+			return s.apply(ctx, tx, e, s.journal.sequence, s.journal.digest)
+		})
+		if durable {
+			s.pending = requestErr != nil
+			return requestErr
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Join(ErrRecovery, err)
+	}
+	return requestErr
+}
+
 // Delete skips recoverable trash. Its caller must establish the person's
 // explicit permanent-deletion choice before invoking it.
 func (s *Store) Delete(ctx context.Context, r Request) error { return s.change(ctx, r, erase) }

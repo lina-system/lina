@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: Apache-2.0
+package memory
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+	"github.com/thisisjun786/lina/internal/core/canon"
+)
+
+// ReassignSubject moves one third-party item to another people record inside
+// the caller's transaction. Sender identity uses it when two records merge,
+// when a record splits, and when a link moves to the right record, so an item
+// follows the identity of its evidence. It never changes the person, the
+// holder, the scope, the evidence or the state, and it writes a new revision
+// like any other change. A forgotten item moves still forgotten. A missing
+// item, including one that was permanently deleted, is ErrNotFound.
+func ReassignSubject(ctx context.Context, tx *canon.Tx, person, itemID, from, to string) (Item, error) {
+	if !present(person) || !present(itemID) || !present(from) || !present(to) || from == to {
+		return Item{}, ErrInvalid
+	}
+	item, err := readItem(ctx, tx, itemID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Item{}, ErrNotFound
+	}
+	if err != nil {
+		return Item{}, err
+	}
+	if item.Person != person || item.Subject.Kind != ThirdParty || item.Subject.ID != from {
+		return Item{}, ErrInvalid
+	}
+	item.Subject.ID = to
+	item.Revision++
+	raw, err := marshalRecord(item)
+	if err != nil {
+		return Item{}, err
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE memory_item SET subject_id=?,record=? WHERE id=?", to, raw, item.ID); err != nil {
+		return Item{}, err
+	}
+	if err = revision(ctx, tx, item, raw); err != nil {
+		return Item{}, err
+	}
+	return item, nil
+}

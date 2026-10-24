@@ -103,6 +103,11 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 			results[key] = result
 		}
 	}
+	if s.store.identities != nil && ctx.Err() == nil {
+		// A people record the person added after the messages arrived links on
+		// the next pass without waiting for a restart.
+		_, _ = s.store.identities.Rematch(ctx)
+	}
 	return results
 }
 
