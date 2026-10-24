@@ -9,3 +9,27 @@ The snapshot reads the previous binding and the last exchange through `retract_v
 The current binding enters the mandatory Waiting group of the ContextPacket. Steering carries its own binding at drain. Request evidence retains an `input-binding-v1` source and reconstructs it from the authorized ledger for replay. Record activity is a disposable projection of Git commit times.
 
 `TestM2InputBindingInstalledCore` creates and reads a to-do through record tools, checks an exact reference and an offered option during a live turn, restarts Core, retries the consumed input and binds a card input. Rule tests cover normalization, ambiguity, finished work, aging and candidate priority. Core tests cover transactional rollback, context assembly and the synthetic production replay.
+
+Model choices are append-only `input_binding_choice` events keyed by the actual
+call and input. `Choice.Request` addresses a request ordinal; the admission event
+is retained. Current choices overlay those events, and a created receipt supplies
+the next focus identity. `input-choice-v1` context sources reconstruct immutable
+choice bytes for request replay.
+
+`NormalizeChoices` decodes a model's binding arguments before validation:
+ordinals are optional and placed in message order, a target may be an object, an
+id, an exact title, `new` or `none`, an absent or inexact excerpt becomes the
+input text, and kind and parent words are mapped to stored values. Only a target
+naming no open item, or more than one, returns a correction with the allowed ids.
+
+A work tool that names its target appends the same kind of choice, so the
+message's item follows what the tool acts on. A worker session resolves to the
+work item it controls, which keeps a person's chosen target authoritative for
+`worker_input` and `worker_interrupt`: a session for another task in the same
+conversation is refused while a chosen target is in effect.
+
+Target questions store their choice with the existing durable question record.
+Their resolution appends the selected or cancelled binding in the same transaction
+as the answer inbox event. General skipped-question defaults never resolve them.
+The optional Atropos judge receives a closed candidate list and revision; its
+accepted choices, probabilities and observed latency are ledger evidence.
