@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/gateway"
+	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
@@ -108,6 +109,12 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 					root.inputCreationMu.Lock()
 					defer root.inputCreationMu.Unlock()
 				}
+				// A system turn can host person steering. Calls that stay on the
+				// system event keep their own path; a selected person input
+				// still passes the binding gate.
+				if input.SpeakerKind != guard.Person {
+					return tool.Execute(ctx, clean)
+				}
 				// Gate and bind before the original tool's own effect/authority path.
 				if result := r.bindWorkCall(ctx, input, ref.Request, s.turnID, clean); result != nil {
 					return *result
@@ -115,12 +122,14 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				exec := tool
 				// A selected steering input keeps its runtime and channel source
 				// through execution, not only through the binding gate.
-				if (name == "follow_work" || name == "read_work_progress") && (r != s.runtime || input.ID != s.input.ID) {
-					prepared := map[string]loop.Tool{}
-					if _, err := r.prepareBindingWorkTools(s.turnID, &toolPreparation{event: input}, prepared); err != nil {
+				if r != s.runtime || input.ID != s.input.ID {
+					alt, err := r.steeringTool(s.turnID, input, clean.Name)
+					if err != nil {
 						return bindingFailure(c.ID, err)
 					}
-					exec = prepared[name]
+					if alt.Execute != nil {
+						exec = alt
+					}
 				}
 				result := exec.Execute(ctx, clean)
 				if result.Code == loop.OK {
@@ -134,6 +143,43 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 	}
 	return declarations
 }
+
+// steeringTool rebuilds a tool on the runtime that owns the selected input.
+// Families that close over the runtime or the event are prepared again so a
+// channel follow-up, record write, or work preparation keeps that channel.
+// Persona preparation needs the turn's persona and stays on the original tool.
+func (r *conversationRuntime) steeringTool(turnID string, event ledger.Event, name string) (loop.Tool, error) {
+	prep := &toolPreparation{event: event}
+	var found loop.Tool
+	for _, prepare := range []toolPreparer{
+		r.prepareRecordTools,
+		r.prepareBindingWorkTools,
+		r.prepareResultTools,
+		r.prepareGoalWorkTools,
+		r.prepareRunTools,
+		r.prepareWebTools,
+		r.prepareA2ATools,
+		r.prepareDispatchTools,
+		r.prepareWorkTools,
+		r.prepareWorkerTools,
+		r.prepareDelegationTools,
+		r.prepareTimerTools,
+		r.prepareExchangeTools,
+	} {
+		family := map[string]loop.Tool{}
+		_, err := prepare(turnID, prep, family)
+		tool, ok := family[name]
+		if err != nil && ok && tool.Execute != nil {
+			return loop.Tool{}, err
+		}
+		if err != nil || !ok || tool.Execute == nil {
+			continue
+		}
+		found = tool
+	}
+	return found, nil
+}
+
 func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Event, index int, turnID string, c provider.ToolCall) *loop.Result {
 	// Explicit steering provenance cannot borrow the original turn's tools.
 	if input.PersonID != r.person || input.AgentID != r.agent || input.ConversationID != r.conversation || r.channelBinding != nil && (!r.channelBinding.Scope.Tools || r.validateChannel(ctx) != nil) {

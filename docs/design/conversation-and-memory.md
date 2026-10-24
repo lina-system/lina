@@ -397,7 +397,10 @@ answer's parent chain before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
 permissions. A tool executed for that steering input uses the steering runtime
-and event, so a channel follow-up keeps that channel's source. Reading a tied
+and event, so a channel follow-up keeps that channel's source and work
+preparation keeps that channel's binding. A system turn that consumes
+person steering still offers binding; a call that stays on the system
+event does not borrow the person's target gate. Reading a tied
 candidate does not resolve the original ambiguity.
 Current choices enter the
 ContextPacket and remain reconstructible from their ledger sources.

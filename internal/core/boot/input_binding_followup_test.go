@@ -2,6 +2,7 @@
 package boot
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -600,5 +601,56 @@ func TestCreatedCodeGoalStaysOnSelectedProject(t *testing.T) {
 	})
 	if blocked.Code != loop.Denied || !strings.Contains(string(blocked.Output), "input_target_pending") {
 		t.Fatalf("other goal was reachable: %+v", blocked)
+	}
+}
+
+func TestWorkCompletionTurnKeepsBindingTools(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	event, err := r.journal().Admit(t.Context(), guard.EntrySystem, ledger.Input{
+		ID: "completion-turn", ConversationID: r.conversation, AgentID: r.agent,
+		Surface: ledger.Surface{Kind: "manager"}, ScaffoldKind: "work_completion",
+		OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: `{"receipt":"saved"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &turnState{runtime: r, input: event, turnID: "turn:" + event.ID, bindings: map[string]loop.Tool{
+		"read_record": {Validate: func(provider.ToolCall) (string, error) { return "record", nil }, Execute: func(context.Context, provider.ToolCall) loop.Result {
+			return loop.Result{Code: loop.OK}
+		}},
+	}}
+	decls := s.prepareInputBinding([]provider.ToolDecl{provider.ToolDecl(`{"type":"function","name":"read_record","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}}`)})
+	if _, ok := s.bindings["bind_input"]; !ok || len(decls) < 2 {
+		t.Fatal("work completion dropped binding tools")
+	}
+}
+
+func TestPrepareWorkUsesSelectedChannelRuntime(t *testing.T) {
+	r, _ := turnRuntime(t)
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("prepare-source", "prepare-native")
+	tui := questionPersonInput(t, r, "tui-prepare", "Prepare the channel task")
+	if _, err := view.saveModelBinding(t.Context(), steering, "binding-model:channel-prepare", []binding.Choice{{Quote: steering.Body.Text(), Target: binding.Target{Class: "new", Kind: "task"}}}, "model"); err != nil {
+		t.Fatal(err)
+	}
+	s := &turnState{runtime: r, input: tui, turnID: "turn:" + tui.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "prepare_work", "channel-prepare", map[string]any{
+		"task_id": "channel-task", "title": "Create a report", "done": "Report exists", "workspace": map[string]any{},
+		"input_binding": map[string]any{"input_event_id": steering.ID},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("prepare: %+v", got)
+	}
+	card, err := r.work.Get(t.Context(), "channel-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := r.completionRunner(t.Context(), card)
+	if err != nil || runner.channelBinding == nil || !runner.channelBinding.Scope.Tools {
+		t.Fatalf("completion lost the channel binding: runner=%v err=%v", runner != nil && runner.channelBinding != nil, err)
 	}
 }

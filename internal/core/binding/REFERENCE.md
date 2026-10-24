@@ -29,7 +29,9 @@ records a new project; the definition file keeps kind goal, and the snapshot
 presents the created record as a project so a later read or correction matches
 the person's choice. A goal id that does
 not resolve is refused. Steering execution uses the selected input's runtime, so a
-channel follow-up keeps that channel source.
+channel follow-up keeps that channel source and work preparation keeps that
+channel binding. A system turn that consumes person steering still offers
+binding.
 
 Target questions store their choice with the existing durable question record.
 Their resolution appends the selected or cancelled binding in the same transaction
