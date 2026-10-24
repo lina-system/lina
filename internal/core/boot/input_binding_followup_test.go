@@ -531,4 +531,36 @@ func TestReviseCodeGoalChecksChosenRecord(t *testing.T) {
 	if kept.Code != loop.OK {
 		t.Fatalf("chosen goal stayed blocked: %+v", kept)
 	}
+	otherRecord, ok := goaleng.ProjectRecordID(otherID)
+	if !ok {
+		t.Fatal("other record id")
+	}
+	prefixedOther := questionCall(t, tools, "revise_code_goal", "revise-other-record", map[string]any{
+		"goal_id": otherRecord, "revision": otherRevision,
+		"outcome": "hijacked outcome", "done": "checks pass",
+		"scope":    map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+		"criteria": []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+	})
+	if prefixedOther.Code != loop.Denied || !strings.Contains(string(prefixedOther.Output), "input_target_pending") {
+		t.Fatalf("record id of goal B bypassed project A: %+v", prefixedOther)
+	}
+	var chosenNow string
+	snap, err = r.workEngine.engine.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range snap.Goals {
+		if g.ID == chosenID {
+			chosenNow = g.RecordRevision
+		}
+	}
+	prefixedChosen := questionCall(t, tools, "revise_code_goal", "revise-chosen-record", map[string]any{
+		"goal_id": chosenRecord, "revision": chosenNow,
+		"outcome": "corrected chosen outcome again", "done": "checks pass",
+		"scope":    map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+		"criteria": []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+	})
+	if prefixedChosen.Code != loop.OK {
+		t.Fatalf("record id of project A stayed blocked: %+v", prefixedChosen)
+	}
 }

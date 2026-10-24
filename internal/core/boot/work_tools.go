@@ -138,9 +138,13 @@ func (r *conversationRuntime) prepareGoalWorkTools(turnID string, _ *toolPrepara
 			if err != nil {
 				return loop.Result{ID: c.ID, Code: loop.Invalid}
 			}
+			goalID, ok := work.GoalID(in.GoalID)
+			if !ok {
+				return loop.Result{ID: c.ID, Code: loop.Invalid}
+			}
 			owner := r.agent
 			if err := r.db.Read(ctx, func(tx *canon.Tx) error {
-				a, err := readCoding(ctx, tx, in.GoalID)
+				a, err := readCoding(ctx, tx, goalID)
 				if errors.Is(err, sql.ErrNoRows) {
 					return nil
 				}
@@ -155,7 +159,7 @@ func (r *conversationRuntime) prepareGoalWorkTools(turnID string, _ *toolPrepara
 			}); err != nil {
 				return loop.Result{ID: c.ID, Code: loop.Denied}
 			}
-			receipt, err := runtime.engine.Revise(ctx, in.GoalID, in.Revision, r.person, owner, in.Definition)
+			receipt, err := runtime.engine.Revise(ctx, goalID, in.Revision, r.person, owner, in.Definition)
 			if err != nil {
 				code := "work_correction_failed"
 				if errors.Is(err, work.ErrStaleDefinition) || errors.Is(err, records.ErrStaleRevision) {
