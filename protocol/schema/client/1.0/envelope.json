@@ -6843,6 +6843,9 @@
         "state": {
           "$ref": "#/$defs/running_state"
         },
+        "paused": {
+          "type": "boolean"
+        },
         "stage": {
           "type": "string"
         },

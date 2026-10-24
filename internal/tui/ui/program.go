@@ -22,7 +22,7 @@ import (
 
 // Offer only rendered families; the conversation discovers and maintains its
 // concrete conversation/results subscriptions after welcome.
-var shellCapabilities = []protocol.Capability{protocol.SurfaceResultsCapability(), {Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "telegram_source", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+var shellCapabilities = []protocol.Capability{protocol.SurfaceResultsCapability(), {Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "telegram_source", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}, {Name: "work", Version: "1.0"}}
 
 // shellClient is the request surface used by the shell and its sessions.
 // Transport negotiation and validated receives remain in clientapi.
@@ -50,6 +50,8 @@ type shellClient interface {
 	Running(context.Context, protocol.RunningGet) (string, error)
 	Record(context.Context, protocol.RecordRequest) (string, error)
 	Memory(context.Context, protocol.MemoryRequest) (string, error)
+	WorkControl(context.Context, protocol.WorkControlRequest) (string, error)
+	WorkLimit(context.Context, protocol.WorkLimitRequest) (string, error)
 }
 
 type clientPeer struct{ *clientapi.Client }

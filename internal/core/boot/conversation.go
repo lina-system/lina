@@ -93,6 +93,7 @@ type conversationRuntime struct {
 	webex           *webex.Service
 	telegram        *telegramControl
 	messenger       *messenger.Service
+	messengerAddon  AddonStarter
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
 	channels        *channelRuntime
@@ -481,6 +482,11 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 	if r.messenger != nil {
 		r.messenger.Close()
 		r.messenger = nil
+	}
+	if r.messengerAddon != nil {
+		if err := r.messengerAddon.Close(ctx); err != nil {
+			return err
+		}
 	}
 	if r.publications != nil && r.publications.stop != nil {
 		r.publications.stop()

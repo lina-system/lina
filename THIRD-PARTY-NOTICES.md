@@ -5947,3 +5947,11 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## Messenger add-on
+
+The external messenger add-on pins [agent-messenger](https://github.com/agent-messenger/agent-messenger)
+2.39.1 (MIT), commit `9d2de96a43fe3e0e172e8e399454c475146a2697`.
+Its npm distribution includes its license. The add-on's lockfile records the
+transitive packages; release packaging retains their license files. Optional
+native dependencies and lifecycle scripts are not used.

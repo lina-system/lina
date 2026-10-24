@@ -15,7 +15,7 @@ const DefaultInterval = time.Minute
 // One source's failure never blocks another source or the conversation.
 type Service struct {
 	store    *Store
-	adapters map[string]Adapter
+	resolve  Resolver
 	factory  Factory
 	interval time.Duration
 
@@ -40,10 +40,22 @@ type Factory func(Source) (Adapter, bool, error)
 // name; factory opens account-specific adapters. An unsupported source is left
 // untouched.
 func NewService(store *Store, adapters map[string]Adapter, interval time.Duration) *Service {
+	return NewServiceWithResolver(store, func(source Source) (Adapter, bool) {
+		adapter, ok := adapters[source.Adapter]
+		return adapter, ok
+	}, interval)
+}
+
+// Resolver selects an adapter for the source account.
+type Resolver func(Source) (Adapter, bool)
+
+// NewServiceWithResolver supports account-specific sessions while NewService
+// retains the registry of adapter names used by official platform services.
+func NewServiceWithResolver(store *Store, resolve Resolver, interval time.Duration) *Service {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	return &Service{store: store, adapters: adapters, interval: interval, wake: make(chan struct{}, 1), liveWake: make(chan struct{}, 1), liveCancel: map[string]context.CancelFunc{}, lastSync: map[string]time.Time{}, perSource: map[string]Adapter{}, syncReads: map[string]map[*sourceRead]struct{}{}, stopping: map[string]bool{}}
+	return &Service{store: store, resolve: resolve, interval: interval, wake: make(chan struct{}, 1), liveWake: make(chan struct{}, 1), liveCancel: map[string]context.CancelFunc{}, lastSync: map[string]time.Time{}, perSource: map[string]Adapter{}, syncReads: map[string]map[*sourceRead]struct{}{}, stopping: map[string]bool{}}
 }
 
 // WithFactory adds the per-source adapter factory.
@@ -70,7 +82,7 @@ func (s *Service) Close() {
 
 // adapterFor resolves the adapter of one source.
 func (s *Service) adapterFor(source Source) (Adapter, bool) {
-	if adapter, ok := s.adapters[source.Adapter]; ok {
+	if adapter, ok := s.resolve(source); ok {
 		return adapter, true
 	}
 	key := source.Platform + "\x00" + source.Account
@@ -130,10 +142,10 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 		return results
 	}
 	for _, source := range sources {
-		if _, owned := s.adapterFor(source); !owned {
+		if source.State != StateConnected && source.State != StateFailing {
 			continue
 		}
-		if source.State != StateConnected && source.State != StateFailing {
+		if _, ok := s.adapterFor(source); !ok {
 			continue
 		}
 		key := source.Platform + "\x00" + source.Account
