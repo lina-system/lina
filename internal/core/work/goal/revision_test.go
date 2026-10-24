@@ -290,7 +290,7 @@ func TestRevisionCancelsOnlyUndispatchedWorkerReservations(t *testing.T) {
 				revisionReport(t, e, "a", Merge, Observation{Status: OutcomeConflict})
 			case ContinueWorker:
 				revisionReport(t, e, "a", Assign, Observation{Status: OutcomeNoReceipt, Handle: "thread-a", EffectsSettled: true})
-			case InspectPR, Merge, RunQA, RepairQA, Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion:
+			case InspectPR, Merge, RunQA, RepairQA, Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion, ReadSource:
 				t.Fatalf("unsupported worker reservation fixture: %s", kind)
 			}
 			old := revisionAction(t, e, "a", kind)

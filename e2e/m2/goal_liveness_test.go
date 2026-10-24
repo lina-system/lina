@@ -202,7 +202,7 @@ func (w *livenessWorld) Execute(ctx context.Context, a work.Action) (work.Observ
 			return out, fmt.Errorf("inspection without the worker head")
 		}
 		out.PR = work.PRState{Head: head, Mergeable: false}
-	case work.Resume, work.Merge, work.RunQA, work.RepairConflict, work.RepairQA, work.Deploy, work.Verify, work.Observe, work.Decide, work.CheckCriterion, work.ContinueWorker:
+	case work.Resume, work.Merge, work.RunQA, work.RepairConflict, work.RepairQA, work.Deploy, work.Verify, work.Observe, work.Decide, work.CheckCriterion, work.ContinueWorker, work.ReadSource:
 		return out, fmt.Errorf("unexpected action %s", a.Kind)
 	default:
 		return out, fmt.Errorf("unexpected action %s", a.Kind)
@@ -265,7 +265,7 @@ func (w *livenessWorld) note(s work.State) {
 			assigned++
 		case work.InspectPR:
 			inspected++
-		case work.Resume, work.Merge, work.RunQA, work.RepairConflict, work.RepairQA, work.Deploy, work.Verify, work.Observe, work.Decide, work.CheckCriterion, work.ContinueWorker:
+		case work.Resume, work.Merge, work.RunQA, work.RepairConflict, work.RepairQA, work.Deploy, work.Verify, work.Observe, work.Decide, work.CheckCriterion, work.ContinueWorker, work.ReadSource:
 			other++
 		}
 	}

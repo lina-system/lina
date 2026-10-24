@@ -61,7 +61,7 @@ func (d *correctedWorkDriver) Execute(ctx context.Context, a work.Action) (work.
 		o.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &work.CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "result-read", Passed: true}
 	case work.PlanGoal:
 		o.Tasks = []work.Task{d.task}
-	case work.Resume, work.RepairConflict, work.RepairQA, work.ContinueWorker, work.Deploy, work.Observe, work.Decide:
+	case work.Resume, work.RepairConflict, work.RepairQA, work.ContinueWorker, work.Deploy, work.Observe, work.Decide, work.ReadSource:
 		return o, fmt.Errorf("unexpected action %s", a.Kind)
 	}
 	return o, nil

@@ -85,7 +85,7 @@ func TestQuotaRestoresInterruptedRecoveryAllowances(t *testing.T) {
 					revisionReport(t, e, "a", workerKind, Observation{Status: OutcomeSucceeded, Head: "head", EffectsSettled: true})
 					revisionReport(t, e, "a", InspectPR, revisionPR("head"))
 					revisionReport(t, e, "a", Merge, Observation{Status: OutcomeConflict})
-				case Assign, InspectPR, Merge, RunQA, RepairQA, Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion:
+				case Assign, InspectPR, Merge, RunQA, RepairQA, Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion, ReadSource:
 					t.Fatalf("unsupported quota fixture: %s", kind)
 				}
 			}

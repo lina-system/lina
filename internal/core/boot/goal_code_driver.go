@@ -197,7 +197,7 @@ func (d *codeGoalDriver) Execute(ctx context.Context, a goal.Action) (goal.Obser
 		return d.libraryProof(ctx, s, g, a)
 	case goal.CheckCriterion:
 		return d.checkCriterion(ctx, s, g, t, a, repo)
-	case goal.Observe, goal.Decide, goal.PlanGoal:
+	case goal.Observe, goal.Decide, goal.PlanGoal, goal.ReadSource:
 		return goal.Observation{}, goal.ErrNeedsPerson
 	}
 	return goal.Observation{}, goal.ErrInvalid

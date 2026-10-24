@@ -179,7 +179,7 @@ func (w *repairWorld) Execute(ctx context.Context, a work.Action) (work.Observat
 			return out, err
 		}
 		out.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &work.CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: p.Ref, Passed: passed}
-	case work.Resume, work.RepairConflict, work.RepairQA, work.Observe, work.Decide, work.ContinueWorker:
+	case work.Resume, work.RepairConflict, work.RepairQA, work.Observe, work.Decide, work.ContinueWorker, work.ReadSource:
 		return out, fmt.Errorf("unexpected action: %s", a.Kind)
 	default:
 		return out, work.ErrInvalid

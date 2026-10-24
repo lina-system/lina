@@ -245,6 +245,8 @@ func (w *waitWorld) Execute(ctx context.Context, a work.Action) (work.Observatio
 			return work.Observation{}, fmt.Errorf("plugin said %q", line)
 		}
 		return work.Observation{Status: work.OutcomeSucceeded, SourceOpen: &open}, nil
+	case work.Assign, work.Resume, work.InspectPR, work.Merge, work.RunQA, work.RepairConflict, work.RepairQA, work.Deploy, work.Verify, work.Observe, work.Decide, work.CheckCriterion, work.ContinueWorker:
+		return work.Observation{}, fmt.Errorf("unexpected action %s", a.Kind)
 	default:
 		return work.Observation{}, fmt.Errorf("unexpected action %s", a.Kind)
 	}

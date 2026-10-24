@@ -781,7 +781,7 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 				g.Evidence = append(g.Evidence, o.Proof)
 			case InspectPR, Merge, PlanGoal:
 				a.State = "needs_person"
-			case Deploy, Verify, Observe, Decide, CheckCriterion:
+			case Deploy, Verify, Observe, Decide, CheckCriterion, ReadSource:
 				return ErrInvalid
 			}
 		case OutcomeSucceeded:
