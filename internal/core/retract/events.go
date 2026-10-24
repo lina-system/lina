@@ -69,9 +69,16 @@ func applyEvent(ctx context.Context, tx *canon.Tx, e entry, target Target) error
 		return ErrInvalid
 	}
 	switch e.Action {
-	case forget, restore:
-		return nil
-	case erase:
+	case forget, erase:
+		// Attachment names are part of the record. The removal list is what a
+		// restored generation replays, so the names have to leave here rather
+		// than in a write the journal cannot repeat.
+		if err := dropMessengerAttachments(ctx, tx, target.ID); err != nil {
+			return err
+		}
+		if e.Action == forget {
+			return nil
+		}
 		// The spans index positions in the text that is going away.
 		if _, err := tx.ExecContext(ctx, "DELETE FROM ev_span WHERE event_id=?", target.ID); err != nil {
 			return err
@@ -80,11 +87,26 @@ func applyEvent(ctx context.Context, tx *canon.Tx, e entry, target Target) error
 		// check constraint needs one of text or material.
 		_, err := tx.ExecContext(ctx, "UPDATE conv_event SET body='',material_id=NULL,material_revision=NULL WHERE id=?", target.ID)
 		return err
+	case restore:
+		return nil
 	case disconnect:
 		return ErrInvalid
 	default:
 		return ErrInvalid
 	}
+}
+
+// dropMessengerAttachments removes every attachment row of the message that
+// owns this event. A revision event identifies the message; older revisions of
+// that message lose their names in the same removal.
+func dropMessengerAttachments(ctx context.Context, tx *canon.Tx, event string) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM messenger_attachment
+WHERE EXISTS (
+ SELECT 1 FROM messenger_record_revision r
+ WHERE r.event=? AND r.platform=messenger_attachment.platform AND r.account=messenger_attachment.account
+  AND r.chat=messenger_attachment.chat AND r.message=messenger_attachment.message
+)`, event)
+	return err
 }
 
 // expandEvents passes event targets through. The caller lists every revision of

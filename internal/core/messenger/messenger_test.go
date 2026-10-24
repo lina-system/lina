@@ -925,6 +925,47 @@ func TestAttachmentMetadataStaysWithTheRecord(t *testing.T) {
 	}
 }
 
+// Hiding a record drops attachment names through the removal list, so a restored
+// generation does not bring them back when recovery replays that removal.
+func TestAttachmentMetadataLeavesOnRetractionReplay(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	msg := message("m-1", messenger.RouteParticipant, f.now, "notes")
+	msg.Attachments = []messenger.Attachment{{ID: "file-1", Name: "notes.txt", MIMEType: "text/plain", Size: 4}}
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{msg}, Next: "c1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	event := f.eventsFor(t, source, "dm-1", "m-1")
+	request := retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Event, ID: event.ID}}}
+	if err := f.removal.Forget(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_attachment WHERE message='m-1'"); n != 0 {
+		t.Fatalf("forget left attachment metadata: %d", n)
+	}
+	if err := f.db.Write(t.Context(), func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(t.Context(), "DELETE FROM retract_target WHERE kind='event' AND id=?", event.ID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(t.Context(), "DELETE FROM removal_applied"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO messenger_attachment(platform,account,chat,message,revision,attachment,name,mime,size)
+VALUES('discord','account-1','dm-1','m-1',1,'file-1','notes.txt','text/plain',4)`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Recover(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_attachment WHERE message='m-1'"); n != 0 {
+		t.Fatalf("recovery left attachment metadata: %d", n)
+	}
+}
+
 // flakyAdapter fails its first failUntil sign-ins, then behaves as fakeAdapter.
 type flakyAdapter struct {
 	fakeAdapter
