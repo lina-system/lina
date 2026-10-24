@@ -47,7 +47,10 @@ type threads struct {
 
 // ListChats lists the guilds the bot belongs to, each guild's text and
 // announcement channels, its active threads and their archived public threads.
-func (a *Adapter) ListChats(ctx context.Context) ([]messenger.Chat, error) {
+func (a *Adapter) ListChats(ctx context.Context, id messenger.SourceID) ([]messenger.Chat, error) {
+	if id != a.sourceID() {
+		return nil, messenger.ErrInvalid
+	}
 	guilds, err := a.guilds(ctx)
 	if err != nil {
 		return nil, err
@@ -141,7 +144,10 @@ func (a *Adapter) archived(ctx context.Context, parent string) ([]channel, error
 }
 
 // Members lists the guild's members, paged by user id.
-func (a *Adapter) Members(ctx context.Context, chat string) ([]messenger.Author, error) {
+func (a *Adapter) Members(ctx context.Context, id messenger.SourceID, chat string) ([]messenger.Author, error) {
+	if id != a.sourceID() {
+		return nil, messenger.ErrInvalid
+	}
 	info, err := a.chat(ctx, chat)
 	if err != nil {
 		return nil, err
@@ -186,7 +192,7 @@ func (a *Adapter) ensureChats(ctx context.Context) error {
 	if loaded {
 		return nil
 	}
-	_, err := a.ListChats(ctx)
+	_, err := a.ListChats(ctx, a.sourceID())
 	return err
 }
 
@@ -199,7 +205,7 @@ func (a *Adapter) chat(ctx context.Context, chat string) (chatInfo, error) {
 	if known {
 		return info, nil
 	}
-	if _, err := a.ListChats(ctx); err != nil {
+	if _, err := a.ListChats(ctx, a.sourceID()); err != nil {
 		return chatInfo{}, err
 	}
 	a.mu.Lock()

@@ -174,7 +174,7 @@ func TestListChatsIncludesGuildChannelsAndThreads(t *testing.T) {
 		}
 		return reply(r, 404, `{"code":10003,"message":"unknown"}`)
 	})
-	chats, err := f.adapter.ListChats(context.Background())
+	chats, err := f.adapter.ListChats(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,10 +215,10 @@ func TestFirstFillPagesForwardFromTheOldestMessage(t *testing.T) {
 		}
 		return reply(r, 200, `[]`)
 	})
-	if _, err := f.adapter.ListChats(context.Background()); err != nil {
+	if _, err := f.adapter.ListChats(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"}); err != nil {
 		t.Fatal(err)
 	}
-	page, err := f.adapter.Page(context.Background(), "100", "")
+	page, err := f.adapter.Page(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"}, "100", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestIncrementalPageStartsAfterTheCommittedCursor(t *testing.T) {
 		}
 		return reply(r, 200, `[]`)
 	})
-	page, err := f.adapter.Page(context.Background(), "100", messenger.Cursor(`{"after":"904"}`))
+	page, err := f.adapter.Page(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"}, "100", messenger.Cursor(`{"after":"904"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestRateLimitHonoursRetryAfterAndKeepsTheCursor(t *testing.T) {
 		return reply(r, 200, `[]`)
 	})
 	start := time.Now()
-	page, err := f.adapter.Page(context.Background(), "100", messenger.Cursor(`{"after":"904"}`))
+	page, err := f.adapter.Page(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"}, "100", messenger.Cursor(`{"after":"904"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestWithoutMessageContentTheSourceSaysTextIsUnavailable(t *testing.T) {
 		}
 		return reply(r, 200, `[]`)
 	})
-	_, err := f.adapter.Page(context.Background(), "100", "")
+	_, err := f.adapter.Page(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"}, "100", "")
 	if !errors.Is(err, messenger.ErrTextUnavailable) {
 		t.Fatalf("err = %v, want text unavailable", err)
 	}
@@ -354,7 +354,7 @@ func TestGatewayRefusingTheIntentSaysTextIsUnavailable(t *testing.T) {
 		wire.URL.Host = endpoint.Host
 		return http.DefaultTransport.RoundTrip(wire)
 	}))
-	err := a.Live(context.Background(), func(messenger.Event) error { return nil })
+	err := a.Live(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"}, func(messenger.Event) error { return nil })
 	if !errors.Is(err, messenger.ErrTextUnavailable) {
 		t.Fatalf("err = %v, want text unavailable", err)
 	}
@@ -421,7 +421,7 @@ func TestLiveMessageEditAndDeleteEvents(t *testing.T) {
 		wire.URL.Host = endpoint.Host
 		return http.DefaultTransport.RoundTrip(wire)
 	}))
-	if _, err := a.ListChats(context.Background()); err != nil {
+	if _, err := a.ListChats(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -429,7 +429,7 @@ func TestLiveMessageEditAndDeleteEvents(t *testing.T) {
 	events := make(chan messenger.Event, 8)
 	done := make(chan error, 1)
 	go func() {
-		done <- a.Live(ctx, func(e messenger.Event) error { events <- e; return nil })
+		done <- a.Live(ctx, messenger.SourceID{Platform: "discord", Account: "123456"}, func(e messenger.Event) error { events <- e; return nil })
 	}()
 	select {
 	case <-identified:
@@ -506,7 +506,7 @@ func TestMembersPageThroughTheGuild(t *testing.T) {
 		}
 		return reply(r, 200, `[]`)
 	})
-	members, err := f.adapter.Members(context.Background(), "100")
+	members, err := f.adapter.Members(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"}, "100")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +522,7 @@ func TestSignInReportsNeedsSignInOnUnauthorized(t *testing.T) {
 		}
 		return reply(r, 200, `[]`)
 	})
-	state, err := f.adapter.SignIn(context.Background())
+	state, err := f.adapter.SignIn(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,5 +539,30 @@ func TestCapabilitiesNameThePlatform(t *testing.T) {
 	}
 	if len(caps.Writes) != 0 {
 		t.Fatalf("reads-only increment named writes: %v", caps.Writes)
+	}
+}
+
+// A bound adapter must never read another account through this bot's token.
+func TestAdapterRejectsOtherSource(t *testing.T) {
+	a := mustAdapter(t, fixtureDB(t), transportFunc(func(r *http.Request) (*http.Response, error) {
+		t.Error("mismatched source reached Discord")
+		return reply(r, 200, `[]`), nil
+	}))
+	for _, id := range []messenger.SourceID{
+		{Platform: "discord", Account: "654321"},
+		{Platform: "teams", Account: "123456"},
+	} {
+		ctx := t.Context()
+		_, signIn := a.SignIn(ctx, id)
+		_, chats := a.ListChats(ctx, id)
+		_, page := a.Page(ctx, id, "100", "")
+		_, members := a.Members(ctx, id, "100")
+		live := a.Live(ctx, id, func(messenger.Event) error { t.Error("mismatched source delivered event"); return nil })
+		_, attachment := a.FetchAttachment(ctx, id, "100", "200")
+		for name, err := range map[string]error{"sign-in": signIn, "chats": chats, "page": page, "members": members, "live": live, "attachment": attachment} {
+			if !errors.Is(err, messenger.ErrInvalid) {
+				t.Errorf("%s for %+v: %v", name, id, err)
+			}
+		}
 	}
 }

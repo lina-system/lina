@@ -211,15 +211,15 @@ type scriptedAdapter struct {
 	requested []messenger.Cursor
 }
 
-func (a *scriptedAdapter) SignIn(context.Context) (messenger.SignInState, error) {
+func (a *scriptedAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
 	return messenger.SignedIn, nil
 }
 
-func (a *scriptedAdapter) ListChats(context.Context) ([]messenger.Chat, error) {
+func (a *scriptedAdapter) ListChats(context.Context, messenger.SourceID) ([]messenger.Chat, error) {
 	return []messenger.Chat{{ID: "dm-1", Name: "Direct", Kind: "direct"}}, nil
 }
 
-func (a *scriptedAdapter) Page(ctx context.Context, _ string, cursor messenger.Cursor) (messenger.Page, error) {
+func (a *scriptedAdapter) Page(ctx context.Context, _ messenger.SourceID, _ string, cursor messenger.Cursor) (messenger.Page, error) {
 	a.mu.Lock()
 	a.requested = append(a.requested, cursor)
 	queue := a.pages[string(cursor)]
@@ -237,11 +237,13 @@ func (a *scriptedAdapter) Page(ctx context.Context, _ string, cursor messenger.C
 	return next.page, nil
 }
 
-func (a *scriptedAdapter) Members(context.Context, string) ([]messenger.Author, error) {
+func (a *scriptedAdapter) Members(context.Context, messenger.SourceID, string) ([]messenger.Author, error) {
 	return nil, nil
 }
-func (a *scriptedAdapter) Live(context.Context, func(messenger.Event) error) error { return nil }
-func (a *scriptedAdapter) FetchAttachment(context.Context, string, string) (io.ReadCloser, error) {
+func (a *scriptedAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
+	return nil
+}
+func (a *scriptedAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 func (a *scriptedAdapter) Capabilities() messenger.Capabilities {

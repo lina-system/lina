@@ -55,6 +55,13 @@ deletion and stays visible.
 origin is `messenger`, because deletion of a native conversation has its own
 owner; the event row itself is never rewritten, since the ledger is append-only.
 
+## Which adapter a source uses
+
+The service selects the adapter by the name stored on the source, not by the
+platform. Discord's bot and personal account are two names. Every call also
+receives the source account, so one adapter implementation can serve several
+accounts without writing one account's chats under another.
+
 ## Imported records
 
 `AdmitImport` takes one chat of a memory importer's run through the same
@@ -65,7 +72,9 @@ reference on the event stays the live one, so a source connected later joins the
 imported records. One run admits one row per platform key, murmur's archive value
 wins over a live value, a changed row without a later edit is reported as a
 conflict, and a record whose stored speaker kind differs from the confirmed map
-gets a new revision that supersedes it.
+gets a new revision that supersedes it. A record whose reply or thread target is
+in the same run is admitted after that target, whatever their source order, so
+its relation survives; a cycle of replies keeps the relations it can.
 
 ## Coverage
 

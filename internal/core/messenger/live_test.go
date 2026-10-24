@@ -145,25 +145,29 @@ type liveAdapter struct {
 	fail    error
 }
 
-func (a *liveAdapter) SignIn(context.Context) (messenger.SignInState, error) {
+func (a *liveAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
 	if a.fail != nil {
 		return messenger.Failing, a.fail
 	}
 	return messenger.SignedIn, nil
 }
 
-func (a *liveAdapter) ListChats(context.Context) ([]messenger.Chat, error) { return a.chats, nil }
+func (a *liveAdapter) ListChats(context.Context, messenger.SourceID) ([]messenger.Chat, error) {
+	return a.chats, nil
+}
 
-func (a *liveAdapter) Page(_ context.Context, _ string, cursor messenger.Cursor) (messenger.Page, error) {
+func (a *liveAdapter) Page(_ context.Context, _ messenger.SourceID, _ string, cursor messenger.Cursor) (messenger.Page, error) {
 	if a.fail != nil {
 		return messenger.Page{}, a.fail
 	}
 	return messenger.Page{Next: cursor}, nil
 }
 
-func (a *liveAdapter) Members(context.Context, string) ([]messenger.Author, error) { return nil, nil }
+func (a *liveAdapter) Members(context.Context, messenger.SourceID, string) ([]messenger.Author, error) {
+	return nil, nil
+}
 
-func (a *liveAdapter) Live(ctx context.Context, deliver func(messenger.Event) error) error {
+func (a *liveAdapter) Live(ctx context.Context, _ messenger.SourceID, deliver func(messenger.Event) error) error {
 	if a.started != nil {
 		a.started <- struct{}{}
 	}
@@ -182,7 +186,7 @@ func (a *liveAdapter) Live(ctx context.Context, deliver func(messenger.Event) er
 	}
 }
 
-func (a *liveAdapter) FetchAttachment(context.Context, string, string) (io.ReadCloser, error) {
+func (a *liveAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 

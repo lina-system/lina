@@ -96,7 +96,10 @@ func (a *Adapter) Capabilities() messenger.Capabilities {
 
 // SignIn checks the token against Discord's own answer and the source's
 // account. A refused token needs the person.
-func (a *Adapter) SignIn(ctx context.Context) (messenger.SignInState, error) {
+func (a *Adapter) SignIn(ctx context.Context, id messenger.SourceID) (messenger.SignInState, error) {
+	if id != a.sourceID() {
+		return messenger.Failing, messenger.ErrInvalid
+	}
 	valid, err := a.client.VerifyBot(ctx, a.source.Account)
 	if err != nil {
 		return messenger.Failing, err
@@ -126,6 +129,13 @@ func (a *Adapter) personID(ctx context.Context) string {
 
 // FetchAttachment needs the platform's signed CDN location, which this
 // increment does not store. Attachment metadata still reaches the record.
-func (a *Adapter) FetchAttachment(context.Context, string, string) (io.ReadCloser, error) {
+func (a *Adapter) FetchAttachment(_ context.Context, id messenger.SourceID, _, _ string) (io.ReadCloser, error) {
+	if id != a.sourceID() {
+		return nil, messenger.ErrInvalid
+	}
 	return nil, ErrUnsupported
+}
+
+func (a *Adapter) sourceID() messenger.SourceID {
+	return messenger.SourceID{Platform: a.source.Platform, Account: a.source.Account}
 }

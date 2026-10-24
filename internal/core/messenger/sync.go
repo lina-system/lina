@@ -41,10 +41,13 @@ type watcher struct {
 	cancel context.CancelFunc
 }
 
-// NewService composes the sync loop with one adapter per platform.
+// NewService composes the sync loop. adapters are keyed by the adapter name a
+// source records. A platform with one adapter uses the platform name; Discord's
+// bot and personal account register two names. A source whose name is absent
+// is left untouched.
 func NewService(store *Store, adapters map[string]Adapter, interval time.Duration) *Service {
 	return NewServiceWith(store, func(source Source) (Adapter, error) {
-		adapter, ok := adapters[source.Platform]
+		adapter, ok := adapters[source.Adapter]
 		if !ok {
 			return nil, ErrInvalid
 		}
@@ -228,7 +231,7 @@ func (s *Service) follow(ctx context.Context, source Source, key string, w *watc
 		if !adapter.Capabilities().LiveEvents {
 			return
 		}
-		err = adapter.Live(ctx, func(event Event) error {
+		err = adapter.Live(ctx, sourceID(source), func(event Event) error {
 			_, err := s.store.AdmitEvent(ctx, source, event)
 			if errors.Is(err, ErrPageWaiting) {
 				// The page read admits the event once the chat's write settles.
@@ -262,13 +265,18 @@ func (s *Service) intervalOf(source Source) time.Duration {
 	return s.interval
 }
 
+func sourceID(source Source) SourceID {
+	return SourceID{Platform: source.Platform, Account: source.Account}
+}
+
 // Sync reads one source: its chat list, then every chat that is in sync.
 func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
 	adapter, err := s.adapter(source)
 	if err != nil {
 		return Result{}, err
 	}
-	state, err := adapter.SignIn(ctx)
+	id := sourceID(source)
+	state, err := adapter.SignIn(ctx, id)
 	if err != nil {
 		return Result{}, err
 	}
@@ -278,7 +286,7 @@ func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
 		}
 		return Result{}, nil
 	}
-	chats, err := adapter.ListChats(ctx)
+	chats, err := adapter.ListChats(ctx, id)
 	if err != nil {
 		return Result{}, err
 	}
@@ -315,7 +323,7 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		page, err := adapter.Page(ctx, chat.Chat, cursor)
+		page, err := adapter.Page(ctx, sourceID(source), chat.Chat, cursor)
 		if err != nil {
 			return result, err
 		}
@@ -339,6 +347,16 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 		}
 		cursor = page.Next
 	}
+}
+
+// Live reads a source's pushed events until ctx ends. A platform without live
+// events returns immediately.
+func (s *Service) Live(ctx context.Context, source Source, deliver func(Event) error) error {
+	adapter, err := s.adapter(source)
+	if err != nil {
+		return err
+	}
+	return adapter.Live(ctx, sourceID(source), deliver)
 }
 
 // failureCause keeps a short, bounded cause on the registry row.

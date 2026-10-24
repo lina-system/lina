@@ -59,7 +59,10 @@ type position struct {
 // Page reads one page of a chat, oldest first. The first fill starts at the
 // oldest message the platform keeps; a later read continues after the committed
 // cursor. A page that adds nothing keeps the same cursor.
-func (a *Adapter) Page(ctx context.Context, chat string, cursor messenger.Cursor) (messenger.Page, error) {
+func (a *Adapter) Page(ctx context.Context, id messenger.SourceID, chat string, cursor messenger.Cursor) (messenger.Page, error) {
+	if id != a.sourceID() {
+		return messenger.Page{}, messenger.ErrInvalid
+	}
 	if !snowflake.MatchString(chat) {
 		return messenger.Page{}, messenger.ErrInvalid
 	}

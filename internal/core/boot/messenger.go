@@ -19,10 +19,12 @@ import (
 // source registry, admission and the sync loop are Core's; adapters are the
 // platform boundary. A platform ported here is resolved from its source account
 // and that account's stored token; an explicitly configured adapter, such as a
-// test's, takes its platform's place.
+// test's, takes the recorded adapter's place.
 // Teams runs account-specific workers through the installed Teams service.
 type MessengerConfig struct {
-	// Adapters are keyed by platform and replace Core's own adapter there.
+	// Adapters are keyed by the adapter name a source records. A platform with
+	// one adapter uses the platform name. Discord's bot and personal account
+	// register two names, and each call names the source account.
 	Adapters map[string]messenger.Adapter
 	// Interval is the schedule for a source whose adapter states none.
 	Interval time.Duration
@@ -55,7 +57,7 @@ func (r *conversationRuntime) startMessenger(ctx context.Context, cfg *Messenger
 // its own adapter so two accounts on one platform never share read state.
 func (r *conversationRuntime) messengerAdapter(cfg *MessengerConfig) func(messenger.Source) (messenger.Adapter, error) {
 	return func(source messenger.Source) (messenger.Adapter, error) {
-		if adapter, ok := cfg.Adapters[source.Platform]; ok {
+		if adapter, ok := cfg.Adapters[source.Adapter]; ok {
 			return adapter, nil
 		}
 		if source.Platform != "discord" || source.Mode != messenger.ModeOfficial {

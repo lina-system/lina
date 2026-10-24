@@ -36,6 +36,13 @@ func (e *Engine) reconcileRetired(v *View) error {
 		if err := json.Unmarshal(row.Body, &a); err != nil {
 			return err
 		}
+		// Only queued actions can become stale here, and only unreconciled
+		// superseded outcomes need retirement. Loading every running action's
+		// whole graph makes a parallel frontier repeatedly decode the same goal
+		// while Core is trying to publish the step that just landed.
+		if a.State != "queued" && (a.State != "finished" || !a.Superseded || a.RetirementReconciled) {
+			continue
+		}
 		g, err := loadGoal(v, a.GoalID)
 		if err != nil {
 			return err

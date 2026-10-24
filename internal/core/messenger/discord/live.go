@@ -12,7 +12,10 @@ import (
 // Live reads pushed events from the bot token's Gateway session until ctx ends.
 // The session carries the message-content intent; when Discord refuses it the
 // source states that text is unavailable instead of admitting empty records.
-func (a *Adapter) Live(ctx context.Context, deliver func(messenger.Event) error) error {
+func (a *Adapter) Live(ctx context.Context, id messenger.SourceID, deliver func(messenger.Event) error) error {
+	if id != a.sourceID() {
+		return messenger.ErrInvalid
+	}
 	if err := a.ensureChats(ctx); err != nil {
 		return err
 	}
