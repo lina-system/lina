@@ -444,9 +444,22 @@ func TestPausedGoalRefusesRecoveryAuthorization(t *testing.T) {
 	if _, _, err = e.Command(t.Context(), GoalCommand{ID: "pause-first", Goal: "first", Person: "person", Command: CommandPause}); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := e.CanContinue(t.Context(), assign); err != nil || ok {
+	if ok, err := e.CanContinue(t.Context(), assign); !errors.Is(err, ErrPaused) || ok {
 		t.Fatalf("recovery authorization = %v %v, want refusal for the paused goal", ok, err)
 	}
+	if _, _, err = e.Command(t.Context(), GoalCommand{ID: "resume-first", Goal: "first", Person: "person", Command: CommandResume}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := e.CanContinue(t.Context(), assign); err != nil || !ok {
+		t.Fatalf("resume authorization = %v %v, want the queued continuation", ok, err)
+	}
+	if _, _, err = e.Command(t.Context(), GoalCommand{ID: "stop-first", Goal: "first", Person: "person", Command: CommandStop, Confirmed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := e.CanContinue(t.Context(), assign); err != nil || ok {
+		t.Fatalf("stop authorization = %v %v, want permanent refusal", ok, err)
+	}
+
 }
 
 // A stopped goal's settled result no longer holds its write area, so another
@@ -764,5 +777,53 @@ func TestStopAllowsQueuedReconciliationRead(t *testing.T) {
 	g := goalByID(t, e, original.GoalID)
 	if g.State != GoalStopped || !g.Tasks[0].EffectsSettled {
 		t.Fatalf("stopped goal did not settle: %+v", g)
+	}
+}
+
+func TestStopSettlesPersonWaitReservations(t *testing.T) {
+	for _, settled := range []bool{true, false} {
+		name := "unsettled"
+		if settled {
+			name = "settled"
+		}
+		t.Run(name, func(t *testing.T) {
+			e, original := claimedAssignment(t)
+			if err := e.Report(t.Context(), original.ID, e.cfg.Epoch, Observation{Status: OutcomeNeedsPerson, EffectsSettled: settled, Handle: "waiting-worker"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := e.Command(t.Context(), GoalCommand{ID: "stop", Goal: original.GoalID, Person: "person", Command: CommandStop, Confirmed: true}); err != nil {
+				t.Fatal(err)
+			}
+			s := revisionSnapshot(t, e)
+			for _, a := range s.Actions {
+				if a.ID != original.ID {
+					continue
+				}
+				if settled {
+					if a.State != "finished" || reserves(a) {
+						t.Fatalf("settled person wait retained capacity: %+v", a)
+					}
+				} else if !reserves(a) || !e.observationDue(a) || a.Handle != "waiting-worker" {
+					t.Fatalf("unsettled person wait lost observation: %+v", a)
+				}
+			}
+			reads := 0
+			e.cfg.Driver = &fixtureDriver{run: func(Action) (Observation, error) {
+				t.Error("executed after stop")
+				return Observation{}, ErrInvalid
+			}, observe: func(Action) (Observation, error) {
+				reads++
+				return Observation{Status: OutcomeSucceeded, EffectsSettled: true}, nil
+			}}
+			after := authorizationStep(t, e)
+			if settled && reads != 0 || !settled && reads != 1 {
+				t.Fatalf("unexpected observations: %d", reads)
+			}
+			for _, a := range after.Actions {
+				if a.ID == original.ID && reserves(a) {
+					t.Fatal("settled effect retained capacity")
+				}
+			}
+		})
 	}
 }

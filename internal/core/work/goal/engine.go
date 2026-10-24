@@ -19,6 +19,9 @@ import (
 var errNoChange = errors.New("work_no_change")
 var ErrNeedsPerson = errors.New("work_needs_person")
 
+// ErrPaused holds a queued continuation for resume instead of retiring it.
+var ErrPaused = errors.New("work_paused")
+
 // Driver is a trusted integration boundary, never model-provided code. It must
 // recheck authority and exact target at dispatch, and return observed evidence,
 // not a command exit code. Execute honors the durable action id as its receipt
@@ -1173,7 +1176,13 @@ func (e *Engine) CanContinue(ctx context.Context, id string) (bool, error) {
 				// A paused goal starts no new execution, including the automatic
 				// replacement of a failed worker; its existing effect is still
 				// observed and settled.
-				return g.State != GoalDone && g.State != GoalStopped && !g.Paused && !staleInputs(g, a), nil
+				if g.State == GoalDone || g.State == GoalStopped || staleInputs(g, a) {
+					return false, nil
+				}
+				if g.Paused {
+					return false, ErrPaused
+				}
+				return true, nil
 			}
 		}
 	}

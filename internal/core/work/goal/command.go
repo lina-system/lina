@@ -107,7 +107,7 @@ func (e *Engine) Command(ctx context.Context, c GoalCommand) (Goal, bool, error)
 			// Undispatched work never runs for a stopped goal, and its award must
 			// not keep a node slot reserved. A claimed effect settles by reading
 			// its outcome, so only queued work and an authority wait retire here.
-			if err := retireStoppedActions(v, &g); err != nil {
+			if err := retireStoppedActions(v, &g, event.At); err != nil {
 				return err
 			}
 		case CommandPause, CommandResume:
@@ -259,18 +259,33 @@ func hasChanges(v *View) bool { return len(v.changes) > 0 }
 // retireStoppedActions closes every undispatched award of a stopped goal in the
 // same transaction, so its reservations are released with the stop. A claimed
 // action keeps its receipt and reservation until its effect is observed.
-func retireStoppedActions(v *View, g *Goal) error {
+func retireStoppedActions(v *View, g *Goal, now int64) error {
 	for _, r := range v.Records("action") {
 		var a Action
 		if err := json.Unmarshal(r.Body, &a); err != nil {
 			return err
 		}
-		if a.GoalID != g.ID || a.ObserveActionID != "" || a.State != "queued" && a.State != "awaiting_authorization" {
+		if a.GoalID != g.ID {
 			continue
 		}
-		restoreUndispatchedTask(g, a)
-		a.State = "finished"
-		a.Superseded, a.RetirementReconciled = true, true
+		if a.State == "needs_person" {
+			// A stopped goal cannot receive a person's wake. A settled worker
+			// releases capacity; an uncertain effect must keep being observed.
+			if settledRefusal(a) {
+				a.State = "finished"
+				a.Superseded, a.RetirementReconciled = true, true
+			} else {
+				a.State = "unknown"
+				a.Deadline = now
+			}
+		} else {
+			if a.ObserveActionID != "" || a.State != "queued" && a.State != "awaiting_authorization" {
+				continue
+			}
+			restoreUndispatchedTask(g, a)
+			a.State = "finished"
+			a.Superseded, a.RetirementReconciled = true, true
+		}
 		if err := put(v, "action", a.ID, a); err != nil {
 			return err
 		}
