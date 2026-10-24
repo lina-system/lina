@@ -42,7 +42,7 @@ func inputVersion(g Goal, a Action) *InputVersion {
 		} else if a.Kind == PlanGoal && a.FailureKey != "" && a.Revision != "" {
 			v.TargetRevision = g.TargetRevision
 		}
-	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker, Observe, Decide:
+	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker, Observe, Decide, ReadSource:
 	}
 	return v
 }
@@ -67,7 +67,7 @@ func currentActionTarget(g Goal, a Action) bool {
 			return a.Revision == inputVersion(g, a).TargetRevision
 		}
 		return !g.DefinitionPending || a.Revision == g.RecordRevision
-	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker, Observe, Decide:
+	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker, Observe, Decide, ReadSource:
 		return true
 	}
 	return false
@@ -90,7 +90,7 @@ func effectSettled(a Action, o Observation) bool {
 		return o.Proof.Ref != "" && o.Proof.Revision == a.Revision
 	case Merge:
 		return o.Status == OutcomeSucceeded && o.Head == a.Revision && o.Proof.proves(o.Proof.Revision)
-	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker, InspectPR, Verify, Observe, Decide, PlanGoal, CheckCriterion:
+	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker, InspectPR, Verify, Observe, Decide, PlanGoal, CheckCriterion, ReadSource:
 		return false
 	}
 	return false
