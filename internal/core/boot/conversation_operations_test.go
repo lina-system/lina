@@ -188,6 +188,7 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				protocol.KindExportRequest: "replay", protocol.KindReplayRequest: "replay",
 				protocol.KindApprovalAnswer: "waiting", protocol.KindQuestionAnswer: "waiting", protocol.KindWaitingGet: "waiting",
 				protocol.KindWorkSwitchRequest: "work", protocol.KindWorkControlRequest: "work",
+				protocol.KindWorkLimitRequest: "work",
 				protocol.KindProgressGet: "worker_lanes",
 				protocol.KindChannelRequest: "channels", protocol.KindAgentTalkGet: "exchanges", protocol.KindAgentTalkExpand: "exchanges",
 				protocol.KindAgentRequest: "agents", protocol.KindMemoryRequest: "memory",
