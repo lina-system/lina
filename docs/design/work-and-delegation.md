@@ -2108,7 +2108,7 @@ cannot prevent other goals from expiring or Core from restarting.
 
 - **At the start, one line.** What LINA will do, what done means, any assumption it made, and what it will need from the person if that is already known. For example: "출장 준비 시작할게요. 일정·숙소·이동을 캘린더에 넣고 일정표를 만들어 둘게요. 숙소 결제만 확인받을게요."
 - **While it runs, nothing new.** The goal is a progress line and its tasks are rows of the running list. A landing of one task is a row change, not a notice. Only a row of "Waiting for me" can notify, under the notification rules of [surfaces.md](surfaces.md).
-- **At the end, one summary.** It begins with the outcome word (done, or stopped, or blocked with the reason), says in a line what changed for the person, and gives one clause of evidence per criterion in the person's words ("일정표는 자료에 있고, 캘린더 세 건 확인했고, 호텔 확인 메일 받았어요"). It lists what was handed to the person as their own 할 일. It names no issue, pull request, branch, check, path or id; those are in the Details of the goal's card.
+- **At the end, one summary.** It begins with the outcome word (done, or stopped, or blocked with the reason), says in a line what changed for the person, and gives one clause of evidence per criterion in the person's words ("일정표는 자료에 있고, 캘린더 세 건 확인했고, 호텔 확인 메일 받았어요"). It lists what was handed to the person as their own 할 일. It names no issue, pull request, branch, check, path or id; those are in the Details of the goal's card. Core refuses a start line or a summary that contains one of those, and does not publish it.
 
 ### Installed code-goal execution
 
