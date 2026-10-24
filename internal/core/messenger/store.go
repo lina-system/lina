@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -36,6 +37,9 @@ type Store struct {
 	materials ledger.Materials
 	removals  Removals
 	now       func() time.Time
+	// admit serializes admission of one source's reads, so a live event and a
+	// scheduled page for the same chat cannot both decide a message is new.
+	admit sync.Mutex
 }
 
 // Open composes the store. materials carries bodies above the ledger's inline
@@ -471,9 +475,60 @@ func (s *Store) pendingEffects(ctx context.Context, source Source, chat string) 
 // cursor and coverage in one canon transaction. Reading the same messages again
 // adds nothing. A message missing from a page changes nothing.
 func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from Cursor, page Page) (PageResult, error) {
+	return s.admitPage(ctx, source, chat, from, page, true)
+}
+
+// AdmitLive commits one pushed event without moving the chat's cursor or
+// recording coverage: the scheduled read owns progress, and a live event that
+// arrives twice adds nothing. A chat the source has not listed, or one the
+// person left out of sync, takes no record.
+func (s *Store) AdmitLive(ctx context.Context, source Source, event Event) (PageResult, error) {
+	if !validName(event.Chat) || (event.Message == nil) == (event.Deletion == nil) {
+		return PageResult{}, ErrInvalid
+	}
+	listed, inSync, err := s.ChatSync(ctx, source, event.Chat)
+	if err != nil {
+		return PageResult{}, err
+	}
+	if !listed || !inSync {
+		return PageResult{}, nil
+	}
+	page := Page{}
+	if event.Message != nil {
+		page.Messages = []Message{*event.Message}
+	}
+	if event.Deletion != nil {
+		page.Deletions = []Deletion{*event.Deletion}
+	}
+	return s.admitPage(ctx, source, event.Chat, "", page, false)
+}
+
+// ChatSync reports whether the source has listed a chat and whether the person
+// left it in sync. A live event for a chat no read covers waits for the next
+// listing instead of creating a record under it, and a chat left out of sync
+// takes no live records either.
+func (s *Store) ChatSync(ctx context.Context, source Source, chat string) (listed, inSync bool, err error) {
+	if !validName(source.Platform) || !validName(source.Account) || !validName(chat) {
+		return false, false, ErrInvalid
+	}
+	err = s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT 1, sync FROM messenger_chat WHERE platform=? AND account=? AND chat=?",
+			source.Platform, source.Account, chat).Scan(new(int), &inSync)
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, nil
+	}
+	return err == nil, inSync, err
+}
+
+// admitPage is the one admission path for a page and for a live event. progress
+// is false for live events, whose cursor and coverage belong to the read.
+func (s *Store) admitPage(ctx context.Context, source Source, chat string, from Cursor, page Page, progress bool) (PageResult, error) {
 	if !validName(source.Person) || !validName(source.Platform) || !validName(source.Account) || !validName(chat) {
 		return PageResult{}, ErrInvalid
 	}
+	s.admit.Lock()
+	defer s.admit.Unlock()
 	ids := make([]string, 0, len(page.Messages))
 	for _, message := range page.Messages {
 		if !validName(message.ID) || !message.Route.Valid() {
@@ -556,6 +611,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 	}
 	if len(plans) == 0 && len(repairs) == 0 {
 		// Nothing new: still record the completed read and advance the cursor.
+		if !progress {
+			return result, nil
+		}
 		return result, s.commitProgress(ctx, source, chat, from, page, 0)
 	}
 	if len(plans) == 0 {
@@ -564,6 +622,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 				if _, err := tx.ExecContext(ctx, `UPDATE messenger_record SET state='deleted',deleted_at=? WHERE platform=? AND account=? AND chat=? AND message=? AND state='live'`, s.now().UTC().Format(time.RFC3339Nano), source.Platform, source.Account, chat, id); err != nil {
 					return err
 				}
+			}
+			if !progress {
+				return nil
 			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, 0)
 		}); err != nil {
@@ -596,6 +657,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 				if _, err := tx.ExecContext(ctx, `UPDATE messenger_record SET state='deleted',deleted_at=? WHERE platform=? AND account=? AND chat=? AND message=? AND state='live'`, s.now().UTC().Format(time.RFC3339Nano), source.Platform, source.Account, chat, id); err != nil {
 					return err
 				}
+			}
+			if !progress {
+				return nil
 			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, len(plans))
 		}

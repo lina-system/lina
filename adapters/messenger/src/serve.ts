@@ -8,7 +8,7 @@
 import { Refusal, frame, MAX_LINE, parseRequest, type Request } from './protocol.ts';
 import { signedIn } from './driver.ts';
 import type { Driver, LiveEvent } from './driver.ts';
-import { author, chat as checkedChat, page as checkedPage } from './shape.ts';
+import { author, chat as checkedChat, live as checkedLive, page as checkedPage } from './shape.ts';
 
 const VERSION = 1;
 
@@ -93,7 +93,15 @@ export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream |
       case 'live': {
         const value = await driverOrOpen();
         stopLive();
-        liveStop = value.live((event: LiveEvent) => write(event));
+        liveStop = value.live((event: LiveEvent) => {
+          // A pushed event the add-on does not recognise fails the source
+          // rather than entering canon unchecked.
+          try {
+            write(checkedLive(event));
+          } catch {
+            write({ event: 'error', error: 'upstream_changed' });
+          }
+        });
         return { live: true };
       }
       default:

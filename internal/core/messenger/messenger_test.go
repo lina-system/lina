@@ -980,3 +980,178 @@ func TestScheduledReaderLeavesUnownedSourcesUntouched(t *testing.T) {
 		}
 	}
 }
+
+// A live event is admitted without moving the chat's cursor or writing
+// coverage, and the same event delivered twice adds nothing.
+func TestLiveEventIsStoredOnceWithoutProgress(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{message("m-1", messenger.RouteParticipant, f.now, "first")}, Next: "c1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	live := message("m-2", messenger.RoutePerson, f.now.Add(time.Minute), "pushed")
+	result, err := f.store.AdmitLive(t.Context(), source, messenger.Event{Chat: "dm-1", Message: &live})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Added != 1 {
+		t.Fatalf("live event added %d records", result.Added)
+	}
+	again, err := f.store.AdmitLive(t.Context(), source, messenger.Event{Chat: "dm-1", Message: &live})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Added != 0 || again.Updated != 0 {
+		t.Fatalf("a repeated live event added %d and updated %d", again.Added, again.Updated)
+	}
+	chats, err := f.store.Chats(t.Context(), "person", "discord", "account-1")
+	if err != nil || len(chats) != 1 || chats[0].Cursor != "c1" {
+		t.Fatalf("cursor moved: %+v %v", chats, err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_coverage WHERE chat='dm-1'"); n != 1 {
+		t.Fatalf("coverage rows = %d, want 1", n)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE chat='dm-1'"); n != 2 {
+		t.Fatalf("records = %d, want 2", n)
+	}
+}
+
+// A live deletion goes through the same retraction path as a page deletion.
+func TestLiveDeletionRetractsTheRecord(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{message("m-1", messenger.RouteParticipant, f.now, "gone")}, Next: "c1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.store.AdmitLive(t.Context(), source, messenger.Event{
+		Chat: "dm-1", Deletion: &messenger.Deletion{Message: "m-1", At: f.now.Add(time.Minute)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deleted != 1 {
+		t.Fatalf("live deletion removed %d records", result.Deleted)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE chat='dm-1' AND state='live'"); n != 0 {
+		t.Fatalf("live records = %d", n)
+	}
+}
+
+// liveAdapter pushes queued events to the service and reports the failure a
+// platform returns.
+type liveAdapter struct {
+	*fakeAdapter
+	events chan messenger.Event
+	fail   error
+}
+
+func (a *liveAdapter) Live(ctx context.Context, _ messenger.SourceID, deliver func(messenger.Event) error) error {
+	if a.fail != nil {
+		return a.fail
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case event := <-a.events:
+			if err := deliver(event); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (a *liveAdapter) Capabilities() messenger.Capabilities {
+	return messenger.Capabilities{LiveEvents: true}
+}
+
+func waitUntil(t *testing.T, what string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// Core runs a source's live subscription beside its scheduled reads, and a live
+// event lands in canon with its chat.
+func TestServiceDeliversLiveEventsIntoAdmission(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	adapter := &liveAdapter{
+		fakeAdapter: &fakeAdapter{chats: []messenger.Chat{{ID: "dm-1", Kind: "direct"}}},
+		events:      make(chan messenger.Event, 1),
+	}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, 10*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); service.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	live := message("live-1", messenger.RouteParticipant, f.now, "pushed")
+	adapter.events <- messenger.Event{Chat: "dm-1", Message: &live}
+	waitUntil(t, "the live record", func() bool {
+		return count(t, f.db, "SELECT count(*) FROM messenger_record WHERE chat='dm-1' AND message='live-1'") == 1
+	})
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account=? AND chat='dm-1'", source.Account); n != 1 {
+		t.Fatalf("records = %d, want 1", n)
+	}
+}
+
+// A chat the person left out of sync takes no live records.
+func TestLiveEventSkipsAChatLeftOutOfSync(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	if err := f.store.SetSwitches(t.Context(), source.Person, source.Platform, source.Account, "dm-1", messenger.Switches{Sync: false, Learn: true, Embed: true}); err != nil {
+		t.Fatal(err)
+	}
+	live := message("live-1", messenger.RouteParticipant, f.now, "pushed")
+	result, err := f.store.AdmitLive(t.Context(), source, messenger.Event{Chat: "dm-1", Message: &live})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Added != 0 {
+		t.Fatalf("a chat out of sync took %d records", result.Added)
+	}
+}
+
+// A live subscription that fails names the cause on the source without stopping
+// the scheduled reads.
+func TestLiveFailureMarksTheSourceFailing(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	adapter := &liveAdapter{
+		fakeAdapter: &fakeAdapter{chats: []messenger.Chat{{ID: "dm-1", Kind: "direct"}}},
+		events:      make(chan messenger.Event),
+		fail:        errors.New("add-on exited"),
+	}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, 10*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); service.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	waitUntil(t, "the failing source", func() bool {
+		return count(t, f.db, "SELECT count(*) FROM messenger_source WHERE account=? AND state='failing'", source.Account) == 1
+	})
+	if cause := readFailure(t, f, source.Account); !strings.Contains(cause, "add-on exited") {
+		t.Fatalf("failure cause = %q", cause)
+	}
+}
+
+func readFailure(t *testing.T, f *fixture, account string) string {
+	t.Helper()
+	var cause string
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT failure FROM messenger_source WHERE account=?", account).Scan(&cause)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return cause
+}

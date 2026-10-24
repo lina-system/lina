@@ -21,8 +21,8 @@ export const READ_METHODS: Record<string, readonly string[]> = {
     'listUsers', 'DiscordCredentialManager', 'getToken', 'setToken', 'loginWithRemoteAuth',
   ],
   whatsapp: [
-    'WhatsAppClient', 'login', 'listChats', 'getMessages', 'getProfile', 'close',
-    'connectForQR', 'connectForPairing',
+    'WhatsAppClient', 'login', 'connect', 'listChats', 'getMessages', 'getProfile',
+    'connectForPairing', 'close',
   ],
   line: [
     'LineClient', 'login', 'getChats', 'getMessages', 'getProfile', 'getFriends', 'close',

@@ -4,6 +4,7 @@ package messenger
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -20,6 +21,17 @@ type Service struct {
 
 	mu       sync.Mutex
 	lastSync map[string]time.Time
+	// live holds one subscription per source account, so a platform sees one
+	// session. A source that stops being connected has its subscription
+	// cancelled. token identifies the current subscription, so a finishing one
+	// never removes its replacement.
+	live     map[string]liveSub
+	sequence uint64
+}
+
+type liveSub struct {
+	stop  context.CancelFunc
+	token uint64
 }
 
 // NewService composes the sync loop. adapters are keyed by the adapter name a
@@ -45,16 +57,18 @@ func NewServiceWithResolver(store *Store, resolve Resolver, interval time.Durati
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	return &Service{store: store, resolve: resolve, interval: interval, lastSync: map[string]time.Time{}}
+	return &Service{store: store, resolve: resolve, interval: interval, lastSync: map[string]time.Time{}, live: map[string]liveSub{}}
 }
 
 // Store is the registry and admission store the service reads into.
 func (s *Service) Store() *Store { return s.store }
 
-// Run reads every connected source until ctx ends. It never returns an error:
-// a failing source is recorded in its own registry row.
+// Run reads every connected source and follows the live events of each one that
+// has them, until ctx ends. It never returns an error: a failing source is
+// recorded in its own registry row.
 func (s *Service) Run(ctx context.Context) {
 	s.SyncAll(ctx, nil)
+	go s.watchAsync(ctx)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
@@ -65,6 +79,128 @@ func (s *Service) Run(ctx context.Context) {
 			s.SyncAll(ctx, nil)
 		}
 	}
+}
+
+func liveKey(source Source) string { return source.Platform + "\x00" + source.Account }
+
+// watchAsync keeps one live subscription per connected source that offers live
+// events. A subscription whose source is no longer connected is cancelled; a
+// platform whose subscription ends is retried on the next interval, and one
+// that never returns (the platform without live events) is not started.
+func (s *Service) watchAsync(ctx context.Context) {
+	s.reconcileLive(ctx)
+	ticker := time.NewTicker(s.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			s.stopLive()
+			return
+		case <-ticker.C:
+			s.reconcileLive(ctx)
+		}
+	}
+}
+
+func (s *Service) reconcileLive(ctx context.Context) {
+	sources, err := s.store.allSources(ctx)
+	if err != nil {
+		return
+	}
+	wanted := map[string]Source{}
+	for _, source := range sources {
+		if source.State != StateConnected {
+			continue
+		}
+		adapter, ok := s.adapterFor(source)
+		if !ok || !adapter.Capabilities().LiveEvents {
+			continue
+		}
+		wanted[liveKey(source)] = source
+	}
+	s.mu.Lock()
+	for key, sub := range s.live {
+		if _, keep := wanted[key]; !keep {
+			sub.stop()
+			delete(s.live, key)
+		}
+	}
+	for key, source := range wanted {
+		if _, running := s.live[key]; running {
+			continue
+		}
+		run, stop := context.WithCancel(ctx)
+		s.sequence++
+		token := s.sequence
+		s.live[key] = liveSub{stop: stop, token: token}
+		go s.watch(run, source, token)
+	}
+	s.mu.Unlock()
+}
+
+func (s *Service) stopLive() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, sub := range s.live {
+		sub.stop()
+		delete(s.live, key)
+	}
+}
+
+// watch follows one source's live events until the subscription ends. A
+// subscription that fails names the cause on that source and leaves the next
+// interval to retry it; every other source and the conversation keep working.
+func (s *Service) watch(ctx context.Context, source Source, token uint64) {
+	adapter, ok := s.adapterFor(source)
+	if !ok {
+		return
+	}
+	err := adapter.Live(ctx, sourceID(source), func(event Event) error {
+		return s.deliverLive(ctx, source, adapter, event)
+	})
+	s.mu.Lock()
+	if current, ok := s.live[liveKey(source)]; ok && current.token == token {
+		delete(s.live, liveKey(source))
+	}
+	s.mu.Unlock()
+	if err != nil && ctx.Err() == nil {
+		_ = s.store.MarkFailure(context.WithoutCancel(ctx), source.Person, source.Platform, source.Account, failureCause(err))
+	}
+}
+
+// deliverLive admits one pushed event. A chat the source has not listed yet is
+// listed first; if it is still absent the event is dropped, because the next
+// page read of that chat covers it and a rising interval cannot lose it.
+func (s *Service) deliverLive(ctx context.Context, source Source, adapter Adapter, event Event) error {
+	if event.Chat == "" || (event.Message == nil) == (event.Deletion == nil) {
+		return fmt.Errorf("%w: live event", ErrInvalid)
+	}
+	listed, inSync, err := s.store.ChatSync(ctx, source, event.Chat)
+	if err != nil {
+		return err
+	}
+	if !listed {
+		chats, err := adapter.ListChats(ctx, sourceID(source))
+		if err != nil {
+			return err
+		}
+		if err := s.store.UpsertChats(ctx, source, chats); err != nil {
+			return err
+		}
+		if listed, inSync, err = s.store.ChatSync(ctx, source, event.Chat); err != nil {
+			return err
+		}
+	}
+	if !listed || !inSync {
+		return nil
+	}
+	_, err = s.store.AdmitLive(ctx, source, event)
+	if errors.Is(err, ErrPageWaiting) {
+		// The scheduled read holds the page until the write settles; its cursor
+		// has not moved, so the message is read again then.
+		return nil
+	}
+	return err
 }
 
 // SyncAll reads each connected source that has an adapter. now overrides the

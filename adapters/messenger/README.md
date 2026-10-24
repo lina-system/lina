@@ -15,12 +15,20 @@ package uses its included prebuild without an install script.
 Platform drivers and their account connection screens are implemented in #1071,
 #1085, #1086 and #1087. This package supplies their read protocol and supervisor;
 unregistered platforms fail closed with `unsupported_platform`.
+`src/whatsapp.ts` is the WhatsApp driver: a linked device, pairing-code sign-in,
+the history the phone pushed at link time, and a poll of the SDK's per-chat
+buffer for live messages. Its coverage and cursor rules are in
+[the WhatsApp source](../../docs/design/integrations.md#whatsapp-source) and
+[the Go notes](../../internal/core/messenger/whatsapp/REFERENCE.md).
 
 `main.ts` opens the platform driver named by `LINA_MESSENGER_ADDON_PLATFORM`
 (`kakaotalk`, `discord`, `whatsapp` or `line`) for the account in
 `LINA_MESSENGER_ADDON_ACCOUNT`, keeping its session under
 `AGENT_MESSENGER_CONFIG_DIR`. `fixture-main.ts` answers from a recorded
 synthetic platform for the tests and Core's end-to-end run; it contacts nothing.
+`fixture-whatsapp-main.ts` does the same for the real WhatsApp driver, with a
+fake SDK that replays `whatsapp.json`: what the phone pushed, then live messages
+at recorded offsets.
 
 ## Verification
 

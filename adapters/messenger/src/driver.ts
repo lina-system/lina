@@ -8,6 +8,9 @@ import type { Author, Capabilities, Chat, Driver, LiveEvent, Page, SignInStep } 
 export type DriverOptions = {
   // configDir is the add-on's data directory for this account (0700).
   configDir: string;
+  // liveMs is how often a driver whose platform pushes nothing new re-reads
+  // what it has. A driver with a real push subscription ignores it.
+  liveMs?: number;
   now?: () => Date;
 };
 

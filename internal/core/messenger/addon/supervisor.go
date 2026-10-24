@@ -246,6 +246,9 @@ func (p *process) call(ctx context.Context, op string, arguments map[string]any,
 			case "upstream_changed":
 				return ErrUpstreamChanged
 			}
+			if strings.HasPrefix(response.Error, "source_") {
+				return fmt.Errorf("%w: %s", ErrRefused, response.Error)
+			}
 			return fmt.Errorf("%w: %s", ErrStopped, response.Error)
 		}
 		if result == nil {

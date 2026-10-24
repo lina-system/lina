@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/messenger"
+	"github.com/thisisjun786/lina/internal/core/messenger/whatsapp"
 )
 
 // MessengerConfig supplies the adapters Core reads messenger sources with. The
@@ -67,6 +68,11 @@ func resolveMessenger(cfg *MessengerConfig) messenger.Resolver {
 		adapter, err := cfg.Addon.Addon(source.Platform, source.Account)
 		if err != nil || adapter == nil {
 			return nil, false
+		}
+		// A platform that states its own capabilities and refusal in Go wears
+		// them in front of the add-on's platform-wide set.
+		if source.Platform == whatsapp.Platform {
+			return whatsapp.Wrap(adapter), true
 		}
 		return adapter, true
 	}

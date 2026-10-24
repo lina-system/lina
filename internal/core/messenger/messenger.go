@@ -100,8 +100,11 @@ type Deletion struct {
 	At      time.Time
 }
 
-// Event is one live event the platform pushed: a message or a deletion.
+// Event is one live event the platform pushed: a message or a deletion, in the
+// chat it belongs to. A live frame is the one place a record arrives without a
+// page that already names its chat.
 type Event struct {
+	Chat     string
 	Message  *Message
 	Deletion *Deletion
 }

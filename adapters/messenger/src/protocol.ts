@@ -53,7 +53,11 @@ export type Prompt = { key: string; kind: 'text' | 'secret'; text: string };
 // the value and keeps none of it.
 export type SignInStep = { state: SignInState; prompt?: Prompt; show?: { kind: 'url' | 'code'; value: string } };
 
-export type LiveEvent = { event: 'message'; message: Message } | { event: 'deletion'; deletion: Deletion };
+// A live event names its chat: live frames are the one place a message arrives
+// without a page that already names the chat.
+export type LiveEvent =
+  | { event: 'message'; chat: string; message: Message }
+  | { event: 'deletion'; chat: string; deletion: Deletion };
 
 export type Driver = {
   readonly platform: string;
@@ -98,8 +102,11 @@ export type Request =
   | { id: string; op: 'members'; chat: string }
   | { id: string; op: Exclude<Op, 'answer' | 'page' | 'members'> };
 
+// A platform identifier. Some platforms give chats and people addresses rather
+// than plain ids, so `@`, `+` and `.` are part of it; the length and the
+// printable set are what keep a frame small and unambiguous.
 const identifier = (value: unknown): value is string =>
-  typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(value);
+  typeof value === 'string' && /^[A-Za-z0-9_.:@+-]{1,128}$/.test(value);
 
 // parseRequest refuses anything outside the fixed table: an unknown operation,
 // an unknown field, a missing identifier or a value of the wrong type.

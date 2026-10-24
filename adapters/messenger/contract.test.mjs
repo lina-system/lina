@@ -127,9 +127,11 @@ test('live events reach the caller until the subscription stops', async t => {
   const h = harness(t);
   await h.send({ id: 'l', op: 'live' });
   await h.send({ id: 'ping', op: 'whoami' });
-  h.driver.emit({ event: 'message', message: { id: 'm-9', author: { id: 'u1', name: 'Someone' }, route: 'external_participant', at: '2026-10-24T09:00:00.000Z', text: 'live' } });
+  h.driver.emit({ event: 'message', chat: 'dm-1', message: { id: 'm-9', author: { id: 'u1', name: 'Someone' }, route: 'external_participant', at: '2026-10-24T09:00:00.000Z', text: 'live' } });
   for (let i = 0; i < 400 && !h.lines().some(line => line.event === 'message'); i++) await new Promise(resolve => setTimeout(resolve, 5));
-  assert.deepEqual(h.lines().find(line => line.event === 'message').message.id, 'm-9');
+  const line = h.lines().find(entry => entry.event === 'message');
+  assert.deepEqual(line.message.id, 'm-9');
+  assert.deepEqual(line.chat, 'dm-1');
   await h.send({ id: 's', op: 'stop' });
   assert.equal(h.driver.delivered.length, 1);
 });

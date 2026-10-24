@@ -38,6 +38,11 @@ var ErrAttachmentFetch = errors.New("attachment fetch not offered by the messeng
 // ErrStopped reports that the add-on exited and was not restarted.
 var ErrStopped = errors.New("messenger add-on stopped")
 
+// ErrRefused reports that the add-on declined with a platform cause code, such
+// as source_forbidden. The process is healthy, so the source fails with that
+// cause instead of being restarted for it.
+var ErrRefused = errors.New("messenger add-on refused")
+
 // Capabilities is the add-on's own descriptor. Each platform driver narrows it.
 func Capabilities() messenger.Capabilities {
 	return messenger.Capabilities{

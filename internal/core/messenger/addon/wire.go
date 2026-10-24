@@ -27,11 +27,15 @@ type wireResponse struct {
 
 type wireEvent struct {
 	Event    string        `json:"event"`
+	Chat     string        `json:"chat"`
 	Message  *wireMessage  `json:"message"`
 	Deletion *wireDeletion `json:"deletion"`
 }
 
 func (e wireEvent) event() (messenger.Event, error) {
+	if !validIdentifier(e.Chat) {
+		return messenger.Event{}, fmt.Errorf("%w: live chat", ErrUpstreamChanged)
+	}
 	switch e.Event {
 	case "message":
 		if e.Message == nil || e.Deletion != nil {
@@ -41,7 +45,7 @@ func (e wireEvent) event() (messenger.Event, error) {
 		if err != nil {
 			return messenger.Event{}, err
 		}
-		return messenger.Event{Message: &message}, nil
+		return messenger.Event{Chat: e.Chat, Message: &message}, nil
 	case "deletion":
 		if e.Deletion == nil || e.Message != nil {
 			return messenger.Event{}, fmt.Errorf("%w: live deletion", ErrUpstreamChanged)
@@ -50,7 +54,7 @@ func (e wireEvent) event() (messenger.Event, error) {
 		if err != nil {
 			return messenger.Event{}, err
 		}
-		return messenger.Event{Deletion: &deletion}, nil
+		return messenger.Event{Chat: e.Chat, Deletion: &deletion}, nil
 	}
 	return messenger.Event{}, fmt.Errorf("%w: live event %q", ErrUpstreamChanged, e.Event)
 }

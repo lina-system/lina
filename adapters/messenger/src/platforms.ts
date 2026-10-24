@@ -8,6 +8,7 @@
 // and only that source fails.
 import { Refusal, type Driver } from './protocol.ts';
 import type { DriverFactory, DriverOptions } from './driver.ts';
+import { whatsappDriver } from './whatsapp.ts';
 
 export type PlatformName = 'kakaotalk' | 'discord' | 'whatsapp' | 'line';
 
@@ -22,7 +23,12 @@ export type Registration = {
   load: () => Promise<unknown>;
 };
 
-const DRIVERS: Partial<Record<PlatformName, Registration>> = {};
+const DRIVERS: Partial<Record<PlatformName, Registration>> = {
+  whatsapp: {
+    open: (sdk, options) => whatsappDriver(sdk, options),
+    load: () => import('agent-messenger/whatsapp'),
+  },
+};
 
 export function registered(platform: string): platform is PlatformName {
   return Object.hasOwn(PLATFORMS, platform) && Object.hasOwn(DRIVERS, platform);
