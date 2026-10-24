@@ -13,14 +13,44 @@ default; no build step. Optional native packages are omitted; the locked LevelDB
 package uses its included prebuild without an install script.
 
 Platform drivers and their account connection screens are implemented in #1071,
-#1085, #1086 and #1087. This package supplies their read protocol and supervisor;
-unregistered platforms fail closed with `unsupported_platform`.
+#1085, #1086 and #1087; Discord's personal account (#1085) is registered. This
+package supplies their read protocol and supervisor; unregistered platforms fail
+closed with `unsupported_platform`.
 
 `main.ts` opens the platform driver named by `LINA_MESSENGER_ADDON_PLATFORM`
 (`kakaotalk`, `discord`, `whatsapp` or `line`) for the account in
 `LINA_MESSENGER_ADDON_ACCOUNT`, keeping its session under
 `AGENT_MESSENGER_CONFIG_DIR`. `fixture-main.ts` answers from a recorded
-synthetic platform for the tests and Core's end-to-end run; it contacts nothing.
+synthetic platform for the tests and Core's end-to-end run;
+`discord-fixture-main.ts` runs the real Discord driver over a recorded SDK, so
+Core's end-to-end run reads guilds, direct messages and edits without a token.
+Neither contacts a platform.
+
+## Discord personal
+
+`src/discord.ts` maps the add-on's reads onto the pinned SDK's Discord slice:
+`listServers` and `listChannels` for guild text channels, `listDMChannels` for
+direct and group messages, `getMessages` for a chat's window, `listUsers` for a
+guild's members and the DM recipients for a direct message's. A cursor names the
+newest message snowflake Core has; the next read takes the window around it, so
+an edit arrives as a later `edited_timestamp`. The platform reports no deletions
+to a personal account and no live events are offered, so sync polls every five
+minutes.
+
+Sign-in is the QR code only. `signIn` opens the client with the token in the
+add-on's own data directory and never calls `login()` without one, which would
+extract a token from the desktop app or a browser; `beginSignIn` starts
+`loginWithRemoteAuth` and shows the QR payload, and the session token it returns
+is written only there. A torn or revoked session returns `needs_sign_in`.
+
+The driver writes nothing: no send, edit, reaction, read-state, presence or
+typing call exists in its source, and `src/allowlist.ts` fails the contract test
+if one is added. `discord.test.mjs` records every SDK entry point the driver
+reaches over synthetic responses and covers guild and DM paging, edits and a
+revoked session.
+
+The reference read before the port, and what was read from it, is in
+[REFERENCE.md](REFERENCE.md).
 
 ## Verification
 

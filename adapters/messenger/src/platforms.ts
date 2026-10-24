@@ -8,6 +8,7 @@
 // and only that source fails.
 import { Refusal, type Driver } from './protocol.ts';
 import type { DriverFactory, DriverOptions } from './driver.ts';
+import { discordDriver } from './discord.ts';
 
 export type PlatformName = 'kakaotalk' | 'discord' | 'whatsapp' | 'line';
 
@@ -22,7 +23,11 @@ export type Registration = {
   load: () => Promise<unknown>;
 };
 
-const DRIVERS: Partial<Record<PlatformName, Registration>> = {};
+const DRIVERS: Partial<Record<PlatformName, Registration>> = {
+  // The SDK slice is loaded on first open, because the platform's module is the
+  // only one that may touch it.
+  discord: { load: () => import('agent-messenger/discord'), open: (sdk, options) => discordDriver(sdk, options) },
+};
 
 export function registered(platform: string): platform is PlatformName {
   return Object.hasOwn(PLATFORMS, platform) && Object.hasOwn(DRIVERS, platform);

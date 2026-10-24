@@ -234,6 +234,37 @@ ORDER BY chat`, platform, account, person)
 	return chats, err
 }
 
+// ChatsReadElsewhere reports the chats of the person's other sources of one
+// platform that reach it through the platform's own API. A personal account
+// leaves those chats to that source, so a chat two ways in would reach is read
+// once and its messages keep one record identity. A disconnected source no
+// longer holds a chat.
+func (s *Store) ChatsReadElsewhere(ctx context.Context, person, platform, except string) (map[string]bool, error) {
+	if !validName(person) || !validName(platform) || !validName(except) {
+		return nil, ErrInvalid
+	}
+	read := map[string]bool{}
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT c.chat FROM messenger_chat c
+JOIN messenger_source o ON o.platform=c.platform AND o.account=c.account
+WHERE c.platform=? AND o.person=? AND o.mode=? AND o.state<>? AND c.account<>?`,
+			platform, person, string(ModeOfficial), string(StateDisconnected), except)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var chat string
+			if err := rows.Scan(&chat); err != nil {
+				return err
+			}
+			read[chat] = true
+		}
+		return rows.Err()
+	})
+	return read, err
+}
+
 // UpsertChats adds newly listed chats and refreshes their names. The person's
 // switches and the committed cursor are never overwritten by a listing.
 func (s *Store) UpsertChats(ctx context.Context, source Source, chats []Chat) error {

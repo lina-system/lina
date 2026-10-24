@@ -17,7 +17,7 @@ export const READ_METHODS: Record<string, readonly string[]> = {
     'setAccount', 'setCurrentAccount', 'clearPendingLogin',
   ],
   discord: [
-    'DiscordClient', 'login', 'testAuth', 'listChannels', 'listDMChannels', 'getMessages',
+    'DiscordClient', 'login', 'testAuth', 'listServers', 'listChannels', 'listDMChannels', 'getMessages',
     'listUsers', 'DiscordCredentialManager', 'getToken', 'setToken', 'loginWithRemoteAuth',
   ],
   whatsapp: [

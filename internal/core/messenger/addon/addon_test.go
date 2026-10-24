@@ -49,6 +49,11 @@ func (s *script) Run(ctx context.Context, l lease.Lease, command sandbox.Command
 		s.requests = append(s.requests, request)
 		op, _ := request["op"].(string)
 		queue := s.responses[op]
+		if len(queue) == 0 && op == "capabilities" {
+			// The program always answers its own descriptor; a test that
+			// queues one replaces this.
+			queue = []string{`{"id":"","ok":true,"result":{"historyDepth":"platform-window","cursorKind":"opaque","edits":true,"deletions":true,"liveEvents":true,"intervalSeconds":900,"readWindowSeconds":172800}}`}
+		}
 		if len(queue) == 0 {
 			s.mu.Unlock()
 			continue
@@ -112,6 +117,45 @@ func TestSignInAndChatsReadThroughTheAddon(t *testing.T) {
 	}
 	if s.count("signIn") != 1 || s.count("listChats") != 1 {
 		t.Fatalf("requests = %+v", s.requests)
+	}
+}
+
+// The platform's own descriptor replaces the add-on's default once its child
+// answers, and a child that cannot answer leaves the default in place.
+func TestPlatformDescriptorReplacesTheDefault(t *testing.T) {
+	t.Parallel()
+	s := &script{responses: map[string][]string{
+		"capabilities": {`{"id":"","ok":true,"result":{"historyDepth":"latest window","cursorKind":"snowflake","edits":true,"deletions":false,"liveEvents":false,"intervalSeconds":300,"readWindowSeconds":86400}}`},
+		"signIn":       {`{"id":"","ok":true,"result":{"state":"signed_in"}}`},
+	}}
+	adapter := session(t, s).Adapter()
+	if caps := adapter.Capabilities(); caps.Interval != addon.Capabilities().Interval {
+		t.Fatalf("before the first call: %v", caps)
+	}
+	if _, err := adapter.SignIn(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}); err != nil {
+		t.Fatal(err)
+	}
+	caps := adapter.Capabilities()
+	if caps.CursorKind != "snowflake" || caps.Interval != 5*time.Minute || caps.ReadWindow != 24*time.Hour || caps.Deletions {
+		t.Fatalf("platform descriptor: %+v", caps)
+	}
+	if s.count("capabilities") != 1 {
+		t.Fatalf("capabilities requests = %d, want 1 per child", s.count("capabilities"))
+	}
+}
+
+func TestMalformedPlatformDescriptorKeepsTheDefault(t *testing.T) {
+	t.Parallel()
+	s := &script{responses: map[string][]string{
+		"capabilities": {`{"id":"","ok":true,"result":{"historyDepth":"all","cursorKind":"opaque","edits":true,"deletions":false,"liveEvents":false,"intervalSeconds":5,"readWindowSeconds":86400}}`},
+		"signIn":       {`{"id":"","ok":true,"result":{"state":"signed_in"}}`},
+	}}
+	adapter := session(t, s).Adapter()
+	if _, err := adapter.SignIn(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if caps := adapter.Capabilities(); caps.Interval != addon.Capabilities().Interval {
+		t.Fatalf("out-of-range interval accepted: %+v", caps)
 	}
 }
 
@@ -338,8 +382,22 @@ func TestSignInRelaysAnAnswerToTheSameAccountSession(t *testing.T) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.exits != 1 || len(s.requests) != 3 || s.requests[1]["value"] != "synthetic-pin" {
-		t.Fatalf("relay did not use one session")
+	if s.exits != 1 {
+		t.Fatalf("relay started %d children", s.exits)
+	}
+	relayed := make([]string, 0, 3)
+	for _, request := range s.requests {
+		op, _ := request["op"].(string)
+		if op == "capabilities" {
+			continue
+		}
+		if op == "answer" && request["value"] != "synthetic-pin" {
+			t.Fatalf("answer carried %v", request["value"])
+		}
+		relayed = append(relayed, op)
+	}
+	if strings.Join(relayed, ",") != "beginSignIn,answer,whoami" {
+		t.Fatalf("relay order = %v", relayed)
 	}
 }
 

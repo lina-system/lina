@@ -55,6 +55,12 @@ export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream |
     switch (request.op) {
       case 'hello':
         return { version: VERSION, platform: addon.platform, account: addon.account };
+      case 'capabilities': {
+        // The platform's own descriptor: how far back it reads, what its cursor
+        // is, and the interval and read window Core should use for it.
+        const value = await driverOrOpen();
+        return value.capabilities();
+      }
       case 'quit':
         stopLive();
         setImmediate(() => process.exit(0));

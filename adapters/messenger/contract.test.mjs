@@ -50,6 +50,7 @@ test('every exposed operation answers with a recorded synthetic response', async
   const h = harness(t);
   const expected = {
     hello: { version: 1, platform: 'fixture', account: 'account-1' },
+    capabilities: { historyDepth: 'all', cursorKind: 'opaque', edits: true, deletions: false, liveEvents: false, intervalSeconds: 900, readWindowSeconds: 172800 },
     signIn: { state: 'signed_in' },
     beginSignIn: { state: 'signed_in' },
     listChats: { chats: [{ id: 'dm-1', name: 'Direct', kind: 'direct' }] },

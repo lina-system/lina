@@ -33,6 +33,10 @@ const (
 	StateDisconnected State = "disconnected"
 )
 
+// AddonAdapter is the name a source records when the messenger add-on reads it.
+// The add-on carries every unofficial platform.
+const AddonAdapter = "messenger-addon"
+
 // Mode is whether the adapter uses the platform's documented API.
 type Mode string
 

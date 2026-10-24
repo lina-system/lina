@@ -176,7 +176,14 @@ func (a *Adapter) FetchAttachment(_ context.Context, id messenger.SourceID, _, _
 	return nil, ErrAttachmentFetch
 }
 
-func (a *Adapter) Capabilities() messenger.Capabilities { return Capabilities() }
+// Capabilities is the platform's own descriptor once the add-on has reported
+// it, and the add-on's default before that.
+func (a *Adapter) Capabilities() messenger.Capabilities {
+	if caps := a.process.caps.Load(); caps != nil {
+		return *caps
+	}
+	return Capabilities()
+}
 
 // Manager keeps one add-on session per account for as long as Core runs, so the
 // platform sees one session per account and a second sync does not restart it.

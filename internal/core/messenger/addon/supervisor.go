@@ -160,6 +160,9 @@ type process struct {
 	platform, account string
 	cfg               Config
 	sequence          atomic.Uint64
+	// caps is the platform's own descriptor, read once from the child that
+	// first started. Until then the add-on's default describes it.
+	caps atomic.Pointer[messenger.Capabilities]
 
 	mu       sync.Mutex
 	child    *child
@@ -210,6 +213,19 @@ func (p *process) call(ctx context.Context, op string, arguments map[string]any,
 	if err != nil {
 		return err
 	}
+	return p.exchange(ctx, current, op, arguments, result, exchangeOptions{timeout: p.cfg.RequestTimeout, counts: true})
+}
+
+// exchangeOptions bound one request. A zero timeout leaves the caller's context
+// as the only deadline, and counts false leaves the restart bound alone, so a
+// best-effort request cannot retire a working child or mask a failure.
+type exchangeOptions struct {
+	timeout time.Duration
+	counts  bool
+}
+
+// exchange sends one request to a running child and reads its answer.
+func (p *process) exchange(ctx context.Context, current *child, op string, arguments map[string]any, result any, options exchangeOptions) error {
 	id := fmt.Sprintf("r%d", p.sequence.Add(1))
 	request := map[string]any{"id": id, "op": op}
 	for key, value := range arguments {
@@ -232,13 +248,19 @@ func (p *process) call(ctx context.Context, op string, arguments map[string]any,
 		current.fail(err)
 		return fmt.Errorf("%w: %v", ErrStopped, err)
 	}
-	timer := time.NewTimer(p.cfg.RequestTimeout)
-	defer timer.Stop()
+	var expired <-chan time.Time
+	if options.timeout > 0 {
+		timer := time.NewTimer(options.timeout)
+		defer timer.Stop()
+		expired = timer.C
+	}
 	select {
 	case response := <-waiter:
-		p.mu.Lock()
-		p.failures = 0
-		p.mu.Unlock()
+		if options.counts {
+			p.mu.Lock()
+			p.failures = 0
+			p.mu.Unlock()
+		}
 		if !response.OK {
 			switch response.Error {
 			case "unsupported_platform":
@@ -257,7 +279,7 @@ func (p *process) call(ctx context.Context, op string, arguments map[string]any,
 		return decodeStrict(response.Result, result)
 	case <-current.done:
 		return errors.Join(ErrStopped, current.failure())
-	case <-timer.C:
+	case <-expired:
 		current.fail(errors.New("request timed out"))
 		return fmt.Errorf("%w: request timed out", ErrStopped)
 	case <-ctx.Done():
@@ -338,10 +360,28 @@ func (p *process) acquire(ctx context.Context) (*child, error) {
 			}
 			p.child = next
 			p.mu.Unlock()
+			p.prefetch(ctx, next)
 			return next, nil
 		}
 		p.mu.Unlock()
 	}
+}
+
+// prefetch reads the platform's descriptor from a freshly started child. It is
+// best effort: a child that cannot answer leaves the add-on's default, and the
+// source's own reads still report the cause.
+func (p *process) prefetch(ctx context.Context, current *child) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var wire wireCapabilities
+	if err := p.exchange(ctx, current, "capabilities", nil, &wire, exchangeOptions{}); err != nil {
+		return
+	}
+	capabilities, err := wire.capabilities()
+	if err != nil {
+		return
+	}
+	p.caps.Store(&capabilities)
 }
 
 // wait sleeps the backoff before the next start. The first start does not wait.

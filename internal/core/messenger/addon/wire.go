@@ -193,6 +193,36 @@ func (p wirePage) page() (messenger.Page, error) {
 	return page, nil
 }
 
+// wireCapabilities is the platform's own descriptor. Its interval and read
+// window are bounded, so a wrong value cannot stop Core reading that source.
+type wireCapabilities struct {
+	HistoryDepth      string `json:"historyDepth"`
+	CursorKind        string `json:"cursorKind"`
+	Edits             bool   `json:"edits"`
+	Deletions         bool   `json:"deletions"`
+	LiveEvents        bool   `json:"liveEvents"`
+	IntervalSeconds   int64  `json:"intervalSeconds"`
+	ReadWindowSeconds int64  `json:"readWindowSeconds"`
+}
+
+func (c wireCapabilities) capabilities() (messenger.Capabilities, error) {
+	if !validIdentifier(c.HistoryDepth) || !validIdentifier(c.CursorKind) {
+		return messenger.Capabilities{}, fmt.Errorf("%w: capabilities", ErrUpstreamChanged)
+	}
+	if c.IntervalSeconds < 60 || c.IntervalSeconds > 86_400 || c.ReadWindowSeconds < 0 || c.ReadWindowSeconds > 30*86_400 {
+		return messenger.Capabilities{}, fmt.Errorf("%w: capabilities window", ErrUpstreamChanged)
+	}
+	return messenger.Capabilities{
+		HistoryDepth: c.HistoryDepth,
+		CursorKind:   c.CursorKind,
+		Edits:        c.Edits,
+		Deletions:    c.Deletions,
+		LiveEvents:   c.LiveEvents,
+		Interval:     time.Duration(c.IntervalSeconds) * time.Second,
+		ReadWindow:   time.Duration(c.ReadWindowSeconds) * time.Second,
+	}, nil
+}
+
 func validIdentifier(value string) bool {
 	if value == "" || len(value) > 512 {
 		return false
@@ -237,6 +267,7 @@ func requiredResult(op string, raw []byte) error {
 		"page":      {"messages", "deletions", "next", "hasMore"},
 		"listChats": {"chats"}, "members": {"members"}, "signIn": {"state"},
 		"beginSignIn": {"state"}, "answer": {"state"}, "whoami": {"author"},
+		"capabilities": {"historyDepth", "cursorKind", "edits", "deletions", "liveEvents", "intervalSeconds", "readWindowSeconds"},
 	}
 	var value map[string]json.RawMessage
 	if json.Unmarshal(raw, &value) != nil || value == nil {

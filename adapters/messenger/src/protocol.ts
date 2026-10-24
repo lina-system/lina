@@ -71,13 +71,15 @@ export type Driver = {
 // OPS is the whole dispatch table. Every entry is a read, a sign-in step or a
 // control request; there is no operation that names an SDK method.
 export const OPS = Object.freeze([
-  'hello', 'signIn', 'beginSignIn', 'answer', 'listChats', 'page', 'members', 'whoami', 'live', 'stop', 'quit',
+  'hello', 'capabilities', 'signIn', 'beginSignIn', 'answer', 'listChats', 'page', 'members', 'whoami', 'live',
+  'stop', 'quit',
 ] as const);
 
 export type Op = (typeof OPS)[number];
 
 const FIELDS: Record<Op, readonly string[]> = {
   hello: ['id', 'op'],
+  capabilities: ['id', 'op'],
   signIn: ['id', 'op'],
   beginSignIn: ['id', 'op'],
   answer: ['id', 'op', 'prompt', 'value'],

@@ -517,6 +517,46 @@ func TestSyncReportsFailureOnTheSource(t *testing.T) {
 	}
 }
 
+// A chat another official source of the platform reads is left to that source.
+func TestChatsReadElsewhereNamesOnlyAnotherOfficialSourceChats(t *testing.T) {
+	f := newFixture(t)
+	bot := f.connect(t)
+	personal := messenger.Source{Person: "person", Platform: "discord", Account: "900", Mode: messenger.ModeUnofficial,
+		Adapter: "messenger-addon", State: messenger.StateConnected, ConnectedAt: f.now,
+		AcceptedTerms: &messenger.Terms{Person: "person", At: f.now, Text: "read only"}}
+	if err := f.store.Connect(t.Context(), personal); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.UpsertChats(t.Context(), personal, []messenger.Chat{
+		{ID: "dm-1", Name: "Direct", Kind: "direct"},
+		{ID: "20", Name: "mina", Kind: "direct"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	read, err := f.store.ChatsReadElsewhere(t.Context(), "person", "discord", "900")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(read) != 1 || !read["dm-1"] {
+		t.Fatalf("read elsewhere: %v", read)
+	}
+	// Only the platform's own API counts: another personal source is not a
+	// source that already reads a chat through the bot.
+	if read, err := f.store.ChatsReadElsewhere(t.Context(), "person", "discord", bot.Account); err != nil || len(read) != 0 {
+		t.Fatalf("a personal source counted as bot-mode: %v %v", read, err)
+	}
+	if err := f.store.Disconnect(t.Context(), "person", bot.Platform, bot.Account); err != nil {
+		t.Fatal(err)
+	}
+	after, err := f.store.ChatsReadElsewhere(t.Context(), "person", "discord", "900")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 0 {
+		t.Fatalf("a disconnected source still holds chats: %v", after)
+	}
+}
+
 // An unofficial source needs the person's accepted terms.
 func TestUnofficialSourceRequiresAcceptedTerms(t *testing.T) {
 	f := newFixture(t)

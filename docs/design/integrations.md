@@ -718,7 +718,7 @@ A messenger source is one of the person's own messenger accounts that LINA reads
 | --- | --- | --- | --- |
 | KakaoTalk | Personal | The messenger add-on, signed in as a tablet sub-device | None: Kakao's terms forbid automating an account |
 | Discord | A bot the person adds to their servers | LINA's Discord adapter | By grant |
-| Discord | Personal | The messenger add-on, QR sign-in | None: Discord's terms forbid self-bots |
+| Discord | Personal | The messenger add-on, QR sign-in ([Discord personal source](#discord-personal-source)) | None: Discord's terms forbid self-bots |
 | iMessage | Personal | A Mac Node reads a read-only copy of `chat.db` under a grant | By grant, through Messages automation on that Node |
 | Slack | Personal | Go, with the person's own Slack app and an OAuth user token | By grant |
 | Microsoft Teams | Work or school | Go, Microsoft Graph with the person's own Entra app | By grant |
@@ -792,6 +792,29 @@ source retries on its next interval; it does not stop other sources or conversat
 Edits are detected when a reread reports a later `updated` timestamp. The API
 supplies no deletion feed here, so an absent message never deletes history.
 This source exposes no write operation.
+
+### Discord personal source
+
+Discord's personal account is read through the messenger add-on, and only that
+way: the person scans a QR code with the Discord app on their phone, and LINA
+accepts no token, cookie or password from the desktop app or a browser. The
+connect card says that Discord's guidelines forbid self-bots or user-bots, links
+them, says that even reading may get the account limited, and says that LINA
+will only read. The person accepts it before connecting, and the acceptance is
+recorded with the person and the date.
+
+The source lists the person's servers' text channels that carry a timeline and
+their direct and group messages, and pages a chat's history forward by message
+snowflake. A later read reports the window around the newest message the source
+has, so a message the platform reports as edited becomes a new revision; the
+platform reports no deletions to a personal account, so an absent message never
+deletes history. Members come from the guild or, for a direct message, its
+recipients. The source polls; it takes no live events and offers no write.
+
+A channel that a bot-mode source of the same platform already reads is left to
+that source: the personal account lists no such chat, so the chat is read once
+and its records keep one identity by message id. A disconnected bot-mode source
+no longer holds its chats.
 
 ### Messenger adapter boundary
 
