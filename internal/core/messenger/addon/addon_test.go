@@ -389,3 +389,121 @@ func TestChildExitUnblocksPendingRead(t *testing.T) {
 		t.Fatalf("child exited but pending read did not stop: %v", err)
 	}
 }
+
+// A single-account platform keeps one process and one data directory for the
+// platform, so the source's account may change from the pending sign-in to the
+// platform's own user id. Stopping it ends the session; the next read starts a
+// new one.
+func TestSingleAccountPlatformKeepsOneSessionUntilStopped(t *testing.T) {
+	t.Parallel()
+	s := &script{responses: map[string][]string{
+		"listChats": {`{"id":"","ok":true,"result":{"chats":[{"id":"chat-1","name":"Direct","kind":"direct"}]}}`,
+			`{"id":"","ok":true,"result":{"chats":[{"id":"chat-1","name":"Direct","kind":"direct"}]}}`,
+			`{"id":"","ok":true,"result":{"chats":[{"id":"chat-1","name":"Direct","kind":"direct"}]}}`},
+	}}
+	root := t.TempDir()
+	manager := addon.NewManager(addon.Config{
+		Node: "/usr/bin/node", Program: "/addon/main.ts", StateRoot: root,
+		Runner: s, RestartDelay: time.Millisecond, MaxRestarts: 2, RequestTimeout: 2 * time.Second,
+		SingleAccount: []string{"kakaotalk"},
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	first, err := manager.Addon("kakaotalk", "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = first.ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.Addon("kakaotalk", "7788")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = second.ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "7788"}); err != nil {
+		t.Fatal(err)
+	}
+	if s.exits != 1 {
+		t.Fatalf("the account change started %d children, want 1", s.exits)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "plugins", "messenger-addon"))
+	if err != nil || len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "kakaotalk-") {
+		t.Fatalf("data directories = %v, %v", entries, err)
+	}
+	if err = manager.Stop(t.Context(), "kakaotalk", "7788"); err != nil {
+		t.Fatal(err)
+	}
+	third, err := manager.Addon("kakaotalk", "7788")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = third.ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "7788"}); err != nil {
+		t.Fatal(err)
+	}
+	if s.exits != 2 {
+		t.Fatalf("after the stop the child started %d times, want 2", s.exits)
+	}
+}
+
+// The platform driver's descriptor reaches Core with the sign-in state every
+// read asks for, so the schedule and the read window come from the platform
+// rather than from the add-on's general bound.
+func TestPlatformDescriptorReachesTheAdapter(t *testing.T) {
+	t.Parallel()
+	s := &script{responses: map[string][]string{
+		"signIn": {`{"id":"","ok":true,"result":{"state":"signed_in","capabilities":{"historyDepth":"platform-window","cursorKind":"log-id","edits":false,"deletions":false,"liveEvents":true,"intervalSeconds":900,"readWindowSeconds":172800}}}`},
+	}}
+	adapter := session(t, s).Adapter()
+	if got := adapter.Capabilities(); got.CursorKind != "opaque" {
+		t.Fatalf("descriptor before the first read: %+v", got)
+	}
+	state, err := adapter.SignIn(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"})
+	if err != nil || state != messenger.SignedIn {
+		t.Fatalf("sign-in state %v, %v", state, err)
+	}
+	caps := adapter.Capabilities()
+	if caps.CursorKind != "log-id" || caps.Edits || caps.Deletions || !caps.LiveEvents || caps.ReadWindow != 48*time.Hour || caps.Interval != 15*time.Minute {
+		t.Fatalf("descriptor %+v", caps)
+	}
+	if s.count("signIn") != 1 || s.count("capabilities") != 0 {
+		t.Fatalf("the descriptor cost an extra frame: %+v", s.requests)
+	}
+}
+
+// A descriptor with a field Core does not know refuses the read instead of
+// guessing the platform's rules.
+func TestUnknownDescriptorFieldRefusesTheRead(t *testing.T) {
+	t.Parallel()
+	s := &script{responses: map[string][]string{
+		"signIn": {`{"id":"","ok":true,"result":{"state":"signed_in","capabilities":{"historyDepth":"platform-window","cursorKind":"log-id","edits":false,"deletions":false,"liveEvents":true,"intervalSeconds":900,"readWindowSeconds":172800,"writes":["send"]}}}`},
+	}}
+	adapter := session(t, s).Adapter()
+	if _, err := adapter.SignIn(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}); !errors.Is(err, addon.ErrUpstreamChanged) {
+		t.Fatalf("unknown field: %v", err)
+	}
+	if got := adapter.Capabilities(); got.CursorKind != "opaque" {
+		t.Fatalf("a refused descriptor was used: %+v", got)
+	}
+}
+
+// A page carries the platform's edit time, an empty body and its attachment
+// metadata through the add-on without inventing text.
+func TestPageCarriesAnEditAnEmptyBodyAndAttachments(t *testing.T) {
+	t.Parallel()
+	s := &script{responses: map[string][]string{
+		"page": {`{"id":"","ok":true,"result":{"messages":[{"id":"9007199254740993123","author":{"id":"42","name":"Someone"},"route":"external_participant","at":"2026-10-24T09:00:00Z","edited":"2026-10-24T09:05:00Z","text":"","attachments":[{"id":"file-key","name":"report.pdf","mimeType":"application/pdf","size":2048}]}],"deletions":[],"next":"9007199254740993123","hasMore":false,"through":"2026-10-24T09:05:00Z"}}`},
+	}}
+	page, err := session(t, s).Adapter().Page(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}, "chat-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Messages) != 1 {
+		t.Fatalf("page %+v", page)
+	}
+	message := page.Messages[0]
+	if message.ID != "9007199254740993123" || message.Text != "" || message.Edited.IsZero() || len(message.Attachments) != 1 {
+		t.Fatalf("message %+v", message)
+	}
+	if page.Through.IsZero() || page.HasMore || page.Next != "9007199254740993123" {
+		t.Fatalf("page position %+v", page)
+	}
+}

@@ -793,6 +793,36 @@ Edits are detected when a reread reports a later `updated` timestamp. The API
 supplies no deletion feed here, so an absent message never deletes history.
 This source exposes no write operation.
 
+### KakaoTalk source
+
+KakaoTalk reads the person's own account through the messenger add-on, signed in
+as a tablet sub-device and only reading. Kakao's terms quote unapproved programs
+calling its protocol or API as a cause for permanently restricting the account,
+so the connect card states that risk, links the term and the stability policy,
+and records the person's acceptance with the date. One account is connected per
+main; a second is refused until the first is disconnected.
+
+Sign-in runs in the add-on's own flow and Core relays it: the email, the
+password read without echo, and the passcode Kakao displays for the person to
+enter on the phone while the tablet registration finishes in the background.
+Core keeps no prompt, answer, passcode or password, and the session lives in the
+add-on's data directory. A stored session the platform rejects marks only that
+source as needing sign-in; other sources keep reading.
+
+The adapter lists chats, reads a chat forward from a `log_id` cursor, reads
+members, follows live message pushes, and reports a 64-bit log id as an opaque
+string. It reports no edits and no deletions, because the platform offers them
+to this client, and an empty message keeps an empty body with its type and
+attachment metadata. Reading never enters the room, so it advances no read
+watermark. The source never sends, never marks a message read, never evicts the
+person's other devices and never takes a password from another app's cache.
+
+Core reads the chat list, skips a chat whose listed newest message is the one
+already stored while recording it as covered, and reads the rest every fifteen
+minutes, 100 messages a page, against a two-day platform window. A chat whose
+last complete read is older than that window is in a gap: the gap is recorded
+once and told to the person once, and the next complete read ends it.
+
 ### Messenger adapter boundary
 
 Each way of reaching a platform has one adapter. Discord's bot and Discord's personal account are two adapters of one platform; every other platform in the table has one. A source records the adapter it uses. An adapter offers: its sign-in state; listing chats; reading a page of a chat from a cursor, oldest first; members; live events where the platform has them; fetching one attachment on request; and a static capability descriptor (history depth, cursor kind, edit and deletion signals, live events and write verbs). Every operation except the capability descriptor names the source account it acts for, so two accounts of one platform never share a read. Only adapters of official platforms have write verbs. A ported adapter is LINA's own Go code, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).

@@ -64,7 +64,9 @@ export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream |
         return { stopped: true };
       case 'signIn': {
         const value = await driverOrOpen();
-        return { state: await value.signInState() };
+        // The platform's descriptor travels with the state every read already
+        // asks for, so Core reads no extra frame to learn its schedule.
+        return { state: await value.signInState(), capabilities: value.capabilities() };
       }
       case 'beginSignIn': {
         const value = await driverOrOpen();

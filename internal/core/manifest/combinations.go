@@ -108,6 +108,7 @@ func ClientCombinationsFor(target string) []Combination {
 			{Name: "a2a", Version: "1.0"},
 			{Name: "teams", Version: "1.0"},
 			{Name: "webex", Version: "1.0"},
+			{Name: "kakaotalk", Version: "1.0"},
 			{Name: "local_model", Version: "1.0"},
 			{Name: "github_merge", Version: "1.0"},
 			{Name: "github", Version: "1.0"},

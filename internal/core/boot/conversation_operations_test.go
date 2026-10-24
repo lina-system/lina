@@ -183,9 +183,10 @@ func TestConversationRegistrationSurface(t *testing.T) {
 			// from the registration helpers: it guards the installed surface.
 			want := map[protocol.Kind]string{
 				protocol.KindAccountRequest: "accounts", protocol.KindSignInListening: "sign_in_relay", protocol.KindSignInRedirect: "sign_in_relay",
-				protocol.KindTeamsRequest:  "teams",
-				protocol.KindWebexRequest:  "webex",
-				protocol.KindRecordRequest: "records", protocol.KindWebRequest: "web", protocol.KindA2aRequest: "a2a",
+				protocol.KindTeamsRequest:     "teams",
+				protocol.KindWebexRequest:     "webex",
+				protocol.KindKakaotalkRequest: "kakaotalk",
+				protocol.KindRecordRequest:    "records", protocol.KindWebRequest: "web", protocol.KindA2aRequest: "a2a",
 				protocol.KindExportRequest: "replay", protocol.KindReplayRequest: "replay",
 				protocol.KindApprovalAnswer: "waiting", protocol.KindQuestionAnswer: "waiting", protocol.KindWaitingGet: "waiting",
 				protocol.KindWorkSwitchRequest: "work", protocol.KindWorkControlRequest: "work",

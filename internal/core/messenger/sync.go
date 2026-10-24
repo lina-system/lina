@@ -18,8 +18,16 @@ type Service struct {
 	resolve  Resolver
 	interval time.Duration
 
+	// Notify tells the person that a chat passed its platform read window
+	// without a complete read. Core sets it; a nil Notify records the gap
+	// without a notice.
+	Notify func(context.Context, Source, ChatRecord) error
+
 	mu       sync.Mutex
 	lastSync map[string]time.Time
+
+	liveMu   sync.Mutex
+	liveRuns map[string]context.CancelFunc
 }
 
 // NewService composes the sync loop. adapters are keyed by the adapter name a
@@ -45,7 +53,7 @@ func NewServiceWithResolver(store *Store, resolve Resolver, interval time.Durati
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	return &Service{store: store, resolve: resolve, interval: interval, lastSync: map[string]time.Time{}}
+	return &Service{store: store, resolve: resolve, interval: interval, lastSync: map[string]time.Time{}, liveRuns: map[string]context.CancelFunc{}}
 }
 
 // Store is the registry and admission store the service reads into.
@@ -94,6 +102,7 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 			continue
 		}
 		result, err := s.Sync(ctx, source)
+		s.ensureLive(ctx, source)
 		s.mu.Lock()
 		s.lastSync[key] = current
 		s.mu.Unlock()
@@ -163,9 +172,27 @@ func (s *Service) Sync(ctx context.Context, source Source) (result Result, err e
 		if !chat.Sync {
 			continue
 		}
-		outcome, err := s.syncChat(ctx, source, adapter, chat)
-		result.add(outcome)
+		// The gap is decided from the coverage before this pass reads: a pass
+		// that completes the read closes it afterwards.
+		gap, err := s.gapState(ctx, source, adapter, chat)
 		if err != nil {
+			return result, err
+		}
+		if chat.LastMessage != "" && string(chat.Cursor) == chat.LastMessage {
+			// The listing names the message the chat already read through, so
+			// there is nothing to page. The chat is still covered: it has no
+			// new messages, not an unfinished read.
+			if err := s.store.RecordCoverage(ctx, source, chat.Chat, chat.Cursor); err != nil {
+				return result, err
+			}
+		} else {
+			outcome, err := s.syncChat(ctx, source, adapter, chat)
+			result.add(outcome)
+			if err != nil {
+				return result, err
+			}
+		}
+		if err := s.settleGap(ctx, source, chat, gap); err != nil {
 			return result, err
 		}
 	}
@@ -207,6 +234,63 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 		}
 		cursor = page.Next
 	}
+}
+
+// gapState reports whether the chat passed the platform's read window before
+// this pass read it, so messages may be missing.
+func (s *Service) gapState(ctx context.Context, source Source, adapter Adapter, chat ChatRecord) (bool, error) {
+	capabilities := adapter.Capabilities()
+	interval := capabilities.Interval
+	if interval <= 0 {
+		interval = s.interval
+	}
+	freshness, err := s.store.Freshness(ctx, source, chat.Chat, interval, capabilities.ReadWindow)
+	if err != nil {
+		return false, err
+	}
+	return freshness.State == "gap", nil
+}
+
+// settleGap closes the gap a completed read ended, or records a new one and
+// tells the person once. A chat still in a gap is not told again.
+func (s *Service) settleGap(ctx context.Context, source Source, chat ChatRecord, gap bool) error {
+	if !gap {
+		return s.store.ClearGap(ctx, source, chat.Chat)
+	}
+	fresh, err := s.store.NoteGap(ctx, source, chat.Chat)
+	if err != nil || !fresh || s.Notify == nil {
+		return err
+	}
+	return s.Notify(ctx, source, chat)
+}
+
+// ensureLive keeps one live subscription per source account while Core runs.
+// A subscription that ends is started again on the next sync pass.
+func (s *Service) ensureLive(ctx context.Context, source Source) {
+	adapter, ok := s.adapterFor(source)
+	if !ok || !adapter.Capabilities().LiveEvents {
+		return
+	}
+	key := source.Platform + "\x00" + source.Account
+	s.liveMu.Lock()
+	if _, running := s.liveRuns[key]; running {
+		s.liveMu.Unlock()
+		return
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	s.liveRuns[key] = cancel
+	s.liveMu.Unlock()
+	go func() {
+		defer func() {
+			s.liveMu.Lock()
+			delete(s.liveRuns, key)
+			s.liveMu.Unlock()
+		}()
+		_ = adapter.Live(runCtx, sourceID(source), func(event Event) error {
+			_, err := s.store.AdmitEvent(runCtx, source, event)
+			return err
+		})
+	}()
 }
 
 // Live reads a source's pushed events until ctx ends. A platform without live

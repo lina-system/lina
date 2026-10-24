@@ -208,7 +208,7 @@ func (s *Store) Chats(ctx context.Context, person, platform, account string) ([]
 	}
 	var chats []ChatRecord
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT chat,name,kind,first_message_at,sync,learn,embed,cursor FROM messenger_chat
+		rows, err := tx.QueryContext(ctx, `SELECT chat,name,kind,first_message_at,sync,learn,embed,cursor,last_message FROM messenger_chat
 WHERE platform=? AND account=? AND EXISTS(SELECT 1 FROM messenger_source o WHERE o.platform=platform AND o.account=account AND o.person=?)
 ORDER BY chat`, platform, account, person)
 		if err != nil {
@@ -218,7 +218,7 @@ ORDER BY chat`, platform, account, person)
 		for rows.Next() {
 			chat := ChatRecord{Platform: platform, Account: account}
 			var first, cursor string
-			if err := rows.Scan(&chat.Chat, &chat.Name, &chat.Kind, &first, &chat.Sync, &chat.Learn, &chat.Embed, &cursor); err != nil {
+			if err := rows.Scan(&chat.Chat, &chat.Name, &chat.Kind, &first, &chat.Sync, &chat.Learn, &chat.Embed, &cursor, &chat.LastMessage); err != nil {
 				return err
 			}
 			if first != "" {
@@ -234,8 +234,9 @@ ORDER BY chat`, platform, account, person)
 	return chats, err
 }
 
-// UpsertChats adds newly listed chats and refreshes their names. The person's
-// switches and the committed cursor are never overwritten by a listing.
+// UpsertChats adds newly listed chats and refreshes their names and their
+// platform's newest message id. The person's switches and the committed cursor
+// are never overwritten by a listing.
 func (s *Store) UpsertChats(ctx context.Context, source Source, chats []Chat) error {
 	if source.Platform == "" || source.Account == "" || len(chats) == 0 {
 		return nil
@@ -254,11 +255,12 @@ func (s *Store) UpsertChats(ctx context.Context, source Source, chats []Chat) er
 			if !chat.FirstMessageAt.IsZero() {
 				first = chat.FirstMessageAt.UTC().Format(time.RFC3339Nano)
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_chat(platform,account,chat,name,kind,first_message_at)
-VALUES(?,?,?,?,?,?)
+			if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_chat(platform,account,chat,name,kind,first_message_at,last_message)
+VALUES(?,?,?,?,?,?,?)
 ON CONFLICT(platform,account,chat) DO UPDATE SET name=excluded.name,kind=excluded.kind,
+ last_message=excluded.last_message,
  first_message_at=CASE WHEN messenger_chat.first_message_at='' THEN excluded.first_message_at ELSE messenger_chat.first_message_at END`,
-				source.Platform, source.Account, chat.ID, chat.Name, chat.Kind, first); err != nil {
+				source.Platform, source.Account, chat.ID, chat.Name, chat.Kind, first, chat.LastMessageID); err != nil {
 				return err
 			}
 		}
@@ -471,6 +473,29 @@ func (s *Store) pendingEffects(ctx context.Context, source Source, chat string) 
 // cursor and coverage in one canon transaction. Reading the same messages again
 // adds nothing. A message missing from a page changes nothing.
 func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from Cursor, page Page) (PageResult, error) {
+	return s.admit(ctx, source, chat, from, page, true)
+}
+
+// AdmitEvent commits one live event into the chat it names. A push confirms
+// that its message exists; it is not a page read, so the cursor and coverage
+// stay where the last completed read put them.
+func (s *Store) AdmitEvent(ctx context.Context, source Source, event Event) (PageResult, error) {
+	if !validName(event.Chat) {
+		return PageResult{}, ErrInvalid
+	}
+	if (event.Message == nil) == (event.Deletion == nil) {
+		return PageResult{}, ErrInvalid
+	}
+	page := Page{}
+	if event.Message != nil {
+		page.Messages = []Message{*event.Message}
+	} else {
+		page.Deletions = []Deletion{*event.Deletion}
+	}
+	return s.admit(ctx, source, event.Chat, "", page, false)
+}
+
+func (s *Store) admit(ctx context.Context, source Source, chat string, from Cursor, page Page, progress bool) (PageResult, error) {
 	if !validName(source.Person) || !validName(source.Platform) || !validName(source.Account) || !validName(chat) {
 		return PageResult{}, ErrInvalid
 	}
@@ -555,6 +580,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		result.Deleted = deleted
 	}
 	if len(plans) == 0 && len(repairs) == 0 {
+		if !progress {
+			return result, nil
+		}
 		// Nothing new: still record the completed read and advance the cursor.
 		return result, s.commitProgress(ctx, source, chat, from, page, 0)
 	}
@@ -564,6 +592,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 				if _, err := tx.ExecContext(ctx, `UPDATE messenger_record SET state='deleted',deleted_at=? WHERE platform=? AND account=? AND chat=? AND message=? AND state='live'`, s.now().UTC().Format(time.RFC3339Nano), source.Platform, source.Account, chat, id); err != nil {
 					return err
 				}
+			}
+			if !progress {
+				return nil
 			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, 0)
 		}); err != nil {
@@ -596,6 +627,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 				if _, err := tx.ExecContext(ctx, `UPDATE messenger_record SET state='deleted',deleted_at=? WHERE platform=? AND account=? AND chat=? AND message=? AND state='live'`, s.now().UTC().Format(time.RFC3339Nano), source.Platform, source.Account, chat, id); err != nil {
 					return err
 				}
+			}
+			if !progress {
+				return nil
 			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, len(plans))
 		}
@@ -817,6 +851,53 @@ VALUES(?,?,?,?,?,?,?)
 ON CONFLICT(platform,account,chat,read_from,read_through) DO UPDATE SET read_at=excluded.read_at,messages=excluded.messages`,
 		source.Platform, source.Account, chat, string(from), through.UTC().Format(time.RFC3339Nano), readAt, messages)
 	return err
+}
+
+// RecordCoverage records a completed read that found nothing new: the
+// platform listed the message already stored, so the read starts and ends at
+// the committed cursor. The chat stays fresh without a page read.
+func (s *Store) RecordCoverage(ctx context.Context, source Source, chat string, cursor Cursor) error {
+	if !validName(source.Person) || !validName(source.Platform) || !validName(source.Account) || !validName(chat) || cursor == "" {
+		return ErrInvalid
+	}
+	readAt := s.now().UTC().Format(time.RFC3339Nano)
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_coverage(platform,account,chat,read_from,read_through,read_at,messages)
+VALUES(?,?,?,?,?,?,0)
+ON CONFLICT(platform,account,chat,read_from,read_through) DO UPDATE SET read_at=excluded.read_at`,
+			source.Platform, source.Account, chat, string(cursor), string(cursor), readAt)
+		return err
+	})
+}
+
+// NoteGap records that a chat passed the platform's read window without a
+// complete read. It reports whether the gap is new: the person is told once per
+// gap, not on every sync.
+func (s *Store) NoteGap(ctx context.Context, source Source, chat string) (bool, error) {
+	if !validName(source.Platform) || !validName(source.Account) || !validName(chat) {
+		return false, ErrInvalid
+	}
+	fresh := false
+	err := s.db.Write(ctx, func(tx *canon.Tx) error {
+		result, err := tx.ExecContext(ctx, `INSERT INTO messenger_gap(platform,account,chat,detected_at) VALUES(?,?,?,?)
+ON CONFLICT(platform,account,chat) DO NOTHING`, source.Platform, source.Account, chat, s.now().UTC().Format(time.RFC3339Nano))
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		fresh = n > 0
+		return err
+	})
+	return fresh, err
+}
+
+// ClearGap ends a chat's gap after a complete read, so a later gap is told
+// again.
+func (s *Store) ClearGap(ctx context.Context, source Source, chat string) error {
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(ctx, "DELETE FROM messenger_gap WHERE platform=? AND account=? AND chat=?", source.Platform, source.Account, chat)
+		return err
+	})
 }
 
 // deleteRecords applies platform-reported deletions through the retraction path

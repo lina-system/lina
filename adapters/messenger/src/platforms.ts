@@ -8,6 +8,7 @@
 // and only that source fails.
 import { Refusal, type Driver } from './protocol.ts';
 import type { DriverFactory, DriverOptions } from './driver.ts';
+import { openKakaoTalk } from './kakaotalk.ts';
 
 export type PlatformName = 'kakaotalk' | 'discord' | 'whatsapp' | 'line';
 
@@ -22,7 +23,12 @@ export type Registration = {
   load: () => Promise<unknown>;
 };
 
-const DRIVERS: Partial<Record<PlatformName, Registration>> = {};
+const DRIVERS: Partial<Record<PlatformName, Registration>> = {
+  kakaotalk: {
+    open: async (sdk, options) => openKakaoTalk(sdk as Parameters<typeof openKakaoTalk>[0], options),
+    load: () => import('agent-messenger/kakaotalk'),
+  },
+};
 
 export function registered(platform: string): platform is PlatformName {
   return Object.hasOwn(PLATFORMS, platform) && Object.hasOwn(DRIVERS, platform);

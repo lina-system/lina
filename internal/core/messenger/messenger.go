@@ -100,18 +100,23 @@ type Deletion struct {
 	At      time.Time
 }
 
-// Event is one live event the platform pushed: a message or a deletion.
+// Event is one live event the platform pushed: a message or a deletion in the
+// chat the platform names.
 type Event struct {
+	Chat     string
 	Message  *Message
 	Deletion *Deletion
 }
 
-// Chat is a chat as the platform lists it.
+// Chat is a chat as the platform lists it. LastMessageID is the newest
+// message the platform reports for the chat, when it reports one; a sync that
+// already stored it reads nothing and records the coverage instead.
 type Chat struct {
 	ID             string
 	Name           string
 	Kind           string // direct, group, channel or thread
 	FirstMessageAt time.Time
+	LastMessageID  string
 }
 
 // Cursor is an opaque position inside one chat. It is committed with the
@@ -211,6 +216,8 @@ type ChatRecord struct {
 	FirstMessageAt          time.Time
 	Sync, Learn, Embed      bool
 	Cursor                  Cursor
+	// LastMessage is the newest message the platform's last listing named.
+	LastMessage string
 }
 
 // Switches are the person's choices for one chat.
