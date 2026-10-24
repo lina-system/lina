@@ -50,7 +50,7 @@ func (a *Adapter) forAccount(id messenger.SourceID) error {
 func (a *Adapter) Live(_ context.Context, id messenger.SourceID, _ func(messenger.Event) error) error {
 	return a.forAccount(id)
 }
-func (a *Adapter) FetchAttachment(_ context.Context, id messenger.SourceID, _, _ string) (io.ReadCloser, error) {
+func (a *Adapter) FetchAttachment(_ context.Context, id messenger.SourceID, _, _, _ string) (io.ReadCloser, error) {
 	if err := a.forAccount(id); err != nil {
 		return nil, err
 	}

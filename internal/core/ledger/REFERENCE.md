@@ -28,6 +28,7 @@ The explicit person-authorized erasure path remains a separate operation to impl
 `ledger.Store.Admit` commits the event, its relations and its spans in one fenced transaction and returns an event only after commit.
 A repeated event id fails without changing the first event.
 Parent references must exist in the same conversation; replay, scaffold and relation targets must already exist.
+`ledger.AppendStructure` is the one later relation write: inside the caller's transaction it adds a `replies_to` or `in_thread` row between two existing events of one conversation, once, for a messenger reply admitted before its root. No row is updated or removed.
 Scaffold references name an event that stores the scaffold once, with the same scaffold kind.
 
 ### C-17 material integration

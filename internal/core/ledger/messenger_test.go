@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/kit/secret"
@@ -59,6 +60,49 @@ func TestMessengerRecordAdmissionKeepsRouteAndReference(t *testing.T) {
 	other.Relations = []ledger.Relation{{TargetID: first.ID, Kind: "replies_to", Ordinal: 1}}
 	if _, err := s.Admit(t.Context(), guard.EntryMessengerParticipant, other); !errors.Is(err, ledger.ErrInvalid) {
 		t.Fatalf("ordered reply accepted: %v", err)
+	}
+}
+
+// A reply admitted before its root gains the relation later, once, and only
+// within one conversation.
+func TestAppendStructureLinksOnceWithinOneConversation(t *testing.T) {
+	t.Parallel()
+	db, _ := database(t)
+	s := ledger.New(db, nil)
+	reply := messengerInput("reply")
+	reply.PersonID = ""
+	admit(t, s, guard.EntryMessengerParticipant, reply)
+	root := messengerInput("root")
+	root.PersonID = ""
+	admit(t, s, guard.EntryMessengerParticipant, root)
+	elsewhere := messengerInput("elsewhere")
+	elsewhere.PersonID = ""
+	elsewhere.ConversationID = "messenger:discord:account-1:dm-2"
+	elsewhere.Surface.ChatID = "dm-2"
+	elsewhere.Messenger = &ledger.MessengerRef{Platform: "discord", Account: "account-1", Chat: "dm-2", Message: "m-1"}
+	admit(t, s, guard.EntryMessengerParticipant, elsewhere)
+	link := func(target, kind string) error {
+		return db.Write(t.Context(), func(tx *canon.Tx) error {
+			return ledger.AppendStructure(t.Context(), tx, "reply", ledger.Relation{TargetID: target, Kind: kind})
+		})
+	}
+	for range 2 {
+		if err := link("root", "replies_to"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.Get(t.Context(), "reply")
+	if err != nil || len(got.Relations) != 1 || got.Relations[0].TargetID != "root" {
+		t.Fatalf("relations: %+v %v", got.Relations, err)
+	}
+	for name, err := range map[string]error{
+		"other conversation": link("elsewhere", "replies_to"),
+		"supersedes":         link("root", "supersedes"),
+		"self":               link("reply", "in_thread"),
+	} {
+		if !errors.Is(err, ledger.ErrInvalid) {
+			t.Fatalf("%s accepted: %v", name, err)
+		}
 	}
 }
 

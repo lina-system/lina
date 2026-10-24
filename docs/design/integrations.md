@@ -764,7 +764,10 @@ Before a source is current, Core reconciles missed account and channel updates
 from checkpoints kept beside its session. Checkpoints advance only after the
 corresponding records commit. A gap beyond Telegram's recovery window reports
 a source failure and retains the checkpoint; missing history is never inferred
-to be a deletion.
+to be a deletion. A channel the account left or can no longer read drops its
+checkpoint, and a later dialog listing sets a new one; it never stops the
+account's other chats. An attachment is fetched from the message it came with,
+so after a restart the source reads that message again for a current location.
 Reads send no read acknowledgement, presence or typing request. A Telegram
 channel bot remains a separate channel connection. This increment reads only;
 write verbs remain subject to the messenger write-grant implementation.
@@ -844,7 +847,7 @@ This source exposes no write operation.
 
 ### Messenger adapter boundary
 
-Each way of reaching a platform has one adapter. Discord's bot and Discord's personal account are two adapters of one platform; every other platform in the table has one. A source records the adapter it uses. An adapter offers: its sign-in state; listing chats; reading a page of a chat from a cursor, oldest first; members; live events where the platform has them; fetching one attachment on request; and a static capability descriptor (history depth, cursor kind, edit and deletion signals, live events and write verbs). Every operation except the capability descriptor names the source account it acts for, so two accounts of one platform never share a read. Core releases the adapter's transport resources when it evicts the adapter or closes its service. Only adapters of official platforms have write verbs. A ported adapter is LINA's own Go code, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
+Each way of reaching a platform has one adapter. Discord's bot and Discord's personal account are two adapters of one platform; every other platform in the table has one. A source records the adapter it uses. An adapter offers: its sign-in state; listing chats; reading a page of a chat from a cursor, oldest first; members; live events where the platform has them; fetching one attachment on request, named by its chat, message and attachment id; and a static capability descriptor (history depth, cursor kind, edit and deletion signals, live events and write verbs). Every operation except the capability descriptor names the source account it acts for, so two accounts of one platform never share a read. Core releases the adapter's transport resources when it evicts the adapter or closes its service. Only adapters of official platforms have write verbs. A ported adapter is LINA's own Go code, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
 
 ### The messenger add-on
 
@@ -860,8 +863,9 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 
 ### Sync and coverage
 
-- Core reads each source on its schedule or from its live events. For a scheduled page, the records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Live admission leaves that pagination cursor and coverage unchanged. A live event that cannot be admitted yet, such as an edit held behind an unsettled write, is replayed on the same session instead of being acknowledged, so it is not lost. A scheduled page that overlaps a reported deletion cannot make the deleted message searchable again. Reading the same messages again adds nothing.
+- Core reads each source on its schedule or from its live events. For a scheduled page, the records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Live admission leaves that pagination cursor and coverage unchanged. A live event that cannot be admitted yet, such as an edit held behind an unsettled write, is replayed on the same session instead of being acknowledged, so it is not lost. A scheduled page that overlaps a reported deletion cannot make the deleted message searchable again; a deletion reported without a chat before its message is admitted is kept and applied when that message arrives. Reading the same messages again adds nothing.
 - Live events and history pages for one source finish admission one at a time, so a newer edit sees the preceding committed revision. Waiting for admission can be cancelled; platform reads run independently of admission.
+- A chat the account can no longer read, such as a channel it left, is skipped with its cursor and records kept; the source's other chats are still read.
 - A failing source is read again on its schedule and returns to connected when a read completes; the person sees its cause in between. A source that needs sign-in waits for the person, and an unreachable, import-only or disconnected source is not read.
 - A chat's first fill reads back as far as the platform allows.
 - Where a platform serves no cursor that survives a restart, a read covers only its newest messages, and the chat's coverage record states that depth and that the cursor does not survive. Overlap between those reads is resolved by the platform message id, so a message reads once.
@@ -879,7 +883,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 
 ### Disconnecting and deleting
 
-- Disconnecting stops sync at once, stops live readers without waiting for the next scheduled read, refuses further live admission, and deletes the source's credentials or the add-on's session. The records stay, searchable as the person's history and labelled with the disconnected source.
+- Disconnecting stops sync at once, stops live readers without waiting for the next scheduled read, refuses further live admission, and deletes the source's credentials or the add-on's session. It waits only for that source's own reads and admissions, never another account's, and a cancelled disconnect leaves the source connected. The records stay, searchable as the person's history and labelled with the disconnected source.
 - Deleting a source's records, a chat or one record is the person's deletion of conversation content ([conversation-and-memory.md](conversation-and-memory.md#deleting-a-conversation)). A tombstone keeps the legacy reference, so a later sync or import does not bring the content back.
 
 ## GitHub
