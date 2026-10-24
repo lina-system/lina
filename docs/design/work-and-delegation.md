@@ -782,8 +782,10 @@ on every `dev` push and nightly; the `e2e` PR label opts into reached scenarios
 before merge. Post-merge test failures become deduplicated `qa` issues in the
 current milestone, with the tested head, first failing range and diagnostics.
 Three consecutive passing descendant heads that ran the test close the matching
-finding; the repository may configure the count. A fail/pass/fail sequence within
-48 hours marks it `flaky` and keeps it open pending that recovery evidence.
+finding; the repository may configure the count. Passes already recorded on later
+runs count toward that threshold when an older failure is reported. A fail/pass/fail
+sequence within 48 hours marks it `flaky` and keeps it open pending that recovery
+evidence, including when the pass is reported after both failures.
 Each finding has one reusable status comment, and a closed finding can reopen
 at most once per 24 hours; failures during that cooldown update the comment.
 They do not block unrelated pull requests. The [foundation policy](../policy/foundation.md)

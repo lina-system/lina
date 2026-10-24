@@ -83,7 +83,9 @@ from completed later CI runs on the same branch. It validates each plan and resu
 against the run head and plan digest, selects the newest attempt per shard, and
 compares commit ancestry. Three consecutive passing descendant heads prevent
 an older failure from creating an already recovered finding, even when those passes
-were reported before any issue existed. The same configurable recovery count
+were reported before any issue existed. A shorter streak is stored on the new
+finding, and a descendant failure limits that streak, so a later pass can
+complete the same threshold. The same configurable recovery count
 applies to existing findings. A same-head failure takes precedence over
 a pass. Missing, expired or skipped results cannot establish recovery; malformed
 results fail reporting. This uses existing Actions artifacts within their retention
@@ -96,7 +98,9 @@ three consecutive distinct descendant heads that ran the test, configurable with
 the positive integer repository variable `QA_RECOVERY_PASSES` (default `3`).
 Each failure resets the pass count. A failure, pass and another failure within
 48 hours of the first failure marks the issue `flaky`; it stays open until the
-same recovery threshold is met. The observation window uses plan start times.
+same recovery threshold is met. Commit order decides that sequence: a pass
+reported after both failures still counts when it sits between them. The
+observation window uses plan start times.
 The label remains as history after recovery. The reporter creates the label if
 it is missing and preserves other labels.
 An unfinished test resets the recovery streak without creating a failure;
@@ -108,7 +112,7 @@ last reopen. Further failures during that window update its body and one reusabl
 status comment without changing the issue's closed state. A later failure report
 after the cooldown can reopen it, including a report of the same failing head.
 State changes and recovery progress edit that same comment instead of posting
-new comments. The issue body persists the pass count, failure timestamp, flaky
+new comments. The issue body persists the pass count, recent failure times, flaky
 classification and last reopen timestamp across reporter runs.
 Recovery retains the most recent passing head identities, bounded by the
 configured threshold, and orders them by commit ancestry. A late intervening
