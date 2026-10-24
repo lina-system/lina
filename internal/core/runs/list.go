@@ -23,6 +23,17 @@ type ListSource interface {
 	Candidates(context.Context, *canon.Tx, string) ([]string, error)
 	Read(context.Context, *canon.Tx, string) (ListItem, error)
 }
+
+// ListBatch is a ListSource whose items share records, such as the tasks of
+// one goal. Build reads its items in one pass, so a shared record is decoded
+// once rather than once per item.
+type ListBatch interface {
+	Items(context.Context, *canon.Tx, string) ([]ListCandidate, error)
+}
+type ListCandidate struct {
+	ID   string
+	Item ListItem
+}
 type ListCanon interface {
 	Write(context.Context, func(*canon.Tx) error) error
 	Read(context.Context, func(*canon.Tx) error) error
@@ -69,12 +80,13 @@ func (l *RunningList) Build(ctx context.Context, person string) (RunningSnapshot
 			if name == "" || source == nil {
 				return ErrListItem
 			}
-			ids, err := source.Candidates(ctx, tx, person)
+			items, err := listItems(ctx, tx, source, person)
 			if err != nil {
 				return err
 			}
 			seen := map[string]bool{}
-			for _, id := range ids {
+			for _, c := range items {
+				id, item := c.ID, c.Item
 				if id == "" {
 					return ErrListItem
 				}
@@ -82,13 +94,6 @@ func (l *RunningList) Build(ctx context.Context, person string) (RunningSnapshot
 					continue
 				}
 				seen[id] = true
-				item, err := source.Read(ctx, tx, id)
-				if errors.Is(err, sql.ErrNoRows) {
-					continue
-				}
-				if err != nil {
-					return err
-				}
 				if item.Person != person {
 					continue
 				}
@@ -140,6 +145,35 @@ func (l *RunningList) Build(ctx context.Context, person string) (RunningSnapshot
 		snapshot.Entries = append(snapshot.Entries, row.entry)
 	}
 	return snapshot, nil
+}
+func listItems(ctx context.Context, tx *canon.Tx, source ListSource, person string) ([]ListCandidate, error) {
+	if batch, ok := source.(ListBatch); ok {
+		return batch.Items(ctx, tx, person)
+	}
+	ids, err := source.Candidates(ctx, tx, person)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ListCandidate, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if id == "" {
+			return nil, ErrListItem
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		item, err := source.Read(ctx, tx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ListCandidate{id, item})
+	}
+	return out, nil
 }
 func projectListItem(item ListItem) (view.Running, string, int, error) {
 	v := view.Running{Summary: item.Summary, AgentName: item.AgentName}

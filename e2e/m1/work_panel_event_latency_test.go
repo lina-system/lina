@@ -92,6 +92,7 @@ type panelLatencyTerminal struct {
 	probe    *panelFrameProbe
 	x, width int
 	selected string
+	running  string
 	before   tuiterm.Snapshot
 	anchor   []string
 	samples  []panelLatencySample
@@ -106,6 +107,25 @@ func (v *panelLatencyTerminal) now(s tuiterm.Snapshot) string {
 		}
 	}
 	return ""
+}
+
+// reading is the conversation's rows above the composer. Without the side
+// panel, the running strip sits between them and its counts change as steps
+// land; it is not part of the reading position.
+func (v *panelLatencyTerminal) reading(s tuiterm.Snapshot, width, height int) []string {
+	rows := panelCellRows(s, 0, width)[1 : height-3]
+	for len(rows) > 0 && strings.HasPrefix(rows[len(rows)-1], v.running) {
+		rows = rows[:len(rows)-1]
+	}
+	return rows
+}
+
+// sameReading compares the rows both screens show from the top. The strip
+// can take its rows from the conversation's bottom, but the top row is the
+// anchor and stays put.
+func sameReading(got, want []string) bool {
+	n := min(len(got), len(want))
+	return n > 0 && reflect.DeepEqual(got[:n], want[:n])
 }
 
 // TestM3WorkPanelEventLatency injects 50 real step landings with 50 running
@@ -284,7 +304,7 @@ func TestM3WorkPanelEventLatency(t *testing.T) {
 					env = append(env, "LINA_GLYPHS=ascii")
 					mark = "> "
 				}
-				v := &panelLatencyTerminal{name: fmt.Sprintf("%s/ascii=%t/%dx%d", language, ascii, width, fixture.Height), probe: &panelFrameProbe{}, x: 80, width: 40, selected: mark + current.Name}
+				v := &panelLatencyTerminal{name: fmt.Sprintf("%s/ascii=%t/%dx%d", language, ascii, width, fixture.Height), probe: &panelFrameProbe{}, x: 80, width: 40, selected: mark + current.Name, running: design.Text(language, "running") + " "}
 				if width < 120 {
 					v.x, v.width = 0, width
 				}
@@ -310,7 +330,7 @@ func TestM3WorkPanelEventLatency(t *testing.T) {
 				if width >= 120 {
 					conversationWidth = 79
 				}
-				v.anchor = panelCellRows(scrolled, 0, conversationWidth)[1 : fixture.Height-3]
+				v.anchor = v.reading(scrolled, conversationWidth, fixture.Height)
 				h.keys(v.terminal, "\x10"+strings.Repeat("\x1b[B", index))
 				v.before = wait(func(s tuiterm.Snapshot) bool { return s.CursorHidden && v.now(s) == *current.Now })
 				v.record = panelCase{Name: v.name, N: config.N, Language: language, ASCII: ascii, Width: width, Height: fixture.Height, Cards: []panelCard{{ID: target, Name: current.Name, Now: *current.Now}}}
@@ -381,7 +401,7 @@ func TestM3WorkPanelEventLatency(t *testing.T) {
 				if !strings.Contains(screenText(frame.screen), "keep draft") {
 					t.Fatal("E9 draft changed")
 				}
-				if !reflect.DeepEqual(panelCellRows(frame.screen, 0, 79)[1:fixture.Height-3], v.anchor) {
+				if !sameReading(v.reading(frame.screen, 79, fixture.Height), v.anchor) {
 					t.Fatal("E9 reading anchor changed")
 				}
 			}
@@ -420,8 +440,8 @@ func TestM3WorkPanelEventLatency(t *testing.T) {
 		if v.x > 0 {
 			width = 79
 		}
-		if !reflect.DeepEqual(panelCellRows(restored, 0, width)[1:fixture.Height-3], v.anchor) {
-			t.Errorf("E9 %s restored reading anchor changed", v.name)
+		if got := v.reading(restored, width, fixture.Height); !sameReading(got, v.anchor) {
+			t.Errorf("E9 %s restored reading anchor changed:\n%s\nwant:\n%s", v.name, strings.Join(got, "\n"), strings.Join(v.anchor, "\n"))
 		}
 		h.keys(v.terminal, "\x04")
 		v.terminal.process.wait(t, 0)

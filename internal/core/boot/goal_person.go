@@ -19,13 +19,26 @@ type goalTaskList struct{}
 
 func goalTaskKey(goalID, taskID string) string { return goalID + "\x1f" + taskID }
 
-func (goalTaskList) Candidates(ctx context.Context, tx *canon.Tx, person string) ([]string, error) {
+func (s goalTaskList) Candidates(ctx context.Context, tx *canon.Tx, person string) ([]string, error) {
+	items, err := s.Items(ctx, tx, person)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids, nil
+}
+
+// Items decodes each goal once for all of its task rows.
+func (goalTaskList) Items(ctx context.Context, tx *canon.Tx, person string) ([]runs.ListCandidate, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT body FROM work_records WHERE kind='goal' ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var ids []string
+	var out []runs.ListCandidate
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
@@ -42,10 +55,11 @@ func (goalTaskList) Candidates(ctx context.Context, tx *canon.Tx, person string)
 			if task.ID == "" {
 				continue
 			}
-			ids = append(ids, goalTaskKey(g.ID, task.ID))
+			summary, state := goal.RunningRow(task)
+			out = append(out, runs.ListCandidate{ID: goalTaskKey(g.ID, task.ID), Item: runs.ListItem{Person: g.Person, Agent: g.Agent, Summary: summary, State: state}})
 		}
 	}
-	return ids, rows.Err()
+	return out, rows.Err()
 }
 
 func (goalTaskList) Read(ctx context.Context, tx *canon.Tx, id string) (runs.ListItem, error) {

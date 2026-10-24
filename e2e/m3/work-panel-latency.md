@@ -23,7 +23,9 @@ is written within Core’s transaction, so storage time is included. Every
 combination independently requires 50 distinct valid samples, nearest-rank
 p95 ≤500 ms and maximum ≤1 s. The shared T-16 E8/E9 evaluators also consume the
 sidebar recordings. The draft, selected card and scrolled conversation remain
-stable; closing each overlay must restore its draft and reading position.
+stable; closing each overlay must restore its draft and reading position. The
+reading position is the conversation's rows; the running strip under them in
+the overlay layout is live status and changes as steps land.
 
 ```sh
 go test -count=1 -v -run WorkPanel ./e2e/m1/...
