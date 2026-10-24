@@ -179,6 +179,11 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 			}
 			var err error
 			parent, err = readInputChoices(ctx, tx, ledger.Event{ID: id})
+			// A card action replies to the agent event that presented the card,
+			// which holds no choices.
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
 			return err
 		})
 		if err != nil {
