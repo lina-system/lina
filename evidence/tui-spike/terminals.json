@@ -72,7 +72,7 @@
       {
         "id": "ssh-tmux",
         "terminal": "tmux",
-        "version": "OpenSSH, tmux",
+        "version": "OpenSSH 10.2p1 Ubuntu-2ubuntu3.8, tmux 3.6",
         "term": "xterm-256color",
         "transport": "ssh"
       }
