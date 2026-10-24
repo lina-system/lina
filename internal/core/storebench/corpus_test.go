@@ -28,6 +28,9 @@ type corpus struct {
 	Turns     [][]message
 	Summaries []summary
 	Skipped   int
+	// SourceEvents maps a snapshot's legacy source row to the synthetic event
+	// that carries it. A private question file may name either identity.
+	SourceEvents map[int64]string
 }
 type counts struct {
 	Turns        int `json:"turns"`

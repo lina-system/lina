@@ -136,6 +136,25 @@ A rerank of the top 20 cannot change recall@20. At 5, `ko-reranker` found 5 ques
 
 Counting identical text as separate documents, as an index of this import would, identical copies filled 3.2 of the top 12 places on average (up to 10) for pair BM25 on questions, and 2.6 for Kiwi content. Recall@12 then drops from 0.41 to 0.35 for pair BM25 and from 0.61 to 0.57 for vectors. Part of that drop is the evidence naming one copy while the list shows the other.
 
+### Recall eval command
+
+Run on 2026-10-24 through the store benchmark's recall eval mode (#1117) on the #849 question set: 50 questions, 77 evidence references, every reference resolved. The history was loaded through LINA's own write path from a private snapshot of every profile's state database.
+
+- **Corpus.** The 23,263 non-empty user rows of all eight profiles, 100.3 MB of derived text, 1,188 events over 16 KiB, over 12.4 days. The rows repeat: they hold 6,252 distinct texts, and the largest profile's 11,216 rows hold 1,204. `recall` counts identical derived text once per conversation, so a repeated row fills one place, as in [Identical copies](#identical-copies). This is not the 6,997-event person-and-forwarded corpus above: the eval command loads what the snapshot holds, and that subset came from the #849 harness's owner mapping. With 3.3 times the documents, absolute recall is lower and the rows are not comparable with the tables above.
+- **Rows.** Lexical ranking only; vectors are #874 and join the same command without a change.
+
+| Configuration | Recall@5 | Recall@12 | Recall@20 | Evidence recall@12 | MRR@20 | Empty | p50 ms | p95 ms |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Question as asked | 0.28 | 0.28 | 0.28 | 0.18 | 0.217 | 0 | 5,803 | 17,412 |
+| Short query | 0.34 | 0.44 | 0.46 | 0.30 | 0.295 | 0 | 836 | 8,864 |
+
+| A | B | Only A | Only B | Both | p |
+| --- | --- | --- | --- | --- | --- |
+| Question as asked | Short query | 2 | 10 | 12 | 0.039 |
+
+- The short query found 10 questions the question missed, against 2 (p = 0.039). BM25 was indifferent on the person-and-forwarded corpus (0.41 against 0.43); this is a different corpus, not the same comparison.
+- Latency is two orders of magnitude above the harness's 7 to 17 ms for the same shape of query. On the benchmark's generated corpus the same call takes 126 ms at 1,800 events and 779 ms at 7,200, so the cost grows with the corpus and belongs to the shipped read path (#871), not to this mode.
+
 ### Cost
 
 On 42.9 MB of derived text (6,997 events):
@@ -186,7 +205,7 @@ These change the contract text of [Store and recall](../design/conversation-and-
 - [#871](https://github.com/thisisjun786/lina/issues/871), `recall`: any term matches and BM25 orders; one hit per identical derived text within a conversation; no model rerank; the `recall` tool asks for a sentence; recall at 12 on the #849 set before and after. Its pull request changes [Store and recall](../design/conversation-and-memory.md#store-and-recall) (Queries, One recall entry).
 - [#874](https://github.com/thisisjun786/lina/issues/874), vectors: the largest measured gain, so it goes first among the quality steps; fusion constant 60; `bge-m3` as the measured candidate for the default model; 4,096 bytes per document at float32.
 - [#867](https://github.com/thisisjun786/lina/issues/867), store benchmark: its private-snapshot loader is reused by the eval command, and it reports the pair table's bytes in the new shape.
-- New: [#1117](https://github.com/thisisjun786/lina/issues/1117), the recall eval command: named recall configurations over a private question set, with the paired counts of this note. Depends on #867 and #871.
+- New: [#1117](https://github.com/thisisjun786/lina/issues/1117), the recall eval command: named recall configurations over a private question set, with the paired counts of this note. Depends on #867 and #871. It runs as the store benchmark's recall eval mode and produced the [rows above](#recall-eval-command).
 
 No issue was filed for Kiwi, rerank, query expansion, judged evidence, version twins or HWP parsing: each is "not now" or "no" above, and the eval command is how a later question set reopens one.
 
