@@ -672,6 +672,56 @@ func TestReadWorkProgressResolvesCodeGoalRecord(t *testing.T) {
 	}
 }
 
+func TestReadWorkProgressResolvesTaskGeneration(t *testing.T) {
+	r, _ := turnRuntime(t)
+	input := questionPersonInput(t, r, "task-progress", "How is the library task going?")
+	tools := modelBindingTools(t, r, input)
+	card := work.Card{
+		Task:  work.Task{ID: "library-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Library task"},
+		State: "input_needed",
+	}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO work_cards(task_id,record) VALUES(?,?)", card.Task.ID, raw)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	read := questionCall(t, tools, "read_work_progress", "generation-progress", map[string]string{"id": "task:library-task:3"})
+	if read.Code != loop.OK {
+		t.Fatalf("progress read denied: %+v", read)
+	}
+	var body struct {
+		ID       string `json:"id"`
+		Progress struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+		} `json:"progress"`
+	}
+	if err = json.Unmarshal(read.Output, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ID != "task:library-task:3" {
+		t.Fatalf("response id = %s, want the original reference", body.ID)
+	}
+	if body.Progress.State == "unknown" || body.Progress.Name != "Library task" {
+		t.Fatalf("task generation missed the progress line: %s", read.Output)
+	}
+	missing := questionCall(t, tools, "read_work_progress", "missing-generation", map[string]string{"id": "task:missing-task:1"})
+	if missing.Code != loop.OK {
+		t.Fatalf("missing task denied: %+v", missing)
+	}
+	if err = json.Unmarshal(missing.Output, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Progress.State != "unknown" {
+		t.Fatalf("missing task was resolved: %s", missing.Output)
+	}
+}
+
 func TestWorkCompletionTurnKeepsBindingTools(t *testing.T) {
 	r, _ := turnRuntime(t)
 	now := time.Now().UTC()

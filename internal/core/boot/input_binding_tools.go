@@ -464,6 +464,10 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 				progressID := a.ID
 				if ref, ok := goal.ProgressRef(a.ID); ok {
 					progressID = ref
+				} else if taskID, ok := workerFollowTask(a.ID); ok && taskID != a.ID {
+					if _, err := r.work.Get(ctx, taskID); err == nil {
+						progressID = taskID
+					}
 				}
 				if projection.Rows != nil {
 					for _, row := range *projection.Rows {
