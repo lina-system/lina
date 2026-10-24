@@ -183,7 +183,7 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 		return nil, nil
 	}
 	kinds := kindsOf(scope)
-	lineageEvents := containsKind(kinds, Event)
+	withEvents := containsKind(kinds, Event)
 	at := scope.At
 	if at == 0 {
 		at = time.Now().Unix()
@@ -262,7 +262,7 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	args = append(args, olderSArgs...)
 	args = append(args, queuedArgs...)
 	var external []Hit
-	if query.EventText != nil {
+	if query.EventText != nil && withEvents {
 		var err error
 		external, err = pendingEventText(ctx, db, scope, at, restricted, terms, query.EventText)
 		if err != nil {
@@ -281,12 +281,12 @@ candidates AS MATERIALIZED (
  FROM recall_source s JOIN recall_pending q ON q.kind=s.kind AND q.source_id=s.source_id
  WHERE ` + strings.Join(pendingWhere, "\n AND ") + `
 ),
-` + lineageCTE(lineageEvents) + `
+` + lineageCTE(withEvents) + `
 dedup AS (
  SELECT c.id,c.kind,c.source_id,c.revision,c.occurred_at,c.holder,c.conversation,c.score,c.paired,c.trigram,c.older,
   CASE WHEN c.kind='event' AND c.text_hash IS NOT NULL AND c.replay=0 THEN row_number() OVER (
    PARTITION BY c.conversation,c.text_hash ORDER BY julianday(c.occurred_at),c.source_id) ELSE 1 END AS twin
- FROM candidates c` + lineageFilter(lineageEvents) + `)
+ FROM candidates c` + lineageFilter(withEvents) + `)
 SELECT kind,source_id,revision,occurred_at,holder,older FROM dedup WHERE twin=1 AND (?=1 OR older=0)
 ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianday(occurred_at) DESC, source_id`
 	args = append(args, boolInt(scope.History))
@@ -421,7 +421,7 @@ func lineageFilter(enabled bool) string {
 	if !enabled {
 		return ""
 	}
-	return ` WHERE c.kind<>'event' OR c.id NOT IN (SELECT d.id FROM candidates d JOIN derived x ON x.id=d.source_id)`
+	return ` WHERE c.kind<>'event' OR c.source_id NOT IN (SELECT x.id FROM derived x)`
 }
 
 func holderCondition(scope Scope, alias string) string {

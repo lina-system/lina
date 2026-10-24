@@ -158,6 +158,58 @@ func TestSearchOneHitPerIdenticalTextAndReplayOptIn(t *testing.T) {
 	}
 }
 
+func TestSearchQueuedViewCountsWithItsSource(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "source", "conversation", "owner", "agent", "도서관 원문", base, "")
+	admitAt(t, db, "other", "conversation", "owner", "agent", "도서관 산책", base.Add(time.Second), "")
+	write(t, db, eventSQL, "view", "도서관 보기")
+	write(t, db, "INSERT INTO ev_rel(event_id,target_id,kind,ordinal) VALUES('view','source','view_of',0)")
+	if n := count(t, db, "SELECT count(*) FROM recall_pending WHERE source_id='view'"); n != 1 {
+		t.Fatalf("view not queued: %d", n)
+	}
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	ids := searchIDs(t, db, scope, "도서관", 0)
+	sort.Strings(ids)
+	if !reflect.DeepEqual(ids, []string{"other", "source"}) {
+		t.Fatalf("queued view: %v", ids)
+	}
+	drain(t, db)
+	ids = searchIDs(t, db, scope, "도서관", 0)
+	sort.Strings(ids)
+	if !reflect.DeepEqual(ids, []string{"other", "source"}) {
+		t.Fatalf("published view: %v", ids)
+	}
+}
+
+func TestSearchQueuedMaterialEventFollowsKinds(t *testing.T) {
+	db := database(t)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES('material','conversation','owner','agent','person','{}','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','observed','{"kind":"native"}','asset',1)`)
+	read := func(context.Context, string) (string, error) { return "도서관 자료", nil }
+	for _, tc := range []struct {
+		kinds []recall.Kind
+		want  []string
+	}{
+		{[]recall.Kind{recall.Memory, recall.Summary, recall.Record}, nil},
+		{[]recall.Kind{recall.Event}, []string{"material"}},
+		{nil, []string{"material"}},
+	} {
+		scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: tc.kinds}
+		hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관", EventText: read})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, hit := range hits {
+			ids = append(ids, hit.ID)
+		}
+		if !reflect.DeepEqual(ids, tc.want) {
+			t.Fatalf("kinds %v: %v, want %v", tc.kinds, ids, tc.want)
+		}
+	}
+}
+
 func TestSearchLineageKeepsEventAsItemCitation(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)

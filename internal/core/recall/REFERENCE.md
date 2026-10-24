@@ -46,9 +46,13 @@ ties go to the newer `occurred_at`. A short term reaches memory items and
 records by a literal scan of the already scoped set. A source that is still
 queued keeps its text in canon; `Match` matches it there, so search does not
 wait for the background drain. A queued event whose body lives in material is
-read through the caller's `EventText` reader, which only `ledger.Store.Search`
-supplies. `recall_doc.text_hash` collapses events with
-identical derived text inside one conversation to the earliest of them. A
+read through the caller's `EventText` reader, which `ledger.Store.Search` and
+the live recall tool supply; it is read only when the requested kinds include
+events. `recall_doc.text_hash` collapses events with
+identical derived text inside one conversation to the earliest of them. An
+event whose `replay_of` or `view_of` chain reaches another candidate is
+represented by that candidate, matched by source id so a queued event without
+an index row collapses the same way. A
 returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
 its lineage counts once: a copy appears when its original is out of scope.
