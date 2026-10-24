@@ -41,7 +41,9 @@ origin, replay, visibility class), matches, ranks and limits without reading a
 published source body. A scope can also restrict only event candidates by
 speaker, which keeps memory items eligible; `recall_person` uses it to read the
 person's own events and never an agent's or tool's words as evidence about the
-person. Vector candidates go through the same scope predicates and the same
+person. `PersonMemory` keeps only memory items whose subject is the person,
+before ranking and the limit; `recall_person` and person-only memory search set
+it. Vector candidates go through the same scope predicates and the same
 restricted-event list before fusion. Query terms are literal, whitespace split,
 at most eight, and any term may match. Documents holding more terms come first
 by BM25 over the pair table; documents found only through the trigram table follow;

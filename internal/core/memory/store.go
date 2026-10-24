@@ -407,8 +407,8 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 		found, err := recall.Match(ctx, s.db, recall.Scope{
 			Person: scope.Person, Agent: scope.Agent, Kinds: []recall.Kind{recall.Memory},
 			CommonOnly: scope.CommonOnly, History: q.History, At: q.At,
-			PersonOnly: q.PersonOnly,
 			Projection: scope.Projection, ExternalModel: scope.ExternalModel,
+			PersonMemory: q.PersonOnly || relationship,
 		}, recall.Query{Text: q.Text, Vectors: s.vectors})
 		if err != nil {
 			return nil, err

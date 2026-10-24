@@ -233,6 +233,31 @@ test('a delayed intervening failure still marks flaky when an earlier mark has n
   assert.equal(mock.issues[0].state, 'open');
 });
 
+test('a late pass between nonadjacent failures is flaky when that pair is inside 48 hours', async () => {
+  const marker = /<!-- foundation-qa:(\{[^\n]+\}) -->/;
+  const at = (result, n, started) => {
+    const input = fixture(result, n);
+    input.plan = sealPlan({ ...input.plan, started });
+    input.records[0].digest = input.plan.digest;
+    return input;
+  };
+  // Commit order A, C, E, G, with E reported far outside the window. Pass F
+  // sits between C and G; E is the only mark between that pair.
+  for (const passStart of [epoch + 3 * hour, epoch + 100 * hour]) {
+    const mock = github();
+    const opts = options(mock);
+    await reconcileQA({ ...opts, ...at('fail', 1, epoch + hour) });
+    await reconcileQA({ ...opts, ...at('fail', 3, epoch + 2 * hour) });
+    await reconcileQA({ ...opts, ...at('fail', 5, epoch + 100 * hour) });
+    await reconcileQA({ ...opts, ...at('fail', 7, epoch + 4 * hour) });
+    await reconcileQA({ ...opts, ...at('pass', 6, passStart) });
+    assert.equal(mock.issues[0].labels.includes('flaky'), passStart === epoch + 3 * hour);
+    assert.equal(mock.issues[0].state, 'open');
+    const state = JSON.parse(marker.exec(mock.issues[0].body)[1]);
+    assert.equal(state.passes, 0, 'a pass before the latest failure is not recovery');
+  }
+});
+
 test('a pass reported after both failures still marks flaky when commit order puts it between them', async () => {
   const marker = /<!-- foundation-qa:(\{[^\n]+\}) -->/;
   for (const elapsed of [48 * hour, 48 * hour + 1]) {

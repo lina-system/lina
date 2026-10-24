@@ -106,11 +106,12 @@ the positive integer repository variable `QA_RECOVERY_PASSES` (default `3`).
 Each failure resets the pass count. A failure, pass and another failure within
 48 hours of the first failure marks the issue `flaky`; it stays open until the
 same recovery threshold is met. Commit order decides that sequence: a pass
-reported after both failures still counts when it sits between them. The
-observation window is the span of those three plan start times, at most 48
-hours. The reporter keeps the newest failure heads, at most 16, even when the
-stored heads are more than 48 hours apart, so a delayed failure between them
-can still complete the sequence.
+reported after both failures still counts when it sits between them. Every
+retained failure pair is checked, so a mark that lies between the pair but
+outside the window does not hide it. The observation window is the span of
+those three plan start times, at most 48 hours. The reporter keeps the newest
+failure heads, at most 16, even when the stored heads are more than 48 hours
+apart, so a delayed failure between them can still complete the sequence.
 The label remains as history after recovery. The reporter creates the label if
 it is missing and preserves other labels.
 An unfinished test resets the recovery streak without creating a failure;
