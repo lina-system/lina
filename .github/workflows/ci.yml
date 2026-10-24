@@ -264,4 +264,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           QA_MILESTONE: ${{ vars.QA_MILESTONE }}
+          QA_RECOVERY_PASSES: ${{ vars.QA_RECOVERY_PASSES }}
         run: node scripts/verify/post-merge-qa.mjs --plan "$RUNNER_TEMP/foundation-plan.json" --results "$RUNNER_TEMP/foundation-results"
