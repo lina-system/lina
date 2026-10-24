@@ -1096,7 +1096,10 @@ func (s *Store) Remove(ctx context.Context, linkID string) (Repair, error) {
 // Correct moves an identity to the right people record. The items the old link
 // produced are retracted, and only this identity's messages after the learning
 // watermark are queued again. The recorded validity window stays: the answer
-// settles the record, not how long the identifier was theirs.
+// settles the record, not how long the identifier was theirs. Every other
+// active link of the identity is superseded in the same transaction, and the
+// items those links produced are retracted, so the sender is not usable as two
+// people.
 func (s *Store) Correct(ctx context.Context, linkID, record string) (Repair, error) {
 	if linkID == "" || record == "" {
 		return Repair{}, ErrInvalid
@@ -1124,13 +1127,38 @@ func (s *Store) Correct(ctx context.Context, linkID, record string) (Repair, err
 		if err := writeSignals(ctx, tx, linkID, answer); err != nil {
 			return err
 		}
-		var err error
-		if items, err = s.citingItems(ctx, tx, linkID); err != nil {
+		cited, err := s.citingItems(ctx, tx, linkID)
+		if err != nil {
 			return err
 		}
-		if err := s.queueRepairTx(ctx, tx, linkID, items); err != nil {
+		if err := s.queueRepairTx(ctx, tx, linkID, cited); err != nil {
 			return err
 		}
+		items = append(items, cited...)
+		links, err := s.linksTx(ctx, tx, identity)
+		if err != nil {
+			return err
+		}
+		for _, link := range links {
+			if link.ID == linkID || link.State != Active {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE identity_link SET state='removed',revision=revision+1 WHERE id=?", link.ID); err != nil {
+				return err
+			}
+			if err := writeChange(ctx, tx, link.ID, link.Revision+1, "superseded", link.Class, Removed, link.Record, s.person, at); err != nil {
+				return err
+			}
+			cited, err = s.citingItems(ctx, tx, link.ID)
+			if err != nil {
+				return err
+			}
+			if err := s.queueRepairTx(ctx, tx, link.ID, cited); err != nil {
+				return err
+			}
+			items = append(items, cited...)
+		}
+		items = uniqueIDs(items)
 		requeued, err = s.requeueTx(ctx, tx, identity, at, "link corrected")
 		return err
 	})
@@ -1240,7 +1268,8 @@ func (s *Store) Requeues(ctx context.Context) ([]Requeue, error) {
 // Merge records that two people records are one human. It is the person's act,
 // so their answer is the evidence a merge rests on; both record ids are kept,
 // the aliases of both are kept with the merge, the links and items of the first
-// record move to the second, and the merge can be undone.
+// record move to the second, and the merge can be undone. A forgotten item
+// moves still forgotten. A permanently deleted item is already gone.
 func (s *Store) Merge(ctx context.Context, from, into string) (string, error) {
 	if from == "" || into == "" || from == into {
 		return "", ErrInvalid
@@ -1320,8 +1349,26 @@ func (s *Store) Merge(ctx context.Context, from, into string) (string, error) {
 	return merge, nil
 }
 
+func uniqueIDs(ids []string) []string {
+	if len(ids) < 2 {
+		return ids
+	}
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
 func (s *Store) subjectItems(ctx context.Context, tx *canon.Tx, record string) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM memory_item WHERE person=? AND subject_kind='third_party' AND subject_id=? AND state='active' ORDER BY id`, s.person, record)
+	// A forgotten item is trashed and still recoverable. It moves with the
+	// record and stays forgotten. A permanently deleted item has no row.
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM memory_item WHERE person=? AND subject_kind='third_party' AND subject_id=? AND state IN ('active','trashed') ORDER BY id`, s.person, record)
 	if err != nil {
 		return nil, err
 	}
@@ -1359,7 +1406,9 @@ func (s *Store) MergeAliases(ctx context.Context, merge string) (map[string][]st
 	return aliases, err
 }
 
-// UndoMerge puts every link and every item back on the record it came from.
+// UndoMerge puts every link and every item that still exists back on the
+// record it came from. A forgotten item moves back still forgotten. A
+// permanently deleted item stays gone and does not block the undo.
 func (s *Store) UndoMerge(ctx context.Context, merge string) error {
 	if merge == "" {
 		return ErrInvalid
@@ -1425,6 +1474,9 @@ func (s *Store) UndoMerge(ctx context.Context, merge string) error {
 		}
 		for _, item := range items {
 			if _, err := memory.ReassignSubject(ctx, tx, s.person, item.item, into, item.record); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
 				return err
 			}
 		}
