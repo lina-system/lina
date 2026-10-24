@@ -27,6 +27,10 @@ var (
 	// message text, such as Discord without the message-content intent. The
 	// source states the cause instead of storing records whose bodies are empty.
 	ErrTextUnavailable = errors.New("messenger_text_unavailable")
+	// ErrChatUnavailable reports a chat this account can no longer read, such
+	// as a channel it left. Sync skips that chat, keeping its cursor and
+	// records, and reads the source's other chats.
+	ErrChatUnavailable = errors.New("messenger_chat_unavailable")
 )
 
 // Removals is the one retraction path. Deleted records are hidden through it and
@@ -518,7 +522,7 @@ func (s *Store) AdmitEvent(ctx context.Context, source Source, event Event) (Pag
 		return PageResult{}, ErrNotConnected
 	}
 	if event.Chat == "" {
-		deleted, err := s.deleteSourceMessages(ctx, source, []string{event.Deletion.Message}, event.ChatPrefixes...)
+		deleted, err := s.deleteSourceMessages(ctx, source, []string{event.Deletion.Message}, deletionTime(*event.Deletion, s.now()), event.ChatPrefixes...)
 		return PageResult{Deleted: deleted}, err
 	}
 	var enabled bool
@@ -624,6 +628,21 @@ func (s *Store) admit(ctx context.Context, source Source, chat string, from Curs
 		}
 		deleting[deletion.Message] = true
 	}
+	retained, err := s.pendingDeletions(ctx, source, chat, ids)
+	if err != nil {
+		return PageResult{}, err
+	}
+	var consumed []string
+	if len(retained) > 0 {
+		page.Deletions = append([]Deletion(nil), page.Deletions...)
+		for _, deletion := range retained {
+			consumed = append(consumed, deletion.Message)
+			if !deleting[deletion.Message] {
+				page.Deletions = append(page.Deletions, deletion)
+				deleting[deletion.Message] = true
+			}
+		}
+	}
 	var result PageResult
 	var plans []recordPlan
 	var repairs []string
@@ -677,6 +696,19 @@ func (s *Store) admit(ctx context.Context, source Source, chat string, from Curs
 			return PageResult{}, err
 		}
 		result.Deleted = deleted
+	}
+	if len(consumed) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(consumed)), ",")
+		args := []any{source.Platform, source.Account}
+		for _, id := range consumed {
+			args = append(args, id)
+		}
+		if err := s.db.Write(ctx, func(tx *canon.Tx) error {
+			_, err := tx.ExecContext(ctx, "DELETE FROM messenger_deletion_pending WHERE platform=? AND account=? AND message IN ("+placeholders+")", args...)
+			return err
+		}); err != nil {
+			return PageResult{}, err
+		}
 	}
 	if len(plans) == 0 && len(repairs) == 0 {
 		// Nothing new: only a scheduled read advances progress.
@@ -754,6 +786,9 @@ type recordPlan struct {
 	ownWrite  bool
 	effect    effectRow
 	relations []ledger.Relation
+	// waiting names reply and thread targets that are neither stored nor in
+	// this batch, by platform message id. They are linked when admitted.
+	waiting []ledger.Relation
 }
 
 // relationNode is one record in a page or an import run, before placement.
@@ -765,6 +800,7 @@ type relationNode struct {
 	revision  int
 	previous  string
 	relations []ledger.Relation
+	waiting   []ledger.Relation
 }
 
 // placeRelations writes each record after the records in this batch it replies
@@ -797,6 +833,12 @@ func (s *Store) placeRelations(ctx context.Context, source Source, chat string, 
 		relations, err := s.importRelations(ctx, source, chat, Message{ID: node.id, ReplyTo: node.replyTo, Thread: node.thread}, admitted)
 		if err != nil {
 			return err
+		}
+		for _, target := range []ledger.Relation{{TargetID: node.replyTo, Kind: "replies_to"}, {TargetID: node.thread, Kind: "in_thread"}} {
+			if _, inBatch := index[target.TargetID]; target.TargetID == "" || target.TargetID == node.id || inBatch || hasRelation(relations, target.Kind) {
+				continue
+			}
+			node.waiting = append(node.waiting, target)
 		}
 		if node.previous != "" {
 			relations = append(relations, ledger.Relation{TargetID: node.previous, Kind: "supersedes"})
@@ -833,10 +875,19 @@ func (s *Store) orderRecordPlans(ctx context.Context, source Source, chat string
 	out := make([]recordPlan, len(ordered))
 	for i, node := range ordered {
 		plan := plans[node.index]
-		plan.relations = node.relations
+		plan.relations, plan.waiting = node.relations, node.waiting
 		out[i] = plan
 	}
 	return out, nil
+}
+
+func hasRelation(relations []ledger.Relation, kind string) bool {
+	for _, relation := range relations {
+		if relation.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // admission builds the trusted entry and ledger input of one record.
@@ -926,9 +977,73 @@ ON CONFLICT(event,ordinal) DO UPDATE SET attachment=excluded.attachment,name=exc
 			return err
 		}
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_record_revision(platform,account,chat,message,revision,event) VALUES(?,?,?,?,?,?)`,
-		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID)
-	return err
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_record_revision(platform,account,chat,message,revision,event) VALUES(?,?,?,?,?,?)`,
+		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID); err != nil {
+		return err
+	}
+	return s.writeWaiting(ctx, tx, source, chat, plan, event.ID)
+}
+
+// writeWaiting links the live replies and thread members admitted before this
+// message to its new event, then records the targets this message still
+// waits for. A backward first fill reaches a reply before its parent.
+func (s *Store) writeWaiting(ctx context.Context, tx *canon.Tx, source Source, chat string, plan recordPlan, event string) error {
+	id := plan.message.ID
+	rows, err := tx.QueryContext(ctx, `SELECT r.event,p.kind FROM messenger_relation_pending p
+JOIN messenger_record r ON r.platform=p.platform AND r.account=p.account AND r.chat=p.chat AND r.message=p.message
+WHERE p.platform=? AND p.account=? AND p.chat=? AND p.target=? AND p.message<>? AND r.state='live' AND r.event<>''
+ORDER BY r.event,p.kind`, source.Platform, source.Account, chat, id, id)
+	if err != nil {
+		return err
+	}
+	var links []struct{ from, kind string }
+	for rows.Next() {
+		var link struct{ from, kind string }
+		if err := rows.Scan(&link.from, &link.kind); err != nil {
+			rows.Close()
+			return err
+		}
+		links = append(links, link)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, link := range links {
+		if err := ledger.AppendStructure(ctx, tx, link.from, ledger.Relation{TargetID: event, Kind: link.kind}); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messenger_relation_pending WHERE platform=? AND account=? AND chat=? AND (target=? OR message=?)`,
+		source.Platform, source.Account, chat, id, id); err != nil {
+		return err
+	}
+	for _, waiting := range plan.waiting {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_relation_pending(platform,account,chat,message,kind,target) VALUES(?,?,?,?,?,?)
+ON CONFLICT(platform,account,chat,message,kind) DO UPDATE SET target=excluded.target`,
+			source.Platform, source.Account, chat, id, waiting.Kind, waiting.TargetID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// attachmentMessage names the message a visible record's current revision
+// carries the attachment with.
+func (s *Store) attachmentMessage(ctx context.Context, source Source, chat, attachment string) (string, error) {
+	if !validName(chat) || !validName(attachment) {
+		return "", ErrInvalid
+	}
+	var message string
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT a.message FROM messenger_attachment a
+JOIN messenger_record r ON r.platform=a.platform AND r.account=a.account AND r.chat=a.chat AND r.message=a.message AND r.event=a.event
+WHERE a.platform=? AND a.account=? AND a.chat=? AND a.attachment=? AND r.state='live'
+ AND EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=a.event)
+ORDER BY a.message LIMIT 1`, source.Platform, source.Account, chat, attachment).Scan(&message)
+	})
+	return message, err
 }
 
 func (s *Store) commitProgress(ctx context.Context, source Source, chat string, from Cursor, page Page, messages int) error {
@@ -1044,21 +1159,52 @@ func (s *Store) DeleteRecords(ctx context.Context, source Source, chat string, m
 // chat, such as updateDeleteMessages. Telegram keeps one message-id sequence
 // for the account's private chats and basic groups, so a pushed id belongs to
 // at most one of them; every chat the id is live in is cleared, as TDLib does.
+// An id no record in those chats holds yet is retained, and a later admission
+// of that message in such a chat writes its tombstone instead.
 func (s *Store) DeleteSourceMessages(ctx context.Context, source Source, messages []string, chatPrefixes ...string) (int, error) {
 	if err := s.lockAdmission(ctx); err != nil {
 		return 0, err
 	}
 	defer s.unlockAdmission()
-	return s.deleteSourceMessages(ctx, source, messages, chatPrefixes...)
+	return s.deleteSourceMessages(ctx, source, messages, s.now(), chatPrefixes...)
 }
 
-func (s *Store) deleteSourceMessages(ctx context.Context, source Source, messages []string, chatPrefixes ...string) (int, error) {
+func (s *Store) deleteSourceMessages(ctx context.Context, source Source, messages []string, at time.Time, chatPrefixes ...string) (int, error) {
 	if len(messages) == 0 {
 		return 0, nil
 	}
-	chats, err := s.chatMessagesByID(ctx, source, messages)
+	for _, message := range messages {
+		if !validName(message) {
+			return 0, ErrInvalid
+		}
+	}
+	for _, prefix := range chatPrefixes {
+		if !validName(prefix) || strings.Contains(prefix, "\n") {
+			return 0, ErrInvalid
+		}
+	}
+	chats, known, err := s.chatMessagesByID(ctx, source, messages, chatPrefixes)
 	if err != nil {
 		return 0, err
+	}
+	var unmatched []string
+	for _, message := range messages {
+		if !known[message] {
+			unmatched = append(unmatched, message)
+		}
+	}
+	if len(unmatched) > 0 {
+		if err := s.db.Write(ctx, func(tx *canon.Tx) error {
+			for _, message := range unmatched {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_deletion_pending(platform,account,message,chat_prefixes,deleted_at) VALUES(?,?,?,?,?)
+ON CONFLICT(platform,account,message) DO NOTHING`, source.Platform, source.Account, message, strings.Join(chatPrefixes, "\n"), at.UTC().Format(time.RFC3339Nano)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return 0, err
+		}
 	}
 	total := 0
 	ordered := make([]string, 0, len(chats))
@@ -1067,18 +1213,6 @@ func (s *Store) deleteSourceMessages(ctx context.Context, source Source, message
 	}
 	sort.Strings(ordered)
 	for _, chat := range ordered {
-		if len(chatPrefixes) > 0 {
-			allowed := false
-			for _, prefix := range chatPrefixes {
-				if strings.HasPrefix(chat, prefix) {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				continue
-			}
-		}
 		ids := chats[chat]
 		n, err := s.DeleteRecords(ctx, source, chat, ids)
 		if err != nil {
@@ -1089,30 +1223,94 @@ func (s *Store) deleteSourceMessages(ctx context.Context, source Source, message
 	return total, nil
 }
 
-func (s *Store) chatMessagesByID(ctx context.Context, source Source, messages []string) (map[string][]string, error) {
+func chatAllowed(chat string, prefixes []string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(chat, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// chatMessagesByID finds the named messages in the chats the prefixes allow:
+// the live ones by chat, and every id any record there holds, tombstones
+// included.
+func (s *Store) chatMessagesByID(ctx context.Context, source Source, messages []string, prefixes []string) (map[string][]string, map[string]bool, error) {
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(messages)), ",")
 	args := []any{source.Platform, source.Account}
 	for _, message := range messages {
 		args = append(args, message)
 	}
 	found := map[string][]string{}
+	known := map[string]bool{}
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT chat,message FROM messenger_record
-WHERE platform=? AND account=? AND state='live' AND message IN (`+placeholders+`)`, args...)
+		rows, err := tx.QueryContext(ctx, `SELECT chat,message,state FROM messenger_record
+WHERE platform=? AND account=? AND message IN (`+placeholders+`)`, args...)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var chat, message string
-			if err := rows.Scan(&chat, &message); err != nil {
+			var chat, message, state string
+			if err := rows.Scan(&chat, &message, &state); err != nil {
 				return err
 			}
-			found[chat] = append(found[chat], message)
+			if !chatAllowed(chat, prefixes) {
+				continue
+			}
+			known[message] = true
+			if state == "live" {
+				found[chat] = append(found[chat], message)
+			}
 		}
 		return rows.Err()
 	})
-	return found, err
+	return found, known, err
+}
+
+// pendingDeletions lists retained source-wide deletions of the named messages
+// whose chat scope includes chat.
+func (s *Store) pendingDeletions(ctx context.Context, source Source, chat string, ids []string) ([]Deletion, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := []any{source.Platform, source.Account}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	var deletions []Deletion
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT message,chat_prefixes,deleted_at FROM messenger_deletion_pending
+WHERE platform=? AND account=? AND message IN (`+placeholders+`) ORDER BY message`, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var message, prefixes, at string
+			if err := rows.Scan(&message, &prefixes, &at); err != nil {
+				return err
+			}
+			var scope []string
+			if prefixes != "" {
+				scope = strings.Split(prefixes, "\n")
+			}
+			if !chatAllowed(chat, scope) {
+				continue
+			}
+			deleted, err := parseTime(at)
+			if err != nil {
+				return err
+			}
+			deletions = append(deletions, Deletion{Message: message, At: deleted})
+		}
+		return rows.Err()
+	})
+	return deletions, err
 }
 
 // DeleteChat is the person's deletion of one chat's records.
