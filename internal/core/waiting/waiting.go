@@ -59,6 +59,8 @@ type Item struct {
 // Read must load the current source, including ownership and answer choices.
 // Answer changes that source in the supplied transaction, with no external I/O.
 // Done marks a completed candidate handled so it never appears as a waiting row.
+// Build calls it; BuildProjection reads without writing and leaves the cleanup
+// to the next Build, because a finished candidate is excluded either way.
 type Source interface {
 	Candidates(context.Context, *canon.Tx, string) ([]string, error)
 	Read(context.Context, *canon.Tx, string) (Item, error)
@@ -135,10 +137,24 @@ func NewWithLive(db Canon, sources map[string]Source, live map[string]LiveSource
 // Schema is installed by the composition root in a numbered canon migration.
 const Schema = canon.WaitingDecisionsSchema
 
-// Build re-reads every candidate before projecting it. A source failure refuses
-// the whole snapshot rather than presenting an incomplete list as authoritative.
+// Build re-reads every candidate before projecting it and marks each finished
+// candidate handled in canon's writer. A source failure refuses the whole
+// snapshot rather than presenting an incomplete list as authoritative.
 // Limit zero returns the full list; Home requests five.
 func (s *Service) Build(ctx context.Context, person string, opts Options) (List, error) {
+	return s.build(ctx, person, opts, true)
+}
+
+// BuildProjection reads the same list without canon's writer lane. The progress
+// and overview projections publish on every commit, so queueing them behind
+// the writer delays the very commit they describe, and a burst of commits can
+// hold them for seconds. A finished candidate is left for the next Build to
+// clean: it is absent from the list either way, and cleaning is a write.
+func (s *Service) BuildProjection(ctx context.Context, person string, opts Options) (List, error) {
+	return s.build(ctx, person, opts, false)
+}
+
+func (s *Service) build(ctx context.Context, person string, opts Options, clean bool) (List, error) {
 	if person == "" || opts.Now.IsZero() || opts.Limit < 0 || (opts.Order != "" && opts.Order != Priority && opts.Order != Lightest) {
 		return List{}, ErrInvalid
 	}
@@ -147,7 +163,11 @@ func (s *Service) Build(ctx context.Context, person string, opts Options) (List,
 		item  Item
 	}
 	var rows []ranked
-	err := s.db.Write(ctx, func(tx *canon.Tx) error {
+	run := s.db.Write
+	if !clean {
+		run = s.db.Read
+	}
+	err := run(ctx, func(tx *canon.Tx) error {
 		names := make([]string, 0, len(s.sources))
 		for name := range s.sources {
 			names = append(names, name)
@@ -182,8 +202,10 @@ func (s *Service) Build(ctx context.Context, person string, opts Options) (List,
 					continue
 				}
 				if item.Finished {
-					if err := source.Done(ctx, tx, id); err != nil {
-						return err
+					if clean {
+						if err := source.Done(ctx, tx, id); err != nil {
+							return err
+						}
 					}
 					continue
 				}

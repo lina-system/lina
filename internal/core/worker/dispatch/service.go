@@ -495,7 +495,9 @@ func (s *Service) sync() {
 					continue
 				}
 			}
-			if r.Recoveries > 0 && s.cfg.AuthorizeRecovery != nil {
+			// A definition return starts another execution just as recovery does.
+			// Transient refusals (including goal pause) retain the queued work.
+			if (r.Recoveries > 0 || r.ReturnReceipt != "") && s.cfg.AuthorizeRecovery != nil {
 				allowed, err := s.cfg.AuthorizeRecovery(s.ctx, r)
 				if err != nil {
 					continue

@@ -48,7 +48,13 @@ type Unit struct {
 	Waiting                int
 	Updated                int64
 	Percent                *int
-	Stages                 []Stage
+	// GoalLine marks a line built from a 목표 record, whose Rank is the
+	// person's order among goals.
+	GoalLine bool
+	// Rank is the person's order among goals. Zero is unranked, an older goal
+	// admitted before ranks existed, so it sorts before a numbered rank.
+	Rank   int
+	Stages []Stage
 }
 
 func Compute(units []Unit) []Entry {
@@ -132,6 +138,11 @@ func Compute(units []Unit) []Entry {
 	less := func(a, b *row) bool {
 		if (a.line.Waiting > 0) != (b.line.Waiting > 0) {
 			return a.line.Waiting > 0
+		}
+		// The person's order decides between goal lines; every other row keeps
+		// the movement order below.
+		if a.unit.GoalLine && b.unit.GoalLine && a.unit.Rank != b.unit.Rank {
+			return a.unit.Rank < b.unit.Rank
 		}
 		if a.unit.Updated != b.unit.Updated {
 			return a.unit.Updated > b.unit.Updated

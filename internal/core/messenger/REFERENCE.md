@@ -25,6 +25,14 @@ adds nothing still commits its cursor and coverage in one transaction.
 The page is the unit of resumption: a page that never commits leaves the cursor
 where it was, so the next read sees it again.
 
+Reply and thread targets are resolved before that batch is written, by the
+same placement an import run uses. A target already committed in the chat uses
+that record's event. A target on the same page is written first, and the reply
+names that event. Each target names one revision: when a committed target is
+edited on the same page, the relation names the new revision only. A target that is neither committed nor on this page adds no
+relation, and the message is still kept. A cycle keeps the relations that can
+name an event already written.
+
 ## Speaker kind
 
 The adapter's `Route` is the only input: `person`, `automation`, `system` and
@@ -55,6 +63,13 @@ deletion and stays visible.
 origin is `messenger`, because deletion of a native conversation has its own
 owner; the event row itself is never rewritten, since the ledger is append-only.
 
+## Which adapter a source uses
+
+The service selects the adapter by the name stored on the source, not by the
+platform. Discord's bot and personal account are two names. Every call also
+receives the source account, so one adapter implementation can serve several
+accounts without writing one account's chats under another.
+
 ## Imported records
 
 `AdmitImport` takes one chat of a memory importer's run through the same
@@ -65,7 +80,9 @@ reference on the event stays the live one, so a source connected later joins the
 imported records. One run admits one row per platform key, murmur's archive value
 wins over a live value, a changed row without a later edit is reported as a
 conflict, and a record whose stored speaker kind differs from the confirmed map
-gets a new revision that supersedes it.
+gets a new revision that supersedes it. A record whose reply or thread target is
+in the same run is admitted after that target, whatever their source order, so
+its relation survives; a cycle of replies keeps the relations it can.
 
 ## Coverage
 
@@ -76,7 +93,11 @@ about freshness is stored.
 
 ## Not in this increment
 
-Live events are on the adapter boundary and the service can deliver them, but no
-platform adapter ships yet (#1070 and the per-platform issues). Writes are
+Live events are on the adapter boundary and the service can deliver them, and the [Teams adapter](teams/README.md) polls Graph through Core. Other
+platforms are tracked by #1070 and the per-platform issues. Writes are
 recorded and matched here; the write verbs, grants and approvals belong to
 #1084. Learning from the person's own records is #1075.
+
+Sender profile emails, when supplied by an adapter, are stored as evidence in
+`messenger_author` with the source account and platform author ID. They do not
+change ledger attribution or create an automatic person merge.

@@ -10,6 +10,8 @@ import (
 // ExternalSignIn shares the existing browser/listener relay without admitting a
 // model-provider account. Core supplies the issuer-bound service implementation.
 type ExternalSignIn struct {
+	// PastePort is the registered loopback port for clients that cannot listen.
+	PastePort  int
 	Begin      func(context.Context, int) (string, error)
 	Complete   func(context.Context, protocol.SignInRedirect) error
 	Disconnect func()
@@ -52,10 +54,16 @@ func (s *SignInRelay) handleExternal(ctx context.Context, session Session, p pro
 	}
 	switch p := p.(type) {
 	case protocol.SignInListening:
-		if p.Port == nil || p.CannotListen != nil || attempt.Begin == nil {
+		if attempt.Begin == nil {
 			return fail()
 		}
-		port, err := p.Port.Int64()
+		var port int64
+		var err error
+		if p.Port != nil && p.CannotListen == nil {
+			port, err = p.Port.Int64()
+		} else if p.Port == nil && p.CannotListen != nil && *p.CannotListen != "" {
+			port = int64(attempt.PastePort)
+		}
 		if err != nil || port < 1 || port > 65535 {
 			return fail()
 		}

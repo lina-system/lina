@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/backup"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -105,8 +106,10 @@ type Services struct {
 	Lifecycle func(*lifecycle.Restarter)
 }
 type Config struct {
-	A2A  *A2AOptions
-	Work *WorkConfig
+	// InputJudge is the optional non-chat closed-choice adapter; nil uses the main model.
+	InputJudge atropos.Judge
+	A2A        *A2AOptions
+	Work       *WorkConfig
 	// SandboxLauncher pins an optional trusted absolute OS launcher.
 	SandboxLauncher string
 	// Client supplies the installed person's agents, supported rows and handlers.
@@ -120,7 +123,7 @@ type Config struct {
 	Messenger *MessengerConfig
 	// SignInTransport is an in-process test seam; production uses the fixed issuer.
 	SignInTransport http.RoundTripper
-	// ChannelTransport is an in-process platform test seam; production uses the fixed Telegram and Discord origins.
+	// ChannelTransport is an in-process platform test seam; production uses the fixed messaging and Teams sign-in origins.
 	ChannelTransport http.RoundTripper
 	// WebTransport is an in-process test seam; production uses the fixed Firecrawl origin.
 	WebTransport http.RoundTripper
@@ -378,6 +381,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 		runtime.replaySocket = cfg.Socket
 		runtime.webTransport = cfg.WebTransport
+		runtime.inputJudge = cfg.InputJudge
 		supported := cfg.Client.Supported
 		cfg.Client = runtime.identity
 		cfg.Client.Supported = supported

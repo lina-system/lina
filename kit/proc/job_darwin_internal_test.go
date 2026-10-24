@@ -5,12 +5,19 @@
 package proc
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
 	"io"
+	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestJobDefinitionNamesOneMoreNestingLevel guards the recursion defence: a job
@@ -68,14 +75,14 @@ func TestOwnerResolvesTheJobDirectory(t *testing.T) {
 	if got, err := ownerDirectory(""); err != nil || got != wd {
 		t.Fatalf("unset directory = %q, %v; want %q", got, err, wd)
 	}
-	if got, err := ownerDirectory("relative/dir"); err != nil || got != filepath.Join(wd, "relative/dir") {
+	if got, err := ownerDirectory("relative/dir"); err != nil || got != strings.TrimSuffix(wd, "/")+"/relative/dir" {
 		t.Fatalf("relative directory = %q, %v", got, err)
 	}
 	// A symlink followed by ".." is resolved by the kernel, not lexically here:
 	// "link/.." must arrive uncleaned so it selects the symlink's parent. The
 	// expectation is built by concatenation because filepath.Join would clean
 	// the ".." away and make this check pass for the wrong implementation.
-	want := wd + string(filepath.Separator) + "link" + string(filepath.Separator) + ".."
+	want := strings.TrimSuffix(wd, string(filepath.Separator)) + string(filepath.Separator) + "link" + string(filepath.Separator) + ".."
 	if got, err := ownerDirectory("link/.."); err != nil || got != want {
 		t.Fatalf("relative directory with a symlink = %q, %v; want %q", got, err, want)
 	}
@@ -87,5 +94,326 @@ func TestOwnerResolvesTheJobDirectory(t *testing.T) {
 	}
 	if got := ownerEnvironment([]string{"A=1"}); len(got) != 1 || got[0] != "A=1" {
 		t.Fatalf("explicit environment = %#v", got)
+	}
+}
+
+// TestRelayInputReportsANonFileReadDeadline keeps a timeout from a reader
+// that is not a file. A connection with a read deadline used to be discarded
+// with the deadline that only stops a file relay.
+func TestRelayInputReportsANonFileReadDeadline(t *testing.T) {
+	server, client := acceptInput(t)
+	t.Cleanup(func() { client.Close() })
+	left, right := net.Pipe()
+	t.Cleanup(func() {
+		left.Close()
+		right.Close()
+	})
+	if err := left.SetReadDeadline(time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	process := &jobProcess{
+		stdin:   left,
+		streams: map[string]*jobStream{"in": {conn: server, pump: make(chan error, 1)}},
+		stopped: make(chan struct{}),
+	}
+	process.relayInput(server, process.streams["in"])
+	select {
+	case err := <-process.streams["in"].pump:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("input relay did not finish")
+	}
+	if err := process.stdinFailure(); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("stdin failure = %v", err)
+	}
+}
+
+// TestDrainJoinsFileStdinWithoutClosingIt is the launchd owner's half of the
+// file relay. After drain, a pipe whose writer is still open is not copied to
+// the finished command, and the caller can read what it writes next.
+func TestDrainJoinsFileStdinWithoutClosingIt(t *testing.T) {
+	process, reader, writer, client := startFileInput(t)
+	deliverInput(t, writer, client, "one")
+	if err := process.drain(); err != nil {
+		t.Fatal(err)
+	}
+	if err := process.stdinFailure(); err != nil {
+		t.Fatal(err)
+	}
+	assertInputStaysWithCaller(t, reader, writer, client)
+}
+
+// TestReleaseJoinsFileStdinWithoutClosingIt covers a start that fails after
+// the relay is running. Run returns through release without calling drain.
+func TestReleaseJoinsFileStdinWithoutClosingIt(t *testing.T) {
+	process, reader, writer, client := startFileInput(t)
+	deliverInput(t, writer, client, "one")
+	process.release()
+	assertInputStaysWithCaller(t, reader, writer, client)
+}
+
+func acceptInput(t *testing.T) (server, client *net.UnixConn) {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "lina-stdin-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(dir, "in.sock"), Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	accepted := make(chan *net.UnixConn, 1)
+	go func() {
+		conn, err := listener.AcceptUnix()
+		if err != nil {
+			return
+		}
+		accepted <- conn
+	}()
+	client, err = net.DialUnix("unix", nil, listener.Addr().(*net.UnixAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case server = <-accepted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("input socket was not accepted")
+	}
+	t.Cleanup(func() { server.Close() })
+	return server, client
+}
+
+func startFileInput(t *testing.T) (*jobProcess, *os.File, *os.File, *net.UnixConn) {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { reader.Close(); writer.Close() })
+	dir, err := os.MkdirTemp("/tmp", "lina-stdin-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(dir, "in.sock"), Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	accepted := make(chan *net.UnixConn, 1)
+	go func() {
+		conn, err := listener.AcceptUnix()
+		if err != nil {
+			return
+		}
+		accepted <- conn
+	}()
+	client, err := net.DialUnix("unix", nil, listener.Addr().(*net.UnixAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { client.Close() })
+	var server *net.UnixConn
+	select {
+	case server = <-accepted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("input socket was not accepted")
+	}
+	t.Cleanup(func() { server.Close() })
+	process := &jobProcess{
+		dir:     dir,
+		stdin:   reader,
+		streams: map[string]*jobStream{"in": {conn: server, pump: make(chan error, 1)}},
+		stopped: make(chan struct{}),
+	}
+	process.relayInput(server, process.streams["in"])
+	return process, reader, writer, client
+}
+
+func deliverInput(t *testing.T, writer *os.File, client *net.UnixConn, text string) {
+	t.Helper()
+	if _, err := writer.Write([]byte(text)); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, len(text))
+	n, err := client.Read(buf)
+	if err != nil || string(buf[:n]) != text {
+		t.Fatalf("command read %q, %v", buf[:n], err)
+	}
+}
+
+func assertInputStaysWithCaller(t *testing.T, reader, writer *os.File, client *net.UnixConn) {
+	t.Helper()
+	if _, err := writer.Write([]byte("two")); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 4)
+	if n, err := client.Read(buf); err == nil {
+		t.Fatalf("finished relay delivered %q", buf[:n])
+	}
+	if err := reader.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	n, err := reader.Read(buf)
+	if err != nil || string(buf[:n]) != "two" {
+		t.Fatalf("caller read %q, %v", buf[:n], err)
+	}
+}
+
+// TestJobMainDropsAnUnclaimedJob proves a helper that never reaches the owner
+// still removes the job. The control socket is absent, as it is when the owner
+// dies after loading the job and before the handshake.
+func TestJobMainDropsAnUnclaimedJob(t *testing.T) {
+	dir, err := os.MkdirTemp("", "lina-proc-unclaimed-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	payload, err := json.Marshal(jobRequest{
+		Path: "/bin/test", Ctl: filepath.Join(dir, "ctl.sock"),
+		Label: "com.lina.proc.unclaimed-test", Domain: "gui/501", Temp: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "request.json")
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := JobMain([]string{"--request", path}, io.Discard); code != 70 {
+		t.Fatalf("exit = %d, want 70", code)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, err := os.Stat(dir)
+		if os.IsNotExist(err) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job directory %s remains after the owner was already gone", dir)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestJobDirectoryKeepsNoEnvironment is the credential-isolation check for the
+// macOS job: the command's environment travels over the control connection, so
+// nothing the job writes into its private directory - the request file, the job
+// definition or a stream socket - carries a credential-bearing value. The
+// command still receives the value it was given.
+func TestJobDirectoryKeepsNoEnvironment(t *testing.T) {
+	secret := rand.Text()
+	input, control, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	defer control.Close()
+	output, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	defer writer.Close()
+	if err := output.SetReadDeadline(time.Now().Add(40 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	p, err := newProcess(Command{
+		Path: "/bin/sh", Args: []string{"-c", `printf '%s\n' "$LINA_PROC_SENTINEL"; read -r release || :`},
+		Dir: t.TempDir(), Env: []string{"LINA_PROC_SENTINEL=" + secret}, Stdin: input, Stdout: writer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, ok := p.(*jobProcess)
+	if !ok {
+		t.Fatalf("newProcess returned %T", p)
+	}
+	defer job.release()
+	requireNoJobDirectoryValue(t, job.dir, secret)
+	if err := job.start(); err != nil {
+		t.Fatal(err)
+	}
+	// Receipt of the value proves the command started with its environment.
+	// It cannot exit until we close control, so the scan cannot race its exit.
+	line, err := bufio.NewReader(output).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line != secret+"\n" {
+		t.Fatal("the command did not receive its environment")
+	}
+	requireNoJobDirectoryValue(t, job.dir, secret)
+	if err := control.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := job.wait(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-job.streams["in"].pump; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// requireNoJobDirectoryValue fails when a regular file under dir holds text.
+// Non-regular entries are sockets, which carry bytes but store none.
+func requireNoJobDirectoryValue(t *testing.T, dir, text string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "request.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request map[string]json.RawMessage
+	if err := json.Unmarshal(data, &request); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := request["Env"]; ok {
+		t.Error("request.json contains an environment field")
+	}
+	if err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || entry.Type()&os.ModeSocket != 0 {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(data, []byte(text)) {
+			t.Errorf("%s holds the command's environment", filepath.Base(path))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestJobNilEnvironmentIsEmpty(t *testing.T) {
+	var out bytes.Buffer
+	p, err := newProcess(Command{Path: "/usr/bin/env", Stdout: &out})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.release()
+	if err := p.start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.wait(); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("nil Env inherited %d bytes of the job's environment", out.Len())
 	}
 }

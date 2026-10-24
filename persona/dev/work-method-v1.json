@@ -8,14 +8,14 @@
       "terminal"
     ]
   },
+  "workers": {
+    "dispatch": true
+  },
   "handoff": {
     "owns": [
       "code",
       "pull_request",
       "worker_task"
     ]
-  },
-  "workers": {
-    "dispatch": true
   }
 }

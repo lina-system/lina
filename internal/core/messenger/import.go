@@ -220,30 +220,60 @@ func importDecision(record ImportRecord, seen bool, row recordRow, ref importRef
 
 type importPlan struct {
 	recordPlan
-	record ImportRecord
+	record   ImportRecord
+	previous string
 }
 
-// importRelations resolves a record's reply and thread targets against what the
-// chat already holds and what this run admits earlier in the same transaction.
-func (s *Store) importRelations(ctx context.Context, source Source, chat string, message Message, existing map[string]recordRow, planned map[string]string) ([]ledger.Relation, error) {
-	relations, err := s.relations(ctx, source, chat, message, existing)
+// orderImport puts each record after the records of this run it replies to or
+// joins the thread of. Placement is shared with AdmitPage.
+func (s *Store) orderImport(ctx context.Context, source Source, chat string, plans []importPlan) ([]importPlan, error) {
+	nodes := make([]relationNode, len(plans))
+	for i, plan := range plans {
+		nodes[i] = relationNode{index: i, id: plan.message.ID, replyTo: plan.message.ReplyTo, thread: plan.message.Thread, revision: plan.revision, previous: plan.previous}
+	}
+	ordered, err := s.placeRelations(ctx, source, chat, nodes)
 	if err != nil {
 		return nil, err
 	}
-	seen := make(map[string]bool, len(relations))
-	for _, relation := range relations {
-		seen[relation.TargetID+"\x00"+relation.Kind] = true
+	out := make([]importPlan, len(ordered))
+	for i, node := range ordered {
+		plan := plans[node.index]
+		plan.relations = node.relations
+		out[i] = plan
 	}
-	for _, target := range []struct{ id, kind string }{{message.ReplyTo, "replies_to"}, {message.Thread, "in_thread"}} {
+	return out, nil
+}
+
+// importRelations resolves a record's reply and thread targets against what the
+// chat already holds and what this admission has already placed. AdmitPage and
+// AdmitImport share it. planned maps a platform message id to the event id of
+// a record placed earlier in the same batch. Each target names one revision:
+// the planned one when the batch also edits it, else the committed one.
+func (s *Store) importRelations(ctx context.Context, source Source, chat string, message Message, planned map[string]string) ([]ledger.Relation, error) {
+	targets := []struct{ id, kind string }{{message.ReplyTo, "replies_to"}, {message.Thread, "in_thread"}}
+	var stored []string
+	for _, target := range targets {
+		if _, ok := planned[target.id]; target.id != "" && !ok {
+			stored = append(stored, target.id)
+		}
+	}
+	rows := map[string]recordRow{}
+	if len(stored) > 0 {
+		var err error
+		if rows, err = s.recordRows(ctx, source, chat, stored); err != nil {
+			return nil, err
+		}
+	}
+	var relations []ledger.Relation
+	for _, target := range targets {
 		if target.id == "" {
 			continue
 		}
-		id, ok := planned[target.id]
-		if !ok || seen[id+"\x00"+target.kind] {
-			continue
+		if id, ok := planned[target.id]; ok {
+			relations = append(relations, ledger.Relation{TargetID: id, Kind: target.kind})
+		} else if row, ok := rows[target.id]; ok && row.state == "live" && row.visible && row.event != "" {
+			relations = append(relations, ledger.Relation{TargetID: row.event, Kind: target.kind})
 		}
-		seen[id+"\x00"+target.kind] = true
-		relations = append(relations, ledger.Relation{TargetID: id, Kind: target.kind})
 	}
 	return relations, nil
 }
@@ -315,8 +345,6 @@ func (s *Store) AdmitImport(ctx context.Context, source Source, batch ImportBatc
 			winners[record.Message.ID] = i
 		}
 	}
-	revisions := map[string]int{}
-	planned := map[string]string{}
 	for i, record := range chat.Records {
 		message := record.Message
 		if winners[message.ID] != i {
@@ -360,27 +388,15 @@ func (s *Store) AdmitImport(ctx context.Context, source Source, batch ImportBatc
 			}
 			continue
 		}
-		// Several revisions of one source row can arrive in one run, so the
-		// chain advances here rather than from the stored row alone.
-		base, added, previous := 1, true, ""
+		plan := importPlan{recordPlan: recordPlan{message: message, revision: 1, added: true}, record: record}
 		if seen {
-			base, added, previous = row.revision+1, false, row.event
+			plan.revision, plan.added, plan.previous = row.revision+1, false, row.event
 		}
-		if n := revisions[message.ID]; n > 0 {
-			base += n
-			added, previous = false, planned[message.ID]
-		}
-		revisions[message.ID]++
-		plan := recordPlan{message: message, revision: base, added: added}
-		plan.relations, err = s.importRelations(ctx, source, chat.Chat, message, existing, planned)
-		if err != nil {
-			return ImportResult{}, err
-		}
-		if previous != "" {
-			plan.relations = append(plan.relations, ledger.Relation{TargetID: previous, Kind: "supersedes"})
-		}
-		planned[message.ID] = eventID(source, chat.Chat, message.ID, base)
-		plans = append(plans, importPlan{recordPlan: plan, record: record})
+		plans = append(plans, plan)
+	}
+	plans, err = s.orderImport(ctx, source, chat.Chat, plans)
+	if err != nil {
+		return ImportResult{}, err
 	}
 	if len(deletions) > 0 {
 		remove := make([]Deletion, 0, len(deletions))

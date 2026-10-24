@@ -35,9 +35,14 @@ func (r *conversationRuntime) deliverCoding(ctx context.Context, a codingAssignm
 	key := review.Key{Repository: repo, Number: d.PR.Number, Head: d.PR.Head}
 	rr, err := review.New(r.db).Get(ctx, key)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = r.runCodingManager(ctx, a, "delivery", &d)
-		if err != nil && !errors.Is(err, errConformanceUnverified) {
-			return "unverified", err
+		managerErr := r.runCodingManager(ctx, a, "delivery", &d)
+		if errors.Is(managerErr, review.ErrDuplicate) {
+			// The pull request already had its one review. A second request is
+			// refused; no verdict is recorded and the person decides.
+			return "unverified", nil
+		}
+		if managerErr != nil && !errors.Is(managerErr, errConformanceUnverified) {
+			return "unverified", managerErr
 		}
 		rr, err = review.New(r.db).Get(ctx, key)
 	}
@@ -78,7 +83,11 @@ func (r *conversationRuntime) deliverCoding(ctx context.Context, a codingAssignm
 	// A later terminal failure at this head is current evidence even when a
 	// previous manager judgment passed before the interrupted merge.
 	if d.FailureReason != "" {
-		return r.closeCoding(ctx, a, d, rr, d.FailureReason)
+		reason := d.FailureReason
+		if lines := review.ReasonLines(rr.Findings); len(lines) > 0 {
+			reason += "\n" + strings.Join(lines, "\n")
+		}
+		return r.closeCoding(ctx, a, d, rr, reason)
 	}
 	if rr.State == "complete" && rr.Verdict == "needs_changes" {
 		payload, err := review.Return(rr)
