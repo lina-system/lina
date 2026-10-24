@@ -2,15 +2,11 @@
 package e2e_test
 
 import (
-	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"testing"
-	"time"
 )
 
 // Drive the real build output through the shared protocol harness. Native
@@ -18,20 +14,7 @@ import (
 func TestPackagedService(t *testing.T) {
 	t.Parallel()
 
-	output := t.TempDir()
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-	defer cancel()
-	build := exec.CommandContext(ctx, "node", "scripts/build.mjs", "--out", output,
-		"--target", runtime.GOOS+"/"+runtime.GOARCH)
-	build.Dir = "../.."
-	for _, key := range []string{"PATH", "HOME", "GOCACHE", "GOMODCACHE", "TMPDIR"} {
-		if value, ok := os.LookupEnv(key); ok {
-			build.Env = append(build.Env, key+"="+value)
-		}
-	}
-	if data, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("package binaries: %v\n%s", err, data)
-	}
+	output := buildRelease(t, t.TempDir())
 	data, err := os.ReadFile("packaged-service.json")
 	if err != nil {
 		t.Fatal(err)

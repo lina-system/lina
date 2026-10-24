@@ -3,20 +3,16 @@
 package e2e_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/design"
@@ -63,19 +59,7 @@ func TestM1TUIEpochNoticeInstalledCore(t *testing.T) {
 
 	// Exercise the release builder and install its binaries with isolated service
 	// management, HOME/XDG paths and a loopback-only Responses fixture.
-	output := t.TempDir()
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-	defer cancel()
-	build := exec.CommandContext(ctx, "node", "scripts/build.mjs", "--out", output, "--target", runtime.GOOS+"/"+runtime.GOARCH)
-	build.Dir = "../.."
-	for _, key := range []string{"PATH", "HOME", "GOCACHE", "GOMODCACHE", "TMPDIR"} {
-		if value, ok := os.LookupEnv(key); ok {
-			build.Env = append(build.Env, key+"="+value)
-		}
-	}
-	if data, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build release: %v\n%s", err, data)
-	}
+	output := buildRelease(t, t.TempDir())
 	h := newHarness(t, filepath.Join(output, "lina"))
 	// Dirty development builds omit provenance; the fixture supplies only a
 	// manifest with exact hashes, as in the other installed-Core scenarios.

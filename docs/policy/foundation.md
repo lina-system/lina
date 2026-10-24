@@ -366,6 +366,17 @@ these states in canon, including completed turns belonging to other inputs,
 sources and conversations. This prevents a known terminal failure from consuming
 the package budget while unrelated worker scenarios wait for execution slots.
 
+Packaging acceptance drives the real release build. `-trimpath` gives that build
+its own cache entries, so it recompiles the whole dependency graph instead of
+reusing the test binary's compilation: 150 CPU-seconds, 165 seconds of wall time
+on one CPU and 43 seconds on four. On a four-vCPU CI runner four concurrent
+scenarios leave about one CPU each, and the 818627c4f post-merge run killed a
+healthy build at 120.02 seconds while three sibling scenarios ran (issue #1682).
+`TestPackagedService` and `TestM1TUIEpochNoticeInstalledCore` now share one
+helper that allows four minutes for that build. The six-minute package watchdog,
+the shard plan, the scenarios' own operation deadlines and the build itself are
+unchanged.
+
 Verification runs in a clean worktree without credentials: no Git or GitHub credentials, tokens, account secrets, personal data, or production services, and no write access to any remote. Actual model and provider calls and subjective quality evaluations run separately in explicitly authorized environments.
 
 [Integration](integration.md) decides how a passing candidate joins `dev`. A passing `foundation` does not authorize a [release](releases.md) or a deployment.
