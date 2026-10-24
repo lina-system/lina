@@ -570,7 +570,7 @@ func TestAdapterRejectsOtherSource(t *testing.T) {
 		_, page := a.Page(ctx, id, "100", "")
 		_, members := a.Members(ctx, id, "100")
 		live := a.Live(ctx, id, func(messenger.Event) error { t.Error("mismatched source delivered event"); return nil })
-		_, attachment := a.FetchAttachment(ctx, id, "100", "200")
+		_, attachment := a.FetchAttachment(ctx, id, "100", "150", "200")
 		for name, err := range map[string]error{"sign-in": signIn, "chats": chats, "page": page, "members": members, "live": live, "attachment": attachment} {
 			if !errors.Is(err, messenger.ErrInvalid) {
 				t.Errorf("%s for %+v: %v", name, id, err)
