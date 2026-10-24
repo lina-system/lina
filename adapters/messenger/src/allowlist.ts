@@ -27,7 +27,7 @@ export const READ_METHODS: Record<string, readonly string[]> = {
   ],
   line: [
     'LineClient', 'login', 'getChats', 'getMessages', 'getProfile', 'getFriends', 'close',
-    'loginWithQR', 'loginWithEmail', 'LineCredentialManager', 'setAccount',
+    'streamEvents', 'loginWithQR', 'loginWithEmail', 'LineCredentialManager', 'getAccount', 'setAccount',
   ],
 };
 

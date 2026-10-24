@@ -39,6 +39,11 @@ var ErrAttachmentFetch = errors.New("attachment fetch not offered by the messeng
 // ErrStopped reports that the add-on exited and was not restarted.
 var ErrStopped = errors.New("messenger add-on stopped")
 
+// ErrLiveEnded reports a live subscription the add-on ended on its own, such
+// as after a lost connection. The add-on keeps serving; the source is read
+// again on its schedule.
+var ErrLiveEnded = errors.New("messenger add-on live events ended")
+
 // Capabilities is the add-on's own descriptor. Each platform driver narrows it.
 func Capabilities() messenger.Capabilities {
 	return messenger.Capabilities{
@@ -206,7 +211,9 @@ func (a *Adapter) Members(ctx context.Context, id messenger.SourceID, chat strin
 	return members, nil
 }
 
-// Live delivers the add-on's pushed events until ctx ends.
+// Live delivers the add-on's pushed events until ctx ends. A subscription the
+// add-on ends on its own returns ErrLiveEnded with its cause, joined with
+// messenger.ErrNeedsSignIn when the platform revoked the session.
 func (a *Adapter) Live(ctx context.Context, id messenger.SourceID, deliver func(messenger.Event) error) error {
 	if err := a.forAccount(id); err != nil {
 		return err

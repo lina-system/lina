@@ -31,12 +31,14 @@ export type FixtureDriver = Driver & {
   calls: string[];
   delivered: LiveEvent[];
   emit(event: LiveEvent): void;
+  end(error: unknown): void;
 };
 
 export function fixtureDriver(recorded: Recorded = {}): FixtureDriver {
   const calls: string[] = [];
   const delivered: LiveEvent[] = [];
   let sink: ((event: LiveEvent) => void) | null = null;
+  let ended: ((error: unknown) => void) | null = null;
   const note = <T>(name: string, value: T): T => {
     calls.push(name);
     return value;
@@ -49,6 +51,9 @@ export function fixtureDriver(recorded: Recorded = {}): FixtureDriver {
     emit(event) {
       delivered.push(event);
       if (sink) sink(event);
+    },
+    end(error) {
+      if (ended) ended(error);
     },
     capabilities(): Capabilities {
       return cap({ historyDepth: 'all' });
@@ -94,12 +99,14 @@ export function fixtureDriver(recorded: Recorded = {}): FixtureDriver {
     async whoami(): Promise<Author> {
       return note('whoami', recorded.whoami ?? { id: 'u0', name: 'Me' });
     },
-    live(deliver: (event: LiveEvent) => void): () => void {
+    live(deliver: (event: LiveEvent) => void, end: (error: unknown) => void): () => void {
       note('live', true);
       sink = deliver;
+      ended = end;
       return () => {
         note('stop', true);
         sink = null;
+        ended = null;
       };
     },
   };

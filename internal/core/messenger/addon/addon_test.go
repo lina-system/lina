@@ -317,6 +317,53 @@ func TestAccountMismatchNeverReachesTheProcess(t *testing.T) {
 	}
 }
 
+func TestLiveReturnsWhenTheAddonReportsItsEnd(t *testing.T) {
+	t.Parallel()
+	id := messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}
+	for _, tc := range []struct {
+		frame string
+		want  error
+	}{
+		{`{"event":"ended","error":"failed:ECONNRESET"}`, addon.ErrLiveEnded},
+		{`{"event":"ended","error":"needs_sign_in"}`, messenger.ErrNeedsSignIn},
+	} {
+		s := &script{responses: map[string][]string{
+			"live":   {`{"id":"","ok":true,"result":{"live":true}}` + "\n" + tc.frame},
+			"signIn": {`{"id":"","ok":true,"result":{"state":"signed_in"}}`},
+		}}
+		adapter := session(t, s).Adapter()
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		err := adapter.Live(ctx, id, func(messenger.Event) error { return nil })
+		expired := ctx.Err()
+		cancel()
+		if expired != nil || !errors.Is(err, tc.want) {
+			t.Fatalf("%s: live returned %v (context %v), want %v", tc.frame, err, expired, tc.want)
+		}
+		if state, err := adapter.SignIn(t.Context(), id); err != nil || state != messenger.SignedIn {
+			t.Fatalf("%s: the add-on stopped serving after the live end: %v, %v", tc.frame, state, err)
+		}
+	}
+}
+
+func TestMalformedLiveEndIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, frame := range []string{
+		`{"event":"ended"}`,
+		`{"event":"ended","error":"failed","message":{"id":"m"}}`,
+		`{"event":"message","error":"failed","message":{"id":"m","author":{"id":"u","name":""},"route":"system","at":"2026-10-24T09:00:00Z","text":""}}`,
+	} {
+		s := &script{responses: map[string][]string{
+			"live": {`{"id":"","ok":true,"result":{"live":true}}` + "\n" + frame},
+		}}
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		err := session(t, s).Adapter().Live(ctx, messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}, func(messenger.Event) error { return nil })
+		cancel()
+		if !errors.Is(err, addon.ErrUpstreamChanged) {
+			t.Fatalf("%s: got %v, want upstream changed", frame, err)
+		}
+	}
+}
+
 func TestSignInRelaysAnAnswerToTheSameAccountSession(t *testing.T) {
 	s := &script{responses: map[string][]string{
 		"beginSignIn": {`{"id":"","ok":true,"result":{"state":"needs_sign_in","prompt":{"key":"pin","kind":"secret","text":"PIN"}}}`},

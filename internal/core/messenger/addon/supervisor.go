@@ -95,6 +95,7 @@ type child struct {
 	mu      sync.Mutex
 	pending map[string]chan wireResponse
 	live    func(messenger.Event) error
+	liveEnd chan error
 }
 
 func (c *child) finish() {
@@ -146,6 +147,22 @@ func (c *child) deliverLine(line []byte) {
 	var event wireEvent
 	if err := decodeStrict(line, &event); err != nil {
 		c.fail(err)
+		return
+	}
+	if event.Event == "ended" {
+		if err := event.checkEnded(); err != nil {
+			c.fail(err)
+			return
+		}
+		c.mu.Lock()
+		end := c.liveEnd
+		c.mu.Unlock()
+		if end != nil {
+			select {
+			case end <- liveEnded(event.Error):
+			default:
+			}
+		}
 		return
 	}
 	converted, err := event.event()
@@ -275,12 +292,15 @@ func (p *process) live(ctx context.Context, deliver func(messenger.Event) error)
 	if err != nil {
 		return err
 	}
+	ended := make(chan error, 1)
 	current.mu.Lock()
 	current.live = deliver
+	current.liveEnd = ended
 	current.mu.Unlock()
 	defer func() {
 		current.mu.Lock()
 		current.live = nil
+		current.liveEnd = nil
 		current.mu.Unlock()
 	}()
 	if err := p.call(ctx, "live", nil, nil); err != nil {
@@ -289,6 +309,8 @@ func (p *process) live(ctx context.Context, deliver func(messenger.Event) error)
 	select {
 	case <-ctx.Done():
 		return nil
+	case err := <-ended:
+		return err
 	case <-current.done:
 		return errors.Join(ErrStopped, current.failure())
 	}

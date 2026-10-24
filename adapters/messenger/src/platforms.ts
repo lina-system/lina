@@ -9,6 +9,7 @@
 import { Refusal, type Driver } from './protocol.ts';
 import type { DriverFactory, DriverOptions } from './driver.ts';
 import { openKakaoTalk } from './kakaotalk.ts';
+import { lineDriver } from './line.ts';
 
 export type PlatformName = 'kakaotalk' | 'discord' | 'whatsapp' | 'line';
 
@@ -27,6 +28,12 @@ const DRIVERS: Partial<Record<PlatformName, Registration>> = {
   kakaotalk: {
     open: async (sdk, options) => openKakaoTalk(sdk as Parameters<typeof openKakaoTalk>[0], options),
     load: () => import('agent-messenger/kakaotalk'),
+  },
+  // LINE: QR and PIN sign-in as a secondary device, read-only, newest N
+  // messages per chat and live events (#1087).
+  line: {
+    load: () => import('agent-messenger/line'),
+    open: async (sdk, options) => lineDriver(sdk, options),
   },
 };
 
