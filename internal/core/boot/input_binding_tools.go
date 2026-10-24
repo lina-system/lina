@@ -594,7 +594,7 @@ func bindingAction(name string) string {
 		return "steer"
 	case "worker_interrupt":
 		return "stop"
-	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start", "submit_step_graph":
+	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start", "submit_step_graph", "build_mock":
 		return "start"
 	case "send_handoff":
 		return "send"

@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -21,6 +22,7 @@ import (
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/kit/result"
 )
 
 func insertWorkCard(t *testing.T, r *conversationRuntime, task work.Task) {
@@ -758,5 +760,65 @@ func TestFollowWorkStaysInsideWorkerConversation(t *testing.T) {
 	requested := follow(requester, "requester-follow", "Steer as the requester")
 	if requested.Code != loop.OK || probe.inputs != 2 || !strings.Contains(probe.text, `sender="`+requester.agent+`"`) || strings.Contains(probe.text, `sender="`+owner.agent+`"`) {
 		t.Fatalf("requester follow: code=%s inputs=%d text=%s", requested.Code, probe.inputs, probe.text)
+	}
+}
+
+func TestBuildMockAsksBeforeAdmittingTiedWork(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dev := workAgentFixture(t, r)
+	r.agent, r.conversation = dev, "main:"+dev
+	r.router.views[dev] = r
+	repo, err := records.Open(r.root, r.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { repo.Close() })
+	r.records = repo
+	if err = r.startWork(t.Context(), &WorkConfig{Driver: func(*goaleng.Engine) (goaleng.Driver, error) { return parkedWorkDriver{}, nil }}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.workEngine.close(t.Context()) })
+	store, err := r.resultStore(ledger.Surface{Kind: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := "mock-run"
+	scope := result.Scope{PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, TurnID: "mock-turn", TaskID: &run}
+	body := result.Mock{Request: "Show tasks", Checklist: []result.MockItem{{ID: "tasks", Description: "Tasks", Action: "none"}}, Page: result.AssetRef{ID: "page", Revision: 1}, PNG: result.AssetRef{ID: "png", Revision: 1}, StopReason: "all_passed"}
+	for _, id := range []string{"elements", "controls", "tokens", "network", "errors", "layout_390", "layout_1280"} {
+		body.Checks = append(body.Checks, result.MockCheck{ID: id, Passed: true})
+	}
+	raw, _ := json.Marshal(body)
+	presented, err := store.PresentMock(t.Context(), scope, result.PresentRequest{Type: result.MockType, Title: "Mock", Summary: "Checked", Body: raw}, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "mock-first", Title: "First analysis", Kind: "run", State: "running", LastActivity: now},
+		{ID: "mock-second", Title: "Second analysis", Kind: "run", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err = r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	text := "Check its progress and build the mock."
+	input := questionPersonInput(t, r, "mock-tie", text)
+	tools := modelBindingTools(t, r, input)
+	a := binding.Target{Class: "existing", Kind: "run", ID: "mock-first"}
+	b := binding.Target{Class: "existing", Kind: "run", ID: "mock-second"}
+	if got := questionCall(t, tools, "bind_input", "read-tie", bindingRequest{Bindings: []binding.Choice{{Quote: text, Target: a, Tied: []binding.Target{a, b}, Action: "read"}}}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	built := questionCall(t, tools, "build_mock", "build-tied", mockBuildInput{ResultID: presented.ID, Revision: presented.Revision, Target: "screen", Repositories: []string{"example/project"}})
+	if built.Code != loop.Denied || !strings.Contains(string(built.Output), "input_target_pending") {
+		t.Fatalf("tied mock build admitted work: %+v", built)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) == 0 || choices[0].Question == "" {
+		t.Fatalf("tie did not ask: %+v %v", choices, err)
+	}
+	snapshot, err := r.workEngine.engine.Snapshot(t.Context())
+	if err != nil || len(snapshot.Goals) != 0 {
+		t.Fatalf("tied build reached Admit: goals=%d err=%v", len(snapshot.Goals), err)
 	}
 }

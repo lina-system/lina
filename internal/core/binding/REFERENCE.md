@@ -23,7 +23,9 @@ message path and the requesting conversation. An unrelated conversation is
 refused before delivery. `worker_input` and `worker_interrupt` resolve their session to
 that task before the person's choice is checked. `worker_interrupt` is a stop:
 a retained tie asks which task before cancellation. `submit_step_graph` starts
-work, so a retained tie asks which project before the graph is admitted. A code goal tool resolves
+work, so a retained tie asks which project before the graph is admitted.
+`build_mock` starts work, so a retained tie asks which target before the goal
+is admitted. A code goal tool resolves
 `goal_id` through the goal package's project record id before the same check.
 The binding snapshot includes that record as a project. A goal id that does
 not resolve is refused. Steering execution uses the selected input's runtime, so a
