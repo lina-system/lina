@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -370,10 +370,16 @@ func recordAdjustPause(t *testing.T, fixture panelFixture) panelCase {
 	})
 	// The running 일 finishes its chain, which frees the only slot while the
 	// paused 일 is fenced off. No pass of that run starts the paused 일.
-	for contains(r.lastPass().Running, run) || contains(r.lastPass().Started, run) {
-		before = r.lastSeq()
+	// The cursor is the pass that still showed the 일 running. A second read
+	// can land on the completion itself, and waiting past that pass never
+	// returns: the chain has nothing left to commit.
+	for {
+		current := r.lastPass()
+		if !contains(current.Running, run) && !contains(current.Started, run) {
+			break
+		}
 		r.release(run)
-		next := r.waitPass(before, func(p adjustPass) bool {
+		next := r.waitPass(current.Seq, func(p adjustPass) bool {
 			return contains(p.Started, run) || !contains(p.Running, run) && !contains(p.Started, run)
 		})
 		if contains(next.Started, other) {
