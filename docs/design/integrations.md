@@ -764,6 +764,38 @@ reason; it is not retried through another service. Transient failures retain the
 cursor and obey Retry-After. Disconnect cancels the account worker before deleting
 its tokens and leaves the previously read history available.
 
+### Webex source
+
+Webex reads the person's spaces through the public REST API and their own
+integration, using only room, message, membership and profile read scopes.
+Core uses plain HTTPS, authorization code with PKCE S256 and the client browser
+relay. Tokens and the integration secret stay in the person's secret store;
+refresh replaces tokens and expiry together. A rejected refresh or a second 401
+marks the source as needing sign-in. Core never substitutes another account.
+
+The first implementation supports one connected Webex account per person.
+Changing the integration or account requires disconnecting first; signing in
+again must resolve the same platform identity. Disconnect cancels and joins the
+reader before deleting credentials. Already-read history remains available.
+
+The integration must register the exact callback address. The installed client
+uses `http://127.0.0.1:8400/auth/callback`, including for pasted callbacks when
+it cannot listen. Other clients report their registered listener port. Core
+validates one-use state, expiry, a supplied issuer and the pasted callback's
+address; it has no callback listener. A registration or administrator refusal
+is reported without trying another authentication method.
+
+Core polls independently every five minutes, including after restart. It walks
+older messages with `beforeMessage`, follows room and membership paging, and
+catches up across multiple pages before moving its newest-message anchor.
+Paging must stay on the same origin and collection. HTTP redirects are refused.
+429 and 423 respect Retry-After; waits over one minute or exhausted attempts
+leave the cursor unchanged and report a retryable source failure. A failed
+source retries on its next interval; it does not stop other sources or conversation.
+Edits are detected when a reread reports a later `updated` timestamp. The API
+supplies no deletion feed here, so an absent message never deletes history.
+This source exposes no write operation.
+
 ### Messenger adapter boundary
 
 Each way of reaching a platform has one adapter. Discord's bot and Discord's personal account are two adapters of one platform; every other platform in the table has one. A source records the adapter it uses. An adapter offers: its sign-in state; listing chats; reading a page of a chat from a cursor, oldest first; members; live events where the platform has them; fetching one attachment on request; and a static capability descriptor (history depth, cursor kind, edit and deletion signals, live events and write verbs). Every operation except the capability descriptor names the source account it acts for, so two accounts of one platform never share a read. Core releases the adapter's transport resources when it evicts the adapter or closes its service. Only adapters of official platforms have write verbs. A ported adapter is LINA's own Go code, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
@@ -977,6 +1009,6 @@ When a token fails, LINA Core marks that account as needing sign-in and tells th
 - A webhook mode for a channel, which would need a public listener: never provided.
 - Rich messages and components of a platform, such as Telegram rich messages: shown only after the adapter's capability probe, with plain text as the fallback.
 - The sync interval, page size, read window and use of live events of each messenger platform: measured and set during implementation acceptance of its adapter.
-- Whether Slack and Webex accept the loopback redirect of the client relay: set by their first implementation; the fallback is pasting the redirected URL.
+- Whether Slack accepts the loopback redirect of the client relay: set by its first implementation; the fallback is pasting the redirected URL. Webex uses the exact registered callback described above; real-tenant registration acceptance remains a live setup check. Pasting relays that same callback and does not bypass registration restrictions.
 - Whether Discord's developer policy allows learning from the owner's own messages that a bot-mode messenger source reads: confirmed before that source learns. Until then it is searchable and not learned from.
 - The progress digest of a channel: its line cap, whether a regular digest can be set, and the scheme of its link: set during implementation acceptance of the channel gateway.

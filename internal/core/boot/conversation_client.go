@@ -90,6 +90,7 @@ func (r *conversationRuntime) admitInput(ctx context.Context, s clientsrv.Sessio
 	text := event.Body.Text()
 	speaker := protocol.ConversationSpeakerPerson
 	answer := protocol.ItemDone{Text: &text, EchoKey: p.InputID, Speaker: &speaker, AgentID: &r.agent, PersonID: &r.person}
+	answer.Binding = r.chipFor(ctx, event)
 	if !receipt.Inserted {
 		return answer, nil
 	}

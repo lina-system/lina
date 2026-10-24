@@ -23,8 +23,13 @@ const (
 // Service reads connected sources on their schedule and from their live events.
 // One source's failure never blocks another source or the conversation.
 type Service struct {
-	store    *Store
-	adapters func(Source) (Adapter, error)
+	store *Store
+	// named holds adapters keyed by the name a source records. It decides which
+	// sources this Core serves when the service was composed with a map.
+	named map[string]Adapter
+	// resolve builds one adapter per source account, so two sources on one
+	// platform never share an adapter instance and its connections.
+	resolve  func(Source) (Adapter, error)
 	interval time.Duration
 
 	mu       sync.Mutex
@@ -48,26 +53,49 @@ type watcher struct {
 // bot and personal account register two names. A source whose name is absent
 // is left untouched.
 func NewService(store *Store, adapters map[string]Adapter, interval time.Duration) *Service {
-	return NewServiceWith(store, func(source Source) (Adapter, error) {
+	if interval <= 0 {
+		interval = DefaultInterval
+	}
+	service := NewServiceWith(store, func(source Source) (Adapter, error) {
 		adapter, ok := adapters[source.Adapter]
 		if !ok {
 			return nil, ErrInvalid
 		}
 		return adapter, nil
 	}, interval)
+	service.named = adapters
+	return service
 }
 
 // NewServiceWith composes the sync loop with a provider that resolves the
 // adapter for one source account, so two sources on one platform never share an
 // adapter instance.
-func NewServiceWith(store *Store, adapters func(Source) (Adapter, error), interval time.Duration) *Service {
+func NewServiceWith(store *Store, resolve func(Source) (Adapter, error), interval time.Duration) *Service {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	if adapters == nil {
-		adapters = func(Source) (Adapter, error) { return nil, ErrInvalid }
+	if resolve == nil {
+		resolve = func(Source) (Adapter, error) { return nil, ErrInvalid }
 	}
-	return &Service{store: store, adapters: adapters, interval: interval, lastSync: map[string]time.Time{}, watching: map[string]*watcher{}, resolved: map[string]Adapter{}}
+	return &Service{store: store, resolve: resolve, interval: interval, lastSync: map[string]time.Time{}, watching: map[string]*watcher{}, resolved: map[string]Adapter{}}
+}
+
+// owns reports whether this Core serves the source. A provider decides for
+// itself; a map leaves a source whose adapter name is unknown untouched.
+func (s *Service) owns(source Source) bool {
+	if s.named == nil {
+		return true
+	}
+	_, ok := s.named[source.Adapter]
+	return ok
+}
+
+// adapterFor selects the implementation the source recorded. Lookup is not by
+// platform: two accounts on one platform, or a bot and a personal account, would
+// otherwise share one instance and one read.
+func (s *Service) adapterFor(source Source) (Adapter, bool) {
+	adapter, ok := s.named[source.Adapter]
+	return adapter, ok
 }
 
 // adapter returns the source's adapter, creating it once.
@@ -79,7 +107,7 @@ func (s *Service) adapter(source Source) (Adapter, error) {
 	if ok {
 		return adapter, nil
 	}
-	adapter, err := s.adapters(source)
+	adapter, err := s.resolve(source)
 	if err != nil {
 		return nil, err
 	}
@@ -148,6 +176,9 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 	connected := make(map[string]bool, len(sources))
 	defer func() { s.retain(connected) }()
 	for _, source := range sources {
+		if !s.owns(source) {
+			continue
+		}
 		// A failing source keeps its schedule: the cause may be a credential or
 		// an unreachable node that the person can fix. A source that needs a
 		// new sign-in waits for the person instead.
@@ -169,9 +200,12 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 		s.mu.Lock()
 		s.lastSync[key] = current
 		s.mu.Unlock()
-		if err != nil && ctx.Err() == nil {
+		switch {
+		case errors.Is(err, ErrInvalid):
+			// This Core does not serve the source; its row stays untouched.
+		case err != nil && ctx.Err() == nil:
 			_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
-		} else if err == nil {
+		case err == nil:
 			results[key] = result
 		}
 	}
@@ -303,7 +337,12 @@ func sourceID(source Source) SourceID {
 }
 
 // Sync reads one source: its chat list, then every chat that is in sync.
-func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
+func (s *Service) Sync(ctx context.Context, source Source) (result Result, err error) {
+	defer func() {
+		if errors.Is(err, ErrNeedsSignIn) {
+			err = s.store.setState(ctx, source.Person, source.Platform, source.Account, StateNeedsSignIn, "")
+		}
+	}()
 	adapter, err := s.adapter(source)
 	if err != nil {
 		return Result{}, err
@@ -330,7 +369,6 @@ func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	var result Result
 	for _, chat := range records {
 		if !chat.Sync {
 			continue
