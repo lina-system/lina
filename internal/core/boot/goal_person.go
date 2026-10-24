@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/runs"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 )
 
@@ -79,8 +80,15 @@ func (s goalQuietWork) Candidates(ctx context.Context, tx *canon.Tx, person stri
 	if err != nil {
 		return nil, err
 	}
+	steps, err := goalStepCards(ctx, tx, person)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
+		if i := strings.LastIndexByte(id, ':'); i > 0 && steps[id[:i]] {
+			continue
+		}
 		goalCard, err := dispatchGoal(ctx, tx, id)
 		if err != nil {
 			return nil, err
@@ -90,6 +98,61 @@ func (s goalQuietWork) Candidates(ctx context.Context, tx *canon.Tx, person stri
 		}
 	}
 	return out, nil
+}
+
+// goalStepCards names the cards the person's goals dispatched for their tasks.
+// A card carries its dispatch's id, so a goal's worker actions are the link,
+// as progress reads them; the dispatch record is marked as a goal's only after
+// the card exists.
+func goalStepCards(ctx context.Context, tx *canon.Tx, person string) (map[string]bool, error) {
+	turns := map[string]string{}
+	rows, err := tx.QueryContext(ctx, "SELECT body FROM work_records WHERE kind='goal'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw []byte
+		var g goal.Goal
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(raw, &g); err != nil {
+			return nil, err
+		}
+		if g.Person == person && g.Turn != "" {
+			turns[g.ID] = g.Turn
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = tx.QueryContext(ctx, "SELECT body FROM work_records WHERE kind='action'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cards := map[string]bool{}
+	for rows.Next() {
+		var raw []byte
+		var a goal.Action
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(raw, &a); err != nil {
+			return nil, err
+		}
+		turn, ok := turns[a.GoalID]
+		if !ok || a.TaskID == "" || !goal.WorkerAction(a.Kind) {
+			continue
+		}
+		source := a.ID
+		if a.ObserveActionID != "" {
+			source = a.ObserveActionID
+		}
+		cards[work.DispatchID(turn, source)] = true
+	}
+	return cards, rows.Err()
 }
 
 func (s goalQuietWork) Read(ctx context.Context, tx *canon.Tx, id string) (runs.ListItem, error) {
