@@ -525,9 +525,8 @@ func TestFinishedRequestKeepsTheAccountProcess(t *testing.T) {
 	}
 }
 
-// TestStoppingALiveReaderStopsItsSubscription proves Core tells the add-on to
-// end a subscription it no longer reads, and that the account's process keeps
-// serving afterwards.
+// The add-on withholds its startup acknowledgment so cancellation necessarily
+// reaches the pending call, without relying on goroutine scheduling.
 func TestStoppingALiveReaderBeforeAcknowledgement(t *testing.T) {
 	t.Parallel()
 	s := &script{
@@ -561,6 +560,9 @@ func TestStoppingALiveReaderBeforeAcknowledgement(t *testing.T) {
 	}
 }
 
+// TestStoppingALiveReaderStopsItsSubscription proves Core tells the add-on to
+// end a subscription it no longer reads, and that the account's process keeps
+// serving afterwards.
 func TestStoppingALiveReaderStopsItsSubscription(t *testing.T) {
 	t.Parallel()
 	s := &script{
