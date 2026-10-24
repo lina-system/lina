@@ -56,10 +56,10 @@ func TestKoreanIndexedRecall(t *testing.T) {
 	// found these words before #65, but there were no searchable FTS/posting rows.
 	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
 		var trigrams, bigrams int
-		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM memory_search WHERE memory_search MATCH ?", canon.TrigramPhrase("도서관")).Scan(&trigrams); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_text WHERE recall_text MATCH ?", canon.TrigramPhrase("도서관")).Scan(&trigrams); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM memory_search_bigram WHERE gram='공부'").Scan(&bigrams); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_pair WHERE recall_pair MATCH '공부'").Scan(&bigrams); err != nil {
 			return err
 		}
 		if trigrams != 3 || bigrams != 2 {
@@ -112,7 +112,7 @@ func TestKoreanIndexRollsBackWithMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
-		for _, table := range []string{"memory_item", "memory_search", "memory_search_bigram"} {
+		for _, table := range []string{"memory_item", "recall_doc", "recall_text", "recall_pair", "cite"} {
 			var count int
 			if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&count); err != nil {
 				return err
@@ -204,7 +204,7 @@ func TestKoreanIndexOfLongMemoryDeduplicatesPostings(t *testing.T) {
 	}
 	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
 		var count int
-		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM memory_search_bigram WHERE item_id=? AND gram='공부'", item.ID).Scan(&count); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_pair WHERE rowid=(SELECT id FROM recall_doc WHERE kind='memory' AND source_id=?) AND recall_pair MATCH '공부'", item.ID).Scan(&count); err != nil {
 			return err
 		}
 		if count != 1 {

@@ -4,7 +4,6 @@ package memory
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -56,7 +55,7 @@ func putName(ctx context.Context, tx *canon.Tx, item Item) (Item, error) {
 		return Item{}, err
 	}
 	var old Item
-	if err := json.Unmarshal(raw, &old); err != nil {
+	if err := DecodeItem(ctx, tx, raw, &old); err != nil {
 		return Item{}, err
 	}
 	if old.Name == nil {

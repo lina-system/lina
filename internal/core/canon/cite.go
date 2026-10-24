@@ -16,6 +16,8 @@ type Citation struct {
 	TargetKind, TargetID, TargetRevision string
 	SpanStart, SpanEnd                   sql.NullInt64
 	Precision, Role                      string
+	SourceAgent                          string
+	OccurredAt                           int64
 }
 
 func citationRows(ctx context.Context, tx *Tx, query string, args ...any) ([]Citation, error) {
@@ -27,7 +29,7 @@ func citationRows(ctx context.Context, tx *Tx, query string, args ...any) ([]Cit
 	var out []Citation
 	for rows.Next() {
 		var c Citation
-		if err := rows.Scan(&c.Ordinal, &c.TargetKind, &c.TargetID, &c.TargetRevision, &c.SpanStart, &c.SpanEnd, &c.Precision, &c.Role); err != nil {
+		if err := rows.Scan(&c.Ordinal, &c.TargetKind, &c.TargetID, &c.TargetRevision, &c.SpanStart, &c.SpanEnd, &c.Precision, &c.Role, &c.SourceAgent, &c.OccurredAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -35,10 +37,10 @@ func citationRows(ctx context.Context, tx *Tx, query string, args ...any) ([]Cit
 	return out, rows.Err()
 }
 
-// ReplaceCitations records only additions and removals, inside the old writer's
+// ReplaceCitations records only additions and removals, inside the source writer's
 // transaction. Unchanged pointers retain their original added revision.
 func ReplaceCitations(ctx context.Context, tx *Tx, kind, id, revision string, desired []Citation) error {
-	old, err := citationRows(ctx, tx, `SELECT ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role FROM cite WHERE view_kind=? AND view_id=? AND dropped_revision IS NULL`, kind, id)
+	old, err := citationRows(ctx, tx, `SELECT ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role,source_agent,occurred_at FROM cite WHERE view_kind=? AND view_id=? AND dropped_revision IS NULL`, kind, id)
 	if err != nil {
 		return err
 	}
@@ -67,7 +69,7 @@ func ReplaceCitations(ctx context.Context, tx *Tx, kind, id, revision string, de
 		if !remaining[c] {
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, kind, id, revision, c.Ordinal, c.TargetKind, c.TargetID, c.TargetRevision, c.SpanStart, c.SpanEnd, c.Precision, c.Role); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role,source_agent,occurred_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, kind, id, revision, c.Ordinal, c.TargetKind, c.TargetID, c.TargetRevision, c.SpanStart, c.SpanEnd, c.Precision, c.Role, c.SourceAgent, c.OccurredAt); err != nil {
 			return err
 		}
 		delete(remaining, c)
@@ -78,13 +80,13 @@ func ReplaceCitations(ctx context.Context, tx *Tx, kind, id, revision string, de
 // WriteEvidenceCitations uses the same normalization as the migration. The raw
 // array is read for identities and span lengths; none of its text is stored.
 func WriteEvidenceCitations(ctx context.Context, tx *Tx, kind, id string, revision int64, evidence []byte) error {
-	refs, err := citationRows(ctx, tx, `SELECT p.ordinal,`+evidenceCitationColumns+` FROM (SELECT key AS ordinal,value AS evidence FROM json_each(?) WHERE type='object') p`, string(evidence))
+	refs, err := citationRows(ctx, tx, `SELECT p.ordinal,`+evidenceCitationColumns+`,coalesce(json_extract(p.evidence,'$.source_agent'),''),coalesce(json_extract(p.evidence,'$.occurred_at'),0) FROM (SELECT key AS ordinal,value AS evidence FROM json_each(?) WHERE type='object') p`, string(evidence))
 	if err != nil {
 		return err
 	}
 	// Quotes disappear from new records. An unchanged reference keeps its
 	// existing span when a later revision is written from those records.
-	old, err := citationRows(ctx, tx, `SELECT ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role FROM cite WHERE view_kind=? AND view_id=? AND dropped_revision IS NULL`, kind, id)
+	old, err := citationRows(ctx, tx, `SELECT ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role,source_agent,occurred_at FROM cite WHERE view_kind=? AND view_id=? AND dropped_revision IS NULL`, kind, id)
 	if err != nil {
 		return err
 	}
@@ -100,16 +102,6 @@ func WriteEvidenceCitations(ctx context.Context, tx *Tx, kind, id string, revisi
 		}
 	}
 	return ReplaceCitations(ctx, tx, kind, id, strconv.FormatInt(revision, 10), refs)
-}
-
-// WriteSummaryCitations runs after every changed child has been rebuilt, so a
-// parent's provenance names the child revision it actually consumed.
-func WriteSummaryCitations(ctx context.Context, tx *Tx, id string, revision int64) error {
-	refs, err := citationRows(ctx, tx, `SELECT ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role FROM (`+summaryCitationSelect+`) WHERE view_id=? ORDER BY ordinal`, id)
-	if err != nil {
-		return err
-	}
-	return ReplaceCitations(ctx, tx, "summary", id, strconv.FormatInt(revision, 10), refs)
 }
 
 func BriefCitationID(person, agent string) string {
@@ -131,7 +123,7 @@ type CitationTombstone struct {
 }
 
 func CitationsAt(ctx context.Context, tx *Tx, kind, id string, revision int64) ([]Citation, error) {
-	return citationRows(ctx, tx, `SELECT ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role FROM cite
+	return citationRows(ctx, tx, `SELECT ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role,source_agent,occurred_at FROM cite
  WHERE view_kind=? AND view_id=? AND CAST(added_revision AS INTEGER)<=?
  AND (dropped_revision IS NULL OR CAST(dropped_revision AS INTEGER)>?) ORDER BY ordinal`, kind, id, revision, revision)
 }

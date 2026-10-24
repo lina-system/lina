@@ -65,7 +65,7 @@ func pinnedMemory(ctx context.Context, tx *canon.Tx, scope Scope, ref ledger.Ref
 		return memory.Item{}, err
 	}
 	var item memory.Item
-	if err = json.Unmarshal(raw, &item); err != nil {
+	if err = memory.DecodeItem(ctx, tx, raw, &item); err != nil {
 		return memory.Item{}, err
 	}
 	for _, sensitivity := range item.Sensitivity {

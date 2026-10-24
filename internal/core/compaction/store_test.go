@@ -264,7 +264,7 @@ func TestRebuildRejectsConcurrentAppendWithoutPartialWrites(t *testing.T) {
 func TestPublicationRollsBackStorageFailure(t *testing.T) {
 	t.Parallel()
 	db, s, _, _ := fixture(t)
-	write(t, db, `CREATE TRIGGER fail_cover BEFORE INSERT ON sum_cover BEGIN SELECT RAISE(ABORT,'injected'); END;`)
+	write(t, db, `CREATE TRIGGER fail_cover BEFORE INSERT ON cite WHEN NEW.view_kind='summary' BEGIN SELECT RAISE(ABORT,'injected'); END;`)
 	if _, err := s.Publish(t.Context(), proposal(t, s, "failed")); err == nil || !strings.Contains(err.Error(), "injected") {
 		t.Fatal(err)
 	}

@@ -35,24 +35,6 @@ type SearchHit struct {
 	OccurredAt                  time.Time
 }
 
-func indexText(ctx context.Context, tx *canon.Tx, id, text string) error {
-	for _, table := range []string{"ledger_search_text", "ledger_search_bigram"} {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE event_id=?", id); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO ledger_search_text(event_id,body) VALUES(?,?)", id, text); err != nil {
-		return err
-	}
-	for _, gram := range canon.HangulBigrams(text) {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO ledger_search_bigram(gram,event_id) VALUES(?,?)", gram, id); err != nil {
-			return err
-		}
-	}
-	_, err := tx.ExecContext(ctx, "DELETE FROM ledger_search_pending WHERE event_id=?", id)
-	return err
-}
-
 // Search is the ledger view of the one recall entry. Scope, matching and
 // ranking come from recall; this function keeps the ledger's source identity
 // and secret-free derived text.
