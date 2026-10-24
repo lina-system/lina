@@ -114,3 +114,7 @@ Installed-Core acceptance runs a real `remember_name` tool call against a
 scripted provider and resolves its material-backed evidence through management
 before and after restart. Package fixtures cover import, legacy revisions,
 secret spans, cross-agent reads and tombstones.
+
+Memory candidate reads and `RestrictedEvents` share recall's `RestrictionCTE`.
+This applies scope through memory chains and copied events before candidate
+limits, including direct item/profile/relationship reads without a text query.

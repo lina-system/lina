@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/textcall"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -265,6 +266,8 @@ func (s *Service) run(ctx context.Context, id string) error {
 	}
 	cfg.Observe = func(ctx context.Context, _ provider.Event) error { return s.touch(ctx, id) }
 	cfg.Journal = s.checkpointJournal(id)
+	cfg.Stream = textcall.Guard(cfg.Stream)
+	cfg.RuntimeTools = s.cfg.ProviderClass == provider.AgentRuntime
 	out, runErr := loop.Run(runCtx, cfg)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -315,6 +318,10 @@ func (s *Service) run(ctx context.Context, id string) error {
 			r.Reason = string(failure.Kind)
 		}
 		return s.save(context.Background(), r, false)
+	}
+	if errors.Is(runErr, loop.ErrTextCall) {
+		r.Reason = "text_tool_call_recovery_failed"
+		return s.land(context.Background(), &r, failureOutcome(r))
 	}
 	if r.Retries == 0 {
 		r.Retries++

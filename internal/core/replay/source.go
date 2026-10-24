@@ -152,13 +152,15 @@ func eventValue(e ledger.Event) Event {
 // copies follow canon's existing revocation projection; scope is checked across
 // holders so a common copy cannot launder a private source into an export.
 func visible(ctx context.Context, tx *canon.Tx, scope Scope, id string) error {
+	if err := sourceRestriction(ctx, tx, scope, "event", id); err != nil {
+		return err
+	}
 	var n int
 	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM retract_visible_event e WHERE e.id=? AND e.agent_id=?
  AND (e.material_id IS NULL OR EXISTS(SELECT 1 FROM assets a JOIN asset_revisions r ON r.asset_id=a.id WHERE a.id=e.material_id AND r.revision=e.material_revision AND a.trashed_at=0))
  AND NOT EXISTS(SELECT 1 FROM retract_block b WHERE b.person=? AND b.conversation_id=e.conversation_id)
  AND NOT EXISTS(SELECT 1 FROM conv_event other WHERE other.conversation_id=e.conversation_id AND other.speaker_kind='person' AND other.person_id<>?)
- AND EXISTS(SELECT 1 FROM conv_event owner WHERE owner.conversation_id=e.conversation_id AND owner.agent_id=e.agent_id AND owner.speaker_kind='person' AND owner.person_id=?)
- AND NOT EXISTS(SELECT 1 FROM memory_item m,json_each(m.record,'$.evidence') x WHERE m.person=? AND m.scope IN ('private','never-leaves') AND json_extract(x.value,'$.kind')='event' AND json_extract(x.value,'$.id')=e.id)`, id, scope.Agent, scope.Person, scope.Person, scope.Person, scope.Person).Scan(&n)
+ AND EXISTS(SELECT 1 FROM conv_event owner WHERE owner.conversation_id=e.conversation_id AND owner.agent_id=e.agent_id AND owner.speaker_kind='person' AND owner.person_id=?)`, id, scope.Agent, scope.Person, scope.Person, scope.Person).Scan(&n)
 	if err != nil {
 		return err
 	}

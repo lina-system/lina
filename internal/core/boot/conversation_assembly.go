@@ -100,6 +100,8 @@ func (r *conversationRuntime) recordContextSources(ctx context.Context, packet a
 			source.Source = "skill-v1"
 		case item.Kind == assemble.Commitments && strings.HasPrefix(item.Origin, "name-memory:"):
 			source.Source = "name-v1"
+		case item.Kind == assemble.Memory && strings.HasPrefix(item.Origin, "topic-memory:"):
+			source.Source = "topic-memory-v1"
 		case item.Kind == assemble.Memory && item.Origin != "":
 			source.Source = "relationship-v1"
 		default:

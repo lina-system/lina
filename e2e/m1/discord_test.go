@@ -149,8 +149,16 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	releasePresentation := make(chan struct{})
 	edits := make(chan struct{}, 4)
 	var buttonAnswers atomic.Int32
-	frames := make(chan any, 16)
 	sent := make(chan string, 16)
+	// The journey drives recovery with the closes it injects. A heartbeat
+	// deadline short enough for host jitter would resume the session while the
+	// journey is not looking, which is not the condition this scenario
+	// measures; heartbeat behaviour is covered by the Discord unit tests.
+	const gatewayHeartbeat = 45000
+	// Each Gateway connection gets its own outbound queue and records the
+	// authentication Core sent on it. A frame written for one connection is
+	// never read by the connection that replaced it, so the journey observes
+	// the authentication that belongs to the close it injected.
 	type gatewayAuth struct {
 		Op int `json:"op"`
 		D  struct {
@@ -159,7 +167,15 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 			Seq     int64  `json:"seq"`
 		} `json:"d"`
 	}
-	identified := make(chan gatewayAuth, 4)
+	type gatewayLink struct {
+		id      int
+		auth    gatewayAuth
+		session string
+		frames  chan any
+		done    chan struct{}
+		closing atomic.Int32
+	}
+	links := make(chan *gatewayLink, 16)
 	var sessions atomic.Int32
 	var blocked atomic.Bool
 	platform := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -171,7 +187,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 			defer conn.CloseNow()
 			ctx, cancel := context.WithCancel(r.Context())
 			defer cancel()
-			if wsjson.Write(ctx, conn, map[string]any{"op": 10, "d": map[string]any{"heartbeat_interval": 1000}}) != nil {
+			if wsjson.Write(ctx, conn, map[string]any{"op": 10, "d": map[string]any{"heartbeat_interval": gatewayHeartbeat}}) != nil {
 				return
 			}
 			var identify gatewayAuth
@@ -182,15 +198,23 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 				t.Error("missing identify credential")
 				return
 			}
-			n := sessions.Add(1)
-			ready := map[string]any{"op": 0, "t": "READY", "s": 1, "d": map[string]any{"session_id": fmt.Sprintf("session-%d", n), "user": map[string]any{"id": scenario.Account, "bot": true}}}
+			n := int(sessions.Add(1))
+			session := fmt.Sprintf("session-%d", n)
+			ready := map[string]any{"op": 0, "t": "READY", "s": 1, "d": map[string]any{"session_id": session, "user": map[string]any{"id": scenario.Account, "bot": true}}}
 			if identify.Op == 6 {
+				session = identify.D.Session
 				ready = map[string]any{"op": 0, "t": "RESUMED", "s": identify.D.Seq, "d": map[string]any{}}
 			}
 			if wsjson.Write(ctx, conn, ready) != nil {
 				return
 			}
-			identified <- identify
+			link := &gatewayLink{id: n, auth: identify, session: session, frames: make(chan any, 16), done: make(chan struct{})}
+			select {
+			case links <- link:
+			case <-ctx.Done():
+				return
+			}
+			defer close(link.done)
 			joined := make(chan struct{})
 			go func() {
 				defer close(joined)
@@ -215,8 +239,9 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 				select {
 				case <-ctx.Done():
 					return
-				case frame := <-frames:
+				case frame := <-link.frames:
 					if code, ok := frame.(websocket.StatusCode); ok {
+						link.closing.Store(int32(code))
 						_ = conn.Close(code, "synthetic invalid session")
 						return
 					}
@@ -350,15 +375,55 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 		return answer.Payload.(protocol.ChannelResult)
 	}
 	str := func(s string) *string { return &s }
-	waitAuth := func(op int, session string, seq int64) {
+	var link *gatewayLink
+	nextLink := func() *gatewayLink {
 		t.Helper()
 		select {
-		case auth := <-identified:
-			if auth.Op != op || auth.D.Session != session || auth.D.Seq != seq {
-				t.Fatalf("Gateway auth: op=%d session=%q seq=%d, want %d %q %d", auth.Op, auth.D.Session, auth.D.Seq, op, session, seq)
-			}
+		case l := <-links:
+			return l
 		case <-h.ctx.Done():
-			t.Fatal("Gateway not identified")
+			t.Fatal("Gateway did not connect")
+		}
+		return nil
+	}
+	waitAuth := func(op int, session string, seq int64) {
+		t.Helper()
+		link = nextLink()
+		if link.auth.Op != op || link.auth.D.Session != session || link.auth.D.Seq != seq {
+			t.Fatalf("Gateway connection %d authenticated op=%d session=%q seq=%d, want %d %q %d", link.id, link.auth.Op, link.auth.D.Session, link.auth.D.Seq, op, session, seq)
+		}
+	}
+	// send writes a frame on the connection the journey is currently using,
+	// never on a connection that already ended.
+	send := func(frame any) {
+		t.Helper()
+		select {
+		case <-link.done:
+			t.Fatalf("Gateway connection %d ended before the frame was written", link.id)
+		default:
+		}
+		select {
+		case link.frames <- frame:
+		case <-h.ctx.Done():
+			t.Fatalf("Gateway connection %d did not take the frame", link.id)
+		}
+	}
+	// closeLink injects one close on a named connection and waits for that
+	// connection to be the one that took it.
+	closeLink := func(l *gatewayLink, code websocket.StatusCode) {
+		t.Helper()
+		select {
+		case l.frames <- code:
+		case <-h.ctx.Done():
+			t.Fatalf("Gateway connection %d did not take the injected close", l.id)
+		}
+		select {
+		case <-l.done:
+		case <-h.ctx.Done():
+			t.Fatalf("Gateway connection %d did not take the injected close", l.id)
+		}
+		if got := l.closing.Load(); got != int32(code) {
+			t.Fatalf("Gateway connection %d closed with %d, want %d", l.id, got, code)
 		}
 	}
 	control(protocol.ChannelRequest{Operation: str("connect"), Platform: &scenario.Platform, Token: str("synthetic.discord.token")})
@@ -370,7 +435,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	seq := int64(1)
 	message := func(id, owner, text string) {
 		seq++
-		frames <- map[string]any{"op": 0, "s": seq, "t": "MESSAGE_CREATE", "d": map[string]any{"id": id, "channel_id": scenario.Chat, "content": text, "author": map[string]any{"id": owner}}}
+		send(map[string]any{"op": 0, "s": seq, "t": "MESSAGE_CREATE", "d": map[string]any{"id": id, "channel_id": scenario.Chat, "content": text, "author": map[string]any{"id": owner}}})
 	}
 	message("9", scenario.Owner, "UNPAIRED-MUST-NOT-DISPATCH")
 	message("10", scenario.Owner, *pair.PairingCode)
@@ -469,7 +534,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	}
 	button := func(id, owner string) {
 		seq++
-		frames <- map[string]any{"op": 0, "s": seq, "t": "INTERACTION_CREATE", "d": map[string]any{"id": id, "application_id": scenario.Account, "type": 3, "token": "button-secret", "channel_id": scenario.Chat, "user": map[string]any{"id": owner}, "data": map[string]any{"custom_id": custom}, "message": map[string]any{"id": "400", "author": map[string]any{"id": scenario.Account, "bot": true}}}}
+		send(map[string]any{"op": 0, "s": seq, "t": "INTERACTION_CREATE", "d": map[string]any{"id": id, "application_id": scenario.Account, "type": 3, "token": "button-secret", "channel_id": scenario.Chat, "user": map[string]any{"id": owner}, "data": map[string]any{"custom_id": custom}, "message": map[string]any{"id": "400", "author": map[string]any{"id": scenario.Account, "bot": true}}}})
 	}
 	button("50", "999")
 	barrier("52")
@@ -485,7 +550,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	message("11", "999", "MUST-NOT-DISPATCH")
 	interaction := func() {
 		seq++
-		frames <- map[string]any{"op": 0, "s": seq, "t": "INTERACTION_CREATE", "d": map[string]any{"id": "12", "application_id": scenario.Account, "type": 2, "token": "interaction-secret", "channel_id": scenario.Chat, "user": map[string]any{"id": scenario.Owner}, "data": map[string]any{"name": "lina", "options": []any{map[string]any{"name": "text", "value": scenario.Input}}}}}
+		send(map[string]any{"op": 0, "s": seq, "t": "INTERACTION_CREATE", "d": map[string]any{"id": "12", "application_id": scenario.Account, "type": 2, "token": "interaction-secret", "channel_id": scenario.Chat, "user": map[string]any{"id": scenario.Owner}, "data": map[string]any{"name": "lina", "options": []any{map[string]any{"name": "text", "value": scenario.Input}}}}})
 	}
 	interaction()
 	interaction()
@@ -516,11 +581,28 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 		}
 	}
 
+	// A transport close retains the session cursor for the Resume, and the
+	// close the journey injects next clears it with Identify. Each
+	// authentication is attributed to the connection it belongs to, so a
+	// Resume that answers the transport close is never mistaken for the
+	// response to the injected close (integrations.md#transport).
+	if len(closeCodes) > 0 {
+		barrier("59")
+		closeLink(link, websocket.StatusCode(4000))
+		resumed := nextLink()
+		if resumed.auth.Op != 6 || resumed.auth.D.Session != link.session || resumed.auth.D.Seq != seq {
+			t.Fatalf("Gateway connection %d did not resume after a transport close: op=%d session=%q seq=%d, want 6 %q %d", resumed.id, resumed.auth.Op, resumed.auth.D.Session, resumed.auth.D.Seq, link.session, seq)
+		}
+		closeLink(resumed, websocket.StatusCode(4007))
+		waitAuth(2, "", 0)
+		seq = 1
+	}
+
 	// Reject each established session while real Core work is pending. The
 	// supervisor must Identify again without replaying admitted interactions.
 	for i, code := range closeCodes {
 		barrier(fmt.Sprint(60 + i))
-		frames <- code
+		closeLink(link, code)
 		waitAuth(2, "", 0)
 		seq = 1
 		interaction()
@@ -533,7 +615,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 
 	control(protocol.ChannelRequest{Operation: str("bind"), Platform: &scenario.Platform, Account: &scenario.Account, Chat: str("101"), AgentID: &agent, Scope: &protocol.ChannelScope{Reads: "addressed", Writes: "reply_only"}})
 	seq++
-	frames <- map[string]any{"op": 0, "s": seq, "t": "MESSAGE_CREATE", "d": map[string]any{"id": "15", "channel_id": "101", "guild_id": "800", "content": groupInput, "author": map[string]any{"id": scenario.Owner}, "mentions": []any{map[string]any{"id": scenario.Account, "bot": true}}}}
+	send(map[string]any{"op": 0, "s": seq, "t": "MESSAGE_CREATE", "d": map[string]any{"id": "15", "channel_id": "101", "guild_id": "800", "content": groupInput, "author": map[string]any{"id": scenario.Owner}, "mentions": []any{map[string]any{"id": scenario.Account, "bot": true}}}})
 	select {
 	case text := <-groupSent:
 		if text != groupReply {
@@ -600,7 +682,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 		t.Fatalf("duplicate/external dispatch: model=%d sends=%d", modelCalls.Load(), sendCalls.Load())
 	}
 	core = start()
-	waitAuth(6, fmt.Sprintf("session-%d", len(closeCodes)+1), seq)
+	waitAuth(6, link.session, seq)
 	c = connect()
 	defer c.conn.Close()
 	waitConnection(func(row protocol.ChannelConnection) bool {

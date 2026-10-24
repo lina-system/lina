@@ -43,9 +43,10 @@ type coreHarness struct {
 	root, socket, url string
 	cancel            context.CancelFunc
 	done              chan error
+	configure         func(*modelpath.Config)
 }
 
-func newCore(t *testing.T, url string) *coreHarness {
+func newCore(t *testing.T, url string, configure ...func(*modelpath.Config)) *coreHarness {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
 	t.Cleanup(cancel)
@@ -62,6 +63,9 @@ func newCore(t *testing.T, url string) *coreHarness {
 	}
 	writeManifest(t, root)
 	h := &coreHarness{t: t, ctx: ctx, root: root, socket: filepath.Join(root, "core.sock"), url: url}
+	if len(configure) > 0 {
+		h.configure = configure[0]
+	}
 	t.Cleanup(h.stop)
 	h.start()
 	return h
@@ -81,6 +85,9 @@ func (h *coreHarness) start() {
 	})
 	if err != nil {
 		h.t.Fatal(err)
+	}
+	if h.configure != nil {
+		h.configure(route)
 	}
 	ctx, cancel := context.WithCancel(h.ctx)
 	h.cancel = cancel

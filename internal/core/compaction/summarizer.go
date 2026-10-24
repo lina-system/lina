@@ -11,6 +11,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/thisisjun786/lina/internal/core/textcall"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
@@ -184,7 +185,7 @@ func (a Auxiliary) generate(ctx context.Context, segment PassSegment, instructio
 	if err != nil {
 		return Text{}, err
 	}
-	stream, err := a.Stream(ctx, req)
+	stream, err := textcall.Guard(a.Stream)(ctx, req)
 	if err != nil {
 		return Text{}, errors.Join(ErrSummary, err)
 	}

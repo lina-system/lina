@@ -235,7 +235,7 @@ func (r *conversationRuntime) extractionModel(ctx context.Context, c jobs.Call) 
 	input, _ := json.Marshal(map[string]string{"role": "user", "content": string(c.Input)})
 	req := r.route.Request([]provider.Item{instruction, input})
 	req.Purpose, req.Instructions, req.Tools = provider.Auxiliary, "", nil
-	stream, err := r.route.Adapter.Stream(ctx, activity, req)
+	stream, err := r.route.Stream(ctx, activity, req)
 	if err != nil {
 		return jobs.Result{}, err
 	}

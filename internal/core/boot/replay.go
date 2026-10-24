@@ -205,10 +205,10 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 				return nil, err
 			}
 			request.Credential = r.route.Request(nil).Credential
-			return report.Observe(ep.TurnID, round, r.route.Route, time.Now, func() (provider.Stream, error) { return r.route.Adapter.Stream(ctx, activity, request) }, &request.Bridge), nil
+			return report.Observe(ep.TurnID, round, r.route.Route, time.Now, func() (provider.Stream, error) { return r.route.Stream(ctx, activity, request) }, &request.Bridge), nil
 		}
 		request.Credential = r.route.Request(nil).Credential
-		stream, err := r.route.Adapter.Stream(ctx, activity, request)
+		stream, err := r.route.Stream(ctx, activity, request)
 		if err != nil {
 			return nil, err
 		}

@@ -4,7 +4,10 @@
 package modelpath
 
 import (
+	"context"
 	"errors"
+	"github.com/thisisjun786/lina/internal/core/textcall"
+	"github.com/thisisjun786/lina/kit/lease"
 	"strings"
 
 	"github.com/thisisjun786/lina/kit/provider"
@@ -85,4 +88,11 @@ func (c *Config) Capabilities(model provider.ModelRef) (provider.CapabilitySet, 
 		admitted = intersection
 	}
 	return c.Adapter.Capabilities(model), admitted
+}
+
+// Stream guards every Core model route, including tool-free auxiliary calls.
+func (c *Config) Stream(ctx context.Context, activity lease.Lease, req provider.Request) (provider.Stream, error) {
+	return textcall.Guard(func(ctx context.Context, q provider.Request) (provider.Stream, error) {
+		return c.Adapter.Stream(ctx, activity, q)
+	})(ctx, req)
 }

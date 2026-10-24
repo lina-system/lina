@@ -111,7 +111,7 @@ func (r *conversationRuntime) skillMaintenanceModel(ctx context.Context, c jobs.
 	instruction, _ := json.Marshal(map[string]any{"role": "developer", "content": skillMaintenanceInstructions})
 	req := r.route.Request([]provider.Item{instruction, item})
 	req.Purpose = c.Kind
-	stream, err := r.route.Adapter.Stream(ctx, activity, req)
+	stream, err := r.route.Stream(ctx, activity, req)
 	if err != nil {
 		return jobs.Result{}, err
 	}

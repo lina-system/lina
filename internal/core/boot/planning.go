@@ -98,7 +98,7 @@ func (r *conversationRuntime) planModel(ctx context.Context, c jobs.Call) (jobs.
 	// belongs to its own trusted input, with no persona or conversation history.
 	req.Instructions = ""
 	req.Tools = nil
-	stream, err := r.route.Adapter.Stream(ctx, activity, req)
+	stream, err := r.route.Stream(ctx, activity, req)
 	if err != nil {
 		return jobs.Result{}, err
 	}

@@ -108,7 +108,7 @@ func (r *conversationRuntime) providerFixture(ctx context.Context, s clientsrv.S
 				return nil, err
 			}
 			q.Credential = r.route.Request(nil).Credential
-			return report.Observe(fmt.Sprint(i+1), round, r.route.Route, time.Now, func() (provider.Stream, error) { return r.route.Adapter.Stream(ctx, activity, q) }, &q.Bridge), nil
+			return report.Observe(fmt.Sprint(i+1), round, r.route.Route, time.Now, func() (provider.Stream, error) { return r.route.Stream(ctx, activity, q) }, &q.Bridge), nil
 		}}, replay.WorkerInput{RuntimeTools: r.route.Adapter.Class() == provider.AgentRuntime, Request: request, Calls: turn.Calls})
 		if err != nil {
 			return providerReportOutput(report, err)
@@ -160,7 +160,7 @@ func (r *conversationRuntime) providerFixture(ctx context.Context, s clientsrv.S
 		}
 		summary.Credential = r.route.Request(nil).Credential
 		stream := report.Observe("summary", 1, r.route.Route, time.Now, func() (provider.Stream, error) {
-			return r.route.Adapter.Stream(ctx, activity, summary)
+			return r.route.Stream(ctx, activity, summary)
 		})
 		var called bool
 		for {

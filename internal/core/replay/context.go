@@ -114,7 +114,7 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 	// may also hide an ancestor event used by another context projection.
 	memories := map[string]memory.Item{}
 	for _, source := range a.Context {
-		if source.Source != "relationship-v1" && source.Source != "name-v1" {
+		if source.Source != "relationship-v1" && source.Source != "name-v1" && source.Source != "topic-memory-v1" {
 			continue
 		}
 		id, ok := strings.CutPrefix(source.ID, "memory:")
@@ -192,7 +192,7 @@ func (s Source) contextSnapshot(ctx context.Context, tx *canon.Tx, scope Scope, 
 			if hex.EncodeToString(hash[:]) != source.Revision {
 				return fail()
 			}
-		case "relationship-v1", "name-v1":
+		case "relationship-v1", "name-v1", "topic-memory-v1":
 			item := memories[source.ID]
 			if source.Source == "relationship-v1" && item.Kind != memory.Relationship || source.Source == "name-v1" && item.Kind != memory.Name {
 				return fail()
@@ -230,7 +230,7 @@ func (s Source) ValidateEpisode(ctx context.Context, ep Episode) error {
 		}
 		refs := append([]ledger.Reference(nil), a.Profile...)
 		for _, c := range a.Context {
-			if c.Source == "relationship-v1" || c.Source == "name-v1" {
+			if c.Source == "relationship-v1" || c.Source == "name-v1" || c.Source == "topic-memory-v1" {
 				refs = append(refs, ledger.Reference{ID: strings.TrimPrefix(c.ID, "memory:"), Revision: c.Revision})
 			}
 		}
@@ -245,6 +245,49 @@ func (s Source) ValidateEpisode(ctx context.Context, ep Episode) error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := s.DB.Read(ctx, func(tx *canon.Tx) error {
+		scope := Scope{Person: a.OwnerPersonID, Agent: a.AgentID}
+		// Legacy assembly records lack OwnerPersonID. Bind their read checks
+		// to the canonical input's conversation owner, never exported prose.
+		if (len(ep.Calls) > 0 || ep.Input.ID != "") && scope.Person == "" {
+			var agent string
+			err := tx.QueryRowContext(ctx, `SELECT person,holder FROM recall_source WHERE kind='event' AND source_id=?`, ep.Input.ID).Scan(&scope.Person, &agent)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && (scope.Person == "" || agent != scope.Agent) {
+				return Exclusion("restricted_content")
+			}
+			if err != nil {
+				return err
+			}
+		}
+		// A scope restriction may change without a removal epoch change. Check
+		// the recorded event sources again before dispatch, including copies.
+		ids := make(map[string]bool)
+		if ep.Input.ID != "" {
+			ids[ep.Input.ID] = true
+		}
+		for _, event := range ep.History {
+			ids[event.ID] = true
+		}
+		for _, ref := range ep.ReplyRefs {
+			ids[ref.ID] = true
+		}
+		for _, event := range ep.Next {
+			ids[event.ID] = true
+		}
+		for id := range ids {
+			if err := visible(ctx, tx, scope, id); err != nil {
+				return err
+			}
+		}
+		for _, call := range ep.Calls {
+			if err := callReferences(ctx, tx, scope, call); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	return s.Validate(ctx, ep.RevocationEpoch)
 }

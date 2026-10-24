@@ -8,7 +8,9 @@ import (
 	"github.com/thisisjun786/lina/kit/tools"
 )
 
-func LocalRead(name string) bool { return name == "expand" || name == "recall_person" }
+func LocalRead(name string) bool {
+	return name == "expand" || name == "recall" || name == "recall_person"
+}
 
 // ReadGate is the discarding authority dependency for the replay read registry.
 // Classification comes from Core's registered schema, never a model declaration.
