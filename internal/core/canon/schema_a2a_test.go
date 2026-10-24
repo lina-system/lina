@@ -4,6 +4,7 @@ package canon
 import "testing"
 
 func TestA2AUpgradePreservesUncertainWorker(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = migrationsBefore(t, a2aSchema)
 	db := openStore(t, cfg)

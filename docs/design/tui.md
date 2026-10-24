@@ -307,7 +307,7 @@ Regions:
   rows when idle.
 - Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
-- Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
+- Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints. The count is Core's count of progress lines, sent with them; the TUI draws it and counts no rows. It is hidden when Core reports zero and, for a Core that sends no count, drawn from the cards the TUI shows.
 
 Once the focused conversation's snapshot is known to have no items, its header
 shows the token-based `lina.` wordmark, the agent name and the connection word.
@@ -617,7 +617,7 @@ overlay in Korean and English with Unicode and ASCII glyphs.
 - The diagram is schematic: it fixes order and content, not glyphs or widths.
 - The first row is the name and, right-aligned, the elapsed time since its work started, from Core's start time and the clock offset of T-06 rule 4: `0m` to `59m`, then `1h 05m`, then `2d 04h`. A done card stops at its finish. The elapsed time is never cut; the name is truncated at a grapheme boundary with an ellipsis.
 - The second row, indented two cells, is Core's Now: what the 일 is doing right now, in a few words ([work-and-delegation.md](work-and-delegation.md#progress-line)). It is truncated the same way and never wraps.
-- A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too.
+- A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too. The tasks and runs of an 일 are its rows, drawn in its stage list or its Details, and never cards of their own (Core marks them `row`).
 - Cards keep Core's order: waiting on the person, running, waiting on something outside, done. Done cards fold into one row. When the cards do not fit, the last row (`…`, or `...` in ASCII) gives the number of hidden cards and, when any of them waits on the person, how many. Cards that wait on the person are hidden last. The numbers always equal the hidden cards.
 - The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time. Its timer uses the next elapsed-minute boundary and the existing Core clock offset. An absent start stays unknown. Snapshot replacement and live updates share the same typed card projection; neither changes conversation focus or the reading anchor.
 
@@ -670,6 +670,32 @@ and emits nothing for an unchanged frame.
 - When the entries do not fit, the leading done entries fold into one row that keeps the last done entry visible, and the entries after the first next one fold into a count. The current stage never folds. Expanded steps fold like cards: waiting on the person first, then working, waiting and done, then a count row.
 - Ctrl+O opens the Details of the selected card, entry or step in the pager. Esc goes back one level: from the steps to the stage list, from the stage list to the cards, and from the cards to the composer with its draft.
 
+Opening a card selects its first unfinished entry without expanding it. The
+selection follows Core's stage number (or the kind of an unnumbered entry)
+across updates. Enter toggles expansion only for an entry with ready or started
+steps; an entry that becomes done or next loses its expansion. A missing stage
+list shows the unknown word, without inventing entries from the Now line.
+Folded entries remain reachable with Up and Down, with the current and selected
+entries kept visible. Details returns to the same panel level in both widths.
+Panel labels stay on one physical line; control, arrow and box-drawing characters
+in supplied text cannot draw a graph. Removing the opened work returns to cards
+without moving focus or changing the draft.
+
+Within an expanded entry, Up and Down visit its steps before the next entry.
+Step selection follows the opaque ref supplied beside the display line, even
+when the name or position changes. Ctrl+O on a step shows that step's Details;
+closing the pager returns to the same selection. Expanded steps put person
+waits first, then working, waiting and remaining history. A step and its worker
+rows stay together when scrolling, with a count of steps hidden on either side.
+Worker state words use the client's language; worker rows disappear on collapse
+or when Core closes the step. A fold that would replace just one entry keeps
+that entry, since a count would save no row.
+
+`TestM3WorkPanelStages` uses the graphs and evaluators of `work-panel.json`,
+with `e2e/m3/work-panel-stages.json` selecting both widths, languages and glyph
+sets. It records collapsed and expanded views with real stub worker processes,
+then checks their artifacts and the removal of worker rows after landing.
+
 **Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place. In the focused card view, the selected name starts with the action mark (`›`, or `>` in ASCII); its width comes from the name budget so elapsed time stays intact.
 
 In both the sidebar and overlay, card navigation scrolls just enough to keep
@@ -680,6 +706,16 @@ The initial window starts at the top of Core's order; scrolling never changes
 that order, the conversation's reading position or the draft.
 
 **Updates.** Topic updates replace cards in place. They never move focus, scroll the conversation, change the draft or close an opened 일 view. From Core's commit of a work event to the PTY frame that shows the changed card, the 95th percentile is at most 500 ms and the maximum at most 1 s with 50 일 running (P).
+
+E8 uses Core's durable work-event timestamp, written inside the commit
+transaction, as a conservative start that includes storage time. The endpoint
+is the first complete renderer write consumed from the PTY whose parsed card
+contains the new Now. A later observer wakeup or a partial PTY read cannot stand
+in for that frame. Every sample retains its event key, both timestamps, latency
+and frame; p95 uses the nearest rank (sample 48 of 50 after sorting). Missing
+frames, negative durations or an exceeded bound fail without retries. The
+draft, focus and retained conversation position are checked throughout and
+after closing the overlay.
 
 **Acceptance, defined before building.** `e2e/m3/work-panel.json` and its Go driver run installed Core with a fixture manager and stub workers, and the real TUI in a PTY at 120x34, in Korean and English, Unicode and ASCII. Inputs are fixed before any run: N = 1, 5, 20 and 50 일; the 일 at position i takes graph i mod 5 of a fixed corpus (one step; a chain of six; a diamond; a fan-out of one, 82 and one; two independent chains); names come from a fixed corpus of 1 to 60 graphemes with Hangul, wide, combining and emoji sequences. Exactly one 일 waits on the person and is the last one admitted; a second case at N = 50 has three. Each check passes or fails. No check is scored, retried or settled by sleeping:
 
@@ -707,13 +743,20 @@ The harness and its self-test live in `TestM3WorkPanelEvaluation` and
 the graph corpus and the name corpus. The driver acts as the fixture manager: it
 admits each 일's graph through Core's goal engine as a step-graph revision, then
 records the 일's work with a stub worker session against that goal. It reads
-Core's own card order, card fields and projected stage list as its oracle — the
+the managed goal as the project card and its worker task as a detail row;
+person waits are recorded on the owning goal step in the journal before
+startup. Core's own card order, card fields and projected stage list are its oracle — the
 stage list must match the corpus graph in steps, depth and parallel groups, so a
 lost blocker fails the run — and records every settled 120x34 frame in both
 languages and glyph modes. A check whose input the build does not publish yet is
-reported as missing and never as a pass: E4 and E8 to E9 need the injected step
-transitions of #771, E6 and E7 the opened 일 view of #770, and E11 to E14 the
-scheduling passes of #772 and #773. The self-test
+reported as missing and never as a pass: E6 and E7 need the opened 일 view of
+#770, and E11 to E14 the scheduling passes of #772 and #773. E4 and E8 to E9
+also run in `TestM3WorkPanelEventLatency`: 50 live corpus graphs remain in
+progress while 50 of the fan-out graph’s 82 parallel steps land. Each stub
+worker writes a result before Core accepts its observation. Eight PTYs observe
+the same commits in both languages, glyph modes and widths, retaining every
+first changed frame and both timestamps. Each combination must independently
+meet the latency bound. The self-test
 builds a well-formed recording, changes one thing per check, and requires that
 check to fail and the others to stay green except where they read the same
 evidence.
@@ -907,7 +950,11 @@ After answering a question and sending Esc, alpha acceptance waits for a complet
 connected conversation frame with the composer cursor and footer. The installed-Core
 question journey uses the same barrier. An idle worker may have no card while its
 continuation starts or after it finishes; the owner journey still requires a
-delivered result and an independently verified artifact. Card checks hold the worker
+delivered result and an independently verified artifact. That result is visible
+when a suffix of the committed reply, after the conversation Markdown render,
+is on the frame and is not only the request. List markers use the surface
+action glyph, and a link contributes its label, so a bulleted ending or a
+Markdown link still counts. Card checks hold the worker
 at an unanswered request and wait for its name, documented elapsed time and current
 activity. Recorder regressions cover the overlay, split redraw and delayed progress.
 

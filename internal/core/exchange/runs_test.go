@@ -35,6 +35,7 @@ func (*artifactStream) Close() error        { return nil }
 // The composition root connects peer L4 flows through their callbacks. This
 // scenario uses the real run supervisor, assets, ledger and mailbox on one canon.
 func TestExchangeThroughBackgroundRun(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	root := filepath.Join(t.TempDir(), "state")

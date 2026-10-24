@@ -10,6 +10,7 @@ import (
 )
 
 func TestInstalledRuntimeMigrationHistory(t *testing.T) {
+	t.Parallel()
 	for _, retracted := range []bool{false, true} {
 		for count := 1; count <= 3; count++ {
 			name := "pre_retraction"
@@ -88,6 +89,7 @@ INSERT INTO turn_runs(id,conversation,inbox_id,prepared,state) VALUES('old-turn'
 }
 
 func TestFutureMigrationDoesNotRenumberRuntime(t *testing.T) {
+	t.Parallel()
 	all := Migrations()
 	for i, name := range []string{"turn-v1.sql", "turn-control-v1.sql", "turn-outcome-v1.sql"} {
 		body, err := os.ReadFile("testdata/" + name)
@@ -134,6 +136,7 @@ func TestFutureMigrationDoesNotRenumberRuntime(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedKoreanSearch(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	// Reproduce the published dev catalog, independently of the pending plan
 	// migration. An existing installation at version 33 has no plan tables.
@@ -181,6 +184,7 @@ func TestPlanningUpgradePreservesPublishedKoreanSearch(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedWaitingDecisions(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	// Version 34 was published with waiting decisions before planning landed.
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, WaitingDecisionsSchema)...), Migration{Version: 34, SQL: WaitingDecisionsSchema})
@@ -218,6 +222,7 @@ func TestPlanningUpgradePreservesPublishedWaitingDecisions(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedPresetEffects(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, presetEffectsSchema)...), Migration{Version: 35, SQL: presetEffectsSchema})
 	db := openStore(t, cfg)
@@ -254,6 +259,7 @@ func TestPlanningUpgradePreservesPublishedPresetEffects(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedSkillMaintenance(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, skillMaintenanceSchema)...), Migration{Version: 36, SQL: skillMaintenanceSchema})
 	db := openStore(t, cfg)
@@ -290,6 +296,7 @@ func TestPlanningUpgradePreservesPublishedSkillMaintenance(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedWorkEvents(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, workEngineSchema)...), Migration{Version: 37, SQL: workEngineSchema})
 	db := openStore(t, cfg)
@@ -326,6 +333,7 @@ func TestPlanningUpgradePreservesPublishedWorkEvents(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedTodoProjection(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, recordsTodoSchema)...), Migration{Version: 38, SQL: recordsTodoSchema})
 	db := openStore(t, cfg)
@@ -365,6 +373,7 @@ func TestPlanningUpgradePreservesPublishedTodoProjection(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedWorkSequenceGuard(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, workEventSequenceSchema)...), Migration{Version: 39, SQL: workEventSequenceSchema})
 	db := openStore(t, cfg)
@@ -401,6 +410,7 @@ func TestPlanningUpgradePreservesPublishedWorkSequenceGuard(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedTimersAndCompletions(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, WorkCompletionsSchema)...),
 		Migration{Version: 40, SQL: WorkCompletionsSchema}, Migration{Version: 41, SQL: TimersSchema})
@@ -442,6 +452,7 @@ INSERT INTO timer(id,person,agent,conversation,authored,next_at) VALUES('existin
 }
 
 func TestPlanningUpgradePreservesPublishedStarters(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, startersSchema)...), Migration{Version: 42, SQL: startersSchema})
 	db := openStore(t, cfg)
@@ -481,6 +492,7 @@ func TestPlanningUpgradePreservesPublishedStarters(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedWorkerChoice(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, WorkerChoiceSchema)...), Migration{Version: 43, SQL: WorkerChoiceSchema})
 	db := openStore(t, cfg)
@@ -524,6 +536,7 @@ func TestPlanningUpgradePreservesPublishedWorkerChoice(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedNaming(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, namingSchema)...), Migration{Version: 44, SQL: namingSchema})
 	db := openStore(t, cfg)
@@ -559,6 +572,7 @@ func TestPlanningUpgradePreservesPublishedNaming(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedRecordOperations(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, recordOperationsSchema)...), Migration{Version: 45, SQL: recordOperationsSchema})
 	db := openStore(t, cfg)
@@ -596,6 +610,7 @@ func TestPlanningUpgradePreservesPublishedRecordOperations(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedWorkSwitch(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, WorkSwitchSchema)...), Migration{Version: 46, SQL: WorkSwitchSchema})
 	db := openStore(t, cfg)
@@ -639,6 +654,7 @@ func TestPlanningUpgradePreservesPublishedWorkSwitch(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedHandoffs(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, handoffsSchema)...), Migration{Version: 47, SQL: handoffsSchema})
 	db := openStore(t, cfg)
@@ -677,6 +693,7 @@ func TestPlanningUpgradePreservesPublishedHandoffs(t *testing.T) {
 }
 
 func TestPlanningUpgradePreservesPublishedWorkReviews(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(append([]Migration{}, migrationsBefore(t, workReviewsSchema)...), Migration{Version: 48, SQL: workReviewsSchema})
 	db := openStore(t, cfg)

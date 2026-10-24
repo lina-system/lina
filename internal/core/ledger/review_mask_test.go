@@ -11,6 +11,7 @@ import (
 )
 
 func TestProviderItemMasksDecodedQuotedTextAcrossReopen(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	in := input("provider-item")
 	in.PersonID = ""

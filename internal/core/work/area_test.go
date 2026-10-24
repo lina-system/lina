@@ -65,6 +65,7 @@ func areaFixtureFormat(t *testing.T, format string) (*Area, WorkspaceSpec, strin
 	return a, WorkspaceSpec{RepositoryID: "repo", Source: source, Base: base, Branch: "task/task-1"}, source
 }
 func TestAreaRegisteredWorktreeUsesConfiguredGit(t *testing.T) {
+	t.Parallel()
 	a, spec, source := areaFixture(t)
 	l := lease.New(func() {})
 	defer l.Release()
@@ -98,6 +99,7 @@ func TestAreaRegisteredWorktreeUsesConfiguredGit(t *testing.T) {
 // update the remote-tracking ref that mirrors that branch, by remote name and,
 // from 2.56, by a URL that matches one configured remote.
 func TestAreaRegisteredWorktreePushesAssignedBranch(t *testing.T) {
+	t.Parallel()
 	a, spec, source := areaFixture(t)
 	l := lease.New(func() {})
 	defer l.Release()
@@ -125,6 +127,7 @@ func TestAreaRegisteredWorktreePushesAssignedBranch(t *testing.T) {
 
 // The mirror allowance covers only the task's own branch name.
 func TestAreaRegisteredWorktreeRejectsOtherRemoteTrackingRefs(t *testing.T) {
+	t.Parallel()
 	a, spec, source := areaFixture(t)
 	l := lease.New(func() {})
 	defer l.Release()
@@ -165,6 +168,7 @@ done
 `
 
 func TestAreaRegisteredWorktreeReplacesEarlierGuard(t *testing.T) {
+	t.Parallel()
 	a, spec, source := areaFixture(t)
 	l := lease.New(func() {})
 	defer l.Release()
@@ -192,6 +196,7 @@ func TestAreaRegisteredWorktreeReplacesEarlierGuard(t *testing.T) {
 }
 
 func TestAreaRegisteredWorktreePreservesUnrelatedHooks(t *testing.T) {
+	t.Parallel()
 	for _, explicit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "default", true: "configured"}[explicit], func(t *testing.T) {
 			a, spec, source := areaFixture(t)
@@ -224,6 +229,7 @@ func TestAreaRegisteredWorktreePreservesUnrelatedHooks(t *testing.T) {
 }
 
 func TestAreaPinnedWorktreeAndProtectedRefs(t *testing.T) {
+	t.Parallel()
 	a, s, source := areaFixture(t)
 	l := lease.New(func() {})
 	defer l.Release()
@@ -273,6 +279,7 @@ func TestAreaPinnedWorktreeAndProtectedRefs(t *testing.T) {
 	}
 }
 func TestAreaSourceIdentitySurvivesWorkerRemote(t *testing.T) {
+	t.Parallel()
 	for _, legacy := range []bool{false, true} {
 		t.Run(fmt.Sprint("legacy=", legacy), func(t *testing.T) {
 			a, spec, source := areaFixture(t)
@@ -314,6 +321,7 @@ func TestAreaSourceIdentitySurvivesWorkerRemote(t *testing.T) {
 }
 
 func TestAreaRefusesEscapesAndConflictingAllocation(t *testing.T) {
+	t.Parallel()
 	a, s, _ := areaFixture(t)
 	l := lease.New(func() {})
 	defer l.Release()
@@ -343,6 +351,7 @@ func TestAreaRefusesEscapesAndConflictingAllocation(t *testing.T) {
 }
 
 func TestAreaNewBaseDoesNotResetOtherTask(t *testing.T) {
+	t.Parallel()
 	a, s, source := areaFixture(t)
 	l := lease.New(func() {})
 	defer l.Release()
@@ -374,6 +383,7 @@ func TestAreaNewBaseDoesNotResetOtherTask(t *testing.T) {
 }
 
 func TestAreaTaskBranchOwnership(t *testing.T) {
+	t.Parallel()
 	a, spec, _ := areaFixture(t)
 	l := lease.New(func() {})
 	defer l.Release()
@@ -466,6 +476,7 @@ func TestAreaTaskBranchOwnership(t *testing.T) {
 }
 
 func TestAreaRefusesConflictingBranchOwnership(t *testing.T) {
+	t.Parallel()
 	a, spec, _ := areaFixture(t)
 	l := lease.New(func() {})
 	defer l.Release()
@@ -494,6 +505,7 @@ func TestAreaRefusesConflictingBranchOwnership(t *testing.T) {
 }
 
 func TestAreaRefusesTaskBranchRename(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, flag, target string
 		detached, implicit bool
@@ -577,6 +589,7 @@ func TestAreaRefusesTaskBranchRename(t *testing.T) {
 }
 
 func TestAreaAssignedBranchDeletionRequiresCore(t *testing.T) {
+	t.Parallel()
 	for _, format := range []string{"sha1", "sha256"} {
 		t.Run(format, func(t *testing.T) {
 			a, spec, _ := areaFixtureFormat(t, format)
@@ -617,6 +630,7 @@ func TestAreaAssignedBranchDeletionRequiresCore(t *testing.T) {
 }
 
 func TestAreaRefusesReplacedHookWithoutOverwritingTarget(t *testing.T) {
+	t.Parallel()
 	a, s, _ := areaFixture(t)
 	l := lease.New(func() {})
 	defer l.Release()

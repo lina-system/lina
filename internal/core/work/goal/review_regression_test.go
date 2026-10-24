@@ -105,6 +105,7 @@ func assertRetiredReviewAction(t *testing.T, e *Engine, a Action) {
 }
 
 func TestReviewScopeCorrectionReachesManagerAndPreservesOtherGoals(t *testing.T) {
+	t.Parallel()
 	for _, propose := range []bool{false, true} {
 		t.Run(fmt.Sprint(propose), func(t *testing.T) {
 			other := oneGoal(readyTask("independent"))
@@ -145,6 +146,7 @@ func TestReviewScopeCorrectionReachesManagerAndPreservesOtherGoals(t *testing.T)
 }
 
 func TestReviewStaleCriterionCompletionDoesNotStopRunner(t *testing.T) {
+	t.Parallel()
 	e := reviewEngine(t, finishedGoal())
 	entered, release := make(chan Action, 1), make(chan struct{})
 	e.cfg.Driver = &fixtureDriver{run: func(a Action) (Observation, error) {
@@ -181,6 +183,7 @@ func TestReviewStaleCriterionCompletionDoesNotStopRunner(t *testing.T) {
 }
 
 func TestReviewStaleManagerPlanCannotInterpretNewRevision(t *testing.T) {
+	t.Parallel()
 	for _, withTasks := range []bool{false, true} {
 		t.Run(fmt.Sprint(withTasks), func(t *testing.T) {
 			e := reviewEngine(t, oneGoal())
@@ -212,6 +215,7 @@ func TestReviewStaleManagerPlanCannotInterpretNewRevision(t *testing.T) {
 }
 
 func TestReviewOverlappingAreasAreSerialized(t *testing.T) {
+	t.Parallel()
 	cases := [][2]string{{"src/*", "src/main.go"}, {"internal/core/**", "internal/core/work/**"}, {"src/a*.go", "src/ab?.go"}, {"./src/main.go", "src/main.go"}, {"**/*.go", "pkg/main.go"}, {"src", "src/sub/file.go"}}
 	for _, areas := range cases {
 		t.Run(areas[0]+"/"+areas[1], func(t *testing.T) {
@@ -247,6 +251,7 @@ func TestReviewOverlappingAreasAreSerialized(t *testing.T) {
 }
 
 func TestReviewPRSignalInvalidatesProofsWithoutQueuedMerge(t *testing.T) {
+	t.Parallel()
 	a := readyTask("a")
 	a.Stage = TaskDelivered
 	a.Head = "head"
@@ -269,6 +274,7 @@ func TestReviewPRSignalInvalidatesProofsWithoutQueuedMerge(t *testing.T) {
 }
 
 func TestReviewRevisionReopensBlockedGoalWithoutAuthorizingEffects(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []ActionKind{PlanGoal, Assign} {
 		t.Run(string(kind), func(t *testing.T) {
 			g := oneGoal()
@@ -333,6 +339,7 @@ type reviewRefusingDriver struct{ *fixtureDriver }
 func (d reviewRefusingDriver) Authorize(context.Context, Action) error { return ErrNeedsPerson }
 
 func TestReviewAuthorizationRefusalProvesNoExecution(t *testing.T) {
+	t.Parallel()
 	e := reviewEngine(t, oneGoal(readyTask("a")))
 	if err := e.NodeChanged(t.Context(), readyNode("n")); err != nil {
 		t.Fatal(err)
@@ -360,6 +367,7 @@ func TestReviewAuthorizationRefusalProvesNoExecution(t *testing.T) {
 }
 
 func TestReviewRevisionPreservesUnsettledEffects(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []ActionKind{Assign, Deploy} {
 		t.Run(string(kind), func(t *testing.T) {
 			g := oneGoal(readyTask("a"))

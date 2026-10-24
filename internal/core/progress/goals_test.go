@@ -4,6 +4,7 @@ package progress
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -67,7 +68,7 @@ func TestGoalLineCarriesNowStartAndStages(t *testing.T) {
 		t.Fatalf("goal units = %+v", units)
 	}
 	u := units[0]
-	if u.ID != "g" || u.Kind != "goal" || u.Name != "Prepare the trip" || !u.Active {
+	if u.ID != "g" || u.Kind != "project" || u.Name != "Prepare the trip" || !u.Active {
 		t.Fatalf("goal unit = %+v", u)
 	}
 	if !u.StartedAt.Equal(time.Unix(100, 0)) {
@@ -92,6 +93,41 @@ func TestGoalLineCarriesNowStartAndStages(t *testing.T) {
 	}
 	if !line.StartedAt.Equal(time.Unix(100, 0)) {
 		t.Fatalf("line started = %v", line.StartedAt)
+	}
+	// The overview must share one snapshot without mixing revisions of goals
+	// whose graphs reuse the same step ids.
+	other := goal.Goal{ID: "other", Person: "person", Agent: "agent", Conversation: "conversation", Summary: "Prepare a workshop", Done: "Workshop ready", NoServiceReason: "plan", Scope: goal.GoalScope{Repositories: []string{"repo"}, Includes: "workshop"}, Criteria: []goal.Criterion{{ID: "outcome", Statement: "Workshop ready", Check: goal.CriterionCheck{Kind: goal.RunEvidence, Method: "test", Target: "repo"}}}}
+	if err = engine.Admit(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	for revision, name := range []string{"Draft notes", "Revise notes"} {
+		if _, err = engine.SubmitStepGraph(t.Context(), other.ID, "person", "agent", "conversation", uint64(revision), []goal.Step{step("stay", name)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = db.Read(t.Context(), func(tx *canon.Tx) error {
+		batch, err := Goals(t.Context(), tx, "person", map[string]string{"agent": "Agent"}, nil)
+		if err != nil {
+			return err
+		}
+		if len(batch) != 2 {
+			t.Fatalf("missing goals: %+v", batch)
+		}
+		for _, unit := range batch {
+			individual, err := GoalStages(t.Context(), tx, unit.ID, "person", design.English)
+			if err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(unit.Stages, individual) {
+				t.Errorf("%s overview differs from individual history", unit.ID)
+			}
+			if unit.ID == other.ID && unit.Stages[0].Label != "Revise notes" {
+				t.Errorf("revision lost or mixed: %+v", unit.Stages)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	// Another person's goal is not observed.
 	if err = db.Read(t.Context(), func(tx *canon.Tx) error {

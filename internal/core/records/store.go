@@ -54,13 +54,24 @@ type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
 }
 type Store struct {
-	root *os.Root
-	db   Canon
+	root     *os.Root
+	db       Canon
+	noSync   bool                 // Set only by NoSync for a throwaway test root.
+	syncFile func(*os.File) error // os.File.Sync unless a test injects another.
 	// PublicationHook is a fault-injection seam for deterministic crash tests.
 	// Production leaves it nil. An error after the intent is durably recoverable.
 	PublicationHook       func(string) error
 	Now                   func() time.Time
 	ReadCandidateMaterial func(context.Context, string, int64) (string, error)
+}
+
+// Option adjusts a store opened for a throwaway test state root.
+type Option func(*Store)
+
+// NoSync skips the fsyncs that make the repository durable after a crash. It
+// exists for tests over a root they discard; Core never passes it.
+func NoSync() Option {
+	return func(s *Store) { s.noSync = true }
 }
 
 // recordsMu serializes every store in the process, including the result saver.
@@ -69,7 +80,7 @@ type Store struct {
 var recordsMu sync.Mutex
 var _ Repo = (*Store)(nil)
 
-func Open(stateRoot string, db Canon) (*Store, error) {
+func Open(stateRoot string, db Canon, options ...Option) (*Store, error) {
 	if db == nil {
 		return nil, ErrInvalid
 	}
@@ -78,14 +89,18 @@ func Open(stateRoot string, db Canon) (*Store, error) {
 		return nil, err
 	}
 	defer root.Close()
-	if err = privateDirectories(root, "versions/records"); err != nil {
+	s := &Store{root: root, db: db}
+	for _, option := range options {
+		option(s)
+	}
+	if err = s.privateDirectories("versions/records"); err != nil {
 		return nil, err
 	}
 	repo, err := root.OpenRoot("versions/records")
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{root: repo, db: db}
+	s.root = repo
 	recordsMu.Lock()
 	defer recordsMu.Unlock()
 	if err = s.initialize(); err == nil {
@@ -417,7 +432,7 @@ func (s *Store) install(p publication, files map[string]string) error {
 			if err = s.root.Remove(c.OldPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
-			if err = syncDirectory(s.root, path.Dir(c.OldPath)); err != nil {
+			if err = s.syncDirectory(path.Dir(c.OldPath)); err != nil {
 				return err
 			}
 		}

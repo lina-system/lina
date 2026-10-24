@@ -62,6 +62,7 @@ func (m *materialStore) Read(ctx context.Context, ref ledger.Material) (string, 
 }
 
 func TestLargeBodyUsesMaskedMaterialAndMissingBytesAreIncomplete(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	root := filepath.Dir(cfg.Path)
 	a, err := assets.Open(t.Context(), root, db)
@@ -143,6 +144,7 @@ func TestLargeBodyUsesMaskedMaterialAndMissingBytesAreIncomplete(t *testing.T) {
 }
 
 func TestExplicitSecretSpansAndNonsecretTags(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	in := input("spans")
@@ -167,6 +169,7 @@ func TestExplicitSecretSpansAndNonsecretTags(t *testing.T) {
 }
 
 func TestAbsentMaterialWriterFailsClosed(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	in := input("large")
@@ -180,6 +183,7 @@ func TestAbsentMaterialWriterFailsClosed(t *testing.T) {
 }
 
 func TestFailedLargeAdmissionLeavesNoRetainedMaterial(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	a, err := assets.Open(t.Context(), filepath.Dir(cfg.Path), db)
 	if err != nil {
@@ -213,6 +217,7 @@ func TestFailedLargeAdmissionLeavesNoRetainedMaterial(t *testing.T) {
 }
 
 func TestDuplicateLargeAdmissionsRetainOnlyOriginalMaterial(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	a, err := assets.Open(t.Context(), filepath.Dir(cfg.Path), db)
 	if err != nil {
@@ -244,6 +249,7 @@ func TestDuplicateLargeAdmissionsRetainOnlyOriginalMaterial(t *testing.T) {
 }
 
 func TestKoreanSearchOfMaterialChecksSourceBytes(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	root := filepath.Dir(cfg.Path)
 	a, err := assets.Open(t.Context(), root, db)
