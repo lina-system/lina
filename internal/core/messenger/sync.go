@@ -28,10 +28,14 @@ type Service struct {
 	interval  time.Duration
 	factory   Factory
 	admission sync.Map
-	activity  sync.RWMutex
 	wake      chan struct{}
 	syncReads map[string]map[*sourceRead]struct{}
 	stopping  map[string]bool
+	// active counts each source's running syncs and live admissions. A
+	// disconnect waits on drained for that source alone, so another account's
+	// slow read or rate-limit wait never holds it.
+	active  map[string]int
+	drained map[string]chan struct{}
 
 	// Notify tells the person that a chat passed its platform read window
 	// without a complete read. Core sets it; a nil Notify records the gap
@@ -87,7 +91,7 @@ func NewServiceWithResolver(store *Store, resolve Resolver, interval time.Durati
 	if resolve == nil {
 		resolve = func(Source) (Adapter, bool) { return nil, false }
 	}
-	return &Service{store: store, resolve: resolve, interval: interval, wake: make(chan struct{}, 1), syncReads: map[string]map[*sourceRead]struct{}{}, stopping: map[string]bool{}, lastSync: map[string]time.Time{}, watching: map[string]*watcher{}, resolved: map[string]Adapter{}}
+	return &Service{store: store, resolve: resolve, interval: interval, wake: make(chan struct{}, 1), syncReads: map[string]map[*sourceRead]struct{}{}, stopping: map[string]bool{}, active: map[string]int{}, drained: map[string]chan struct{}{}, lastSync: map[string]time.Time{}, watching: map[string]*watcher{}, resolved: map[string]Adapter{}}
 }
 
 // adapterFor selects the implementation for the source account, creating it
@@ -365,19 +369,16 @@ func sourceID(source Source) SourceID {
 // Sync reads one source: its chat list, then every chat that is in sync.
 func (s *Service) Sync(ctx context.Context, source Source) (result Result, err error) {
 	watchCtx := ctx
-	s.activity.RLock()
-	defer s.activity.RUnlock()
-	if !s.connected(ctx, source) {
-		return Result{}, nil
-	}
 	key := source.Platform + "\x00" + source.Account
+	ctx, cancel := context.WithCancel(ctx)
+	read := &sourceRead{cancel: cancel}
 	s.mu.Lock()
 	if s.stopping[key] {
 		s.mu.Unlock()
+		cancel()
 		return Result{}, nil
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	read := &sourceRead{cancel: cancel}
+	s.active[key]++
 	if s.syncReads[key] == nil {
 		s.syncReads[key] = map[*sourceRead]struct{}{}
 	}
@@ -396,7 +397,11 @@ func (s *Service) Sync(ctx context.Context, source Source) (result Result, err e
 			delete(s.syncReads, key)
 		}
 		s.mu.Unlock()
+		s.leave(key)
 	}()
+	if !s.connected(ctx, source) {
+		return Result{}, nil
+	}
 	adapter, ok := s.adapterFor(source)
 	if !ok {
 		return Result{}, ErrInvalid
@@ -453,6 +458,9 @@ func (s *Service) Sync(ctx context.Context, source Source) (result Result, err e
 		} else {
 			outcome, err := s.syncChat(ctx, source, adapter, chat)
 			result.add(outcome)
+			if errors.Is(err, ErrChatUnavailable) {
+				continue
+			}
 			if err != nil {
 				return result, err
 			}
@@ -546,6 +554,24 @@ func (s *Service) Live(ctx context.Context, source Source, deliver func(Event) e
 	return adapter.Live(ctx, sourceID(source), deliver)
 }
 
+// FetchAttachment reads one attachment of a live record on the person's
+// request. The stored metadata names the message it came with, so an adapter
+// that restarted can find that message again.
+func (s *Service) FetchAttachment(ctx context.Context, source Source, chat, attachment string) (io.ReadCloser, error) {
+	if !s.connected(ctx, source) {
+		return nil, ErrNotConnected
+	}
+	message, err := s.store.attachmentMessage(ctx, source, chat, attachment)
+	if err != nil {
+		return nil, err
+	}
+	adapter, err := s.adapter(source)
+	if err != nil {
+		return nil, err
+	}
+	return adapter.FetchAttachment(ctx, sourceID(source), chat, message, attachment)
+}
+
 // failureCause keeps a short, bounded cause on the registry row.
 func failureCause(err error) string {
 	if errors.Is(err, ErrTextUnavailable) {
@@ -585,9 +611,32 @@ func (s *Service) admitPage(ctx context.Context, source Source, chat string, cur
 
 // Apply admits one live event while coordinating disconnect with sync.
 func (s *Service) Apply(ctx context.Context, source Source, event Event) (Result, error) {
-	s.activity.RLock()
-	defer s.activity.RUnlock()
+	key := source.Platform + "\x00" + source.Account
+	s.mu.Lock()
+	if s.stopping[key] {
+		s.mu.Unlock()
+		return Result{}, nil
+	}
+	s.active[key]++
+	s.mu.Unlock()
+	defer s.leave(key)
 	return s.apply(ctx, source, event)
+}
+
+// leave ends one sync or live admission of a source and wakes a disconnect
+// waiting for that source to drain.
+func (s *Service) leave(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.active[key]--
+	if s.active[key] > 0 {
+		return
+	}
+	delete(s.active, key)
+	if drained := s.drained[key]; drained != nil {
+		close(drained)
+		delete(s.drained, key)
+	}
 }
 func (s *Service) apply(ctx context.Context, source Source, event Event) (Result, error) {
 	if !s.connected(ctx, source) {
@@ -623,7 +672,9 @@ func (s *Service) connected(ctx context.Context, source Source) bool {
 	return false
 }
 
-// Disconnect cancels active requests before waiting for their admissions.
+// Disconnect cancels the source's active requests before waiting for their
+// admissions. It waits for that source only, and returns when ctx ends; the
+// source then stays connected and is read again on its schedule.
 func (s *Service) Disconnect(ctx context.Context, source Source) error {
 	key := source.Platform + "\x00" + source.Account
 	s.mu.Lock()
@@ -634,10 +685,22 @@ func (s *Service) Disconnect(ctx context.Context, source Source) error {
 	if w := s.watching[key]; w != nil {
 		w.cancel()
 	}
+	var drained chan struct{}
+	if s.active[key] > 0 {
+		if drained = s.drained[key]; drained == nil {
+			drained = make(chan struct{})
+			s.drained[key] = drained
+		}
+	}
 	s.mu.Unlock()
-	s.activity.Lock()
-	defer s.activity.Unlock()
 	defer func() { s.mu.Lock(); delete(s.stopping, key); s.mu.Unlock() }()
+	if drained != nil {
+		select {
+		case <-drained:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	s.release(key)
 	return s.store.Disconnect(ctx, source.Person, source.Platform, source.Account)
 }

@@ -89,7 +89,17 @@ func (a *Adapter) Recover(ctx context.Context, source messenger.SourceID, delive
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	for _, id := range ids {
-		if err := a.recoverChannel(ctx, api, &position, id, deliver, save); err != nil {
+		err := a.recoverChannel(ctx, api, &position, id, deliver, save)
+		if inaccessible(err) {
+			// The account left the channel or lost access to it. Its updates
+			// cannot be read now; a later dialog listing sets a new baseline.
+			delete(position.Channels, id)
+			a.mu.Lock()
+			delete(a.channelPts, id)
+			a.mu.Unlock()
+			err = save()
+		}
+		if err != nil {
 			return err
 		}
 	}

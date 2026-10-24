@@ -637,7 +637,7 @@ func (a *fakeAdapter) Members(context.Context, messenger.SourceID, string) ([]me
 func (a *fakeAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
 	return nil
 }
-func (a *fakeAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
+func (a *fakeAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 func (a *fakeAdapter) Capabilities() messenger.Capabilities {
@@ -893,7 +893,7 @@ func (a *accountAdapter) Members(context.Context, messenger.SourceID, string) ([
 func (a *accountAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
 	return nil
 }
-func (a *accountAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
+func (a *accountAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 func (a *accountAdapter) Capabilities() messenger.Capabilities { return messenger.Capabilities{} }
