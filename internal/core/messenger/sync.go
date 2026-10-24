@@ -15,7 +15,7 @@ const DefaultInterval = time.Minute
 // One source's failure never blocks another source or the conversation.
 type Service struct {
 	store    *Store
-	adapters map[string]Adapter
+	resolve  Resolver
 	interval time.Duration
 
 	mu       sync.Mutex
@@ -30,7 +30,22 @@ func NewService(store *Store, adapters map[string]Adapter, interval time.Duratio
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	return &Service{store: store, adapters: adapters, interval: interval, lastSync: map[string]time.Time{}}
+	return NewServiceWithResolver(store, func(source Source) (Adapter, bool) {
+		adapter, ok := adapters[source.Adapter]
+		return adapter, ok
+	}, interval)
+}
+
+// Resolver selects an adapter for the source account.
+type Resolver func(Source) (Adapter, bool)
+
+// NewServiceWithResolver supports account-specific sessions while NewService
+// retains the registry of adapter names used by official platform services.
+func NewServiceWithResolver(store *Store, resolve Resolver, interval time.Duration) *Service {
+	if interval <= 0 {
+		interval = DefaultInterval
+	}
+	return &Service{store: store, resolve: resolve, interval: interval, lastSync: map[string]time.Time{}}
 }
 
 // Store is the registry and admission store the service reads into.
@@ -65,10 +80,10 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 		return results
 	}
 	for _, source := range sources {
-		if _, owned := s.adapterFor(source); !owned {
+		if source.State != StateConnected && source.State != StateFailing {
 			continue
 		}
-		if source.State != StateConnected && source.State != StateFailing {
+		if _, ok := s.adapterFor(source); !ok {
 			continue
 		}
 		key := source.Platform + "\x00" + source.Account
@@ -109,8 +124,7 @@ func (s *Service) intervalOf(source Source) time.Duration {
 // platform: two accounts on one platform, or a bot and a personal account, would
 // otherwise share one instance and one read.
 func (s *Service) adapterFor(source Source) (Adapter, bool) {
-	adapter, ok := s.adapters[source.Adapter]
-	return adapter, ok
+	return s.resolve(source)
 }
 
 func sourceID(source Source) SourceID {
