@@ -698,6 +698,63 @@ func TestSplitMovesOneIdentityAndItsItems(t *testing.T) {
 	}
 }
 
+// TestSplitMovesAForgottenItemWithItsIdentity proves an item the person forgot
+// before the split still follows the identity that produced it, and stays
+// forgotten. An item of an identity that stays behind does not move.
+func TestSplitMovesAForgottenItemWithItsIdentity(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-shared", Identifiers: []identity.SeenIdentifier{
+			{Kind: identity.Phone, Value: "+821012340001", Source: "iMessage profile"},
+			{Kind: identity.Phone, Value: "+821012340002", Source: "iMessage profile"},
+		}},
+		{Record: "person-split"},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, imessage("+821012340001"), "One", phone("+821012340001", "iMessage profile"))
+	observe(t, f, imessage("+821012340002"), "Two", phone("+821012340002", "iMessage profile"))
+	staying := usable(t, f, imessage("+821012340001"))
+	moving := usable(t, f, imessage("+821012340002"))
+	if len(staying) != 1 || len(moving) != 1 {
+		t.Fatal("both identities did not link")
+	}
+	kept := f.itemIn(t, "person-shared", "still here", "native:kept")
+	forgotten := f.itemIn(t, "person-shared", "please forget", "native:forgotten")
+	other := f.itemIn(t, "person-shared", "stays behind", "native:other")
+	for _, item := range []memory.Item{kept, forgotten} {
+		if err := f.store.RecordArtifact(t.Context(), moving[0].ID, "item", item.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.store.RecordArtifact(t.Context(), staying[0].ID, "item", other.ID); err != nil {
+		t.Fatal(err)
+	}
+	ref := func(id string) retract.Request {
+		return retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: id}}}
+	}
+	if err := f.removal.Forget(t.Context(), ref(forgotten.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Forget(t.Context(), ref(other.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Split(t.Context(), "person-shared", "person-split", []identity.Identity{imessage("+821012340002")}); err != nil {
+		t.Fatal(err)
+	}
+	if subject(t, f, kept.ID) != "person-split" || !visible(t, f, kept.ID) {
+		t.Fatal("the active item did not follow its identity")
+	}
+	state, subj, ok := itemRow(t, f, forgotten.ID)
+	if !ok || state != "trashed" || subj != "person-split" || visible(t, f, forgotten.ID) {
+		t.Fatalf("forgotten item = state %q subject %q present %t visible %t", state, subj, ok, visible(t, f, forgotten.ID))
+	}
+	state, subj, ok = itemRow(t, f, other.ID)
+	if !ok || state != "trashed" || subj != "person-shared" || visible(t, f, other.ID) {
+		t.Fatalf("another identity's forgotten item = state %q subject %q present %t", state, subj, ok)
+	}
+}
+
 // stopRemovals can forget only in its own later transaction. A repair must
 // refuse it and leave the link unchanged when items have to be retracted.
 type stopRemovals struct{}

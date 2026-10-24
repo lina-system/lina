@@ -1026,6 +1026,36 @@ AND NOT EXISTS(SELECT 1 FROM retract_target r WHERE r.kind='memory' AND r.id=m.i
 	return items, rows.Err()
 }
 
+// producedItems lists every memory item a link produced that still has a row,
+// including one the person has forgotten. Split moves these with the identity.
+// A permanently deleted item has no row and is absent. citingItems is the
+// narrower list a repair retracts.
+func (s *Store) producedItems(ctx context.Context, tx *canon.Tx, linkID string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM identity_artifact WHERE link=? AND kind='item'
+UNION
+SELECT view_id FROM cite WHERE view_kind='memory' AND target_kind='external' AND target_id=? AND dropped_revision IS NULL`,
+		linkID, linkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		var present bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM memory_item m WHERE m.id=? AND m.person=?)`, id, s.person).Scan(&present); err != nil {
+			return nil, err
+		}
+		if present {
+			items = append(items, id)
+		}
+	}
+	return items, rows.Err()
+}
+
 // atomicRemovals journals a forget in the same fenced writer as the caller's
 // canon changes. The removal list Core opens implements it.
 type atomicRemovals interface {
@@ -1361,7 +1391,8 @@ func (s *Store) UndoMerge(ctx context.Context, merge string) error {
 }
 
 // Split is the person's act: the listed identities and the items their evidence
-// produced move from one record to another.
+// produced move from one record to another. A forgotten item moves still
+// forgotten. A permanently deleted item stays gone, and neither blocks the split.
 func (s *Store) Split(ctx context.Context, from, into string, identities []Identity) error {
 	if from == "" || into == "" || from == into || len(identities) == 0 {
 		return ErrInvalid
@@ -1403,12 +1434,15 @@ func (s *Store) Split(ctx context.Context, from, into string, identities []Ident
 				if err := writeChange(ctx, tx, link.id, link.revision+1, "split", link.class, Active, into, s.person, at); err != nil {
 					return err
 				}
-				items, err := s.citingItems(ctx, tx, link.id)
+				items, err := s.producedItems(ctx, tx, link.id)
 				if err != nil {
 					return err
 				}
 				for _, item := range items {
 					if _, err := memory.ReassignSubject(ctx, tx, s.person, item, from, into); err != nil {
+						if errors.Is(err, memory.ErrNotFound) {
+							continue
+						}
 						return err
 					}
 				}

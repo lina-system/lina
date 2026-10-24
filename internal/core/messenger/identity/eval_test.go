@@ -169,6 +169,61 @@ func TestOwnerSampleGateNeedsThreeHundredTrials(t *testing.T) {
 	}
 }
 
+// TestEvaluationReplaysObservationsByInstant proves two RFC3339 timestamps
+// with different offsets are replayed by the instant they name. The later
+// text sorts first: 2026-10-24T02:00:00Z is before 2026-10-24T09:00:00+09:00
+// as strings, and two hours after it as time. Replaying the later iMessage
+// handle first would keep both links; time order ends the earlier Discord
+// link and refuses the recycled handle.
+func TestEvaluationReplaysObservationsByInstant(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660009"
+	set := identity.Set{
+		Version: 1,
+		People: []identity.SetPerson{{
+			ID:       "person-old",
+			Contacts: []identity.SetContact{{Kind: identity.Phone, Value: number, Source: "contacts"}},
+		}},
+		Identities: []identity.SetIdentity{
+			{
+				Platform: "imessage", User: number, At: "2026-10-24T02:00:00Z", Expect: "unknown",
+				Identifiers: []identity.SetContact{{Kind: identity.Phone, Value: number, Source: "iMessage profile"}},
+			},
+			{
+				Platform: "discord", User: "d-old", At: "2026-10-24T09:00:00+09:00", Expect: "unknown",
+				Names:       []string{"Old owner"},
+				Identifiers: []identity.SetContact{{Kind: identity.Phone, Value: number, Source: "Discord profile"}},
+			},
+		},
+	}
+	f := newFixture(t, nil)
+	measures, err := identity.Evaluate(t.Context(), f.store, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if measures.UsableLinks != 0 || measures.WrongLinks != 0 {
+		t.Fatalf("replayed out of time order: usable=%d wrong=%d", measures.UsableLinks, measures.WrongLinks)
+	}
+	earlier := links(t, f, discord("d-old"))
+	if len(earlier) != 1 || earlier[0].ValidThrough.IsZero() {
+		t.Fatalf("the earlier link did not end: %+v", earlier)
+	}
+	later, err := time.Parse(time.RFC3339, "2026-10-24T02:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !earlier[0].ValidThrough.Equal(later) {
+		t.Fatalf("valid through = %v, want the later instant", earlier[0].ValidThrough)
+	}
+	if got := links(t, f, imessage(number)); len(got) != 0 {
+		t.Fatalf("the recycled number linked: %+v", got)
+	}
+	question, found, err := f.store.Question(t.Context(), imessage(number))
+	if err != nil || !found || question.Reason != identity.ReasonIdentifierReused {
+		t.Fatalf("question = %+v found=%t err=%v", question, found, err)
+	}
+}
+
 func TestOwnerSampleNeedsALabelForEveryIdentity(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

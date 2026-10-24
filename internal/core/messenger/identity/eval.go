@@ -216,14 +216,25 @@ func Evaluate(ctx context.Context, store *Store, set Set) (Measures, error) {
 		return Measures{}, err
 	}
 	run := store.WithPeople(people)
-	identities := append([]SetIdentity(nil), set.Identities...)
-	sort.SliceStable(identities, func(i, j int) bool { return identities[i].At < identities[j].At })
-	var latest time.Time
-	for _, identity := range identities {
+	type observed struct {
+		identity SetIdentity
+		at       time.Time
+	}
+	ordered := make([]observed, len(set.Identities))
+	for i, identity := range set.Identities {
 		at, err := time.Parse(time.RFC3339, identity.At)
 		if err != nil {
 			return Measures{}, err
 		}
+		ordered[i] = observed{identity: identity, at: at}
+	}
+	// Parsed instants, not the timestamp text. Two RFC3339 offsets do not
+	// sort chronologically as strings.
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].at.Before(ordered[j].at) })
+	var latest time.Time
+	for _, row := range ordered {
+		identity := row.identity
+		at := row.at
 		if at.After(latest) {
 			latest = at
 		}
@@ -247,7 +258,8 @@ func Evaluate(ctx context.Context, store *Store, set Set) (Measures, error) {
 	// One sender identity is one trial. Repeated observations of that identity
 	// read the same link and must not multiply the usable-link count.
 	seen := map[string]bool{}
-	for _, identity := range identities {
+	for _, row := range ordered {
+		identity := row.identity
 		id := Identity{Platform: identity.Platform, Scope: identity.Scope, User: identity.User}
 		if seen[id.Key()] {
 			continue

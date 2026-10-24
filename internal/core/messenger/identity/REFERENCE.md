@@ -89,8 +89,10 @@ record to the second, and `UndoMerge` puts each link and each item that still
 exists back on the record it came from. A forgotten item moves back still
 forgotten. A permanently deleted item stays gone, and neither blocks the undo.
 `Split` moves the identities the person chooses and the items their evidence
-produced. Item moves run through `memory.ReassignSubject` in the same
-transaction, so an item keeps its evidence, holder and scope.
+produced. A forgotten item moves still forgotten. A permanently deleted item
+stays gone, and neither blocks the split. Item moves run through
+`memory.ReassignSubject` in the same transaction, so an item keeps its evidence,
+holder and scope.
 
 What a link produced is recorded in `identity_artifact` (memory items, and the
 kind reserved for people-record entries) and a citation of the link as external
@@ -137,8 +139,9 @@ records `gate` false and the command exits unsuccessfully. The files are
 without `expect`) and `labels.json` (`{"<platform>/<scope>/<user>": "<record id>"|"unknown"|"self"}`).
 
 `Evaluate` replaces the store's people source with the set's, observes every
-identity in time order, and then measures. It removes one link as its repair
-check, so a store is measured once.
+identity in order of the parsed instant, and then measures. Timestamp text is
+not the order: two RFC3339 values with different offsets replay by the instant
+they name. It removes one link as its repair check, so a store is measured once.
 
 ## Not in this increment
 
