@@ -303,7 +303,7 @@ func TestAccountMismatchNeverReachesTheProcess(t *testing.T) {
 		_, e3 := a.Page(t.Context(), id, "chat", "")
 		_, e4 := a.Members(t.Context(), id, "chat")
 		e5 := a.Live(t.Context(), id, func(messenger.Event) error { return nil })
-		_, e6 := a.FetchAttachment(t.Context(), id, "chat", "file")
+		_, e6 := a.FetchAttachment(t.Context(), id, "chat", "message", "file")
 		for _, err := range []error{e1, e2, e3, e4, e5, e6} {
 			if !errors.Is(err, messenger.ErrInvalid) {
 				t.Fatalf("wrong source: %v", err)
