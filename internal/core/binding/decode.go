@@ -68,6 +68,7 @@ type rawChoice struct {
 	Action     string          `json:"action"`
 	Close      rawStrings      `json:"close_matches"`
 	Difference string          `json:"difference"`
+	More       rawTargets      `json:"more"`
 }
 
 func normalizeChoice(state State, text string, raw json.RawMessage) (Choice, error) {
@@ -112,6 +113,18 @@ func normalizeChoice(state State, text string, raw json.RawMessage) (Choice, err
 	}
 	if len(tied) > 1 {
 		c.Tied = tied[:min(5, len(tied))]
+	}
+	// A later page is Core's own overflow. The tool drops a page the model sends
+	// before this decode, so a remaining page is part of the inherited set.
+	for _, rawMore := range in.More {
+		other, err := NormalizeTarget(state, rawMore)
+		if err != nil {
+			return Choice{}, err
+		}
+		if slices.Contains(tied, other) || slices.Contains(c.More, other) {
+			continue
+		}
+		c.More = append(c.More, other)
 	}
 	c.Action = normalizeAction(in.Action)
 	for _, id := range in.Close {

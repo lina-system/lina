@@ -99,6 +99,17 @@ func TestCompletedExactTitleBinds(t *testing.T) {
 	}
 }
 
+// A canonical choice keeps targets that do not fit on the first question page.
+func TestNormalizeChoicesKeepsLaterPage(t *testing.T) {
+	s := decodeState()
+	s.Items = append(s.Items, Item{ID: "extra-a", Title: "Extra A", Kind: "task", State: "running", LastActivity: s.Clock}, Item{ID: "extra-b", Title: "Extra B", Kind: "task", State: "running", LastActivity: s.Clock})
+	raw := `{"target":{"class":"existing","id":"garden","kind":"project"},"tied":[{"class":"existing","id":"garden","kind":"project"},{"class":"existing","id":"library","kind":"project"},{"class":"existing","id":"planting","kind":"task"},{"class":"existing","id":"finished","kind":"project"}],"more":[{"class":"existing","id":"extra-a","kind":"task"},{"class":"existing","id":"extra-b","kind":"task"}],"action":"stop"}`
+	got, err := NormalizeChoices(s, "Water the garden", []json.RawMessage{json.RawMessage(raw)})
+	if err != nil || len(got) != 1 || len(got[0].Tied) != 4 || len(got[0].More) != 2 || got[0].More[0].ID != "extra-a" || got[0].More[1].ID != "extra-b" {
+		t.Fatalf("later page: %+v %v", got, err)
+	}
+}
+
 // An ambiguous tied alternative is a correction, not a settled recommendation.
 func TestAmbiguousTiedTargetIsNotDropped(t *testing.T) {
 	s := decodeState()
