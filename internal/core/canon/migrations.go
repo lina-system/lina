@@ -85,7 +85,8 @@ func Migrations() []Migration {
 		{Version: 70, SQL: workRunLimitSchema},
 		{Version: 71, SQL: BindingMoveSchema},
 		{Version: 72, SQL: MessengerAttachmentSchema},
-		{Version: 73, SQL: recallSearchSchema},
+		{Version: 73, SQL: MessengerReadCoverageSchema},
+		{Version: 74, SQL: recallSearchSchema},
 	}
 }
 
