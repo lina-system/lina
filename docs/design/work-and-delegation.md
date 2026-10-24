@@ -781,8 +781,12 @@ automation, dependencies, build/analysis and unit checks. E2e runs after merge
 on every `dev` push and nightly; the `e2e` PR label opts into reached scenarios
 before merge. Post-merge test failures become deduplicated `qa` issues in the
 current milestone, with the tested head, first failing range and diagnostics.
-An explicit pass on a later head closes the matching finding. They do not block
-unrelated pull requests. The [foundation policy](../policy/foundation.md)
+Three consecutive passing descendant heads that ran the test close the matching
+finding; the repository may configure the count. A fail/pass/fail sequence within
+48 hours marks it `flaky` and keeps it open pending that recovery evidence.
+Each finding has one reusable status comment, and a closed finding can reopen
+at most once per 24 hours; failures during that cooldown update the comment.
+They do not block unrelated pull requests. The [foundation policy](../policy/foundation.md)
 defines this repository's selection and automated QA evidence.
 
 At merge the manager session checks the result against the work definition's done condition, scope and design reference, then asks Core to merge or close. It sends work back only when the result misses that definition, never to triage review findings or CI failures. The steps are in Judgment and delivery, and the only GitHub writes LINA Core makes on delegated work are merging and closing (see GitHub writes and merges).
