@@ -906,3 +906,77 @@ func TestSyncLeavesSourcesOwnedByOtherServicesUntouched(t *testing.T) {
 		t.Fatalf("unregistered source changed: %+v, %v", rows, err)
 	}
 }
+
+// Revocation can be discovered after SignIn, during any authenticated read.
+type revokedReadAdapter struct {
+	fakeAdapter
+	stage string
+}
+
+func (a *revokedReadAdapter) ListChats(ctx context.Context, id messenger.SourceID) ([]messenger.Chat, error) {
+	if a.stage == "chats" {
+		return nil, messenger.ErrNeedsSignIn
+	}
+	return []messenger.Chat{{ID: "dm-1", Kind: "direct"}}, nil
+}
+func (a *revokedReadAdapter) Page(context.Context, messenger.SourceID, string, messenger.Cursor) (messenger.Page, error) {
+	return messenger.Page{}, messenger.ErrNeedsSignIn
+}
+func TestRevokedReadNeedsSignInWithoutMovingCursor(t *testing.T) {
+	for _, stage := range []string{"chats", "page"} {
+		t.Run(stage, func(t *testing.T) {
+			f := newFixture(t)
+			f.connect(t)
+			service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": &revokedReadAdapter{stage: stage}}, time.Minute)
+			service.SyncAll(t.Context(), &f.now)
+			sources, err := f.store.Sources(t.Context(), "person")
+			if err != nil || len(sources) != 1 || sources[0].State != messenger.StateNeedsSignIn {
+				t.Fatalf("state: %+v %v", sources, err)
+			}
+			chats, err := f.store.Chats(t.Context(), "person", "discord", "account-1")
+			if err != nil || len(chats) != 1 || chats[0].Cursor != "" {
+				t.Fatalf("cursor changed: %+v %v", chats, err)
+			}
+		})
+	}
+}
+func TestTransientSourceFailureRetriesOnItsNextInterval(t *testing.T) {
+	f := newFixture(t)
+	f.connect(t)
+	adapter := &fakeAdapter{fail: errors.New("temporary outage")}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Minute)
+	service.SyncAll(t.Context(), &f.now)
+	adapter.fail = nil
+	f.now = f.now.Add(time.Minute)
+	service.SyncAll(t.Context(), &f.now)
+	rows, err := f.store.Sources(t.Context(), "person")
+	if err != nil || rows[0].State != messenger.StateConnected || rows[0].Failure != "" {
+		t.Fatalf("source did not recover: %+v %v", rows, err)
+	}
+}
+
+func TestScheduledReaderLeavesUnownedSourcesUntouched(t *testing.T) {
+	f := newFixture(t)
+	owned := f.connect(t)
+	other := owned
+	other.Platform = "teams"
+	other.Adapter = "teams"
+	other.Account = "work"
+	if err := f.store.Connect(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": &fakeAdapter{}}, time.Minute)
+	service.SyncAll(t.Context(), &f.now)
+	rows, err := f.store.Sources(t.Context(), "person")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("sources: %+v", rows)
+	}
+	for _, row := range rows {
+		if row.State != messenger.StateConnected || row.Failure != "" {
+			t.Fatalf("reader changed another source: %+v", row)
+		}
+	}
+}

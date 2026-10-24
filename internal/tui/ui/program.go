@@ -37,6 +37,8 @@ type shellClient interface {
 	Channel(context.Context, protocol.ChannelRequest) (string, error)
 	Input(context.Context, protocol.Input) (string, error)
 	Interrupt(context.Context, protocol.Interrupt) (string, error)
+	Binding(context.Context, protocol.BindingGet) (string, error)
+	BindingMove(context.Context, protocol.BindingMove) (string, error)
 	Account(context.Context, protocol.AccountRequest) (string, error)
 	SignInListening(context.Context, protocol.SignInListening) (string, error)
 	SignInRedirect(context.Context, protocol.SignInRedirect) (string, error)
@@ -296,6 +298,12 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 				case state.InterruptRequest:
 					_, err := client.Interrupt(ctx, protocol.Interrupt{ConversationID: &model.conversation.id})
 					return err
+				case state.BindingGetRequest:
+					_, err := client.Binding(ctx, protocol.BindingGet{InputID: request.InputID})
+					return err
+				case state.BindingMoveRequest:
+					_, err := client.BindingMove(ctx, protocol.BindingMove{InputID: request.InputID, Target: request.Target})
+					return err
 				}
 			}
 		}
@@ -314,6 +322,9 @@ func runClientShell(parent context.Context, dial connectionDial, input io.Reader
 						return nil
 					}
 					if client != nil {
+						if model.bindingResponse(*e) {
+							return display.showShell(model)
+						}
 						if consumed, err := management.response(ctx, client, *e); consumed {
 							if err != nil {
 								return err

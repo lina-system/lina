@@ -45,7 +45,7 @@ A person is a human LINA serves. Each person has a person id: stable, assigned b
 
 ## Product families and components
 
-There are two product families: LINA Core and LINA APP. Node is a separately installed device execution component of the LINA Core family. It is not a third family, not a feature of LINA APP and not a separate LINA. LIFE is a background world engine plus a personal feed in the LINA app. It is not a separate product. LINA OS is a separate, optional project in [lina-os](https://github.com/thisisjun786/lina-os).
+There are two product families: LINA Core and LINA APP. Node is a separately installed device execution component of the LINA Core family. It is not a third family, not a feature of LINA APP and not a separate LINA. LIFE is a background world engine plus a personal feed in the LINA app. It is not a separate product. LINA OS is a separate, optional project in [lina-os](https://github.com/lina-system/lina-os).
 
 Users see LINA APP as "the LINA app". No other app name is used.
 
@@ -143,12 +143,12 @@ Every actor follows two rules, and only these two are enforced:
 
 ## Installation modes
 
-LINA OS is a separate, optional project in [thisisjun786/lina-os](https://github.com/thisisjun786/lina-os).
-Its installation modes and profiles live in [lina-os `docs/design.md`](https://github.com/thisisjun786/lina-os/blob/main/docs/design.md).
+LINA OS is a separate, optional project in [thisisjun786/lina-os](https://github.com/lina-system/lina-os).
+Its installation modes and profiles live in [lina-os `docs/design.md`](https://github.com/lina-system/lina-os/blob/main/docs/design.md).
 
 ## Repository, artifacts and versions
 
-LINA is the public monorepo `thisisjun786/lina`, which holds LINA Core, the terminal UI, Node and the published protocol between the LINA app and LINA Core. The LINA app lives in its own public repository, `thisisjun786/lina-app`, under the same licence. LINA OS is a separate, optional project in [thisisjun786/lina-os](https://github.com/thisisjun786/lina-os). Work in the monorepo branches from `dev` and joins `dev` through the integration script after the local foundation verification passes ([integration.md](../policy/integration.md), [foundation.md](../policy/foundation.md)). `main` mirrors releases, and releases are immutable tags of the form `v0.0.1-alpha.YYYYMMDD.N` ([versioning.md](versioning.md), [releases.md](../policy/releases.md)). Issue #1 of the repository is its roadmap.
+LINA is the public monorepo `thisisjun786/lina`, which holds LINA Core, the terminal UI, Node and the published protocol between the LINA app and LINA Core. The LINA app lives in its own public repository, `thisisjun786/lina-app`, under the same licence. LINA OS is a separate, optional project in [thisisjun786/lina-os](https://github.com/lina-system/lina-os). Work in the monorepo branches from `dev` and joins `dev` through the integration script after the local foundation verification passes ([integration.md](../policy/integration.md), [foundation.md](../policy/foundation.md)). `main` mirrors releases, and releases are immutable tags of the form `v0.0.1-alpha.YYYYMMDD.N` ([versioning.md](versioning.md), [releases.md](../policy/releases.md)). Issue #1 of the repository is its roadmap.
 
 Users report problems and ideas in public: Core, the terminal UI and Node in the GitHub Issues of the LINA repository, the app in the Issues of the app repository, each with issue forms for a bug and for an idea. Ideas and open questions go to GitHub Discussions. Every client offers a report-a-problem action that drafts the issue and posts it only after the person confirms ([surfaces.md](surfaces.md#settings)). A person without a GitHub account has no route in the first release; a relay or an e-mail route is a later option.
 
