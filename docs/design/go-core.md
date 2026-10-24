@@ -2660,14 +2660,15 @@ Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [w
   Prompts, paging and debug output are disabled.
   This keeps `gh api --include` headers and JSON machine-readable under an inherited color-capable terminal without changing the user's login, tool configuration or parent environment.
   The installed-Core scenario exercises this inherited environment through the real child boundary.
-- The conformance check uses the owning dev manager's existing conversation and `coding_decision` tool, once per delivered head.
+- The conformance check uses the owning dev manager's existing conversation and `coding_decision` tool, once per pull request.
   Implementation notes: [C-58 review claims migration](../../internal/core/review/REFERENCE.md#c-58-review-claims-migration).
-  A duplicate request is refused even after interruption or restart.
-  A fix generation with a new head gets its own check.
+  A duplicate request is refused even after interruption or restart, and a changed head is refused too.
+  Only the head produced by the one return, in the next generation of the same task, continues the review.
   Reading an existing judgment at merge is not another request.
 - Core checks GitHub readiness, change-evidence availability and then the observed diff's file paths before calling the manager.
-  Failed or incomplete checks and blocking GitHub reviews are merge preconditions: they block the task without a `verified` verdict or model findings.
-  A change outside the declared write area is a Core-computed scope miss, recorded as `needs_changes` without calling a model.
+  Failed or incomplete checks and blocking GitHub reviews are merge preconditions: they block the task without a `verified` verdict.
+  Each failed required check is a Core-computed P1 finding on that blocked review, naming the check and pointing at the workflow definitions; waiting, missing or mismatched evidence records no finding.
+  A change outside the declared write area is a Core-computed scope miss, recorded as `needs_changes` with one P1 finding per path, without calling a model.
   Renames are observed as deletion and addition, so both paths are checked with the scheduler's path language.
 - The manager receives the work definition, observed diff and design text read at the admission's pinned base, as source-labeled data in the existing handoff.
   Missing or oversized change evidence finishes the claimed review as `blocked` with cause `change_evidence_unavailable`, without a verdict, findings or a model call, even when an observed path is outside the write area.
