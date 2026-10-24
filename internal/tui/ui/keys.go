@@ -59,6 +59,7 @@ var keyBindings = []keyBinding{
 	{"sign_in_open", []string{"/signin"}, 2, "", "commands"},
 	{"memory.heading", []string{"/memory"}, 3, "", "commands"},
 	{"agents.heading", []string{"/agents"}, 4, "", "commands"},
+	{"telegram.heading", []string{"/telegram"}, 5, "", "commands"},
 	{"channel.heading", []string{"/channels"}, 5, "", "commands"},
 	{"developer.heading", []string{"/developer"}, 6, "", "commands"},
 	{"talk.heading", []string{"/talk"}, 6, "", "commands"},

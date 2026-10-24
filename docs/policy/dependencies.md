@@ -23,6 +23,15 @@ Other documents cover what each component uses and why. [runtime.md](../design/r
 
 LINA's components are Go. Their outside code comes in as Go modules.
 
+The personal Telegram source uses `github.com/gotd/td v0.163.0` (MIT), including
+its MTProto transport, authentication and generated Telegram API types. It
+uses no TDLib binary. Its transitive modules and notices are recorded in
+`go.mod`, `go.sum` and `THIRD-PARTY-NOTICES.md`. The replacement of
+`github.com/segmentio/asm` with `v1.2.0` retains the MIT release; later releases
+use a license this policy does not admit. The narrowly versioned OpenPGP
+advisory exception covers code outside LINA's import closure; it does not
+waive MTProto vulnerability checks.
+
 ### Toolchain and configuration
 
 - Every `go.mod` has a `toolchain` line that names one exact Go release. `foundation` and release builds use that toolchain.
