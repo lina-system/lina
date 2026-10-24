@@ -337,10 +337,21 @@ func GoalStages(ctx context.Context, tx *canon.Tx, goalID, person string, langua
 	if current.Person != person {
 		return nil, goal.GraphUnavailable
 	}
-	graphs, err := stepGraphRevisions(ctx, tx, goalID)
+	ids := map[string]bool{goalID: true}
+	history, err := stepGraphRevisions(ctx, tx, ids)
 	if err != nil {
 		return nil, err
 	}
+	started, err := cardStarts(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	return stagesForGoal(current, history[goalID], started, language)
+}
+
+// stagesForGoal uses inputs from one canon snapshot. Overview callers read
+// history once for the whole set, rather than once per displayed goal.
+func stagesForGoal(current goal.Goal, graphs []graphRevision, started map[string]time.Time, language design.Language) ([]Stage, error) {
 	if current.StepGraph != nil && (len(graphs) == 0 || graphs[len(graphs)-1].Graph.Revision != current.StepGraph.Revision) {
 		graphs = append(graphs, graphRevision{Graph: *current.StepGraph, Tasks: current.Tasks})
 	}
@@ -355,10 +366,6 @@ func GoalStages(ctx context.Context, tx *canon.Tx, goalID, person string, langua
 	// after the last revision was committed.
 	last := graphs[len(graphs)-1]
 	revisions[len(revisions)-1].Steps = graphSteps(last.Graph.Steps, current.Tasks)
-	started, err := cardStarts(ctx, tx, goalID)
-	if err != nil {
-		return nil, err
-	}
 	for i := range revisions {
 		for j := range revisions[i].Steps {
 			revisions[i].Steps[j].StartedAt = started[revisions[i].Steps[j].ID]
@@ -367,9 +374,10 @@ func GoalStages(ctx context.Context, tx *canon.Tx, goalID, person string, langua
 	return Stages(revisions, current.State, language)
 }
 
-// cardStarts reads when each step of this goal started, which orders a parallel
-// stage's label. A step that has not started has no start and sorts by id.
-func cardStarts(ctx context.Context, tx *canon.Tx, goalID string) (map[string]time.Time, error) {
+// cardStarts reads when each step started, which orders a parallel stage's
+// label. A step's card carries the step id, so the ledger needs no goal link on
+// the card. A step that has not started has no start and sorts by id.
+func cardStarts(ctx context.Context, tx *canon.Tx) (map[string]time.Time, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT record FROM work_cards ORDER BY task_id")
 	if err != nil {
 		return nil, err
@@ -385,7 +393,7 @@ func cardStarts(ctx context.Context, tx *canon.Tx, goalID string) (map[string]ti
 		if json.Unmarshal(raw, &card) != nil {
 			return nil, ErrStageGraph
 		}
-		if card.Task.GoalID == goalID && !card.StartedAt.IsZero() {
+		if !card.StartedAt.IsZero() {
 			out[card.Task.ID] = card.StartedAt
 		}
 	}
@@ -417,13 +425,13 @@ type graphRevision struct {
 
 // stepGraphRevisions reads the whole revisions the manager submitted, in commit
 // order. Each step graph event journals the goal record that carries it.
-func stepGraphRevisions(ctx context.Context, tx *canon.Tx, goalID string) ([]graphRevision, error) {
+func stepGraphRevisions(ctx context.Context, tx *canon.Tx, goals map[string]bool) (map[string][]graphRevision, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT body FROM work_events WHERE kind='goal.step_graph' ORDER BY seq")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var graphs []graphRevision
+	graphs := map[string][]graphRevision{}
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
@@ -440,7 +448,7 @@ func stepGraphRevisions(ctx context.Context, tx *canon.Tx, goalID string) ([]gra
 			return nil, ErrStageGraph
 		}
 		for _, change := range entry.Changes {
-			if change.Kind != "goal" || change.ID != goalID {
+			if change.Kind != "goal" || !goals[change.ID] {
 				continue
 			}
 			var g goal.Goal
@@ -448,7 +456,7 @@ func stepGraphRevisions(ctx context.Context, tx *canon.Tx, goalID string) ([]gra
 				return nil, ErrStageGraph
 			}
 			if g.StepGraph != nil {
-				graphs = append(graphs, graphRevision{Graph: *g.StepGraph, Tasks: g.Tasks})
+				graphs[change.ID] = append(graphs[change.ID], graphRevision{Graph: *g.StepGraph, Tasks: g.Tasks})
 			}
 		}
 	}

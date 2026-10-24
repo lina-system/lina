@@ -75,11 +75,11 @@ void test_guard(void) {
   struct lina_pending record;
   CHECK(lina_pending_read(&pending.host, &paths, &record) == 1);
   CHECK(record.lock_ms == 10000);
-  report = lina_guard_tick(&pending.host, &paths, 10000 + 119999);
+  report = lina_guard_tick(&pending.host, &paths, 10000 + 119998);
   CHECK(report.action == LINA_GUARD_IDLE);
   CHECK(pending.write_count == 0);
   pending.locked = false;
-  report = lina_guard_tick(&pending.host, &paths, 10000 + 200000);
+  report = lina_guard_tick(&pending.host, &paths, 10000 + 119999);
   CHECK(report.action == LINA_GUARD_VERIFIED);
   CHECK(pending.write_count == 0);
   CHECK(lina_pending_read(&pending.host, &paths, &record) == 0);
@@ -113,6 +113,95 @@ void test_guard(void) {
   CHECK_STR(report.reason, "verify-timeout");
   restored(&timeout, &stock);
   only_backup_or_stock(&timeout, &stock);
+
+  // An unlock first seen after the window cannot prove it came inside it,
+  // whether the guard was stopped or could not read the session meanwhile.
+  for (int unreadable = 0; unreadable < 2; unreadable++) {
+    struct fake_host late;
+    installed(&late);
+    late.locked = true;
+    CHECK(lina_guard_tick(&late.host, &paths, 5000).action == LINA_GUARD_IDLE);
+    if (unreadable) {
+      late.session_locked_status = -1;
+      CHECK(lina_guard_tick(&late.host, &paths, 6000).action == LINA_GUARD_IDLE);
+    }
+    late.locked = false;
+    report = lina_guard_tick(&late.host, &paths, 5000 + LINA_VERIFY_WINDOW_MS + 60000);
+    CHECK(report.action == LINA_GUARD_RESTORED);
+    CHECK(report.reason != NULL && strcmp(report.reason, "verify-timeout") == 0);
+    restored(&late, &stock);
+  }
+
+  // A restore whose rule write fails turns the feature off and is retried on
+  // the next pass, whatever triggered it.
+  for (int trigger = 0; trigger < 2; trigger++) {
+    struct fake_host retry;
+    installed(&retry);
+    uint64_t first = 20000;
+    if (trigger == 0) {
+      snprintf(retry.build, sizeof(retry.build), "26B100");
+    } else {
+      retry.locked = true;
+      CHECK(lina_guard_tick(&retry.host, &paths, 5000).action == LINA_GUARD_IDLE);
+      first = 5000 + LINA_VERIFY_WINDOW_MS;
+    }
+    retry.write_right_status = -1;
+    CHECK(lina_guard_tick(&retry.host, &paths, first).action == LINA_GUARD_FAILED);
+    CHECK(!lina_enabled_present(&retry.host, &paths));
+    CHECK(lina_guard_tick(&retry.host, &paths, first + 1000).action == LINA_GUARD_FAILED);
+    retry.write_right_status = 0;
+    report = lina_guard_tick(&retry.host, &paths, first + 2000);
+    CHECK(report.action == LINA_GUARD_RESTORED);
+    restored(&retry, &stock);
+    CHECK(lina_guard_tick(&retry.host, &paths, first + 3000).action == LINA_GUARD_IDLE);
+    only_backup_or_stock(&retry, &stock);
+  }
+
+  // An install waits until a pending retry has put the rule back.
+  struct fake_host waiting;
+  installed(&waiting);
+  waiting.bundle_present = false;
+  waiting.write_right_status = -1;
+  CHECK(lina_guard_tick(&waiting.host, &paths, 20000).action == LINA_GUARD_FAILED);
+  waiting.write_right_status = 0;
+  struct lina_install_input again = {
+      .bundle_source = "/release/LinaUnlock.bundle",
+      .broker_socket = "/var/run/lina/broker.sock",
+      .person_uid = 501,
+      .deadline_ms = 500,
+  };
+  struct lina_outcome outcome = lina_install(&waiting.host, &paths, &again);
+  CHECK(outcome.code == LINA_INSTALL_STATE);
+  CHECK(outcome.reason != NULL && strcmp(outcome.reason, "restore-pending") == 0);
+  CHECK(lina_guard_tick(&waiting.host, &paths, 21000).action == LINA_GUARD_RESTORED);
+  restored(&waiting, &stock);
+  CHECK(lina_install(&waiting.host, &paths, &again).code == LINA_INSTALL_OK);
+
+  // A marker left by a crashed evaluation goes once the guard has checked the
+  // install; the marker of an evaluation still running stays.
+  struct fake_host crashed;
+  installed(&crashed);
+  fake_file_set(&crashed, paths.evaluation, "");
+  crashed.now_ms += 60000;
+  report = lina_guard_tick(&crashed.host, &paths, crashed.now_ms);
+  CHECK(report.action == LINA_GUARD_IDLE);
+  CHECK(crashed.host.exists(crashed.host.context, paths.evaluation) == 0);
+  CHECK(crashed.write_count == 0);
+  CHECK(lina_enabled_present(&crashed.host, &paths));
+  fake_file_set(&crashed, paths.evaluation, "");
+  crashed.now_ms += 100;
+  CHECK(lina_guard_tick(&crashed.host, &paths, crashed.now_ms).action == LINA_GUARD_IDLE);
+  CHECK(crashed.host.exists(crashed.host.context, paths.evaluation) == 1);
+
+  // A failed check restores instead, and the marker stays until an install
+  // the guard has checked.
+  struct fake_host crashed_broken;
+  installed(&crashed_broken);
+  fake_file_set(&crashed_broken, paths.evaluation, "");
+  crashed_broken.now_ms += 60000;
+  crashed_broken.bundle_present = false;
+  CHECK(lina_guard_tick(&crashed_broken.host, &paths, crashed_broken.now_ms).action == LINA_GUARD_RESTORED);
+  CHECK(crashed_broken.host.exists(crashed_broken.host.context, paths.evaluation) == 1);
 
   // A restore leaves the rule equal to the backup in every key except its
   // timestamps, including keys LINA never wrote.

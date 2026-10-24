@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: Apache-2.0
+# Build the arm64 unlock plug-in bundle on a hosted Apple silicon Mac and check
+# the signature there. The Linux foundation check compiles and runs the portable
+# decision core; the macOS workflows build the Darwin files and bundle layout.
+#
+# This workflow builds ad-hoc on every ref. Developer ID signing lives in
+# macos-unlock-plugin-signed.yml, whose triggers exclude pull requests and
+# feature-branch pushes so they never acquire a skipped signing check.
+name: macOS unlock plug-in
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'native/macos/**'
+      - '.github/workflows/macos-unlock-plugin.yml'
+  # A branch push is the only trigger a worker can count on: the bundle is
+  # macOS-only, so feature branches need it before the pull request runs it.
+  push:
+    paths:
+      - 'native/macos/**'
+      - '.github/workflows/macos-unlock-plugin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-unlock-plugin-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    name: bundle (arm64)
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Record the machine
+        run: |
+          sw_vers
+          uname -m
+          xcrun --sdk macosx clang --version
+      - name: Build and check the ad-hoc bundle
+        working-directory: native/macos/unlock-plugin
+        env:
+          # The team identifier is embedded in the plug-in's signing requirement.
+          # An ad-hoc build uses a placeholder team and never ships.
+          LINA_TEAM_ID: '0000000000'
+          LINA_SIGN_IDENTITY: ''
+        run: |
+          set -o pipefail
+          ./build.sh 2>&1 | tee "$RUNNER_TEMP/build.log"
+          {
+            echo '## Build and verify (ad-hoc)'
+            echo '```'
+            cat "$RUNNER_TEMP/build.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Record the architecture and the signature
+        working-directory: native/macos/unlock-plugin
+        run: |
+          set -o pipefail
+          bundle=build/LinaUnlock.bundle
+          lipo -archs "$bundle/Contents/MacOS/LinaUnlock" 2>&1 | tee "$RUNNER_TEMP/signature.log"
+          codesign --verify --strict --verbose=2 "$bundle" 2>&1 | tee -a "$RUNNER_TEMP/signature.log"
+          codesign -dvvv "$bundle" 2>&1 | tee -a "$RUNNER_TEMP/signature.log"
+          {
+            echo '## Architecture and signature'
+            echo '```'
+            cat "$RUNNER_TEMP/signature.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check the hardened runtime flag
+        working-directory: native/macos/unlock-plugin
+        run: |
+          set -euo pipefail
+          report=$(codesign -dvvv build/LinaUnlock.bundle 2>&1)
+          printf '%s\n' "$report"
+          if ! grep -Eq 'flags=0x[0-9a-f]+\(([a-z]+,)*runtime(,[a-z]+)*\)' <<<"$report"; then
+            echo 'the bundle is missing the hardened runtime flag' >&2
+            exit 1
+          fi
+      - name: Keep the bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: LinaUnlock-bundle
+          path: native/macos/unlock-plugin/build/LinaUnlock.bundle
+          if-no-files-found: error
+          retention-days: 5

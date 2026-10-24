@@ -25,7 +25,7 @@ func TestRestartClosesServicesBeforeReturningPlannedExit(t *testing.T) {
 			root := stateRoot(t)
 			var restart *lifecycle.Restarter
 			var trace []string
-			cfg := boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock")}
+			cfg := boot.Config{NoSync: true, StateRoot: root, Socket: filepath.Join(root, "run/core.sock")}
 			cfg.Services.Lifecycle = func(r *lifecycle.Restarter) { restart = r }
 			cfg.Services.OpenEvents = func(context.Context) (boot.Events, error) {
 				if failClose {
@@ -72,7 +72,7 @@ func TestBootUsesTheSharedRegistryForRestart(t *testing.T) {
 	}
 	defer activity.Release()
 	var restart *lifecycle.Restarter
-	cfg := boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Activities: r}
+	cfg := boot.Config{NoSync: true, StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Activities: r}
 	cfg.Services.Lifecycle = func(x *lifecycle.Restarter) { restart = x }
 	cfg.AfterStep = func(step boot.Step, _ boot.Snapshot) error {
 		if step != boot.Ready {

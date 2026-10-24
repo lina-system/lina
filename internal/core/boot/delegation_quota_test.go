@@ -32,7 +32,7 @@ func newBootWork(t *testing.T) *work.Service {
 	if err = ctl.Acquire(); err != nil {
 		t.Fatal(err)
 	}
-	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: canon.Migrations()})
+	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: ctl, Migrations: canon.Migrations(), NoSync: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,5 +257,34 @@ func TestTiedInferredLimitsAllNeedRecovery(t *testing.T) {
 	one[0].Observed = now.Add(time.Minute)
 	if blocked, reset = d.reconcileQuotaStop(one, now.Add(time.Minute)); !blocked || !reset.Equal(weeklyReset) {
 		t.Fatalf("one tied limit cleared the other: blocked=%v reset=%v", blocked, reset)
+	}
+}
+
+func TestRecoveredLimitStaysRecovered(t *testing.T) {
+	now := time.Now()
+	used := 99.0
+	recovered := 40.0
+	primaryReset := now.Add(time.Hour)
+	weeklyReset := now.Add(2 * time.Hour)
+	d := &delegationRuntime{}
+	d.noteQuotaFailure(now)
+	rows := []provider.QuotaRow{
+		{Provider: provider.ChatGPT, LimitID: "a", Bucket: "primary", UsedPct: &used, ResetsAt: &primaryReset, Observed: now.Add(-time.Minute), State: provider.QuotaOK},
+		{Provider: provider.ChatGPT, LimitID: "b", Bucket: "secondary", UsedPct: &used, ResetsAt: &weeklyReset, Observed: now.Add(-time.Minute), State: provider.QuotaOK},
+	}
+	if blocked, _ := d.reconcileQuotaStop(rows, now); !blocked {
+		t.Fatal("stopped limits did not block")
+	}
+	first := append([]provider.QuotaRow(nil), rows...)
+	first[0].UsedPct = &recovered
+	first[0].Observed = now.Add(time.Minute)
+	if blocked, reset := d.reconcileQuotaStop(first, now.Add(time.Minute)); !blocked || !reset.Equal(weeklyReset) {
+		t.Fatalf("one limit recovered: blocked=%v reset=%v", blocked, reset)
+	}
+	second := append([]provider.QuotaRow(nil), rows...)
+	second[1].UsedPct = &recovered
+	second[1].Observed = now.Add(2 * time.Minute)
+	if blocked, reset := d.reconcileQuotaStop(second, now.Add(2*time.Minute)); blocked {
+		t.Fatalf("earlier recovery was forgotten: reset=%v", reset)
 	}
 }

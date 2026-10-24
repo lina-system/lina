@@ -13,6 +13,7 @@ import (
 )
 
 func TestRunInputWaitingAnswerIsAttributedAndResumesOnlyItsRun(t *testing.T) {
+	t.Parallel()
 	var allowed atomic.Bool
 	s, db, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		if !allowed.Load() {

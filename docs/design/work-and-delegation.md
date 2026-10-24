@@ -899,7 +899,9 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
   contains, so one reported window is that limit. Each stopped limit keeps the
   reset its own row reported, including when usage is still under the cap.
   The worker stays blocked until every stopped limit reaches its own reset or
-  a later measurement shows that same limit below the cap. A newer row for
+  a later measurement shows that same limit below the cap. A recovered limit
+  stays recovered for that stop, even when a later snapshot lacks its newer
+  row. A newer row for
   another window or limit does not clear the stop, and a healthy window's
   reset cannot extend an exhausted one. The snapshot that missed the failure,
   and any older or unknown snapshot, does not clear the stop. Rows from
@@ -913,7 +915,7 @@ Workers are coding tools the user installed or signed in to: Codex, Claude Code,
 
 - Codex runs on its own app-server protocol over stdio (see Codex adapter).
 - Every ACP worker runs through one ACP adapter: Claude Code through the `claude-agent-acp` adapter program, Cursor (`cursor-agent acp`), Gemini CLI (`gemini --acp`) and Grok natively (see ACP adapter). Codex is never driven through ACP: both Codex ACP adapters measured worse than the app-server ([worker-protocols.md](../research/worker-protocols.md)).
-- Antigravity runs as a headless child with streaming output (see Antigravity headless adapter). The Claude Code headless adapter remains beside the ACP one until the worker evaluation chooses between them.
+- Antigravity runs as a headless child with streaming output (see Antigravity headless adapter). [CC] keeps ACP as its worker connection; its headless adapter stays only as an explicit selection ([worker-evaluation.md](../../evidence/worker-evaluation.md)).
 
 Each worker thread is a per-task coding-agent session: it implements the task packet, opens the task's pull request, waits for CI and review bots, fixes every CI failure and the P0 and P1 findings once, and reports done with a completion receipt only when the resulting head is green and no P0 or P1 remains. Review and CI stay with that session and never return to the manager for triage.
 
@@ -1066,8 +1068,10 @@ worker control. Unstarted completion follow-ups resume from canon after restart;
 a claimed turn is never replayed and a committed reply is not duplicated.
 A successful completion committed before the restart settles that exact turn's
 recovery record, so a restart never presents the finished session as an unknown
-live placeholder or recovers it again. Failed and transport-loss notices stay
-unknown until the thread is read.
+live placeholder or recovers it again. The same applies when the record write
+failed and the session then closed without a restart: settling it removes the
+closed session, so views read the recorded outcome. Failed and transport-loss
+notices stay unknown until the thread is read.
 Channel replies follow the completion back to its original input, retaining that
 input's address and the existing outbound delivery identity across restart.
 Recovery resolves the retained channel inbox address and its current most-specific
@@ -1247,8 +1251,10 @@ Added workers participate in normal dispatch authority, readiness and receipts.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
 
 The lifecycle adapter in #747 registers `claude-acp`, `cursor`, `gemini` and
-`grok` with `dispatch_work`; `claude` retains the headless adapter pending the
-worker evaluation. Each attempt records its version again after session
+`grok` with `dispatch_work`; `claude` keeps the headless adapter only as an
+explicit selection, because the worker evaluation kept ACP for [CC]
+([worker-evaluation.md](../../evidence/worker-evaluation.md)). Each attempt
+records its version again after session
 initialization and reports an unverified version while continuing the task.
 Gemini CLI installation reads its version through `gemini --acp` and
 `initialize`, without opening a session or requiring sign-in. Dispatch uses the
@@ -1299,8 +1305,10 @@ installs are discarded; complete installs are checked before reuse. Readiness
 records `claude --version`; the result separately records `agentInfo.version`.
 A missing Claude or Node returns an unsupported cause for this worker through
 `dispatch_work`, while other installed workers remain available. The `claude`
-headless worker remains a separate selection pending evaluation. A separately
-opted-in live test records the person's Claude version and the program version.
+headless worker stays available only as an explicit selection; the evaluation
+kept ACP ([worker-evaluation.md](../../evidence/worker-evaluation.md)). A
+separately opted-in live test records the person's Claude version and the
+program version.
 
 ### Readiness
 
@@ -2270,6 +2278,13 @@ Work progress is seen through work cards and the running list built from them. T
 
 ### Progress line
 
+New work-engine events retain Core's admission timestamp at nanosecond
+precision inside their commit transaction, separately from the source event's
+time. Retries and projection rebuilds preserve the original timestamp; legacy
+events without one remain unknown. Commit-to-surface measurements use that
+stored timestamp, including transaction storage time, and never substitute the
+time a later observer reads the event.
+
 LINA Core keeps one progress line for each 일 and each 목표 that has work in flight or something waiting on the person. The line is the person's view of where a piece of work stands, and it is the only form in which the progress of an 일 or a 목표 reaches a surface ([surfaces.md](surfaces.md#progress-at-a-glance)). It is computed from the records and the work cards. It is never written by hand and never taken from a model's estimate.
 
 | Field | What it holds |
@@ -2289,6 +2304,7 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 - Started is when the goal was handed over, or when a run that serves no goal started. Elapsed time runs from it to now, or to the finish of a done line. Core records the instant in new work-ledger events and preserves it through retries and projection rebuilds. Legacy events with no timestamp stay unknown. Live conversation workers use their Core launch time; independent background runs use their recorded creation time.
 - Before a plan's stages exist, Now prefers the worker's existing session title and current to-do item: `title · current step`, either alone when only one is observed. Core reads Claude Code `ai-title`, TodoWrite and session task files; Codex thread names and `update_plan`; Gemini `write_todos`; Cursor `todo_write`; opencode titles and todos; and ACP session metadata and plan entries. Streaming readers consume each new record once, file readers retain append offsets, and rewritten task/document snapshots are read only when changed. An empty plan clears the current step. Core masks secrets, removes terminal controls and active markup, and limits the line to 120 Unicode characters before storing or publishing it. Busy/idle and the last transition time come from those observations and adapter lifecycle events; silence changes neither. No prompt asks for a progress report and no model call produces this line. The next adapter event carries the observation to the work card and sidebar, using the existing progress publication window. Core keeps that line for the session's current turn. A later turn, opened by input or recovery, replaces it; an observation from another turn does not. The line is display evidence, never a completion verdict or plan percentage. When neither title nor current step is observed, Now reflects the observed execution: in progress, running a command, editing files, preparing a reply or using a tool. A pending person request takes precedence and supplies its subject. These fallback labels are Core activity classifications, not worker prose, command arguments, reasoning or completion claims. Repeated deltas in the same activity do not change Now; an activity change is retained for durable dispatched work. Plan stage and percentage remain unknown until observed.
 - A value that cannot be observed is unknown and is shown as unknown, never as zero, as the rule of Plans says. A line says done only when the done condition is met.
+- A line carries one state word in the running list's words, and the running count reads it. For an 일 it is the most urgent step state, in the order the stage list uses (input needed, failed, stopped, working, waiting), else the 일's own state: 설계 and 대기 read as waiting, 확인 as ready for review, 끝 as done. A background run outside any 일 carries its own run state.
 - A 목표 has a line when one of its 일 runs or something waits on the person. An 일 that belongs to a 목표 is a line below it, and an 일 that stands alone is a line of its own. A goal that is a single 할 일, and a background run that serves no goal, is a line of its own whose stage list is its one step. A finished item leaves the lines once the person has seen it.
 - Shared overview rows keep each goal immediately followed by its children, even when their execution states differ. Core supplies a separate flat card order for the work panel; sorting those cards never moves the shared rows or changes their depth.
 - A line holds no issue number, pull request, check, log or id. The tasks and runs behind a line are the running list (in progress, waiting, landed) limited to that 일 or 목표, and the state words are the same in both. They open on request, from the Details of the line ([surfaces.md](surfaces.md#default-view)).
@@ -2325,10 +2341,10 @@ claim the person's attention. Scheduled workers retain their durable task rows
 and do not also contribute session rows. These rows do not alter the task or
 background-run state mappings.
 
-- A row is one task, one background run or one conversation-started worker. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
+- A row is one task, one background run or one conversation-started worker. A row is never a line: the tasks of an 일 are rows under its line, and the 일 is the line the person counts. It has one of three states. In progress: a worker (or a background sub-agent) is working on it, or its pull request is being operated on. Waiting: it is not running, with one visible reason: a dependency, an area held by another task, a worker out of quota, host capacity, CI pending, a question or decision for the person, or a pause. Landed: the task has landed (see Terms), or the background run has ended with its outcome.
 - The states map onto the work card states: working is in progress; waiting, paused and input needed are waiting; done is landed. A stalled or failed task shows its state word until it is dispatched again (see Stall and failure).
 - A row is one line in the person's words about the outcome, not about the pull request. Rows that need the person come first, then the rest in the order they started. Opening a row opens the task's card.
-- A running count, such as "2 running, 1 waiting for you", shows in the conversation header or composer. It counts progress lines other than 목표 lines (see Progress line), by their state, so it grows with the 일 the person reads and not with the number of workers; the rows of this list are counted in the list itself.
+- A running count, such as "2 running, 1 waiting for you", shows in the conversation header or composer. It counts progress lines other than 목표 lines (see Progress line), by their state, so it grows with the 일 the person reads and not with the number of workers; the rows of this list are counted in the list itself. Core computes the count from the lines it publishes and sends it with them, so every surface shows the same number; a client never recounts the rows. A line whose row waits on the person counts as waiting for them. The steps of an 일 are rows under its line, not lines of their own.
 - A state change updates its row in place. It never opens a panel, moves focus, starts a message or interrupts a reply. A landing of one task of several is a row change and not a notice (see Notifications in [surfaces.md](surfaces.md)).
 - A landed row stays until the person has seen it, then it moves to history. Stopping works per row and for all rows ([surfaces.md](surfaces.md#running-list)).
 - For scheduled work, a stop durably closes the selected task or all tasks in
@@ -2518,7 +2534,7 @@ The running-Core acceptance scenario is `e2e/m3/operational-switch.json`.
 - Retention periods for closed workspaces: set during work engine implementation acceptance.
 - Whether Codex subagents inside a worker see the `lina` tools, and that a declined approval leaves the action unexecuted: confirmed by QA in the worker adapter implementation issue.
 - Remote-device worker hosting through Node and the worker's own pull-request path from the device: verified during Node implementation acceptance; unsupported until then.
-- The ACP worker profiles: confirmed against each installed version when the profile is built, with live runs in the worker evaluation ([worker-protocols.md](../research/worker-protocols.md#evaluation-defined-before-building)). Which Claude Code adapter stays, ACP or headless, is decided by that evaluation.
+- The ACP worker profiles: confirmed against each installed version when the profile is built, with live runs in the worker evaluation ([worker-protocols.md](../research/worker-protocols.md#evaluation-defined-before-building)). That evaluation kept ACP for [CC] ([worker-evaluation.md](../../evidence/worker-evaluation.md)).
 - The wire format of delivery layers, work events and progress data: added to [host-protocol.md](host-protocol.md) during work engine implementation acceptance.
 - The Korean words of the frame and of the date fields, and the exposure of the four-level priority: set by a card sort with non-developers and by use.
 - The thresholds of the to-do record (surviving briefings before a question, the rate at which rejected automatic additions fall back to candidates), Korean date parsing coverage (lunar dates, month ends, business days), the commit granularity and inbox form of the records repository, and its behavior at thousands of files: set by measurement during work engine implementation acceptance.

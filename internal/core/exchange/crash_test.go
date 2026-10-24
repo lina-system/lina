@@ -19,6 +19,7 @@ import (
 )
 
 func TestDeliverySurvivesSIGKILL(t *testing.T) {
+	t.Parallel()
 	if root := os.Getenv("LINA_EXCHANGE_CRASH_ROOT"); root != "" {
 		db := openAt(t, root, 1)
 		s := exchange.New(db)
