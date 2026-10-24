@@ -58,6 +58,9 @@ func (s *Service) workersFor(r Record) []Factory {
 	if r.ReturnReceipt != "" {
 		name = r.Worker
 	}
+	if r.FreshSession {
+		name = r.RecoveryWorker
+	}
 	var factories []Factory
 	for _, f := range s.cfg.Workers {
 		if f.Open == nil {
@@ -65,7 +68,7 @@ func (s *Service) workersFor(r Record) []Factory {
 		}
 		if name == "" && f.Chooser {
 			factories = append(factories, f)
-		} else if name != "" && f.Name == name && (f.Explicit || r.ReturnReceipt != "") {
+		} else if name != "" && f.Name == name && (f.Explicit || r.ReturnReceipt != "" || r.FreshSession) {
 			return []Factory{f}
 		}
 	}

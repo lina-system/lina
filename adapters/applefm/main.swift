@@ -48,7 +48,7 @@ struct AppleFMHelper {
                 "id": request.id,
                 "ok": true,
                 "profile": [
-                    "context_tokens": model.maxContextSize,
+                    "context_tokens": model.contextSize,
                     "tool_calling": true,
                     "guided_generation": true,
                     "image_input": false,
