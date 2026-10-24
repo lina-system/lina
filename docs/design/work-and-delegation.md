@@ -785,7 +785,9 @@ Three consecutive passing descendant heads that ran the test close the matching
 finding; the repository may configure the count. Passes already recorded on later
 runs count toward that threshold when an older failure is reported. A fail/pass/fail
 sequence within 48 hours marks it `flaky` and keeps it open pending that recovery
-evidence, including when the pass is reported after both failures.
+evidence. The window includes the pass start, including a pass reported after
+both failures, and earlier failure heads stay available when a failure is
+reported late.
 Each finding has one reusable status comment, and a closed finding can reopen
 at most once per 24 hours; failures during that cooldown update the comment.
 They do not block unrelated pull requests. The [foundation policy](../policy/foundation.md)
