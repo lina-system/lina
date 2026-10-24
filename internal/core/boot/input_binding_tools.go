@@ -153,6 +153,23 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				}
 				return tool.Validate(clean)
 			},
+			Gate: func(c provider.ToolCall) string {
+				_, ref, err := stripToolBinding(c)
+				if err != nil {
+					return ""
+				}
+				// Only a call that names a consumed steering input or a request
+				// ordinal waits for a binding when the turn has no person input
+				// of its own.
+				if ref.Input == "" && ref.InputEventID == "" && !ref.Ordinal && !s.defaultBindingInput() {
+					return ""
+				}
+				input, _, err := s.selectedBindingInput(ref.InputEventID, ref.Input)
+				if err != nil {
+					return ""
+				}
+				return bindingBarrier(input.ID)
+			},
 			Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
 				clean, ref, err := stripToolBinding(c)
 				if err != nil {
@@ -160,6 +177,13 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				}
 				if _, err = tool.Validate(clean); err != nil {
 					return loop.Result{ID: c.ID, Code: loop.Invalid}
+				}
+				// A system turn with no held request has no person input to
+				// bind, so an unqualified call runs as the turn's own tool even
+				// when it consumed steering. A call that names the steering
+				// input or a request ordinal is still bound.
+				if ref.Input == "" && ref.InputEventID == "" && !ref.Ordinal && !s.defaultBindingInput() {
+					return tool.Execute(ctx, clean)
 				}
 				if s.bindingSource != nil && ref.Input == "" && ref.InputEventID == "" && !ref.Ordinal {
 					ref.Request = s.bindingRequest
