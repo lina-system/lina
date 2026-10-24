@@ -35,12 +35,12 @@ type RequestEvidence struct {
 	Class         provider.Class
 	// Batch names a deferred submission that served this request. It is
 	// recorded after the provider answers, so a pre-send record leaves it empty.
-	Batch string `json:",omitempty"`
-	Assembly      Assembly
-	Model         provider.ModelRef   `json:",omitempty"`
-	Effort        provider.Effort     `json:",omitempty"`
-	Tools         []provider.ToolDecl `json:",omitempty"`
-	Fields        provider.FieldList  `json:",omitempty"`
+	Batch    string `json:",omitempty"`
+	Assembly Assembly
+	Model    provider.ModelRef   `json:",omitempty"`
+	Effort   provider.Effort     `json:",omitempty"`
+	Tools    []provider.ToolDecl `json:",omitempty"`
+	Fields   provider.FieldList  `json:",omitempty"`
 }
 
 // ContextSource is a text-free source locator, not a stored ContextPacket.

@@ -473,7 +473,7 @@ func (h *Host) serveRead(w http.ResponseWriter, r *http.Request, appID, token st
 		return
 	}
 	name := r.URL.Query().Get("name")
-	var arguments json.RawMessage = json.RawMessage(`{}`)
+	var arguments = json.RawMessage(`{}`)
 	if r.Method == http.MethodPost {
 		var body struct {
 			Name      string          `json:"name"`

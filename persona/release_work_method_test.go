@@ -4,7 +4,6 @@ package persona_test
 import (
 	"encoding/json"
 	"io/fs"
-	"reflect"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -52,25 +51,6 @@ func replaceMethodField(t *testing.T, data []byte, field, value string) []byte {
 		t.Fatal(err)
 	}
 	return result
-}
-
-// sameRecord compares two records by parsed value, since canonical JSON orders
-// object keys differently from the record literal a preset writes.
-func sameRecord(t *testing.T, a, b, key string) bool {
-	t.Helper()
-	var left, right map[string]any
-	first, err := persona.ParseWorkMethod([]byte(a), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := persona.ParseWorkMethod([]byte(b), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if json.Unmarshal([]byte(first), &left) != nil || json.Unmarshal([]byte(second), &right) != nil {
-		t.Fatal("record is not an object")
-	}
-	return reflect.DeepEqual(left, right)
 }
 
 func TestReleaseWorkMethodsRejectDrift(t *testing.T) {
