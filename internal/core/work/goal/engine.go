@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -245,7 +246,7 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 	if err := validateGoal(g); err != nil {
 		return err
 	}
-	if g.StepGraph != nil || g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || len(g.MergedRevisions) > 0 || g.Deployment != (Proof{}) || g.Verification != (Proof{}) || g.Rank != 0 || g.Paused || g.QueuePlace != 0 || g.QueueReason != "" {
+	if g.StepGraph != nil || g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || g.DecisionRow != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || len(g.MergedRevisions) > 0 || g.Deployment != (Proof{}) || g.Verification != (Proof{}) || g.Rank != 0 || g.Paused || g.QueuePlace != 0 || g.QueueReason != "" {
 		return ErrInvalid
 	}
 	for _, t := range g.Tasks {
@@ -434,6 +435,18 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					g.State = GoalBlocked
 					g.AttentionID = fmt.Sprintf("goal:%s:%d:attention", g.ID, g.Revision)
 					g.BlockedReason = "LINA could not find a way to finish the remaining done condition; a decision is needed."
+				case has(p.Orphans, g.ID):
+					g.State = GoalBlocked
+					g.AttentionID = fmt.Sprintf("goal:%s:%d:attention", g.ID, g.Revision)
+					g.BlockedReason = livenessReason(*g)
+				case has(p.Rows, g.ID):
+					g.State = GoalBlocked
+					if g.AttentionID == "" {
+						g.AttentionID = "goal:" + g.ID + ":decision"
+					}
+					if g.DecisionRow != "" {
+						g.BlockedReason = g.DecisionRow
+					}
 				case g.DefinitionPending:
 					g.State = GoalRunning
 				case failedEvidence(*g):
@@ -827,11 +840,18 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		if t != nil && (t.Stage != TaskQAFailed || t.RepairedBy != "") {
 			return ErrInvalid
 		}
+		liveness := t == nil && a.FailureKey == ""
+		if liveness && o.Wait != nil && !namedWait(*o.Wait) {
+			return ErrInvalid
+		}
 		if t == nil {
 			g.ManagerTurns++
 		}
 		if a.FailureKey != "" {
 			g.AssessedFailure = a.FailureKey
+		}
+		if liveness && len(o.Tasks) > 0 {
+			g.DecisionRow, g.AttentionID, g.BlockedReason = "", "", ""
 		}
 		if len(o.Tasks) > 0 {
 			for _, task := range o.Tasks {
@@ -854,6 +874,18 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 			if err := validateGoal(*g); err != nil {
 				return err
 			}
+		}
+		if liveness && o.Wait != nil {
+			w := *o.Wait
+			w.GoalID = g.ID
+			w.Recorded = true
+			g.Waits = append(g.Waits, w)
+		}
+		if liveness && len(o.Tasks) == 0 && strings.TrimSpace(o.Decision) != "" {
+			g.DecisionRow = strings.TrimSpace(o.Decision)
+			g.AttentionID = "goal:" + g.ID + ":decision"
+			g.BlockedReason = g.DecisionRow
+			g.State = GoalBlocked
 		}
 
 	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker:
