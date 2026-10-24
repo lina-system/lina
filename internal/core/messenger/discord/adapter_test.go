@@ -745,3 +745,149 @@ func TestLiveForwardedMessageReadsItsSnapshot(t *testing.T) {
 		t.Fatal("live did not stop")
 	}
 }
+
+// gatewayFixture starts a synthetic Gateway for one adapter and returns the
+// frame channel plus the adapter's live event stream. A test writes frames to
+// the channel and reads the events the live reader delivered.
+func gatewayFixture(t *testing.T, rest func(*http.Request) *http.Response) (chan any, chan messenger.Event, *messengerdiscord.Adapter, func()) {
+	t.Helper()
+	frames := make(chan any, 8)
+	identified := make(chan int, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		if wsjson.Write(ctx, conn, map[string]any{"op": 10, "d": map[string]any{"heartbeat_interval": 60000}}) != nil {
+			return
+		}
+		var auth struct {
+			Op int `json:"op"`
+		}
+		if wsjson.Read(ctx, conn, &auth) != nil {
+			return
+		}
+		identified <- 1
+		if wsjson.Write(ctx, conn, map[string]any{"op": 0, "t": "READY", "s": 1, "d": map[string]any{"session_id": "session-1", "user": map[string]any{"id": "123456", "bot": true}}}) != nil {
+			return
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case frame := <-frames:
+				if wsjson.Write(ctx, conn, frame) != nil {
+					return
+				}
+			}
+		}
+	}))
+	endpoint, _ := url.Parse(server.URL)
+	a := mustAdapter(t, fixtureDB(t), transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "discord.com" {
+			switch apiRequest(r).URL.Path {
+			case "/users/@me/guilds":
+				return reply(r, 200, guilds), nil
+			case "/guilds/g1/channels":
+				return reply(r, 200, guildChannels), nil
+			case "/guilds/g1/threads/active":
+				return reply(r, 200, activeThreads), nil
+			}
+			if strings.HasSuffix(apiRequest(r).URL.Path, "/threads/archived/public") {
+				return reply(r, 200, `{"threads":[],"has_more":false}`), nil
+			}
+			return rest(apiRequest(r)), nil
+		}
+		wire := r.Clone(r.Context())
+		wire.URL.Scheme = endpoint.Scheme
+		wire.URL.Host = endpoint.Host
+		return http.DefaultTransport.RoundTrip(wire)
+	}))
+	if _, err := a.ListChats(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan messenger.Event, 8)
+	done := make(chan error, 1)
+	go func() {
+		done <- a.Live(ctx, messenger.SourceID{Platform: "discord", Account: "123456"}, func(e messenger.Event) error { events <- e; return nil })
+	}()
+	select {
+	case <-identified:
+	case err := <-done:
+		cancel()
+		t.Fatalf("live stopped: %v", err)
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("live never identified")
+	}
+	stop := func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				t.Errorf("live stopped with %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("live did not stop")
+		}
+		server.Close()
+	}
+	return frames, events, a, stop
+}
+
+// Discord sends a partial MESSAGE_UPDATE. Only the fields it sent may reach the
+// record: an update with no author is completed from REST, an embed-only update
+// is not a text edit, and an update whose text is unavailable never stops the
+// shared session.
+func TestPartialMessageUpdateReadsTheStoredMessage(t *testing.T) {
+	frames, events, _, stop := gatewayFixture(t, func(r *http.Request) *http.Response {
+		if r.URL.Path == "/channels/100/messages/901" {
+			return reply(r, 200, `{"id":"901","channel_id":"100","guild_id":"g1","content":"edited words","type":0,
+				"edited_timestamp":"2026-10-24T08:05:00.000000+00:00","timestamp":"2026-10-24T08:00:00.000000+00:00",
+				"author":{"id":"200","username":"owner"}}`)
+		}
+		if r.URL.Path == "/channels/100/messages/902" {
+			return reply(r, 200, `{"id":"902","channel_id":"100","guild_id":"g1","content":"","type":0,
+				"edited_timestamp":"2026-10-24T08:06:00.000000+00:00","timestamp":"2026-10-24T08:00:00.000000+00:00",
+				"author":{"id":"200","username":"owner"}}`)
+		}
+		return reply(r, 404, `{"code":10003,"message":"unknown"}`)
+	})
+	defer stop()
+	// A partial update names no author, so the full message is read from REST.
+	frames <- map[string]any{"op": 0, "t": "MESSAGE_UPDATE", "s": 2, "d": map[string]any{
+		"id": "901", "channel_id": "100", "guild_id": "g1", "content": "edited words",
+		"edited_timestamp": "2026-10-24T08:05:00.000000+00:00"}}
+	select {
+	case e := <-events:
+		if e.Message == nil || e.Message.Text != "edited words" || e.Message.Author.ID != "200" || e.Message.Route != messenger.RoutePerson {
+			t.Fatalf("partial update = %+v", e)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the partial update was not delivered")
+	}
+	// An embed-only update carries neither an edit time nor a content change.
+	frames <- map[string]any{"op": 0, "t": "MESSAGE_UPDATE", "s": 3, "d": map[string]any{
+		"id": "901", "channel_id": "100", "guild_id": "g1", "embeds": []any{map[string]any{"type": "rich"}}}}
+	// An update whose text the platform withholds must not fail the session.
+	frames <- map[string]any{"op": 0, "t": "MESSAGE_UPDATE", "s": 4, "d": map[string]any{
+		"id": "902", "channel_id": "100", "guild_id": "g1", "edited_timestamp": "2026-10-24T08:06:00.000000+00:00"}}
+	frames <- map[string]any{"op": 0, "t": "MESSAGE_CREATE", "s": 5, "d": map[string]any{
+		"id": "903", "channel_id": "100", "guild_id": "g1", "content": "still here", "type": 0,
+		"timestamp": "2026-10-24T08:07:00.000000+00:00", "author": map[string]any{"id": "200", "username": "owner"}}}
+	for {
+		select {
+		case e := <-events:
+			if e.Message == nil || e.Message.ID != "903" {
+				t.Fatalf("skipped update was delivered: %+v", e)
+			}
+			return
+		case <-time.After(5 * time.Second):
+			t.Fatal("the session stopped after an update without text")
+		}
+	}
+}

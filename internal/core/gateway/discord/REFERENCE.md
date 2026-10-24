@@ -49,6 +49,12 @@ that session, so a channel connection and a bot-mode messenger source on the
 same token receive every event from one socket (#1079). The session identifies
 with the union of its subscribers' intents and reconnects with a fresh Identify
 when that union changes; a Resume keeps the intents it identified with.
+A close 4014 (disallowed intents) removes only the subscribers that asked for
+the refused privileged intent: each is told `ErrIntentsDenied`, so its source
+reports text unavailable, and the session reconnects with the remaining
+subscribers' intents so a channel worker on the same token keeps running. A
+socket this hub interrupts for an intent change reconnects with the current
+union instead of failing every subscriber.
 A subscriber that cannot store a dispatch yet returns `channels.Retry`; the
 session replays that dispatch on the same socket with a bounded backoff and
 advances the shared checkpoint only after every subscriber accepts it, so a

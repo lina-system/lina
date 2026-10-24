@@ -370,3 +370,137 @@ func TestRetryableDispatchReplaysWithoutFailingTheSession(t *testing.T) {
 		t.Fatal("session did not stop")
 	}
 }
+
+// Discord refuses the privileged message-content intent with close 4014. Only
+// the subscriber that asked for it loses text; the session reconnects with the
+// other subscribers' intents, so a channel worker already running on the same
+// token keeps its session instead of stopping with the source.
+func TestDisallowedContentIntentKeepsTheChannelWorker(t *testing.T) {
+	var accepts atomic.Int32
+	channelReady := make(chan struct{}, 1)
+	reconnected := make(chan chan any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		n := accepts.Add(1)
+		frames := make(chan any, 4)
+		if n == 3 {
+			reconnected <- frames
+		}
+		if wsjson.Write(ctx, conn, map[string]any{"op": 10, "d": map[string]any{"heartbeat_interval": 60000}}) != nil {
+			return
+		}
+		var identify struct {
+			Op int `json:"op"`
+			D  struct {
+				Intents int `json:"intents"`
+			} `json:"d"`
+		}
+		if wsjson.Read(ctx, conn, &identify) != nil {
+			return
+		}
+		switch n {
+		case 2:
+			// The source joined and asked for the content intent, which the bot
+			// is not granted.
+			if identify.D.Intents&int(IntentMessageContent) == 0 {
+				t.Errorf("the source session did not ask for content: %d", identify.D.Intents)
+			}
+			conn.Close(4014, "disallowed intents")
+			return
+		case 3:
+			if identify.D.Intents&int(IntentMessageContent) != 0 {
+				t.Errorf("the reconnect kept the refused intent: %d", identify.D.Intents)
+			}
+		}
+		if wsjson.Write(ctx, conn, map[string]any{"op": 0, "t": "READY", "s": 1, "d": map[string]any{"session_id": "session-1", "user": map[string]any{"id": "123456", "bot": true}}}) != nil {
+			return
+		}
+		if n == 1 {
+			channelReady <- struct{}{}
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case frame := <-frames:
+				if wsjson.Write(ctx, conn, frame) != nil {
+					return
+				}
+			}
+		}
+	}))
+	defer server.Close()
+	endpoint, _ := url.Parse(server.URL)
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		wire := r.Clone(r.Context())
+		wire.URL.Scheme = endpoint.Scheme
+		wire.URL.Host = endpoint.Host
+		return http.DefaultTransport.RoundTrip(wire)
+	})
+	f := setup(t, transport)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	channelGot := make(chan struct{}, 1)
+	g := gateway.New(f.db, func(context.Context, gateway.Delivery) error { channelGot <- struct{}{}; return nil })
+	channelDone := make(chan error, 1)
+	go func() { channelDone <- f.a.Run(ctx, g) }()
+	select {
+	case <-channelReady:
+	case err := <-channelDone:
+		t.Fatalf("the channel worker stopped: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the channel worker never connected")
+	}
+
+	// The source joins the running session and asks for the refused intent.
+	sourceDone := make(chan error, 1)
+	go func() {
+		sourceDone <- Listen(ctx, Listener{Bot: f.a.bot, Token: f.a.token, DB: f.db, Transport: transport, Intents: IntentMessageContent,
+			Handle: func(context.Context, string, json.RawMessage, string) error { return nil }})
+	}()
+	select {
+	case err := <-sourceDone:
+		if !errors.Is(err, ErrIntentsDenied) {
+			t.Fatalf("source stopped with %v, want the refused intent (sessions=%d)", err, accepts.Load())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the source never learned that its intent was refused")
+	}
+
+	// The channel worker must still hold a live session on the same token.
+	var frames chan any
+	select {
+	case frames = <-reconnected:
+	case err := <-channelDone:
+		t.Fatalf("the channel worker stopped: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the channel worker never reconnected")
+	}
+	frames <- map[string]any{"op": 0, "t": "MESSAGE_CREATE", "s": 2, "d": map[string]any{"id": "1", "channel_id": "100", "author": map[string]any{"id": "200"}, "content": "hello"}}
+	select {
+	case <-channelGot:
+	case err := <-channelDone:
+		t.Fatalf("the channel worker stopped: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the channel never received an event after the refused intent")
+	}
+	if accepts.Load() != 3 {
+		t.Fatalf("gateway sessions = %d, want three (channel, refused source, channel again)", accepts.Load())
+	}
+	cancel()
+	select {
+	case err := <-channelDone:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("the channel worker stopped with %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the channel worker did not stop")
+	}
+}

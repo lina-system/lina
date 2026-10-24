@@ -38,6 +38,11 @@ read again for this increment.
   content intent. A content-free type 21 thread starter points at the message
   that began its thread, and a forward carries the copied words and media in
   `message_snapshots`; history reads both and advances past them.
+- **Inferred for LINA:** `MESSAGE_UPDATE` carries only the fields Discord
+  changed. An update without an author is completed from the message REST
+  keeps; an update that changes neither text nor edit time, such as an embed
+  refresh, is skipped; and an update whose text is unavailable is skipped
+  rather than failing the shared session.
 - **Inferred for LINA:** a live event the store cannot admit yet, such as an
   edit held behind an unsettled write, comes back as a retryable dispatch. The
   shared session replays it on the same socket after a bounded backoff, so the

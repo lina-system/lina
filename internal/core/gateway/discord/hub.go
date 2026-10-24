@@ -226,16 +226,54 @@ func (h *hub) loop() {
 		}
 		h.mu.Lock()
 		asked := h.unionLocked()
+		empty := len(h.members) == 0
 		h.mu.Unlock()
+		if empty {
+			return
+		}
 		err := h.serve(asked)
 		if h.stopped() {
 			return
 		}
-		if err != nil {
+		if errors.Is(err, ErrIntentsDenied) && h.dropContentIntent() {
+			// The subscribers that asked for the refused intent were told, and
+			// the rest reconnect with their own intents.
+			continue
+		}
+		// A cancelled serve is this hub interrupting its own socket for an
+		// intent change or a close: reconnect with the current union rather
+		// than failing every subscriber on the token.
+		if err != nil && !errors.Is(err, context.Canceled) {
 			h.fail(err)
 			return
 		}
 	}
+}
+
+// dropContentIntent removes the subscribers that asked for the privileged
+// message-content intent after Discord refused it. Each is told that the intent
+// was denied, so its source reports text unavailable; the subscribers that did
+// not ask for it keep the session.
+func (h *hub) dropContentIntent() bool {
+	h.mu.Lock()
+	var dropped []*member
+	kept := h.members[:0]
+	for _, m := range h.members {
+		if m.intents&IntentMessageContent != 0 {
+			dropped = append(dropped, m)
+			continue
+		}
+		kept = append(kept, m)
+	}
+	h.members = kept
+	h.mu.Unlock()
+	for _, m := range dropped {
+		select {
+		case m.done <- ErrIntentsDenied:
+		default:
+		}
+	}
+	return len(dropped) > 0
 }
 
 func (h *hub) fail(err error) {
