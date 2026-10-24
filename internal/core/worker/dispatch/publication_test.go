@@ -117,7 +117,12 @@ func TestPublicationCancellationAfterWorkerStart(t *testing.T) {
 		}
 		return func(worker.Event) {}, func() {}
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	// Workspace preparation runs several supervised Git commands, and under
+	// -race each one re-executes this instrumented test binary as the
+	// proc-supervise helper. The budget bounds the scenario (a missed
+	// cancellation still ends the dispatch and fails below), not that fixed
+	// instrumented setup cost.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	s.execute(ctx, r)
 	records, err := s.records(t.Context())

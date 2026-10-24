@@ -563,9 +563,12 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 				return false
 			}
 			var cancelled bool
-			_ = s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
-				return tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(record,'$.canceled'),0) FROM worker_dispatch WHERE id=?`, r.ID).Scan(&cancelled)
-			})
+			readCanceled := func() error {
+				return s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
+					return tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(record,'$.canceled'),0) FROM worker_dispatch WHERE id=?`, r.ID).Scan(&cancelled)
+				})
+			}
+			_ = readCanceled()
 			if cancelled {
 				r.Canceled = true
 				_ = adapter.Interrupt(ctx, thread, worker.UserCancel)
@@ -587,6 +590,40 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 			}
 			observed := false
 			var progressSequence uint64
+			var stopExpired <-chan time.Time
+			interruptSent := cancelled
+			// Cancellation is durable and independent of the optional owner bridge.
+			// A worker that never confirms stopping is closed after a bounded wait;
+			// that retains an unknown outcome and its directory reservations.
+			startStopTimer := func() {
+				timer := time.NewTimer(5 * time.Second)
+				e.deferred = append(e.deferred, func() { timer.Stop() })
+				stopExpired = timer.C
+			}
+			stopWorker := func() {
+				r.Canceled = true
+				interruptSent = true
+				stopCtx, stopCancel := context.WithTimeout(ctx, 2*time.Second)
+				_ = adapter.Interrupt(stopCtx, thread, worker.UserCancel)
+				stopCancel()
+				startStopTimer()
+			}
+			if interruptSent {
+				startStopTimer()
+			}
+			// The owner bridge commits its own controls as it registers. Read the
+			// durable cancellation again here so a stop committed during the bind
+			// is not left waiting for the next progress tick.
+			if !interruptSent {
+				if err = readCanceled(); err != nil {
+					r.Code = "control_unavailable"
+					unbind()
+					return false
+				}
+				if cancelled {
+					stopWorker()
+				}
+			}
 			if err = s.reportReadiness(ctx, *r, run, &progressSequence); err != nil {
 				unbind()
 				return false
@@ -604,19 +641,6 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 				}
 				progressSequence++
 				return service.ReportProgress(ctx, r.ID, run.ID, progressSequence, summary)
-			}
-			var stopExpired <-chan time.Time
-			interruptSent := cancelled
-			// Cancellation is durable and independent of the optional owner bridge.
-			// A worker that never confirms stopping is closed after a bounded wait;
-			// that retains an unknown outcome and its directory reservations.
-			startStopTimer := func() {
-				timer := time.NewTimer(5 * time.Second)
-				e.deferred = append(e.deferred, func() { timer.Stop() })
-				stopExpired = timer.C
-			}
-			if interruptSent {
-				startStopTimer()
 			}
 			for !observed {
 				select {
@@ -679,21 +703,13 @@ func (s *Service) runAttempts(ctx context.Context, e *execution) bool {
 					}
 				case now := <-progressTick.C:
 					if !interruptSent {
-						err = s.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
-							return tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(record,'$.canceled'),0) FROM worker_dispatch WHERE id=?`, r.ID).Scan(&cancelled)
-						})
-						if err != nil {
+						if err = readCanceled(); err != nil {
 							r.Code = "control_unavailable"
 							unbind()
 							return false
 						}
 						if cancelled {
-							r.Canceled = true
-							interruptSent = true
-							stopCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-							_ = adapter.Interrupt(stopCtx, thread, worker.UserCancel)
-							cancel()
-							startStopTimer()
+							stopWorker()
 						}
 					}
 					if err = recordProgress(progress.Flush(now, false)); err != nil {
