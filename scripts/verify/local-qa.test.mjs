@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { developmentRepository, sandbox } from '../test-fixture.mjs';
-import { executeLocalRun, readLocalHistory, runLocalQA, runLocalShards } from './local-qa.mjs';
+import { executeLocalRun, readLocalHistory, readSandboxJSON, runLocalQA, runLocalShards } from './local-qa.mjs';
 
 function fixture(t) {
   const sb = sandbox(t);
@@ -143,7 +143,34 @@ test('all shards execute with bounded parallelism even after a failure', async (
   assert.equal(peak, 2);
   assert.deepEqual(calls.map(call => call.id), plan.tasks.map(task => task.id));
   for (const { args, id } of calls) assert.deepEqual(args,
-    ['--plan', '/qa/plan.json', '--shard', id, '--out', '/qa/results/' + id + '.json']);
+    ['--plan', '/qa/plan.json', '--shard', id, '--out', '/output/' + id + '.json']);
+});
+
+test('only bounded regular sandbox output is imported, without following links or blocking on FIFOs', { skip: process.platform !== 'linux' }, t => {
+  const sb = sandbox(t);
+  const target = join(sb.dir, 'target.json');
+  writeFileSync(target, '{"valid":true}');
+  assert.deepEqual(readSandboxJSON(target), { valid: true });
+  const symbolic = join(sb.dir, 'symbolic.json');
+  symlinkSync(target, symbolic);
+  assert.throws(() => readSandboxJSON(symbolic), { code: 'ELOOP' });
+  const hard = join(sb.dir, 'hard.json');
+  linkSync(target, hard);
+  assert.throws(() => readSandboxJSON(hard), /regular file/);
+  const fifo = join(sb.dir, 'fifo.json');
+  assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+  assert.throws(() => readSandboxJSON(fifo), /regular file/);
+});
+
+test('a rejected shard output still waits for every independent worker before cleanup', async () => {
+  const plan = { tasks: ['one', 'two', 'three'].map(id => ({ id })) };
+  const executed = [];
+  await assert.rejects(runLocalShards(plan, 2, async (_args, id) => {
+    executed.push(id);
+    if (id === 'one') throw new Error('unsafe output');
+    return 0;
+  }), /unsafe output/);
+  assert.deepEqual(executed.sort(), ['one', 'three', 'two']);
 });
 
 test('the real sandbox selects and runs a clean synthetic candidate without host credentials', { skip: process.platform !== 'linux' }, async t => {
@@ -175,4 +202,20 @@ assert.equal(profile.status, 0, profile.stderr);
   } });
   assert.equal(result.result, 'success', readFileSync(result.logPath, 'utf8'));
   assert.equal(readFileSync(secret, 'utf8'), 'private fixture');
+});
+
+test('sandbox-created links cannot redirect host metadata writes', { skip: process.platform !== 'linux' }, async t => {
+  const f = fixture(t);
+  const victim = join(f.sb.dir, 'operator-file');
+  writeFileSync(victim, 'unchanged operator data');
+  f.sb.commit(f.work, 'test: hostile output links', { 'scripts/links.test.mjs': `// SPDX-License-Identifier: Apache-2.0
+import { existsSync, symlinkSync } from 'node:fs';
+const output = existsSync('/output') ? '/output' : '/qa';
+for (const name of ['run.json.tmp', 'foundation.json.tmp', 'run.log']) {
+  symlinkSync(${JSON.stringify(victim)}, output + '/' + name);
+}
+` });
+  f.sb.g(f.work, 'push', '-q', 'origin', 'dev');
+  await runLocalQA({ ...f.options, execute: executeLocalRun });
+  assert.equal(readFileSync(victim, 'utf8'), 'unchanged operator data');
 });

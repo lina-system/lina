@@ -140,7 +140,8 @@ failures. The first failing range survives updates. Reporting is serialized
 with `queue: max`, preserving up to 100 pending jobs in GitHub's FIFO queue.
 The queue is bounded: GitHub cancels additional jobs when those slots are full.
 Its token is available only to the reporter step, never to verification.
-PR and push runs skip the QA job and cannot write issues.
+Push runs skip the QA job. PR runs retain the existing scope-only job, which
+succeeds without running the reporter or writing issues.
 
 For validation before landing, dispatch CI on an explicitly named
 `qa/e2e-*` branch. It uses the same full plan and reporter, with issue identity
@@ -191,7 +192,12 @@ every selected shard runs with `--plan --shard --out`, including shards after
 another shard fails. `--jobs` bounds simultaneous shards (default two) and each
 gets a share of the available CPUs. Each command retains a bounded deadline.
 Bubblewrap exposes only the candidate, tools, public dependency caches and the
-run's output directory, with isolated home, temporary files and PID namespace.
+command's temporary output directory, with isolated home, temporary files and
+PID namespace. Host-owned state, run metadata, logs and retained results are
+not mounted into the sandbox. Shards receive a read-only sealed plan. After
+each command exits, the host imports only bounded regular output files through
+no-follow file descriptors; links and special files are rejected. Host writes
+use exclusive file creation and atomic replacement.
 Network access remains available for dependency checks as in CI. The reporting
 token and operator home are not exposed to verification. The temporary checkout
 is removed on normal completion or error; the operator's systemd service should

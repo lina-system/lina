@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { closeSync, constants, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { availableParallelism, hostname, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,9 +15,30 @@ import { githubAPI, reconcileQA } from './post-merge-qa.mjs';
 const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
 const readJSON = path => JSON.parse(readFileSync(path, 'utf8'));
 function save(path, value) {
-  const temporary = path + '.tmp';
-  writeFileSync(temporary, JSON.stringify(value) + '\n', { mode: 0o600 });
-  renameSync(temporary, path);
+  const temporary = path + '.' + randomUUID() + '.tmp';
+  const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try {
+    writeFileSync(fd, JSON.stringify(value) + '\n');
+    renameSync(temporary, path);
+  } finally {
+    closeSync(fd);
+    rmSync(temporary, { force: true });
+  }
+}
+
+// Called only after the sandbox has exited. The parent directory is created
+// by the host and mounted as /output, so candidate code cannot replace it.
+export function readSandboxJSON(path) {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.nlink !== 1 || info.size <= 0 || info.size > 64 * 1024 * 1024) {
+      throw new Error('QA output must be a bounded regular file, not a link or special file');
+    }
+    return JSON.parse(readFileSync(fd, 'utf8'));
+  } finally {
+    closeSync(fd);
+  }
 }
 const isolatedGit = { env: { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' } };
 
@@ -139,7 +161,7 @@ function toolPath(name) {
 // Same foundation shard command as CI, with an additional outer filesystem/PID
 // sandbox for a persistent machine. Only public dependency caches are shared;
 // networking remains available for dependency and vulnerability checks, as in CI.
-export function sandboxArguments({ worktree, runDirectory, cacheDirectory, goRoot, node, actionlint, jobs }, args) {
+export function sandboxArguments({ worktree, outputDirectory, planFile, cacheDirectory, goRoot, node, actionlint, jobs }, args) {
   return [
     '--unshare-all', '--share-net', '--die-with-parent', '--new-session', '--cap-drop', 'ALL', '--clearenv',
     ...['/usr', '/bin', '/lib', '/lib64', '/etc/ssl', '/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/etc/ld.so.cache', '/etc/apparmor.d']
@@ -147,7 +169,9 @@ export function sandboxArguments({ worktree, runDirectory, cacheDirectory, goRoo
     '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home/qa', '--dir', '/tools',
     '--ro-bind', node, '/tools/node', '--ro-bind', actionlint, '/tools/actionlint',
     '--ro-bind', goRoot, '/toolchain', '--ro-bind', worktree, '/source',
-    '--bind', runDirectory, '/qa', '--bind', cacheDirectory, '/cache', '--chdir', '/source',
+    '--bind', outputDirectory, '/output',
+    ...(planFile ? ['--ro-bind', planFile, '/qa/plan.json'] : []),
+    '--bind', cacheDirectory, '/cache', '--chdir', '/source',
     ...Object.entries({ PATH: '/toolchain/bin:/tools:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin', HOME: '/home/qa',
       XDG_CONFIG_HOME: '/home/qa', TMPDIR: '/tmp', GOROOT: '/toolchain', GOENV: 'off',
       GOCACHE: '/cache/build', GOMODCACHE: '/cache/modules',
@@ -159,7 +183,7 @@ export function sandboxArguments({ worktree, runDirectory, cacheDirectory, goRoo
 }
 
 function sandboxRun(context, args, logPath) {
-  const fd = openSync(logPath, 'a', 0o600);
+  const fd = openSync(logPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   return new Promise((resolveRun, reject) => {
     const child = spawn('bwrap', sandboxArguments(context, args), {
       env: { PATH: '/usr/bin:/bin' }, detached: true, stdio: ['ignore', fd, fd],
@@ -176,15 +200,21 @@ function sandboxRun(context, args, logPath) {
 export async function runLocalShards(plan, jobs, run) {
   let index = 0;
   let upstream = 'success';
+  const errors = [];
   await Promise.all(Array.from({ length: Math.min(jobs, plan.tasks.length) }, async () => {
     while (index < plan.tasks.length) {
       const task = plan.tasks[index++];
       // A failing shard must not cancel the rest of the full plan.
-      const status = await run(['--plan', '/qa/plan.json', '--shard', task.id,
-        '--out', '/qa/results/' + task.id + '.json'], task.id);
-      if (status !== 0) upstream = 'failure';
+      try {
+        const status = await run(['--plan', '/qa/plan.json', '--shard', task.id,
+          '--out', '/output/' + task.id + '.json'], task.id);
+        if (status !== 0) upstream = 'failure';
+      } catch (error) {
+        errors.push(error);
+      }
     }
   }));
+  if (errors.length) throw errors[0];
   return upstream;
 }
 
@@ -196,15 +226,40 @@ export async function executeLocalRun(input) {
   } });
   if (go.status !== 0) throw new Error('Cannot locate the installed Go toolchain');
   const context = { ...input, goRoot: realpathSync(go.stdout.trim()), node: realpathSync(process.execPath), actionlint: toolPath('actionlint') };
-  const run = (args, id = 'selection') => sandboxRun(context, args, join(input.runDirectory, id + '.log'));
-  if (await run(['--full', '--event', 'schedule', '--no-note', '--select', '/qa/plan.json']) !== 0) throw new Error('Local QA selection failed; see selection.log');
-  const plan = readPlan(join(input.runDirectory, 'plan.json'), input.worktree);
-  const upstream = await runLocalShards(plan, input.jobs, run);
-  const records = readResults(join(input.runDirectory, 'results'));
-  const evidence = finishFoundation(input.worktree, plan, aggregate(plan, records, upstream), { note: false });
-  save(join(input.runDirectory, 'foundation.json'), evidence);
-  writeFileSync(input.localRun.logPath, JSON.stringify({ ...evidence, logs: ['selection.log', ...plan.tasks.map(task => task.id + '.log')] }) + '\n', { mode: 0o600 });
-  return { plan, result: evidence.result };
+  const outputs = mkdtempSync(join(tmpdir(), 'lina-qa-output-'));
+  const planFile = join(input.runDirectory, 'plan.json');
+  const results = join(input.runDirectory, 'results');
+  mkdirSync(results);
+  try {
+    const run = async (args, id) => {
+      const outputDirectory = join(outputs, id);
+      mkdirSync(outputDirectory);
+      const status = await sandboxRun({ ...context, outputDirectory, planFile: id === 'selection' ? undefined : planFile },
+        args, join(input.runDirectory, id + '.log'));
+      const name = id === 'selection' ? 'plan.json' : id + '.json';
+      try {
+        const record = readSandboxJSON(join(outputDirectory, name));
+        save(id === 'selection' ? planFile : join(results, name), record);
+      } catch (error) {
+        // A killed command may not have produced a result. Links and malformed
+        // output fail closed, after the other independent shards have exited.
+        if (error.code !== 'ENOENT') throw error;
+      }
+      return status;
+    };
+    if (await run(['--full', '--event', 'schedule', '--no-note', '--select', '/output/plan.json'], 'selection') !== 0) {
+      throw new Error('Local QA selection failed; see selection.log');
+    }
+    const plan = readPlan(planFile, input.worktree);
+    const upstream = await runLocalShards(plan, input.jobs, run);
+    const records = readResults(results);
+    const evidence = finishFoundation(input.worktree, plan, aggregate(plan, records, upstream), { note: false });
+    save(join(input.runDirectory, 'foundation.json'), evidence);
+    save(input.localRun.logPath, { ...evidence, logs: ['selection.log', ...plan.tasks.map(task => task.id + '.log')] });
+    return { plan, result: evidence.result };
+  } finally {
+    rmSync(outputs, { recursive: true, force: true });
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
