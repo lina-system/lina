@@ -105,8 +105,10 @@ retraction commits the link and writes no removal-list line. A failure rolls
 the link change back with the retraction. When the removal list already has
 the line, recovery replays the journaled link change and requeue with the
 retraction before reads reopen. That line records ids and the resulting
-state, not the person's answer or other signal text. Restore replays it
-the same way.
+state, not the person's answer or other signal text. The backup and
+restore commands pass this replay function when they open the removal
+list, so a restored generation finishes the same line. The backup
+package does not import the identity store.
 
 A repair leaves one row per identity in `identity_requeue`, from the source's
 learning watermark or, without one, the identity's first sighting. Extraction

@@ -20,6 +20,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/manifest"
+	messengeridentity "github.com/thisisjun786/lina/internal/core/messenger/identity"
 )
 
 func runBackup(args []string) int {
@@ -123,7 +124,7 @@ func captureBackup(ctx context.Context, root string) (backup.Manifest, error) {
 		return backup.Manifest{}, err
 	}
 	defer db.Close(context.Background())
-	return backup.Create(ctx, backup.Config{Root: root, Canon: db, Controls: controls, MainID: identity.MainID, Epoch: epoch, Artifacts: artifacts})
+	return backup.Create(ctx, backup.Config{Root: root, Canon: db, Controls: controls, MainID: identity.MainID, Epoch: epoch, Artifacts: artifacts, Repair: messengeridentity.ReplayRepair})
 }
 
 // Reject links in protected input paths before opening SQLite for replay.

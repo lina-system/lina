@@ -101,7 +101,7 @@ func TestRestoreReplaysRemovalsBeforeFirstReadInAnotherRoot(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(generation, "backups/removals"), journal, 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err := prepareRestoredCanon(t.Context(), generation, 20, canon.Migrations()); err != nil {
+			if err := prepareRestoredCanon(t.Context(), generation, 20, canon.Migrations(), nil); err != nil {
 				t.Fatal(err)
 			}
 			controls, err := ctlfiles.Open(generation)
@@ -220,10 +220,86 @@ func TestRestoreRefusesMissingRemovalList(t *testing.T) {
 	}
 	// Even a generation with no acknowledged removals must travel with a list;
 	// silently inventing an empty list could lose a post-generation forgetting.
-	if err := prepareRestoredCanon(t.Context(), root, 20, canon.Migrations()); err == nil {
+	if err := prepareRestoredCanon(t.Context(), root, 20, canon.Migrations(), nil); err == nil {
 		t.Fatal("restore invented an empty removal list")
 	}
 	if _, err := os.Stat(filepath.Join(root, "canon/canon.sqlite")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("missing removal list changed canon")
+	}
+}
+
+func TestRestoreReplaysAJournaledRepair(t *testing.T) {
+	t.Parallel()
+	db := restoreDB(t)
+	source := t.TempDir()
+	removals, err := retract.Open(t.Context(), retract.Config{Canon: db, Root: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer removals.Close()
+	const body = "synthetic repair preference"
+	_, err = ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "source", ConversationID: "conversation", AgentID: "agent", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := memoryexec.NewMemory(db, nil, nil).Remember(t.Context(), memory.Write{Agent: "agent", Person: "person", Item: memory.Item{Kind: memory.Preference, Content: body, Subject: memory.Subject{Kind: memory.Person, ID: "person"}, Basis: memory.Stated, Standing: true, Evidence: []memory.Evidence{{Kind: memory.Event, ID: "source", Precision: memory.Exact}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := t.TempDir()
+	if err := os.Chmod(generation, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(generation, "canon"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	var dbPath string
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		var sequence int
+		var name string
+		return tx.QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &dbPath)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := canon.OpenSQLiteReader(t.Context(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(generation, "canon/canon.sqlite")
+	if err := canon.BackupSQLite(t.Context(), reader, path); err != nil {
+		reader.Close()
+		t.Fatal(err)
+	}
+	reader.Close()
+	crash := errors.New("after sync")
+	removals.SetCrash("after_sync", crash)
+	err = removals.ForgetDuringIntent(t.Context(), "person", func(*canon.Tx) (retract.Intent, error) {
+		return retract.Intent{Refs: []retract.Ref{{Kind: retract.Memory, ID: receipt.ID}}, Repair: []byte(`{"v":1}`)}, nil
+	})
+	if !errors.Is(err, crash) {
+		t.Fatalf("crash = %v", err)
+	}
+	journal, err := os.ReadFile(filepath.Join(source, "backups/removals"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(generation, "backups"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(generation, "backups/removals"), journal, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareRestoredCanon(t.Context(), generation, 20, canon.Migrations(), nil); !errors.Is(err, retract.ErrRecovery) {
+		t.Fatalf("missing repair = %v", err)
+	}
+	var got []byte
+	if err := prepareRestoredCanon(t.Context(), generation, 20, canon.Migrations(), func(_ context.Context, _ *canon.Tx, raw []byte) error {
+		got = append([]byte(nil), raw...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"v":1}` {
+		t.Fatalf("replayed repair = %q", got)
 	}
 }

@@ -18,7 +18,6 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
-	"github.com/thisisjun786/lina/internal/core/messenger/identity"
 	"github.com/thisisjun786/lina/internal/core/retract"
 )
 
@@ -32,7 +31,11 @@ type Config struct {
 	MainID    string
 	Epoch     uint64
 	Artifacts map[string]string
-	boundary  func(string) error
+	// Repair replays a caller intent journaled with a removal. Backup does not
+	// import the sender-identity store; the command that creates a generation
+	// passes that store's replay function. Nil refuses a line that carries an intent.
+	Repair   func(context.Context, *canon.Tx, []byte) error
+	boundary func(string) error
 }
 
 type File struct {
@@ -88,7 +91,7 @@ func Create(ctx context.Context, cfg Config) (result Manifest, err error) {
 	if err = boundary("removals"); err != nil {
 		return result, err
 	}
-	removals, err := retract.Open(ctx, retract.Config{Canon: cfg.Canon, Root: cfg.Root, Repair: identity.ReplayRepair})
+	removals, err := retract.Open(ctx, retract.Config{Canon: cfg.Canon, Root: cfg.Root, Repair: cfg.Repair})
 	if err != nil {
 		return result, err
 	}

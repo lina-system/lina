@@ -19,7 +19,11 @@ type RestoreConfig struct {
 	Root, Generation string
 	Migrations       []canon.Migration
 	Artifacts        map[string]string
-	boundary         func(string) error
+	// Repair replays a caller intent journaled with a removal. Backup does not
+	// import the sender-identity store; the restore command passes that store's
+	// replay function. Nil refuses a line that carries an intent.
+	Repair   func(context.Context, *canon.Tx, []byte) error
+	boundary func(string) error
 }
 
 type restorePlan struct {
@@ -110,7 +114,7 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 				return err
 			}
 			if at == "complete" {
-				return finalizeRestore(ctx, root, controls, targetPath, generationPath, plan.Manifest, cfg.Migrations)
+				return finalizeRestore(ctx, root, controls, targetPath, generationPath, plan.Manifest, cfg.Migrations, cfg.Repair)
 			}
 			return nil
 		}); err != nil {
@@ -229,7 +233,7 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 	if err := writeRestoreFile(dest, "backups/removals", removals); err != nil {
 		return result, err
 	}
-	if err := prepareRestoredCanon(ctx, stagePath, epoch, cfg.Migrations); err != nil {
+	if err := prepareRestoredCanon(ctx, stagePath, epoch, cfg.Migrations, cfg.Repair); err != nil {
 		return result, err
 	}
 	for _, dir := range []string{"backups", "system"} {
@@ -255,7 +259,7 @@ func Restore(ctx context.Context, cfg RestoreConfig) (result Manifest, err error
 			return err
 		}
 		if at == "complete" {
-			return finalizeRestore(ctx, root, controls, targetPath, generationPath, m, cfg.Migrations)
+			return finalizeRestore(ctx, root, controls, targetPath, generationPath, m, cfg.Migrations, cfg.Repair)
 		}
 		return nil
 	}); err != nil {

@@ -16,7 +16,7 @@ import (
 // Resume rechecks the stopped source before opening the publication gate. A
 // forgetting made at the source while restore was interrupted still wins.
 // The target remains locked and unreadable throughout this reconciliation.
-func finalizeRestore(ctx context.Context, root *os.Root, controls *ctlfiles.Store, target, generation string, m Manifest, migrations []canon.Migration) (result error) {
+func finalizeRestore(ctx context.Context, root *os.Root, controls *ctlfiles.Store, target, generation string, m Manifest, migrations []canon.Migration, repair func(context.Context, *canon.Tx, []byte) error) (result error) {
 	source, err := os.OpenRoot(filepath.Dir(generation))
 	if err != nil {
 		return err
@@ -79,7 +79,7 @@ func finalizeRestore(ctx context.Context, root *os.Root, controls *ctlfiles.Stor
 	if err := temporary.Write("epoch", []byte(strconv.FormatUint(epoch, 10))); err != nil {
 		return err
 	}
-	if err := reconcileRestoredCanon(ctx, path, target, epoch, temporary, migrations); err != nil {
+	if err := reconcileRestoredCanon(ctx, path, target, epoch, temporary, migrations, repair); err != nil {
 		return err
 	}
 	if err := syncDir(root, "canon"); err != nil {

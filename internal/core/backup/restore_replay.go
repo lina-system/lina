@@ -11,13 +11,12 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
-	"github.com/thisisjun786/lina/internal/core/messenger/identity"
 	"github.com/thisisjun786/lina/internal/core/retract"
 )
 
 // prepareRestoredCanon operates only on a private staging root. No store is
 // returned until removal replay and authority invalidation have both finished.
-func prepareRestoredCanon(ctx context.Context, root string, epoch uint64, migrations []canon.Migration) (result error) {
+func prepareRestoredCanon(ctx context.Context, root string, epoch uint64, migrations []canon.Migration, repair func(context.Context, *canon.Tx, []byte) error) (result error) {
 	info, err := os.Lstat(filepath.Join(root, "backups/removals"))
 	if err != nil {
 		return err
@@ -36,16 +35,16 @@ func prepareRestoredCanon(ctx context.Context, root string, epoch uint64, migrat
 	if err := controls.Write("epoch", []byte(strconv.FormatUint(epoch, 10))); err != nil {
 		return err
 	}
-	return reconcileRestoredCanon(ctx, filepath.Join(root, "canon/canon.sqlite"), root, epoch, controls, migrations)
+	return reconcileRestoredCanon(ctx, filepath.Join(root, "canon/canon.sqlite"), root, epoch, controls, migrations, repair)
 }
 
-func reconcileRestoredCanon(ctx context.Context, path, root string, epoch uint64, controls *ctlfiles.Store, migrations []canon.Migration) (result error) {
+func reconcileRestoredCanon(ctx context.Context, path, root string, epoch uint64, controls *ctlfiles.Store, migrations []canon.Migration, repair func(context.Context, *canon.Tx, []byte) error) (result error) {
 	db, err := canon.Open(ctx, canon.Config{Path: path, Epoch: epoch, Controls: controls, Migrations: migrations})
 	if err != nil {
 		return err
 	}
 	defer func() { result = errors.Join(result, db.Close(context.Background())) }()
-	removals, err := retract.Open(ctx, retract.Config{Canon: db, Root: root, Repair: identity.ReplayRepair})
+	removals, err := retract.Open(ctx, retract.Config{Canon: db, Root: root, Repair: repair})
 	if err != nil {
 		return err
 	}
