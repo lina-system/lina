@@ -106,10 +106,13 @@ func (r wireRoom) Kind() string {
 //
 // A fill walks back through a room's first read. When the room has no older
 // messages left it hands over to the tail, anchored on the newest message the
-// fill saw. A tail read that overflows one page holds more messages than one
-// page since the last read; it then walks backwards (a fill with a stop) until
-// it reaches the message the last read ended on, so nothing between them is
-// skipped. ids are base64url-encoded because a Webex id is base64 itself and may
+// fill saw. A tail with an empty newest is a room that was empty; the next
+// burst fills to the beginning before that anchor moves. A tail read that
+// overflows one page holds more messages than one page since the last read; it
+// then walks backwards (a fill with a stop) until it reaches the message the
+// last read ended on, so nothing between them is skipped. A reply whose parent
+// is still on an older page of that walk is returned in the same page as the
+// parent. ids are base64url-encoded because a Webex id is base64 itself and may
 // contain '/'.
 const cursorPrefix = "webex/1/"
 

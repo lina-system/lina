@@ -153,6 +153,7 @@ type Goal struct {
 	ManagerTurns      int               `json:"manager_turns"`
 	AttentionID       string            `json:"attention_id,omitempty"`
 	BlockedReason     string            `json:"blocked_reason,omitempty"`
+	DecisionRow       string            `json:"decision_row,omitempty"`
 	CreatedAt         int64             `json:"created_at"`
 	Deadline          int64             `json:"deadline,omitempty"`
 	ID                string            `json:"id"`
@@ -222,6 +223,8 @@ type Action struct {
 	ObservedAt           int64           `json:"observed_at"`
 	ObserverEpoch        uint64          `json:"observer_epoch"`
 	Receipt              json.RawMessage `json:"receipt,omitempty"`
+	// OpenCriteria names the unmet done condition for one liveness manager turn.
+	OpenCriteria []string `json:"open_criteria,omitempty"`
 }
 type State struct {
 	Goals   []Goal   `json:"goals"`
@@ -232,11 +235,12 @@ type State struct {
 	Limits map[string]RunLimit `json:"limits,omitempty"`
 }
 type Wait struct {
-	GoalID string `json:"goal_id"`
-	TaskID string `json:"task_id"`
-	Reason string `json:"reason"`
-	Wake   string `json:"wake"`
-	Until  int64  `json:"until"`
+	GoalID   string `json:"goal_id"`
+	TaskID   string `json:"task_id"`
+	Reason   string `json:"reason"`
+	Wake     string `json:"wake"`
+	Until    int64  `json:"until"`
+	Recorded bool   `json:"recorded,omitempty"`
 }
 type Plan struct {
 	// RunLimits is the limit this pass applied to each person, and Queues holds
@@ -248,6 +252,10 @@ type Plan struct {
 	Queues    []QueuePlace
 	Close     []string
 	Block     []string
+	// Orphans are goals whose derivation found nothing after the one manager
+	// turn. Rows keep a decision that turn recorded.
+	Orphans []string
+	Rows    []string
 }
 
 func finite(n float64) bool { return !math.IsNaN(n) && !math.IsInf(n, 0) }
@@ -459,7 +467,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 		}
 	}
 	wait := func(g Goal, t Task, reason, wake string) {
-		plan.Waits = append(plan.Waits, Wait{g.ID, t.ID, reason, wake, now.Add(SafetySweep).Unix()})
+		plan.Waits = append(plan.Waits, Wait{GoalID: g.ID, TaskID: t.ID, Reason: reason, Wake: wake, Until: now.Add(SafetySweep).Unix()})
 	}
 	add := func(g Goal, t Task, kind ActionKind, revision, node string) {
 		a := Action{StepKind: t.Kind, GoalID: g.ID, TaskID: t.ID, Kind: kind, Attempt: t.Attempt, Revision: revision, NodeID: node, State: "queued", Deadline: now.Add(SafetySweep).Unix()}
@@ -518,15 +526,13 @@ func Derive(state State, now time.Time) (Plan, error) {
 			}
 			continue
 		}
-		if len(g.Tasks) == 0 {
-			if !pending(state.Actions, g.ID, "") {
-				if g.ManagerTurns == 0 {
-					add(g, Task{}, PlanGoal, "", "")
-				} else {
-					plan.Block = append(plan.Block, g.ID)
-				}
+		// A recorded wait holds the goal only until its deadline. After that the
+		// liveness pass below applies again, instead of keeping an expired wait.
+		for _, w := range g.Waits {
+			if w.Recorded && namedWait(w) && w.Until > now.Unix() {
+				w.GoalID = g.ID
+				plan.Waits = append(plan.Waits, w)
 			}
-			continue
 		}
 		tasks := map[string]Task{}
 		for _, t := range g.Tasks {
@@ -635,7 +641,9 @@ func Derive(state State, now time.Time) (Plan, error) {
 			}
 			ready = append(ready, candidate{g, t, kind, depth(t.ID), goalRank(g)})
 		}
-		if !allDone || pending(state.Actions, g.ID, "") {
+		// No tasks is not "everything landed". The liveness pass below asks the
+		// manager, instead of waiting on a merge that does not exist.
+		if len(g.Tasks) == 0 || !allDone || pending(state.Actions, g.ID, "") {
 			continue
 		}
 		if g.TargetRevision == "" {
@@ -817,5 +825,85 @@ func Derive(state State, now time.Time) (Plan, error) {
 		places[h.person]++
 		plan.Queues = append(plan.Queues, QueuePlace{GoalID: h.goal, Reason: h.reason, Place: places[h.person]})
 	}
+	// Derivation has already had its chance. A goal that is still not final and
+	// still has no task, wait, recovery or row is orphaned.
+	for _, g := range goals {
+		if g.State == GoalDone || g.State == GoalStopped || g.Paused || g.DefinitionPending {
+			continue
+		}
+		if g.DecisionRow != "" && !goalHasWork(plan, state.Actions, g.ID) {
+			plan.Rows = append(plan.Rows, g.ID)
+			continue
+		}
+		if goalHeld(plan, state.Actions, g.ID) {
+			continue
+		}
+		if g.ManagerTurns == 0 {
+			add(g, Task{}, PlanGoal, "", "")
+			plan.Actions[len(plan.Actions)-1].OpenCriteria = openCriteria(g)
+			continue
+		}
+		plan.Orphans = append(plan.Orphans, g.ID)
+	}
 	return plan, nil
+}
+
+func namedWait(w Wait) bool {
+	return strings.TrimSpace(w.Reason) != "" && strings.TrimSpace(w.Wake) != "" && w.Until > 0
+}
+
+func openCriteria(g Goal) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, c := range goalCriteria(g) {
+		if criterionMet(g, c) {
+			continue
+		}
+		text := strings.TrimSpace(c.Statement)
+		if text == "" || seen[text] {
+			continue
+		}
+		seen[text] = true
+		out = append(out, text)
+	}
+	return out
+}
+
+func livenessReason(g Goal) string {
+	missing := openCriteria(g)
+	if len(missing) == 0 {
+		return "LINA could not find a way to finish this goal."
+	}
+	return "LINA could not find a way to finish this goal. Still open: " + strings.Join(missing, "; ") + "."
+}
+
+func goalHasWork(plan Plan, actions []Action, id string) bool {
+	for _, a := range plan.Actions {
+		if a.GoalID == id {
+			return true
+		}
+	}
+	for _, a := range actions {
+		if a.GoalID == id && a.State != "finished" {
+			return true
+		}
+	}
+	for _, q := range plan.Queues {
+		if q.GoalID == id {
+			return true
+		}
+	}
+	return has(plan.Close, id) || has(plan.Block, id)
+}
+
+func goalHeld(plan Plan, actions []Action, id string) bool {
+	if goalHasWork(plan, actions, id) {
+		return true
+	}
+	for _, w := range plan.Waits {
+		if w.GoalID == id {
+			return true
+		}
+	}
+	return false
 }

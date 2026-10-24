@@ -355,9 +355,6 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		if openErr != nil {
 			return openErr
 		}
-		if err := runtime.startMessenger(ctx, cfg.Messenger); err != nil {
-			return err
-		}
 		conversation = runtime
 		if cfg.Local != nil {
 			helper, helperErr := applefm.New(applefm.Settings{Helper: cfg.Local.Helper, Model: cfg.Local.Model, PrivateCloud: cfg.Local.PrivateCloud, Env: cfg.Local.Env})
@@ -529,6 +526,11 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		return err
 	}
 	if conversation != nil {
+		// The add-on masks the client socket. Bind it before constructing the
+		// sandbox so a missing path cannot be mistaken for a directory.
+		if err := conversation.startMessenger(ctx, cfg.Messenger); err != nil {
+			return err
+		}
 		conversation.startRecall(ctx)
 	}
 	var workDone <-chan struct{}
