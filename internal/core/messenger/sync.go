@@ -20,6 +20,7 @@ type Service struct {
 
 	mu       sync.Mutex
 	lastSync map[string]time.Time
+	changed  func()
 }
 
 // NewService composes the sync loop. adapters are keyed by the adapter name a
@@ -35,6 +36,10 @@ func NewService(store *Store, adapters map[string]Adapter, interval time.Duratio
 
 // Store is the registry and admission store the service reads into.
 func (s *Service) Store() *Store { return s.store }
+
+// SetAfterSync registers a non-blocking wake after a source read completes.
+// Learning uses it to scan new records without waiting for its own ticker.
+func (s *Service) SetAfterSync(fn func()) { s.changed = fn }
 
 // Run reads every connected source until ctx ends. It never returns an error:
 // a failing source is recorded in its own registry row.
@@ -83,6 +88,9 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 			_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
 		} else if err == nil {
 			results[key] = result
+			if s.changed != nil {
+				s.changed()
+			}
 		}
 	}
 	return results

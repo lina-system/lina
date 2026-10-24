@@ -35,3 +35,30 @@ func TestCitationScopeAndUTF8Boundaries(t *testing.T) {
 		}
 	}
 }
+
+// A messenger record is the person's record. Every agent may cite it even
+// though its holder is the source rather than an agent.
+func TestCitationOfMessengerRecordForAnyAgent(t *testing.T) {
+	db, _ := database(t)
+	store := ledger.New(db, nil)
+	in := messengerInput("messenger-citation")
+	in.Body = "I prefer jasmine tea."
+	admit(t, store, guard.EntryMessengerPerson, in)
+	got, err := store.Citation(t.Context(), "person", "agent-b", canon.Citation{TargetKind: "event", TargetID: in.ID,
+		SpanStart: sql.NullInt64{Int64: 2, Valid: true}, SpanEnd: sql.NullInt64{Int64: 8, Valid: true}})
+	if err != nil || got.Status != "" || got.Quote != "prefer" {
+		t.Fatalf("messenger citation: %+v %v", got, err)
+	}
+	if got, err := store.Citation(t.Context(), "other", "agent-b", canon.Citation{TargetKind: "event", TargetID: in.ID}); err != nil || got.Status != "restricted" {
+		t.Fatalf("foreign person: %+v %v", got, err)
+	}
+	// A message LINA sent belongs to the agent that sent it.
+	own := messengerInput("messenger-own")
+	own.PersonID = ""
+	own.AgentID = "agent-a"
+	own.Body = "On my way."
+	admit(t, store, guard.EntryMessengerAgent, own)
+	if got, err := store.Citation(t.Context(), "person", "agent-a", canon.Citation{TargetKind: "event", TargetID: own.ID}); err != nil || got.Status != "" {
+		t.Fatalf("own write for its agent: %+v %v", got, err)
+	}
+}

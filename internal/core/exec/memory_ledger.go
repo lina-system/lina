@@ -160,23 +160,34 @@ func PrepareMemoryEvidence(ctx context.Context, db *canon.Store, materials ledge
 		}
 	}
 	return func(ctx context.Context, tx *canon.Tx, ref memory.Evidence) (memory.Origin, error) {
-		event, err := canonicalEvent(ctx, ledger.New(transactionReader{tx}, cached), ref.ID, nil)
-		if err != nil {
-			return memory.Origin{}, err
-		}
-		person := event.PersonID
-		// Non-person events carry no person id. The authenticated flow supplies
-		// the owning person; the source agent still must match at memory commit.
-		if person == "" {
-			person = in.Person
-		}
-		origin := memory.Origin{ID: event.ID, Person: person, Agent: event.AgentID, Speaker: event.SpeakerKind, Quote: event.Body.DerivedText(), OccurredAt: event.OccurredAt.Unix(), Scope: memory.Local}
-		for _, span := range event.Spans {
-			origin.Sensitivity = append(origin.Sensitivity, span.Sensitivity)
-			if span.Sensitivity == "third_party" {
-				origin.Scope = memory.Private
-			}
-		}
-		return origin, nil
+		return originFromEvent(ctx, ledger.New(transactionReader{tx}, cached), ref.ID, in.Person)
 	}, nil
+}
+
+// ReadOrigin resolves one event inside a read transaction with the read-only
+// materials store. Background preparation uses it; a writer preloads bodies
+// with PrepareMemoryEvidence instead.
+func ReadOrigin(ctx context.Context, tx *canon.Tx, materials ledger.Materials, id, person string) (memory.Origin, error) {
+	return originFromEvent(ctx, ledger.New(transactionReader{tx}, materials), id, person)
+}
+
+func originFromEvent(ctx context.Context, events *ledger.Store, id, fallback string) (memory.Origin, error) {
+	event, err := canonicalEvent(ctx, events, id, nil)
+	if err != nil {
+		return memory.Origin{}, err
+	}
+	person := event.PersonID
+	// Non-person events carry no person id. The authenticated flow supplies
+	// the owning person; the source agent still must match at memory commit.
+	if person == "" {
+		person = fallback
+	}
+	origin := memory.Origin{ID: event.ID, Person: person, Agent: event.AgentID, Speaker: event.SpeakerKind, Messenger: event.Origin.Kind == "messenger", Quote: event.Body.DerivedText(), OccurredAt: event.OccurredAt.Unix(), Scope: memory.Local}
+	for _, span := range event.Spans {
+		origin.Sensitivity = append(origin.Sensitivity, span.Sensitivity)
+		if span.Sensitivity == "third_party" {
+			origin.Scope = memory.Private
+		}
+	}
+	return origin, nil
 }

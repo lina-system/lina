@@ -195,8 +195,11 @@ type Source struct {
 	State             State
 	Failure           string
 	LearningWatermark string
-	AcceptedTerms     *Terms
-	ConnectedAt       time.Time
+	// Learn is the person's source-wide learning switch. A chat's own switch
+	// narrows it further.
+	Learn         bool
+	AcceptedTerms *Terms
+	ConnectedAt   time.Time
 }
 
 // Holder is what holds a messenger record that has no participating agent. The
@@ -210,8 +213,19 @@ type ChatRecord struct {
 	Name, Kind              string
 	FirstMessageAt          time.Time
 	Sync, Learn, Embed      bool
-	Cursor                  Cursor
+	// Scope is the chat's sensitivity class. A never-leaves chat is searchable
+	// but never learning input.
+	Scope  string
+	Cursor Cursor
 }
+
+// Chat scopes. They match the memory scope names; the messenger package keeps
+// its own strings so it does not import the memory store.
+const (
+	ChatLocal       = "local"
+	ChatPrivate     = "private"
+	ChatNeverLeaves = "never-leaves"
+)
 
 // Switches are the person's choices for one chat.
 type Switches struct {

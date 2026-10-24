@@ -46,6 +46,22 @@ func validKind(k Kind) bool {
 	}
 	return false
 }
+
+// validMessengerKind reports the kinds that the person's own messenger records
+// can state. Shared history, relationship and emotion observation are held by
+// one agent and do not arise from a messenger conversation. A name carries a
+// structured identity value that a name write supplies, so it does not come
+// from this job either.
+func validMessengerKind(k Kind) bool {
+	switch k {
+	case Fact, Preference, Commitment, Decision:
+		return true
+	case Name, Correction, SharedHistory, Relationship, EmotionObservation:
+		return false
+	}
+	return false
+}
+
 func validBasis(b Basis) bool {
 	switch b {
 	case Stated, Derived, Imported, Automation:
@@ -68,8 +84,13 @@ func defaultHolder(in Write) Holder {
 	}
 	return ""
 }
-func validate(in Write) (Item, error) { return validateWrite(in, false) }
-func validateWrite(in Write, promotion bool) (Item, error) {
+func validate(in Write) (Item, error)                      { return validateWrite(in, false) }
+func validateWrite(in Write, promotion bool) (Item, error) { return validateMode(in, promotion, false) }
+
+// validateMode validates one write. A messenger write has no source agent: its
+// items are common, so the holder is always all, and the kinds that one agent
+// holds never arise from the person's messenger records.
+func validateMode(in Write, promotion, messenger bool) (Item, error) {
 	item := in.Item
 	if err := validateName(item); err != nil {
 		return Item{}, err
@@ -80,7 +101,14 @@ func validateWrite(in Write, promotion bool) (Item, error) {
 			return Item{}, ErrInvalid
 		}
 	}
-	if !present(in.Agent) || in.Agent == string(All) || !present(in.Person) || !validKind(item.Kind) || !validBasis(item.Basis) || !present(item.Content) || item.ID != "" || item.Revision != 0 || item.State != "" || len(item.Evidence) == 0 || item.ValidFrom < 0 || item.ValidUntil < 0 || item.ValidUntil != 0 && item.ValidUntil <= item.ValidFrom {
+	if messenger {
+		if present(in.Agent) || !present(in.Person) || !validMessengerKind(item.Kind) || item.Basis != Stated {
+			return Item{}, ErrInvalid
+		}
+	} else if !present(in.Agent) || in.Agent == string(All) || !present(in.Person) || !validKind(item.Kind) || !validBasis(item.Basis) {
+		return Item{}, ErrInvalid
+	}
+	if !present(item.Content) || item.ID != "" || item.Revision != 0 || item.State != "" || len(item.Evidence) == 0 || item.ValidFrom < 0 || item.ValidUntil < 0 || item.ValidUntil != 0 && item.ValidUntil <= item.ValidFrom {
 		return Item{}, ErrInvalid
 	}
 	if in.AgentPreference && item.Kind != Preference {
@@ -113,6 +141,9 @@ func validateWrite(in Write, promotion bool) (Item, error) {
 	if item.Holder != All && item.Holder != Holder(in.Agent) {
 		return Item{}, ErrScope
 	}
+	if messenger && (item.Holder != All || item.SourceAgent != "" || item.Subject.Kind != Person || item.Subject.ID != in.Person || item.Scope == NeverLeaves) {
+		return Item{}, ErrScope
+	}
 	if item.Scope == "" {
 		item.Scope = Local
 		if item.Subject.Kind == ThirdParty {
@@ -126,7 +157,10 @@ func validateWrite(in Write, promotion bool) (Item, error) {
 		return Item{}, ErrInvalid
 	}
 	item.Person = in.Person
-	item.SourceAgent = in.Agent
+	item.SourceAgent = ""
+	if !messenger {
+		item.SourceAgent = in.Agent
+	}
 	item.SourcePerson = ""
 	item.State = Active
 	item.Revision = 1
@@ -149,8 +183,26 @@ func Insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 	return insert(ctx, tx, in, resolve, false)
 }
 
+// insertKind carries the authenticated write mode. The zero value is the
+// ordinary agent write; a messenger write has no agent and names the source
+// holders whose records may be its evidence.
+type insertKind struct {
+	messenger bool
+	holders   map[string]bool
+}
+
 func insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence, promotion bool) (Item, error) {
-	item, err := validateWrite(in, promotion)
+	return insertWith(ctx, tx, in, resolve, promotion, insertKind{})
+}
+
+func insertWith(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence, promotion bool, kind insertKind) (Item, error) {
+	var item Item
+	var err error
+	if kind.messenger {
+		item, err = validateMode(in, false, true)
+	} else {
+		item, err = validateWrite(in, promotion)
+	}
 	if err != nil {
 		return Item{}, err
 	}
@@ -191,7 +243,16 @@ func insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 		if item.Subject.Kind == Person && !confirmedExternal && origin.Speaker != guard.Person {
 			return Item{}, ErrPersonEvidence
 		}
-		if origin.Speaker == guard.ExternalParticipant || origin.Person != in.Person || origin.Agent != "" && origin.Agent != in.Agent || origin.PlanEnded {
+		if kind.messenger {
+			// A messenger record belongs to its source, not to an agent, and no
+			// record outside this batch may become evidence.
+			if !origin.Messenger || !kind.holders[origin.Agent] {
+				return Item{}, ErrEvidence
+			}
+		} else if origin.Agent != "" && origin.Agent != in.Agent {
+			return Item{}, ErrEvidence
+		}
+		if origin.Speaker == guard.ExternalParticipant || origin.Person != in.Person || origin.PlanEnded {
 			return Item{}, ErrEvidence
 		}
 		if in.Item.Scope == "" && scopeRank(origin.Scope) > scopeRank(item.Scope) {
@@ -216,6 +277,9 @@ func insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 			e.ID = origin.ID
 		}
 		e.SourceAgent = origin.Agent
+		if kind.messenger {
+			e.SourceAgent = ""
+		}
 		e.OccurredAt = origin.OccurredAt
 		e.Quote = origin.Quote
 		if !slices.ContainsFunc(evidence, func(old Evidence) bool { return old.Kind == e.Kind && old.ID == e.ID && old.Revision == e.Revision }) {

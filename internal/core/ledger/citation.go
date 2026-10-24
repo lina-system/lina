@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -16,14 +17,28 @@ func (s *Store) Citation(ctx context.Context, person, agent string, ref canon.Ci
 	check := func() (canon.CitationValue, error) {
 		value := canon.CitationValue{}
 		err := s.db.Read(ctx, func(tx *canon.Tx) error {
+			var owner string
+			var who sql.NullString
+			var origin string
+			err := tx.QueryRowContext(ctx, `SELECT agent_id,person_id,origin FROM conv_event WHERE id=?`, ref.TargetID).Scan(&owner, &who, &origin)
+			if errors.Is(err, sql.ErrNoRows) {
+				value.Status = "bytes_unavailable"
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			// A messenger conversation has no participating agent: its holder
+			// names the source, and every agent the source lets read may cite it.
+			messenger := strings.Contains(origin, `"kind":"messenger"`)
 			var state string
 			tomb := canon.CitationTombstone{}
-			err := tx.QueryRowContext(ctx, `SELECT state,person,agent,at FROM retract_target WHERE kind='event' AND id=?`, ref.TargetID).Scan(&state, &tomb.Person, &tomb.Agent, &tomb.At)
+			err = tx.QueryRowContext(ctx, `SELECT state,person,agent,at FROM retract_target WHERE kind='event' AND id=?`, ref.TargetID).Scan(&state, &tomb.Person, &tomb.Agent, &tomb.At)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
 			if err == nil && state != "active" {
-				if tomb.Person != person || tomb.Agent != agent {
+				if tomb.Person != person || tomb.Agent != agent && !messenger {
 					value.Status = "restricted"
 					return nil
 				}
@@ -35,17 +50,7 @@ func (s *Store) Citation(ctx context.Context, person, agent string, ref canon.Ci
 				}
 				return nil
 			}
-			var owner string
-			var who sql.NullString
-			err = tx.QueryRowContext(ctx, `SELECT agent_id,person_id FROM conv_event WHERE id=?`, ref.TargetID).Scan(&owner, &who)
-			if errors.Is(err, sql.ErrNoRows) {
-				value.Status = "bytes_unavailable"
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if owner != agent || who.Valid && who.String != person {
+			if owner != agent && !messenger || who.Valid && who.String != person {
 				value.Status = "restricted"
 				return nil
 			}

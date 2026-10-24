@@ -114,3 +114,39 @@ Installed-Core acceptance runs a real `remember_name` tool call against a
 scripted provider and resolves its material-backed evidence through management
 before and after restart. Package fixtures cover import, legacy revisions,
 secret spans, cross-agent reads and tombstones.
+
+### Messenger extraction
+
+The whole-main job is `messenger-extraction`, registered separately from the
+per-agent conversation job. It has its own budget, cadence and adoption record
+(`stated messenger memory`).
+
+- `PrepareMessengerExtraction` reads this person's sources in one snapshot. A
+  source's learning watermark is a time floor set when it connects; its
+  `messenger_learning_cursor` row is the committed ledger position. Only live,
+  visible, canonical `person` records at or after the floor are eligible. The
+  source switch, the chat switch and a `never-leaves` chat narrow it further.
+- A source or chat with learning off is not read: its cursor passes the records
+  that arrived in that window, so turning learning back on does not learn them
+  late. A `never-leaves` chat is skipped the same way.
+- A burst is consecutive records in one chat within the configurable window.
+  Up to three earlier visible records of that chat travel as `Context`; their
+  ids are not in the allowed evidence set.
+- Items take the default holder of their kind and no source agent. The kinds
+  one agent holds (shared history, relationship, emotion observation) are
+  refused, as are non-stated bases and a nonempty holder, scope or source agent.
+- `ApplyMessengerExtraction` rechecks the epoch, every prepared record, the
+  chat and source switches, and each source cursor before writing. It commits
+  the items and the scanned source cursors together. An obsolete batch is
+  consumed without writing or advancing cursors.
+
+The messenger write path uses `insertKind{messenger: true}`: every evidence
+origin must be a messenger record held by one of the batch's sources, and the
+stored evidence entry carries no source agent. Ledger citations of messenger
+records resolve for every agent the source allows, because the conversation has
+no participating agent.
+
+`TestMessengerExtractionCostPerThousandMessages` reports calls and reported
+tokens per 1,000 own messages on the synthetic corpus. The synthetic provider
+estimates tokens as UTF-8 bytes / 4; the figure is a bound, not a billing
+reconciliation.

@@ -1893,6 +1893,12 @@ The scheduler rebuilds its replacement from the old source cursor against curren
 Obsolescence is decided before the first write; malformed current proposals and write failures still roll back the batch.
 Common equal statements merge evidence and ordinary recall hides each predecessor in a supersession chain.
 
+The messenger extraction job is registered once for the whole main, separate from the per-agent job and with its own budget and adoption record.
+It reads the person's live messenger records at or after each source's learning watermark, in bounded batches, one utterance per chat burst, and carries at most three earlier records of that chat as untrusted context.
+A source or chat with learning off, and a `never-leaves` chat, advance the source's learning cursor without being read.
+Items take the default holder of their kind and no source agent; the write path accepts only messenger records of that batch as evidence.
+An empty batch advances the scanned cursors without a model task, and Apply rechecks each cursor and switch before committing items and cursors together.
+
 Maintenance reads one exact holder, including `all` for the common pass.
 Its editable choice is revision-checked and defaults to no allowed actions.
 It can clear a standing flag, merge normalized-equal duplicates or classify exclusively automated evidence only when that action is pre-authorized at commit.
