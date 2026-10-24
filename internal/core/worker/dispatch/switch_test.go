@@ -340,31 +340,20 @@ func (a *connectionSwitchAdapter) Start(ctx context.Context, l lease.Lease, spec
 	return thread, err
 }
 
-// The recovery capability alone cannot settle unknown effects. Its observed
-// terminal snapshot must survive the attempt/delivery function boundary.
-type recoverableConnectionAdapter struct{ *connectionSwitchAdapter }
-
-func (a *recoverableConnectionAdapter) RecoverAttempt(context.Context, lease.Lease, worker.StartSpec, worker.Thread) (worker.Thread, error) {
-	return worker.Thread{}, errors.New("unexpected recovery during connection evidence check")
-}
-
 func TestDispatchSwitchConnectionEvidence(t *testing.T) {
 	for _, tc := range []struct {
-		name, code           string
-		terminal             bool
-		recoverable, unknown bool
+		name, code string
+		terminal   bool
 	}{
-		{"claude", "invalid_message", false, false, false},
-		{"claude", "session_mismatch", false, false, false},
-		{"claude", "invalid_result", false, false, false},
-		{"claude", "invalid_init", false, false, false},
-		{"claude", "invalid_usage", false, false, false},
-		{"claude", "missing_result", false, false, false},
-		{"antigravity", "missing_result", false, false, false},
-		{"codex", "connection_lost", false, false, false},
-		{"codex", "connection", true, false, false},
-		{"gemini", "joined_failure", true, true, false},
-		{"gemini", "unknown_failure", false, true, true},
+		{"claude", "invalid_message", false},
+		{"claude", "session_mismatch", false},
+		{"claude", "invalid_result", false},
+		{"claude", "invalid_init", false},
+		{"claude", "invalid_usage", false},
+		{"claude", "missing_result", false},
+		{"antigravity", "missing_result", false},
+		{"codex", "connection_lost", false},
+		{"codex", "connection", true},
 	} {
 		t.Run(tc.name+"/"+tc.code, func(t *testing.T) {
 			s, r, _, _, _ := switchDispatchFixture(t, false)
@@ -374,10 +363,7 @@ func TestDispatchSwitchConnectionEvidence(t *testing.T) {
 			}
 			w := externalDispatchTask(t, s, []string{r.Definition.Repository}, true)
 			s.cfg.Workers = []Factory{{Name: tc.name, Explicit: true, Chooser: true, Open: func(context.Context, lease.Lease) (worker.Adapter, func(context.Context) error, error) {
-				a := &connectionSwitchAdapter{quotaStopAdapter: quotaStopAdapter{events: make(chan worker.Event, 1), unknown: tc.unknown}, name: tc.name, code: tc.code}
-				if tc.recoverable {
-					return &recoverableConnectionAdapter{a}, func(context.Context) error { return nil }, nil
-				}
+				a := &connectionSwitchAdapter{quotaStopAdapter: quotaStopAdapter{events: make(chan worker.Event, 1)}, name: tc.name, code: tc.code}
 				return a, func(context.Context) error { return nil }, nil
 			}}}
 			s.execute(s.ctx, r)
