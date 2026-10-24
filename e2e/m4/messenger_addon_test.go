@@ -248,9 +248,11 @@ func TestM4MessengerAddonKilledMidPage(t *testing.T) {
 	if got := readCanon(t, root, `SELECT count(*) FROM messenger_coverage`); got != 1 {
 		t.Fatalf("coverage rows = %d, want 1", got)
 	}
-	if state := readString(t, root, `SELECT state FROM messenger_source`); state != "connected" {
-		t.Fatalf("source state = %q", state)
-	}
+	// The committed page and the source's recovery are separate writes: the
+	// read completes first, then the source returns to connected.
+	waitFor(t, "the source to recover after the kill", func() bool {
+		return readString(t, root, `SELECT state FROM messenger_source`) == "connected"
+	})
 }
 
 // TestM4MessengerAddonFailsWithoutNode proves the failure stays with its source:

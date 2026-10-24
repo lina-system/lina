@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/messenger/identity"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
@@ -39,6 +40,16 @@ type Removals interface {
 	Forget(context.Context, retract.Request) error
 }
 
+// Identities records the sender of an admitted record. Core supplies sender
+// identity; it matches the author inside the page's own transaction, so a
+// record and the identity it was seen with commit together.
+type Identities interface {
+	Prepare(context.Context) (*identity.Observer, error)
+	// Rematch matches identities that have no link again, so a people record
+	// created after the messages still links.
+	Rematch(context.Context) (int, error)
+}
+
 // Store owns the source registry and messenger admission.
 type Store struct {
 	// admissionGate orders scheduled and live admission against switches and
@@ -47,6 +58,7 @@ type Store struct {
 	db            *canon.Store
 	materials     ledger.Materials
 	removals      Removals
+	identities    Identities
 	now           func() time.Time
 }
 
@@ -71,6 +83,19 @@ func (s *Store) unlockAdmission() { <-s.admissionGate }
 
 // WithClock replaces the clock for deterministic tests.
 func (s *Store) WithClock(now func() time.Time) *Store { s.now = now; return s }
+
+// WithIdentities records every admitted author as a sender identity.
+func (s *Store) WithIdentities(identities Identities) *Store { s.identities = identities; return s }
+
+// Rematch matches identities that still have no link, so a people record the
+// person adds after the messages arrived links on the next read. A store
+// without identities does nothing.
+func (s *Store) Rematch(ctx context.Context) (int, error) {
+	if s.identities == nil {
+		return 0, nil
+	}
+	return s.identities.Rematch(ctx)
+}
 
 func validName(text string) bool { return text != "" && !strings.ContainsRune(text, 0) }
 
@@ -99,10 +124,10 @@ func (s *Store) Connect(ctx context.Context, source Source) error {
 		at = s.now()
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(platform,account) DO UPDATE SET person=excluded.person,owner=excluded.owner,mode=excluded.mode,adapter=excluded.adapter,state=excluded.state,failure=excluded.failure,learning_watermark=excluded.learning_watermark,accepted_terms=excluded.accepted_terms`,
-			source.Person, source.Platform, source.Account, source.Owner, string(source.Mode), source.Adapter, string(source.State), source.Failure, source.LearningWatermark, terms, at.UTC().Format(time.RFC3339Nano))
+		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,owner,workspace,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(platform,account) DO UPDATE SET person=excluded.person,owner=excluded.owner,workspace=excluded.workspace,mode=excluded.mode,adapter=excluded.adapter,state=excluded.state,failure=excluded.failure,learning_watermark=excluded.learning_watermark,accepted_terms=excluded.accepted_terms`,
+			source.Person, source.Platform, source.Account, source.Owner, source.Workspace, string(source.Mode), source.Adapter, string(source.State), source.Failure, source.LearningWatermark, terms, at.UTC().Format(time.RFC3339Nano))
 		return err
 	})
 }
@@ -161,7 +186,7 @@ func (s *Store) Sources(ctx context.Context, person string) ([]Source, error) {
 	}
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,workspace,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
 FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 		if err != nil {
 			return err
@@ -182,7 +207,7 @@ FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 	var source Source
 	var mode, state, terms, connected string
-	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &source.Owner, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &terms, &connected); err != nil {
+	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &source.Owner, &source.Workspace, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &terms, &connected); err != nil {
 		return Source{}, err
 	}
 	source.Mode, source.State = Mode(mode), State(state)
@@ -212,7 +237,7 @@ func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 func (s *Store) allSources(ctx context.Context) ([]Source, error) {
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,workspace,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
 FROM messenger_source ORDER BY platform,account`)
 		if err != nil {
 			return err
@@ -733,6 +758,21 @@ func (s *Store) admit(ctx context.Context, source Source, chat string, from Curs
 		}
 		return result, nil
 	}
+	var observe func(context.Context, *canon.Tx, identity.Observation) error
+	var observer *identity.Observer
+	if s.identities != nil {
+		for _, plan := range plans {
+			if _, ok := senderObservation(source, plan); ok {
+				prepared, err := s.identities.Prepare(ctx)
+				if err != nil {
+					return PageResult{}, err
+				}
+				observer = prepared
+				observe = prepared.ObserveTx
+				break
+			}
+		}
+	}
 	batch := make([]ledger.Admission, 0, len(plans))
 	index := make(map[string]int, len(plans))
 	for i, plan := range plans {
@@ -753,6 +793,13 @@ func (s *Store) admit(ctx context.Context, source Source, chat string, from Curs
 		if err := s.writeRecord(ctx, tx, source, chat, plan, event); err != nil {
 			return err
 		}
+		if observe != nil {
+			if observation, ok := senderObservation(source, plan); ok {
+				if err := observe(ctx, tx, observation); err != nil {
+					return err
+				}
+			}
+		}
 		if i == last {
 			for _, id := range repairs {
 				if _, err := tx.ExecContext(ctx, `UPDATE messenger_record SET state='deleted',deleted_at=? WHERE platform=? AND account=? AND chat=? AND message=? AND state='live'`, s.now().UTC().Format(time.RFC3339Nano), source.Platform, source.Account, chat, id); err != nil {
@@ -769,6 +816,14 @@ func (s *Store) admit(ctx context.Context, source Source, chat string, from Curs
 	if _, err := events.AdmitBatch(ctx, batch); err != nil {
 		return PageResult{}, err
 	}
+	if observer != nil {
+		// A move that ended an earlier link at an earlier sighting retracts what
+		// that link produced inside the newly invalid window, through the one
+		// retraction path, once the page's own write has committed.
+		if err := observer.Repair(ctx); err != nil {
+			return PageResult{}, err
+		}
+	}
 	for _, plan := range plans {
 		if plan.added {
 			result.Added++
@@ -777,6 +832,44 @@ func (s *Store) admit(ctx context.Context, source Source, chat string, from Curs
 		}
 	}
 	return result, nil
+}
+
+// senderObservation builds the identity observation of one admitted author.
+// Bots and platform notices are not people, so only a person or an external
+// participant is observed.
+func senderObservation(source Source, plan recordPlan) (identity.Observation, bool) {
+	message := plan.message
+	if message.Author.ID == "" {
+		return identity.Observation{}, false
+	}
+	switch message.Route {
+	case RoutePerson, RouteParticipant:
+		// A person or an external participant is observed below.
+	case RouteAutomation, RouteSystem:
+		return identity.Observation{}, false
+	default:
+		return identity.Observation{}, false
+	}
+	observation := identity.Observation{
+		Identity: identity.Identity{Platform: source.Platform, Scope: source.Workspace, User: message.Author.ID},
+		At:       message.At,
+		Self:     message.Route == RoutePerson && !plan.ownWrite,
+	}
+	if message.At.IsZero() {
+		observation.At = time.Now()
+	}
+	if name := strings.TrimSpace(message.Author.Name); name != "" {
+		observation.Names = []identity.NameSeen{{Value: name, At: observation.At}}
+	}
+	for _, identifier := range message.Author.Identifiers {
+		observation.Identifiers = append(observation.Identifiers, identity.SeenIdentifier{Kind: identity.Kind(identifier.Kind), Value: identifier.Value, Source: identifier.Source, At: observation.At})
+	}
+	// The profile email is evidence of who the author is, not the identity key.
+	// Adapters that read directory profiles fill it and not Identifiers.
+	if email := strings.TrimSpace(message.Author.Email); email != "" {
+		observation.Identifiers = append(observation.Identifiers, identity.SeenIdentifier{Kind: identity.Email, Value: email, Source: "profile", At: observation.At})
+	}
+	return observation, true
 }
 
 type recordPlan struct {
