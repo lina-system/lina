@@ -38,12 +38,18 @@ func roundTrip(t *testing.T, value map[string]any) Envelope {
 func concretePayloads() map[string]any {
 	return map[string]any{
 		"mock_request":       map[string]any{"action": "read", "result_id": "mock", "revision": float64(1), "conversation_id": "main:agent"},
+		"mini_app_request":   map[string]any{"operation": "list"},
+		"mini_app_result":    map[string]any{"operation": "list", "apps": []any{}},
 		"stop_result":        map[string]any{"run_id": "run-1", "outcome": "cancelled"},
 		"tool_activity":      map[string]any{"call_id": "call-example", "tool_name": "Reading file", "status": "started"},
 		"restart_status":     map[string]any{"owed": false},
 		"record_request":     map[string]any{"operation": "query", "view": "memos"},
 		"record_result":      map[string]any{"operation": "query", "rows": []any{}},
+		"teams_request":      map[string]any{"operation": "list"},
+		"teams_result":       map[string]any{"operation": "list", "connections": []any{}},
 		"a2a_request":        map[string]any{"operation": "list"},
+		"local_task":         map[string]any{"task": "intent", "text": "open safari"},
+		"local_task_result":  map[string]any{"route": "local", "reason": "fit", "provider": "apple", "model": "apple-foundation-on-device", "served_id": "0123456789abcdef0123456789abcdef"},
 		"a2a_result":         map[string]any{"operation": "list", "connections": []any{}},
 		"web_request":        map[string]any{"operation": "status"},
 		"web_result":         map[string]any{"provider": "firecrawl", "configured": false},
@@ -88,12 +94,16 @@ func concretePayloads() map[string]any {
 				"payload": map[string]any{"text": "complete"},
 			}},
 		},
-		"surface_action":      map[string]any{"result_id": "card", "revision": float64(1), "action": "choose", "values": map[string]any{"slot": []any{"wed-1500"}}, "input_id": "press"},
-		"work_switch_request": map[string]any{"operation": "switch_status", "switch_id": "switch-1"},
-		"work_switch_result":  map[string]any{"switch_id": "switch-1", "state": "approved", "approval": "input-1", "snapshot": "hash", "tasks": []any{"task-1"}, "events": []any{}},
-		"resync":              map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
-		"resync_required":     map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
-		"plan_request":        map[string]any{"operation": "get", "agent_id": "agent", "result_id": "plan"},
+		"surface_action":       map[string]any{"result_id": "card", "revision": float64(1), "action": "choose", "values": map[string]any{"slot": []any{"wed-1500"}}, "input_id": "press"},
+		"work_control_request": map[string]any{"operation": "pause", "goal_id": "goal-example"},
+		"work_control_result":  map[string]any{"goal_id": "goal-example", "operation": "pause", "state": "running", "paused": true, "rank": float64(2)},
+		"work_limit_request":   map[string]any{"operation": "limit_up"},
+		"work_limit_result":    map[string]any{"automatic": false, "limit": float64(2), "reason": "slot"},
+		"work_switch_request":  map[string]any{"operation": "switch_status", "switch_id": "switch-1"},
+		"work_switch_result":   map[string]any{"switch_id": "switch-1", "state": "approved", "approval": "input-1", "snapshot": "hash", "tasks": []any{"task-1"}, "events": []any{}},
+		"resync":               map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
+		"resync_required":      map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
+		"plan_request":         map[string]any{"operation": "get", "agent_id": "agent", "result_id": "plan"},
 	}
 }
 
@@ -113,8 +123,7 @@ func TestEveryClientKindRoundTripsWithTypedPayload(t *testing.T) {
 				value = jsonValue(t, fixture(t, kind)).(map[string]any)
 			case "error":
 				value = jsonValue(t, fixture(t, "unsupported_combination")).(map[string]any)
-			case "surface_action", "mock_request", "mock_response":
-
+			case "surface_action", "mock_request", "mock_response", "mini_app_request", "mini_app_result":
 				value["protocol"].(map[string]any)["version"] = "1.1"
 			case "result_save":
 				value["idempotency_key"] = "example-save-key"

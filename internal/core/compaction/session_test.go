@@ -60,3 +60,16 @@ func TestSessionPreservesCompactedPrefixAcrossAppends(t *testing.T) {
 		t.Fatalf("changed prefix calls=%d", calls)
 	}
 }
+
+func TestFollowUpRequestKeepsTheOrdinaryTrigger(t *testing.T) {
+	p, v := fixturePass()
+	p.Cold = true
+	p.Policy.EarlyPercent = 70
+	s, err := NewSession(p, v, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sizes, err := s.Sizes(); err != nil || sizes.Trigger != sizes.Threshold {
+		t.Fatalf("follow-up request kept the early boundary: %+v %v", sizes, err)
+	}
+}

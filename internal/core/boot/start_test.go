@@ -63,7 +63,7 @@ func TestStartOrderAndDurableEpochBeforeCanon(t *testing.T) {
 	defer cancel()
 	var steps []boot.Step
 	var trace []string
-	cfg := boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), PeerSeenMax: 70}
+	cfg := boot.Config{NoSync: true, StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), PeerSeenMax: 70}
 	cfg.Services = boot.Services{
 		OpenEvents: func(context.Context) (boot.Events, error) {
 			trace = append(trace, "open events null epoch")
@@ -126,7 +126,7 @@ func TestRecoveringServesHandshakeAndRefusesRequests(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			cfg := boot.Config{StateRoot: root, Socket: socket}
+			cfg := boot.Config{NoSync: true, StateRoot: root, Socket: socket}
 			check := func(want protocol.ErrorCode) {
 				conn, err := net.Dial("unix", socket)
 				if err != nil {
@@ -196,7 +196,7 @@ func TestFailedStartReleasesLockAndPreservesEpoch(t *testing.T) {
 			root := stateRoot(t)
 			socket := filepath.Join(root, "run/core.sock")
 			failure := errors.New("injected startup failure")
-			err := boot.Run(context.Background(), boot.Config{StateRoot: root, Socket: socket, AfterStep: func(at boot.Step, _ boot.Snapshot) error {
+			err := boot.Run(context.Background(), boot.Config{NoSync: true, StateRoot: root, Socket: socket, AfterStep: func(at boot.Step, _ boot.Snapshot) error {
 				if at == step {
 					return failure
 				}
@@ -238,7 +238,7 @@ func TestCrashChild(t *testing.T) {
 	syscall.Umask(0022)
 	root := os.Getenv("LINA_CRASH_ROOT")
 	target, _ := strconv.Atoi(os.Getenv("LINA_CRASH_STEP"))
-	err := boot.Run(context.Background(), boot.Config{StateRoot: root, Socket: os.Getenv("LINA_CRASH_SOCKET"), AfterStep: func(step boot.Step, snapshot boot.Snapshot) error {
+	err := boot.Run(context.Background(), boot.Config{NoSync: true, StateRoot: root, Socket: os.Getenv("LINA_CRASH_SOCKET"), AfterStep: func(step boot.Step, snapshot boot.Snapshot) error {
 		if int(step) == target {
 			if err := json.NewEncoder(os.Stdout).Encode(snapshot); err != nil {
 				return err
@@ -376,7 +376,7 @@ func TestExistingCanonNeedsReadOnlyPeek(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "canon/store.db"), []byte("preserve"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	err := boot.Run(context.Background(), boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock")})
+	err := boot.Run(context.Background(), boot.Config{NoSync: true, StateRoot: root, Socket: filepath.Join(root, "run/core.sock")})
 	if err == nil || !strings.Contains(err.Error(), "canon service") {
 		t.Fatalf("ignored existing canon: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestRecoveryReceivesPreviousControls(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cfg := boot.Config{StateRoot: root, Socket: socket, Services: boot.Services{Reconcile: func(_ context.Context, recovery boot.Recovery) error {
+	cfg := boot.Config{NoSync: true, StateRoot: root, Socket: socket, Services: boot.Services{Reconcile: func(_ context.Context, recovery boot.Recovery) error {
 		if recovery.Previous == nil || recovery.Previous.Epoch != "5" || recovery.Previous.Socket != socket || string(recovery.Lifecycle) != `{"schema":1,"id":"0123456789abcdef0123456789abcdef","mode":"when_idle","epoch":"5"}` || recovery.Epoch != 6 {
 			t.Fatalf("lost previous controls: %+v", recovery)
 		}
@@ -420,7 +420,7 @@ func TestEpochFailureNeverOpensCanon(t *testing.T) {
 				t.Fatal(err)
 			}
 			opened := false
-			cfg := boot.Config{StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Services: boot.Services{
+			cfg := boot.Config{NoSync: true, StateRoot: root, Socket: filepath.Join(root, "run/core.sock"), Services: boot.Services{
 				PeekEpoch: func(context.Context) (uint64, error) { return 1, nil },
 				OpenCanon: func(context.Context, uint64) (boot.Canon, error) {
 					opened = true

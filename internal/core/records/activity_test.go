@@ -8,6 +8,7 @@ import (
 )
 
 func TestActivityRebuiltFromRecordRevision(t *testing.T) {
+	t.Parallel()
 	s, root, db := setup(t)
 	at := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 	s.Now = func() time.Time { return at }

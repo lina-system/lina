@@ -12,6 +12,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
@@ -27,10 +28,13 @@ type Canon interface {
 }
 
 type Transition struct {
-	ID   string          `json:"id"`
-	Kind string          `json:"kind"`
-	At   int64           `json:"at"`
-	Data json.RawMessage `json:"data,omitempty"`
+	// RecordedAt is Core's admission clock, independent of the source's At.
+	// It is written inside the committing transaction; legacy entries omit it.
+	RecordedAt string          `json:"recorded_at,omitempty"`
+	ID         string          `json:"id"`
+	Kind       string          `json:"kind"`
+	At         int64           `json:"at"`
+	Data       json.RawMessage `json:"data,omitempty"`
 }
 
 type Record struct {
@@ -61,7 +65,7 @@ func (j *Journal) notify() {
 
 func key(kind, id string) string { return kind + "\x00" + id }
 func validKey(kind, id string) bool {
-	return (kind == "goal" || kind == "node" || kind == "action") && strings.TrimSpace(id) != "" && !strings.ContainsRune(id, 0)
+	return (kind == "goal" || kind == "node" || kind == "action" || kind == "limit") && strings.TrimSpace(id) != "" && !strings.ContainsRune(id, 0)
 }
 func copyRecord(r Record) Record { r.Body = bytes.Clone(r.Body); return r }
 
@@ -128,6 +132,7 @@ func (j *Journal) Update(ctx context.Context, event Transition, apply func(*View
 	if j.db == nil || strings.TrimSpace(event.ID) == "" || strings.TrimSpace(event.Kind) == "" || event.At <= 0 || len(event.Data) > 0 && !json.Valid(event.Data) || apply == nil {
 		return ErrInvalid
 	}
+	event.RecordedAt = ""
 	input, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -141,6 +146,7 @@ func (j *Journal) Update(ctx context.Context, event Transition, apply func(*View
 			if json.Unmarshal(previous, &saved) != nil {
 				return ErrInvalid
 			}
+			saved.Event.RecordedAt = ""
 			original, e := json.Marshal(saved.Event)
 			if e != nil {
 				return e
@@ -165,6 +171,7 @@ func (j *Journal) Update(ctx context.Context, event Transition, apply func(*View
 			changes = append(changes, r)
 		}
 		sort.Slice(changes, func(i, k int) bool { return key(changes[i].Kind, changes[i].ID) < key(changes[k].Kind, changes[k].ID) })
+		event.RecordedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		body, err := json.Marshal(entry{Event: event, Changes: changes})
 		if err != nil {
 			return err
@@ -185,6 +192,35 @@ func (j *Journal) Update(ctx context.Context, event Transition, apply func(*View
 	}
 	return err
 }
+
+// Committed reads the transition recorded under id. A resend of the same
+// message keeps its original transition, including the instant it committed,
+// whatever the local retry time is.
+func (j *Journal) Committed(ctx context.Context, id string) (Transition, bool, error) {
+	var out Transition
+	found := false
+	err := j.db.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		err := tx.QueryRowContext(ctx, "SELECT body FROM work_events WHERE id=?", id).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var saved entry
+		if err := json.Unmarshal(raw, &saved); err != nil {
+			return ErrInvalid
+		}
+		if saved.Event.ID != id {
+			return ErrInvalid
+		}
+		out, found = saved.Event, true
+		return nil
+	})
+	return out, found, err
+}
+
 func putRecord(ctx context.Context, tx *canon.Tx, r Record) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO work_records(kind,id,version,body) VALUES(?,?,?,?)
  ON CONFLICT(kind,id) DO UPDATE SET version=excluded.version,body=excluded.body`, r.Kind, r.ID, r.Version, r.Body)

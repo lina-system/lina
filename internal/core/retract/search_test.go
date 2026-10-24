@@ -16,6 +16,7 @@ import (
 )
 
 func TestForgetPurgesKoreanIndexesAndRestoreDoesNotResurrectThem(t *testing.T) {
+	t.Parallel()
 	db, s, flow, root, close := memoryFixture(t)
 	receipt := seedMemory(t, db, flow, "source-1", "conversation-1", "도서관에서 커피를 마신다")
 	scope := memory.RecallScope{Agent: "agent-1", Person: "person-1"}
@@ -115,6 +116,7 @@ func assertNoSearchRows(t *testing.T, db *canon.Store) {
 }
 
 func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
+	t.Parallel()
 	db, s, flow, root, close := memoryFixture(t)
 	receipt := seedMemory(t, db, flow, "source-1", "conversation-1", forgotten)
 	events := ledger.New(db, nil)

@@ -47,7 +47,7 @@ A change that lets an internal term into the default view is a defect.
 **C-01 One main (changed).**
 One `lina core` runs per state root, as a user service under the person's OS user ([runtime.md](runtime.md#processes)).
 Inside it run these goroutine families: one lane per conversation, the background-run supervisor, the gateway adapters, the scheduler, the completion-event reactor, the client hub and the job API for `moirai-worker`.
-Children are created through `kit/proc` with owned process lifetimes and process groups (inheriting a cgroup where the service manager has one): the Claude adapter (started on first use, stopped after idle), the `grok` command, workers, plugin servers and sandboxed commands.
+Children are created through `kit/proc` with owned process lifetimes — a subreaper helper on Linux, a launchd job coalition on macOS, a Job Object on Windows — inheriting a cgroup where the service manager has one: the Claude adapter (started on first use, stopped after idle), the `grok` command, workers, plugin servers and sandboxed commands.
 There is no process per agent and no model proxy.
 A foreground `lina core` for development runs only where install created the main id file.
 
@@ -82,9 +82,9 @@ Doctor never mints an epoch, creates a lock or socket, migrates canon, repairs c
 Layout: `cmd/lina`, `cmd/lina-node`, `cmd/moirai-worker`, `protocol/schema`, `protocol/fixtures`, `persona/<preset>/`, `skills/` (built-in, embedded), `catalog/` (plan and plugin catalog sources), `adapters/claude/` (TypeScript, lockfile), and `internal/` with `core`, `node`, `tui`, `clientapi`, `buildinfo` (shared binary metadata), `design` (generated from the token source) and `fakecore`.
 Builds are static; cgo follows the SQLite binding chosen by [V2](runtime.md#runtime-acceptance).
 The kit wrapper starts bubblewrap through the explicit process supervisor ([runtime.md](runtime.md#sandbox)).
-Listed helper subcommands such as `file-tool` and `proc-supervise` are allowed; hidden re-exec modes and initialization hooks are not.
-Both `lina` and `lina-node` register `proc.SuperviseMain` and list `proc-supervise` in usage.
-The supervisor needs no additional binary or cgroup delegation.
+Listed helper subcommands such as `file-tool`, `proc-supervise` and `proc-job` are allowed; hidden re-exec modes and initialization hooks are not.
+Both `lina` and `lina-node` register `proc.SuperviseMain` and `proc.JobMain` and list `proc-supervise` and `proc-job` in usage.
+The helpers need no additional binary or cgroup delegation.
 
 Kit seams, following [runtime.md](runtime.md#lina-kit):
 
@@ -105,8 +105,8 @@ Layers under `internal/core/`:
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
 | L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `recall` (shared derived index writer and queued fill) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
-| L5 | `boot`, `supervise` |
+| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `localmodel`, `exec`, `exchange`, `messenger`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install`, `miniapps` |
+| L5 | `boot`, `supervise`, `methodreplay` |
 
 The separate worker has its own downward import layers.
 Core may import only its `jobapi` contract, never its reader or runtime; the worker imports no Core, provider, secret, process-launch or arbitrary third-party package.
@@ -265,6 +265,9 @@ If the filesystem context cannot be isolated, startup refuses before binding.
 
 The root, `system/` and `system/core/` must be owned by the current user and private (0700); existing unsafe paths are refused, not chmodded.
 Control records must be regular files at 0600, owned by that user, without symbolic or hard links.
+A read validates both the opened file and its directory entry before consuming bytes.
+If an atomic replacement unlinks the opened inode or changes the entry, the reader closes it and reopens the record after a short pause, with at most eight attempts and all checks repeated.
+An unsafe replacement or continuous replacement fails closed.
 Records larger than 64 KiB, malformed JSON objects and invalid epochs stop startup with exit 78.
 The epoch file contains only its canonical decimal digits, with no whitespace; overflow refuses the start and preserves the record.
 Linux filesystem validation permits ext-family, XFS, Btrfs, tmpfs, overlay, F2FS, ZFS, NILFS, ReiserFS and JFS.
@@ -329,7 +332,7 @@ The reconcile table follows [runtime.md](runtime.md#recovery) and [main-authorit
 | Model request or partial stream | Discarded; the turn is `interrupted` and not replayed; one plain line in the conversation |
 | Tool intent with no receipt | `unknown`; never run again; an irreversible one waits for the person |
 | Node effect, Node not back | `unknown` until the Node reports |
-| Worker turn cut by the restart | `unknown`; settled by reading the thread |
+| Worker turn cut by the restart | `unknown`; settled by reading the thread, or by a completion committed for that exact turn before the cut |
 | Pending approval | Stopped; a late button is answered stale |
 | Background run that was working | Resumed once from its checkpoint; a second cut lands it failed or partial |
 | Outbound channel send, outcome unknown | Not sent again |
@@ -683,6 +686,7 @@ It saves each set of four layers and its work-method record as a Git commit in a
 Immutable `refs/revisions/<commit>` retain saved versions; `HEAD` anchors the first version and canon selects the current one.
 Each immutable file is written and synced in a private temporary file beside its destination, then installed without replacing an existing file and followed by a directory sync.
 Opening the store removes abandoned temporary files; concurrent writers compare only fully published bytes.
+Core opens the store without options, so every saved file is synced. A test may open a throwaway root with `agents.NoSync()` to skip those fsyncs; it never changes what Core writes.
 Unpublished objects after a failed write are never applied.
 `Prepare(turn, agent)` verifies the saved bytes and durably pins one revision to that turn; repeating it after a restart returns that revision, while a later turn selects the latest published revision.
 This is the persona part of preparation, not evidence that account, context or model-policy preparation succeeded.
@@ -1116,6 +1120,7 @@ Container ids are resolved by a trusted ownership-checking lookup, never treated
 The initial records writer saves one Markdown file with typed result data and provenance under `versions/records/`, and one Git commit for saved version 1.
 Names are human slugs with collision suffixes, never record ids.
 Before changing a tracked file, index or ref, the records writer journals the intended parent/commit, file and blob ids in canon and retains a durable token for its Git index lock.
+Core opens the repository without options, so every object, index and ref write is synced. A test may open a throwaway root with `records.NoSync()` to skip those fsyncs; it never changes what Core writes.
 Reopening completes only that exact interrupted publication, checks all other working files, and releases only a lock with its own token; different target bytes, a different ref or a foreign lock are refused.
 Recovery repairs repository consistency so later saves can proceed, while the original unknown effect remains for reconciliation without redispatch.
 It checks the repository head against a canon checkpoint and verifies tracked working files; it refuses both committed and uncommitted outside changes instead of silently incorporating them.
@@ -1452,8 +1457,14 @@ Implementation notes: [C-14 sandbox acceptance](../../kit/sandbox/REFERENCE.md#c
 Linux process ownership uses the explicit per-command `proc-supervise` helper with `PR_SET_CHILD_SUBREAPER`.
 It kills and waits for the whole descendant tree, including `setsid`/`setpgid` escapes and orphans, before returning.
 The tests cover owner shutdown, cancellation, normal leader exit and owner process death.
-macOS first kills the process group, then scans same-user processes for an inherited owner token using `KERN_PROCARGS2`.
-This macOS cleanup is best effort: a child that clears its environment can escape, and this remaining limitation is not accepted as complete unescapable supervision.
+macOS runs each command as its own launchd job through the explicit per-command `proc-job` helper, and owns it through the resource coalition launchd creates for that job.
+Coalition membership is fixed at process creation and inherited by every descendant, so teardown reaches a child that changes session, outlives its parent and clears its environment.
+Streams and the exit status cross the job boundary over a private Unix socket; teardown kills the coalition and boots the job out.
+The owner stops and joins a file-backed input relay when the command returns, and it does not close the caller's file.
+A read timeout on input that is not a file is reported with the command result. The read deadline that stops the file relay is not an input failure.
+If the owner disappears before the helper connects, the helper still boots the job out and removes its directory.
+A relative command directory is prefixed with the owner's working directory and left uncleaned, so the kernel resolves a symlink followed by `..`.
+The sandbox's Seatbelt policy keeps its `setsid`/`setpgid` denial, which matches the Linux seccomp filter but is no longer what owns a command's descendants.
 
 Windows process ownership uses a Job Object assigned before the suspended leader runs.
 Descendants cannot break away by changing their console/process group, and cleanup waits for an empty job as well as the leader's exit.
@@ -1496,6 +1507,7 @@ An observed concurrent change returns unknown and keeps the recovery information
 A completed receipt describes the final observation, not future writes through another process's open descriptor.
 Captures remain readable through file reads after reopening and participate in workspace manifest revisions.
 A recovery-like directory name is not proof of worker ownership and never hides its files from a command receipt; this also keeps later writes through captured open inodes observable.
+Worker-reserved capture slots are recorded in the private version store and accounted separately from the 10,000-entry workspace manifest limit, so retained captures cannot exhaust workspace manifest snapshots on their own.
 These live captures share the workspace's access scope, whereas the immutable before/after version store remains private to the file worker.
 Restore from a saved-version id uses its immutable bytes and the current destination revision.
 A multi-file patch is prevalidated but is not a filesystem transaction: an interrupted commit is unknown with retained recovery information.
@@ -1557,6 +1569,7 @@ It has three classes of data: canonical rows; FTS tables written in the same tra
 One writer goroutine owns one write connection.
 Readers open `query_only`.
 WAL and `synchronous=FULL`.
+Core always opens canon that way; only a test that opens its own throwaway state root may set `Config.NoSync`, which keeps WAL but drops commit sync through `synchronous=OFF`.
 No transaction spans a model, tool, Node or network call.
 Migrations are forward-only.
 The SQLite binding is chosen by [V2](runtime.md#runtime-acceptance) against four needs: FTS5, the online backup API, an optional sqlite-vec load verified against a manifest digest, and static builds.
@@ -2019,7 +2032,7 @@ The embedded meta-skill describes this procedure.
 **C-28 Importing a Hermes install (changed).**
 Contract: [memory importer add-ons](conversation-and-memory.md#memory-importer-add-ons), [Hermes import](conversation-and-memory.md#importing-a-hermes-install), [filesystem.md](filesystem.md#importing-another-memory-system), [integrations.md](integrations.md#memory-importers).
 The optional Hermes adapter lives in `internal/addons/importer/hermes`, outside the Core layers.
-Production packages outside `internal/addons/` must not import memory importer add-ons, with one explicit entry-point exception: `cmd/lina/import_hermes.go` may import the exact Hermes adapter package for `lina import-hermes`.
+Production packages outside `internal/addons/` must not import memory importer add-ons, with one explicit entry-point exception per adapter: `cmd/lina/import_hermes.go` may import the exact Hermes adapter package for `lina import-hermes`, and `cmd/lina/import_murmur.go` the exact murmur adapter package for `lina import-murmur`.
 Core, onboarding and other commands remain independent of adapter execution.
 Foundation registers the adapter and `testdata/hermes/` for build, vet, analyzer and test checks.
 An installed adapter runs as a background job started by the person, with no model call and deterministic classification.
@@ -2353,7 +2366,7 @@ type Adapter interface {
 - Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches).
   Claude Code, Cursor, Gemini CLI, Grok and added agents through the one ACP adapter of C-60.
   Antigravity as a headless child with streaming output.
-  The Claude Code headless adapter below remains until the worker evaluation chooses between it and the ACP profile.
+  The Claude Code headless adapter below stays an explicit selection; the worker evaluation kept the ACP profile ([worker-evaluation.md](../../evidence/worker-evaluation.md)).
 - Implementation notes: [C-29 session integration](../../internal/core/worker/REFERENCE.md#c-29-session-integration).
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)).
   Approvals go to the originating conversation.
@@ -2651,14 +2664,16 @@ Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [w
   Prompts, paging and debug output are disabled.
   This keeps `gh api --include` headers and JSON machine-readable under an inherited color-capable terminal without changing the user's login, tool configuration or parent environment.
   The installed-Core scenario exercises this inherited environment through the real child boundary.
-- The conformance check uses the owning dev manager's existing conversation and `coding_decision` tool, once per delivered head.
+- The conformance check uses the owning dev manager's existing conversation and `coding_decision` tool, once per pull request.
   Implementation notes: [C-58 review claims migration](../../internal/core/review/REFERENCE.md#c-58-review-claims-migration).
-  A duplicate request is refused even after interruption or restart.
-  A fix generation with a new head gets its own check.
+  A duplicate request is refused even after interruption or restart, and a changed head is refused too.
+  Only the head produced by the one return, in the next generation of the same task, continues the review.
   Reading an existing judgment at merge is not another request.
 - Core checks GitHub readiness, change-evidence availability and then the observed diff's file paths before calling the manager.
-  Failed or incomplete checks and blocking GitHub reviews are merge preconditions: they block the task without a `verified` verdict or model findings.
-  A change outside the declared write area is a Core-computed scope miss, recorded as `needs_changes` without calling a model.
+  Failed or incomplete checks and blocking GitHub reviews are merge preconditions: they block the task without a `verified` verdict.
+  Each failed required check is a Core-computed P1 finding on that blocked review, naming the check and pointing at the workflow definitions; waiting, missing or mismatched evidence records no finding.
+  A change outside the declared write area is a Core-computed scope miss, recorded as `needs_changes` with one P1 finding per path, without calling a model.
+  That finding list stays within the accepted schema, at most 256 items. Every out-of-area path remains in the scope evidence. When the list does not fit, one finding names the remainder so the review still finishes.
   Renames are observed as deletion and addition, so both paths are checked with the scheduler's path language.
 - The manager receives the work definition, observed diff and design text read at the admission's pinned base, as source-labeled data in the existing handoff.
   Missing or oversized change evidence finishes the claimed review as `blocked` with cause `change_evidence_unavailable`, without a verdict, findings or a model call, even when an observed path is outside the write area.
@@ -2795,8 +2810,9 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
   They remain answerable through the existing authenticated question/approval forms.
   Implementation notes: [C-55 waiting migration](../../internal/core/waiting/REFERENCE.md#c-55-waiting-migration).
 - Canon closes its change notification only after a committed mutation; read callbacks and rollbacks remain quiet.
-  Core coalesces those events and live worker changes for 100 ms, rereads the sources, and publishes the replaced overview when its contents or the full waiting list change.
-  The coalescing window leaves room inside the 250 ms (P) bound from a goal commit to its changed line, so the projection itself still fits.
+  Core coalesces a burst of those events and live worker changes, rereads once and publishes at most every 100 ms; a change that follows an idle period publishes at once, because the person is waiting for it.
+  The window leaves room inside the 250 ms (P) bound from a goal commit to its changed line, so the projection itself still fits.
+  The projection reads canon without its writer, so it never queues behind the commits it describes; a finished waiting candidate is cleaned by the next `waiting_get`, which writes.
   A change below Home's five-row limit still advances the overview cursor, causing an open full waiting view to reread its sources.
   Subscriptions reread before their snapshot.
   While the progress topic has observers, a five-second reconciliation tick also rereads filesystem-backed sources, using the same coalescing.

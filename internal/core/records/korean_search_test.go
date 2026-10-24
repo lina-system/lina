@@ -14,6 +14,7 @@ import (
 )
 
 func TestKoreanRecordSearchLifecycle(t *testing.T) {
+	t.Parallel()
 	s, root, db := setup(t)
 	makeChange := func(id, person, kind, title, note string) Change {
 		return Change{ID: id, Path: "inbox/" + id + ".md", Data: []byte(fmt.Sprintf("---\nid: %q\nperson_id: %q\nkind: %s\nstate: active\n---\n\n# %s\n\n%s\n", id, person, kind, title, note))}
@@ -82,6 +83,7 @@ func TestKoreanRecordSearchLifecycle(t *testing.T) {
 }
 
 func TestKoreanRecordSearchExistingInstallation(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -163,6 +165,7 @@ func TestKoreanRecordSearchExistingInstallation(t *testing.T) {
 }
 
 func TestKoreanRecordSearchLiteralPhrases(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	for _, fixture := range []struct{ id, title, note string }{
 		{"a", "합성 워크숍 메모", "가상의 등대는 청록색이다. 준비물: 종이와 연필."},
@@ -206,6 +209,7 @@ func TestKoreanRecordSearchLiteralPhrases(t *testing.T) {
 }
 
 func TestRecallProjectionFollowsRecordRevision(t *testing.T) {
+	t.Parallel()
 	s, _, db := setup(t)
 	c := Change{ID: "record", Path: "inbox/record.md", Data: doc("record", "도서관에서 공부")}
 	c.Base = commit(t, s, c)

@@ -72,6 +72,7 @@ func record(t *testing.T, s *exchange.Store, id string) exchange.Record {
 	return r
 }
 func TestDeliveryDeduplicatesAndKeepsAgentProvenance(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	s := exchange.New(db)
 	r := start(t, s)
@@ -119,6 +120,7 @@ func TestDeliveryDeduplicatesAndKeepsAgentProvenance(t *testing.T) {
 	}
 }
 func TestAcknowledgementEndsWithoutModelOrCheck(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	r := start(t, s)
 	if err := s.Acknowledge(t.Context(), r.DeliveryID, "answerer", now); err != nil {
@@ -136,6 +138,7 @@ func TestAcknowledgementEndsWithoutModelOrCheck(t *testing.T) {
 	}
 }
 func TestTypedAnswerRequiresAskersCheckAndEvidence(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	r := start(t, s)
 	if _, err := s.Deliver(t.Context(), r.DeliveryID, now); err != nil {
@@ -168,6 +171,7 @@ func TestTypedAnswerRequiresAskersCheckAndEvidence(t *testing.T) {
 	}
 }
 func TestDecisionOwnerControlsWaitingFlag(t *testing.T) {
+	t.Parallel()
 	for _, owner := range []exchange.Owner{{Kind: exchange.AgentOwner, ID: "asker"}, {Kind: exchange.PersonOwner, ID: "person"}, {Kind: exchange.PersonOwner}, {Kind: "person claimed in text", ID: "person"}} {
 		t.Run(string(owner.Kind)+owner.ID, func(t *testing.T) {
 			s := exchange.New(database(t))
@@ -190,6 +194,7 @@ func TestDecisionOwnerControlsWaitingFlag(t *testing.T) {
 	}
 }
 func TestRoundLimitAndDeadlineStopWithoutPersonFlag(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	r := start(t, s)
 	for round := 1; round <= 4; round++ {
@@ -234,27 +239,28 @@ func TestRoundLimitAndDeadlineStopWithoutPersonFlag(t *testing.T) {
 
 type rollback struct{ *canon.Store }
 
-var rollbackError = errors.New("injected rollback")
+var errRollback = errors.New("injected rollback")
 
 func (r rollback) Write(ctx context.Context, fn func(*canon.Tx) error) error {
 	return r.Store.Write(ctx, func(tx *canon.Tx) error {
 		if err := fn(tx); err != nil {
 			return err
 		}
-		return rollbackError
+		return errRollback
 	})
 }
 func TestFailedCommitReturnsNoReceiptOrDelivery(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	s := exchange.New(rollback{db})
 	r, err := s.Start(t.Context(), request(), now)
-	if !errors.Is(err, rollbackError) || r.ID != "" {
+	if !errors.Is(err, errRollback) || r.ID != "" {
 		t.Fatalf("start: %+v %v", r, err)
 	}
 	good := exchange.New(db)
 	r = start(t, good)
 	receipt, err := s.Deliver(t.Context(), r.DeliveryID, now)
-	if !errors.Is(err, rollbackError) || receipt.ID != "" {
+	if !errors.Is(err, errRollback) || receipt.ID != "" {
 		t.Fatalf("deliver: %+v %v", receipt, err)
 	}
 	if record(t, good, r.ID).State != exchange.Queued {
@@ -263,6 +269,7 @@ func TestFailedCommitReturnsNoReceiptOrDelivery(t *testing.T) {
 }
 
 func TestRetryAfterDeadlineReturnsOriginalReceipt(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	r := start(t, s)
 	retry := request()
@@ -274,6 +281,7 @@ func TestRetryAfterDeadlineReturnsOriginalReceipt(t *testing.T) {
 }
 
 func TestCommittedDeliveryReceiptSurvivesDeadline(t *testing.T) {
+	t.Parallel()
 	for _, state := range []exchange.State{exchange.Queued, exchange.Delivered, exchange.Read} {
 		for _, delay := range []time.Duration{time.Hour, 2 * time.Hour} {
 			t.Run(string(state)+"/"+delay.String(), func(t *testing.T) {
@@ -337,6 +345,7 @@ func TestCommittedDeliveryReceiptSurvivesDeadline(t *testing.T) {
 	}
 }
 func TestWrongAgentAndMissingEvidenceCannotAnswer(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	r := start(t, s)
 	calls := 0
@@ -357,6 +366,7 @@ func TestWrongAgentAndMissingEvidenceCannotAnswer(t *testing.T) {
 	}
 }
 func TestAnswerRaceWithAcknowledgementCannotReopenExchange(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	r := start(t, s)
 	a := exchange.Answer{Text: "checked", Evidence: []exchange.Evidence{{EventID: "event", At: now}}}
@@ -369,6 +379,7 @@ func TestAnswerRaceWithAcknowledgementCannotReopenExchange(t *testing.T) {
 }
 
 func TestExpiryRemovesPersonDecisionAtomically(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	r := start(t, s)
 	if err := s.NeedPerson(t.Context(), r.ID, now, func(context.Context, *canon.Tx, exchange.DecisionRef) (exchange.Owner, error) {
@@ -394,6 +405,7 @@ func TestExpiryRemovesPersonDecisionAtomically(t *testing.T) {
 }
 
 func TestCheckbackDisabledAndConcurrentArtifactClaims(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	req := request()
 	req.Origin = &exchange.Origin{Person: "person", Conversation: "main:asker", CheckBack: false, NextCheck: now.Add(time.Minute)}
@@ -442,6 +454,7 @@ func TestCheckbackDisabledAndConcurrentArtifactClaims(t *testing.T) {
 }
 
 func TestRedirectedFirstChangeReservesReceiverOwnership(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	req := request()
 	req.DeliveryID = "new-change"

@@ -41,6 +41,7 @@ type report struct {
 	Corpus            counts                  `json:"corpus"`
 	RecallDocuments   int                     `json:"recall_documents"`
 	PersonEventsEarly int                     `json:"person_events_early"`
+	PersonEventsExtra int                     `json:"person_events_extra_after_early"`
 	RecallParity      int                     `json:"recall_parity_queries"`
 	SourceBytes       int64                   `json:"source_bytes"`
 	RecallTextBytes   int64                   `json:"recall_text_bytes"`

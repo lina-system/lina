@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/lease"
+	"github.com/thisisjun786/lina/kit/tools"
 )
 
 type disconnectedResultProbe struct {
@@ -251,5 +252,140 @@ func TestWorkerOutputSurvivesDelayedCompletion(t *testing.T) {
 				t.Fatalf("result admission: completions=%d previous=%d queued=%d err=%v", completions, priorResults, queued, err)
 			}
 		})
+	}
+}
+
+// A crash between committing the turn's completion and storing its recovery
+// state must not restart the session as an unknown live placeholder. The
+// committed completion is the exact turn's terminal observation.
+func TestWorkerRecoveryUsesCommittedCompletionAfterCrash(t *testing.T) {
+	r := controlRuntime(t)
+	if r.workers.recoveryStop != nil {
+		r.workers.recoveryStop()
+		<-r.workers.recoveryDone
+		r.workers.recoveryStop = nil
+	}
+	ctx, now := t.Context(), time.Now()
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "restart-input", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Create result.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "restart-session", TurnID: "turn-1", TaskID: "task", AttemptID: "attempt", ProcessGeneration: 1, BindingEpoch: 1}
+	entry := &workerSession{origin: r, input: input, thread: thread, workdir: t.TempDir(), packet: "Create result.txt"}
+	if err := entry.finish(ctx, worker.Event{Kind: worker.FinishEvent, Thread: thread, Finish: &worker.Finish{Status: worker.Done}}); err != nil {
+		t.Fatal(err)
+	}
+	rec := recovery.Record{ID: thread.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: input.ID, Workdir: entry.workdir, Packet: entry.packet, Thread: thread, State: "unknown", Epoch: 1}
+	if err := (recovery.Recovery{DB: r.db}).Put(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	r.reconcileWorkers(ctx, map[string]bool{})
+	in, err := workerSchema("worker_snapshot", json.RawMessage(`{"session":"restart-session"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.workerOperation(ctx, "worker_snapshot", "recall", input, in)
+	var recorded workerCompletion
+	if err != nil || got.State != tools.Applied || json.Unmarshal(got.Body, &recorded) != nil || recorded.Status != worker.Done || recorded.Turn != thread.TurnID || recorded.Live {
+		t.Fatalf("restart lost the committed outcome: %s %v", got.Body, err)
+	}
+	records, err := (recovery.Recovery{DB: r.db}).Records(ctx)
+	if err != nil || len(records) != 1 || records[0].State != "finished" {
+		t.Fatalf("terminal turn stayed pending: %+v %v", records, err)
+	}
+	r.workers.mu.Lock()
+	_, retained := r.workers.sessions[thread.ID]
+	r.workers.mu.Unlock()
+	if retained {
+		t.Fatal("finished worker retained as an unknown live placeholder")
+	}
+}
+
+// A completion can commit while its recovery checkpoint fails. When the worker
+// then disconnects, settling the record must also retire the closed session so
+// views read the recorded outcome instead of the stale entry.
+func TestWorkerRecoverySettlementRetiresClosedSession(t *testing.T) {
+	r := controlRuntime(t)
+	if r.workers.recoveryStop != nil {
+		r.workers.recoveryStop()
+		<-r.workers.recoveryDone
+		r.workers.recoveryStop = nil
+	}
+	ctx, now := t.Context(), time.Now()
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "closed-input", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Create result.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "closed-session", TurnID: "turn-1", TaskID: "task", AttemptID: "attempt", ProcessGeneration: 1, BindingEpoch: 1}
+	rec := recovery.Record{ID: thread.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: input.ID, Workdir: t.TempDir(), Packet: "Create result.txt", Thread: thread, State: "running", Epoch: 1}
+	closed, released := 0, 0
+	entry := &workerSession{origin: r, input: input, thread: thread, workdir: rec.Workdir, packet: rec.Packet, recovery: rec, done: make(chan struct{}), active: map[string]lease.Lease{}, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, started: now}
+	entry.adapter = &retainedWorker{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Unknown, Worker: "codex", Workdir: rec.Workdir}}
+	entry.close = func() error { closed++; return nil }
+	entry.process = lease.New(func() { released++ })
+	if err := entry.finish(ctx, worker.Event{Kind: worker.FinishEvent, Thread: thread, Finish: &worker.Finish{Status: worker.Done}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (recovery.Recovery{DB: r.db}).Put(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	close(entry.done)
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+
+	r.reconcileWorkers(ctx, map[string]bool{})
+	records, err := (recovery.Recovery{DB: r.db}).Records(ctx)
+	if err != nil || len(records) != 1 || records[0].State != "finished" {
+		t.Fatalf("terminal turn stayed pending: %+v %v", records, err)
+	}
+	r.workers.mu.Lock()
+	_, retained := r.workers.sessions[thread.ID]
+	r.workers.mu.Unlock()
+	if retained || closed != 1 || released != 1 {
+		t.Fatalf("settled session not retired: retained=%v closed=%d released=%d", retained, closed, released)
+	}
+	in, err := workerSchema("worker_snapshot", json.RawMessage(`{"session":"closed-session"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.workerOperation(ctx, "worker_snapshot", "recall", input, in)
+	var recorded workerCompletion
+	if err != nil || got.State != tools.Applied || json.Unmarshal(got.Body, &recorded) != nil || recorded.Status != worker.Done || recorded.Live {
+		t.Fatalf("snapshot did not read the recorded outcome: %s %v", got.Body, err)
+	}
+}
+
+// Canceling a turn does not turn a transport-loss notice into terminal
+// evidence. Its effects stay unknown, so the record must keep its reservation
+// and normal reconciliation instead of being settled by the notice.
+func TestWorkerRecoveryKeepsCanceledTransportLossUnknown(t *testing.T) {
+	r := controlRuntime(t)
+	if r.workers.recoveryStop != nil {
+		r.workers.recoveryStop()
+		<-r.workers.recoveryDone
+		r.workers.recoveryStop = nil
+	}
+	ctx, now := t.Context(), time.Now()
+	input, err := r.journal().Admit(ctx, guard.EntryOwner, ledger.Input{ID: "canceled-input", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Create result.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "canceled-session", TurnID: "turn-1", TaskID: "task", AttemptID: "attempt", ProcessGeneration: 1, BindingEpoch: 1}
+	entry := &workerSession{origin: r, input: input, thread: thread, workdir: t.TempDir(), packet: "Create result.txt"}
+	if err := entry.recoveredFinish(ctx, worker.Event{Kind: worker.FinishEvent, Thread: thread, Finish: &worker.Finish{Status: worker.Failed, Failure: worker.ConnectionFailure, Code: "connection_lost"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	rec := recovery.Record{ID: thread.ID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: input.ID, Workdir: entry.workdir, Packet: entry.packet, Thread: thread, State: "unknown", Canceled: true, Reservation: "canceled-reservation", Epoch: 1}
+	if err := (recovery.Recovery{DB: r.db}).Put(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	r.reconcileWorkers(ctx, map[string]bool{})
+	records, err := (recovery.Recovery{DB: r.db}).Records(ctx)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("recovery records: %+v %v", records, err)
+	}
+	if records[0].State == "finished" || records[0].Reservation != rec.Reservation {
+		t.Fatalf("transport loss settled a canceled turn: state=%s reservation=%q", records[0].State, records[0].Reservation)
 	}
 }

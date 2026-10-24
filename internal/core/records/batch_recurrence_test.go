@@ -10,6 +10,7 @@ import (
 )
 
 func TestBatchRecurringCompletionRecovery(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"normal", "intent", "file", "checkpoint"} {
 		t.Run(stage, func(t *testing.T) {
 			s, root, db := setup(t)

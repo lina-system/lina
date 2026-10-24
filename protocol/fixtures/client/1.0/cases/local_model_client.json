@@ -1,0 +1,17 @@
+{
+  "side": "client",
+  "input": [
+    "normal/local_task_result.json"
+  ],
+  "output": [
+    "normal/local_task_result.json"
+  ],
+  "errors": [
+    ""
+  ],
+  "outcome": {
+    "accepted": 1,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

@@ -2,8 +2,12 @@
 
 `CriterionEvidence.Collected` retains the content acquired by a trusted Core
 adapter. `currentEvidence` validates the evidence kind, goal revision, checking
-round, target and required content. `applySuccess` compares external records to
-the criterion's expected fields before storing a passing result. Worker receipts
+round, target and required content. A task-bound outcome check, including a
+custom criterion that names the task, uses that task's current result revision.
+`merge.read` keeps the historical merge commit, so a passing repair does not
+rewrite the merge receipt and does not let the failed commit satisfy the outcome.
+`applySuccess` compares external records to the criterion's expected fields
+before storing a passing result. Worker receipts
 and model arguments cannot supply this execution projection.
 
 The installed code driver implements `EvidenceReader`. `closingEvidence` reads

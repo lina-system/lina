@@ -50,8 +50,9 @@ type Scope struct {
 	SpeakerKind  guard.SpeakerKind
 	Origin       string
 	CommonOnly   bool
-	// IncludeReplay returns replay copies as their own results. Copies stay out
-	// of the default result set because the original already counts.
+	// IncludeReplay makes replay copies candidates. A copy still counts once
+	// with its lineage, so it surfaces only when its original is not a
+	// candidate: a copy appears only when asked, through its original.
 	IncludeReplay bool
 	// History keeps memory items past their validity or superseded by a newer
 	// one, marking them Older; an item past valid_from is never returned.

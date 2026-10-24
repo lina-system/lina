@@ -4,6 +4,7 @@ package canon
 import "testing"
 
 func TestSummaryTablesPublishAtomically(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = Migrations()
 	db := openStore(t, cfg)
@@ -34,6 +35,7 @@ func TestSummaryTablesPublishAtomically(t *testing.T) {
 }
 
 func TestSummaryMigrationPreservesLedgerAndRevocationEpoch(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	all := Migrations()
 	for i, m := range all {

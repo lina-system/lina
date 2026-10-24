@@ -26,10 +26,11 @@ type WorkConfig struct {
 	Sessions *worker.Live
 }
 type workRuntime struct {
-	engine *work.Engine
-	stop   context.CancelFunc
-	done   chan struct{}
-	err    error
+	sessions *worker.Live
+	engine   *work.Engine
+	stop     context.CancelFunc
+	done     chan struct{}
+	err      error
 }
 
 func (w *workRuntime) close(ctx context.Context) error {
@@ -108,7 +109,7 @@ func (r *conversationRuntime) startWork(ctx context.Context, cfg *WorkConfig) er
 		}
 	}
 	runCtx, stop := context.WithCancel(ctx)
-	w := &workRuntime{engine: e, stop: stop, done: make(chan struct{})}
+	w := &workRuntime{engine: e, sessions: sessions, stop: stop, done: make(chan struct{})}
 	if r.dispatchMu != nil {
 		r.dispatchMu.Lock()
 	}

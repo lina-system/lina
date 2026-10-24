@@ -45,7 +45,9 @@ table; documents found only through the trigram table follow; ties go to the
 newer `occurred_at`. A short term reaches memory items and records by a literal
 scan of the already scoped set. `recall_doc.text_hash` collapses events with
 identical derived text inside one conversation to the earliest of them. A
-returned memory item hides its own evidence events, so lineage counts once.
+returned memory item hides its own evidence events, so lineage counts once. A
+replay copy is a candidate only when the scope asks for copies, and even then
+its lineage counts once: a copy appears when its original is out of scope.
 `recall.Search` adds the bounded masked excerpt and the citations in force at
 the result's revision. `VectorQuery` is the fusion hook for #874.
 

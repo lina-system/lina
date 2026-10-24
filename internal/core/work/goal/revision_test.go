@@ -9,6 +9,7 @@ import (
 )
 
 func TestObsoleteCriterionReportDoesNotStopEngine(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "head-a", EffectsSettled: true})
 	revisionReport(t, e, "a", InspectPR, revisionPR("head-a"))
@@ -81,6 +82,7 @@ func TestObsoleteCriterionReportDoesNotStopEngine(t *testing.T) {
 }
 
 func TestOldManagerCannotAssessCorrectedDefinition(t *testing.T) {
+	t.Parallel()
 	for _, withTask := range []bool{false, true} {
 		t.Run(map[bool]string{false: "empty", true: "old-plan"}[withTask], func(t *testing.T) {
 			e := revisionEngine(t)
@@ -110,6 +112,7 @@ func TestOldManagerCannotAssessCorrectedDefinition(t *testing.T) {
 }
 
 func TestClaimedSiblingRepairsRederiveAfterExecutionRevision(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"), readyTask("b"))
 	var actions []Action
 	for _, id := range []string{"a", "b"} {
@@ -147,6 +150,7 @@ func TestClaimedSiblingRepairsRederiveAfterExecutionRevision(t *testing.T) {
 }
 
 func TestOldRepairPlanCannotReenterAfterDefinitionAssessment(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "head-a", EffectsSettled: true})
 	revisionReport(t, e, "a", InspectPR, revisionPR("head-a"))
@@ -268,6 +272,7 @@ func revisionPR(head string) Observation {
 }
 
 func TestRevisionCancelsOnlyUndispatchedWorkerReservations(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []ActionKind{Assign, Resume, RepairConflict, ContinueWorker} {
 		t.Run(string(kind), func(t *testing.T) {
 			e := revisionEngine(t, readyTask("a"), readyTask("live"))
@@ -346,6 +351,7 @@ func observeRevisedWorker(t *testing.T, e *Engine, original Action, receipt Obse
 }
 
 func TestRepairRevisionRederivesQueuedSiblingActions(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"), readyTask("b"), readyTask("waiting"))
 	for _, id := range []string{"a", "b"} {
 		revisionReport(t, e, id, Assign, Observation{Status: OutcomeSucceeded, Head: "head-" + id, EffectsSettled: true})
@@ -376,6 +382,7 @@ func TestRepairRevisionRederivesQueuedSiblingActions(t *testing.T) {
 }
 
 func TestTaskSignalInvalidatesProofsWhileWaitingForMergeSlot(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"), readyTask("b"))
 	for _, id := range []string{"a", "b"} {
 		revisionReport(t, e, id, Assign, Observation{Status: OutcomeSucceeded, Head: "head-" + id, EffectsSettled: true})
@@ -413,6 +420,7 @@ func TestTaskSignalInvalidatesProofsWhileWaitingForMergeSlot(t *testing.T) {
 }
 
 func TestInspectionCannotReplaceReceiptedHead(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "receipted-A", EffectsSettled: true})
 	revisionReport(t, e, "a", InspectPR, revisionPR("unreceipted-B"))

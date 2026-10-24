@@ -106,6 +106,8 @@ func ClientCombinationsFor(target string) []Combination {
 			{Name: "worker_lanes", Version: "1.0"},
 			{Name: "web", Version: "1.0"},
 			{Name: "a2a", Version: "1.0"},
+			{Name: "teams", Version: "1.0"},
+			{Name: "local_model", Version: "1.0"},
 			{Name: "github_merge", Version: "1.0"},
 			{Name: "github", Version: "1.0"},
 			{Name: "agents", Version: "1.0"},
@@ -126,11 +128,14 @@ func ClientCombinationsFor(target string) []Combination {
 		Evidence: []string{
 			"go test ./e2e/m1 -run TestM3PlanDrafting",
 			"go test ./e2e/m1 -run TestM3OperationalSwitch",
+			"go test ./e2e/m1 -run TestM3WorkCommandsInstalledCore",
 			"go test ./e2e/m1 -run TestM2TUIRecordsInstalledCore",
 			"go test ./e2e/m1 -run TestM2ProgressWaitingInstalledCore",
 			"go test ./e2e/m1 -run TestM3WorkerLanes",
 			"go test ./e2e/m1 -run TestM1Web",
 			"go test ./e2e/m1 -run TestM3A2A",
+			"go test ./e2e/m1 -run TestM3TeamsGraphInstalledCore",
+			"go test ./e2e/m1 -run TestM3LocalModel",
 			"go test ./e2e/m1 -run TestM2GitHubMergeInstalledCore",
 			"go test ./e2e/m1 -run TestM2GitHubCIInstalledCore",
 			"go test ./kit/protocol/conformance",
@@ -150,8 +155,7 @@ func ClientCombinationsFor(target string) []Combination {
 	}}
 	modern := rows[0]
 	modern.ProtocolVersion = "1.1"
-	modern.Capabilities = append(append([]protocol.Capability{}, modern.Capabilities...), protocol.SurfaceResultsCapability(), protocol.Capability{Name: "mocks", Version: "1.0"})
-	modern.Evidence = append(append([]string{}, modern.Evidence...), "go test ./e2e/m1 -run TestGeneratedSurfaceInstalledCore", "go test ./e2e/m1 -run TestM3DrawnMocks")
+	modern.Capabilities = append(append([]protocol.Capability{}, modern.Capabilities...), protocol.SurfaceResultsCapability(), protocol.Capability{Name: "mocks", Version: "1.0"}, protocol.Capability{Name: "mini_apps", Version: "1.0"})
+	modern.Evidence = append(append([]string{}, modern.Evidence...), "go test ./e2e/m1 -run TestGeneratedSurfaceInstalledCore", "go test ./e2e/m1 -run TestM3DrawnMocks", "go test ./e2e/m4 -run TestMiniAppsThroughRunningCore")
 	return append(rows, modern)
-
 }

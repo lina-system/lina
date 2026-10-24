@@ -78,6 +78,7 @@ func memoryWrite(event, content string) memory.Write {
 }
 
 func TestForgetHidesMemoryAndLedgerFallbackAndBlocksExtraction(t *testing.T) {
+	t.Parallel()
 	db, s, flow, _, _ := memoryFixture(t)
 	r := seedMemory(t, db, flow, "source-1", "conversation-1", forgotten)
 	scope := memory.RecallScope{Agent: "agent-1", Person: "person-1"}
@@ -114,6 +115,7 @@ func TestForgetHidesMemoryAndLedgerFallbackAndBlocksExtraction(t *testing.T) {
 }
 
 func TestPermanentDeletionErasesEveryMemoryRevisionButKeepsProvenance(t *testing.T) {
+	t.Parallel()
 	db, s, flow, root, _ := memoryFixture(t)
 	r := seedMemory(t, db, flow, "source-1", "conversation-1", forgotten)
 	seedMemory(t, db, flow, "source-2", "conversation-2", forgotten) // same item, next evidence revision
@@ -161,6 +163,7 @@ func TestPermanentDeletionErasesEveryMemoryRevisionButKeepsProvenance(t *testing
 }
 
 func TestRecoverOneItemKeepsOtherExtractionExclusions(t *testing.T) {
+	t.Parallel()
 	db, s, flow, _, _ := memoryFixture(t)
 	first := seedMemory(t, db, flow, "source-1", "conversation-1", forgotten)
 	second, err := flow.Remember(t.Context(), memoryWrite("source-1", "synthetic amber preference"))
@@ -183,6 +186,7 @@ func TestRecoverOneItemKeepsOtherExtractionExclusions(t *testing.T) {
 }
 
 func TestProtectedEvidenceCannotLeaveThroughAnotherHolder(t *testing.T) {
+	t.Parallel()
 	db, _, flow, _, _ := memoryFixture(t)
 	seedMemory(t, db, flow, "source-1", "conversation-1", forgotten)
 	protected := memoryWrite("source-1", "synthetic private restriction")
@@ -204,6 +208,7 @@ func TestProtectedEvidenceCannotLeaveThroughAnotherHolder(t *testing.T) {
 }
 
 func TestMemoryForgetPreservesAuthorizedConversationDisplay(t *testing.T) {
+	t.Parallel()
 	db, s, flow, _, _ := memoryFixture(t)
 	receipt := seedMemory(t, db, flow, "source-1", "conversation-1", forgotten)
 	if err := s.Forget(t.Context(), retract.Request{Person: "person-1", Targets: []retract.Ref{{Kind: retract.Memory, ID: receipt.ID}}}); err != nil {
@@ -245,6 +250,7 @@ func deriveMemory(t *testing.T, db *canon.Store, parent, text string) (memory.It
 }
 
 func TestForgetExcludesTransitiveDerivedMemory(t *testing.T) {
+	t.Parallel()
 	db, s, flow, root, close := memoryFixture(t)
 	source := seedMemory(t, db, flow, "source-1", "conversation-1", forgotten)
 	first, err := deriveMemory(t, db, source.ID, forgotten+" direct")

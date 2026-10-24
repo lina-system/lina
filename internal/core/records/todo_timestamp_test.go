@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 )
 
+// todoDateFields is a read-only table. Parallel tests share it and must not write it.
 var todoDateFields = map[string]func(string) Todo{
 	"when":        func(v string) Todo { return Todo{When: v} },
 	"deadline":    func(v string) Todo { return Todo{Deadline: v, DeadlineSource: "mail:1"} },
@@ -23,6 +24,7 @@ var todoDateFields = map[string]func(string) Todo{
 }
 
 func TestTodoTimestampSQLiteRange(t *testing.T) {
+	t.Parallel()
 	_, _, db := setup(t)
 	for _, value := range []string{
 		"0001-01-01T00:00:00+14:59",
@@ -50,6 +52,7 @@ func TestTodoTimestampSQLiteRange(t *testing.T) {
 }
 
 func TestTodoNonCanonicalTimestamps(t *testing.T) {
+	t.Parallel()
 	for field, todo := range todoDateFields {
 		t.Run(field, func(t *testing.T) {
 			for _, value := range []string{
@@ -72,6 +75,7 @@ func TestTodoNonCanonicalTimestamps(t *testing.T) {
 }
 
 func TestTodoNonCanonicalTimestampDoesNotPublish(t *testing.T) {
+	t.Parallel()
 	for field, todo := range todoDateFields {
 		t.Run(field, func(t *testing.T) {
 			s, _, db := setup(t)
@@ -112,6 +116,7 @@ func TestTodoNonCanonicalTimestampDoesNotPublish(t *testing.T) {
 }
 
 func TestTodoValidTimestampsRemainQueryable(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	want := map[string]Todo{}
 	for field, todo := range todoDateFields {

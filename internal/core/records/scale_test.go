@@ -13,6 +13,7 @@ import (
 )
 
 func TestRecordsThousands(t *testing.T) {
+	t.Parallel()
 	const count = 3000
 	s, root, db := setup(t)
 	// Seed a known published generation without timing thousands of fsynced

@@ -39,12 +39,12 @@ func managementFixture(t *testing.T) (*conversationRuntime, clientsrv.Session, s
 	if err = controls.Acquire(); err != nil {
 		t.Fatal(err)
 	}
-	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: controls, Migrations: ApplicationMigrations()})
+	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: controls, Migrations: ApplicationMigrations(), NoSync: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close(context.Background()) })
-	store, err := agents.Open(root, db)
+	store, err := agents.Open(root, db, agents.NoSync())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestChosenAgentResumesAfterStoreReopen(t *testing.T) {
 	if _, err := r.Agent(t.Context(), session, protocol.AgentRequest{Operation: textptr("choose"), AgentID: &chosen}); err != nil {
 		t.Fatal(err)
 	}
-	store, err := agents.Open(r.root, r.db)
+	store, err := agents.Open(r.root, r.db, agents.NoSync())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -30,13 +30,14 @@ func (r *conversationRuntime) beginConformance(ctx context.Context, a codingAssi
 	if card.Active || card.Receipt == nil || card.Run == nil || card.Head != d.PR.Head || card.CompletionHead != d.PR.Head || card.Task.AgentID != a.Owner || card.Task.PersonID != a.Origin.Person {
 		return review.Record{}, work.ErrState
 	}
-	rr := review.Record{Key: review.Key{Repository: repo, Number: d.PR.Number, Head: d.PR.Head}, Task: a.ID, Receipt: card.Receipt.EventID, Generation: card.Run.Generation, State: "checking"}
+	rr := review.Record{Key: review.Key{Repository: repo, Number: d.PR.Number, Head: d.PR.Head}, Task: a.ID, Receipt: card.Receipt.EventID, ReturnOf: d.ReturnReceipt, Generation: card.Run.Generation, State: "checking"}
 	if err = review.New(r.db).Claim(ctx, rr); err != nil {
 		return rr, err
 	}
 	// Resolve readiness and evidence blocks before selecting a scope verdict:
 	// an unavailable-evidence receipt cannot accept a judgment.
-	result := review.Assess(d.PR.Verify(repo, d.TaskDefinition().Branch, d.Definition.Base, d.PR.Head), nil, nil)
+	blocked, failures := d.PR.Readiness(repo, d.TaskDefinition().Branch, d.Definition.Base, d.PR.Head)
+	result := review.Assess(review.Precondition{Blocked: blocked, Failures: failures}, nil, nil)
 	if result.State == "" && d.Code == "pr_unverified" {
 		result = review.Record{State: "blocked", Cause: "merge_precondition", Evidence: "The delivered head does not satisfy GitHub merge prerequisites."}
 	}
@@ -44,10 +45,10 @@ func (r *conversationRuntime) beginConformance(ctx context.Context, a codingAssi
 		result = review.Record{State: "blocked", Cause: "change_evidence_unavailable", Evidence: "The delivered diff and base design are unavailable."}
 	}
 	if result.State == "" {
-		result = review.Assess(nil, d.ChangedFiles, d.Definition.WriteArea)
+		result = review.Assess(review.Precondition{}, d.ChangedFiles, d.Definition.WriteArea)
 	}
 	if result.State != "" {
-		rr.State, rr.Cause, rr.Verdict, rr.Evidence = result.State, result.Cause, result.Verdict, result.Evidence
+		rr.State, rr.Cause, rr.Verdict, rr.Evidence, rr.Findings = result.State, result.Cause, result.Verdict, result.Evidence, result.Findings
 		err = r.finishConformance(ctx, a, rr)
 	}
 	return rr, err

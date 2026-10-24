@@ -2,6 +2,7 @@
 package goal
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -17,6 +18,7 @@ func oneGoal(tasks ...Task) Goal {
 }
 
 func TestDeriveFillsLoadSizedSlotsAndReleasesDependenciesAtMerge(t *testing.T) {
+	t.Parallel()
 	a, b, c := readyTask("a"), readyTask("b"), readyTask("c")
 	c.DependsOn = []string{"a"}
 	n := readyNode("n")
@@ -49,6 +51,7 @@ func TestDeriveFillsLoadSizedSlotsAndReleasesDependenciesAtMerge(t *testing.T) {
 }
 
 func TestDeriveNeverMergesWithoutExactHeadProof(t *testing.T) {
+	t.Parallel()
 	task := readyTask("a")
 	task.Stage = TaskDelivered
 	task.Head = "head"
@@ -84,6 +87,7 @@ func TestDeriveNeverMergesWithoutExactHeadProof(t *testing.T) {
 }
 
 func TestDeriveRequiresQADeployAndVerificationBeforeClose(t *testing.T) {
+	t.Parallel()
 	task := readyTask("a")
 	task.Stage = TaskDone
 	task.Merge = Proof{Revision: "merged", Ref: "merge", Passed: true}
@@ -128,6 +132,7 @@ func TestDeriveRequiresQADeployAndVerificationBeforeClose(t *testing.T) {
 }
 
 func TestCapacityCountsReservationsWithoutDoubleCountingObservedWork(t *testing.T) {
+	t.Parallel()
 	n := readyNode("n")
 	n.LoadCPU = 2
 	n.ObservedActions = []string{"running"}
@@ -147,6 +152,7 @@ func TestCapacityCountsReservationsWithoutDoubleCountingObservedWork(t *testing.
 }
 
 func TestDeriveDoesNotResumeAnUnreconciledDeadWorker(t *testing.T) {
+	t.Parallel()
 	task := readyTask("a")
 	task.Stage = TaskWorkerLost
 	task.Attempt = 1
@@ -160,6 +166,7 @@ func TestDeriveDoesNotResumeAnUnreconciledDeadWorker(t *testing.T) {
 }
 
 func TestDeriveSerializesMergesIntoTheSameBase(t *testing.T) {
+	t.Parallel()
 	a, b := readyTask("a"), readyTask("b")
 	for _, task := range []*Task{&a, &b} {
 		task.Stage = TaskDelivered
@@ -176,6 +183,7 @@ func TestDeriveSerializesMergesIntoTheSameBase(t *testing.T) {
 }
 
 func TestDeriveRejectsCyclesAndMissingDoneConditions(t *testing.T) {
+	t.Parallel()
 	a, b := readyTask("a"), readyTask("b")
 	a.DependsOn = []string{"b"}
 	b.DependsOn = []string{"a"}
@@ -187,6 +195,7 @@ func TestDeriveRejectsCyclesAndMissingDoneConditions(t *testing.T) {
 }
 
 func TestCapacityUsesDiskAndGoalDeadlineBeforeAge(t *testing.T) {
+	t.Parallel()
 	older := oneGoal(readyTask("old"))
 	older.ID = "a-older"
 	older.CreatedAt = 1
@@ -215,6 +224,7 @@ func TestCapacityUsesDiskAndGoalDeadlineBeforeAge(t *testing.T) {
 }
 
 func TestCapacityPrefersDependencyDepthAcrossGoalsAndPersonalNodesLast(t *testing.T) {
+	t.Parallel()
 	root := readyTask("root")
 	root.Stage = TaskDone
 	root.Merge = Proof{Revision: "r", Ref: "m", Passed: true}
@@ -238,5 +248,56 @@ func TestCapacityPrefersDependencyDepthAcrossGoalsAndPersonalNodesLast(t *testin
 	}
 	if len(p.Actions) != 2 || p.Actions[0].TaskID != "shallow" || p.Actions[0].NodeID != "worker" || p.Actions[1].TaskID != "deep" {
 		t.Fatalf("wrong ordering/headroom preference: %+v", p.Actions)
+	}
+}
+
+// A goal with a step in progress is not waiting for a run slot, even when
+// another of its ready steps fits no host. Places count only goals that hold
+// no slot once the whole pass is placed.
+func TestDeriveQueuesOnlyGoalsWithoutRunSlot(t *testing.T) {
+	t.Parallel()
+	huge := func(id string) Task {
+		task := readyTask(id)
+		task.Resources.CPU = 16
+		return task
+	}
+	running := readyTask("a")
+	running.Stage = TaskBuilding
+	running.NodeID = "n"
+	award := Action{ID: "award-a", GoalID: "first", TaskID: "a", Kind: Assign, NodeID: "n", Resources: running.Resources, State: "running", Epoch: 1}
+	for name, c := range map[string]struct {
+		tasks   []Task
+		actions []Action
+		held    string
+	}{
+		"held step before the started one": {tasks: []Task{huge("a"), readyTask("b")}, held: "a"},
+		"held step after the started one":  {tasks: []Task{readyTask("a"), huge("b")}, held: "b"},
+		"step in progress before the pass": {tasks: []Task{running, huge("b")}, actions: []Action{award}, held: "b"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tasks, actions := c.tasks, c.actions
+			first := oneGoal(tasks...)
+			first.ID, first.Rank, first.State = "first", 1, GoalRunning
+			held := readyTask("c")
+			held.Resources.CPU = 8
+			second := oneGoal(held)
+			second.ID, second.Rank, second.State = "second", 2, GoalRunning
+			plan, err := Derive(State{Goals: []Goal{first, second}, Nodes: []Node{readyNode("n")}, Actions: actions}, time.Unix(100, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []QueuePlace{{GoalID: "second", Reason: ReasonLoad, Place: 1}}
+			if !reflect.DeepEqual(plan.Queues, want) {
+				t.Fatalf("queues = %+v, want %+v", plan.Queues, want)
+			}
+			waiting := false
+			for _, w := range plan.Waits {
+				waiting = waiting || w.GoalID == "first" && w.TaskID == c.held && w.Reason == "host_capacity"
+			}
+			if !waiting {
+				t.Fatalf("the step no host can take has no capacity wait: %+v", plan.Waits)
+			}
+		})
 	}
 }
