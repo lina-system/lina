@@ -254,12 +254,15 @@ async function advanceState(previous, observation, { plan, before, identity, req
       state.recoveryHeads.splice(index, 0, plan.head);
       state.recoveryHeads = state.recoveryHeads.slice(-requiredPasses);
     }
-    // Commit order, not arrival order: a late pass can sit between two failures.
-    for (let index = 0; index < state.failureMarks.length - 1 && !state.flaky; index++) {
-      const earlier = state.failureMarks[index];
-      const later = state.failureMarks[index + 1];
-      if (plan.head === later.head || !withinFlakyWindow([earlier.at, later.at, plan.started])) continue;
-      if (await isAncestor(earlier.head, plan.head) && await isAncestor(plan.head, later.head)) state.flaky = true;
+    // Commit order, not arrival order. A late pass can sit between two failures
+    // that are not neighbors: an isolated mark between them must not hide the pair.
+    for (let earlierIndex = 0; earlierIndex < state.failureMarks.length - 1 && !state.flaky; earlierIndex++) {
+      for (let laterIndex = earlierIndex + 1; laterIndex < state.failureMarks.length && !state.flaky; laterIndex++) {
+        const earlier = state.failureMarks[earlierIndex];
+        const later = state.failureMarks[laterIndex];
+        if (plan.head === later.head || !withinFlakyWindow([earlier.at, later.at, plan.started])) continue;
+        if (await isAncestor(earlier.head, plan.head) && await isAncestor(plan.head, later.head)) state.flaky = true;
+      }
     }
   } else {
     if (observation.result === 'fail' && Number.isFinite(plan.started)) {

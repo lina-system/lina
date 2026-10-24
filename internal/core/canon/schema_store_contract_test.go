@@ -6,6 +6,30 @@ import (
 	"testing"
 )
 
+func TestStoreContractUpgradesPublishedIdentitySchema(t *testing.T) {
+	cfg := storeConfig(t)
+	cfg.Migrations = migrationsBefore(t, storeContractSchema)
+	db := openStore(t, cfg)
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	cfg.Epoch++
+	db = openStore(t, cfg)
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		var kind string
+		if err := tx.QueryRowContext(t.Context(), "SELECT type FROM sqlite_schema WHERE name='sum_cover'").Scan(&kind); err != nil {
+			return err
+		}
+		if kind != "view" {
+			t.Errorf("summary coverage is %s after upgrade, want view", kind)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStoreContractRemovesLegacyIndexes(t *testing.T) {
 	t.Parallel()
 	cfg := storeConfig(t)

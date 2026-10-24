@@ -90,7 +90,9 @@ func Migrations() []Migration {
 		{Version: 75, SQL: DiscordSessionsSchema},
 		{Version: 76, SQL: MessengerPendingSchema},
 		{Version: 77, SQL: recallSearchSchema},
-		{Version: 78, SQL: storeContractSchema},
+		{Version: 78, SQL: IdentitySchema},
+		{Version: 79, SQL: IdentityRepairSchema},
+		{Version: 80, SQL: storeContractSchema},
 	}
 }
 
@@ -146,6 +148,12 @@ var publishedMigrationTables = []struct {
 	{72, "messenger_attachment"},
 	{75, "discord_sessions"},
 	{76, "messenger_relation_pending"}, {76, "messenger_deletion_pending"},
+	{78, "identity_sender"}, {78, "identity_identifier"}, {78, "identity_name"},
+	{78, "identity_link"}, {78, "identity_link_signal"}, {78, "identity_link_change"},
+	{78, "identity_question"}, {78, "identity_question_candidate"}, {78, "identity_artifact"}, {78, "identity_merge"},
+	{78, "identity_merge_link"}, {78, "identity_merge_alias"}, {78, "identity_merge_artifact"},
+	{78, "identity_requeue"},
+	{79, "identity_repair"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is
@@ -169,7 +177,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 	for _, entry := range publishedMigrationTables {
 		var count int
 		kind := "table"
-		if version >= 78 && (entry.table == "sum_edge" || entry.table == "sum_cover") {
+		if version >= 80 && (entry.table == "sum_edge" || entry.table == "sum_cover") {
 			kind = "view"
 		}
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type=? AND name=?", kind, entry.table).Scan(&count); err != nil {
