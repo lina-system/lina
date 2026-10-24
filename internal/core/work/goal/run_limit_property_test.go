@@ -94,6 +94,7 @@ func runLimitPasses(t *testing.T, seed uint64) {
 		free := freeSteps(nodes, actions, now)
 		wantStarted := map[string]bool{}
 		wantQueued := map[string]int{}
+		wantHeld := map[string]int{}
 		place := 0
 		for _, g := range rankOrderedGoals(goals) {
 			if running[g.ID] || !hasReadyTask(g) {
@@ -105,6 +106,10 @@ func runLimitPasses(t *testing.T, seed uint64) {
 				continue
 			}
 			if free <= 0 {
+				// No report can carry it either. It waits on that report, not on
+				// the limit, and still holds its place in rank order.
+				place++
+				wantHeld[g.ID] = place
 				continue
 			}
 			free--
@@ -127,8 +132,8 @@ func runLimitPasses(t *testing.T, seed uint64) {
 		}
 		// Every queued goal has its place in rank order and its one reason, and
 		// waits for that reason.
-		if len(plan.Queues) != len(wantQueued) {
-			t.Fatalf("pass %d: queues = %+v, want %v", pass, plan.Queues, wantQueued)
+		if len(plan.Queues) != len(wantQueued)+len(wantHeld) {
+			t.Fatalf("pass %d: queues = %+v, want %v and held %v", pass, plan.Queues, wantQueued, wantHeld)
 		}
 		limited := map[string]bool{}
 		for _, w := range plan.Waits {
@@ -137,14 +142,26 @@ func runLimitPasses(t *testing.T, seed uint64) {
 			}
 		}
 		for _, q := range plan.Queues {
-			if q.Place == 0 || wantQueued[q.GoalID] != q.Place {
-				t.Fatalf("pass %d: queue = %+v, want %v", pass, plan.Queues, wantQueued)
+			if q.Place <= 0 {
+				t.Fatalf("pass %d: queue = %+v", pass, q)
 			}
-			if q.Reason != wantReason {
-				t.Fatalf("pass %d: queue reason = %q, want %q", pass, q.Reason, wantReason)
+			if want, ok := wantQueued[q.GoalID]; ok {
+				if q.Place != want || q.Reason != wantReason || !limited[q.GoalID] {
+					t.Fatalf("pass %d: limit queue = %+v, want place %d reason %q with a run limit wait", pass, q, want, wantReason)
+				}
+				continue
 			}
-			if !limited[q.GoalID] {
-				t.Fatalf("pass %d: queued %s has no run limit wait: %+v", pass, q.GoalID, plan.Waits)
+			held, ok := wantHeld[q.GoalID]
+			if !ok || q.Place != held {
+				t.Fatalf("pass %d: queue = %+v, want %v held %v", pass, plan.Queues, wantQueued, wantHeld)
+			}
+			// Held back by a report: the reason names the report, and the goal
+			// waits for that report rather than for the limit.
+			if q.Reason != ReasonLoad && q.Reason != ReasonQuota {
+				t.Fatalf("pass %d: held queue reason = %q", pass, q.Reason)
+			}
+			if limited[q.GoalID] {
+				t.Fatalf("pass %d: held %s waits on the run limit: %+v", pass, q.GoalID, plan.Waits)
 			}
 		}
 		// Apply the pass, then land some of the steps in progress.
