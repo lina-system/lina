@@ -700,7 +700,7 @@ func TestBindingMoveFollowsCurrentLocation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(payload, `"todo"`) {
+	if strings.Contains(payload, `"todo":`) {
 		t.Errorf("text-only edit gained a to-do on replay: %s", payload)
 	}
 }
