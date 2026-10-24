@@ -5,6 +5,7 @@
 // a record: Core then fails that source's batch and keeps its cursor.
 import { Refusal, type Author, type Chat, type Message, type Page, type Route } from './protocol.ts';
 
+
 const ROUTES: Record<Route, true> = { person: true, automation: true, system: true, external_participant: true };
 
 const text = (value: unknown): value is string => typeof value === 'string';
@@ -48,6 +49,14 @@ export function message(value: unknown): Message {
     text: source.text,
   };
   if (source.edited !== undefined && source.edited !== '') result.edited = time(source.edited);
+  if (source.decryptionFailed !== undefined) {
+    if (typeof source.decryptionFailed !== 'boolean') throw changed('message');
+    if (source.decryptionFailed) {
+      // A failed decryption has no text; it never becomes an empty message.
+      if (result.text !== '') throw changed('message');
+      result.decryptionFailed = true;
+    }
+  }
   if (source.replyTo !== undefined) {
     if (!text(source.replyTo)) throw changed('message');
     result.replyTo = source.replyTo;
@@ -81,11 +90,21 @@ export function page(value: unknown): Page {
     if (!id(deletion.message)) throw changed('page');
     return { message: deletion.message as string, at: time(deletion.at) };
   });
-  return {
+  const page: Page = {
     messages: source.messages.map(message),
     deletions,
     next: source.next,
     hasMore: source.hasMore,
     through: source.through === undefined ? undefined : time(source.through),
   };
+  if (source.coverage !== undefined) {
+    const coverage = source.coverage;
+    if (!coverage || typeof coverage !== 'object' || Array.isArray(coverage)) throw changed('coverage');
+    const entry = coverage as Record<string, unknown>;
+    if (typeof entry.historyDepth !== 'string' || typeof entry.cursorSurvivesRestart !== 'boolean') {
+      throw changed('coverage');
+    }
+    page.coverage = { historyDepth: entry.historyDepth, cursorSurvivesRestart: entry.cursorSurvivesRestart };
+  }
+  return page;
 }

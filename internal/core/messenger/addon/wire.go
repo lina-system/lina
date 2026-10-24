@@ -75,15 +75,16 @@ type wireAttachment struct {
 }
 
 type wireMessage struct {
-	ID          string           `json:"id"`
-	Author      wireAuthor       `json:"author"`
-	Route       string           `json:"route"`
-	At          string           `json:"at"`
-	Edited      string           `json:"edited"`
-	Text        string           `json:"text"`
-	ReplyTo     string           `json:"replyTo"`
-	Thread      string           `json:"thread"`
-	Attachments []wireAttachment `json:"attachments"`
+	ID               string           `json:"id"`
+	Author           wireAuthor       `json:"author"`
+	Route            string           `json:"route"`
+	At               string           `json:"at"`
+	Edited           string           `json:"edited"`
+	Text             string           `json:"text"`
+	DecryptionFailed bool             `json:"decryptionFailed"`
+	ReplyTo          string           `json:"replyTo"`
+	Thread           string           `json:"thread"`
+	Attachments      []wireAttachment `json:"attachments"`
 }
 
 func (m wireMessage) message() (messenger.Message, error) {
@@ -97,6 +98,9 @@ func (m wireMessage) message() (messenger.Message, error) {
 	route := messenger.Route(m.Route)
 	if !route.Valid() {
 		return messenger.Message{}, fmt.Errorf("%w: route %q", ErrUpstreamChanged, m.Route)
+	}
+	if m.DecryptionFailed && m.Text != "" {
+		return messenger.Message{}, fmt.Errorf("%w: decryption flag with text", ErrUpstreamChanged)
 	}
 	at, err := wireTime(m.At)
 	if err != nil {
@@ -115,7 +119,7 @@ func (m wireMessage) message() (messenger.Message, error) {
 	}
 	return messenger.Message{
 		ID: m.ID, Author: author, Route: route, At: at, Edited: edited,
-		Text: m.Text, ReplyTo: m.ReplyTo, Thread: m.Thread, Attachments: attachments,
+		Text: m.Text, DecryptionFailed: m.DecryptionFailed, ReplyTo: m.ReplyTo, Thread: m.Thread, Attachments: attachments,
 	}, nil
 }
 
@@ -164,6 +168,14 @@ type wirePage struct {
 	Next      string         `json:"next"`
 	HasMore   bool           `json:"hasMore"`
 	Through   string         `json:"through"`
+	Coverage  *wireCoverage  `json:"coverage"`
+}
+
+// wireCoverage is what a read covers when the platform serves no position that
+// outlives the process or a bounded range.
+type wireCoverage struct {
+	HistoryDepth          string `json:"historyDepth"`
+	CursorSurvivesRestart bool   `json:"cursorSurvivesRestart"`
 }
 
 func (p wirePage) page() (messenger.Page, error) {
@@ -190,6 +202,9 @@ func (p wirePage) page() (messenger.Page, error) {
 		return messenger.Page{}, err
 	}
 	page.Through = through
+	if p.Coverage != nil {
+		page.Coverage = &messenger.ReadCoverage{HistoryDepth: p.Coverage.HistoryDepth, CursorSurvivesRestart: p.Coverage.CursorSurvivesRestart}
+	}
 	return page, nil
 }
 

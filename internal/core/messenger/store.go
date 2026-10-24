@@ -493,7 +493,7 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 	}
 	ids := make([]string, 0, len(page.Messages))
 	for _, message := range page.Messages {
-		if !validName(message.ID) || !message.Route.Valid() {
+		if !validName(message.ID) || !message.Route.Valid() || (message.DecryptionFailed && message.Text != "") {
 			return PageResult{}, ErrInvalid
 		}
 		for _, attachment := range message.Attachments {
@@ -797,11 +797,11 @@ ON CONFLICT(platform,account,author) DO UPDATE SET name=excluded.name,email=excl
 	if !message.Edited.IsZero() {
 		edited = message.Edited.UTC().Format(time.RFC3339Nano)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_record(platform,account,chat,message,revision,event,author,author_name,occurred_at,edited_at)
-VALUES(?,?,?,?,?,?,?,?,?,?)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_record(platform,account,chat,message,revision,event,author,author_name,occurred_at,edited_at,decryption_failed)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(platform,account,chat,message) DO UPDATE SET revision=excluded.revision,event=excluded.event,
- author=excluded.author,author_name=excluded.author_name,edited_at=excluded.edited_at`,
-		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID, message.Author.ID, message.Author.Name, occurred, edited); err != nil {
+ author=excluded.author,author_name=excluded.author_name,edited_at=excluded.edited_at,decryption_failed=excluded.decryption_failed`,
+		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID, message.Author.ID, message.Author.Name, occurred, edited, boolInt(message.DecryptionFailed)); err != nil {
 		return err
 	}
 	// The platform's attachment metadata commits with the record, so the
@@ -845,10 +845,18 @@ func (s *Store) writeProgress(ctx context.Context, tx *canon.Tx, source Source, 
 	if through.IsZero() {
 		through = s.now()
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_coverage(platform,account,chat,read_from,read_through,read_at,messages)
-VALUES(?,?,?,?,?,?,?)
-ON CONFLICT(platform,account,chat,read_from,read_through) DO UPDATE SET read_at=excluded.read_at,messages=excluded.messages`,
-		source.Platform, source.Account, chat, string(from), through.UTC().Format(time.RFC3339Nano), readAt, messages)
+	// A page whose adapter states no coverage keeps the default: an opaque
+	// cursor that survives a restart and history as deep as the platform serves.
+	depth, durable := "", 1
+	if page.Coverage != nil {
+		depth = page.Coverage.HistoryDepth
+		durable = boolInt(page.Coverage.CursorSurvivesRestart)
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_coverage(platform,account,chat,read_from,read_through,read_at,messages,history_depth,cursor_survives_restart)
+VALUES(?,?,?,?,?,?,?,?,?)
+ON CONFLICT(platform,account,chat,read_from,read_through) DO UPDATE SET read_at=excluded.read_at,messages=excluded.messages,
+ history_depth=excluded.history_depth,cursor_survives_restart=excluded.cursor_survives_restart`,
+		source.Platform, source.Account, chat, string(from), through.UTC().Format(time.RFC3339Nano), readAt, messages, depth, durable)
 	return err
 }
 
