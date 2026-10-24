@@ -53,6 +53,25 @@ func NewClient(token secret.Secret, tr http.RoundTripper) (*Client, error) {
 // Close releases idle connections.
 func (c *Client) Close() { c.http.CloseIdleConnections() }
 
+// VerifyBot checks the credential and account against Discord's own identity.
+// A refused credential returns false; a different account is forbidden.
+func (c *Client) VerifyBot(ctx context.Context, account string) (bool, error) {
+	var me struct {
+		ID  string `json:"id"`
+		Bot bool   `json:"bot"`
+	}
+	if err := c.Get(ctx, "/users/@me", nil, &me); err != nil {
+		if errors.Is(err, ErrUnauthorized) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !me.Bot || me.ID != account {
+		return false, ErrForbidden
+	}
+	return true, nil
+}
+
 // Get reads one absolute API path with its query and decodes the JSON body.
 // Redirects are refused, so the credential cannot leave Discord.
 func (c *Client) Get(ctx context.Context, path string, query url.Values, out any) error {

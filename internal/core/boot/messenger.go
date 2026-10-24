@@ -3,10 +3,13 @@ package boot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/channels"
+	gatewaydiscord "github.com/thisisjun786/lina/internal/core/gateway/discord"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 	messengerdiscord "github.com/thisisjun786/lina/internal/core/messenger/discord"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -66,7 +69,31 @@ func (r *conversationRuntime) messengerAdapter(cfg *MessengerConfig) func(messen
 		if err != nil {
 			return nil, messenger.ErrNotConnected
 		}
-		return messengerdiscord.New(messengerdiscord.Config{Source: source, Token: token, DB: r.db, Transport: cfg.Transport})
+		client, err := gatewaydiscord.NewClient(token, cfg.Transport)
+		if err != nil {
+			return nil, err
+		}
+		adapter, err := messengerdiscord.New(messengerdiscord.Config{
+			Source: source, DB: r.db, Client: client,
+			Listen: func(ctx context.Context, handle func(context.Context, string, json.RawMessage) error) error {
+				err := gatewaydiscord.Listen(ctx, gatewaydiscord.Listener{
+					Bot:   channels.Bot{Platform: source.Platform, Account: source.Account},
+					Token: token, DB: r.db, Transport: cfg.Transport,
+					Intents: gatewaydiscord.IntentMessageContent,
+					Handle: func(ctx context.Context, kind string, data json.RawMessage, _ string) error {
+						return handle(ctx, kind, data)
+					},
+				})
+				if errors.Is(err, gatewaydiscord.ErrIntentsDenied) {
+					return messenger.ErrTextUnavailable
+				}
+				return err
+			},
+		})
+		if err != nil {
+			client.Close()
+		}
+		return adapter, err
 	}
 }
 

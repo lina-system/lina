@@ -4,10 +4,8 @@ package discord
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
-	gatewaydiscord "github.com/thisisjun786/lina/internal/core/gateway/discord"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 )
 
@@ -18,20 +16,9 @@ func (a *Adapter) Live(ctx context.Context, deliver func(messenger.Event) error)
 	if err := a.ensureChats(ctx); err != nil {
 		return err
 	}
-	err := gatewaydiscord.Listen(ctx, gatewaydiscord.Listener{
-		Bot:       a.bot,
-		Token:     a.token,
-		DB:        a.db,
-		Intents:   gatewaydiscord.IntentMessageContent,
-		Transport: a.transport,
-		Handle: func(ctx context.Context, kind string, data json.RawMessage, _ string) error {
-			return a.live(ctx, kind, data, deliver)
-		},
+	return a.listen(ctx, func(ctx context.Context, kind string, data json.RawMessage) error {
+		return a.live(ctx, kind, data, deliver)
 	})
-	if errors.Is(err, gatewaydiscord.ErrIntentsDenied) {
-		return messenger.ErrTextUnavailable
-	}
-	return err
 }
 
 func (a *Adapter) listed() []string {

@@ -13,38 +13,46 @@ package discord
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
-	"net/http"
+	"net/url"
 	"regexp"
 	"sync"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
-	gatewaydiscord "github.com/thisisjun786/lina/internal/core/gateway/discord"
 	"github.com/thisisjun786/lina/internal/core/messenger"
-	"github.com/thisisjun786/lina/kit/secret"
 )
+
+// Client is the read-only Discord REST port supplied by the composition root.
+type Client interface {
+	Get(context.Context, string, url.Values, any) error
+	VerifyBot(context.Context, string) (bool, error)
+	Close()
+}
+
+// Listen joins the shared Gateway and reports unavailable text as
+// messenger.ErrTextUnavailable.
+type Listen func(context.Context, func(context.Context, string, json.RawMessage) error) error
 
 // Config binds one bot-mode Discord source.
 type Config struct {
 	Source messenger.Source
-	Token  secret.Secret
-	// DB supplies the shared Gateway session and the pairing that confirms the
-	// person's own numeric user id.
-	DB        channels.Canon
-	Transport http.RoundTripper
+	// DB supplies the pairing that confirms the person's own numeric user id.
+	DB     channels.Canon
+	Client Client
+	Listen Listen
 }
 
 // Adapter reads one Discord bot's servers as a messenger source.
 type Adapter struct {
-	source    messenger.Source
-	bot       channels.Bot
-	token     secret.Secret
-	db        channels.Canon
-	client    *gatewaydiscord.Client
-	transport http.RoundTripper
+	source messenger.Source
+	bot    channels.Bot
+	db     channels.Canon
+	client Client
+	listen Listen
 
 	mu     sync.Mutex
 	chats  map[string]chatInfo
@@ -58,21 +66,16 @@ var snowflake = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
 // New composes the source adapter. Nothing here contacts Discord.
 func New(c Config) (*Adapter, error) {
-	if c.Source.Platform != "discord" || !snowflake.MatchString(c.Source.Account) || c.Source.Mode != messenger.ModeOfficial || c.DB == nil {
+	if c.Source.Platform != "discord" || !snowflake.MatchString(c.Source.Account) || c.Source.Mode != messenger.ModeOfficial || c.DB == nil || c.Client == nil || c.Listen == nil {
 		return nil, messenger.ErrInvalid
 	}
-	client, err := gatewaydiscord.NewClient(c.Token, c.Transport)
-	if err != nil {
-		return nil, err
-	}
 	return &Adapter{
-		source:    c.Source,
-		bot:       channels.Bot{Platform: "discord", Account: c.Source.Account},
-		token:     c.Token,
-		db:        c.DB,
-		client:    client,
-		transport: c.Transport,
-		chats:     map[string]chatInfo{},
+		source: c.Source,
+		bot:    channels.Bot{Platform: "discord", Account: c.Source.Account},
+		db:     c.DB,
+		client: c.Client,
+		listen: c.Listen,
+		chats:  map[string]chatInfo{},
 	}, nil
 }
 
@@ -94,18 +97,12 @@ func (a *Adapter) Capabilities() messenger.Capabilities {
 // SignIn checks the token against Discord's own answer and the source's
 // account. A refused token needs the person.
 func (a *Adapter) SignIn(ctx context.Context) (messenger.SignInState, error) {
-	var me struct {
-		ID  string `json:"id"`
-		Bot bool   `json:"bot"`
-	}
-	if err := a.client.Get(ctx, "/users/@me", nil, &me); err != nil {
-		if errors.Is(err, gatewaydiscord.ErrUnauthorized) {
-			return messenger.NeedsSignIn, nil
-		}
+	valid, err := a.client.VerifyBot(ctx, a.source.Account)
+	if err != nil {
 		return messenger.Failing, err
 	}
-	if !me.Bot || me.ID != a.source.Account {
-		return messenger.Failing, gatewaydiscord.ErrForbidden
+	if !valid {
+		return messenger.NeedsSignIn, nil
 	}
 	return messenger.SignedIn, nil
 }

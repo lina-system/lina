@@ -23,6 +23,8 @@ read again for this increment.
   The source's durable cursor is its chat cursor in `messenger_chat`; live
   events are newer than the last page, and a later page read admits them again
   without adding anything.
+  Core's `boot` composition supplies the REST client and Gateway listener through
+  source-owned ports, keeping the messenger and gateway flow packages independent.
 - **Inferred for LINA:** a bot-mode source always needs message text, so its
   session requests the message-content intent. When Discord refuses it, the
   source reports that text is unavailable and admits nothing, rather than

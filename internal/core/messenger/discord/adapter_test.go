@@ -3,6 +3,7 @@ package discord_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -104,9 +105,28 @@ func fixtureDB(t *testing.T) *canon.Store {
 
 func mustAdapter(t *testing.T, db *canon.Store, tr http.RoundTripper) *messengerdiscord.Adapter {
 	t.Helper()
+	token := secret.New("synthetic.discord.token")
+	client, err := discord.NewClient(token, tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Close)
 	a, err := messengerdiscord.New(messengerdiscord.Config{
 		Source: messenger.Source{Person: "person", Platform: "discord", Account: "123456", Mode: messenger.ModeOfficial, Adapter: "discord", State: messenger.StateConnected},
-		Token:  secret.New("synthetic.discord.token"), DB: db, Transport: tr,
+		DB:     db, Client: client,
+		Listen: func(ctx context.Context, handle func(context.Context, string, json.RawMessage) error) error {
+			err := discord.Listen(ctx, discord.Listener{
+				Bot:   channels.Bot{Platform: "discord", Account: "123456"},
+				Token: token, DB: db, Transport: tr, Intents: discord.IntentMessageContent,
+				Handle: func(ctx context.Context, kind string, data json.RawMessage, _ string) error {
+					return handle(ctx, kind, data)
+				},
+			})
+			if errors.Is(err, discord.ErrIntentsDenied) {
+				return messenger.ErrTextUnavailable
+			}
+			return err
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
