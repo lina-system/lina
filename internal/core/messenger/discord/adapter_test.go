@@ -103,6 +103,18 @@ func fixtureDB(t *testing.T) *canon.Store {
 	return db
 }
 
+// goneClient mirrors the composition root's translation of a message the bot
+// can never read.
+type goneClient struct{ *discord.Client }
+
+func (c goneClient) Get(ctx context.Context, path string, query url.Values, out any) error {
+	err := c.Client.Get(ctx, path, query, out)
+	if errors.Is(err, discord.ErrNotFound) || errors.Is(err, discord.ErrForbidden) {
+		return messengerdiscord.ErrGone
+	}
+	return err
+}
+
 func mustAdapter(t *testing.T, db *canon.Store, tr http.RoundTripper) *messengerdiscord.Adapter {
 	t.Helper()
 	token := secret.New("synthetic.discord.token")
@@ -113,7 +125,7 @@ func mustAdapter(t *testing.T, db *canon.Store, tr http.RoundTripper) *messenger
 	t.Cleanup(client.Close)
 	a, err := messengerdiscord.New(messengerdiscord.Config{
 		Source: messenger.Source{Person: "person", Platform: "discord", Account: "123456", Mode: messenger.ModeOfficial, Adapter: "discord", State: messenger.StateConnected},
-		DB:     db, Client: client,
+		DB:     db, Client: goneClient{client},
 		Listen: func(ctx context.Context, handle func(context.Context, string, json.RawMessage) error) error {
 			err := discord.Listen(ctx, discord.Listener{
 				Bot:   channels.Bot{Platform: "discord", Account: "123456"},

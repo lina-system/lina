@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/channels"
-	gatewaydiscord "github.com/thisisjun786/lina/internal/core/gateway/discord"
 
 	"github.com/thisisjun786/lina/internal/core/messenger"
 )
@@ -137,12 +136,7 @@ func (a *Adapter) updated(ctx context.Context, data json.RawMessage, deliver fun
 // message reads one message through the REST port.
 func (a *Adapter) message(ctx context.Context, chat, id string) (message, error) {
 	var raw message
-	err := a.client.Get(ctx, "/channels/"+chat+"/messages/"+id, nil, &raw)
-	switch {
-	case errors.Is(err, gatewaydiscord.ErrNotFound), errors.Is(err, gatewaydiscord.ErrForbidden):
-		// The message is deleted or the bot can never read it.
-		return message{}, ErrGone
-	case err != nil:
+	if err := a.client.Get(ctx, "/channels/"+chat+"/messages/"+id, nil, &raw); err != nil {
 		return message{}, err
 	}
 	return raw, nil

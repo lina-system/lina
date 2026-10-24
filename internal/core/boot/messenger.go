@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/channels"
@@ -14,6 +15,19 @@ import (
 	messengerdiscord "github.com/thisisjun786/lina/internal/core/messenger/discord"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
+
+// goneClient tells the source adapter when a message can never be read. The
+// platform's not-found and forbidden answers are permanent; every other read
+// failure is transient and the live update is replayed.
+type goneClient struct{ *gatewaydiscord.Client }
+
+func (c goneClient) Get(ctx context.Context, path string, query url.Values, out any) error {
+	err := c.Client.Get(ctx, path, query, out)
+	if errors.Is(err, gatewaydiscord.ErrNotFound) || errors.Is(err, gatewaydiscord.ErrForbidden) {
+		return messengerdiscord.ErrGone
+	}
+	return err
+}
 
 // MessengerConfig supplies the adapters Core reads messenger sources with. The
 // source registry, admission and the sync loop are Core's; adapters are the
@@ -77,7 +91,7 @@ func (r *conversationRuntime) messengerAdapter(cfg *MessengerConfig) func(messen
 			return nil, err
 		}
 		adapter, err := messengerdiscord.New(messengerdiscord.Config{
-			Source: source, DB: r.db, Client: client,
+			Source: source, DB: r.db, Client: goneClient{client},
 			Listen: func(ctx context.Context, handle func(context.Context, string, json.RawMessage) error) error {
 				err := gatewaydiscord.Listen(ctx, gatewaydiscord.Listener{
 					Bot:   channels.Bot{Platform: source.Platform, Account: source.Account},

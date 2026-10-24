@@ -27,6 +27,7 @@ import (
 )
 
 // Client is the read-only Discord REST port supplied by the composition root.
+// A read of one message returns ErrGone when the message can never be read.
 type Client interface {
 	Get(context.Context, string, url.Values, any) error
 	VerifyBot(context.Context, string) (bool, error)
@@ -63,7 +64,9 @@ type Adapter struct {
 var ErrUnsupported = errors.New("discord_source_unsupported")
 
 // ErrGone reports a REST answer that will not change: the message is deleted or
-// the bot cannot read its channel. A transient failure is any other error.
+// the bot can never read its channel. The composition root translates the
+// platform's not-found and forbidden answers into this error; any other read
+// failure is transient.
 var ErrGone = errors.New("discord_message_gone")
 
 var snowflake = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
