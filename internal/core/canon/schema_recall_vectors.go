@@ -50,11 +50,17 @@ CREATE VIEW recall_imported_event AS
  OR EXISTS(SELECT 1 FROM messenger_record_revision mr JOIN messenger_legacy_ref l
  ON l.platform=mr.platform AND l.account=mr.account AND l.chat=mr.chat AND l.message=mr.message WHERE mr.event=e.id);
 CREATE VIEW recall_embed_eligible AS
- WITH RECURSIVE ancestry(doc,kind,source_id) AS (
+ WITH RECURSIVE edges(view_kind,view_id,target_kind,target_id) AS (
+  SELECT view_kind,view_id,target_kind,target_id FROM cite WHERE dropped_revision IS NULL
+  UNION ALL
+  SELECT 'event',id,'event',replay_of FROM conv_event WHERE replay_of IS NOT NULL
+  UNION ALL
+  SELECT 'event',event_id,'event',target_id FROM ev_rel WHERE kind='view_of'
+ ), ancestry(doc,kind,source_id) AS (
   SELECT id,kind,source_id FROM recall_doc
   UNION
-  SELECT a.doc,c.target_kind,c.target_id FROM ancestry a JOIN cite c
-   ON c.view_kind=a.kind AND c.view_id=a.source_id AND c.dropped_revision IS NULL
+  SELECT a.doc,e.target_kind,e.target_id FROM ancestry a JOIN edges e
+   ON e.view_kind=a.kind AND e.view_id=a.source_id
  )
  SELECT d.* FROM recall_doc d WHERE NOT EXISTS (
   SELECT 1 FROM ancestry a WHERE a.doc=d.id AND (

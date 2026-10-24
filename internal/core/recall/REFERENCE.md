@@ -84,7 +84,8 @@ vector table and queues the current documents. Reads stay lexical until this
 queue and the text backfill drain. Normal incremental writes queue their own
 vectors without blocking reads. Vector candidates pass the same scoped filters
 before distance and limit. Imported-event consent and never-leaves sensitivity
-are checked through current citation ancestors. Messenger provenance is checked
+are checked through current citation ancestors, including event `replay_of` and
+`view_of` derivation edges. Copies cannot bypass restrictions on their originals. Messenger provenance is checked
 through its legacy references as well as the event's origin. Import consent
 stores a conversation's event watermark; future imports are excluded. Consent
 changes and chat embedding switches invalidate vectors and restart backfill.

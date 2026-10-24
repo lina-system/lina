@@ -359,3 +359,29 @@ func TestFusionTiesUseKindWhenSourceIDsCollide(t *testing.T) {
 		}
 	}
 }
+
+func TestEmbeddingRestrictionsFollowEventDerivations(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "original", "conversation", "owner", "agent", "protected source text", base, "")
+	remember(t, db, "agent", "", "protected preference", memory.NeverLeaves, "original")
+	admitAt(t, db, "replay", "conversation", "owner", "agent", "protected source text", base.Add(time.Second), "original")
+	admitAt(t, db, "view", "conversation", "owner", "agent", "protected source text", base.Add(2*time.Second), "")
+	write(t, db, `INSERT INTO ev_rel(event_id,target_id,kind) VALUES('view','original','view_of')`)
+	admitAt(t, db, "transitive", "conversation", "owner", "agent", "protected source text", base.Add(3*time.Second), "view")
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,origin,occurred_at,recorded_at,time_quality,body,replay_of)
+ SELECT 'imported-replay','imported-conversation',person_id,agent_id,speaker_kind,surface,'{"kind":"import","system":"fixture"}',occurred_at,recorded_at,time_quality,body,'original' FROM conv_event WHERE id='original'`)
+	if err := recall.SetImportConsent(t.Context(), db, "imported-conversation", true); err != nil {
+		t.Fatal(err)
+	}
+	drain(t, db)
+	f := &fakeEmbeddings{model: "test", dimension: 2}
+	v, err := recall.NewVectors(t.Context(), db, nil, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishVectors(t, db, v)
+	if f.calls != 0 || vectorCount(t, db) != 0 {
+		t.Fatalf("protected derivations escaped: calls=%d vectors=%d", f.calls, vectorCount(t, db))
+	}
+}
