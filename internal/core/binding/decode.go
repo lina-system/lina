@@ -205,6 +205,12 @@ func targetFromText(state State, value string) (Target, error) {
 			return newTarget(state, kind, ""), nil
 		}
 	}
+	// An id such as "task:a" names that candidate even when its prefix is a
+	// stored kind. Kind-and-colon text is new work only when no candidate has
+	// that exact id.
+	if item, ok := itemByID(state, value); ok {
+		return Target{Class: "existing", ID: item.ID, Kind: item.Kind}, nil
+	}
 	if prefix, rest, ok := strings.Cut(value, ":"); ok && strings.TrimSpace(rest) != "" {
 		if kind := NormalizeKind(prefix); kind != "" {
 			return newTarget(state, kind, ""), nil
@@ -217,13 +223,24 @@ func targetFromText(state State, value string) (Target, error) {
 	return resolveReference(state, value)
 }
 
-func resolveReference(state State, ref string) (Target, error) {
-	ref = strings.TrimSpace(ref)
+func itemByID(state State, ref string) (Item, bool) {
+	folded := Fold(strings.TrimSpace(ref))
+	if folded == "" {
+		return Item{}, false
+	}
 	for _, item := range state.Items {
-		if Fold(item.ID) == Fold(ref) {
-			return Target{Class: "existing", ID: item.ID, Kind: item.Kind}, nil
+		if Fold(item.ID) == folded {
+			return item, true
 		}
 	}
+	return Item{}, false
+}
+
+func resolveReference(state State, ref string) (Target, error) {
+	if item, ok := itemByID(state, ref); ok {
+		return Target{Class: "existing", ID: item.ID, Kind: item.Kind}, nil
+	}
+	ref = strings.TrimSpace(ref)
 	var matches []Item
 	for _, item := range state.Items {
 		names := append(append([]string{item.Title}, item.Names...), item.Links...)

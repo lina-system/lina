@@ -100,7 +100,7 @@ func TestSessionCloseRecoveryPreservesReceipts(t *testing.T) {
 						t.Errorf("non-resumable cursor retained after %d: %s", code, saved)
 					}
 				} else {
-					want := cursor{Session: "session-1", Seq: 2 + int64(i)}
+					want := cursor{Session: "session-1", Seq: 2 + int64(i), Intents: baseIntents}
 					if i == 1 && reset {
 						want.Session = "session-2"
 					}

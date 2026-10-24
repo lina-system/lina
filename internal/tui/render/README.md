@@ -65,3 +65,14 @@ keeps literal text inside code. `Seal` replaces that preview with the
 CommonMark parse of the authoritative text, including reference definitions.
 Malformed or escaped syntax in a sealed item remains literal. ANSI and OSC are
 never admitted as source styling, including after Markdown entity decoding.
+
+Closed pipe tables arrive as `MarkdownTable` cells and column alignments from
+the UI's pinned Goldmark table extension. `MarkdownTable.Rows` measures the
+visible cell text with the shared `Measurer`, pads columns, and clips complete
+rows at the viewport edge without wrapping. It retains inline styles and clips
+joined spans at grapheme boundaries. The cached semantic table reflows on width
+or width-mode changes; the open preview follows the existing blank-line/Seal
+boundary. Unit tests cover 40/80/140 columns in both modes, escaped pipes,
+alignment, styles, clipping and every streaming byte split. The
+`TestM1TUIMarkdownTables` acceptance scenario exercises the built TUI through a
+real PTY with a fake Core held at open, closed and completed reply checkpoints.

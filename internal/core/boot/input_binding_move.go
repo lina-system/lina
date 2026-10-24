@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -625,7 +626,10 @@ func (r *conversationRuntime) moveEditedRecord(ctx context.Context, effect bindi
 		if bytes.Equal(applied.Data, beforeBody) {
 			next.AfterRevision = beforeRev
 		}
-		if payload := relocatedEditPayload(to.ID, applied.Data, effect.Payload); len(payload) > 0 {
+		// Keep the field list taken from this effect. The destination's bytes
+		// are only the restoration snapshot and can already hold a new value.
+		fields := editFieldsOf(effect.Payload, effect.BeforeBody)
+		if payload := relocatedEditPayload(to.ID, applied.Data, effect.Payload, fields); len(payload) > 0 {
 			next.Payload = payload
 		}
 		return outcome, &next, nil
@@ -654,6 +658,7 @@ func (s *moveEditRepo) Read(ctx context.Context, id records.ID) (records.Record,
 
 // reapplyEdit prepares the changed fields on the right item while preserving
 // its other fields. WriteRecord performs the ordinary ownership/field checks.
+// Fields named by the retained edit apply even when this item already holds them.
 func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Effect, target string) (*records.Change, []byte, string, string) {
 	var write coreexec.RecordWrite
 	if json.Unmarshal(effect.Payload, &write) != nil {
@@ -663,22 +668,23 @@ func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Ef
 	if err != nil {
 		return nil, nil, "", "not_a_record"
 	}
-	beforeKind, beforeTitle, beforeNote, _, _ := recordParts(effect.BeforeBody)
+	beforeKind, _, _, _, _ := recordParts(effect.BeforeBody)
 	kind, title, note, _, _ := recordParts(right.Data)
 	if kind != write.Kind {
 		return nil, nil, "", "target_kind"
 	}
-	if write.Title == beforeTitle && write.Note == beforeNote && write.Todo == nil {
+	fields := editFieldsOf(effect.Payload, effect.BeforeBody)
+	if fields.empty() && write.Todo == nil {
 		return nil, nil, "", ""
 	}
-	if write.Title != beforeTitle {
+	if fields.Title {
 		title = write.Title
 	}
-	if write.Note != beforeNote {
+	if fields.Note {
 		note = write.Note
 	}
 	var todo *records.Todo
-	if write.Todo != nil {
+	if len(fields.Todo) > 0 || write.Todo != nil {
 		var beforeTodo, rightTodo *records.Todo
 		if beforeKind == "todo" {
 			beforeTodo, _, _, _ = records.ReadTodo(effect.BeforeBody)
@@ -686,7 +692,13 @@ func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Ef
 		if kind == "todo" {
 			rightTodo, _, _, _ = records.ReadTodo(right.Data)
 		}
-		if beforeTodo != nil && rightTodo != nil {
+		if rightTodo != nil && len(fields.Todo) > 0 {
+			editTodo := write.Todo
+			if editTodo == nil {
+				editTodo = &records.Todo{}
+			}
+			todo = applyTodoFields(editTodo, rightTodo, fields.Todo)
+		} else if beforeTodo != nil && rightTodo != nil && write.Todo != nil {
 			todo = mergeTodo(beforeTodo, write.Todo, rightTodo)
 		}
 	}
@@ -697,11 +709,60 @@ func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Ef
 	return staged.change, right.Data, rightRevision, ""
 }
 
+// editFields is the set of fields an edit changed. It travels with the
+// relocated payload. Comparing the payload with the destination's bytes
+// cannot tell an intentional edit from a value that item already held.
+type editFields struct {
+	Title    bool     `json:"title,omitempty"`
+	Note     bool     `json:"note,omitempty"`
+	Todo     []string `json:"todo,omitempty"`
+	Retained bool     `json:"retained,omitempty"`
+}
+
+func (f editFields) empty() bool {
+	return !f.Title && !f.Note && len(f.Todo) == 0
+}
+
+type storedEdit struct {
+	coreexec.RecordWrite
+	Edited *editFields `json:"edited,omitempty"`
+}
+
+// editFieldsOf returns the field list a previous move stored. The first move
+// derives it from the edit and the before-image it replaced. A tool argument
+// can carry an edited member, so the list counts only after this package
+// rewrote the payload: the rewrite leaves the revision empty and sets Retained.
+func editFieldsOf(payload, before []byte) editFields {
+	var stored storedEdit
+	if json.Unmarshal(payload, &stored) == nil && stored.Revision == "" && stored.Edited != nil && stored.Edited.Retained {
+		return *stored.Edited
+	}
+	return diffEditFields(payload, before)
+}
+
+func diffEditFields(payload, before []byte) editFields {
+	var write coreexec.RecordWrite
+	if json.Unmarshal(payload, &write) != nil {
+		return editFields{}
+	}
+	_, beforeTitle, beforeNote, _, _ := recordParts(before)
+	fields := editFields{Title: write.Title != beforeTitle, Note: write.Note != beforeNote}
+	if write.Todo == nil {
+		return fields
+	}
+	beforeTodo, _, _, err := records.ReadTodo(before)
+	if err != nil || beforeTodo == nil {
+		return fields
+	}
+	fields.Todo = changedTodoKeys(beforeTodo, write.Todo)
+	return fields
+}
+
 // relocatedEditPayload describes the edit as it now sits on the destination,
-// so a later move diffs against that item rather than the original one.
-// A text-only edit stays text-only: adding the destination's stored to-do
-// would replay fields the person did not change, including ones a write rejects.
-func relocatedEditPayload(id string, data, original []byte) []byte {
+// and keeps the field list from the edit that was moved. A text-only edit
+// stays text-only: adding the destination's stored to-do would replay fields
+// the person did not change, including ones a write rejects.
+func relocatedEditPayload(id string, data, original []byte, fields editFields) []byte {
 	kind, title, note, _, _ := recordParts(data)
 	write := coreexec.RecordWrite{ID: id, Kind: kind, Title: title, Note: note}
 	var previous coreexec.RecordWrite
@@ -710,7 +771,13 @@ func relocatedEditPayload(id string, data, original []byte) []byte {
 			write.Todo = todo
 		}
 	}
-	raw, err := json.Marshal(write)
+	stored := storedEdit{RecordWrite: write}
+	if !fields.empty() {
+		kept := fields
+		kept.Retained = true
+		stored.Edited = &kept
+	}
+	raw, err := json.Marshal(stored)
 	if err != nil {
 		return nil
 	}
@@ -720,31 +787,76 @@ func relocatedEditPayload(id string, data, original []byte) []byte {
 // mergeTodo copies fields the edit changed and drops fields the edit cleared.
 // A cleared optional field is absent after marshalling because Todo uses omitempty.
 func mergeTodo(before, edit, right *records.Todo) *records.Todo {
-	b, _ := json.Marshal(before)
-	e, _ := json.Marshal(edit)
-	current, _ := json.Marshal(right)
-	var bm, em, rm map[string]json.RawMessage
-	if json.Unmarshal(b, &bm) != nil || json.Unmarshal(e, &em) != nil || json.Unmarshal(current, &rm) != nil {
+	if before == nil || edit == nil || right == nil {
 		return right
 	}
-	kept := map[string]bool{}
+	return applyTodoFields(edit, right, changedTodoKeys(before, edit))
+}
+
+// changedTodoKeys lists to-do keys whose value changed and keys the edit cleared.
+func changedTodoKeys(before, edit *records.Todo) []string {
+	bm, ok := todoJSON(before)
+	em, editOK := todoJSON(edit)
+	if !ok || !editOK {
+		return nil
+	}
+	keys := make([]string, 0)
 	for key, value := range em {
-		kept[key] = true
 		if string(bm[key]) != string(value) {
-			rm[key] = value
+			keys = append(keys, key)
 		}
 	}
 	for key := range bm {
-		if !kept[key] {
+		if _, kept := em[key]; !kept {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// applyTodoFields copies the named keys onto the destination and clears a
+// named key the edit no longer carries.
+func applyTodoFields(edit, right *records.Todo, keys []string) *records.Todo {
+	if edit == nil || right == nil || len(keys) == 0 {
+		return right
+	}
+	em, ok := todoJSON(edit)
+	rm, rightOK := todoJSON(right)
+	if !ok || !rightOK {
+		return right
+	}
+	for _, key := range keys {
+		if value, exists := em[key]; exists {
+			rm[key] = value
+		} else {
 			delete(rm, key)
 		}
 	}
-	raw, _ := json.Marshal(rm)
+	raw, err := json.Marshal(rm)
+	if err != nil {
+		return right
+	}
 	var out records.Todo
 	if json.Unmarshal(raw, &out) != nil {
 		return right
 	}
 	return &out
+}
+
+func todoJSON(todo *records.Todo) (map[string]json.RawMessage, bool) {
+	if todo == nil {
+		return nil, false
+	}
+	raw, err := json.Marshal(todo)
+	if err != nil {
+		return nil, false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return nil, false
+	}
+	return fields, true
 }
 
 // recordParts reads the identity, title and note a record shows, without

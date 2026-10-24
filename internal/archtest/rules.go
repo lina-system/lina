@@ -201,6 +201,7 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 				markdown := within(owner, "internal/tui/ui") && (imported == "github.com/yuin/goldmark" ||
 					imported == "github.com/yuin/goldmark/ast" || imported == "github.com/yuin/goldmark/text" ||
 					imported == "github.com/yuin/goldmark/util" || imported == "github.com/yuin/goldmark/parser" ||
+					imported == "github.com/yuin/goldmark/extension" || imported == "github.com/yuin/goldmark/extension/ast" ||
 					imported == "github.com/alecthomas/chroma/v2" || imported == "github.com/alecthomas/chroma/v2/lexers")
 				if !allowed && !(charm && terminal) && !markdown {
 					report(spec.Pos(), "TUI", "only standard/internal client dependencies and permitted UI/terminal libraries are allowed: "+imported)

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sync/atomic"
 
 	"github.com/thisisjun786/lina/internal/core/ledger"
@@ -73,10 +74,28 @@ func (s *Service) run(ctx context.Context, id string) error {
 	if r.Origin.Job != "" {
 		cfg.Request.Purpose = provider.BackgroundJob
 	}
+	if r.Brief.FollowOf != "" {
+		cfg.Request.Instructions += " This run continues a partial result. Answer only what it says is missing. If the sources cannot answer a question, leave it in missing and set open_reason to why."
+	}
 	cfg.Request.Items = r.Checkpoint
 	if len(cfg.Request.Items) == 0 {
 		b, _ := json.Marshal(r.Brief)
 		cfg.Request.Items = []provider.Item{item(string(b))}
+		for _, ref := range r.Brief.Refs {
+			reader, err := s.cfg.Assets.OpenRead(ctx, ref.ID, ref.Revision)
+			if err != nil {
+				return err
+			}
+			data, err := io.ReadAll(io.LimitReader(reader, 64<<10))
+			closeErr := reader.Close()
+			if err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				return err
+			}
+			cfg.Request.Items = append(cfg.Request.Items, item(string(data)))
+		}
 		if r.Promotion != nil {
 			gathered, _ := json.Marshal(r.Promotion)
 			cfg.Request.Items = append(cfg.Request.Items, item(string(gathered)))

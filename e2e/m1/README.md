@@ -197,3 +197,19 @@ scenario checks the ledger records and their speaker kinds, the supersession and
 retraction relations, the tombstone that keeps the legacy reference, the
 coverage and cursor rows, the one index's documents with origin `messenger`, and
 that a URL secret is masked while the URL's public text stays.
+
+`TestM3TelegramSourceInstalledCore` signs a Telegram source in with a phone code
+and a 2FA password against an in-process MTProto server, then runs installed
+Core over that source. Core lists the account's dialogs, reads their history
+through a rate-limited first request, admits the person's own and other people's
+messages with their speaker kinds, and applies a pushed edit and deletion. The
+scenario checks the committed cursor and coverage, the tombstones, that the
+session exists only in the secret store with mode 0600, and that no read-state or
+presence request was ever sent.
+
+Telegram source acceptance signs in through the owner socket using the person's
+application credentials, phone code and 2FA password. A child Core hosts the
+fake MTProto server, preserving the real owner/worker process boundary. A live
+subscription barrier precedes a single edit and deletion; request recording
+rejects read acknowledgements, presence and typing. The adapter package also
+covers session resume, multi-page catch-up and namespace-scoped deletion.

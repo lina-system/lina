@@ -108,13 +108,42 @@ sits in its chat, in order, as a record. `AdmitPage` refuses a page that pairs
 the flag with text, and the add-on's wire check refuses the same, so a failure
 can never become an empty message that reads as something someone sent.
 
-## Not in this increment
+## Live events
 
-Live events are on the adapter boundary and the service can deliver them, and the [Teams adapter](teams/README.md) polls Graph through Core. Other
-platforms are tracked by #1070 and the per-platform issues. Writes are
-recorded and matched here; the write verbs, grants and approvals belong to
-#1084. Learning from the person's own records is #1075.
+`AdmitEvent` admits one pushed message or deletion through the same admission
+path as a page, and writes no cursor or coverage: a live event is newer than the
+last complete read, and the next page admits it again without adding anything.
+`Service` starts one live reader per connected source, after the source's first
+sync, and re-joins the platform's session with bounded backoff after a failure.
+A source that needs a new sign-in gets no live reader.
+
+An event held behind an unsettled write (`ErrPageWaiting`) is returned to the
+session as `channels.Retry`, not acknowledged: the scheduled read resumes past
+its cursor and cannot see that edit or deletion again. The session replays the
+dispatch after a bounded backoff and keeps the source connected.
+
+`NewServiceWithResolver` resolves an adapter per source, so two accounts on one platform
+never share an adapter's read state. `NewService` keeps the map form for
+platforms with one account.
+
+## Platform adapters
+
+`internal/core/messenger/discord` reads the servers of a bot the person added
+(#1079). It shares the Gateway session with a channel connection on the same
+token. Writes are recorded and matched here; the write verbs, grants and
+approvals belong to #1084. Learning from the person's own records is #1075,
+which waits for the Discord developer policy reading; nothing here learns.
+
+The [Teams adapter](teams/README.md) polls Graph through Core. Other platforms
+are tracked by #1070 and the per-platform issues.
+
+The [Telegram adapter](telegram/REFERENCE.md) uses the same live admission path,
+with account-wide deletion namespaces and persistent update recovery.
 
 Sender profile emails, when supplied by an adapter, are stored as evidence in
 `messenger_author` with the source account and platform author ID. They do not
 change ledger attribution or create an automatic person merge.
+
+Live events and history pages serialize revision planning and commit through a
+cancellable, per-source admission lock. Platform requests happen outside that
+lock, so waiting for a provider does not hold up live admission.

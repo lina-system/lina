@@ -390,6 +390,12 @@ arbitrary ledger lookup. Case and spacing differences in input text are ignored.
 When the turn has only that input, other prose in the selector means it too.
 Conflicting selectors are rejected. Unknown binding fields are ignored.
 A question about two new targets labels each choice with its kind and parent.
+When one response binds and acts on the same input, the work call runs only after
+`bind_input` committed the choice or the pending target question. Calls for other
+inputs or other targets keep running in parallel. A turn with no person input of
+its own runs an unqualified work call as the turn's own tool, even after it
+consumed steering; only a call that names the steering input waits for that
+input's binding.
 A single `prepare_work` or `schedule_work` receipt records the created task as
 that request's focus. Several created tasks stay unresolved. When the person
 has selected a new target and creation has recorded its id, a later record
@@ -455,13 +461,7 @@ Target questions use the existing question card and Waiting for me. Their
 recommendation is the first option, with no default action. A card answer or an
 exact offered label or number resolves only that request; declining or cancelling
 records its cancellation. An unrelated turn can proceed without resolving it.
-Core checks a retained tie again when a later tool would make it irreversible.
-
-Target questions use the existing question card and Waiting for me. Their
-recommendation is the first option, with no default action. A card answer or an
-exact offered label or number resolves only that request; declining or cancelling
-records its cancellation. An unrelated turn can proceed without resolving it.
-Core checks a retained tie again when a later tool would make it irreversible.
+Core checks a retained tie again when a later tool would make it irreversible. On an answer continuation, a work call that omits a request ordinal uses the answered request. An explicit ordinal keeps the request it names. Starting a run for a selected channel input keeps that channel receipt beside the requesting turn, so a later check still uses the channel's tool permission and recovery still finds the turn that started the run. A follow-up sent with `worker_input` for a selected channel input keeps the same receipt and is not delivered after that channel loses tool permission.
 
 **Showing and moving.**
 

@@ -18,11 +18,20 @@ This policy covers:
 
 Tools the user installs are outside this policy: workers such as Codex, the command-line tools that plugins rely on, and the plugins the user adds with their servers. They are not LINA dependencies. LINA records the version and source it observed for them and never pins them ([runtime.md](../design/runtime.md), [integrations.md](../design/integrations.md)). First-party plugins are LINA code and follow this policy. Tools that only the developers of LINA run during development are outside this policy as well; they are recorded under Development-time tools.
 
-Other documents cover what each component uses and why. [runtime.md](../design/runtime.md) names the vendored upstream, the provider adapters, external components, the packaging, and the release manifest. The [foundation policy](foundation.md) owns path mapping and check layout.
+Other documents cover what each component uses and why. [runtime.md](../design/runtime.md) names the vendored upstream, the provider adapters, external components, the packaging, and the release manifest. The [foundation policy](foundation.md) owns path mapping and check layout. The Flutter/Dart LINA app lives in its own repository, [`lina-system/lina-app`](https://github.com/lina-system/lina-app) ([surfaces.md](../design/surfaces.md#app-front-end)): its Flutter SDK pin (`.flutter-version`), Dart and Flutter pub packages (`pubspec.yaml` and committed `pubspec.lock` enforced with `flutter pub get --enforce-lockfile`), bundled app fonts, and pinned theme and Dart protocol generators (`scripts/verify/generators.json`) are governed by `lina-system/lina-app`'s `docs/policy/dependencies.md` and `docs/policy/foundation.md` ([lina-app#3](https://github.com/lina-system/lina-app/issues/3), [lina-app#5](https://github.com/lina-system/lina-app/issues/5), [lina-app#6](https://github.com/lina-system/lina-app/issues/6)), which consume this repository's canonical `design/tokens/`, `protocol/schema/` and `protocol/fixtures/` files at an immutable `lina-system/lina` release tag (`v0.0.1-alpha.YYYYMMDD.N`) or 40-character commit SHA verified by SHA-256 file digests.
 
 ## Go modules
 
 LINA's components are Go. Their outside code comes in as Go modules.
+
+The personal Telegram source uses `github.com/gotd/td v0.163.0` (MIT), including
+its MTProto transport, authentication and generated Telegram API types. It
+uses no TDLib binary. Its transitive modules and notices are recorded in
+`go.mod`, `go.sum` and `THIRD-PARTY-NOTICES.md`. The replacement of
+`github.com/segmentio/asm` with `v1.2.0` retains the MIT release; later releases
+use a license this policy does not admit. The narrowly versioned OpenPGP
+advisory exception covers code outside LINA's import closure; it does not
+waive MTProto vulnerability checks.
 
 ### Toolchain and configuration
 

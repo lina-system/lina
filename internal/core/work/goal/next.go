@@ -112,6 +112,11 @@ type Task struct {
 	PR             PRState   `json:"pr"`
 	Merge          Proof     `json:"merge"`
 	QA             Proof     `json:"qa"`
+	// ResearchFollowUp is the one follow-up brief derived from a partial
+	// landing. It is empty until that landing, and it is never replaced.
+	ResearchFollowUp *BackgroundBrief `json:"research_follow_up,omitempty"`
+	ResearchGap      []string         `json:"research_gap,omitempty"`
+	ResearchOpen     []ResearchOpen   `json:"research_open,omitempty"`
 }
 type GoalState string
 
@@ -676,6 +681,9 @@ func Derive(state State, now time.Time) (Plan, error) {
 		failure := ""
 		for _, c := range goalCriteria(g) {
 			for _, proof := range g.Checks {
+				if c.Check.Kind == CitationEvidence {
+					continue
+				}
 				if currentEvidence(g, c, proof) && !proof.Passed {
 					failure = fmt.Sprintf("%d:%d:%s", g.Revision, g.CheckRound, c.ID)
 					break
@@ -697,8 +705,13 @@ func Derive(state State, now time.Time) (Plan, error) {
 			continue
 		}
 		missing := false
+		heldCitation := false
 		for _, c := range goalCriteria(g) {
 			if criterionMet(g, c) {
+				continue
+			}
+			if citationUnresolved(g, c) {
+				heldCitation = true
 				continue
 			}
 			a := Action{GoalID: g.ID, Kind: CheckCriterion, Revision: criterionRevision(g, c), CriterionID: c.ID, Check: &c.Check, GoalRevision: g.Revision, CheckRound: g.CheckRound, State: "queued", Deadline: now.Add(SafetySweep).Unix()}
@@ -707,6 +720,10 @@ func Derive(state State, now time.Time) (Plan, error) {
 			plan.Actions = append(plan.Actions, a)
 			missing = true
 			break
+		}
+		if heldCitation && !missing {
+			wait(g, Task{}, "citation", "evidence.target_changed")
+			continue
 		}
 		if !missing {
 			plan.Close = append(plan.Close, g.ID)
