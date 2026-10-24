@@ -64,6 +64,23 @@ they do not establish current acceptance or change the contracts.
 `work.Area` owns leased Git subprocesses through `kit/proc`, detached allocation at the pinned base, protected refs and branch bundles.
 Core closes its process owner during shutdown.
 
+### C-57 parent acceptance (#136)
+
+#137 and #138 carry the parent's five conditions. This note records where each
+one is proved on the current head; the parent adds no code or command of its own.
+
+| Condition | Proof |
+| --- | --- |
+| A definition without a done condition or write area is refused | `TestDefinitionRefusedBeforeAdmission` (`internal/core/worker/dispatch/definition_test.go`, cases `done`, `write_area`, `blank_write_area`) and the installed-Core cases `missing-done` and `missing-write-area` in `e2e/m2/work-definition.json` |
+| Two tasks with overlapping write areas are never in flight together | `TestDirectoryAreaAdmissionAndLease` and `TestDirectoryAreaIntersections` (`internal/core/work/areas_test.go`), `TestAreaClaimsSerializeOverlapAndKeepFinishedLease` (`internal/core/worker/dispatch/choice_test.go`), and the installed-Core case `overlap` in `e2e/m2/worker-choice.json`, which requires the second task to wait with reason `area` before any launch |
+| A worker whose quota row is blocked is not chosen before its reset | `TestChooserQuotaAndSituation` (`internal/core/work/chooser_test.go`) excludes the worker before `ResetsAt`, admits it at that time, and never infers a reset; the installed-Core case `blocked` in `e2e/m2/worker-choice.json` launches only the unknown-quota worker |
+| Unknown quota is usable | The same chooser test ranks ok above warning and unknown, and admits a worker with no rows; the installed-Core case `quota-fallback` starts the worker that reports no quota |
+| A quota stop hands the same packet once to the next worker | `TestQuotaHandoffWaitSurvivesCompletionOutbox` (`internal/core/worker/dispatch/handoff_test.go`) keeps one settled attempt; the installed-Core case `quota-fallback` in `e2e/m2/worker-choice.json` requires identical packet bytes, the same workspace, a reaped first process tree and one replacement, and its case `double-quota` makes a second stop terminal |
+
+Both sub-issues are closed, and the listed commands pass on this branch. The
+sub-issue scenarios stay the parent's end-to-end evidence; a change to any
+condition must update the case named here.
+
 ### C-57 graph validation
 
 #539 bounds dependency reachability in both `ValidateSchedule` preflight and
@@ -82,3 +99,25 @@ idempotent retry, and atomic missing-dependency, cycle and unordered-fork
 rejection with an existing ledger. `TestM3SharedAncestorGraphInstalledCore`
 exercises the conversation tool, manager admission, real worker Git results,
 dependency release and restart while the shared-ancestor tail stays queued.
+
+### Goal commands (#772)
+
+The person's order, pause, resume and stop choices are recorded in the work
+ledger as `goal.command` events keyed by the input message identity, so a resent
+choice keeps one record and a refused or no-op choice records nothing. `Command`
+reports whether the choice changed the goal, and the client answer is `applied`
+only then. The committed event
+writes the goal projection in the same transaction: rank, paused flag or the
+final `stopped` state. Derivation sorts ready steps by rank before Capacity's
+deadline, depth and age order, keeps a paused goal's waits and queued award, and
+derives nothing for a paused, stopped or done goal. A claim on a paused goal
+returns a claim conflict without changing the action, so a resumed goal claims
+its already-committed award instead of spending a second attempt.
+`progress.Goals` reads the same rank and pause flag for the line's order and Now,
+so a restart rebuilds the identical projection. A resent message compares its
+stable identity and payload with the committed transition, so a retry at a later
+second keeps one record instead of conflicting on its timestamp. A report that
+settles after a confirmed stop keeps its receipt and releases its reservation
+but never reopens the goal; a paused goal refuses recovery authorization as well
+as new claims. Derivation drops a stopped goal's write-area lease once its
+effects are settled and keeps it while an outcome is still unknown.

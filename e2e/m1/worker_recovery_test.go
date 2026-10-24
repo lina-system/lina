@@ -403,15 +403,22 @@ func TestM2WorkerRecovery(t *testing.T) {
 		})
 	}
 }
+
+// A live Core keeps writing while a case waits, and the inspection connection
+// only promises a stable snapshot while writers are excluded. Reads that decide
+// a wait therefore use a normal read-only connection, the same view the case
+// asserts on afterwards.
 func workerRecoveryReactions(t *testing.T, h *harness) int {
 	t.Helper()
-	db, closeDB, err := canon.OpenSQLiteInspection(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeDB()
+	defer db.Close(context.Background())
 	var completed int
-	if err = db.QueryRowContext(h.ctx, "SELECT count(*) FROM turn_runs t JOIN inbox i ON i.id=t.inbox_id WHERE i.source='worker-finish' AND t.state='completed'").Scan(&completed); err != nil {
+	if err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(h.ctx, "SELECT count(*) FROM turn_runs t JOIN inbox i ON i.id=t.inbox_id WHERE i.source='worker-finish' AND t.state='completed'").Scan(&completed)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return completed

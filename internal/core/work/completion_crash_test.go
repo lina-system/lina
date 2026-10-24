@@ -34,6 +34,7 @@ func completionCrashStore(t *testing.T, root string, epoch uint64) (*Service, *c
 }
 
 func TestCompletionSIGKILLAtomicity(t *testing.T) {
+	t.Parallel()
 	if root := os.Getenv("LINA_COMPLETION_CRASH_ROOT"); root != "" {
 		s, db := completionCrashStore(t, root, 1)
 		startFixture(t, s)

@@ -76,6 +76,8 @@ separate test process per package.
 - Readiness comes from socket connections and protocol/terminal observations.
   Composer scenarios wait for both the composer controls and Connected status;
   controls alone can appear while initial conversation discovery is pending.
+  Reading-position checks also wait for a known conversation item before
+  scrolling: Connected and waiting cards can precede the conversation snapshot.
   Socket startup retries are bounded; there are no fixed sleeps. A recovering
   Core may explicitly refuse an input probe as `unavailable`; only that refusal
   allows a fresh probe. Malformed frames, wrong identities or correlations, and
@@ -192,7 +194,12 @@ completion with its task packet is 19,065 bytes.
 installed Core, a killed turn and the recovery continuation with the synthetic
 worker, and requires the completed delivery, the material-backed completion and
 the attributed reply. The same run reads the completion by raw column and shows
-the empty result the acceptance used to return.
+the empty result the acceptance used to return. Barriers that decide a wait
+while Core runs read through a normal read-only connection: the inspection
+connection only promises a stable snapshot while writers are excluded, and it
+has reported a completed worker delivery that the committed database did not
+hold. The wait also names the delivery under test rather than counting any
+completed worker delivery.
 
 Every acceptance run logs each stored completion candidate with its session,
 turn, status, delivery state, material flag and body size, so a failure is

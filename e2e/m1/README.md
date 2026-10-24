@@ -39,7 +39,7 @@ physical input and UX. Passing this suite alone does not declare the phase done.
 | 3. Reply card, hard budget, boundary notice | `TestM1ReplyShapeLONGQA` and final-item/large-frame cases check sentence cuts and retained ledger data; `TestM1TurnBudgetHandoffInstalledCore` checks gathered state, one run, running UI and no notice inside an active turn; `TestM1RunLandingNotice` and `TestM1RunQuestionNotice` check durable landing. |
 | 4. Forget, restore, Korean, exact expansion | `TestM1MemoryCorrectionForgetRestore` backs up a readable summary before correcting/forgetting its source, restores the old generation into a different root and checks unavailable summaries, empty forgotten recall and absent provider context with a retained-memory positive control. `TestM1KoreanMemoryByID` runs every query in the Korean corpus through installed Core's memory protocol. `TestM1PreparedSummaries` runs the actual worker, checks three depths and exact raw fact bytes. `TestM1MemoryJobs` checks sourced conclusions and excludes automated/replayed person attribution. |
 | 5. Skill learning and undo | `TestM1SkillsInstalledCore` checks instruction-only adoption, its notice, next-turn use and one-action undo, and refuses executable-code adoption. |
-| 6. Hermes import | `TestM1ImportReconciliation`, `TestM1ImportRehearsalPromotion`, `TestM1StagedImportWorker` and `TestM1ImportJSONMasking` check table/row reconciliation, reverse hashes, unchanged source, repeat-import zero growth, promotion boundaries, JSON masking and unavailable-body reporting through installed import and restarted Core memory reads. |
+| 6. Memory import | `TestM1ImportReconciliation`, `TestM1ImportRehearsalPromotion`, `TestM1StagedImportWorker` and `TestM1ImportJSONMasking` check table/row reconciliation, reverse hashes, unchanged source, repeat-import zero growth, promotion boundaries, JSON masking and unavailable-body reporting through installed import and restarted Core memory reads. `TestM1MurmurImport` hands a synthetic murmur data home to the installed command: every source type becomes messenger records keyed by murmur's uid, each room reconciles with murmur's own digest, a second run adds nothing, the data home keeps its bytes, learning off creates no memory item, and installed Core leaves the import-only sources alone. |
 | 7. Telegram and agent hand-off | `TestM1TUIChannelPairing` checks installed pairing/binding controls; `TestM1TelegramCommitCrash` kills the real adapter/gateway before and after the inbox/cursor transaction, reopens canon and replays the update without duplicate delivery; `TestM1TelegramOwnerButton` checks an outsider's no-op before the owner's authenticated button. `TestM1TUITalkLogInstalledCore` now runs a typed hand-off through the background supervisor, checks its cited answer and one mailbox log row, then displays and expands that row through installed Core and TUI. |
 | 8. Sandbox, tool evidence, idle restart | `TestM1SandboxUnavailable`, `TestM1ClientAdmissionSandbox`, `TestM1ToolEvidenceCannotApprove`, `TestM1RestartWaitsForEffect` and `TestPlannedRestart`: probe/fail-closed causes, protected socket, planted tool-result text with a real authority gate, and protocol-visible restart held by a blocked effect until it finishes. |
 | 9. Waiting, running, cards, unchanged output, spikes | `TestM1WaitingRunningNotices`, `TestM1TUICards`, `TestM1TUIApprovalsInstalledCore`, `TestM1TurnBudgetHandoffInstalledCore` and the TUI stream/recovery/resize fixtures cover ordering, counts and cards. Foundation also runs the recording-writer checks `TestUnchangedConnectionWritesNothing`, `TestConversationDoneReplacesStreamAndUnchangedWritesNothing` and `TestConversationMarkdownProfilesAndUnchangedOutput` in `internal/tui/ui`. They compare exact byte counts synchronously, without idle sleeps. Physical spike evidence remains the prerequisite below. |
@@ -54,6 +54,29 @@ Failure coverage also includes:
   `TestWorkerCompletionFixtureRequestLayout` uses the real assembler to cover
   trailing context, tool discovery, later inputs and result text that appears
   only in retrieved context.
+
+- `TestM3WorkPanelEvaluation` records the fixed T-16 corpus
+  ([`work-panel.json`](../m3/work-panel.json)) through installed Core and the
+  real TUI at 120x34 in both languages and glyph modes, then reports E1 to E14
+  from the frames and Core's own card order. The driver admits each 일's corpus
+  graph as a step-graph revision before recording its work, and checks Core's
+  projected stage list against the graph. `TestM3WorkPanelChecksRejectWrongFrames`
+  is its self-test: it breaks one thing per check and requires that check to
+  fail. A check whose input the build does not publish yet reports missing
+  input, never a pass.
+
+- `TestM3WorkPanelStages` supplies E6/E7 with collapsed and expanded views of
+  all five corpus graphs at 120x34 and 100x34 in both languages and glyph modes.
+  Real stub processes produce 101 checked artifacts. Each parallel group stays
+  on one numbered row, without a graph; worker rows appear only on expansion
+  and disappear when their steps land. Run it with `TestM3WorkPanelEventLatency`
+  for step-event timing and draft, focus and reading-position checks.
+
+- `TestM3WorkPanelLiveMatrix` starts 50 separate Codex protocol fixture
+  processes through installed Core. It records the 1/5/20/50-card matrix,
+  including three simultaneous person waits, then checks 50 activity updates,
+  worker-written results and Core completions. Its question-event timings are
+  separate from the step-event measurements above.
 
 - `TestM2WorkerDelayedCompletionOutput`: the model fixture selects the latest
   scenario input or worker result even when user-role ContextPacket evidence
@@ -158,3 +181,19 @@ Core resolves the quote through memory management before and after restart;
 canon inspection verifies that item/revision evidence contains no quote text.
 The management renderer's synthetic [capture](../../evidence/generated-ui/memory-quotes.png)
 shows a quote and an erased-source status.
+
+- `TestM3WorkPanelEventLatency` runs 50 live corpus graphs through Core and
+  measures 50 actual step landings in eight TUI PTYs. Each language, glyph and
+  width combination records every commit and first-frame time and must meet
+  T-16’s p95 500 ms / maximum 1 s bounds. The run also checks worker result
+  files, card Now and retention of the draft, selection and reading position.
+  See [the measurement notes](../m3/work-panel-latency.md).
+
+`TestM1MessengerStoreInstalledCore` runs the real messenger store inside
+installed Core with a scripted adapter. Core reads two pages of one chat, an
+edit and a platform-reported deletion, stops between pages, and resumes from the
+committed cursor; a later run that re-serves the newest page adds nothing. The
+scenario checks the ledger records and their speaker kinds, the supersession and
+retraction relations, the tombstone that keeps the legacy reference, the
+coverage and cursor rows, the one index's documents with origin `messenger`, and
+that a URL secret is masked while the URL's public text stays.

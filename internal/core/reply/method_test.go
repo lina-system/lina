@@ -11,6 +11,7 @@ import (
 )
 
 func TestReplyMethodUsesPreparedRecordAndActiveAgentFills(t *testing.T) {
+	t.Parallel()
 	record, err := persona.ParseWorkMethod([]byte(`{"schema":1,"reply":{"comparison":"verdict-then-table","candidates":3},"fill":["reply.candidates"]}`), "")
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +52,7 @@ func TestReplyMethodUsesPreparedRecordAndActiveAgentFills(t *testing.T) {
 }
 
 func TestUnstructuredReplyIsNotClassifiedByWording(t *testing.T) {
+	t.Parallel()
 	shapes := reply.Shapes{Status: "verdict-first", Comparison: "verdict-then-card", Candidates: 1, ThirdParty: "recipient-only"}
 	c := config()
 	c.Shapes = &shapes

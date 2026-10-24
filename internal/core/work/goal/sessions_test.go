@@ -17,6 +17,7 @@ func stepSession(id string, stage TaskStage) Task {
 }
 
 func TestLiveSessionsFollowTheFrontier(t *testing.T) {
+	t.Parallel()
 	g := Goal{ID: "g", State: GoalRunning, Tasks: []Task{
 		stepSession("building", TaskBuilding),
 		stepSession("delivered", TaskDelivered),
@@ -49,6 +50,7 @@ func TestLiveSessionsFollowTheFrontier(t *testing.T) {
 }
 
 func TestLiveSessionsKeepOneRepairAndOneRecovery(t *testing.T) {
+	t.Parallel()
 	repair := stepSession("repair", TaskConflicted)
 	recovered := stepSession("recovered", TaskWorkerLost)
 	recovered.EffectsSettled, recovered.Recoveries = true, 0
@@ -70,6 +72,7 @@ func TestLiveSessionsKeepOneRepairAndOneRecovery(t *testing.T) {
 }
 
 func TestLiveSessionsEndWithTheGoal(t *testing.T) {
+	t.Parallel()
 	for _, state := range []GoalState{GoalDone, GoalStopped} {
 		g := Goal{ID: "g", State: state, Tasks: []Task{stepSession("delivered", TaskDelivered)}}
 		if live := LiveSessions(g, []Action{{ID: "action-delivered", GoalID: "g", State: "running"}}); len(live) != 0 {
@@ -79,6 +82,7 @@ func TestLiveSessionsEndWithTheGoal(t *testing.T) {
 }
 
 func TestLiveSessionsAreDeterministic(t *testing.T) {
+	t.Parallel()
 	g := Goal{ID: "g", State: GoalRunning, Tasks: []Task{
 		stepSession("a", TaskBuilding), stepSession("b", TaskDelivered), stepSession("c", TaskMerged),
 	}}
@@ -95,6 +99,7 @@ func TestLiveSessionsAreDeterministic(t *testing.T) {
 }
 
 func TestEngineReapsSessionsOutsideTheFrontier(t *testing.T) {
+	t.Parallel()
 	live := worker.NewLive()
 	ends := map[string]int{}
 	for _, id := range []string{"action-a", "action-b"} {
@@ -117,6 +122,7 @@ func TestEngineReapsSessionsOutsideTheFrontier(t *testing.T) {
 }
 
 func TestReapWithoutRegistryKeepsEverything(t *testing.T) {
+	t.Parallel()
 	e := &Engine{}
 	if err := e.reapSessions(t.Context(), State{}); err != nil {
 		t.Fatal(err)

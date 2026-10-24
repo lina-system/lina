@@ -2,6 +2,7 @@
 package exec
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -109,5 +110,40 @@ func TestTodoToolCannotInventWorkCompletion(t *testing.T) {
 	}
 	if validateTodoEdit("---", "---\nexecution_state: \"done\"", records.Todo{}) == nil {
 		t.Fatal("model invented execution observation")
+	}
+}
+
+// A provider that validates JSON Schema refuses an empty enum value, so the
+// published view list names only real views; omitting it already means search.
+func TestQueryViewsPublishNoEmptyEnumMember(t *testing.T) {
+	var found bool
+	for _, decl := range RecordDeclarations() {
+		var parsed struct {
+			Name       string
+			Parameters struct {
+				Properties map[string]struct {
+					Enum []string `json:"enum"`
+				} `json:"properties"`
+			} `json:"parameters"`
+		}
+		if err := json.Unmarshal(decl, &parsed); err != nil {
+			t.Fatal(err)
+		}
+		if parsed.Name != "query_records" {
+			continue
+		}
+		found = true
+		view, ok := parsed.Parameters.Properties["view"]
+		if !ok || len(view.Enum) == 0 {
+			t.Fatal("query_records lost its views")
+		}
+		for _, name := range view.Enum {
+			if name == "" {
+				t.Fatal("query_records advertises an empty view")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("query_records declaration missing")
 	}
 }

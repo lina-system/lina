@@ -75,9 +75,21 @@ type Store struct {
 	db        *canon.Store
 	root      *os.Root
 	writeFile func(*os.File, []byte) (int, error) // Per-store fault injection for filesystem tests.
+	syncFile  func(*os.File) error                // os.File.Sync unless a test injects another.
+	noSync    bool                                // Set only by NoSync for a throwaway test root.
 }
 
-func Open(stateRoot string, db *canon.Store) (*Store, error) {
+// Option adjusts a store opened for a test state root that the test discards.
+type Option func(*Store)
+
+// NoSync skips the fsyncs that make revisions durable after a crash. It exists
+// for tests over a throwaway root; Core must never pass it.
+func NoSync() Option {
+	return func(s *Store) { s.noSync = true }
+}
+
+// Open opens the agent store under stateRoot. Core passes no options.
+func Open(stateRoot string, db *canon.Store, options ...Option) (*Store, error) {
 	if db == nil {
 		return nil, ErrInvalid
 	}
@@ -85,15 +97,19 @@ func Open(stateRoot string, db *canon.Store) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := privateDirs(root, "versions/agents"); err != nil {
+	s := &Store{db: db, root: root}
+	for _, option := range options {
+		option(s)
+	}
+	if err := s.privateDirs("versions/agents"); err != nil {
 		root.Close()
 		return nil, err
 	}
-	if err := recoverTemporaries(root); err != nil {
+	if err := s.recoverTemporaries(); err != nil {
 		root.Close()
 		return nil, err
 	}
-	return &Store{db: db, root: root}, nil
+	return s, nil
 }
 func (s *Store) Close() error { return s.root.Close() }
 func newID() string           { var b [16]byte; _, _ = rand.Read(b[:]); return hex.EncodeToString(b[:]) }

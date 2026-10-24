@@ -13,6 +13,7 @@ import (
 )
 
 func TestResultParentMustBelongToTheTurnScope(t *testing.T) {
+	t.Parallel()
 	_, db, _, _ := setup(t)
 	now := time.Now()
 	surface := ledger.Surface{Kind: "tui"}

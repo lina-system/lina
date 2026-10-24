@@ -7,6 +7,7 @@ import (
 )
 
 func TestWorkerProgressIsDurableAndFencedByActiveRun(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	startFixture(t, s)
 	if err := s.ReportProgress(t.Context(), "task-1", "run-1", 1, "Writing result"); err != nil {

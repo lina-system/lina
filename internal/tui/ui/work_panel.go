@@ -24,7 +24,8 @@ func projectWork(payload protocol.Payload) *state.WorkSummary {
 	clean := func(s string) string { return strings.Join(strings.Fields(sanitize.Display(s)), " ") }
 	for _, row := range *p.Rows {
 		v := row.Line
-		if v.Kind == "goal" {
+		// A 목표 heading and the rows inside a line are drawn by their line.
+		if v.Kind == "goal" || v.Row != nil && *v.Row {
 			continue
 		}
 		c := state.WorkCard{ID: row.Ref, Name: clean(v.Name)}
@@ -39,6 +40,42 @@ func projectWork(payload protocol.Payload) *state.WorkSummary {
 		}
 		if v.State != nil {
 			c.State = *v.State
+		}
+		if v.Stages != nil {
+			refs := map[string][]string{}
+			if row.StageRefs != nil {
+				for _, ref := range *row.StageRefs {
+					number := ""
+					if ref.Number != nil {
+						number = ref.Number.String()
+					}
+					refs[ref.Kind+":"+number] = ref.Steps
+				}
+			}
+			for _, entry := range *v.Stages {
+				stage := state.WorkStage{Kind: entry.Kind, Label: panelText(entry.Label), State: entry.State}
+				if entry.Number != nil {
+					stage.Number = entry.Number.String()
+				}
+				if entry.Steps != nil {
+					for i, step := range *entry.Steps {
+						value := state.WorkStageStep{Name: panelText(step.Name), State: step.State}
+						if ids := refs[stageKey(stage)]; i < len(ids) {
+							value.ID = ids[i]
+						}
+						if step.Workers != nil {
+							for _, w := range *step.Workers {
+								value.Workers = append(value.Workers, state.WorkStageWorker{Name: panelText(w.Name), State: w.State})
+							}
+						}
+						if step.StartedAt != nil {
+							value.Started, _ = time.Parse(time.RFC3339Nano, *step.StartedAt)
+						}
+						stage.Steps = append(stage.Steps, value)
+					}
+				}
+				c.Stages = append(c.Stages, stage)
+			}
 		}
 		c.Waiting, _ = strconv.Atoi(string(v.Waiting))
 		cards = append(cards, c)
@@ -64,7 +101,14 @@ func projectWork(payload protocol.Payload) *state.WorkSummary {
 		}
 		cards = ordered
 	}
-	return &state.WorkSummary{Cards: cards}
+	summary := &state.WorkSummary{Cards: cards}
+	// The running count follows Core's lines; it never counts these rows.
+	if p.Counts != nil {
+		running, _ := p.Counts.Running.Int64()
+		waiting, _ := p.Counts.Waiting.Int64()
+		summary.Counts = &state.WorkCount{Running: max(0, int(running)), Waiting: max(0, int(waiting))}
+	}
+	return summary
 }
 
 func (m *shellModel) workCards() []state.WorkCard {
@@ -135,6 +179,9 @@ func matchesWorkFilter(c state.WorkCard, filter protocol.RunningState) bool {
 func (m *shellModel) workPanelRows(width, height int) []string {
 	if width <= 0 || height <= 0 {
 		return nil
+	}
+	if card, ok := m.openedWorkCard(); ok {
+		return m.workStageRows(card, width, height)
 	}
 	text := func(id string) string { return design.Text(m.styles.options.Language, id) }
 	ellipsis := "…"
@@ -251,6 +298,10 @@ func panelClip(s string, width int, tail string) string {
 }
 
 func (m *shellModel) workPanelKey(key string) tea.Cmd {
+	if card, ok := m.openedWorkCard(); ok && key != "ctrl+c" && key != "ctrl+d" {
+		m.workStageKey(card, key)
+		return nil
+	}
 	switch key {
 	case "ctrl+d":
 		m.status = ConnectionStatus{State: Quit}
@@ -259,6 +310,14 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 		return m.controlC()
 	case "esc":
 		m.conversation.workFocused = false
+	case "enter":
+		cards, _ := m.selectableWorkCards()
+		if len(cards) > 0 {
+			m.conversation.workStages = workStageView{card: cards[m.conversation.workIndex].ID}
+			m.syncWorkStage(cards[m.conversation.workIndex])
+		}
+	case "ctrl+o":
+		m.openWorkDetails()
 	case "ctrl+p":
 		m.conversation.workCompact = !m.conversation.workCompact
 	case "left", "right":

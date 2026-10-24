@@ -12,6 +12,7 @@ import (
 )
 
 func TestWorkLedgerSchema(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {

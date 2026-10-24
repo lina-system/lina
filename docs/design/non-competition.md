@@ -58,29 +58,31 @@ Hard conditions:
 - **Unlock plug-in.** An authorization plug-in bundle in `/Library/Security/SecurityAgentPlugins/` with one mechanism. The mechanism runs in the privileged plug-in host, has no interface and answers only allow or deny. When the engine deactivates the mechanism, the plug-in calls `DidDeactivate` with the engine reference from mechanism creation and returns that call's status. Returning success without the call does not let the engine continue. Its only state is a crash marker. It connects only to the lock broker of the person who turned the feature on, and it accepts an answer only after the signature check under Unlock.
 - **Lock broker.** A small native executable of the Node, signed with LINA's Developer ID team and the hardened runtime, which launchd starts in the person's GUI session. It holds at most one unlock ticket, starts the unlock and locks the Mac again. It takes lease requests only from the Node, after the same kind of signature check.
 - **Cover.** A second native process of the Node in the same session. It draws the cover on every display, watches input and stops the work. The broker and the cover watch each other: when one of them exits during a lease, the other locks the Mac.
-- **Lock guard.** A root launchd daemon that can only restore the lock screen's authorization rule. It runs at boot and whenever the plug-in folder changes, and it carries the rollback command.
+- **Lock guard.** A root launchd daemon that can only restore the lock screen's authorization rule. It runs at boot, whenever the plug-in folder changes and once a second, so the manual-unlock check and a build that is no longer measured are noticed without a folder change. It carries the rollback command.
 - **Node.** The Node keeps the grant, the lease, the receipts and the input gate of its screen driver ([main-authority.md](main-authority.md#node-states)). It keeps no native code of its own; the parts above are separate signed executables in the Node's artifact. This design registers no protocol kind. The Node issue adds the payloads, generated types and fixtures together with the handlers.
 
 ### Install and uninstall
 
 Turning the feature on installs the native parts. macOS asks for an administrator's password in its own dialog, and LINA never sees it.
 
-1. Check the Mac. It must have Apple silicon and a macOS build the eval passed on. The lock screen's rule, `system.login.screensaver`, must be exactly what macOS ships (the rule `use-login-window-ui`) or what an earlier LINA install wrote. Any other rule stops the install and says why: Platform SSO, a smart-card rule, another plug-in or a managed rule. The rule is not touched. Only the eval's test Mac waives the build check, for the install and for the guard, because the eval is how a build becomes measured.
+1. Check the Mac. It must have Apple silicon and a macOS build the eval passed on. The lock screen's rule, `system.login.screensaver`, must be exactly what macOS ships (the rule `use-login-window-ui`) or what an earlier LINA install wrote. Any other rule stops the install and says why: Platform SSO, a smart-card rule, another plug-in or a managed rule. The rule is not touched. Only the eval's test Mac waives the build check, for the install and for the guard, because the eval is how a build becomes measured. The builds it passes arrive in a list the release carries, and the eval marks its own test Mac with a root-only file; nothing else can waive the check.
 2. Back up the current rule and the macOS build, with a hash of both, into a file only root can read.
 3. Copy the plug-in and verify its signature and notarization.
 4. Write LINA's unlock right: class `evaluate-mechanisms`, the one privileged mechanism, `tries` 1 and `shared` false. Without `tries` 1, a mechanism rule repeats a denied evaluation up to 10,000 times.
 5. Self-test the plug-in through a separate test right that uses the same mechanism, outside the lock screen, and expect a deny within the plug-in's deadline. This proves that macOS loads the plug-in before the lock screen depends on it. A failure removes the bundle and the right and stops the install.
 6. Write `system.login.screensaver` as class `rule` with `k-of-n` 1 and the rule list LINA's unlock right, then `use-login-window-ui`. Read it back and compare. A mismatch restores the backup.
-7. Ask the person to lock the Mac and unlock it by hand once. The install completes only after that unlock. If no unlock follows within two minutes of the lock, the guard restores the backup, so the next attempt uses the stock rule.
+7. Ask the person to lock the Mac and unlock it by hand once. The install completes only after that unlock. If no unlock follows within two minutes of the lock, the guard restores the backup, so the next attempt uses the stock rule. An unlock the guard first sees after those two minutes does not count.
+
+A re-install replaces the installed plug-in in one step, so a rule an earlier install wrote never names a missing plug-in.
 
 Uninstall runs in an order that never leaves the rule naming a missing plug-in:
 
 1. Turn the feature off, so the plug-in denies at once.
-2. Restore the backed-up rule when the current rule is LINA's. When someone else has changed the rule since, leave it alone and report it.
+2. Restore the backed-up rule when the current rule is LINA's. When someone else has changed the rule since, leave it alone and report it. When that changed rule still names LINA's unlock right, the right and the bundle stay as well, because removing either would leave the rule naming something that is gone.
 3. Remove LINA's unlock right.
 4. Remove the bundle and the state.
 
-The guard restores the backup, or the stock rule when the backup is unusable, and turns the feature off, when it finds any of these: the bundle missing, or its signature invalid, while the rule names it; a rule that differs from what LINA wrote; a macOS build the eval has not passed. The rollback command does the same on request. It needs no Node, no Core and no network, and it runs over SSH or from another administrator account when the person cannot unlock. Turning the feature off in LINA asks the guard to restore. A restore needs no administrator password, because it only returns the Mac to the rule it had.
+The guard restores the backup, or the stock rule when the backup is unusable, and turns the feature off, when it finds any of these: the bundle missing, or its signature invalid, while the rule names it; LINA's unlock right missing while the rule names it; a rule that differs from what LINA wrote; a macOS build the eval has not passed. The rollback command does the same on request. It needs no Node, no Core and no network, and it runs over SSH or from another administrator account when the person cannot unlock. As root it restores in place; from the person's account it asks the guard over a local socket that administrators may use. Turning the feature off in LINA asks the guard to restore. A restore needs no administrator password, because it only returns the Mac to the rule it had. A restore leaves the rule equal to the backup in every key except its timestamps, which the database writes afresh. A restore that cannot write the rule still turns the feature off, and the guard retries it until it succeeds; an install waits for that.
 
 ### Grant flow
 
@@ -105,7 +107,7 @@ The guard restores the backup, or the stock rule when the backup is unusable, an
    Every other case is deny: no broker, a failed check, no ticket, the deadline passing or an internal error. The plug-in never returns an undefined or cancelled result, because either one ends the rule's evaluation before the normal lock screen is tried. A deny moves the evaluation on to `use-login-window-ui`, the person's normal unlock.
 6. The broker confirms the unlock within a fixed deadline. Otherwise it withdraws the ticket and sets the stop latch, and the step fails and asks. The Mac stays locked.
 
-The plug-in logs each answer to the system log with the ticket id, and never a credential. It writes a marker when an evaluation starts and clears it when it answers. A marker left by a crashed evaluation makes every later evaluation deny without connecting, until the guard has checked the install.
+The plug-in logs each answer to the system log with the ticket id, and never a credential. It writes a marker when an evaluation starts and clears it when it answers. A marker left by a crashed evaluation makes every later evaluation deny without connecting, until the guard has checked the install and removed the marker.
 
 ### Cover and stop
 

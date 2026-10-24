@@ -11,6 +11,7 @@ import (
 )
 
 func TestRecordedBreachCountsSpeakingAgentOnly(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	journal := ledger.New(db, nil)
 	for _, tc := range []struct{ agent, text string }{

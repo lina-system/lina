@@ -13,6 +13,7 @@ import (
 )
 
 func TestPendingMaterialLandingResumesAfterRestart(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"start", "promotion"} {
 		t.Run(kind, func(t *testing.T) {
 			var cfg runs.Config

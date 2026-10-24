@@ -43,6 +43,7 @@ func (k *knowledge) Personal(context.Context, string) ([]string, error) {
 	return nil, nil
 }
 func TestExchangePreparationReadsOnlyAllowedKnowledge(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	r := start(t, s)
 	k := &knowledge{t: t}
@@ -74,6 +75,7 @@ func TestExchangePreparationReadsOnlyAllowedKnowledge(t *testing.T) {
 	}
 }
 func TestAcknowledgementNeverPrepares(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	r := start(t, s)
 	if err := s.Acknowledge(t.Context(), r.DeliveryID, "answerer", now); err != nil {
@@ -103,6 +105,7 @@ func (r *response) Next(context.Context) (provider.Event, error) {
 func (*response) Meta() provider.Meta { return provider.Meta{} }
 func (*response) Close() error        { return nil }
 func TestPreparedExchangeRunsThroughModelBoundary(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	r := start(t, s)
 	prepared, err := s.Prepare(t.Context(), r.DeliveryID, "answerer", now, &knowledge{t: t})

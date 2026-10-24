@@ -85,6 +85,7 @@ func files(t *testing.T, root string) []string {
 }
 
 func TestRenameKeepsIdentityHashAndRevision(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := importAsset(t, s, "original")
 	renamed, err := s.Rename(t.Context(), a.ID, "renamed/picture.bin", actor)
@@ -105,6 +106,7 @@ func TestRenameKeepsIdentityHashAndRevision(t *testing.T) {
 }
 
 func TestEditKeepsIDAndRetainsOldRevision(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := importAsset(t, s, "before")
 	edited, err := s.Edit(t.Context(), a.ID, a.Revision, strings.NewReader("after"), actor)
@@ -130,6 +132,7 @@ func TestEditKeepsIDAndRetainsOldRevision(t *testing.T) {
 }
 
 func TestIdenticalContentGetsIndependentIDs(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a, b := importAsset(t, s, "same"), importAsset(t, s, "same")
 	if a.ID == b.ID || a.Hash != b.Hash || a.Path == b.Path {
@@ -138,6 +141,7 @@ func TestIdenticalContentGetsIndependentIDs(t *testing.T) {
 }
 
 func TestImportStaysInStagingUntilHandover(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	before := files(t, root)
 	token, err := s.StageImport(t.Context(), strings.NewReader("incoming"))
@@ -178,6 +182,7 @@ func TestImportStaysInStagingUntilHandover(t *testing.T) {
 }
 
 func TestExportRecordsDeliveryAndRemovesStaging(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	a := importAsset(t, s, "outgoing")
 	exported, err := s.Export(t.Context(), a.ID, a.Revision, "chosen-destination", actor, func(ctx context.Context, body io.Reader) error {
@@ -212,6 +217,7 @@ func TestExportRecordsDeliveryAndRemovesStaging(t *testing.T) {
 }
 
 func TestBackupDetectsHashMismatchInCurrentAndSavedBytes(t *testing.T) {
+	t.Parallel()
 	for _, corruptOld := range []bool{false, true} {
 		t.Run(map[bool]string{false: "current", true: "saved"}[corruptOld], func(t *testing.T) {
 			s, _, root := setup(t)
@@ -254,6 +260,7 @@ func TestBackupDetectsHashMismatchInCurrentAndSavedBytes(t *testing.T) {
 }
 
 func TestTrashHidesAllRevisionsAndRestoresIdentity(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := importAsset(t, s, "recoverable")
 	if err := s.Trash(t.Context(), a.ID, actor); err != nil {
@@ -284,6 +291,7 @@ func TestTrashHidesAllRevisionsAndRestoresIdentity(t *testing.T) {
 }
 
 func TestMetadataSurvivesReopen(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	a := importAsset(t, s, "durable")
 	if err := s.Close(); err != nil {

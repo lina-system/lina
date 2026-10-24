@@ -47,7 +47,7 @@ func controlRuntime(t *testing.T) *conversationRuntime {
 	if err = ctl.Acquire(); err != nil {
 		t.Fatal(err)
 	}
-	r, err := startConversation(t.Context(), root, "test-main", 1, ctl, nil, lifecycle.NewRegistry(nil), "owner", nil, nil)
+	r, err := startConversation(t.Context(), root, "test-main", 1, ctl, nil, lifecycle.NewRegistry(nil), "owner", nil, nil, "", throwawayState())
 	if err != nil {
 		t.Fatal(err)
 	}
