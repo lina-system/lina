@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/work"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -103,11 +104,13 @@ func publishGoalLine(ctx context.Context, view *conversationRuntime, parent ledg
 	var err error
 	if start {
 		text, err = goal.StartLine(g)
-		if errors.Is(err, goal.ErrInvalid) {
-			return nil
-		}
 	} else {
 		text, err = goal.CloseLine(g)
+	}
+	// A stored line can name a path or a check. Do not publish it, and do not
+	// stop the work runner: other goals still need this pass.
+	if errors.Is(err, goal.ErrInvalid) || errors.Is(err, work.ErrPersonLine) {
+		return nil
 	}
 	if err != nil {
 		return err
