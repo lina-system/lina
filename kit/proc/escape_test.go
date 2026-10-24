@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//go:build linux || windows
+//go:build linux || darwin || windows
 
 package proc_test
 
