@@ -229,7 +229,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	} else if !errors.Is(e, agents.ErrNotFound) {
 		return nil, e
 	}
-	r.removals, err = retract.Open(ctx, retract.Config{Canon: db, Root: root})
+	r.removals, err = retract.Open(ctx, retract.Config{Canon: db, Root: root, Repair: identity.ReplayRepair})
 	if err != nil {
 		return nil, err
 	}

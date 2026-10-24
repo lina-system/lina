@@ -545,6 +545,49 @@ func TestConfirmRepairsTheLinkItSupersedes(t *testing.T) {
 	}
 }
 
+func TestRemoveKeepsTheLinkRepairAfterTheJournalSync(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-anna", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "iMessage profile"}}},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, imessage("+821012340001"), "Anna", phone("+821012340001", "iMessage profile"))
+	anna := usable(t, f, imessage("+821012340001"))
+	if len(anna) != 1 {
+		t.Fatal("the identity did not link")
+	}
+	item := f.item(t, "person-anna", "prefers short replies")
+	if err := f.store.RecordArtifact(t.Context(), anna[0].ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	crash := errors.New("injected crash boundary")
+	f.removal.SetCrash("after_sync", crash)
+	if _, err := f.store.Remove(t.Context(), anna[0].ID); !errors.Is(err, crash) {
+		t.Fatalf("remove = %v", err)
+	}
+	if err := f.db.Read(t.Context(), func(*canon.Tx) error { return nil }); !errors.Is(err, canon.ErrRecoveryRequired) {
+		t.Fatalf("partial state was readable: %v", err)
+	}
+	f.removal.SetCrash("", nil)
+	if err := f.removal.Recover(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(usable(t, f, imessage("+821012340001"))) != 0 {
+		t.Fatal("recovered link stayed usable")
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("recovered item stayed visible")
+	}
+	requeues, err := f.store.Requeues(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeues) != 1 || requeues[0].Identity != imessage("+821012340001") {
+		t.Fatalf("requeues = %+v", requeues)
+	}
+}
+
 func TestRemoveRetractsItemsAndRequeuesOnlyThatIdentity(t *testing.T) {
 	t.Parallel()
 	people := identity.StaticPeople{

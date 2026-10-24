@@ -102,7 +102,9 @@ change. A citing item that is hidden only because an ancestor was forgotten is
 retracted too, so restoring that ancestor does not show it again. An item that
 is already retracted, or whose row is gone, stays as it is. The link change and the retraction become visible together. An empty
 retraction commits the link and writes no removal-list line. A failure rolls
-the link change back with the retraction. Recovery replays the removal list.
+the link change back with the retraction. When the removal list already has
+the line, recovery replays the journaled link change and requeue with the
+retraction before reads reopen.
 
 A repair leaves one row per identity in `identity_requeue`, from the source's
 learning watermark or, without one, the identity's first sighting. Extraction
