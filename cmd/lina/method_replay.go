@@ -22,8 +22,9 @@ import (
 
 // runMethodReplay scores the private M4-1 replay set before and after the
 // per-agent tailoring. It is a development command: it reads an explicit case
-// file, plays each case once per variant through the configured model route and
-// writes only scores, check outcomes and case ids.
+// file, plays each case --repeat times per variant through the configured model
+// route and writes only scores, check outcomes and case ids. A ship decision
+// needs at least three repeats.
 func runMethodReplay(args []string) int {
 	flags := flag.NewFlagSet("lina method-replay", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
