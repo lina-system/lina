@@ -23,6 +23,10 @@ var (
 	ErrInvalid      = errors.New("invalid_messenger_source")
 	ErrNotFound     = sql.ErrNoRows
 	ErrNotConnected = errors.New("messenger_source_not_connected")
+	// ErrTextUnavailable reports that the platform will not give this adapter
+	// message text, such as Discord without the message-content intent. The
+	// source states the cause instead of storing records whose bodies are empty.
+	ErrTextUnavailable = errors.New("messenger_text_unavailable")
 )
 
 // Removals is the one retraction path. Deleted records are hidden through it and
@@ -33,17 +37,33 @@ type Removals interface {
 
 // Store owns the source registry and messenger admission.
 type Store struct {
-	db        *canon.Store
-	materials ledger.Materials
-	removals  Removals
-	now       func() time.Time
+	// admissionGate orders scheduled and live admission against switches and
+	// disconnection, including deletions that use a separate retraction transaction.
+	admissionGate chan struct{}
+	db            *canon.Store
+	materials     ledger.Materials
+	removals      Removals
+	now           func() time.Time
 }
 
 // Open composes the store. materials carries bodies above the ledger's inline
 // size; removals hides deleted records. Core supplies both.
 func Open(db *canon.Store, materials ledger.Materials, removals Removals) *Store {
-	return &Store{db: db, materials: materials, removals: removals, now: time.Now}
+	return &Store{db: db, materials: materials, removals: removals, now: time.Now, admissionGate: make(chan struct{}, 1)}
 }
+
+// lockAdmission waits for a complete admission, including retraction, while
+// allowing a cancelled reader to leave without waiting for another source.
+func (s *Store) lockAdmission(ctx context.Context) error {
+	select {
+	case s.admissionGate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Store) unlockAdmission() { <-s.admissionGate }
 
 // WithClock replaces the clock for deterministic tests.
 func (s *Store) WithClock(now func() time.Time) *Store { s.now = now; return s }
@@ -75,10 +95,10 @@ func (s *Store) Connect(ctx context.Context, source Source) error {
 		at = s.now()
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
-VALUES(?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(platform,account) DO UPDATE SET person=excluded.person,mode=excluded.mode,adapter=excluded.adapter,state=excluded.state,failure=excluded.failure,learning_watermark=excluded.learning_watermark,accepted_terms=excluded.accepted_terms`,
-			source.Person, source.Platform, source.Account, string(source.Mode), source.Adapter, string(source.State), source.Failure, source.LearningWatermark, terms, at.UTC().Format(time.RFC3339Nano))
+		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(platform,account) DO UPDATE SET person=excluded.person,owner=excluded.owner,mode=excluded.mode,adapter=excluded.adapter,state=excluded.state,failure=excluded.failure,learning_watermark=excluded.learning_watermark,accepted_terms=excluded.accepted_terms`,
+			source.Person, source.Platform, source.Account, source.Owner, string(source.Mode), source.Adapter, string(source.State), source.Failure, source.LearningWatermark, terms, at.UTC().Format(time.RFC3339Nano))
 		return err
 	})
 }
@@ -94,6 +114,10 @@ func (s State) valid() bool {
 // Disconnect stops sync for a source and marks it disconnected. Its records
 // stay; the caller deletes the credentials it holds.
 func (s *Store) Disconnect(ctx context.Context, person, platform, account string) error {
+	if err := s.lockAdmission(ctx); err != nil {
+		return err
+	}
+	defer s.unlockAdmission()
 	return s.setState(ctx, person, platform, account, StateDisconnected, "")
 }
 
@@ -113,7 +137,7 @@ func (s *Store) setState(ctx context.Context, person, platform, account string, 
 		return ErrInvalid
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET state=?,failure=? WHERE person=? AND platform=? AND account=?", string(state), cause, person, platform, account)
+		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET state=?,failure=? WHERE person=? AND platform=? AND account=? AND (state<>'disconnected' OR ?='disconnected')", string(state), cause, person, platform, account, string(state))
 		if err != nil {
 			return err
 		}
@@ -133,7 +157,7 @@ func (s *Store) Sources(ctx context.Context, person string) ([]Source, error) {
 	}
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
 FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 		if err != nil {
 			return err
@@ -154,7 +178,7 @@ FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 	var source Source
 	var mode, state, terms, connected string
-	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &terms, &connected); err != nil {
+	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &source.Owner, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &terms, &connected); err != nil {
 		return Source{}, err
 	}
 	source.Mode, source.State = Mode(mode), State(state)
@@ -184,7 +208,7 @@ func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 func (s *Store) allSources(ctx context.Context) ([]Source, error) {
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
 FROM messenger_source ORDER BY platform,account`)
 		if err != nil {
 			return err
@@ -269,6 +293,10 @@ ON CONFLICT(platform,account,chat) DO UPDATE SET name=excluded.name,kind=exclude
 
 // SetSwitches leaves a chat out of sync, learning or embedding.
 func (s *Store) SetSwitches(ctx context.Context, person, platform, account, chat string, switches Switches) error {
+	if err := s.lockAdmission(ctx); err != nil {
+		return err
+	}
+	defer s.unlockAdmission()
 	if !validName(person) || !validName(platform) || !validName(account) || !validName(chat) {
 		return ErrInvalid
 	}
@@ -468,6 +496,58 @@ type PageResult struct {
 	Added, Updated, Deleted, Waiting int
 }
 
+// AdmitEvent commits one live event without moving the chat's cursor or its
+// coverage: a live event is newer than the last page, and the next page read
+// admits it again through the ordinary path, which adds nothing twice.
+func (s *Store) AdmitEvent(ctx context.Context, source Source, event Event) (PageResult, error) {
+	if !validName(event.Chat) && !(event.Chat == "" && event.Deletion != nil && event.Message == nil) {
+		return PageResult{}, ErrInvalid
+	}
+	if (event.Message == nil) == (event.Deletion == nil) {
+		return PageResult{}, ErrInvalid
+	}
+	if err := s.lockAdmission(ctx); err != nil {
+		return PageResult{}, err
+	}
+	defer s.unlockAdmission()
+	connected, err := s.liveConnected(ctx, source)
+	if err != nil {
+		return PageResult{}, err
+	}
+	if !connected {
+		return PageResult{}, ErrNotConnected
+	}
+	if event.Chat == "" {
+		deleted, err := s.deleteSourceMessages(ctx, source, []string{event.Deletion.Message}, event.ChatPrefixes...)
+		return PageResult{Deleted: deleted}, err
+	}
+	var enabled bool
+	if err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM messenger_chat WHERE platform=? AND account=? AND chat=? AND sync=1)", source.Platform, source.Account, event.Chat).Scan(&enabled)
+	}); err != nil {
+		return PageResult{}, err
+	}
+	if !enabled {
+		return PageResult{}, nil
+	}
+	page := Page{HasMore: true}
+	if event.Message != nil {
+		page.Messages = []Message{*event.Message}
+	}
+	if event.Deletion != nil {
+		page.Deletions = []Deletion{*event.Deletion}
+	}
+	return s.admit(ctx, source, event.Chat, "", page, false)
+}
+
+func (s *Store) liveConnected(ctx context.Context, source Source) (bool, error) {
+	var connected bool
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM messenger_source WHERE person=? AND platform=? AND account=? AND state IN ('connected','failing'))", source.Person, source.Platform, source.Account).Scan(&connected)
+	})
+	return connected, err
+}
+
 // ErrPageWaiting reports a page held back because an own-account message matches
 // a write whose outcome is not yet known. Nothing commits and the cursor stays,
 // so the next read sees the page again after the write settles.
@@ -489,16 +569,27 @@ func (s *Store) pendingEffects(ctx context.Context, source Source, chat string) 
 // cursor and coverage in one canon transaction. Reading the same messages again
 // adds nothing. A message missing from a page changes nothing.
 func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from Cursor, page Page) (PageResult, error) {
-	return s.admitPage(ctx, source, chat, from, page, true)
+	if err := s.lockAdmission(ctx); err != nil {
+		return PageResult{}, err
+	}
+	defer s.unlockAdmission()
+	return s.admit(ctx, source, chat, from, page, true)
 }
 
-// AdmitMessages admits messages the platform pushed, such as an edit, without
-// touching the chat's cursor or coverage: a pushed message is not a read.
+// AdmitMessages admits pushed messages without moving history progress.
 func (s *Store) AdmitMessages(ctx context.Context, source Source, chat string, messages []Message) (PageResult, error) {
-	return s.admitPage(ctx, source, chat, "", Page{Messages: messages}, false)
+	if err := s.lockAdmission(ctx); err != nil {
+		return PageResult{}, err
+	}
+	defer s.unlockAdmission()
+	return s.admit(ctx, source, chat, "", Page{Messages: messages}, false)
 }
 
-func (s *Store) admitPage(ctx context.Context, source Source, chat string, from Cursor, page Page, progress bool) (PageResult, error) {
+// admit commits one page. advance is false for live admission, which stores the
+// records but leaves the cursor and coverage to the scheduled read: a live event
+// is newer than the last page, and a cursor moved from a stale read would rewind
+// a chat whose scheduled page committed in the meantime.
+func (s *Store) admit(ctx context.Context, source Source, chat string, from Cursor, page Page, advance bool) (PageResult, error) {
 	if !validName(source.Person) || !validName(source.Platform) || !validName(source.Account) || !validName(chat) {
 		return PageResult{}, ErrInvalid
 	}
@@ -588,10 +679,10 @@ func (s *Store) admitPage(ctx context.Context, source Source, chat string, from 
 		result.Deleted = deleted
 	}
 	if len(plans) == 0 && len(repairs) == 0 {
-		if !progress {
+		// Nothing new: only a scheduled read advances progress.
+		if !advance {
 			return result, nil
 		}
-		// Nothing new: still record the completed read and advance the cursor.
 		return result, s.commitProgress(ctx, source, chat, from, page, 0)
 	}
 	if len(plans) == 0 {
@@ -601,7 +692,7 @@ func (s *Store) admitPage(ctx context.Context, source Source, chat string, from 
 					return err
 				}
 			}
-			if !progress {
+			if !advance {
 				return nil
 			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, 0)
@@ -636,7 +727,7 @@ func (s *Store) admitPage(ctx context.Context, source Source, chat string, from 
 					return err
 				}
 			}
-			if !progress {
+			if !advance {
 				return nil
 			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, len(plans))
@@ -954,6 +1045,14 @@ func (s *Store) DeleteRecords(ctx context.Context, source Source, chat string, m
 // for the account's private chats and basic groups, so a pushed id belongs to
 // at most one of them; every chat the id is live in is cleared, as TDLib does.
 func (s *Store) DeleteSourceMessages(ctx context.Context, source Source, messages []string, chatPrefixes ...string) (int, error) {
+	if err := s.lockAdmission(ctx); err != nil {
+		return 0, err
+	}
+	defer s.unlockAdmission()
+	return s.deleteSourceMessages(ctx, source, messages, chatPrefixes...)
+}
+
+func (s *Store) deleteSourceMessages(ctx context.Context, source Source, messages []string, chatPrefixes ...string) (int, error) {
 	if len(messages) == 0 {
 		return 0, nil
 	}

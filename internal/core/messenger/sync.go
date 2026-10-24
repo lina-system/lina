@@ -4,43 +4,66 @@ package messenger
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"time"
+
+	"github.com/thisisjun786/lina/internal/core/channels"
 )
 
 // DefaultInterval is the schedule for a source whose adapter states none.
 const DefaultInterval = time.Minute
 
+// liveBackoff bounds how long a failing live reader waits before it retries.
+const (
+	liveBackoffMin = time.Second
+	liveBackoffMax = time.Minute
+)
+
 // Service reads connected sources on their schedule and from their live events.
 // One source's failure never blocks another source or the conversation.
 type Service struct {
-	store    *Store
-	resolve  Resolver
-	factory  Factory
-	interval time.Duration
+	store     *Store
+	resolve   Resolver
+	interval  time.Duration
+	factory   Factory
+	admission sync.Map
+	activity  sync.RWMutex
+	wake      chan struct{}
+	syncReads map[string]map[*sourceRead]struct{}
+	stopping  map[string]bool
 
-	admission  sync.Map // SourceID -> chan struct{}; never held during a platform read.
-	activity   sync.RWMutex
-	wake       chan struct{}
-	liveWake   chan struct{}
-	liveCancel map[string]context.CancelFunc
-	mu         sync.Mutex
-	lastSync   map[string]time.Time
-	perSource  map[string]Adapter
-	syncReads  map[string]map[*sourceRead]struct{}
-	stopping   map[string]bool
+	mu       sync.Mutex
+	lastSync map[string]time.Time
+	// resolved caches one adapter per source account, so a schedule and a live
+	// reader share it and its connections.
+	resolved map[string]Adapter
+	// watching holds each source's live reader, so a source connected while
+	// Core runs gains one at its next schedule and a disconnected source stops
+	// its reader at once.
+	watching map[string]*watcher
+}
+
+// watcher is one source's live reader.
+type watcher struct {
+	cancel context.CancelFunc
 }
 
 type sourceRead struct{ cancel context.CancelFunc }
 
-// Factory opens the adapter of one source. It returns false when it does not
-// serve that source. Core uses it for account-specific credentials.
+// Factory opens an account-specific adapter when the resolver does not own it.
 type Factory func(Source) (Adapter, bool, error)
 
-// NewService composes the sync loop. adapters are keyed by the source's adapter
-// name; factory opens account-specific adapters. An unsupported source is left
-// untouched.
+func (s *Service) WithFactory(factory Factory) *Service { s.factory = factory; return s }
+
+// NewService composes the sync loop. adapters are keyed by the adapter name a
+// source records. A platform with one adapter uses the platform name; Discord's
+// bot and personal account register two names. A source whose name is absent
+// is left untouched.
 func NewService(store *Store, adapters map[string]Adapter, interval time.Duration) *Service {
+	if interval <= 0 {
+		interval = DefaultInterval
+	}
 	return NewServiceWithResolver(store, func(source Source) (Adapter, bool) {
 		adapter, ok := adapters[source.Adapter]
 		return adapter, ok
@@ -56,54 +79,66 @@ func NewServiceWithResolver(store *Store, resolve Resolver, interval time.Durati
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	return &Service{store: store, resolve: resolve, interval: interval, wake: make(chan struct{}, 1), liveWake: make(chan struct{}, 1), liveCancel: map[string]context.CancelFunc{}, lastSync: map[string]time.Time{}, perSource: map[string]Adapter{}, syncReads: map[string]map[*sourceRead]struct{}{}, stopping: map[string]bool{}}
-}
-
-// WithFactory adds the per-source adapter factory.
-func (s *Service) WithFactory(factory Factory) *Service {
-	s.factory = factory
-	return s
-}
-
-// Close releases per-source adapters that hold a connection.
-func (s *Service) Close() {
-	s.mu.Lock()
-	adapters := make([]Adapter, 0, len(s.perSource))
-	for key, adapter := range s.perSource {
-		adapters = append(adapters, adapter)
-		delete(s.perSource, key)
+	if resolve == nil {
+		resolve = func(Source) (Adapter, bool) { return nil, false }
 	}
-	s.mu.Unlock()
-	for _, adapter := range adapters {
-		if closer, ok := adapter.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
-	}
+	return &Service{store: store, resolve: resolve, interval: interval, wake: make(chan struct{}, 1), syncReads: map[string]map[*sourceRead]struct{}{}, stopping: map[string]bool{}, lastSync: map[string]time.Time{}, watching: map[string]*watcher{}, resolved: map[string]Adapter{}}
 }
 
-// adapterFor resolves the adapter of one source.
+// adapterFor selects the implementation for the source account, creating it
+// once. Lookup is not by platform: two accounts on one platform, or a bot and a
+// personal account, would otherwise share one instance and one read.
 func (s *Service) adapterFor(source Source) (Adapter, bool) {
-	if adapter, ok := s.resolve(source); ok {
-		return adapter, true
-	}
+	adapter, err := s.adapter(source)
+	return adapter, err == nil
+}
+
+// adapter returns the source's adapter, resolving it once per account.
+func (s *Service) adapter(source Source) (Adapter, error) {
 	key := source.Platform + "\x00" + source.Account
-	// One adapter serves the sync loop and the live subscription, so its
-	// construction holds the lock: a second caller must not open another
-	// connection for the same source.
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if adapter, ok := s.perSource[key]; ok {
-		return adapter, true
+	if s.stopping[key] {
+		return nil, ErrNotConnected
 	}
-	if s.factory == nil {
-		return nil, false
+	if adapter, ok := s.resolved[key]; ok {
+		return adapter, nil
 	}
-	adapter, ok, err := s.factory(source)
-	if err != nil || !ok {
-		return nil, false
+	adapter, ok := s.resolve(source)
+	if !ok && s.factory != nil {
+		var err error
+		adapter, ok, err = s.factory(source)
+		if err != nil {
+			return nil, err
+		}
 	}
-	s.perSource[key] = adapter
-	return adapter, true
+	if !ok || adapter == nil {
+		return nil, ErrInvalid
+	}
+	s.resolved[key] = adapter
+	return adapter, nil
+}
+
+// Close releases the adapters the resolver created.
+func (s *Service) Close() {
+	s.retain(nil)
+	s.mu.Lock()
+	adapters := s.resolved
+	s.resolved = map[string]Adapter{}
+	s.mu.Unlock()
+	for _, adapter := range adapters {
+		closeAdapter(adapter)
+	}
+}
+
+// closeAdapter supports the cleanup signatures of the platform adapters.
+func closeAdapter(adapter Adapter) {
+	switch closer := adapter.(type) {
+	case io.Closer:
+		_ = closer.Close()
+	case interface{ Close() }:
+		closer.Close()
+	}
 }
 
 // Store is the registry and admission store the service reads into.
@@ -112,9 +147,7 @@ func (s *Service) Store() *Store { return s.store }
 // Run reads every connected source until ctx ends. It never returns an error:
 // a failing source is recorded in its own registry row.
 func (s *Service) Run(ctx context.Context) {
-	liveDone := make(chan struct{})
-	go func() { defer close(liveDone); s.RunLive(ctx) }()
-	defer func() { <-liveDone }()
+	defer s.retain(nil)
 	s.SyncAll(ctx, nil)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -142,14 +175,23 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 	if err != nil {
 		return results
 	}
+	connected := make(map[string]bool, len(sources))
+	defer func() { s.retain(connected) }()
 	for _, source := range sources {
+		// A failing source keeps its schedule: the cause may be a credential or
+		// an unreachable node that the person can fix. A source that needs a
+		// new sign-in waits for the person instead.
 		if source.State != StateConnected && source.State != StateFailing {
 			continue
 		}
-		if _, ok := s.adapterFor(source); !ok {
+		if _, owned := s.adapterFor(source); !owned {
 			continue
 		}
 		key := source.Platform + "\x00" + source.Account
+		connected[key] = true
+		if source.State == StateConnected {
+			s.watch(ctx, source)
+		}
 		s.mu.Lock()
 		last := s.lastSync[key]
 		s.mu.Unlock()
@@ -161,11 +203,7 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 		s.lastSync[key] = current
 		s.mu.Unlock()
 		if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) {
-			s.activity.RLock()
-			if s.connected(ctx, source) {
-				_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
-			}
-			s.activity.RUnlock()
+			_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
 		} else if err == nil {
 			results[key] = result
 		}
@@ -173,8 +211,141 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 	return results
 }
 
+// watch starts a source's live reader once, when its adapter pushes events.
+func (s *Service) watch(ctx context.Context, source Source) {
+	key := source.Platform + "\x00" + source.Account
+	s.mu.Lock()
+	if s.watching[key] != nil || s.stopping[key] {
+		s.mu.Unlock()
+		return
+	}
+	reader, cancel := context.WithCancel(ctx)
+	w := &watcher{cancel: cancel}
+	s.watching[key] = w
+	s.mu.Unlock()
+	go func() {
+		// Observe committed registry changes independently of scheduled network I/O.
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for {
+				changed := s.store.db.Changed()
+				connected, err := s.store.liveConnected(reader, source)
+				if err != nil || !connected {
+					// A disconnect is a committed change, so it is observed
+					// here even when the person reconnects before the next
+					// schedule. Releasing the adapter at once keeps a
+					// replacement token from being ignored.
+					s.release(key)
+					return
+				}
+				select {
+				case <-reader.Done():
+					return
+				case <-changed:
+				}
+			}
+		}()
+		s.follow(reader, source, key, w)
+		cancel()
+		<-done
+	}()
+}
+
+// release stops one account's live reader and releases its adapter, so a
+// reconnect with replacement credentials resolves a new adapter.
+func (s *Service) release(key string) {
+	s.mu.Lock()
+	w := s.watching[key]
+	delete(s.watching, key)
+	adapter := s.resolved[key]
+	delete(s.resolved, key)
+	delete(s.lastSync, key)
+	s.mu.Unlock()
+	if w != nil {
+		w.cancel()
+	}
+	if adapter != nil {
+		closeAdapter(adapter)
+	}
+}
+
+// retain stops the live readers of sources that are no longer connected and
+// releases their adapters. Disconnecting a source stops its sync at once.
+func (s *Service) retain(connected map[string]bool) {
+	s.mu.Lock()
+	var stopped []*watcher
+	var released []Adapter
+	for key, w := range s.watching {
+		if !connected[key] {
+			stopped = append(stopped, w)
+			delete(s.watching, key)
+		}
+	}
+	for key, adapter := range s.resolved {
+		if !connected[key] {
+			released = append(released, adapter)
+			delete(s.resolved, key)
+		}
+	}
+	s.mu.Unlock()
+	for _, w := range stopped {
+		w.cancel()
+	}
+	for _, adapter := range released {
+		closeAdapter(adapter)
+	}
+}
+
+// follow reads one source's live events until ctx ends, and after a failure
+// backs off and rejoins that platform's session.
+func (s *Service) follow(ctx context.Context, source Source, key string, w *watcher) {
+	defer func() {
+		s.mu.Lock()
+		if s.watching[key] == w {
+			delete(s.watching, key)
+		}
+		s.mu.Unlock()
+	}()
+	backoff := liveBackoffMin
+	for ctx.Err() == nil {
+		adapter, err := s.adapter(source)
+		if err != nil {
+			return
+		}
+		if !adapter.Capabilities().LiveEvents {
+			return
+		}
+		err = adapter.Live(ctx, sourceID(source), func(event Event) error {
+			_, err := s.Apply(ctx, source, event)
+			if errors.Is(err, ErrPageWaiting) {
+				// The event belongs to a write whose outcome is not known yet.
+				// Acknowledging it here would drop it: the scheduled read starts
+				// past this cursor and cannot see an edit or a deletion again.
+				// The session replays the dispatch once the write settles.
+				return channels.Retry(err)
+			}
+			return err
+		})
+		if ctx.Err() != nil || errors.Is(err, ErrNotConnected) {
+			return
+		}
+		if err != nil && !channels.Retryable(err) && !errors.Is(err, ErrPageWaiting) {
+			_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		backoff = min(2*backoff, liveBackoffMax)
+	}
+}
+
 func (s *Service) intervalOf(source Source) time.Duration {
-	if adapter, ok := s.adapterFor(source); ok {
+	if adapter, err := s.adapter(source); err == nil {
 		if interval := adapter.Capabilities().Interval; interval > 0 {
 			return interval
 		}
@@ -188,6 +359,7 @@ func sourceID(source Source) SourceID {
 
 // Sync reads one source: its chat list, then every chat that is in sync.
 func (s *Service) Sync(ctx context.Context, source Source) (result Result, err error) {
+	watchCtx := ctx
 	s.activity.RLock()
 	defer s.activity.RUnlock()
 	if !s.connected(ctx, source) {
@@ -266,6 +438,7 @@ func (s *Service) Sync(ctx context.Context, source Source) (result Result, err e
 			return result, err
 		}
 	}
+	s.watch(watchCtx, source)
 	return result, s.store.MarkConnected(ctx, source.Person, source.Platform, source.Account)
 }
 
@@ -312,6 +485,31 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 	}
 }
 
+// Live reads a source's pushed events until ctx ends. A platform without live
+// events returns immediately.
+func (s *Service) Live(ctx context.Context, source Source, deliver func(Event) error) error {
+	adapter, err := s.adapter(source)
+	if err != nil {
+		return err
+	}
+	return adapter.Live(ctx, sourceID(source), deliver)
+}
+
+// failureCause keeps a short, bounded cause on the registry row.
+func failureCause(err error) string {
+	if errors.Is(err, ErrTextUnavailable) {
+		return "message text is unavailable: the bot's message-content intent is off"
+	}
+	if errors.Is(err, ErrNotConnected) {
+		return "the bot token for this account is not stored"
+	}
+	text := err.Error()
+	if len(text) > 240 {
+		text = text[:240]
+	}
+	return text
+}
+
 // lockAdmission serializes revision planning and commit for one source. Live
 // updates and history pages must observe each other's completed revisions.
 func (s *Service) lockAdmission(ctx context.Context, source Source) (func(), error) {
@@ -334,35 +532,12 @@ func (s *Service) admitPage(ctx context.Context, source Source, chat string, cur
 	return s.store.AdmitPage(ctx, source, chat, cursor, page)
 }
 
-// Live reads a source's pushed events until ctx ends. A platform without live
-// events returns immediately.
-func (s *Service) Live(ctx context.Context, source Source, deliver func(Event) error) error {
-	adapter, ok := s.adapterFor(source)
-	if !ok {
-		return ErrInvalid
-	}
-	return adapter.Live(ctx, sourceID(source), deliver)
-}
-
-// failureCause keeps a short, bounded cause on the registry row.
-func failureCause(err error) string {
-	text := err.Error()
-	if len(text) > 240 {
-		text = text[:240]
-	}
-	return text
-}
-
-// Apply admits one event the platform pushed: an edit or a new message becomes
-// a record without moving the chat's cursor, and a deletion travels through the
-// retraction path. An event for a chat this source does not hold is ignored.
+// Apply admits one live event while coordinating disconnect with sync.
 func (s *Service) Apply(ctx context.Context, source Source, event Event) (Result, error) {
 	s.activity.RLock()
 	defer s.activity.RUnlock()
 	return s.apply(ctx, source, event)
 }
-
-// apply also serves recovery while Sync already holds the activity lock.
 func (s *Service) apply(ctx context.Context, source Source, event Event) (Result, error) {
 	if !s.connected(ctx, source) {
 		return Result{}, nil
@@ -372,123 +547,18 @@ func (s *Service) apply(ctx context.Context, source Source, event Event) (Result
 		return Result{}, err
 	}
 	defer unlock()
-	if event.Message != nil {
-		if event.Chat == "" || !validName(event.Chat) {
-			return Result{}, ErrInvalid
-		}
-		chats, err := s.store.Chats(ctx, source.Person, source.Platform, source.Account)
-		if err != nil {
-			return Result{}, err
-		}
-		allowed := false
-		for _, chat := range chats {
-			if chat.Chat == event.Chat && chat.Sync {
-				allowed = true
-			}
-		}
-		if !allowed {
-			return Result{}, nil
-		}
-	}
-	var result Result
-	switch {
-	case event.Message != nil:
-		if event.Chat == "" || !validName(event.Chat) {
-			return result, ErrInvalid
-		}
-		outcome, err := s.store.AdmitMessages(ctx, source, event.Chat, []Message{*event.Message})
-		result.Added, result.Updated, result.Waiting = outcome.Added, outcome.Updated, outcome.Waiting
-		if errors.Is(err, ErrPageWaiting) {
-			return result, nil
-		}
-		return result, err
-	case event.Deletion != nil:
-		deleted := 0
-		var err error
-		if event.Chat != "" {
-			deleted, err = s.store.DeleteRecords(ctx, source, event.Chat, []string{event.Deletion.Message})
-		} else {
-			deleted, err = s.store.DeleteSourceMessages(ctx, source, []string{event.Deletion.Message}, event.ChatPrefixes...)
-		}
-		result.Deleted = deleted
-		return result, err
-	}
-	return result, ErrInvalid
+	outcome, err := s.store.AdmitEvent(ctx, source, event)
+	return Result{Added: outcome.Added, Updated: outcome.Updated, Deleted: outcome.Deleted, Waiting: outcome.Waiting}, err
 }
 
-// RunLive delivers pushed events for every connected source whose adapter has
-// them, until ctx ends. A source whose adapter has no live events is read on
-// its schedule only.
-func (s *Service) RunLive(ctx context.Context) {
-	subscribed := map[string]bool{}
-	var mu sync.Mutex
-	var workers sync.WaitGroup
-	defer workers.Wait()
-	subscribe := func() {
-		sources, err := s.store.allSources(ctx)
-		if err != nil {
-			return
-		}
-		for _, source := range sources {
-			if source.State != StateConnected {
-				continue
-			}
-			adapter, ok := s.adapterFor(source)
-			if !ok || !adapter.Capabilities().LiveEvents {
-				continue
-			}
-			key := source.Platform + "\x00" + source.Account
-			mu.Lock()
-			if subscribed[key] {
-				mu.Unlock()
-				continue
-			}
-			subscribed[key] = true
-			mu.Unlock()
-			liveCtx, cancel := context.WithCancel(ctx)
-			s.mu.Lock()
-			s.liveCancel[key] = cancel
-			s.mu.Unlock()
-			workers.Add(1)
-			go func(source Source, adapter Adapter) {
-				defer workers.Done()
-				defer cancel()
-				_ = adapter.Live(liveCtx, sourceID(source), func(event Event) error {
-					_, err := s.Apply(liveCtx, source, event)
-					return err
-				})
-				mu.Lock()
-				delete(subscribed, key)
-				mu.Unlock()
-			}(source, adapter)
-		}
-	}
-	subscribe()
-	ticker := time.NewTicker(s.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-s.liveWake:
-			subscribe()
-		case <-ticker.C:
-			subscribe()
-		}
-	}
-}
-
-// Wake schedules newly connected sources without waiting for the next tick.
+// Wake reads newly connected sources without waiting for the next interval.
 func (s *Service) Wake() {
 	select {
 	case s.wake <- struct{}{}:
 	default:
 	}
-	select {
-	case s.liveWake <- struct{}{}:
-	default:
-	}
 }
+
 func (s *Service) connected(ctx context.Context, source Source) bool {
 	rows, err := s.store.Sources(ctx, source.Person)
 	if err != nil {
@@ -502,30 +572,21 @@ func (s *Service) connected(ctx context.Context, source Source) bool {
 	return false
 }
 
-// Disconnect stops reading before removing the source's authentication.
+// Disconnect cancels active requests before waiting for their admissions.
 func (s *Service) Disconnect(ctx context.Context, source Source) error {
 	key := source.Platform + "\x00" + source.Account
-	// Cancel network reads and rate-limit waits before waiting for their writes.
 	s.mu.Lock()
 	s.stopping[key] = true
 	for read := range s.syncReads[key] {
 		read.cancel()
 	}
-	if cancel := s.liveCancel[key]; cancel != nil {
-		cancel()
-		delete(s.liveCancel, key)
+	if w := s.watching[key]; w != nil {
+		w.cancel()
 	}
 	s.mu.Unlock()
 	s.activity.Lock()
 	defer s.activity.Unlock()
 	defer func() { s.mu.Lock(); delete(s.stopping, key); s.mu.Unlock() }()
-	s.mu.Lock()
-	adapter := s.perSource[key]
-	delete(s.perSource, key)
-	delete(s.lastSync, key)
-	s.mu.Unlock()
-	if closer, ok := adapter.(interface{ Close() error }); ok {
-		_ = closer.Close()
-	}
+	s.release(key)
 	return s.store.Disconnect(ctx, source.Person, source.Platform, source.Account)
 }

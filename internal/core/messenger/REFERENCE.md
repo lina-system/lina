@@ -110,19 +110,35 @@ can never become an empty message that reads as something someone sent.
 
 ## Live events
 
-An adapter's pushed event reaches `Service.Apply`: an edit or new message is
-admitted with `AdmitMessages` without moving a cursor or coverage. Deletions
-travel through the retraction path. A deletion without a chat is resolved by
-`DeleteSourceMessages` across chats where the id is live. `Service.RunLive`
-subscribes connected sources. One per-source adapter serves sync and events.
+`AdmitEvent` admits one pushed message or deletion through the same admission
+path as a page, and writes no cursor or coverage: a live event is newer than the
+last complete read, and the next page admits it again without adding anything.
+`Service` starts one live reader per connected source, after the source's first
+sync, and re-joins the platform's session with bounded backoff after a failure.
+A source that needs a new sign-in gets no live reader.
 
-## Adapters
+An event held behind an unsettled write (`ErrPageWaiting`) is returned to the
+session as `channels.Retry`, not acknowledged: the scheduled read resumes past
+its cursor and cannot see that edit or deletion again. The session replays the
+dispatch after a bounded backoff and keeps the source connected.
 
-The [Telegram adapter](telegram/REFERENCE.md) ships with Core, using its secret
-store through an account-specific factory. The [Teams adapter](teams/README.md)
-polls Graph through its installed service. Other platforms are tracked by #1070
-and the per-platform issues. Writes are recorded and matched here; write verbs,
-grants and approvals belong to #1084. Learning from the person's records is #1075.
+`NewServiceWithResolver` resolves an adapter per source, so two accounts on one platform
+never share an adapter's read state. `NewService` keeps the map form for
+platforms with one account.
+
+## Platform adapters
+
+`internal/core/messenger/discord` reads the servers of a bot the person added
+(#1079). It shares the Gateway session with a channel connection on the same
+token. Writes are recorded and matched here; the write verbs, grants and
+approvals belong to #1084. Learning from the person's own records is #1075,
+which waits for the Discord developer policy reading; nothing here learns.
+
+The [Teams adapter](teams/README.md) polls Graph through Core. Other platforms
+are tracked by #1070 and the per-platform issues.
+
+The [Telegram adapter](telegram/REFERENCE.md) uses the same live admission path,
+with account-wide deletion namespaces and persistent update recovery.
 
 Sender profile emails, when supplied by an adapter, are stored as evidence in
 `messenger_author` with the source account and platform author ID. They do not
