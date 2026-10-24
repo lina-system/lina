@@ -1460,6 +1460,9 @@ The tests cover owner shutdown, cancellation, normal leader exit and owner proce
 macOS runs each command as its own launchd job through the explicit per-command `proc-job` helper, and owns it through the resource coalition launchd creates for that job.
 Coalition membership is fixed at process creation and inherited by every descendant, so teardown reaches a child that changes session, outlives its parent and clears its environment.
 Streams and the exit status cross the job boundary over a private Unix socket; teardown kills the coalition and boots the job out.
+The owner stops and joins a file-backed input relay when the command returns, and it does not close the caller's file.
+If the owner disappears before the helper connects, the helper still boots the job out and removes its directory.
+A relative command directory is prefixed with the owner's working directory and left uncleaned, so the kernel resolves a symlink followed by `..`.
 The sandbox's Seatbelt policy keeps its `setsid`/`setpgid` denial, which matches the Linux seccomp filter but is no longer what owns a command's descendants.
 
 Windows process ownership uses a Job Object assigned before the suspended leader runs.
@@ -2660,14 +2663,16 @@ Contract: [work-and-delegation.md](work-and-delegation.md#event-driven-flow), [w
   Prompts, paging and debug output are disabled.
   This keeps `gh api --include` headers and JSON machine-readable under an inherited color-capable terminal without changing the user's login, tool configuration or parent environment.
   The installed-Core scenario exercises this inherited environment through the real child boundary.
-- The conformance check uses the owning dev manager's existing conversation and `coding_decision` tool, once per delivered head.
+- The conformance check uses the owning dev manager's existing conversation and `coding_decision` tool, once per pull request.
   Implementation notes: [C-58 review claims migration](../../internal/core/review/REFERENCE.md#c-58-review-claims-migration).
-  A duplicate request is refused even after interruption or restart.
-  A fix generation with a new head gets its own check.
+  A duplicate request is refused even after interruption or restart, and a changed head is refused too.
+  Only the head produced by the one return, in the next generation of the same task, continues the review.
   Reading an existing judgment at merge is not another request.
 - Core checks GitHub readiness, change-evidence availability and then the observed diff's file paths before calling the manager.
-  Failed or incomplete checks and blocking GitHub reviews are merge preconditions: they block the task without a `verified` verdict or model findings.
-  A change outside the declared write area is a Core-computed scope miss, recorded as `needs_changes` without calling a model.
+  Failed or incomplete checks and blocking GitHub reviews are merge preconditions: they block the task without a `verified` verdict.
+  Each failed required check is a Core-computed P1 finding on that blocked review, naming the check and pointing at the workflow definitions; waiting, missing or mismatched evidence records no finding.
+  A change outside the declared write area is a Core-computed scope miss, recorded as `needs_changes` with one P1 finding per path, without calling a model.
+  That finding list stays within the accepted schema, at most 256 items. Every out-of-area path remains in the scope evidence. When the list does not fit, one finding names the remainder so the review still finishes.
   Renames are observed as deletion and addition, so both paths are checked with the scheduler's path language.
 - The manager receives the work definition, observed diff and design text read at the admission's pinned base, as source-labeled data in the existing handoff.
   Missing or oversized change evidence finishes the claimed review as `blocked` with cause `change_evidence_unavailable`, without a verdict, findings or a model call, even when an observed path is outside the write area.
@@ -2804,8 +2809,9 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
   They remain answerable through the existing authenticated question/approval forms.
   Implementation notes: [C-55 waiting migration](../../internal/core/waiting/REFERENCE.md#c-55-waiting-migration).
 - Canon closes its change notification only after a committed mutation; read callbacks and rollbacks remain quiet.
-  Core coalesces those events and live worker changes for 100 ms, rereads the sources, and publishes the replaced overview when its contents or the full waiting list change.
-  The coalescing window leaves room inside the 250 ms (P) bound from a goal commit to its changed line, so the projection itself still fits.
+  Core coalesces a burst of those events and live worker changes, rereads once and publishes at most every 100 ms; a change that follows an idle period publishes at once, because the person is waiting for it.
+  The window leaves room inside the 250 ms (P) bound from a goal commit to its changed line, so the projection itself still fits.
+  The projection reads canon without its writer, so it never queues behind the commits it describes; a finished waiting candidate is cleaned by the next `waiting_get`, which writes.
   A change below Home's five-row limit still advances the overview cursor, causing an open full waiting view to reread its sources.
   Subscriptions reread before their snapshot.
   While the progress topic has observers, a five-second reconciliation tick also rereads filesystem-backed sources, using the same coalescing.

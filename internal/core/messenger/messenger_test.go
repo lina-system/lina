@@ -333,8 +333,8 @@ func relationTargets(event ledger.Event, kind, target string) bool {
 	return false
 }
 
-// Two messages that reply to each other still commit. The later one keeps the
-// link; the page is not rejected for a cycle.
+// Two messages that reply to each other still commit. A cycle keeps the one
+// relation that can name an event already written.
 func TestMutualRepliesOnOnePageStillCommit(t *testing.T) {
 	f := newFixture(t)
 	source := f.connect(t)

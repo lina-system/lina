@@ -147,6 +147,7 @@ type jobProcess struct {
 	environment               []string
 	stdinMu                   sync.Mutex
 	stdinErr                  error
+	stdinRelay                *ownedFileRelay
 	coalition                 uint64
 	loaded                    bool
 	stop                      sync.Once
@@ -227,11 +228,9 @@ func newProcess(c Command) (process, error) {
 
 // ownerDirectory resolves the directory a job receives. The helper runs in the
 // job's private directory, so an unset or relative directory is resolved here
-// against the owner's own before it is sent.
-//
-// The result is not cleaned: "link/.." must reach the kernel as written, so the
-// kernel follows the symlink itself and selects the same directory the command
-// would have selected without a job in between.
+// against the owner's own before it is sent. A relative result is not cleaned,
+// so the kernel follows a symlink in it the same way it would have without a
+// job in between.
 func ownerDirectory(dir string) (string, error) {
 	if filepath.IsAbs(dir) {
 		return dir, nil
@@ -240,10 +239,7 @@ func ownerDirectory(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if dir == "" {
-		return wd, nil
-	}
-	return strings.TrimSuffix(wd, "/") + "/" + dir, nil
+	return joinOwnerDirectory(wd, dir), nil
 }
 
 // ownerEnvironment keeps an explicit environment explicit: a nil list is sent
@@ -358,18 +354,7 @@ func (p *jobProcess) start() error {
 		stream.conn = conn
 		switch name {
 		case "in":
-			go func() {
-				_, err := io.Copy(conn, p.stdin)
-				if skipStdinCopyError(err) {
-					err = nil
-				}
-				p.stdinMu.Lock()
-				if err != nil && p.stdinErr == nil {
-					p.stdinErr = err
-				}
-				p.stdinMu.Unlock()
-				stream.pump <- conn.CloseWrite()
-			}()
+			p.relayInput(conn, stream)
 		case "out":
 			go func() {
 				_, err := io.Copy(&sharedWriter{mu: stream.writeMu, w: p.stdout}, conn)
@@ -499,8 +484,59 @@ func (p *jobProcess) stdinFailure() error {
 
 func skipStdinCopyError(err error) bool {
 	// The job's end of the input closed because the command finished, which
-	// is a normal end of input rather than a failed command.
-	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, net.ErrClosed)
+	// is a normal end of input rather than a failed command. A read deadline
+	// is how a file relay is asked to stop; it is not a failed read.
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrDeadlineExceeded)
+}
+
+// relayInput copies the caller's input to the job. A file is stopped and
+// joined from finishStdin without closing it. Any other reader ends only when
+// that reader does, as before.
+func (p *jobProcess) relayInput(conn *net.UnixConn, stream *jobStream) {
+	file, fileBacked := p.stdin.(*os.File)
+	var relay *ownedFileRelay
+	if fileBacked {
+		relay = newOwnedFileRelay()
+		p.stdinRelay = relay
+	}
+	go func() {
+		if relay != nil {
+			defer close(relay.done)
+		}
+		var err error
+		if fileBacked {
+			err = copyOwnedFile(conn, file, relay.stop)
+		} else {
+			_, err = io.Copy(conn, p.stdin)
+		}
+		if skipStdinCopyError(err) {
+			err = nil
+		}
+		p.stdinMu.Lock()
+		if err != nil && p.stdinErr == nil {
+			p.stdinErr = err
+		}
+		p.stdinMu.Unlock()
+		stream.pump <- conn.CloseWrite()
+	}()
+}
+
+// finishStdin stops a file-backed input relay and waits for it. Closing the
+// job socket cannot unblock a read of the caller's file, so the relay is
+// cancelled first. The socket is closed only if that read is not what is
+// stuck, and the caller's file is left open either way.
+func (p *jobProcess) finishStdin() error {
+	relay := p.stdinRelay
+	if relay == nil {
+		return nil
+	}
+	if err := relay.stopAndWait(time.Second); err == nil {
+		return nil
+	}
+	if stream := p.streams["in"]; stream != nil && stream.conn != nil {
+		_ = stream.conn.Close()
+	}
+	return relay.stopAndWait(time.Second)
 }
 
 func (p *jobProcess) next() (jobRecord, error) {
@@ -625,8 +661,9 @@ func (p *jobProcess) drain() error {
 			continue
 		}
 		if stream.writeMu == nil {
-			// The caller owns the reader; a reader that never ends keeps this
-			// copy blocked. Its error is reported by stdinFailure instead.
+			// Join file-backed input before returning. A reader that is not a
+			// file still ends on its own; its error is reported by stdinFailure.
+			err = errors.Join(err, p.finishStdin())
 			continue
 		}
 		remaining := time.Until(deadline)
@@ -660,6 +697,9 @@ func (p *jobProcess) release() {
 	case <-p.stopped:
 	case <-time.After(launchctlTimeout):
 	}
+	// A start that fails after the relay is running never reaches drain.
+	// Joining here too is what keeps that path from holding the caller's file.
+	_ = p.finishStdin()
 	for _, stream := range p.streams {
 		_ = stream.listener.Close()
 		if stream.conn != nil {
@@ -692,6 +732,15 @@ func JobMain(args []string, diagnostic io.Writer) int {
 		fmt.Fprintln(diagnostic, "proc-job:", err)
 		return 70
 	}
+	// The owner-death goroutine starts only after the handshake. Until then a
+	// return would leave the loaded job and its directory behind, including
+	// when the owner is already gone and the control socket never connects.
+	claimed := false
+	defer func() {
+		if !claimed {
+			endJob(request.Domain, request.Label, request.Temp)
+		}
+	}()
 	if depth := jobDepth(); depth > 1 {
 		fmt.Fprintf(diagnostic, "proc-job: a job cannot start another job (depth %d)\n", depth)
 		return 70
@@ -721,6 +770,7 @@ func JobMain(args []string, diagnostic io.Writer) int {
 		fmt.Fprintln(diagnostic, "proc-job:", err)
 		return 70
 	}
+	claimed = true
 	// The owner closes the control socket when it tears the job down or dies.
 	// Either way the coalition is killed, and a job left registered is removed
 	// by a detached launchctl.

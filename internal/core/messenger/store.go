@@ -538,20 +538,11 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		plan.effect = effect
 		plans = append(plans, plan)
 	}
-	// A root and its replies often arrive together. Relations name ledger events,
-	// and a later event in the batch may name an earlier one, so targets are
-	// admitted first and resolved from that prefix plus rows already committed.
-	plans = orderPagePlans(plans)
-	admitted := map[string]string{}
-	for i := range plans {
-		plans[i].relations, err = s.importRelations(ctx, source, chat, plans[i].message, admitted)
-		if err != nil {
-			return PageResult{}, err
-		}
-		if !plans[i].added {
-			plans[i].relations = append(plans[i].relations, ledger.Relation{TargetID: existing[plans[i].message.ID].event, Kind: "supersedes"})
-		}
-		admitted[plans[i].message.ID] = eventID(source, chat, plans[i].message.ID, plans[i].revision)
+	// A root and its replies often arrive together. The same placement an import
+	// uses writes the target first and links the reply to that event.
+	plans, err = s.orderRecordPlans(ctx, source, chat, plans, existing)
+	if err != nil {
+		return PageResult{}, err
 	}
 	if len(page.Deletions) > 0 {
 		// A deletion is durable before the cursor passes it: a crash after the
@@ -631,58 +622,87 @@ type recordPlan struct {
 	relations []ledger.Relation
 }
 
-// orderPagePlans admits a message after the same-page messages it replies to
-// or sits in a thread under. Page order is the tie break. A cycle cannot be
-// ordered, so the remaining messages stay in page order and only the link
-// toward an earlier message is kept.
-func orderPagePlans(plans []recordPlan) []recordPlan {
-	n := len(plans)
-	if n < 2 {
-		return plans
+// relationNode is one record in a page or an import run, before placement.
+type relationNode struct {
+	index     int
+	id        string
+	replyTo   string
+	thread    string
+	revision  int
+	previous  string
+	relations []ledger.Relation
+}
+
+// placeRelations writes each record after the records in this batch it replies
+// to or joins the thread of. A relation can name only an event that already
+// exists, so a target still being placed, as in a cycle or a self-reply, gets
+// no relation. AdmitPage and AdmitImport both use this placement.
+func (s *Store) placeRelations(ctx context.Context, source Source, chat string, nodes []relationNode) ([]relationNode, error) {
+	index := make(map[string]int, len(nodes))
+	for i, node := range nodes {
+		index[node.id] = i
 	}
-	pos := make(map[string]int, n)
-	for i, plan := range plans {
-		pos[plan.message.ID] = i
-	}
-	next := make([][]int, n)
-	indeg := make([]int, n)
-	for i, plan := range plans {
-		seen := map[int]bool{}
-		for _, id := range []string{plan.message.ReplyTo, plan.message.Thread} {
-			j, ok := pos[id]
-			if !ok || j == i || seen[j] {
-				continue
-			}
-			seen[j] = true
-			next[j] = append(next[j], i)
-			indeg[i]++
+	const placing, placed = 1, 2
+	state := make([]int, len(nodes))
+	admitted := make(map[string]string, len(nodes))
+	ordered := make([]relationNode, 0, len(nodes))
+	var place func(int) error
+	place = func(i int) error {
+		if state[i] != 0 {
+			return nil
 		}
-	}
-	used := make([]bool, n)
-	out := make([]recordPlan, 0, n)
-	for len(out) < n {
-		pick := -1
-		for i := 0; i < n; i++ {
-			if !used[i] && indeg[i] == 0 {
-				pick = i
-				break
-			}
-		}
-		if pick < 0 {
-			for i := 0; i < n; i++ {
-				if !used[i] {
-					out = append(out, plans[i])
+		state[i] = placing
+		node := nodes[i]
+		for _, target := range []string{node.replyTo, node.thread} {
+			if j, ok := index[target]; ok {
+				if err := place(j); err != nil {
+					return err
 				}
 			}
-			break
 		}
-		used[pick] = true
-		out = append(out, plans[pick])
-		for _, i := range next[pick] {
-			indeg[i]--
+		relations, err := s.importRelations(ctx, source, chat, Message{ID: node.id, ReplyTo: node.replyTo, Thread: node.thread}, admitted)
+		if err != nil {
+			return err
+		}
+		if node.previous != "" {
+			relations = append(relations, ledger.Relation{TargetID: node.previous, Kind: "supersedes"})
+		}
+		node.relations = relations
+		state[i] = placed
+		admitted[node.id] = eventID(source, chat, node.id, node.revision)
+		ordered = append(ordered, node)
+		return nil
+	}
+	for i := range nodes {
+		if err := place(i); err != nil {
+			return nil, err
 		}
 	}
-	return out
+	return ordered, nil
+}
+
+// orderRecordPlans is AdmitPage's use of placeRelations. An edit supersedes
+// the committed event of that message.
+func (s *Store) orderRecordPlans(ctx context.Context, source Source, chat string, plans []recordPlan, existing map[string]recordRow) ([]recordPlan, error) {
+	nodes := make([]relationNode, len(plans))
+	for i, plan := range plans {
+		previous := ""
+		if !plan.added {
+			previous = existing[plan.message.ID].event
+		}
+		nodes[i] = relationNode{index: i, id: plan.message.ID, replyTo: plan.message.ReplyTo, thread: plan.message.Thread, revision: plan.revision, previous: previous}
+	}
+	ordered, err := s.placeRelations(ctx, source, chat, nodes)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]recordPlan, len(ordered))
+	for i, node := range ordered {
+		plan := plans[node.index]
+		plan.relations = node.relations
+		out[i] = plan
+	}
+	return out, nil
 }
 
 // admission builds the trusted entry and ledger input of one record.

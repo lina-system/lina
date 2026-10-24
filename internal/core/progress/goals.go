@@ -3,7 +3,6 @@ package progress
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -27,12 +26,12 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 	var goals []goal.Goal
 	for rows.Next() {
 		var raw []byte
-		var g goal.Goal
 		if err = rows.Scan(&raw); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		if err = json.Unmarshal(raw, &g); err != nil {
+		g, err := decodeProgressGoal(raw)
+		if err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -58,7 +57,11 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 			continue
 		}
 		visible = append(visible, g)
-		ids[g.ID] = true
+		// Revision one has no earlier placement to retain. Its complete graph
+		// and newest task states already live in this snapshot's goal record.
+		if g.StepGraph == nil || g.StepGraph.Revision != 1 {
+			ids[g.ID] = true
+		}
 		turns[g.ID] = g.Turn
 	}
 	if len(visible) == 0 {
@@ -88,7 +91,7 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 			return nil, err
 		}
 		// One manager runs one 일, so a managed goal is the 일 the person reads.
-		u := Unit{ID: g.ID, Agent: g.Agent, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages)}
+		u := Unit{ID: g.ID, Agent: g.Agent, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages), Rank: g.Rank}
 		if u.Name == "" {
 			u.Name = design.Text(language, "progress.untitled")
 		}
@@ -141,6 +144,11 @@ func goalNow(g goal.Goal, stages []Stage, language design.Language) string {
 	}
 	if g.State == goal.GoalBlocked || g.AttentionID != "" {
 		return design.Text(language, "progress.needs_you")
+	}
+	// The person's pause comes before a step phrase: a paused goal starts no new
+	// step, and its in-progress step ends its current turn.
+	if g.Paused {
+		return design.Text(language, "progress.paused")
 	}
 	if working := stepsInState(stages, StepWorking); len(working) > 0 {
 		if len(working) > 1 {
