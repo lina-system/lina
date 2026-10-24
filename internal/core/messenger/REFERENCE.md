@@ -62,28 +62,6 @@ platform. Discord's bot and personal account are two names. Every call also
 receives the source account, so one adapter implementation can serve several
 accounts without writing one account's chats under another.
 
-A source left `failing` stays on the schedule. The next interval tries it, and
-a new process tries it on the first schedule because the attempt time is not
-durable. Success marks it connected. `needs_sign_in` is not retried.
-
-## Relations on one page
-
-`replies_to` and `in_thread` resolve against records already committed and
-against messages admitted in the same page. A target later in the page is
-linked after every event in the batch exists, in that same transaction, so the
-link does not depend on the page boundary. An unchanged message is not read
-again, so a missed link is not repaired later.
-
-## Attachment metadata
-
-`messenger_attachment` stores the id, name, media type and size for the
-revision that carried them. The bytes are not fetched. An edit adds the new
-revision's rows and leaves the earlier ones. Deleting the record removes the
-rows and keeps the legacy reference. The retraction projection performs that
-delete when the record is forgotten or erased, so recovery of an older
-generation repeats it. The table is canon migration 69, after the murmur
-import tables.
-
 ## Imported records
 
 `AdmitImport` takes one chat of a memory importer's run through the same

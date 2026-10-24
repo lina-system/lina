@@ -754,7 +754,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 - A message missing from a later read is never treated as deleted. Edits and deletions the platform reports follow [Messenger records](conversation-and-memory.md#messenger-records).
 - Each chat is fresh, stale (no complete read within its interval) or in a gap (the time since its last complete read passed the platform's read window, so messages may be lost). A gap is shown on the source and told to the person once. An archive import can fill it later.
 - Rates are the adapter's: it honours the platform's retry-after and keeps its cursor.
-- A failing source never blocks conversation or another source. A source whose last read failed stays on the schedule. Core tries it again when the interval has passed, and on the first schedule after a restart, and a completed read clears the failure. A source that needs sign-in waits until the person signs in.
+- A failing source never blocks conversation or another source.
 
 ### Writes by grant
 

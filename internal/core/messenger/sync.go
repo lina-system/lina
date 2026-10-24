@@ -65,9 +65,7 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 		return results
 	}
 	for _, source := range sources {
-		// A failing source stays on the schedule so a transient outage recovers.
-		// A source that needs sign-in waits until the person signs in.
-		if source.State != StateConnected && source.State != StateFailing {
+		if source.State != StateConnected {
 			continue
 		}
 		key := source.Platform + "\x00" + source.Account

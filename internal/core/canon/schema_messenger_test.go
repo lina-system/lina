@@ -104,43 +104,6 @@ VALUES('person','discord','account-1','official','discord','connected','2026-10-
 	}
 }
 
-// Migration 69 adds attachment metadata beside records that already exist.
-func TestMessengerAttachmentUpgradeKeepsRecords(t *testing.T) {
-	t.Parallel()
-	cfg := storeConfig(t)
-	cfg.Migrations = append([]Migration{}, Migrations()[:68]...)
-	db := openStore(t, cfg)
-	if err := db.Write(t.Context(), func(tx *Tx) error {
-		_, err := tx.ExecContext(t.Context(), `INSERT INTO messenger_source(person,platform,account,mode,adapter,state,connected_at)
-VALUES('person','discord','account-1','official','discord','connected','2026-10-24T00:00:00Z');
-INSERT INTO messenger_record(platform,account,chat,message,event,occurred_at)
-VALUES('discord','account-1','dm-1','m-1','event-1','2026-10-24T00:00:00Z')`)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	cfg.Migrations = Migrations()
-	db = openStore(t, cfg)
-	defer db.Close(t.Context())
-	if err := db.Write(t.Context(), func(tx *Tx) error {
-		_, err := tx.ExecContext(t.Context(), `INSERT INTO messenger_attachment(platform,account,chat,message,revision,attachment,name,mime,size)
-VALUES('discord','account-1','dm-1','m-1',1,'file-1','notes.txt','text/plain',4)`)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Write(t.Context(), func(tx *Tx) error {
-		_, err := tx.ExecContext(t.Context(), `INSERT INTO messenger_attachment(platform,account,chat,message,revision,attachment,size)
-VALUES('discord','account-1','dm-1','m-1',1,'file-2',-1)`)
-		return err
-	}); err == nil {
-		t.Fatal("negative attachment size accepted")
-	}
-}
-
 // Hiding an event removes its document from the one index; restoring queues it.
 func TestMessengerRemovalHidesTheIndexedDocument(t *testing.T) {
 	t.Parallel()
