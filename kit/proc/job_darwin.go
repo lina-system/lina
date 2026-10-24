@@ -482,13 +482,6 @@ func (p *jobProcess) stdinFailure() error {
 	return p.stdinErr
 }
 
-func skipStdinCopyError(err error) bool {
-	// The job's end of the input closed because the command finished, which
-	// is a normal end of input rather than a failed command. A read deadline
-	// is how a file relay is asked to stop; it is not a failed read.
-	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, net.ErrClosed) || errors.Is(err, os.ErrDeadlineExceeded)
-}
-
 // relayInput copies the caller's input to the job. A file is stopped and
 // joined from finishStdin without closing it. Any other reader ends only when
 // that reader does, as before.
