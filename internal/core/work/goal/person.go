@@ -36,6 +36,8 @@ func CloseLine(g Goal) (string, error) {
 		word = "stopped"
 	case GoalBlocked:
 		word = "blocked"
+	case GoalDefining, GoalRunning, GoalWaiting, GoalChecking:
+		return "", ErrConflict
 	default:
 		return "", ErrConflict
 	}
@@ -93,6 +95,8 @@ func RunningRow(t Task) (summary, state string) {
 		state = "needs_input"
 	case TaskDone:
 		state = "done"
+	case TaskReady, TaskBuilding, TaskDelivered, TaskConflicted, TaskWorkerLost, TaskNoReceipt, TaskMerged, TaskQAFailed:
+		state = "working"
 	default:
 		state = "working"
 	}
