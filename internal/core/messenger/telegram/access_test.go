@@ -103,3 +103,95 @@ func TestUnreadableChatReportsUnavailable(t *testing.T) {
 		t.Fatalf("malformed chat id: %v", err)
 	}
 }
+
+// A restart clears the channel cache before dialog listing finishes. The
+// account can still read the channel, so the fetch resolves that entity and
+// reads the message instead of treating the empty cache as loss of access.
+func TestChannelAttachmentResolvesUncachedChannel(t *testing.T) {
+	t.Parallel()
+	s := newServer(t)
+	channel := &tg.Channel{ID: 4004, Title: "Notes", Photo: &tg.ChatPhotoEmpty{}, Broadcast: true}
+	channel.SetAccessHash(44)
+	var mu sync.Mutex
+	var accessHash int64
+	var resolved bool
+	s.dispatcher.HandleFunc(tg.MessagesGetDialogsRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+		return server.SendResult(req, &tg.MessagesDialogs{
+			Dialogs: []tg.DialogClass{&tg.Dialog{Peer: &tg.PeerChannel{ChannelID: channel.ID}, TopMessage: 9, Pts: 3}},
+			Users:   []tg.UserClass{self}, Chats: []tg.ChatClass{channel},
+		})
+	})
+	s.dispatcher.HandleFunc(tg.ChannelsGetMessagesRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+		var request tg.ChannelsGetMessagesRequest
+		if err := request.Decode(req.Buf); err != nil {
+			return err
+		}
+		input, ok := request.Channel.(*tg.InputChannel)
+		if !ok {
+			return server.SendErr(req, tgerr.New(400, "CHANNEL_INVALID"))
+		}
+		mu.Lock()
+		resolved = true
+		accessHash = input.AccessHash
+		mu.Unlock()
+		return server.SendResult(req, &tg.MessagesChannelMessages{
+			Pts: 3, Count: 1,
+			Messages: []tg.MessageClass{&tg.Message{
+				ID: 9, PeerID: &tg.PeerChannel{ChannelID: channel.ID}, Date: 500, Message: "file", Post: true,
+				Media: &tg.MessageMediaDocument{Document: document()},
+			}},
+			Chats: []tg.ChatClass{channel}, Users: []tg.UserClass{self},
+		})
+	})
+	adapter := newAdapter(t, s, newVault(t), nil)
+	signIn(t, adapter)
+	reader, err := adapter.FetchAttachment(t.Context(), sourceID, "channel:4004", "9", "document:99")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil || string(body) != "file" {
+		t.Fatalf("attachment bytes = %q, %v", body, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !resolved || accessHash != 44 {
+		t.Fatalf("channel resolved = %v, access hash = %d", resolved, accessHash)
+	}
+}
+
+// A channel the dialogs do not name is unavailable only after that lookup.
+// The fetch does not call channels.getMessages with an empty cache.
+func TestChannelAttachmentUnavailableWhenDialogsOmitIt(t *testing.T) {
+	t.Parallel()
+	s := newServer(t)
+	var mu sync.Mutex
+	dialogs, messages := 0, 0
+	s.dispatcher.HandleFunc(tg.MessagesGetDialogsRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+		mu.Lock()
+		dialogs++
+		mu.Unlock()
+		return server.SendResult(req, &tg.MessagesDialogs{
+			Dialogs: []tg.DialogClass{&tg.Dialog{Peer: &tg.PeerUser{UserID: other.ID}, TopMessage: 4}},
+			Users:   []tg.UserClass{self, other},
+		})
+	})
+	s.dispatcher.HandleFunc(tg.ChannelsGetMessagesRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+		mu.Lock()
+		messages++
+		mu.Unlock()
+		return server.SendErr(req, tgerr.New(400, "CHANNEL_INVALID"))
+	})
+	adapter := newAdapter(t, s, newVault(t), nil)
+	signIn(t, adapter)
+	_, err := adapter.FetchAttachment(t.Context(), sourceID, "channel:4004", "9", "document:99")
+	if !errors.Is(err, messenger.ErrChatUnavailable) {
+		t.Fatalf("omitted channel: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if dialogs != 1 || messages != 0 {
+		t.Fatalf("dialogs = %d, channels.getMessages = %d", dialogs, messages)
+	}
+}
