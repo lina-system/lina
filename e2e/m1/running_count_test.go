@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -140,7 +141,7 @@ func seedRunningCount(t *testing.T, h *harness, scenario runningCountScenario) {
 	conversation := "main:" + agent
 	at := time.Now().UTC().Add(-time.Hour)
 	for _, day := range scenario.Goals {
-		g := goal.Goal{ID: day.ID, Person: person, Agent: agent, Conversation: conversation, Summary: "Day " + day.ID, Done: "The day is planned", NoServiceReason: "plan",
+		g := goal.Goal{ID: day.ID, Person: person, Agent: agent, Conversation: conversation, Turn: "turn:" + day.ID, Summary: "Day " + day.ID, Done: "The day is planned", NoServiceReason: "plan",
 			Scope:    goal.GoalScope{Repositories: []string{"fixture"}, Includes: day.ID},
 			Criteria: []goal.Criterion{{ID: "outcome", Statement: "The day is planned", Check: goal.CriterionCheck{Kind: goal.RunEvidence, Method: "acceptance", Target: "fixture"}}}}
 		if err = engine.Admit(h.ctx, g); err != nil {
@@ -178,12 +179,22 @@ func seedRunningCount(t *testing.T, h *harness, scenario runningCountScenario) {
 			t.Fatal(err)
 		}
 	}
-	// The step cards are dispatched work: one card per step, carrying the step
-	// id so the line and its rows stay one 일.
+	// The step cards are dispatched work: each step's worker action dispatched
+	// one card, which carries the dispatch's id and not the step's, so the line
+	// reaches its rows through the goal's actions.
 	if err = db.Write(h.ctx, func(tx *canon.Tx) error {
 		for _, day := range scenario.Goals {
+			origin := dispatch.Origin{Person: person, Agent: agent, Conversation: conversation, Turn: "turn:" + day.ID}
 			for i, name := range day.Steps {
-				id := stepID(day.ID, i)
+				action := goal.Action{ID: "assign:" + stepID(day.ID, i), GoalID: day.ID, TaskID: stepID(day.ID, i), Kind: goal.Assign, State: "running"}
+				body, err := json.Marshal(action)
+				if err != nil {
+					return err
+				}
+				if _, err = tx.ExecContext(h.ctx, "INSERT INTO work_records(kind,id,version,body) VALUES('action',?,1,?)", action.ID, body); err != nil {
+					return err
+				}
+				id := dispatch.GoalWorkID(origin, action.ID)
 				task := work.Task{ID: id, PersonID: person, AgentID: agent, ConversationID: conversation, Title: name, Done: "Produce " + name}
 				run := work.Run{ID: id + ":run", TaskID: id, Generation: 1, Worker: "fixture", ThreadID: id, TurnID: id, NodeID: "local"}
 				events := []work.Event{
@@ -216,7 +227,7 @@ func seedRunningCount(t *testing.T, h *harness, scenario runningCountScenario) {
 	}
 }
 
-// stepID names a step's card. The id is opaque; the fixture holds the words.
+// stepID names a goal step. The id is opaque; the fixture holds the words.
 func stepID(goalID string, index int) string { return fmt.Sprintf("%s-step-%d", goalID, index) }
 
 // countDefinitions joins the records store to the goal engine's definition

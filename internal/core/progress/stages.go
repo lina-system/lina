@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
+	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/internal/design"
 )
 
@@ -56,6 +57,7 @@ type Step struct {
 	Name      string
 	DependsOn []string
 	State     StepState
+	Cards     []string
 }
 
 // Revision is one admitted step graph revision, whole, with the step states
@@ -63,11 +65,12 @@ type Step struct {
 // revision's event, so a replay needs no second source.
 type Revision struct{ Steps []Step }
 
-// StageStep is one step of a stage, as the 일 view lists it. The id stays on
-// this side: a line holds no identity.
+// StageStep is one step of a stage, as the 일 view lists it. The id and the
+// work cards that ran the step stay on this side: a line holds no identity.
 type StageStep struct {
 	StartedAt time.Time `json:"started_at,omitzero"`
 	ID        string    `json:"-"`
+	Cards     []string  `json:"-"`
 	Name      string    `json:"name"`
 	State     StepState `json:"state"`
 }
@@ -164,9 +167,11 @@ func Stages(revisions []Revision, state goal.GoalState, language design.Language
 		}
 	}
 	started := map[string]time.Time{}
+	cards := map[string][]string{}
 	for _, revision := range revisions {
 		for _, step := range revision.Steps {
 			started[step.ID] = step.StartedAt
+			cards[step.ID] = step.Cards
 		}
 	}
 	out := make([]Stage, 0, highest+1)
@@ -182,7 +187,7 @@ func Stages(revisions []Revision, state goal.GoalState, language design.Language
 		first, live := "", 0
 		for _, id := range ids {
 			stepState := states[id]
-			entry.Steps = append(entry.Steps, StageStep{ID: id, Name: names[id], State: stepState, StartedAt: started[id]})
+			entry.Steps = append(entry.Steps, StageStep{ID: id, Cards: cards[id], Name: names[id], State: stepState, StartedAt: started[id]})
 			if stepState == StepSuperseded {
 				continue
 			}
@@ -355,21 +360,70 @@ func GoalStages(ctx context.Context, tx *canon.Tx, goalID, person string, langua
 	// after the last revision was committed.
 	last := graphs[len(graphs)-1]
 	revisions[len(revisions)-1].Steps = graphSteps(last.Graph.Steps, current.Tasks)
+	cards, err := stepCards(ctx, tx, current)
+	if err != nil {
+		return nil, err
+	}
 	started, err := cardStarts(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
 	for i := range revisions {
 		for j := range revisions[i].Steps {
-			revisions[i].Steps[j].StartedAt = started[revisions[i].Steps[j].ID]
+			step := &revisions[i].Steps[j]
+			step.Cards = cards[step.ID]
+			for _, card := range step.Cards {
+				if at := started[card]; !at.IsZero() && (step.StartedAt.IsZero() || at.Before(step.StartedAt)) {
+					step.StartedAt = at
+				}
+			}
 		}
 	}
 	return Stages(revisions, current.State, language)
 }
 
-// cardStarts reads when each step started, which orders a parallel stage's
-// label. A step's card carries the step id, so the ledger needs no goal link on
-// the card. A step that has not started has no start and sorts by id.
+// stepCards lists the work cards each step's worker actions dispatched, in
+// action id order. A card carries its dispatch's id, never the step's, so the
+// goal's actions are the only link between them. An action that observes
+// another after a restart leads to that action's card.
+func stepCards(ctx context.Context, tx *canon.Tx, g goal.Goal) (map[string][]string, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT body FROM work_records WHERE kind='action' ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	origin := dispatch.Origin{Person: g.Person, Agent: g.Agent, Conversation: g.Conversation, Turn: g.Turn}
+	out := map[string][]string{}
+	seen := map[string]bool{}
+	for rows.Next() {
+		var raw []byte
+		var a goal.Action
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if json.Unmarshal(raw, &a) != nil {
+			return nil, ErrStageGraph
+		}
+		// Background and wait steps start no dispatch, so they have no card.
+		if a.GoalID != g.ID || a.TaskID == "" || !goal.WorkerAction(a.Kind) || a.StepKind != "" && a.StepKind != goal.TaskStep {
+			continue
+		}
+		source := a.ID
+		if a.ObserveActionID != "" {
+			source = a.ObserveActionID
+		}
+		card := dispatch.GoalWorkID(origin, source)
+		if !seen[card] {
+			seen[card] = true
+			out[a.TaskID] = append(out[a.TaskID], card)
+		}
+	}
+	return out, rows.Err()
+}
+
+// cardStarts reads when each work card started. A step starts with the first of
+// its cards, which orders a parallel stage's label; a step that has not started
+// has no start and sorts by id.
 func cardStarts(ctx context.Context, tx *canon.Tx) (map[string]time.Time, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT record FROM work_cards ORDER BY task_id")
 	if err != nil {
