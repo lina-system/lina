@@ -278,6 +278,23 @@ func measure(ctx context.Context, root string, c corpus) (_ report, err error) {
 	scope := memory.RecallScope{Agent: agent, Person: person}
 	eventScope := recall.Scope{Person: person, Agent: agent, Kinds: []recall.Kind{recall.Event}}
 	for _, q := range c.queries() {
+		// Live Atropos materializes ranked ids and their scoped evidence. This
+		// metric measures retrieval, separately from whole-turn latency.
+		if err := timed("topic_memory_read", func() error {
+			hits, err := recall.Match(ctx, db, recall.Scope{Person: person, Agent: agent, Kinds: []recall.Kind{recall.Memory}, ExternalModel: true, At: 1800000000}, recall.Query{Text: q, Limit: 12})
+			if err != nil {
+				return err
+			}
+			ids := make([]string, 0, len(hits))
+			for _, hit := range hits {
+				ids = append(ids, hit.ID)
+			}
+			items, err := memory.New(db).WithQuotes(events.Citation).Items(ctx, memory.RecallScope{Person: person, Agent: agent, ExternalModel: true}, ids, 1800000000, false)
+			r.Hits["topic_memory_read"] += len(items)
+			return err
+		}); err != nil {
+			return r, err
+		}
 		var hits []recall.Hit
 		if err := timed("ledger_search", func() error {
 			var e error
