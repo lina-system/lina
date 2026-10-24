@@ -9,7 +9,6 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/internal/design"
-	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 // keyBinding is the local reference for implemented conversation shortcuts.
@@ -95,14 +94,7 @@ func (m *shellModel) conversationFooter(showNotice bool) string {
 	status := m.styles.presentation(m.status)
 	line := status.Mark + " " + status.Label
 	if m.hasCapability("progress") {
-		running, waiting := 0, 0
-		for _, c := range m.workCards() {
-			if c.Waiting > 0 {
-				waiting++
-			} else if c.State == protocol.RunningStateInProgress {
-				running++
-			}
-		}
+		running, waiting := m.workCount()
 		if running+waiting > 0 {
 			line += "  " + fmt.Sprintf(design.Text(m.styles.options.Language, "work.count"), running, waiting)
 		}

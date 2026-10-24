@@ -3602,6 +3602,9 @@
     "progress": {
       "type": "object",
       "properties": {
+        "counts": {
+          "$ref": "#/$defs/progress_counts"
+        },
         "lanes": {
           "type": "array",
           "items": {
@@ -3640,6 +3643,9 @@
     "progress_update": {
       "type": "object",
       "properties": {
+        "counts": {
+          "$ref": "#/$defs/progress_counts"
+        },
         "stream": {
           "$ref": "#/$defs/stream_metadata"
         },
@@ -3670,6 +3676,24 @@
         }
       },
       "required": [],
+      "additionalProperties": false
+    },
+    "progress_counts": {
+      "type": "object",
+      "properties": {
+        "running": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "waiting": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "running",
+        "waiting"
+      ],
       "additionalProperties": false
     },
     "progress_digest_get": {
@@ -6586,6 +6610,9 @@
     "progress_line": {
       "type": "object",
       "properties": {
+        "row": {
+          "type": "boolean"
+        },
         "started_at": {
           "type": "string",
           "format": "date-time"

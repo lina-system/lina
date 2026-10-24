@@ -34,3 +34,12 @@ The stage word is the lowest-numbered stage entry that is not done.
 `Line.Stages` carries the entries, and the line holds no step id; `StageStep.ID` stays on the projection side.
 `e2e/m3/progress-line.json` drives a headless Core whose first step lands from an injected worker result: the subscribed topic carries the entries, the changed line arrives within 250 ms of the commit, exactly one line changes, and a recomputation that changes no line publishes no frame.
 `internal/core/boot/progress_line_test.go` checks the same projection and wire shape without a socket.
+
+### C-55 running count increment
+
+#767 makes the running count follow lines, not rows.
+`progress.CountLines` counts the visible lines of a projection: a row at depth 0 belongs to its own line, a goal's step cards are rows under it, and a line whose row waits on the person counts as waiting for them. Core publishes the result as `counts.running` and `counts.waiting` beside the overview rows, so a client draws Core's number and never recounts the cards it folds.
+`progress.Compute` marks each entry as a line or a row: a step card is a row of the 일 that runs it, linked through the step id its stage list already carries, and a task handed under a 목표 is that 목표's 일, a line of its own. A line carries `row` on the wire so a client never draws a row as a card.
+A managed goal is one 일, so `progress.Goals` publishes it as a project line; a card that groups others stays a 목표 line.
+A goal line carries the running list's state word, projected by `progress.goalState` in the order the stage list uses: input needed, failed, stopped, working, waiting, then the goal's own state.
+`e2e/m3/running-count.json` drives installed Core with three 일 of four steps and one background run outside any 일: four lines by state, thirteen rows in the running list, and the TUI status line prints Core's number.
