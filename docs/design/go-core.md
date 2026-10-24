@@ -103,7 +103,7 @@ Layers under `internal/core/`:
 | Layer | Packages |
 | --- | --- |
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
-| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `recall` (shared derived index writer and queued fill) |
+| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `textcall` (terminal call parsing and offline replay scoring), `recall` (shared derived index writer and queued fill) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
 | L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `localmodel`, `exec`, `exchange`, `messenger`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install`, `miniapps` |
 | L5 | `boot`, `supervise`, `methodreplay` |
@@ -1202,6 +1202,17 @@ For AgentRuntime providers, Core carries out the list of [runtime.md](runtime.md
 The ledger names the class per request.
 
 **Text-form tool calls.** Across LINA's own model routes (`ModelAPI` and `AgentRuntime` streams in `turn`, `runs`, exchanges and auxiliary calls) and coding workers ([work-and-delegation.md](work-and-delegation.md#adapter-boundary)), one rule governs a turn that ends with a text-form tool call (`[tool_use …]`, `<tool_use>`, `<function_calls><invoke>`, `<antml:invoke>`, `<tool_call>`) and no real `ToolCall` ([text-tool-calls.md](../research/text-tool-calls.md)): Core detects it at the terminal boundary, never shows it as progress or a final reply, and handles it by (1) parsing it into a real `ToolCall` when the arguments are complete valid JSON (or complete named parameters) and the tool is allowed in the active declaration set (matching the declared name, or the declared name after stripping one leading `_`), else (2) starting a fresh session or continuation request on the same model route (or the same worker) with a short state summary that omits the contaminated assistant turn. There is no nudging loop in the contaminated session and no silent hand-off to another model, account or worker.
+
+Before runtime recovery is enabled, a deterministic replay must verify the shared
+parser against the active declarations. An exact declared name wins over removing
+one leading underscore. Only standalone terminal syntax outside Markdown quotes,
+code, diffs and thinking is eligible; an existing structured call takes precedence.
+Arguments must satisfy the declared schema. Duplicate keys or parameters, partial
+calls and ambiguous multiple calls require a fresh session without partial dispatch.
+The replay rejects malformed or missing cases explicitly, and distinguishes measured
+decision latency from proposed tool dispatches and fresh-session starts.
+
+Implementation and replay schema: [text-call parser](../../internal/core/textcall/README.md).
 
 [Provider capabilities](runtime.md#provider-capabilities) add three things to this boundary:
 - the adapter reports a capability set per model;
@@ -2378,9 +2389,16 @@ type Adapter interface {
 - A process group kill is the stop.
   A cut turn's effects are unknown until `Snapshot` and a read of GitHub settle them.
 - Implementation notes: [C-29 work tools and approvals](../../internal/core/worker/REFERENCE.md#c-29-work-tools-and-approvals).
-- Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection); for ACP, the same declarations through the session-scoped `lina worker-tools` MCP server.
+- Work tools: for Codex, `lina` dynamic tools (submit receipt, ask, coordinate, read projection, check inbox); for ACP, the same declarations through the session-scoped `lina worker-tools` MCP server.
   Other adapters build a receipt from the final result and the pull request and mark it adapter-derived.
 - A worker turn that ends with a text-form tool call and no real tool call follows the same rule as LINA's model routes ([C-43](#model-path-and-accounts); [work-and-delegation.md](work-and-delegation.md#adapter-boundary); [text-tool-calls.md](../research/text-tool-calls.md)): Core detects it, never emits it as `worker_report` progress or a completed turn, and handles it by (1) parsing and dispatching it as a real call when the arguments are complete and the tool is an allowed LINA session work tool, else (2) starting a fresh session (`thread/start` on Codex, `session/new` on ACP — never `thread/resume`, `session/load` or `session/resume` of the contaminated thread) on the same worker in the same worktree and branch with a short state summary. There is no nudging loop and no silent hand-off to another worker.
+- Dispatch supplies the session work-tool declarations only to adapters that
+  advertise work tools. Text-call recovery uses the same authenticated bridge
+  and pending-request lifetime as native calls. The failed turn and the fresh
+  recovery intent commit together before another process starts. The intent
+  retains the selected worker, worktree and branch, bypasses transcript restore,
+  and consumes the existing once-only recovery allowance. A second unrecoverable
+  text-call turn creates the existing decision row, with no third automatic start.
 - The delegated-task store records the requesting agent and conversation, done condition, artifact roots and whether application is required.
   A run binds its task, generation, worker, thread, turn and observing node.
   Admission appends an event and updates the active-run reservation in one fenced canon transaction; a task cannot admit a second active run.

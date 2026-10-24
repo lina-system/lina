@@ -406,6 +406,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			CommonOnly: scope.CommonOnly, History: q.History, At: q.At,
 			PersonOnly: q.PersonOnly,
 			Projection: scope.Projection, ExternalModel: scope.ExternalModel,
+			PersonMemory: q.PersonOnly || relationship,
 		}, recall.Query{Text: q.Text})
 		if err != nil {
 			return nil, err

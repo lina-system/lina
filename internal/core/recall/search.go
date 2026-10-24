@@ -58,6 +58,8 @@ type Scope struct {
 	// PersonOnly restricts person-model queries to person-authored events and
 	// person-subject memory items, before ranking and the result limit.
 	PersonOnly bool
+	// PersonMemory limits only memory candidates to person-subject items.
+	PersonMemory bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
 	// with its lineage, so it surfaces only when its original is not a
 	// candidate: a copy appears only when asked, through its original.
@@ -479,6 +481,9 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	if containsKind(kinds, Memory) {
 		where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item v WHERE v.id=`+alias+`.source_id AND v.valid_from<=?))`)
 		args = append(args, at)
+		if scope.PersonMemory {
+			where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item p WHERE p.id=`+alias+`.source_id AND p.subject_kind='person'))`)
+		}
 	}
 	if restricted {
 		where = append(where, "NOT EXISTS(SELECT 1 FROM restricted r WHERE r.kind="+alias+".kind AND r.id="+alias+".source_id)")
