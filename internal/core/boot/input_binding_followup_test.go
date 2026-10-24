@@ -1153,3 +1153,121 @@ func TestBindingActionClassifiesEveryWrappedTool(t *testing.T) {
 		}
 	}
 }
+
+// Six settled targets on the previous input are past the five-answer question.
+// Stopping must ask, then ask again for the rest, and must not interrupt first.
+func TestInheritedTargetsBeyondQuestionLimit(t *testing.T) {
+	r, _ := turnRuntime(t)
+	reserve := t.TempDir()
+	const n = 6
+	ids := make([]string, n)
+	tasks := make([]work.Task, n)
+	for i := range tasks {
+		ids[i] = fmt.Sprintf("wide-%d", i)
+		tasks[i] = work.Task{ID: ids[i], PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: fmt.Sprintf("Wide %d", i), Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+		if err := r.work.Create(t.Context(), tasks[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	last := tasks[n-1]
+	if err := r.work.Start(t.Context(), work.Run{ID: "wide-run", TaskID: last.ID, Generation: 1, Worker: "codex", ThreadID: "wide-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "wide-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "wide-thread", TaskID: last.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "wide-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	words := []string{"one", "two", "three", "four", "five", "six"}
+	parentText := strings.Join(words, " ")
+	parent := questionPersonInput(t, r, "wide-parent", parentText)
+	parentTools := modelBindingTools(t, r, parent)
+	choices := make([]binding.Choice, n)
+	for i := range choices {
+		choices[i] = binding.Choice{Request: i, Quote: words[i], Target: binding.Target{Class: "existing", Kind: "task", ID: ids[i]}}
+	}
+	if got := questionCall(t, parentTools, "bind_input", "wide-bind", bindingRequest{Bindings: choices}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	follow := questionPersonInput(t, r, "wide-stop", "stop it")
+	saved, err := r.journal().Get(t.Context(), inputBindingID(follow.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.Decider != "no-rule" || decision.Target.Class != "none" {
+		t.Fatalf("follow-up settled before the stop: %+v", decision)
+	}
+	followTools := modelBindingTools(t, r, follow)
+	stopped := questionCall(t, followTools, "worker_interrupt", "stop-wide", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "quote": "stop it"})
+	if stopped.Code != loop.Denied || !strings.Contains(string(stopped.Output), "input_target_pending") || probe.interrupts != 0 {
+		t.Fatalf("oversized inherited stop: %+v interrupts=%d", stopped, probe.interrupts)
+	}
+	pending, err := waiting.NewConversationQuestions(r.db).Pending(t.Context(), r.person, r.agent)
+	if err != nil || len(pending) != 1 || pending[0].Binding == nil {
+		t.Fatalf("missing target question: %+v %v", pending, err)
+	}
+	first := pending[0]
+	if len(first.Binding.Tied) != 4 || len(first.Binding.More) != 2 || len(first.Choices) != len(first.Binding.Tied)+1 {
+		t.Fatalf("first page: tied=%d more=%d choices=%d", len(first.Binding.Tied), len(first.Binding.More), len(first.Choices))
+	}
+	for i, target := range first.Binding.Tied {
+		if target.ID != ids[i] {
+			t.Fatalf("first page target %d = %s", i, target.ID)
+		}
+	}
+	route := r.route
+	r.route = nil
+	t.Cleanup(func() { r.route = route })
+	answerChoice := func(q waiting.ConversationQuestion, value string) {
+		t.Helper()
+		revision := "1"
+		values := protocol.FormValues{"answer": {String: &value}}
+		answer := protocol.QuestionAnswer{CardID: &q.ID, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}
+		if outcome, err := r.answerConversationQuestion(t.Context(), r.person, answer, "answer-"+q.ID); err != nil || outcome != protocol.DecisionOutcomeResolved {
+			t.Fatalf("answer %s: %s %v", q.ID, outcome, err)
+		}
+	}
+	answerChoice(first, first.Choices[len(first.Binding.Tied)])
+	if probe.interrupts != 0 {
+		t.Fatal("continuing the question interrupted the worker")
+	}
+	current, err := r.currentInputChoices(t.Context(), follow)
+	if err != nil || len(current) != 1 || current[0].Question == "" || current[0].Question == first.ID {
+		t.Fatalf("continuation did not stay pending: %+v %v", current, err)
+	}
+	second, err := waiting.NewConversationQuestions(r.db).Get(t.Context(), current[0].Question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Binding.Tied) != 2 || len(second.Binding.More) != 0 || len(second.Choices) != 2 || second.Binding.Tied[0].ID != ids[4] || second.Binding.Tied[1].ID != ids[5] {
+		t.Fatalf("second page: %+v choices=%v", second.Binding, second.Choices)
+	}
+	answerChoice(second, second.Choices[1])
+	current, err = r.currentInputChoices(t.Context(), follow)
+	if err != nil || current[0].Question != "" || current[0].Decider != "person" || current[0].Target.ID != last.ID || len(current[0].Tied) != 0 || len(current[0].More) != 0 {
+		t.Fatalf("selected target: %+v %v", current, err)
+	}
+	if probe.interrupts != 0 {
+		t.Fatal("selecting a target interrupted without a new call")
+	}
+	r.route = route
+	again := questionCall(t, followTools, "worker_interrupt", "stop-wide-chosen", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "quote": "stop it"})
+	if again.Code != loop.OK || probe.interrupts != 1 {
+		t.Fatalf("chosen interrupt: %+v interrupts=%d", again, probe.interrupts)
+	}
+}

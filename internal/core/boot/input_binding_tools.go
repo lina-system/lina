@@ -194,8 +194,12 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 			}
 		}
 		if len(targets) > 1 {
-			choice.Tied = targets
-			choice.Target = targets[0]
+			// One question lists at most five answers. Keep the rest for the
+			// next page instead of failing the five-target check.
+			shown, rest := binding.QuestionPage(targets)
+			choice.Tied = shown
+			choice.Target = shown[0]
+			choice.More = rest
 		}
 	}
 	if _, err := r.journal().Get(ctx, "binding-tool:"+turnID+":"+c.ID); err == nil {

@@ -21,6 +21,16 @@ import (
 	"time"
 )
 
+func TestDecodeBindingRequestIgnoresLaterPage(t *testing.T) {
+	raw := `{"bindings":[{"request":0,"quote":"stop it","target":{"class":"none"},"more":[{"class":"existing","id":"wide-0","kind":"task"}]}]}`
+	in, err := decodeBindingRequest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(in.Bindings) != 1 || len(in.Bindings[0].More) != 0 || in.Bindings[0].Target.Class != "none" {
+		t.Fatalf("model later page was kept: %+v", in.Bindings)
+	}
+}
 func modelBindingTools(t *testing.T, r *conversationRuntime, input ledger.Event) map[string]loop.Tool {
 	t.Helper()
 	s := &turnState{runtime: r, input: input, turnID: "turn:" + input.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}}

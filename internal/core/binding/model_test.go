@@ -20,6 +20,55 @@ func TestAskRequiresTieAndIrreversibleAction(t *testing.T) {
 		}
 	}
 }
+func TestQuestionPageKeepsEveryInheritedTarget(t *testing.T) {
+	targets := make([]Target, 10)
+	items := make([]Item, len(targets))
+	for i := range targets {
+		id := string(rune('a' + i))
+		targets[i] = Target{Class: "existing", Kind: "task", ID: id}
+		items[i] = Item{ID: id, Kind: "task", State: "waiting"}
+	}
+	s := State{Items: items}
+	shown, rest := QuestionPage(targets[:6])
+	if len(shown) != 4 || len(rest) != 2 {
+		t.Fatalf("page of six: %d shown, %d rest", len(shown), len(rest))
+	}
+	shown[0].ID = "changed"
+	if targets[0].ID == "changed" {
+		t.Fatal("page shared storage with the inherited targets")
+	}
+	shown, rest = QuestionPage(targets[:6])
+	choice := Choice{Quote: "stop it", Target: shown[0], Tied: shown, More: rest, Action: "stop"}
+	if err := ValidateChoice(s, "stop it", choice); err != nil {
+		t.Fatal(err)
+	}
+	choice.More = append([]Target{shown[0]}, rest...)
+	if err := ValidateChoice(s, "stop it", choice); err == nil {
+		t.Fatal("a repeated target was accepted on the next page")
+	}
+	choice = Choice{Quote: "stop it", Target: targets[0], Tied: targets[:5], More: targets[5:6], Action: "stop"}
+	if err := ValidateChoice(s, "stop it", choice); err == nil {
+		t.Fatal("five shown targets plus a later page was accepted")
+	}
+	choice.More = nil
+	choice.Tied = targets[:6]
+	if err := ValidateChoice(s, "stop it", choice); err == nil {
+		t.Fatal("six tied targets were accepted")
+	}
+	shown, rest = QuestionPage(targets)
+	shown, rest = QuestionPage(rest)
+	if len(shown) != 4 || len(rest) != 2 {
+		t.Fatalf("second page: %d shown, %d rest", len(shown), len(rest))
+	}
+	shown, rest = QuestionPage(rest)
+	if len(shown) != 2 || rest != nil {
+		t.Fatalf("last page: %d shown, rest %#v", len(shown), rest)
+	}
+	shown, rest = QuestionPage(targets[:5])
+	if len(shown) != 5 || rest != nil {
+		t.Fatalf("five targets: %d shown, rest %#v", len(shown), rest)
+	}
+}
 func TestDuplicateNormalizationAndClosedItems(t *testing.T) {
 	s := State{Items: []Item{{ID: "nfc", Title: "Café", State: "open"}, {ID: "closed", Title: "Cafe\u0301", State: "done"}, {ID: "near", Title: "Another title", State: "open"}}}
 	matches := Duplicates(s, " CAFE\u0301 ", []string{"near"})
