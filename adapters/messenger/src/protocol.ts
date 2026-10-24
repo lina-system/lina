@@ -25,6 +25,10 @@ export type Message = {
   at: string;
   edited?: string;
   text: string;
+  // decryptionFailed marks a message the platform served but this account
+  // could not decrypt. It keeps the record with no text; it is never an empty
+  // message that reads as something the person wrote.
+  decryptionFailed?: boolean;
   replyTo?: string;
   thread?: string;
   attachments?: Attachment[];
@@ -32,7 +36,19 @@ export type Message = {
 
 export type Deletion = { message: string; at: string };
 
-export type Page = { messages: Message[]; deletions: Deletion[]; next: string; hasMore: boolean; through?: string };
+// Coverage states what a completed read covers when the platform serves no
+// position that outlives the process or a bounded range. Core stores it with the
+// chat's coverage; an absent one keeps the adapter's declared default.
+export type Coverage = { historyDepth: string; cursorSurvivesRestart: boolean };
+
+export type Page = {
+  messages: Message[];
+  deletions: Deletion[];
+  next: string;
+  hasMore: boolean;
+  through?: string;
+  coverage?: Coverage;
+};
 
 export type Capabilities = {
   historyDepth: string;
