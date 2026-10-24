@@ -3,8 +3,10 @@
 package term
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -33,7 +35,7 @@ func Start(ctx context.Context, model tea.Model, width, height int) (*Harness, e
 	ctx, cancel := context.WithCancel(ctx)
 	h := &Harness{Output: output, cancel: cancel, done: make(chan struct{})}
 	h.program = tea.NewProgram(model,
-		tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(output),
+		tea.WithContext(ctx), tea.WithInput(nil), tea.WithOutput(cookedOutput{output}),
 		tea.WithEnvironment([]string{"TERM=xterm-256color"}),
 		tea.WithColorProfile(colorprofile.TrueColor), tea.WithWindowSize(width, height),
 		tea.WithoutSignalHandler(), tea.WithoutCatchPanics(),
@@ -44,6 +46,23 @@ func Start(ctx context.Context, model tea.Model, width, height int) (*Harness, e
 		h.model, h.err = h.program.Run()
 	}()
 	return h, nil
+}
+
+// Match a cooked TTY's ONLCR output processing. Bubble Tea emits bare LF;
+// without CR a full painted row advances twice in the VT emulator. The product
+// applies the same translation in its raw-terminal output adapter.
+type cookedOutput struct{ io.Writer }
+
+func (w cookedOutput) Write(data []byte) (int, error) {
+	translated := bytes.ReplaceAll(data, []byte{'\n'}, []byte{'\r', '\n'})
+	n, err := w.Writer.Write(translated)
+	if err == nil && n != len(translated) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		return 0, err
+	}
+	return len(data), nil
 }
 
 func (h *Harness) Send(message tea.Msg) { h.program.Send(message) }
