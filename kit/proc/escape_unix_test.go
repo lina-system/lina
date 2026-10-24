@@ -12,13 +12,15 @@ import (
 	"time"
 )
 
-var escapeModes = []string{"setsid", "setpgid"}
+var escapeFinishes = []string{"close", "cancel", "exit"}
 
+// "cleared" leaves the new session and adds a fully cleared environment, so the
+// descendant carries neither the owner token nor any inherited entry.
 func configureEscape(cmd *exec.Cmd, escape string) {
-	if escape == "setsid" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	} else {
+	if escape == "setpgid" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	} else {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	}
 }
 
@@ -28,7 +30,7 @@ func escapedGone(pid int) error {
 	// On Darwin the kernel's reaper, not this process, collects an orphan.
 	// Poll the actual PID state with a deadline rather than assuming a sleep
 	// is enough; Linux's supervisor already joined it before Run returned.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		err := syscall.Kill(pid, 0)
 		if errors.Is(err, syscall.ESRCH) {

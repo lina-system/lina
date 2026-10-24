@@ -60,7 +60,7 @@ func TestDyingOwnerProcess(t *testing.T) {
 	}
 	owner := proc.NewOwner()
 	l := lease.New(func() {})
-	err := owner.Run(context.Background(), l, proc.Command{Path: os.Args[0], Args: []string{"-test.run=^TestEscapingProcess$", "--", "leaf", "setsid"}, Env: []string{"LINA_PROC_ESCAPE_TEST=1"}, Stdout: os.Stdout, Stderr: os.Stderr})
+	err := owner.Run(context.Background(), l, proc.Command{Path: os.Args[0], Args: []string{"-test.run=^TestEscapingProcess$", "--", "leaf", "setsid"}, Env: []string{}, Stdout: os.Stdout, Stderr: os.Stderr})
 	if err != nil {
 		t.Fatal(err)
 	}
