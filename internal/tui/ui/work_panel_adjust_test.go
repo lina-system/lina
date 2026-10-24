@@ -12,6 +12,15 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// adjustCards are cards Core marked as goals, which take the adjust keys.
+func adjustCards(n int) []state.WorkCard {
+	cards := navigationCards(n)
+	for i := range cards {
+		cards[i].Control = "goal"
+	}
+	return cards
+}
+
 // adjustShell focuses the panel over cards Core already projected, with the
 // work capability granted as installed Core grants it.
 func adjustShell(cards []state.WorkCard) *shellModel {
@@ -46,7 +55,7 @@ func TestWorkPanelAdjustSendsThePersonsChoice(t *testing.T) {
 		"stop":      {tea.KeyPressMsg{Code: tea.KeyDelete}, "stop", true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			m := adjustShell(navigationCards(4))
+			m := adjustShell(adjustCards(4))
 			if tc.operation == "stop" {
 				// The stop asks first and sends only on Enter.
 				if request := adjustCommand(t, m, tc.msg); request != nil {
@@ -69,7 +78,7 @@ func TestWorkPanelAdjustSendsThePersonsChoice(t *testing.T) {
 }
 
 func TestWorkPanelStopAsksThenCancels(t *testing.T) {
-	m := adjustShell(navigationCards(4))
+	m := adjustShell(adjustCards(4))
 	selected := m.conversation.workSelected
 	adjustCommand(t, m, tea.KeyPressMsg{Code: tea.KeyDelete})
 	rows := m.workPanelRows(40, 20)
@@ -91,7 +100,7 @@ func TestWorkPanelStopAsksThenCancels(t *testing.T) {
 }
 
 func TestWorkPanelPausedCardResumes(t *testing.T) {
-	cards := navigationCards(4)
+	cards := adjustCards(4)
 	cards[0].Paused = true
 	cards[0].Now = design.Text(design.English, "progress.paused")
 	m := adjustShell(cards)
@@ -111,18 +120,18 @@ func TestWorkPanelLimitKeysAndTitle(t *testing.T) {
 		"auto": {tea.KeyPressMsg{Code: '0', Text: "0"}, "limit_auto"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			m := adjustShell(navigationCards(4))
+			m := adjustShell(adjustCards(4))
 			request, ok := adjustCommand(t, m, tc.msg).(protocol.WorkLimitRequest)
 			if !ok || request.Operation != tc.operation || request.Value != nil {
 				t.Fatalf("%s sent %+v", name, request)
 			}
 		})
 	}
-	m := adjustShell(navigationCards(4))
+	m := adjustShell(adjustCards(4))
 	if rows := m.workPanelRows(40, 20); strings.Contains(rows[0], design.Text(design.English, "work.limit")) {
 		t.Fatalf("automatic shows a limit: %q", rows[0])
 	}
-	m.content.Blocks = []state.Block{{Topic: "progress", Work: &state.WorkSummary{Cards: navigationCards(4), Limit: &state.WorkLimit{Value: 3}}}}
+	m.content.Blocks = []state.Block{{Topic: "progress", Work: &state.WorkSummary{Cards: adjustCards(4), Limit: &state.WorkLimit{Value: 3}}}}
 	if rows := m.workPanelRows(40, 20); !strings.Contains(rows[0], "3") {
 		t.Fatalf("a set limit is not in the title: %q", rows[0])
 	}
@@ -131,7 +140,7 @@ func TestWorkPanelLimitKeysAndTitle(t *testing.T) {
 // Without Core's grant the panel sends nothing: Core decides, and the TUI never
 // assumes the capability it did not negotiate.
 func TestWorkPanelAdjustNeedsTheWorkCapability(t *testing.T) {
-	m := navigationShell(120, navigationCards(4))
+	m := navigationShell(120, adjustCards(4))
 	for _, msg := range []tea.KeyPressMsg{
 		{Code: tea.KeyUp, Mod: tea.ModShift},
 		{Code: tea.KeySpace, Text: " "},
@@ -145,8 +154,7 @@ func TestWorkPanelAdjustNeedsTheWorkCapability(t *testing.T) {
 
 // The adjust keys never change the card locally; Core's update does.
 func TestWorkPanelAdjustKeepsTheCardUntilCoreUpdates(t *testing.T) {
-	cards := navigationCards(4)
-	m := adjustShell(cards)
+	m := adjustShell(adjustCards(4))
 	before := ansi.Strip(m.View().Content)
 	m.Update(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
 	m.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
@@ -156,5 +164,39 @@ func TestWorkPanelAdjustKeepsTheCardUntilCoreUpdates(t *testing.T) {
 	}
 	if m.content.Draft.Text != "keep 초안" || !m.conversation.workFocused {
 		t.Fatal("a choice changed the draft or the focus")
+	}
+}
+
+// A card Core did not mark as a goal takes no rank, pause or stop: a
+// background run and a session are cards too, and Core refuses a goal command
+// for them.
+func TestWorkPanelAdjustSkipsCardsWithoutGoalControl(t *testing.T) {
+	cards := navigationCards(4)
+	m := adjustShell(cards)
+	for _, msg := range []tea.KeyPressMsg{
+		{Code: tea.KeyUp, Mod: tea.ModShift},
+		{Code: tea.KeySpace, Text: " "},
+		{Code: tea.KeyDelete},
+	} {
+		if request := adjustCommand(t, m, msg); request != nil {
+			t.Fatalf("a card without goal control sent %T", request)
+		}
+	}
+	if m.conversation.workStop != "" {
+		t.Fatal("a card without goal control offered a stop ask")
+	}
+	// The run limit belongs to the person, not to a card, so it still applies.
+	if request := adjustCommand(t, m, tea.KeyPressMsg{Code: '-', Text: "-"}); request == nil {
+		t.Fatal("a card without goal control suppressed the run limit key")
+	}
+}
+
+// A held adjust key is one choice: the panel classifies it as a toggle, so a
+// key repeat cannot pause and then resume the same 일.
+func TestWorkPanelAdjustIgnoresKeyRepeat(t *testing.T) {
+	m := adjustShell(adjustCards(4))
+	repeat := tea.KeyPressMsg{Code: tea.KeySpace, Text: " ", IsRepeat: true}
+	if request := adjustCommand(t, m, repeat); request != nil {
+		t.Fatalf("a repeated key sent %T", request)
 	}
 }

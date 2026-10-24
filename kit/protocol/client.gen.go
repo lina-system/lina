@@ -866,6 +866,7 @@ type ProgressGet struct {
 	View  *string `json:"view,omitempty"`
 }
 type ProgressLine struct {
+	Control      *string          `json:"control,omitempty"`
 	Depth        json.Number      `json:"depth"`
 	FinishedAt   *string          `json:"finished_at,omitempty"`
 	JustFinished string           `json:"just_finished"`
@@ -9230,6 +9231,12 @@ const clientSchemaJSON = `{
         },
         "paused": {
           "type": "boolean"
+        },
+        "control": {
+          "type": "string",
+          "enum": [
+            "goal"
+          ]
         },
         "stage": {
           "type": "string"

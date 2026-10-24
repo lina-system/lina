@@ -6812,6 +6812,12 @@
         "paused": {
           "type": "boolean"
         },
+        "control": {
+          "type": "string",
+          "enum": [
+            "goal"
+          ]
+        },
         "stage": {
           "type": "string"
         },

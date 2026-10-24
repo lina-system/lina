@@ -72,6 +72,9 @@ type WorkCard struct {
 	State             protocol.RunningState
 	Waiting           int
 	Paused            bool
+	// Control is the choice Core accepts for this card; empty means the card
+	// takes none, as a background run or a session does.
+	Control           string
 	Stages            []WorkStage
 }
 

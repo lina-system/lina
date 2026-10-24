@@ -17,7 +17,10 @@ type Line struct {
 	Stage        string    `json:"stage"`
 	State        string    `json:"state,omitempty"`
 	// Paused is the person's pause on a goal line, as Core recorded it.
-	Paused       bool      `json:"paused,omitempty"`
+	Paused bool `json:"paused,omitempty"`
+	// Control names the choices a line accepts from the person: a goal line
+	// takes rank, pause, resume and stop; a run or session line takes none.
+	Control      string    `json:"control,omitempty"`
 	Percent      *int      `json:"percent"`
 	JustFinished string    `json:"just_finished"`
 	Next         string    `json:"next"`
@@ -45,6 +48,8 @@ type Unit struct {
 	State                  string // Optional observed execution state, independent of plan stage.
 	// Paused is the person's pause on a goal line.
 	Paused                 bool
+	// Control is the control a line accepts; empty means none.
+	Control                string
 	Done                   *bool
 	Active, Seen, Landed   bool
 	JustFinished           string
@@ -99,7 +104,7 @@ func Compute(units []Unit) []Entry {
 	}
 	rows := make(map[string]*row, len(units))
 	for _, u := range units {
-		line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Paused: u.Paused, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
+		line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Paused: u.Paused, Control: u.Control, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
 		if u.JustFinished != "" {
 			line.JustFinished = u.JustFinished
 		}

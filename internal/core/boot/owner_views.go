@@ -340,6 +340,12 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 			paused := true
 			line.Paused = &paused
 		}
+		// Only a goal line takes the person's rank, pause and stop; a run or a
+		// session is drawn as a card but has no such control.
+		if v.Control != "" {
+			control := v.Control
+			line.Control = &control
+		}
 		if entry.Row {
 			row := true
 			line.Row = &row

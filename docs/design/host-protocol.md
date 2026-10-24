@@ -880,7 +880,11 @@ never means zero. Stage and unknown are codes localized by the client. An option
 `state` uses the `running_state` display codes for an observed conversation-worker
 execution state; it does not supply a plan stage or completion verdict. An
 optional `paused` is the person's pause as Core recorded it on a goal line, so a
-client that offers pause and resume sends the opposite without reading Now.
+client that offers pause and resume sends the opposite without reading Now. An
+optional `control` names the choices a line accepts: `goal` takes rank, pause,
+resume and stop, and its absence means the line takes none, as a background run
+or a session card does. A client offers those controls only where Core marks
+them, so it never sends a choice Core must refuse.
 Older clients may omit these additional presentation fields.
 
 An optional `stages` array carries a line's stage list, in order, as Core computed

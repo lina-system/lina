@@ -52,6 +52,14 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 	case "enter", "esc", "ctrl+c", "ctrl+d", "tab", "shift+tab", "ctrl+o", "ctrl+t", "ctrl+w", "ctrl+r", "ctrl+p", "ctrl+b", "f6":
 		class = term.Toggle
 	}
+	// The panel's adjust keys are choices, not text: a held key must not move,
+	// pause or limit twice, so a repeat cannot undo the person's own choice.
+	if m.conversation.workFocused {
+		switch key.Name {
+		case "space", "shift+up", "shift+down", "delete", "-", "+", "shift++", "shift+=", "0":
+			class = term.Toggle
+		}
+	}
 	if !m.gate.Admit(key, class, m.now()) {
 		return nil
 	}
