@@ -68,6 +68,7 @@ type rawChoice struct {
 	Action     string          `json:"action"`
 	Close      rawStrings      `json:"close_matches"`
 	Difference string          `json:"difference"`
+	More       rawTargets      `json:"more"`
 }
 
 func normalizeChoice(state State, text string, raw json.RawMessage) (Choice, error) {
@@ -103,8 +104,8 @@ func normalizeChoice(state State, text string, raw json.RawMessage) (Choice, err
 	for _, rawTied := range in.Tied {
 		other, err := NormalizeTarget(state, rawTied)
 		if err != nil {
-			// A target Core cannot authorize is never offered as an option.
-			continue
+			// Dropping an alternative would leave the recommendation settled.
+			return Choice{}, err
 		}
 		if !slices.Contains(tied, other) {
 			tied = append(tied, other)
@@ -112,6 +113,18 @@ func normalizeChoice(state State, text string, raw json.RawMessage) (Choice, err
 	}
 	if len(tied) > 1 {
 		c.Tied = tied[:min(5, len(tied))]
+	}
+	// A later page is Core's own overflow. The tool drops a page the model sends
+	// before this decode, so a remaining page is part of the inherited set.
+	for _, rawMore := range in.More {
+		other, err := NormalizeTarget(state, rawMore)
+		if err != nil {
+			return Choice{}, err
+		}
+		if slices.Contains(tied, other) || slices.Contains(c.More, other) {
+			continue
+		}
+		c.More = append(c.More, other)
 	}
 	c.Action = normalizeAction(in.Action)
 	for _, id := range in.Close {
@@ -205,6 +218,12 @@ func targetFromText(state State, value string) (Target, error) {
 			return newTarget(state, kind, ""), nil
 		}
 	}
+	// An id such as "task:a" names that candidate even when its prefix is a
+	// stored kind. Kind-and-colon text is new work only when no candidate has
+	// that exact id.
+	if item, ok := itemByID(state, value); ok {
+		return Target{Class: "existing", ID: item.ID, Kind: item.Kind}, nil
+	}
 	if prefix, rest, ok := strings.Cut(value, ":"); ok && strings.TrimSpace(rest) != "" {
 		if kind := NormalizeKind(prefix); kind != "" {
 			return newTarget(state, kind, ""), nil
@@ -217,13 +236,24 @@ func targetFromText(state State, value string) (Target, error) {
 	return resolveReference(state, value)
 }
 
-func resolveReference(state State, ref string) (Target, error) {
-	ref = strings.TrimSpace(ref)
+func itemByID(state State, ref string) (Item, bool) {
+	folded := Fold(strings.TrimSpace(ref))
+	if folded == "" {
+		return Item{}, false
+	}
 	for _, item := range state.Items {
-		if Fold(item.ID) == Fold(ref) {
-			return Target{Class: "existing", ID: item.ID, Kind: item.Kind}, nil
+		if Fold(item.ID) == folded {
+			return item, true
 		}
 	}
+	return Item{}, false
+}
+
+func resolveReference(state State, ref string) (Target, error) {
+	if item, ok := itemByID(state, ref); ok {
+		return Target{Class: "existing", ID: item.ID, Kind: item.Kind}, nil
+	}
+	ref = strings.TrimSpace(ref)
 	var matches []Item
 	for _, item := range state.Items {
 		names := append(append([]string{item.Title}, item.Names...), item.Links...)
@@ -231,18 +261,17 @@ func resolveReference(state State, ref string) (Target, error) {
 			matches = append(matches, item)
 		}
 	}
-	// The rules prefer unfinished work when one such item matches; a name the
-	// model gave explicitly still decides between two open items.
+	// Unfinished work wins when any open item matches. With none, one offered
+	// item, including a finished one, is that target. Its id already binds.
 	var open []Item
 	for _, item := range matches {
 		if Open(item) {
 			open = append(open, item)
 		}
 	}
-	if len(open) == 1 {
-		return Target{Class: "existing", ID: open[0].ID, Kind: open[0].Kind}, nil
+	if len(open) > 0 {
+		matches = open
 	}
-	matches = open
 	switch len(matches) {
 	case 1:
 		return Target{Class: "existing", ID: matches[0].ID, Kind: matches[0].Kind}, nil

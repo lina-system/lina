@@ -222,28 +222,9 @@ func (r *conversationRuntime) workerCompletionView(ctx context.Context, event le
 	// A persona's main conversation can be shared by several channels. Resolve
 	// the retained originating inbox input, never another binding with the
 	// same persona/conversation or just the parent chat of a restricted thread.
-	parentID := event.ParentID
-	seen := map[string]bool{}
-	for !strings.HasPrefix(parentID, "channel-input:") {
-		if parentID == "" || seen[parentID] {
-			return nil, channels.ErrDenied
-		}
-		seen[parentID] = true
-		parent, err := r.journal().Get(ctx, parentID)
-		if errors.Is(err, ledger.ErrNotFound) {
-			return nil, channels.ErrDenied
-		}
-		if err != nil {
-			return nil, err
-		}
-		if parent.AgentID != event.AgentID || parent.ConversationID != event.ConversationID || parent.Surface.Kind != "channel" || parent.Origin.Kind != "native" || parent.ReplayOf != "" {
-			return nil, channels.ErrDenied
-		}
-		// Only Core's durable continuation events can carry the original receipt.
-		if parent.ScaffoldKind != "question_answer" && parent.ScaffoldKind != "worker_completion" {
-			return nil, channels.ErrDenied
-		}
-		parentID = parent.ParentID
+	parentID, err := r.originatingChannelInputID(ctx, event)
+	if err != nil {
+		return nil, err
 	}
 	parent, ok := strings.CutPrefix(parentID, "channel-input:")
 	id, err := strconv.ParseInt(parent, 10, 64)
@@ -276,6 +257,36 @@ func (r *conversationRuntime) workerCompletionView(ctx context.Context, event le
 	view := newConversationView(r, binding.Agent, binding.Conversation)
 	view.coordinator, view.channelBinding, view.channelAddress = shared, &binding, original.Address
 	return view, nil
+}
+
+// originatingChannelInputID walks a continuation back to its channel receipt.
+// The walk starts at the event's parent. Only a question answer or a worker
+// completion may sit between the receipt and the continuation.
+func (r *conversationRuntime) originatingChannelInputID(ctx context.Context, event ledger.Event) (string, error) {
+	parentID := event.ParentID
+	seen := map[string]bool{}
+	for !strings.HasPrefix(parentID, "channel-input:") {
+		if parentID == "" || seen[parentID] {
+			return "", channels.ErrDenied
+		}
+		seen[parentID] = true
+		parent, err := r.journal().Get(ctx, parentID)
+		if errors.Is(err, ledger.ErrNotFound) {
+			return "", channels.ErrDenied
+		}
+		if err != nil {
+			return "", err
+		}
+		if parent.AgentID != event.AgentID || parent.ConversationID != event.ConversationID || parent.Surface.Kind != "channel" || parent.Origin.Kind != "native" || parent.ReplayOf != "" {
+			return "", channels.ErrDenied
+		}
+		// Only Core's durable continuation events can carry the original receipt.
+		if parent.ScaffoldKind != "question_answer" && parent.ScaffoldKind != "worker_completion" {
+			return "", channels.ErrDenied
+		}
+		parentID = parent.ParentID
+	}
+	return parentID, nil
 }
 
 // Only this conversation's worker directory is selectable. The existing file

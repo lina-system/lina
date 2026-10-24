@@ -23,9 +23,15 @@ const (
 // Service reads connected sources on their schedule and from their live events.
 // One source's failure never blocks another source or the conversation.
 type Service struct {
-	store    *Store
-	resolve  Resolver
-	interval time.Duration
+	store     *Store
+	resolve   Resolver
+	interval  time.Duration
+	factory   Factory
+	admission sync.Map
+	activity  sync.RWMutex
+	wake      chan struct{}
+	syncReads map[string]map[*sourceRead]struct{}
+	stopping  map[string]bool
 
 	mu       sync.Mutex
 	lastSync map[string]time.Time
@@ -42,6 +48,13 @@ type Service struct {
 type watcher struct {
 	cancel context.CancelFunc
 }
+
+type sourceRead struct{ cancel context.CancelFunc }
+
+// Factory opens an account-specific adapter when the resolver does not own it.
+type Factory func(Source) (Adapter, bool, error)
+
+func (s *Service) WithFactory(factory Factory) *Service { s.factory = factory; return s }
 
 // NewService composes the sync loop. adapters are keyed by the adapter name a
 // source records. A platform with one adapter uses the platform name; Discord's
@@ -69,7 +82,7 @@ func NewServiceWithResolver(store *Store, resolve Resolver, interval time.Durati
 	if resolve == nil {
 		resolve = func(Source) (Adapter, bool) { return nil, false }
 	}
-	return &Service{store: store, resolve: resolve, interval: interval, lastSync: map[string]time.Time{}, watching: map[string]*watcher{}, resolved: map[string]Adapter{}}
+	return &Service{store: store, resolve: resolve, interval: interval, wake: make(chan struct{}, 1), syncReads: map[string]map[*sourceRead]struct{}{}, stopping: map[string]bool{}, lastSync: map[string]time.Time{}, watching: map[string]*watcher{}, resolved: map[string]Adapter{}}
 }
 
 // adapterFor selects the implementation for the source account, creating it
@@ -84,27 +97,31 @@ func (s *Service) adapterFor(source Source) (Adapter, bool) {
 func (s *Service) adapter(source Source) (Adapter, error) {
 	key := source.Platform + "\x00" + source.Account
 	s.mu.Lock()
-	adapter, ok := s.resolved[key]
-	s.mu.Unlock()
-	if ok {
+	defer s.mu.Unlock()
+	if s.stopping[key] {
+		return nil, ErrNotConnected
+	}
+	if adapter, ok := s.resolved[key]; ok {
 		return adapter, nil
 	}
-	adapter, ok = s.resolve(source)
+	adapter, ok := s.resolve(source)
+	if !ok && s.factory != nil {
+		var err error
+		adapter, ok, err = s.factory(source)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if !ok || adapter == nil {
 		return nil, ErrInvalid
 	}
-	s.mu.Lock()
-	if existing, ok := s.resolved[key]; ok {
-		adapter = existing
-	} else {
-		s.resolved[key] = adapter
-	}
-	s.mu.Unlock()
+	s.resolved[key] = adapter
 	return adapter, nil
 }
 
 // Close releases the adapters the resolver created.
 func (s *Service) Close() {
+	s.retain(nil)
 	s.mu.Lock()
 	adapters := s.resolved
 	s.resolved = map[string]Adapter{}
@@ -130,6 +147,7 @@ func (s *Service) Store() *Store { return s.store }
 // Run reads every connected source until ctx ends. It never returns an error:
 // a failing source is recorded in its own registry row.
 func (s *Service) Run(ctx context.Context) {
+	defer s.retain(nil)
 	s.SyncAll(ctx, nil)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -137,6 +155,8 @@ func (s *Service) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.wake:
+			s.SyncAll(ctx, nil)
 		case <-ticker.C:
 			s.SyncAll(ctx, nil)
 		}
@@ -182,7 +202,7 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 		s.mu.Lock()
 		s.lastSync[key] = current
 		s.mu.Unlock()
-		if err != nil && ctx.Err() == nil {
+		if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) {
 			_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
 		} else if err == nil {
 			results[key] = result
@@ -195,7 +215,7 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 func (s *Service) watch(ctx context.Context, source Source) {
 	key := source.Platform + "\x00" + source.Account
 	s.mu.Lock()
-	if s.watching[key] != nil {
+	if s.watching[key] != nil || s.stopping[key] {
 		s.mu.Unlock()
 		return
 	}
@@ -240,6 +260,7 @@ func (s *Service) release(key string) {
 	delete(s.watching, key)
 	adapter := s.resolved[key]
 	delete(s.resolved, key)
+	delete(s.lastSync, key)
 	s.mu.Unlock()
 	if w != nil {
 		w.cancel()
@@ -296,7 +317,7 @@ func (s *Service) follow(ctx context.Context, source Source, key string, w *watc
 			return
 		}
 		err = adapter.Live(ctx, sourceID(source), func(event Event) error {
-			_, err := s.store.AdmitEvent(ctx, source, event)
+			_, err := s.Apply(ctx, source, event)
 			if errors.Is(err, ErrPageWaiting) {
 				// The event belongs to a write whose outcome is not known yet.
 				// Acknowledging it here would drop it: the scheduled read starts
@@ -338,14 +359,42 @@ func sourceID(source Source) SourceID {
 
 // Sync reads one source: its chat list, then every chat that is in sync.
 func (s *Service) Sync(ctx context.Context, source Source) (result Result, err error) {
+	watchCtx := ctx
+	s.activity.RLock()
+	defer s.activity.RUnlock()
+	if !s.connected(ctx, source) {
+		return Result{}, nil
+	}
+	key := source.Platform + "\x00" + source.Account
+	s.mu.Lock()
+	if s.stopping[key] {
+		s.mu.Unlock()
+		return Result{}, nil
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	read := &sourceRead{cancel: cancel}
+	if s.syncReads[key] == nil {
+		s.syncReads[key] = map[*sourceRead]struct{}{}
+	}
+	s.syncReads[key][read] = struct{}{}
+	s.mu.Unlock()
 	defer func() {
-		if errors.Is(err, ErrNeedsSignIn) {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		} else if errors.Is(err, ErrNeedsSignIn) {
 			err = s.store.setState(ctx, source.Person, source.Platform, source.Account, StateNeedsSignIn, "")
 		}
+		cancel()
+		s.mu.Lock()
+		delete(s.syncReads[key], read)
+		if len(s.syncReads[key]) == 0 {
+			delete(s.syncReads, key)
+		}
+		s.mu.Unlock()
 	}()
-	adapter, err := s.adapter(source)
-	if err != nil {
-		return Result{}, err
+	adapter, ok := s.adapterFor(source)
+	if !ok {
+		return Result{}, ErrInvalid
 	}
 	id := sourceID(source)
 	state, err := adapter.SignIn(ctx, id)
@@ -365,6 +414,16 @@ func (s *Service) Sync(ctx context.Context, source Source) (result Result, err e
 	if err := s.store.UpsertChats(ctx, source, chats); err != nil {
 		return Result{}, err
 	}
+	if recovery, ok := adapter.(interface {
+		Recover(context.Context, SourceID, func(Event) error) error
+	}); ok {
+		if err := recovery.Recover(ctx, id, func(event Event) error {
+			_, err := s.apply(ctx, source, event)
+			return err
+		}); err != nil {
+			return result, err
+		}
+	}
 	records, err := s.store.Chats(ctx, source.Person, source.Platform, source.Account)
 	if err != nil {
 		return Result{}, err
@@ -379,7 +438,7 @@ func (s *Service) Sync(ctx context.Context, source Source) (result Result, err e
 			return result, err
 		}
 	}
-	s.watch(ctx, source)
+	s.watch(watchCtx, source)
 	return result, s.store.MarkConnected(ctx, source.Person, source.Platform, source.Account)
 }
 
@@ -404,7 +463,7 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 			capabilities := adapter.Capabilities()
 			page.Coverage = &ReadCoverage{HistoryDepth: capabilities.HistoryDepth, CursorSurvivesRestart: capabilities.CursorKind != "none"}
 		}
-		outcome, err := s.store.AdmitPage(ctx, source, chat.Chat, cursor, page)
+		outcome, err := s.admitPage(ctx, source, chat.Chat, cursor, page)
 		result.Added += outcome.Added
 		result.Updated += outcome.Updated
 		result.Deleted += outcome.Deleted
@@ -449,4 +508,85 @@ func failureCause(err error) string {
 		text = text[:240]
 	}
 	return text
+}
+
+// lockAdmission serializes revision planning and commit for one source. Live
+// updates and history pages must observe each other's completed revisions.
+func (s *Service) lockAdmission(ctx context.Context, source Source) (func(), error) {
+	value, _ := s.admission.LoadOrStore(sourceID(source), make(chan struct{}, 1))
+	token := value.(chan struct{})
+	select {
+	case token <- struct{}{}:
+		return func() { <-token }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *Service) admitPage(ctx context.Context, source Source, chat string, cursor Cursor, page Page) (PageResult, error) {
+	unlock, err := s.lockAdmission(ctx, source)
+	if err != nil {
+		return PageResult{}, err
+	}
+	defer unlock()
+	return s.store.AdmitPage(ctx, source, chat, cursor, page)
+}
+
+// Apply admits one live event while coordinating disconnect with sync.
+func (s *Service) Apply(ctx context.Context, source Source, event Event) (Result, error) {
+	s.activity.RLock()
+	defer s.activity.RUnlock()
+	return s.apply(ctx, source, event)
+}
+func (s *Service) apply(ctx context.Context, source Source, event Event) (Result, error) {
+	if !s.connected(ctx, source) {
+		return Result{}, nil
+	}
+	unlock, err := s.lockAdmission(ctx, source)
+	if err != nil {
+		return Result{}, err
+	}
+	defer unlock()
+	outcome, err := s.store.AdmitEvent(ctx, source, event)
+	return Result{Added: outcome.Added, Updated: outcome.Updated, Deleted: outcome.Deleted, Waiting: outcome.Waiting}, err
+}
+
+// Wake reads newly connected sources without waiting for the next interval.
+func (s *Service) Wake() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Service) connected(ctx context.Context, source Source) bool {
+	rows, err := s.store.Sources(ctx, source.Person)
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if row.Platform == source.Platform && row.Account == source.Account {
+			return row.State == StateConnected || row.State == StateFailing
+		}
+	}
+	return false
+}
+
+// Disconnect cancels active requests before waiting for their admissions.
+func (s *Service) Disconnect(ctx context.Context, source Source) error {
+	key := source.Platform + "\x00" + source.Account
+	s.mu.Lock()
+	s.stopping[key] = true
+	for read := range s.syncReads[key] {
+		read.cancel()
+	}
+	if w := s.watching[key]; w != nil {
+		w.cancel()
+	}
+	s.mu.Unlock()
+	s.activity.Lock()
+	defer s.activity.Unlock()
+	defer func() { s.mu.Lock(); delete(s.stopping, key); s.mu.Unlock() }()
+	s.release(key)
+	return s.store.Disconnect(ctx, source.Person, source.Platform, source.Account)
 }

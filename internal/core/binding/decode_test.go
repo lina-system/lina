@@ -34,6 +34,7 @@ func TestNormalizeChoicesAcceptsModelShapes(t *testing.T) {
 		{"title", `{"target":{"id":"Library"}}`, Choice{Request: -1, Target: Target{Class: "existing", ID: "library", Kind: "project"}}},
 		{"name", `{"target":"정원"}`, Choice{Request: -1, Target: Target{Class: "existing", ID: "garden", Kind: "project"}}},
 		{"object", `{"target":{"class":"existing","id":"planting","kind":"task"},"action":"follow"}`, Choice{Request: -1, Target: Target{Class: "existing", ID: "planting", Kind: "task"}, Action: "steer"}},
+		{"stop", `{"target":"planting","action":"stop"}`, Choice{Request: -1, Target: Target{Class: "existing", ID: "planting", Kind: "task"}, Action: "stop"}},
 		{"new-kind-word", `{"target":"new todo"}`, Choice{Request: -1, Target: Target{Class: "new", Kind: "todo"}}},
 		{"parent-dropped", `{"target":{"class":"new","kind":"todo","parent":"planting"}}`, Choice{Request: -1, Target: Target{Class: "new", Kind: "todo"}}},
 		{"new-with-match", `{"target":{"class":"new","kind":"todo","id":"garden"}}`, Choice{Request: -1, Target: Target{Class: "existing", ID: "garden", Kind: "project"}}},
@@ -77,6 +78,53 @@ func TestNormalizeChoicesCorrectsOnlyTargets(t *testing.T) {
 	}
 }
 
+// A unique exact title of a finished offered item is that item. An id already
+// binds it; the title must not become an unknown target after the open filter.
+func TestCompletedExactTitleBinds(t *testing.T) {
+	s := decodeState()
+	got, err := NormalizeChoices(s, "Water the garden", []json.RawMessage{json.RawMessage(`{"target":"Done"}`)})
+	if err != nil || len(got) != 1 || got[0].Target != (Target{Class: "existing", ID: "finished", Kind: "project"}) {
+		t.Fatalf("completed title: %+v %v", got, err)
+	}
+	s.Items = append(s.Items, Item{ID: "also-done", Title: "Done", Kind: "project", State: "completed", LastActivity: s.Clock})
+	_, err = NormalizeChoices(s, "Water the garden", []json.RawMessage{json.RawMessage(`{"target":"Done"}`)})
+	var detail *ChoiceError
+	if !errors.As(err, &detail) || detail.Reason != "ambiguous_target" || !slices.Equal(detail.Allowed, []string{"finished", "also-done"}) {
+		t.Fatalf("two finished titles: %+v", err)
+	}
+	s.Items = append(s.Items, Item{ID: "open-done", Title: "Done", Kind: "project", State: "active", LastActivity: s.Clock})
+	got, err = NormalizeChoices(s, "Water the garden", []json.RawMessage{json.RawMessage(`{"target":"Done"}`)})
+	if err != nil || len(got) != 1 || got[0].Target.ID != "open-done" {
+		t.Fatalf("open title: %+v %v", got, err)
+	}
+}
+
+// A canonical choice keeps targets that do not fit on the first question page.
+func TestNormalizeChoicesKeepsLaterPage(t *testing.T) {
+	s := decodeState()
+	s.Items = append(s.Items, Item{ID: "extra-a", Title: "Extra A", Kind: "task", State: "running", LastActivity: s.Clock}, Item{ID: "extra-b", Title: "Extra B", Kind: "task", State: "running", LastActivity: s.Clock})
+	raw := `{"target":{"class":"existing","id":"garden","kind":"project"},"tied":[{"class":"existing","id":"garden","kind":"project"},{"class":"existing","id":"library","kind":"project"},{"class":"existing","id":"planting","kind":"task"},{"class":"existing","id":"finished","kind":"project"}],"more":[{"class":"existing","id":"extra-a","kind":"task"},{"class":"existing","id":"extra-b","kind":"task"}],"action":"stop"}`
+	got, err := NormalizeChoices(s, "Water the garden", []json.RawMessage{json.RawMessage(raw)})
+	if err != nil || len(got) != 1 || len(got[0].Tied) != 4 || len(got[0].More) != 2 || got[0].More[0].ID != "extra-a" || got[0].More[1].ID != "extra-b" {
+		t.Fatalf("later page: %+v %v", got, err)
+	}
+}
+
+// An ambiguous tied alternative is a correction, not a settled recommendation.
+func TestAmbiguousTiedTargetIsNotDropped(t *testing.T) {
+	s := decodeState()
+	s.Items = append(s.Items, Item{ID: "beds-a", Title: "Beds", Kind: "project", State: "active", LastActivity: s.Clock}, Item{ID: "beds-b", Title: "Beds", Kind: "project", State: "active", LastActivity: s.Clock})
+	_, err := NormalizeChoices(s, "Stop the garden work.", []json.RawMessage{json.RawMessage(`{"target":"garden","tied":["garden","Beds"],"action":"stop"}`)})
+	var detail *ChoiceError
+	if !errors.As(err, &detail) || detail.Field != "bindings[0].target" || detail.Reason != "ambiguous_target" || !slices.Equal(detail.Allowed, []string{"beds-a", "beds-b"}) {
+		t.Fatalf("error %+v", err)
+	}
+	got, err := NormalizeChoices(s, "Stop the garden work.", []json.RawMessage{json.RawMessage(`{"target":"garden","tied":["garden","library"],"action":"stop"}`)})
+	if err != nil || len(got) != 1 || len(got[0].Tied) != 2 || got[0].Action != "stop" {
+		t.Fatalf("resolvable tie: %+v %v", got, err)
+	}
+}
+
 // Close matches that are not open items never reach the duplicate check, and a
 // difference is bounded so one message cannot store unbounded text.
 func TestNormalizeChoicesBoundsMetadata(t *testing.T) {
@@ -88,6 +136,36 @@ func TestNormalizeChoicesBoundsMetadata(t *testing.T) {
 	}
 	if !slices.Equal(got[0].Close, []string{"garden"}) || len(got[0].Difference) > maxDifference {
 		t.Fatalf("metadata: %+v", got[0])
+	}
+}
+
+// A candidate id that begins with a stored kind name is still that item.
+// Kind-and-colon text is new work only when it is not an exact candidate id.
+func TestExactCandidateIDBeatsKindPrefix(t *testing.T) {
+	s := decodeState()
+	s.Items = append(s.Items, Item{ID: "task:a", Title: "Recovered", Kind: "task", State: "running", LastActivity: s.Clock})
+	text := "Continue the recovered task."
+	got, err := NormalizeChoices(s, text, []json.RawMessage{json.RawMessage(`{"target":"task:a"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Target{Class: "existing", ID: "task:a", Kind: "task"}
+	if len(got) != 1 || got[0].Target != want {
+		t.Fatalf("exact id: got %+v want %+v", got, want)
+	}
+	folded, err := NormalizeChoices(s, text, []json.RawMessage{json.RawMessage(`{"target":"Task:A"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(folded) != 1 || folded[0].Target != want {
+		t.Fatalf("folded id: got %+v want %+v", folded, want)
+	}
+	fresh, err := NormalizeChoices(s, text, []json.RawMessage{json.RawMessage(`{"target":"task:brand-new"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fresh) != 1 || fresh[0].Target != (Target{Class: "new", Kind: "task"}) {
+		t.Fatalf("kind shorthand: got %+v", fresh)
 	}
 }
 
