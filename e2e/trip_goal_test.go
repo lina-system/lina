@@ -238,16 +238,23 @@ func runTripGoal(t *testing.T, mode string) {
 	var cancel context.CancelFunc
 	var done chan error
 	start := func() {
+		// The previous Core has joined before restart. Discard its retained
+		// projection so the next barrier observes the new epoch's engine.
+		select {
+		case <-w.updates:
+		default:
+		}
 		ctx, stop := context.WithCancel(t.Context())
 		cancel, done = stop, make(chan error, 1)
-		go func() { done <- boot.Run(ctx, cfg) }()
+		go func(result chan<- error) { result <- boot.Run(ctx, cfg) }(done)
 	}
 	stop := func() {
 		cancel()
-		if err := <-done; err != nil {
+		err := <-done
+		cancel = nil
+		if err != nil {
 			t.Fatal(err)
 		}
-		cancel = nil
 	}
 	t.Cleanup(func() {
 		if cancel != nil {
