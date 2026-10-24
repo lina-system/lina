@@ -35,7 +35,9 @@ type LineMessage = {
 type LoginResult = { authenticated?: boolean; account_id?: string; display_name?: string };
 type QRLogin = { device?: string; onQRUrl: (url: string) => void; onPincode: (pin: string) => void };
 type RawMessage = {
-  raw: { id?: unknown; createdTime?: unknown };
+  raw: { id?: unknown; createdTime?: unknown; toType?: unknown };
+  to?: { id?: unknown };
+  isMyMessage?: boolean;
   from: { id?: unknown };
   text?: string | null;
   decryption_error?: DecryptionError;
@@ -324,7 +326,14 @@ export function lineDriver(sdk: unknown, options: DriverOptions): Driver {
           open = await session();
           for await (const event of open.streamEvents(stop.signal)) {
             if (stop.signal.aborted) return;
-            if (event?.kind === 'message') deliver({ event: 'message', message: liveRecord(event.message) });
+            if (event?.kind === 'message') {
+              const value = event.message;
+              const type = value.raw.toType;
+              const group = type === 'GROUP' || type === 'ROOM' || type === 0 || type === 1;
+              const chat = group || value.isMyMessage ? value.to?.id : value.from?.id;
+              if (typeof chat !== 'string' || !chat) throw new Refusal('upstream_changed', 'LINE live chat');
+              deliver({ event: 'message', chat, message: liveRecord(value) });
+            }
           }
           if (!stop.signal.aborted) ended(new Refusal('live_ended', 'LINE live stream closed'));
         } catch (error) {

@@ -81,7 +81,9 @@ export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream |
         return { stopped: true };
       case 'signIn': {
         const value = await driverOrOpen();
-        return { state: await value.signInState() };
+        // The platform's descriptor travels with the state every read already
+        // asks for, so Core reads no extra frame to learn its schedule.
+        return { state: await value.signInState(), capabilities: value.capabilities() };
       }
       case 'beginSignIn': {
         const value = await driverOrOpen();
@@ -90,6 +92,11 @@ export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream |
       case 'answer': {
         const value = await driverOrOpen();
         return await value.answer(request.prompt, request.value);
+      }
+      case 'cancelSignIn': {
+        const value = await driverOrOpen();
+        if (value.cancelSignIn) await value.cancelSignIn();
+        return { cancelled: true };
       }
       case 'listChats': {
         const value = await driverOrOpen();

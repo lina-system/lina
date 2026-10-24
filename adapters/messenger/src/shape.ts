@@ -33,6 +33,7 @@ export function chat(value: unknown): Chat {
     name: source.name,
     kind: source.kind,
     firstMessageAt: source.firstMessageAt === undefined ? undefined : time(source.firstMessageAt),
+    lastMessageId: source.lastMessageId === undefined ? undefined : String(source.lastMessageId),
   };
 }
 
