@@ -28,7 +28,8 @@ where it was, so the next read sees it again.
 Reply and thread targets are resolved before that batch is written, by the
 same placement an import run uses. A target already committed in the chat uses
 that record's event. A target on the same page is written first, and the reply
-names that event. A target that is neither committed nor on this page adds no
+names that event. Each target names one revision: when a committed target is
+edited on the same page, the relation names the new revision only. A target that is neither committed nor on this page adds no
 relation, and the message is still kept. A cycle keeps the relations that can
 name an event already written.
 
