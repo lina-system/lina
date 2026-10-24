@@ -629,8 +629,9 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					}
 					// A session kept after restart still names a task card, but
 					// its worker is not registered. Sending that card to the
-					// live path drops the follow-up. Keep the offline mailbox.
-					if session, ok := strings.CutPrefix(a.ID, "session:"); ok && !r.workerSessionLive(session) {
+					// live path drops the follow-up. Keep the offline mailbox,
+					// unless the reference resolved as a literal task id.
+					if session, ok := strings.CutPrefix(a.ID, "session:"); ok && taskID != a.ID && !r.workerSessionLive(session) {
 						return r.followOfflineSession(ctx, event, turnID, c.ID, session, a.Text)
 					}
 					if _, err := r.work.Get(ctx, taskID); err == nil {
@@ -1019,8 +1020,12 @@ func (r *conversationRuntime) workerSessionTask(ctx context.Context, session str
 // followTaskID resolves a follow_work id to the task the follow-up reaches.
 // The chosen-target gate and execution share it, so the identity that is
 // checked is the identity that receives the instruction. A literal task id
-// wins over a generation suffix: a task named "a:1" is not generation 1 of "a".
+// wins over session/task prefixes and generation suffixes: a task named "a:1"
+// is not generation 1 of "a".
 func (r *conversationRuntime) followTaskID(ctx context.Context, ref string) (string, error) {
+	if card, err := r.work.Get(ctx, ref); err == nil {
+		return card.Task.ID, nil
+	}
 	if session, ok := strings.CutPrefix(ref, "session:"); ok {
 		return r.workerSessionTask(ctx, session)
 	}
@@ -1032,9 +1037,6 @@ func (r *conversationRuntime) followTaskID(ctx context.Context, ref string) (str
 			return err
 		})
 		return card.Task.ID, err
-	}
-	if card, err := r.work.Get(ctx, ref); err == nil {
-		return card.Task.ID, nil
 	}
 	if taskID, ok := workerFollowTask(ref); ok && taskID != ref {
 		if _, err := r.work.Get(ctx, taskID); err == nil {

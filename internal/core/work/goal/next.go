@@ -176,8 +176,36 @@ type Goal struct {
 	Verification      Proof             `json:"verification"`
 	Waits             []Wait            `json:"waits,omitempty"`
 	// ClearTodos are linked 할 일 whose waiting_on must be cleared after the wait ends.
-	ClearTodos []string `json:"clear_todos,omitempty"`
-	Evidence   []Proof  `json:"evidence,omitempty"`
+	// The fields are the wait's own values, so a later edit of the to-do is left in place.
+	ClearTodos []ClearedWait `json:"clear_todos,omitempty"`
+	Evidence   []Proof       `json:"evidence,omitempty"`
+}
+
+// ClearedWait is one linked 할 일 to clear after its outside wait ends.
+// A persisted entry may be the to-do id alone, from before the fields were stored.
+type ClearedWait struct {
+	TodoID    string `json:"todo_id"`
+	Who       string `json:"who,omitempty"`
+	Since     string `json:"since,omitempty"`
+	NextCheck string `json:"next_check,omitempty"`
+}
+
+func (c *ClearedWait) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var id string
+		if err := json.Unmarshal(data, &id); err != nil {
+			return err
+		}
+		*c = ClearedWait{TodoID: id}
+		return nil
+	}
+	type fields ClearedWait
+	var decoded fields
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*c = ClearedWait(decoded)
+	return nil
 }
 
 type ActionKind string
