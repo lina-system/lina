@@ -89,10 +89,12 @@ record to the second, and `UndoMerge` puts each link and each item that still
 exists back on the record it came from. A forgotten item moves back still
 forgotten. A permanently deleted item stays gone, and neither blocks the undo.
 `Split` moves the identities the person chooses and the items their evidence
-produced. A forgotten item moves still forgotten. A permanently deleted item
-stays gone, and neither blocks the split. Item moves run through
-`memory.ReassignSubject` in the same transaction, so an item keeps its evidence,
-holder and scope.
+produced that are still attributed to the record being left. A forgotten item
+of that record moves still forgotten. An item a correction retracted stays on
+its previous subject; the external citation the retraction leaves behind does
+not move it or block the split. A permanently deleted item stays gone, and
+none of these block the split. Item moves run through `memory.ReassignSubject`
+in the same transaction, so an item keeps its evidence, holder and scope.
 
 What a link produced is recorded in `identity_artifact` (memory items, and the
 kind reserved for people-record entries) and a citation of the link as external

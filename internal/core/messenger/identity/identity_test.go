@@ -798,6 +798,87 @@ func TestSplitMovesAForgottenItemWithItsIdentity(t *testing.T) {
 	}
 }
 
+// TestSplitLeavesRetractedItemsOnTheSubjectACorrectionKept proves a later
+// split does not move items a correction already retracted onto the previous
+// record. Their external citations stay, and applyMemory only changes state,
+// so those items are still attributed to the old subject. Forgotten items
+// that belong to the record being split still move and stay forgotten.
+func TestSplitLeavesRetractedItemsOnTheSubjectACorrectionKept(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-a", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "Discord profile"}}},
+		{Record: "person-b"},
+		{Record: "person-c"},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, discord("d-split"), "Someone", phone("+821012340001", "Discord profile"))
+	link := usable(t, f, discord("d-split"))
+	if len(link) != 1 || link[0].Record != "person-a" {
+		t.Fatalf("exact link = %+v", link)
+	}
+	retracted := f.itemIn(t, "person-a", "wrongly attributed", "native:retracted")
+	leftForgotten := f.itemIn(t, "person-a", "forgotten before the move", "native:left")
+	for _, item := range []memory.Item{retracted, leftForgotten} {
+		if err := f.store.RecordArtifact(t.Context(), link[0].ID, "item", item.ID); err != nil {
+			t.Fatal(err)
+		}
+		citeLink(t, f, item.ID, link[0].ID)
+	}
+	ref := func(id string) retract.Request {
+		return retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: id}}}
+	}
+	if err := f.removal.Forget(t.Context(), ref(leftForgotten.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Correct(t.Context(), link[0].ID, "person-b"); err != nil {
+		t.Fatal(err)
+	}
+	kept := f.itemIn(t, "person-b", "learned after the correction", "native:kept")
+	forgotten := f.itemIn(t, "person-b", "forgotten on the current record", "native:forgotten")
+	for _, item := range []memory.Item{kept, forgotten} {
+		if err := f.store.RecordArtifact(t.Context(), link[0].ID, "item", item.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.removal.Forget(t.Context(), ref(forgotten.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Split(t.Context(), "person-b", "person-c", []identity.Identity{discord("d-split")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := links(t, f, discord("d-split")); len(got) != 1 || got[0].Record != "person-c" {
+		t.Fatalf("split link = %+v", got)
+	}
+	if subject(t, f, kept.ID) != "person-c" || !visible(t, f, kept.ID) {
+		t.Fatal("the current item did not follow the identity")
+	}
+	state, subj, ok := itemRow(t, f, forgotten.ID)
+	if !ok || state != "trashed" || subj != "person-c" || visible(t, f, forgotten.ID) {
+		t.Fatalf("forgotten item = state %q subject %q present %t visible %t", state, subj, ok, visible(t, f, forgotten.ID))
+	}
+	state, subj, ok = itemRow(t, f, retracted.ID)
+	if !ok || state != "trashed" || subj != "person-a" || visible(t, f, retracted.ID) {
+		t.Fatalf("retracted item = state %q subject %q present %t visible %t", state, subj, ok, visible(t, f, retracted.ID))
+	}
+	state, subj, ok = itemRow(t, f, leftForgotten.ID)
+	if !ok || state != "trashed" || subj != "person-a" || visible(t, f, leftForgotten.ID) {
+		t.Fatalf("earlier forgotten item = state %q subject %q present %t visible %t", state, subj, ok, visible(t, f, leftForgotten.ID))
+	}
+}
+
+func citeLink(t *testing.T, f *fixture, item, link string) {
+	t.Helper()
+	err := f.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,precision,role)
+VALUES('memory',?,'1',1,'external',?,'1','none','cites')`, item, link)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // stopRemovals can forget only in its own later transaction. A repair must
 // refuse it and leave the link unchanged when items have to be retracted.
 type stopRemovals struct{}
