@@ -95,7 +95,7 @@ func memoryReference(ctx context.Context, tx *canon.Tx, scope Scope, id string, 
 		return err
 	}
 	var item memory.Item
-	if json.Unmarshal(data, &item) != nil || item.Scope != memory.Local || item.State != memory.Active {
+	if memory.DecodeItem(ctx, tx, data, &item) != nil || item.Scope != memory.Local || item.State != memory.Active {
 		return Exclusion("restricted_content")
 	}
 	for _, ref := range item.Evidence {

@@ -155,7 +155,7 @@ func Maintain(ctx context.Context, tx *canon.Tx, person string, holder Holder, n
 			rows.Close()
 			return result, err
 		}
-		if err := json.Unmarshal(raw, &item); err != nil {
+		if err := DecodeItem(ctx, tx, raw, &item); err != nil {
 			rows.Close()
 			return result, err
 		}

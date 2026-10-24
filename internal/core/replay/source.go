@@ -158,7 +158,7 @@ func visible(ctx context.Context, tx *canon.Tx, scope Scope, id string) error {
  AND NOT EXISTS(SELECT 1 FROM retract_block b WHERE b.person=? AND b.conversation_id=e.conversation_id)
  AND NOT EXISTS(SELECT 1 FROM conv_event other WHERE other.conversation_id=e.conversation_id AND other.speaker_kind='person' AND other.person_id<>?)
  AND EXISTS(SELECT 1 FROM conv_event owner WHERE owner.conversation_id=e.conversation_id AND owner.agent_id=e.agent_id AND owner.speaker_kind='person' AND owner.person_id=?)
- AND NOT EXISTS(SELECT 1 FROM memory_item m,json_each(m.record,'$.evidence') x WHERE m.person=? AND m.scope IN ('private','never-leaves') AND json_extract(x.value,'$.kind')='event' AND json_extract(x.value,'$.id')=e.id)`, id, scope.Agent, scope.Person, scope.Person, scope.Person, scope.Person).Scan(&n)
+ AND NOT EXISTS(SELECT 1 FROM memory_item m JOIN cite x ON x.view_kind='memory' AND x.view_id=m.id AND x.dropped_revision IS NULL WHERE m.person=? AND m.scope IN ('private','never-leaves') AND x.target_kind='event' AND x.target_id=e.id)`, id, scope.Agent, scope.Person, scope.Person, scope.Person, scope.Person).Scan(&n)
 	if err != nil {
 		return err
 	}

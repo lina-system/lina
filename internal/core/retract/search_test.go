@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/retract"
 )
 
@@ -44,15 +45,10 @@ func TestForgetPurgesKoreanIndexesAndRestoreDoesNotResurrectThem(t *testing.T) {
 	search(0)
 	// Simulate a backfill that read its body before forgetting and commits late.
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(t.Context(), `INSERT INTO ledger_search_text(event_id,body) VALUES('source-1','도서관에서 커피를 마신다');
-INSERT INTO ledger_search_bigram(gram,event_id) VALUES('커피','source-1');
-INSERT OR IGNORE INTO ledger_search_pending VALUES('source-1');`)
-		if err != nil {
+		if err := recall.IndexText(t.Context(), tx, "event", "source-1", "도서관에서 커피를 마신다"); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(t.Context(), `INSERT INTO memory_search_text(sequence,item_id,body) SELECT sequence,id,normalized FROM memory_item;
-INSERT INTO memory_search_bigram(gram,item_id) SELECT '커피',id FROM memory_item;`)
-		return err
+		return recall.IndexText(t.Context(), tx, "memory", receipt.ID, "도서관에서 커피를 마신다")
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +56,9 @@ INSERT INTO memory_search_bigram(gram,item_id) SELECT '커피',id FROM memory_it
 	if err := s.Restore(t.Context(), r); err != nil {
 		t.Fatal(err)
 	}
+	// Recovery queues the sources it reveals; Core's background drain publishes
+	// them before the next read.
+	drainIndex(t, db)
 	search(1)
 	if err := s.Delete(t.Context(), r); err != nil {
 		t.Fatal(err)
@@ -88,7 +87,7 @@ INSERT INTO memory_search_bigram(gram,item_id) SELECT '커피',id FROM memory_it
 func assertNoSearchRows(t *testing.T, db *canon.Store) {
 	t.Helper()
 	if err := db.Read(context.Background(), func(tx *canon.Tx) error {
-		for _, table := range []string{"ledger_search_text", "ledger_search_bigram", "ledger_search_pending", "memory_search_text", "memory_search_bigram"} {
+		for _, table := range []string{"recall_doc", "recall_text", "recall_pair"} {
 			var n int
 			if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table).Scan(&n); err != nil {
 				return err
@@ -97,7 +96,7 @@ func assertNoSearchRows(t *testing.T, db *canon.Store) {
 				t.Fatalf("forgotten data retained in %s: %d", table, n)
 			}
 		}
-		for _, query := range []string{"SELECT count(*) FROM ledger_search WHERE ledger_search MATCH '도서관'", "SELECT count(*) FROM memory_search WHERE memory_search MATCH '도서관'"} {
+		for _, query := range []string{"SELECT count(*) FROM recall_text WHERE recall_text MATCH '도서관'", "SELECT count(*) FROM recall_pair WHERE recall_pair MATCH '커피'"} {
 			var n int
 			if err := tx.QueryRowContext(t.Context(), query).Scan(&n); err != nil {
 				return err
@@ -132,7 +131,9 @@ func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
 	copyEvent("view-1", "source-1", false)
 	copyEvent("replay-1", "view-1", true)
 	copyEvent("nested-view", "replay-1", false)
-	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 4 {
+	// One lineage counts once: the copy chain is represented by its original
+	// (conversation-and-memory.md, One recall entry).
+	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 1 || hits[0].ID != "source-1" {
 		t.Fatalf("copy precondition: %+v %v", hits, err)
 	}
 	generation := filepath.Join(t.TempDir(), "canon.sqlite")
@@ -164,7 +165,9 @@ func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
 	if err := s.Restore(t.Context(), retract.Request{Person: "person-1", Targets: []retract.Ref{{Kind: retract.Memory, ID: receipt.ID}}}); err != nil {
 		t.Fatal(err)
 	}
-	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 6 {
+	drainIndex(t, db)
+	// The whole recovered chain is one lineage, represented by its original.
+	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 1 || hits[0].ID != "source-1" {
 		t.Fatalf("recovered lineage: %+v %v", hits, err)
 	}
 	if err := s.Delete(t.Context(), retract.Request{Person: "person-1", Targets: []retract.Ref{{Kind: retract.Memory, ID: receipt.ID}}}); err != nil {

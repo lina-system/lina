@@ -432,7 +432,7 @@ func TestSystemObservesRepairsAndVerifiesThroughInstalledCore(t *testing.T) {
 	defer db.Close()
 	// An orphan search row affects only a disposable projection. Unlike a stale
 	// index head, ordinary overview reads do not repair it before observation.
-	if _, err = db.Exec("INSERT INTO records_fts(id,title,note) VALUES('synthetic-orphan','Fixture','No canonical record')"); err != nil {
+	if _, err = db.Exec("INSERT INTO recall_doc(kind,source_id,revision,person,holder,conversation,occurred_at,speaker_kind,origin,replay) VALUES('record','synthetic-orphan','fixture','','all','','','','{}',0)"); err != nil {
 		t.Fatal(err)
 	}
 	// Reconcile the overview before the health tool runs. The background

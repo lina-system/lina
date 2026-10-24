@@ -4,6 +4,7 @@ package compaction
 import (
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,19 +38,10 @@ func (s *Store) publish(ctx context.Context, p Proposal, audit func(*canon.Tx) e
 		if err != nil {
 			return err
 		}
-		for i, id := range n.Children {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO sum_edge(parent_id,child_id,ordinal) VALUES(?,?,?)", n.ID, id, i); err != nil {
-				return err
-			}
-		}
-		for i, c := range n.Cover {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO sum_cover(node_id,event_id,ordinal,reason) VALUES(?,?,?,?)", n.ID, c.EventID, i, c.Reason); err != nil {
-				return err
-			}
-		}
-		if err := canon.WriteSummaryCitations(ctx, tx, n.ID, n.Revision); err != nil {
+		if err := writeCitations(ctx, tx, n); err != nil {
 			return err
 		}
+
 		if err := recall.IndexText(ctx, tx, "summary", n.ID, n.Output.Text); err != nil {
 			return err
 		}
@@ -202,4 +194,24 @@ func validateCoverage(ctx context.Context, tx *canon.Tx, p Proposal) (Node, erro
 		return Node{}, ErrCoverage
 	}
 	return n, nil
+}
+
+// writeCitations records only changed provenance intervals, including child revisions.
+func writeCitations(ctx context.Context, tx *canon.Tx, n Node) error {
+	refs := make([]canon.Citation, 0, len(n.Children)+len(n.Cover))
+	for _, child := range n.Children {
+		var revision int64
+		if err := tx.QueryRowContext(ctx, "SELECT revision FROM sum_node WHERE id=?", child).Scan(&revision); err != nil {
+			return err
+		}
+		refs = append(refs, canon.Citation{Ordinal: len(refs), TargetKind: "summary", TargetID: child, TargetRevision: strconv.FormatInt(revision, 10), Precision: "none", Role: "cites"})
+	}
+	for _, c := range n.Cover {
+		reason := c.Reason
+		if reason == "" {
+			reason = "covers"
+		}
+		refs = append(refs, canon.Citation{Ordinal: len(refs), TargetKind: "event", TargetID: c.EventID, TargetRevision: "0", Precision: "event", Role: reason})
+	}
+	return canon.ReplaceCitations(ctx, tx, "summary", n.ID, strconv.FormatInt(n.Revision, 10), refs)
 }

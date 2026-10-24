@@ -62,13 +62,14 @@ The same query means different things per index: "abc" finds the substring in co
 | --- | --- | --- |
 | Standing profile | up to 32 standing memory items, newest first, with no query | every live turn (`boot/conversation_memory.go:53`) |
 | `query_records` | records index, ordered by id | live turns (`exec/records.go:128`) |
-| `ledger.Store.Search` | ledger index | tests only; no production caller |
-| `recall_person` | memory index, then a scan of every person event of the agent, read one at a time and matched in Go (`exec/memory_ledger.go:57-103`) | replay only (`boot/replay_reads.go:73`) |
-| `expand` | summary coverage and events | replay only (`boot/replay_reads.go:43`); `compaction.Expansion.Read` (`compaction/expansion.go:49`) has no production caller |
-| Memory management | `memory.Store.Recall` | TUI memory screens (`boot/management.go:146-202`) |
+| `ledger.Store.Search` | the shared recall index, event kind | tests only; no production caller |
+| `recall_person` | the shared recall index over memory items and events, one ranked list | replay only (`boot/replay_reads.go:73`) |
+| `expand` | `compaction.Expansion` over summary coverage and events | replay only (`boot/replay_reads.go:43`) |
+| Memory management | `memory.Store.Recall`, text match through the shared index | TUI memory screens (`boot/management.go:146-202`) |
 | Agent exchange | common memory items, no query | exchange turns (`boot/exchange_runtime.go:44`) |
 
-A live turn today recalls nothing by topic: no ledger search, no expand, no `recall_person`, and no query against the memory index. [Recall with evidence](../design/conversation-and-memory.md#recall-with-evidence) describes all four.
+After #871 every one of these reads goes through the shared index; a live turn
+still recalls nothing by topic until #873 ([Recall with evidence](../design/conversation-and-memory.md#recall-with-evidence)).
 
 ### Findings
 
@@ -200,6 +201,43 @@ not a copied body column. Source bytes count each eligible view's text, includin
 memory content derived from a person event. The corpus has no records; record
 projection/revision behavior is covered by its package tests. Private imported
 corpora and the full post-merge acceptance suite were not run for this measure.
+
+### Contract step measurement (#876)
+
+The generated 100-turn store benchmark was run once at each of `b50b79a7`
+(the switched readers with the old shapes) and `da5ff6de0` (the contract step),
+with `GOMAXPROCS=4` and `-benchtime=1x`. Each loaded 1,830 events, 100 memory
+items and 4,235,070 source bytes through the real writers into a fresh scratch
+canon. Both held 1,932 shared documents and passed all 60 recall parity queries.
+These are synthetic storage measurements, not the owner's recall-quality set.
+
+| Allocation, bytes | Before | After |
+| --- | ---: | ---: |
+| Canon file, including free pages | 30,887,936 | 16,891,904 |
+| Free pages | 151,552 | 438,272 |
+| Search indexes and their metadata | 23,334,912 | 9,084,928 |
+| Shared trigram FTS | 7,151,616 | 7,151,616 |
+| Shared pair FTS | 892,928 | 892,928 |
+
+`dbstat` attributed **14,249,984 bytes** to the 33 retired index trees and
+their SQLite indexes, exactly the reduction in total search allocation. The
+remaining file-size difference includes non-search tables and free pages. An
+existing database keeps freed pages for reuse; this migration does not run
+`VACUUM`. No private installation or activation backup was used in this run.
+
+The repeated-statement regression stores 200 revisions and 200 citation
+intervals, with no embedded evidence array in any revision. Its counted record
+and citation payload grows from 17,447 bytes at 50 merges to 34,650 at 100 and
+69,250 at 200. It checks rows and bytes, not elapsed time. The pre-contract
+regression failed with an evidence array in every revision and roughly fourfold
+growth each time the number of merges doubled.
+
+The generated pre-citation generation restores through the current CLI with
+the same provenance and visible recall and with later removals applied. The
+installed-Core topic-recall scenario also passes recall, expansion, restart and
+digest-checked replay. These checks do not satisfy the release requirement for
+14 days of stable switched readers on the owner's install or identify the
+verified activation generation. Those remain required before shipping step 7.
 
 ### Index size
 

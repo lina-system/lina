@@ -163,7 +163,7 @@ func TestM2RecordsIndexInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Lose the derived data while Core is stopped; leave canonical files intact.
-	for _, statement := range []string{"DELETE FROM records_edges", "DELETE FROM records_text", "DELETE FROM records_fts", "DELETE FROM records_index", "UPDATE records_index_state SET head='unbuilt'"} {
+	for _, statement := range []string{"DELETE FROM records_edges", "DELETE FROM records_text", "DELETE FROM recall_doc WHERE kind='record'", "DELETE FROM records_index", "UPDATE records_index_state SET head='unbuilt'"} {
 		if _, err = db.ExecContext(h.ctx, statement); err != nil {
 			t.Fatal(err)
 		}
@@ -206,7 +206,7 @@ func TestM2RecordsIndexInstalledCore(t *testing.T) {
 	if err = reader.QueryRowContext(h.ctx, "SELECT note FROM records_text WHERE id=?", saved.ID).Scan(&note); err != nil || note != scenario.Note {
 		t.Fatal("outside text entered index", note, err)
 	}
-	if err = reader.QueryRowContext(h.ctx, "SELECT count(*) FROM records_fts WHERE records_fts MATCH ?", scenario.Search).Scan(&matches); err != nil || matches != 1 {
+	if err = reader.QueryRowContext(h.ctx, "SELECT count(*) FROM recall_text WHERE rowid IN (SELECT id FROM recall_doc WHERE kind='record') AND recall_text MATCH ?", scenario.Search).Scan(&matches); err != nil || matches != 1 {
 		t.Fatal("search index not restored", matches, err)
 	}
 }

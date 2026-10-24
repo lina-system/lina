@@ -9,7 +9,7 @@ import (
 func TestMemorySearchMigrationMaintainsBothIndexesAndReopens(t *testing.T) {
 	t.Parallel()
 	cfg := storeConfig(t)
-	all := Migrations()
+	all := migrationsBefore(t, storeContractSchema)
 	index := -1
 	for i, migration := range all {
 		if migration.SQL == memorySearchSchema {

@@ -55,7 +55,9 @@ func TestKoreanRecordSearchLifecycle(t *testing.T) {
 		check("도서관", "", 10, "b-memo")
 		check("연필", "", 1, "b-memo")
 		check("연필", "b-memo", 1, "c-title")
-		check(`연필 OR 도서관`, "", 10)
+		// Any query term may match, and an operator word is a literal term, so
+		// the two matching records come back (#871).
+		check(`연필 OR 도서관`, "", 10, "b-memo", "c-title")
 		check(`연필" OR *`, "", 10)
 	}
 	checkAll()
@@ -122,32 +124,31 @@ func TestKoreanRecordSearchExistingInstallation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Inspect before records.Open can rebuild anything: the migration itself
-	// must index existing text without advancing the published record revision.
+	s, err = Open(root, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Startup rebuilds derived documents without advancing the published record revision.
 	if err = db.Read(t.Context(), func(tx *canon.Tx) error {
 		var head, tokenizer, fallback string
 		var trigrams, bigrams int
 		if err := tx.QueryRowContext(t.Context(), "SELECT head FROM records_state").Scan(&head); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(t.Context(), "SELECT tokenizer,fallback FROM search_index_config WHERE name='records_korean'").Scan(&tokenizer, &fallback); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT tokenizer,fallback FROM search_index_config WHERE name='recall'").Scan(&tokenizer, &fallback); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM records_korean_fts WHERE records_korean_fts MATCH ?", canon.TrigramPhrase("도서관")).Scan(&trigrams); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_text WHERE recall_text MATCH ?", canon.TrigramPhrase("도서관")).Scan(&trigrams); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM records_korean_bigram WHERE gram='연필'").Scan(&bigrams); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_pair WHERE recall_pair MATCH '연필'").Scan(&bigrams); err != nil {
 			return err
 		}
-		if head != rev || tokenizer != "trigram" || fallback != "hangul_bigram" || trigrams != 1 || bigrams != 1 {
+		if head != rev || tokenizer != "trigram" || fallback != "hangul_pair_words_v1" || trigrams != 1 || bigrams != 1 {
 			t.Errorf("migration: head=%s tokenizer=%s fallback=%s trigrams=%d bigrams=%d", head, tokenizer, fallback, trigrams, bigrams)
 		}
 		return nil
 	}); err != nil {
-		t.Fatal(err)
-	}
-	s, err = Open(root, db)
-	if err != nil {
 		t.Fatal(err)
 	}
 	for _, search := range []string{"연필", "도서관"} {
@@ -181,12 +182,16 @@ func TestKoreanRecordSearchLiteralPhrases(t *testing.T) {
 		{"등대", []string{"a", "c"}},
 		{"연필", []string{"a", "b", "c"}},
 		{"연필통", []string{"b"}},
-		{`연필 "파란" OR 등대`, []string{"c"}},
+		// Any term matches: 연필 reaches a, b and c; the quoted word and the
+		// operator word are literal terms, never query syntax (#871).
+		{`연필 "파란" OR 등대`, []string{"a", "b", "c"}},
 		{`"연필"`, nil},
-		{"연필 OR 종이", nil},
+		// 연필 is one of the terms, so its records match (#871).
+		{"연필 OR 종이", []string{"a", "b", "c"}},
 		{"prototype", []string{"d"}},
 		{"go", []string{"d"}},
-		{"rotot", nil},
+		// A three-character term matches as a literal substring of any word.
+		{"rotot", []string{"d"}},
 	} {
 		rows, err := s.Query(t.Context(), Params{Person: "person", Search: tc.query})
 		if err != nil {

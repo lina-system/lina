@@ -40,7 +40,7 @@ func TestBuilderCompactsPersistedNonPrefixRoot(t *testing.T) {
 			// The old builder owned all exclusions, even past the retained e2.
 			// Seed its on-disk representation without using today's publisher.
 			if err = db.Write(t.Context(), func(tx *canon.Tx) error {
-				_, err := tx.ExecContext(t.Context(), `INSERT INTO sum_cover(node_id,event_id,ordinal,reason) VALUES('legacy-leaf','audit',1,'summary_echo')`)
+				_, err := tx.ExecContext(t.Context(), `INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,precision,role) VALUES('summary','legacy-leaf','1',1,'event','audit','0','event','summary_echo')`)
 				return err
 			}); err != nil {
 				t.Fatal(err)
@@ -141,11 +141,11 @@ func TestPublicationRejectsInvalidPersistedCoverage(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-				reason := ""
+				reason := "covers"
 				if kind != "input gap" {
 					reason = "scaffold"
 				}
-				_, err := tx.ExecContext(t.Context(), `INSERT INTO sum_cover(node_id,event_id,ordinal,reason) VALUES('legacy','e3',1,?)`, reason)
+				_, err := tx.ExecContext(t.Context(), `INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,precision,role) VALUES('summary','legacy','1',1,'event','e3','0','event',?)`, reason)
 				return err
 			}); err != nil {
 				t.Fatal(err)

@@ -304,9 +304,6 @@ func writeEvent(ctx context.Context, tx *canon.Tx, e Event) error {
 			return err
 		}
 	}
-	if err := indexText(ctx, tx, e.ID, e.Body.DerivedText()); err != nil {
-		return err
-	}
 	return recall.Index(ctx, tx, "event", e.ID, e.Body.DerivedText())
 }
 
