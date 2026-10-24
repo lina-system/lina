@@ -381,6 +381,10 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 			line.Stages = &stages
 		}
 		row := protocol.ProgressRow{Ref: entry.Ref, Line: line}
+		if entry.GoalID != "" {
+			goalID := entry.GoalID
+			row.GoalID = &goalID
+		}
 		if len(refs) > 0 {
 			row.StageRefs = &refs
 		}
