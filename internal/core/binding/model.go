@@ -51,13 +51,30 @@ func validateTarget(s State, target Target, field string) error {
 	return nil
 }
 
+// MaxTiedTargets is the question card's choice limit. One question cannot
+// offer more tied targets than that.
+const MaxTiedTargets = 5
+
+// QuestionPage splits targets across questions of at most MaxTiedTargets
+// answers. While targets remain, one answer stays free for the next page, so
+// a page never shows a single target and never drops the rest.
+func QuestionPage(targets []Target) (shown, rest []Target) {
+	if len(targets) <= MaxTiedTargets {
+		return slices.Clone(targets), nil
+	}
+	return slices.Clone(targets[:MaxTiedTargets-1]), slices.Clone(targets[MaxTiedTargets-1:])
+}
+
 // Choice names one request, in message order. Tied is ordered with the
-// recommended target first. Confidence is deliberately not an ask signal.
+// recommended target first. More holds inherited targets that do not fit on
+// this question; Core sets it, and a model binding cannot. Confidence is
+// deliberately not an ask signal.
 type Choice struct {
 	Request       int                `json:"request"`
 	Quote         string             `json:"quote"`
 	Target        Target             `json:"target"`
 	Tied          []Target           `json:"tied,omitempty"`
+	More          []Target           `json:"more,omitempty"`
 	Action        string             `json:"action,omitempty"`
 	Close         []string           `json:"close_matches,omitempty"`
 	Difference    string             `json:"difference,omitempty"`
@@ -91,7 +108,11 @@ func ValidateChoice(s State, text string, c Choice) error {
 	if c.Action != "" && !slices.Contains([]string{"read", "edit", "steer", "start", "send", "pay", "delete", "stop"}, c.Action) {
 		return ErrChoice
 	}
-	if len(c.Tied) == 1 || len(c.Tied) > 5 {
+	if len(c.Tied) == 1 || len(c.Tied) > MaxTiedTargets {
+		return ErrChoice
+	}
+	// A later page needs the last answer, so this page shows four targets.
+	if len(c.More) > 0 && len(c.Tied) != MaxTiedTargets-1 {
 		return ErrChoice
 	}
 	seen := map[Target]bool{}
@@ -100,6 +121,15 @@ func ValidateChoice(s State, text string, c Choice) error {
 			return ErrChoice
 		}
 		if err := validateTarget(s, target, fmt.Sprintf("tied[%d]", n)); err != nil {
+			return err
+		}
+		seen[target] = true
+	}
+	for n, target := range c.More {
+		if seen[target] {
+			return ErrChoice
+		}
+		if err := validateTarget(s, target, fmt.Sprintf("more[%d]", n)); err != nil {
 			return err
 		}
 		seen[target] = true
@@ -122,11 +152,17 @@ func NeedsQuestion(s State, c Choice) bool {
 	case "start", "send", "pay", "delete", "stop":
 		return true
 	case "steer":
-		for _, target := range c.Tied {
-			for _, i := range s.Items {
-				if i.ID == target.ID && (i.Kind == "task" || i.Kind == "run") && slices.Contains([]string{"running", "working", "waiting", "needs_input", "input_needed"}, i.State) {
-					return true
-				}
+		// A target held for a later page still makes a steer ask.
+		return riskySteer(s, c.Tied) || riskySteer(s, c.More)
+	}
+	return false
+}
+
+func riskySteer(s State, targets []Target) bool {
+	for _, target := range targets {
+		for _, i := range s.Items {
+			if i.ID == target.ID && (i.Kind == "task" || i.Kind == "run") && slices.Contains([]string{"running", "working", "waiting", "needs_input", "input_needed"}, i.State) {
+				return true
 			}
 		}
 	}

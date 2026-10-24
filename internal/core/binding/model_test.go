@@ -20,7 +20,6 @@ func TestAskRequiresTieAndIrreversibleAction(t *testing.T) {
 		}
 	}
 }
-
 func TestSteerAsksWhenTiedTaskNeedsInput(t *testing.T) {
 	s := State{Items: []Item{{ID: "a", Kind: "task", State: "input_needed"}, {ID: "b", Kind: "task", State: "input_needed"}}}
 	a, b := Target{Class: "existing", Kind: "task", ID: "a"}, Target{Class: "existing", Kind: "task", ID: "b"}
@@ -35,6 +34,81 @@ func TestSteerAsksWhenTiedTaskNeedsInput(t *testing.T) {
 	s.Items[1].State = "done"
 	if NeedsQuestion(s, c) {
 		t.Fatal("finished tasks asked")
+	}
+}
+
+func TestQuestionPageKeepsEveryInheritedTarget(t *testing.T) {
+	targets := make([]Target, 10)
+	items := make([]Item, len(targets))
+	for i := range targets {
+		id := string(rune('a' + i))
+		targets[i] = Target{Class: "existing", Kind: "task", ID: id}
+		items[i] = Item{ID: id, Kind: "task", State: "waiting"}
+	}
+	s := State{Items: items}
+	shown, rest := QuestionPage(targets[:6])
+	if len(shown) != 4 || len(rest) != 2 {
+		t.Fatalf("page of six: %d shown, %d rest", len(shown), len(rest))
+	}
+	shown[0].ID = "changed"
+	if targets[0].ID == "changed" {
+		t.Fatal("page shared storage with the inherited targets")
+	}
+	shown, rest = QuestionPage(targets[:6])
+	choice := Choice{Quote: "stop it", Target: shown[0], Tied: shown, More: rest, Action: "stop"}
+	if err := ValidateChoice(s, "stop it", choice); err != nil {
+		t.Fatal(err)
+	}
+	choice.More = append([]Target{shown[0]}, rest...)
+	if err := ValidateChoice(s, "stop it", choice); err == nil {
+		t.Fatal("a repeated target was accepted on the next page")
+	}
+	choice = Choice{Quote: "stop it", Target: targets[0], Tied: targets[:5], More: targets[5:6], Action: "stop"}
+	if err := ValidateChoice(s, "stop it", choice); err == nil {
+		t.Fatal("five shown targets plus a later page was accepted")
+	}
+	choice.More = nil
+	choice.Tied = targets[:6]
+	if err := ValidateChoice(s, "stop it", choice); err == nil {
+		t.Fatal("six tied targets were accepted")
+	}
+	shown, rest = QuestionPage(targets)
+	shown, rest = QuestionPage(rest)
+	if len(shown) != 4 || len(rest) != 2 {
+		t.Fatalf("second page: %d shown, %d rest", len(shown), len(rest))
+	}
+	shown, rest = QuestionPage(rest)
+	if len(shown) != 2 || rest != nil {
+		t.Fatalf("last page: %d shown, rest %#v", len(shown), rest)
+	}
+	shown, rest = QuestionPage(targets[:5])
+	if len(shown) != 5 || rest != nil {
+		t.Fatalf("five targets: %d shown, rest %#v", len(shown), rest)
+	}
+}
+
+func TestNeedsQuestionCountsTargetsHeldForLaterPage(t *testing.T) {
+	shown := make([]Target, 4)
+	items := make([]Item, 0, 6)
+	for i := range shown {
+		id := string(rune('a' + i))
+		shown[i] = Target{Class: "existing", Kind: "project", ID: id}
+		items = append(items, Item{ID: id, Kind: "project", State: "active"})
+	}
+	later := Target{Class: "existing", Kind: "initiative", ID: "lane"}
+	items = append(items, Item{ID: later.ID, Kind: "initiative", State: "active"})
+	quiet := Choice{Quote: "steer it", Target: shown[0], Tied: shown, More: []Target{later}, Action: "steer"}
+	if NeedsQuestion(State{Items: items}, quiet) {
+		t.Fatal("a later initiative made a steer ask")
+	}
+	for _, state := range []string{"running", "working", "waiting", "needs_input", "input_needed"} {
+		risky := Item{ID: "live", Kind: "task", State: state}
+		choice := quiet
+		choice.More = []Target{later, {Class: "existing", Kind: "task", ID: risky.ID}}
+		held := append(append([]Item{}, items...), risky)
+		if !NeedsQuestion(State{Items: held}, choice) {
+			t.Fatalf("state %s on a later page did not ask", state)
+		}
 	}
 }
 func TestDuplicateNormalizationAndClosedItems(t *testing.T) {

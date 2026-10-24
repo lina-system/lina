@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -356,12 +357,11 @@ func (r *conversationRuntime) saveModelBinding(ctx context.Context, input ledger
 				}
 			}
 			if binding.NeedsQuestion(state, *c) {
-				qid := fmt.Sprintf("%starget:%s:%d", conversationQuestionPrefix, input.ID, c.Request)
-				labels := make([]string, len(c.Tied))
-				for j, target := range c.Tied {
-					labels[j] = bindingChoiceLabel(state, target)
+				qid := targetQuestionID(input.ID, c.Request, 0)
+				draft, e := targetQuestionDraft(state, *c)
+				if e != nil {
+					return e
 				}
-				draft := waiting.QuestionDraft{Question: "Which item should this apply to?", Recommendation: labels[0], Choices: labels, Default: labels[0]}
 				q := waiting.ConversationQuestion{ID: qid, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: input.ID, Turn: "binding:" + input.ID, AskedAt: time.Now().UTC(), QuestionDraft: draft, Binding: c}
 				if e = waiting.NewConversationQuestions(questionTransaction{tx}).Ask(ctx, q, 32); e != nil {
 					return e
@@ -388,7 +388,64 @@ func decodeBindingRequest(raw string) (bindingRequest, error) {
 	if len(raw) > 32<<10 || json.Unmarshal([]byte(raw), &in) != nil || len(in.Bindings) == 0 || len(in.Bindings) > 32 {
 		return in, binding.ErrChoice
 	}
+	// Core pages inherited targets. A model-supplied later page is ignored,
+	// the same way as any binding field the tool does not declare.
+	for i := range in.Bindings {
+		in.Bindings[i].More = nil
+	}
 	return in, nil
+}
+
+func targetQuestionID(inputID string, request, page int) string {
+	id := fmt.Sprintf("%starget:%s:%d", conversationQuestionPrefix, inputID, request)
+	if page == 0 {
+		return id
+	}
+	return fmt.Sprintf("%s:page:%d", id, page)
+}
+
+func targetQuestionPageNumber(id string) int {
+	i := strings.LastIndex(id, ":page:")
+	if i < 0 {
+		return 0
+	}
+	page := id[i+len(":page:"):]
+	n, err := strconv.Atoi(page)
+	if err != nil || n < 1 || strconv.Itoa(n) != page {
+		return 0
+	}
+	return n
+}
+
+func moreItemsLabel(used []string) string {
+	const base = "Another item"
+	if !slices.Contains(used, base) {
+		return base
+	}
+	for n := 2; ; n++ {
+		label := fmt.Sprintf("%s %d", base, n)
+		if !slices.Contains(used, label) {
+			return label
+		}
+	}
+}
+
+func targetQuestionDraft(state binding.State, c binding.Choice) (waiting.QuestionDraft, error) {
+	if len(c.Tied) < 2 {
+		return waiting.QuestionDraft{}, binding.ErrChoice
+	}
+	labels := make([]string, 0, len(c.Tied)+1)
+	for _, target := range c.Tied {
+		labels = append(labels, bindingChoiceLabel(state, target))
+	}
+	if len(c.More) > 0 {
+		labels = append(labels, moreItemsLabel(labels))
+	}
+	draft := waiting.QuestionDraft{Question: "Which item should this apply to?", Recommendation: labels[0], Choices: labels, Default: labels[0]}
+	if !draft.Valid() {
+		return waiting.QuestionDraft{}, binding.ErrChoice
+	}
+	return draft, nil
 }
 
 func bindingChoiceLabel(state binding.State, target binding.Target) string {
@@ -422,7 +479,8 @@ func bindInputDeclaration() provider.ToolDecl {
 }
 
 // Explicit person answers close only the named request. No default applies.
-func resolveTargetBinding(ctx context.Context, tx *canon.Tx, input ledger.Event, q waiting.ConversationQuestion, d waiting.QuestionResolution) error {
+// The extra answer on a full page asks the next page and leaves the request pending.
+func (r *conversationRuntime) resolveTargetBinding(ctx context.Context, tx *canon.Tx, input ledger.Event, q waiting.ConversationQuestion, d waiting.QuestionResolution) error {
 	if q.Binding == nil {
 		return nil
 	}
@@ -430,9 +488,16 @@ func resolveTargetBinding(ctx context.Context, tx *canon.Tx, input ledger.Event,
 	c.Question = ""
 	c.Decider = "person"
 	c.Tied = nil
+	c.More = nil
 	if d.Kind == "answered" {
 		index := slices.Index(q.Choices, d.Value)
-		if index < 0 || index >= len(q.Binding.Tied) {
+		if index < 0 {
+			return binding.ErrChoice
+		}
+		if index == len(q.Binding.Tied) && len(q.Binding.More) > 0 {
+			return r.continueTargetQuestion(ctx, tx, input, q)
+		}
+		if index >= len(q.Binding.Tied) {
 			return binding.ErrChoice
 		}
 		c.Target = q.Binding.Tied[index]
@@ -443,4 +508,67 @@ func resolveTargetBinding(ctx context.Context, tx *canon.Tx, input ledger.Event,
 		return errBindingPending
 	}
 	return appendInputChoices(ctx, tx, input, "binding-answer:"+q.ID, []binding.Choice{c})
+}
+
+func (r *conversationRuntime) continueTargetQuestion(ctx context.Context, tx *canon.Tx, input ledger.Event, q waiting.ConversationQuestion) error {
+	shown, rest := binding.QuestionPage(q.Binding.More)
+	next := *q.Binding
+	next.Target = shown[0]
+	next.Tied = shown
+	next.More = rest
+	next.Question = ""
+	next.Cancelled = false
+	next.CreatedID = ""
+	next.Probabilities = nil
+	state, err := r.bindingState(ctx, tx, input)
+	if err != nil {
+		return err
+	}
+	if err = binding.ValidateChoice(state, input.Body.Text(), next); err != nil {
+		return err
+	}
+	page := targetQuestionPageNumber(q.ID) + 1
+	draft, err := targetQuestionDraft(state, next)
+	if err != nil {
+		return err
+	}
+	qid := targetQuestionID(input.ID, next.Request, page)
+	// A later page has its own turn so it does not consume the input's question budget.
+	turn := fmt.Sprintf("binding:%s:%d:page:%d", input.ID, next.Request, page)
+	// The answer can arrive on the root runtime. The next page stays with the question that asked.
+	asked := waiting.ConversationQuestion{ID: qid, Person: q.Person, Agent: q.Agent, Conversation: q.Conversation, Input: input.ID, Turn: turn, AskedAt: time.Now().UTC(), QuestionDraft: draft, Binding: &next}
+	if err = waiting.NewConversationQuestions(questionTransaction{tx}).Ask(ctx, asked, 32); err != nil {
+		return err
+	}
+	next.Question = qid
+	next.Decider = "model"
+	return appendInputChoices(ctx, tx, input, "binding-more:"+q.ID, []binding.Choice{next})
+}
+
+// publishContinuedTargetQuestion shows the next page after its answer commits.
+// A runtime without a waiting topic still keeps the question for later restore.
+func (r *conversationRuntime) publishContinuedTargetQuestion(ctx context.Context, q waiting.ConversationQuestion) error {
+	if q.Binding == nil {
+		return nil
+	}
+	input, err := r.journal().Get(ctx, q.Input)
+	if err != nil {
+		return err
+	}
+	choices, err := r.currentInputChoices(ctx, input)
+	if err != nil {
+		return err
+	}
+	if q.Binding.Request < 0 || q.Binding.Request >= len(choices) {
+		return nil
+	}
+	id := choices[q.Binding.Request].Question
+	if id == "" || id == q.ID {
+		return nil
+	}
+	decisions := r.questionDecisions()
+	if decisions == nil || decisions.Questions == nil || decisions.Topics == nil {
+		return nil
+	}
+	return decisions.PublishQuestion(ctx, id)
 }
