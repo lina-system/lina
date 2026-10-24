@@ -18,7 +18,9 @@ choice bytes for request replay.
 
 A person-selected new target keeps that decider. Once its created id is recorded,
 a later read, progress check, or follow-up may name that existing item; any
-other item stays pending. A model follow-up to a worker task uses the agent
+other item stays pending. In one response, `bind_input` commits before a later
+work call: the work call's scheduling key is the binding key, a newline, and
+its own target. Other targets still run beside that update. A model follow-up to a worker task uses the agent
 message path. `worker_input` and `worker_interrupt` resolve their session to
 that task before the person's choice is checked. A code goal tool resolves
 `goal_id` through the goal package's project record id before the same check.

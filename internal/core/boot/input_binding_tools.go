@@ -74,7 +74,16 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				if err != nil {
 					return "", err
 				}
-				return tool.Validate(clean)
+				key, err := tool.Validate(clean)
+				if err != nil {
+					return "", err
+				}
+				// The newline barrier makes this call wait for bind_input on the
+				// same input. The remainder keeps this target's own order.
+				if key == "" {
+					key = c.ID
+				}
+				return "input-binding:" + s.input.ID + "\n" + key, nil
 			},
 			Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
 				clean, ref, err := stripToolBinding(c)
