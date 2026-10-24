@@ -84,10 +84,14 @@ func CloseLine(g Goal) (string, error) {
 }
 
 // RunningRow is one goal task on the running list. A landing changes the
-// state and keeps the person-facing name. A technical name is not shown.
+// state and keeps the person-facing name. A task admitted without a name
+// uses its done condition. A technical line is not shown.
 func RunningRow(t Task) (summary, state string) {
-	summary = oneLine(t.Name)
-	if summary == "" || work.RejectPersonLine(summary, nil) != nil {
+	summary = personSummary(t.Name)
+	if summary == "" {
+		summary = personSummary(t.Done)
+	}
+	if summary == "" {
 		summary = "In progress"
 	}
 	switch t.Stage {
@@ -101,6 +105,36 @@ func RunningRow(t Task) (summary, state string) {
 		state = "working"
 	}
 	return summary, state
+}
+
+// RunningHold is the running-list reason for a scheduler hold on this task.
+// A worker that is simply in progress is not a hold, and a reason the list
+// cannot show is left off the row.
+func RunningHold(g Goal, taskID string) (string, bool) {
+	for _, wait := range g.Waits {
+		if wait.TaskID != taskID || (wait.GoalID != "" && wait.GoalID != g.ID) {
+			continue
+		}
+		switch wait.Reason {
+		case "dependency", "area", "run_limit", "person":
+			return wait.Reason, true
+		case "worker_quota":
+			return "quota", true
+		case "host_capacity":
+			return "host_capacity", true
+		case "ci_review":
+			return "ci_pending", true
+		}
+	}
+	return "", false
+}
+
+func personSummary(text string) string {
+	text = oneLine(text)
+	if text == "" || work.RejectPersonLine(text, nil) != nil {
+		return ""
+	}
+	return text
 }
 
 // AcceptProse refuses a goal whose start line or criterion statements would
