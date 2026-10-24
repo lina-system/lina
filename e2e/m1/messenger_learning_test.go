@@ -250,7 +250,7 @@ func (*learningAdapter) Members(context.Context, messenger.SourceID, string) ([]
 func (*learningAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
 	return nil
 }
-func (*learningAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
+func (*learningAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 func (*learningAdapter) Capabilities() messenger.Capabilities {

@@ -185,6 +185,49 @@ func TestMessengerExtractionReadsMaterialBackedRecord(t *testing.T) {
 	}
 }
 
+// The material preload is bounded by the pending batch: a source that does not
+// feed learning is not read at all, and the batch limit caps the candidates, so
+// the cost does not grow with the person's history.
+func TestMessengerEvidenceCandidatesStayWithinThePendingBatch(t *testing.T) {
+	r, _, _, store, source, start := messengerExtractionFixture(t)
+	long := "I prefer jasmine tea. " + strings.Repeat("synthetic detail ", ledger.InlineBytes/8)
+	admitMessenger(t, store, source,
+		messengerRecord("a", messenger.RoutePerson, start.Add(time.Minute), long),
+		messengerRecord("b", messenger.RoutePerson, start.Add(2*time.Minute), long),
+	)
+	off := source
+	off.Account = "acct-2"
+	if err := store.Connect(t.Context(), off); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertChats(t.Context(), off, []messenger.Chat{{ID: "dm", Name: "Direct", Kind: "direct"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetSourceLearn(t.Context(), r.person, off.Platform, off.Account, false); err != nil {
+		t.Fatal(err)
+	}
+	admitMessenger(t, store, off, messengerRecord("off", messenger.RoutePerson, start.Add(3*time.Minute), long))
+	limited, err := memory.New(r.db).MessengerEvidenceCandidates(t.Context(), r.person, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited) != 1 {
+		t.Fatalf("candidates=%d, want the batch limit to cap them", len(limited))
+	}
+	refs, err := memory.New(r.db).MessengerEvidenceCandidates(t.Context(), r.person, 32, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("candidates=%d, want only the learning source's records and their context", len(refs))
+	}
+	for _, ref := range refs {
+		if strings.Contains(ref.ID, "acct-2") {
+			t.Fatalf("a disabled source was preloaded: %s", ref.ID)
+		}
+	}
+}
+
 // A model that proposes the participant's line as a fact about the person is
 // refused, and the batch is not cached.
 func TestMessengerExtractionRefusesParticipantEvidence(t *testing.T) {

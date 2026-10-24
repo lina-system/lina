@@ -174,7 +174,10 @@ narrows it per chat. Turning either off writes the interval it excludes to
 source); turning it back on closes that interval. An interval excludes every
 record in its ledger range even when the switch returns before the next scan, so
 the window the person opted out of is never learned late. Entering
-`never-leaves` states the same interval, and leaving it closes it. `messenger_chat.scope` carries the chat's sensitivity class:
+`never-leaves` states the same interval, and leaving it closes it. The chat
+switch and the scope are one condition: an interval closes only when the chat
+learns again (`learn` and a scope other than `never-leaves`), and one that held
+no record is deleted rather than left closed at its own start. `messenger_chat.scope` carries the chat's sensitivity class:
 `local`, `private` or `never-leaves`. A `never-leaves` chat stays searchable and
 is never learning input. A disabled source or chat still advances the learning
 cursor past what arrived while it was off, so re-enabling does not learn that

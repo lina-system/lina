@@ -132,10 +132,21 @@ per-agent conversation job. It has its own budget, cadence and adoption record
   late. `messenger_learning_skip` states that window when the switch moves, so a
   switch that returns before the next scan still excludes it. A `never-leaves`
   chat is skipped and states the same interval.
+- The switch and the scope are one condition: the interval opens when the chat's
+  combined answer (`learn` and a scope other than `never-leaves`) goes off and
+  closes only when that answer returns, so leaving never-leaves while the switch
+  is off does not reopen the window. An interval that holds no record is dropped
+  when it closes; keeping it would read as still open.
+- A Discord bot-mode source is searchable and not learned from until the owner
+  confirms the platform's developer-policy reading, so preparation passes it
+  over as if its switch were off and its cursor moves past what arrived.
 - Material-backed bodies are loaded before preparation takes its read
   transaction (`MessengerEvidenceCandidates` plus the writer's preload), because
   canon serves one reader and a material read inside the transaction would wait
-  on the connection it holds. Core's `readMessengerEvidence` does this.
+  on the connection it holds. Core's `readMessengerEvidence` does this with the
+  same batch and context limits as preparation and the same source and chat
+  controls, so the preload covers the pending batch and its context and never
+  grows with the person's history.
 - A burst is consecutive records in one chat within the configurable window.
   Up to three earlier visible records of that chat travel as `Context`; their
   ids are not in the allowed evidence set.

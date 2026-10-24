@@ -332,9 +332,7 @@ func (s *Store) SetSwitches(ctx context.Context, person, platform, account, chat
 		return ErrInvalid
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		var was bool
-		err := tx.QueryRowContext(ctx, "SELECT learn FROM messenger_chat WHERE platform=? AND account=? AND chat=?",
-			platform, account, chat).Scan(&was)
+		wasLearn, scope, err := chatEligibility(ctx, tx, platform, account, chat)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -352,14 +350,29 @@ AND EXISTS(SELECT 1 FROM messenger_source o WHERE o.platform=? AND o.account=? A
 		} else if n == 0 {
 			return ErrNotFound
 		}
-		if was == switches.Learn {
-			return nil
-		}
 		// The switch states the interval it excludes in the same transaction,
 		// so a record from that window is not learned when the switch returns
-		// before the next scan.
-		return s.stateLearningInterval(ctx, tx, platform, account, chat, switches.Learn)
+		// before the next scan. The chat's scope is the other control, so the
+		// interval follows their combined answer, not this switch alone.
+		return s.stateLearningInterval(ctx, tx, platform, account, chat,
+			chatLearns(wasLearn, scope), chatLearns(switches.Learn, scope))
 	})
+}
+
+// chatEligibility reads the two controls that decide whether a chat feeds
+// learning: its own switch and its scope.
+func chatEligibility(ctx context.Context, tx *canon.Tx, platform, account, chat string) (bool, string, error) {
+	var learn bool
+	var scope string
+	err := tx.QueryRowContext(ctx, "SELECT learn,scope FROM messenger_chat WHERE platform=? AND account=? AND chat=?",
+		platform, account, chat).Scan(&learn, &scope)
+	return learn, scope, err
+}
+
+// chatLearns is the chat's effective learning answer. A never-leaves chat is
+// never learning input, whatever its switch says.
+func chatLearns(learn bool, scope string) bool {
+	return learn && scope != ChatNeverLeaves
 }
 
 // learningMark is the newest ledger position a source has admitted.
@@ -372,16 +385,25 @@ WHERE m.platform=? AND m.account=? AND m.state='live' AND json_extract(e.origin,
 	return mark, err
 }
 
-// stateLearningInterval opens the excluded interval when a switch goes off and
-// closes it when the switch returns. chat="" covers a whole source.
-func (s *Store) stateLearningInterval(ctx context.Context, tx *canon.Tx, platform, account, chat string, learn bool) error {
+// stateLearningInterval states the interval a source or chat excludes from
+// learning when its effective answer goes off, and closes it when the answer
+// returns. chat="" covers a whole source. An interval that holds no record is
+// removed rather than kept closed at its own start, which would read as open.
+func (s *Store) stateLearningInterval(ctx context.Context, tx *canon.Tx, platform, account, chat string, was, now bool) error {
+	if was == now {
+		return nil
+	}
 	mark, err := learningMark(ctx, tx, platform, account)
 	if err != nil {
 		return err
 	}
-	if learn {
-		_, err = tx.ExecContext(ctx, `UPDATE messenger_learning_skip SET to_rowid=?
-WHERE platform=? AND account=? AND chat=? AND to_rowid=0`, mark, platform, account, chat)
+	if now {
+		if _, err = tx.ExecContext(ctx, `UPDATE messenger_learning_skip SET to_rowid=?
+WHERE platform=? AND account=? AND chat=? AND to_rowid=0`, mark, platform, account, chat); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM messenger_learning_skip
+WHERE platform=? AND account=? AND chat=? AND to_rowid=from_rowid`, platform, account, chat)
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO messenger_learning_skip(platform,account,chat,from_rowid) VALUES(?,?,?,?)
@@ -397,9 +419,7 @@ func (s *Store) SetChatScope(ctx context.Context, person, platform, account, cha
 		return ErrInvalid
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		var previous string
-		err := tx.QueryRowContext(ctx, "SELECT scope FROM messenger_chat WHERE platform=? AND account=? AND chat=?",
-			platform, account, chat).Scan(&previous)
+		learn, previous, err := chatEligibility(ctx, tx, platform, account, chat)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -418,14 +438,10 @@ AND EXISTS(SELECT 1 FROM messenger_source o WHERE o.platform=? AND o.account=? A
 			return ErrNotFound
 		}
 		// Entering never-leaves closes learning input for the interval it
-		// covers, the same way the learning switch does.
-		if entered := scope == ChatNeverLeaves && previous != ChatNeverLeaves; entered {
-			return s.stateLearningInterval(ctx, tx, platform, account, chat, false)
-		}
-		if left := previous == ChatNeverLeaves && scope != ChatNeverLeaves; left {
-			return s.stateLearningInterval(ctx, tx, platform, account, chat, true)
-		}
-		return nil
+		// covers, the same way the learning switch does, and leaving it reopens
+		// that input only when the switch is on too.
+		return s.stateLearningInterval(ctx, tx, platform, account, chat,
+			chatLearns(learn, previous), chatLearns(learn, scope))
 	})
 }
 
@@ -455,10 +471,7 @@ func (s *Store) SetSourceLearn(ctx context.Context, person, platform, account st
 		} else if n == 0 {
 			return ErrNotFound
 		}
-		if was == learn {
-			return nil
-		}
-		return s.stateLearningInterval(ctx, tx, platform, account, "", learn)
+		return s.stateLearningInterval(ctx, tx, platform, account, "", was, learn)
 	})
 }
 

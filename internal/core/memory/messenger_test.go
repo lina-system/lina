@@ -416,6 +416,94 @@ func TestMessengerExtractionChatSwitchExcludesItsInterval(t *testing.T) {
 	}
 }
 
+// A chat whose learning switch is off stays excluded when its scope leaves
+// never-leaves: the two controls share one interval, and only their combined
+// answer closes it.
+func TestMessengerExtractionChatScopeKeepsItsIntervalOpen(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	admitMessages(t, store, source,
+		messengerMessage("on", messenger.RoutePerson, start.Add(time.Minute), "I prefer jasmine tea."),
+	)
+	if err := store.SetSwitches(t.Context(), messengerTestPerson, source.Platform, source.Account, "dm",
+		messenger.Switches{Sync: true, Learn: false, Embed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetChatScope(t.Context(), messengerTestPerson, source.Platform, source.Account, "dm", messenger.ChatNeverLeaves); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetChatScope(t.Context(), messengerTestPerson, source.Platform, source.Account, "dm", messenger.ChatLocal); err != nil {
+		t.Fatal(err)
+	}
+	admitMessages(t, store, source,
+		messengerMessage("off", messenger.RoutePerson, start.Add(2*time.Minute), "I live on Mars."),
+	)
+	if err := store.SetSwitches(t.Context(), messengerTestPerson, source.Platform, source.Account, "dm",
+		messenger.Switches{Sync: true, Learn: true, Embed: true}); err != nil {
+		t.Fatal(err)
+	}
+	batch := prepareMessenger(t, db)
+	if len(batch.Utterances) != 1 || !strings.Contains(batch.Utterances[0].Text, "jasmine tea") ||
+		strings.Contains(batch.Utterances[0].Text, "Mars") {
+		t.Fatalf("record from the disabled interval was read: %+v", batch.Utterances)
+	}
+}
+
+// An interval that covers no record is dropped when the switch returns, so a
+// source that never admitted a record while it was off learns again.
+func TestMessengerExtractionEmptyIntervalDoesNotBlockLaterRecords(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	if err := store.SetSourceLearn(t.Context(), messengerTestPerson, source.Platform, source.Account, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetSourceLearn(t.Context(), messengerTestPerson, source.Platform, source.Account, true); err != nil {
+		t.Fatal(err)
+	}
+	admitMessages(t, store, source,
+		messengerMessage("later", messenger.RoutePerson, start.Add(time.Minute), "I prefer jasmine tea."),
+	)
+	if batch := prepareMessenger(t, db); len(batch.Utterances) != 1 {
+		t.Fatalf("an empty interval excluded a later record: %+v", batch.Utterances)
+	}
+}
+
+// A Discord bot-mode source stays searchable but does not feed learning until
+// the owner confirms the platform's developer-policy reading; a personal source
+// on the same platform learns normally.
+func TestMessengerExtractionGatesBotModeDiscord(t *testing.T) {
+	db := database(t)
+	store := messenger.Open(db, nil, nil)
+	start := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	bot := messenger.Source{Person: messengerTestPerson, Platform: "discord", Account: "111", Mode: messenger.ModeOfficial,
+		Adapter: "discord", State: messenger.StateConnected, ConnectedAt: start}
+	personal := messenger.Source{Person: messengerTestPerson, Platform: "discord", Account: "222", Mode: messenger.ModeUnofficial,
+		Adapter: "discord-personal", State: messenger.StateConnected, ConnectedAt: start,
+		AcceptedTerms: &messenger.Terms{Person: messengerTestPerson, At: start, Text: "personal account terms"}}
+	for _, source := range []messenger.Source{bot, personal} {
+		if err := store.Connect(t.Context(), source); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpsertChats(t.Context(), source, []messenger.Chat{{ID: "dm", Name: "Direct", Kind: "direct"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	admitMessages(t, store, bot,
+		messengerMessage("bot", messenger.RoutePerson, start.Add(time.Minute), "I live on Mars."),
+	)
+	admitMessages(t, store, personal,
+		messengerMessage("personal", messenger.RoutePerson, start.Add(2*time.Minute), "I prefer jasmine tea."),
+	)
+	batch := prepareMessenger(t, db)
+	if len(batch.Utterances) != 1 || !strings.Contains(batch.Utterances[0].Text, "jasmine tea") {
+		t.Fatalf("bot-mode records fed learning: %+v", batch.Utterances)
+	}
+	var records int
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM messenger_record WHERE account='111'").Scan(&records)
+	}); err != nil || records != 1 {
+		t.Fatalf("bot-mode record was not searchable: %d %v", records, err)
+	}
+}
+
 // An import the person started with learning on moves the watermark back and
 // resets progress, so older history becomes input once.
 func TestMessengerExtractionImportWithLearning(t *testing.T) {

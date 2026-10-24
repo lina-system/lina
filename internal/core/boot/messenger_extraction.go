@@ -145,12 +145,14 @@ func (r *conversationRuntime) queueMessengerExtraction(ctx context.Context) erro
 	return jobapi.ErrInvalid
 }
 
-// readMessengerEvidence loads material-backed bodies before preparation takes
-// its read transaction, then resolves prepared events from that cache inside
-// it. A material read opens its own canon transaction, and canon serves one
-// reader, so reading bytes inside preparation would wait on itself.
+// readMessengerEvidence loads the material-backed bodies of the next bounded
+// batch and its context before preparation takes its read transaction, then
+// resolves prepared events from that cache inside it. A material read opens its
+// own canon transaction, and canon serves one reader, so reading bytes inside
+// preparation would wait on itself. The candidate query is bounded by the same
+// batch and context limits, so the preload never grows with the history.
 func (r *conversationRuntime) readMessengerEvidence(ctx context.Context) (memory.ResolveEvidence, error) {
-	refs, err := memory.New(r.db).MessengerEvidenceCandidates(ctx, r.person)
+	refs, err := memory.New(r.db).MessengerEvidenceCandidates(ctx, r.person, messengerExtractionBatchLimit, messengerExtractionContextLimit)
 	if err != nil {
 		return nil, err
 	}
