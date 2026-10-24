@@ -9,7 +9,6 @@ import (
 	"errors"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
@@ -366,6 +365,24 @@ func readItem(ctx context.Context, tx *canon.Tx, id string) (Item, error) {
 func (s *Store) Recall(ctx context.Context, scope RecallScope, q Query) ([]Hit, error) {
 	return s.recall(ctx, scope, q, false, false)
 }
+
+// Items materializes the items of a ranked id set from the shared index in one
+// scoped read, in that order. Queries by identity never scan the item set.
+func (s *Store) Items(ctx context.Context, scope RecallScope, ids []string, at int64, history bool) ([]Hit, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	hits, err := s.recall(ctx, scope, Query{IDs: ids, At: at, History: history, Limit: len(ids)}, false, false)
+	if err != nil {
+		return nil, err
+	}
+	order := make(map[string]int, len(ids))
+	for i, id := range ids {
+		order[id] = i
+	}
+	slices.SortStableFunc(hits, func(a, b Hit) int { return order[a.ID] - order[b.ID] })
+	return hits, nil
+}
 func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing, relationship bool) ([]Hit, error) {
 	if s == nil || s.db == nil || !present(scope.Agent) || scope.Agent == string(All) || !present(scope.Person) || q.At < 0 || q.Limit < 0 {
 		return nil, ErrInvalid
@@ -373,6 +390,37 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 	limit := q.Limit
 	if limit == 0 {
 		limit = 100
+	}
+	// Text matching is the one recall entry's job. The item, holder, validity
+	// and evidence filters below stay here; recall supplies the matching ids.
+	var matched string
+	if len(q.IDs) > 0 {
+		raw, err := json.Marshal(q.IDs)
+		if err != nil {
+			return nil, err
+		}
+		matched = string(raw)
+	} else if strings.TrimSpace(q.Text) != "" {
+		found, err := recall.Match(ctx, s.db, recall.Scope{
+			Person: scope.Person, Agent: scope.Agent, Kinds: []recall.Kind{recall.Memory},
+			CommonOnly: scope.CommonOnly, History: q.History, At: q.At,
+			Projection: scope.Projection, ExternalModel: scope.ExternalModel,
+		}, recall.Query{Text: q.Text})
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]string, 0, len(found))
+		for _, hit := range found {
+			ids = append(ids, hit.ID)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		raw, err := json.Marshal(ids)
+		if err != nil {
+			return nil, err
+		}
+		matched = string(raw)
 	}
 	var hits []Hit
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
@@ -382,29 +430,18 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			return err
 		}
 		restrictedJSON, _ := json.Marshal(restricted)
-		text := normalize(q.Text)
 		match := "1"
-		args := []any{q.At, q.At, scope.Person, q.ID, q.ID, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly, relationship, scope.Agent, scope.Person, string(restrictedJSON), q.Kind, q.Kind, q.History}
-
-		switch {
-		case utf8.RuneCountInString(text) >= 3:
-			match = "EXISTS(SELECT 1 FROM memory_search WHERE rowid=e.sequence AND memory_search MATCH ?)"
-			args = append(args, canon.TrigramPhrase(text))
-		case len(canon.HangulBigrams(text)) == 1:
-			match = "EXISTS(SELECT 1 FROM memory_search_bigram b WHERE b.item_id=e.id AND b.gram=?)"
-			args = append(args, text)
-		case text != "":
-			// Preserve short non-Hangul literal queries; neither index can
-			// represent these. Only the already-scoped set is scanned.
-			match = "instr(e.normalized,?)>0"
-			args = append(args, text)
+		args := []any{q.At, q.At, scope.Person, q.ID, q.ID, matched, matched, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly, relationship, scope.Agent, scope.Person, string(restrictedJSON), q.Kind, q.Kind, q.History}
+		if matched != "" {
+			match = "EXISTS(SELECT 1 FROM json_each(?) WHERE value=e.id)"
+			args = append(args, matched)
 		}
 		args = append(args, q.After, q.After, q.After, q.After, limit)
 		rows, err := tx.QueryContext(ctx, `WITH candidates AS MATERIALIZED (
    SELECT m.id,m.sequence,m.record,m.normalized,
    (SELECT max(r.sequence) FROM memory_revision r WHERE r.item_id=m.id) AS priority,
    ((m.valid_until<>0 AND m.valid_until<=?) OR EXISTS(SELECT 1 FROM memory_item n WHERE n.supersedes=m.id AND n.valid_from<=?)) AS older
-   FROM retract_visible_memory m WHERE m.person=? AND (?='' OR m.id=?) AND m.holder IN (?,?) AND m.state='active' AND m.valid_from<=?
+   FROM retract_visible_memory m WHERE m.person=? AND (?='' OR m.id=?) AND (?='' OR m.id IN (SELECT value FROM json_each(?))) AND m.holder IN (?,?) AND m.state='active' AND m.valid_from<=?
    AND (?=0 OR m.scope='local') AND (?=0 OR m.scope<>'never-leaves') AND (?=0 OR m.standing=1)
    AND (?=0 OR m.subject_kind='person')
    AND (?=0 OR (m.holder=? AND m.subject_kind='person' AND m.subject_id=? AND json_extract(m.record,'$.kind')='relationship'))
