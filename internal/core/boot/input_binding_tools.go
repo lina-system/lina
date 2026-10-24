@@ -179,6 +179,11 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 			}
 			var err error
 			parent, err = readInputChoices(ctx, tx, ledger.Event{ID: id})
+			// A card action replies to the agent event that presented the card,
+			// which holds no choices.
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
 			return err
 		})
 		if err != nil {
@@ -472,9 +477,15 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					return bindingFailure(c.ID, err)
 				}
 				var line any = map[string]string{"state": "unknown"}
+				// The binding check keeps the project record id. The progress
+				// line uses the bare goal id, so resolve that reference here.
+				progressID := a.ID
+				if ref, ok := goal.GoalID(a.ID); ok && ref != a.ID {
+					progressID = ref
+				}
 				if projection.Rows != nil {
 					for _, row := range *projection.Rows {
-						if row.Ref == a.ID || row.Ref == "run:"+a.ID || row.Ref == "task:"+a.ID || row.Ref == "record:"+a.ID {
+						if row.Ref == progressID || row.Ref == a.ID || row.Ref == "run:"+a.ID || row.Ref == "task:"+a.ID || row.Ref == "record:"+a.ID {
 							line = row.Line
 							break
 						}
