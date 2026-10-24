@@ -1,0 +1,42 @@
+{
+  "protocol": {
+    "name": "client",
+    "version": "1.0"
+  },
+  "kind": "binding_move_result",
+  "message_id": "binding_move_result-example",
+  "attempt_id": "binding_move_result-attempt-1",
+  "reply_to": null,
+  "sender": {
+    "party": "core",
+    "id": "main-example"
+  },
+  "epoch": "42",
+  "sent_at": "2026-01-01T00:00:01Z",
+  "idempotency_key": null,
+  "effect_state": "applied",
+  "receipt_ref": null,
+  "source_refs": [],
+  "error": null,
+  "payload": {
+    "move_id": "move-example",
+    "input_id": "input-example",
+    "from": {
+      "class": "existing",
+      "id": "plants",
+      "kind": "todo"
+    },
+    "to": {
+      "class": "none"
+    },
+    "decider": "exact-reference",
+    "effects": [
+      {
+        "kind": "start",
+        "item": "run-example",
+        "moved": false,
+        "reason": "left"
+      }
+    ]
+  }
+}

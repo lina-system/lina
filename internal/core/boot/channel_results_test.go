@@ -92,3 +92,68 @@ func TestTypedResultsReachOriginatingChannelOnce(t *testing.T) {
 		})
 	}
 }
+
+func TestBindingChipStaysOnDirectChannelReply(t *testing.T) {
+	for _, platform := range []string{"telegram", "discord"} {
+		t.Run(platform, func(t *testing.T) {
+			r := runRuntime(t)
+			ctx, now := t.Context(), time.Now()
+			fixtureRecord(t, r, "plants", "todo", "open", "", "Plants", "Water them.")
+			bot := channels.Bot{Platform: platform, Account: "fixture"}
+			store := r.channels.store
+			if err := store.Connect(ctx, bot, r.person); err != nil {
+				t.Fatal(err)
+			}
+			code, err := store.PairingCode(ctx, bot, r.person, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Pair(ctx, bot, code, "42", "100", now); err != nil {
+				t.Fatal(err)
+			}
+			address := channels.Address{Bot: bot, Chat: "100"}
+			if err := store.Bind(ctx, channels.Binding{Address: address, Agent: r.agent, Person: r.person, Conversation: r.conversation, Scope: channels.PrivateScope()}); err != nil {
+				t.Fatal(err)
+			}
+			inbound := gateway.Inbound{Address: address, NativeID: "native", Sender: "42", Cursor: "1", Direct: true, Body: []byte(`{"text":"Plants"}`)}
+			var delivery gateway.Delivery
+			if err := gateway.New(r.db, func(_ context.Context, d gateway.Delivery) error { delivery = d; return nil }).Admit(ctx, inbound); err != nil {
+				t.Fatal(err)
+			}
+			inputID := "channel-input:" + strconv.FormatInt(delivery.InboxID, 10)
+			appendEvent := func(entry guard.Entry, id, parent, scaffold, body string) {
+				t.Helper()
+				person := ""
+				if entry == guard.EntryOwner {
+					person = r.person
+				}
+				_, err := r.journal().Admit(ctx, entry, ledger.Input{ID: id, ParentID: parent, ConversationID: r.conversation, AgentID: r.agent, PersonID: person, Surface: ledger.Surface{Kind: "channel", Platform: platform, ChatID: address.Chat}, ScaffoldKind: scaffold, Locator: "fixture:" + id, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: body})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			appendEvent(guard.EntryOwner, inputID, "", "", "Plants")
+			appendEvent(guard.EntryAgent, "reply", inputID, "", "Working on the plants.")
+			appendEvent(guard.EntryTool, "completion", inputID, "worker_completion", "Done.")
+			appendEvent(guard.EntryAgent, "follow-up", "completion", "", "The plants are watered.")
+			adapter := &workerOutcomeChannel{}
+			for range 2 {
+				if err := r.channels.channelDeliveries(ctx, bot, adapter); err != nil {
+					t.Fatal(err)
+				}
+			}
+			chips := 0
+			for _, message := range adapter.sent {
+				if strings.Contains(message.Text, "/move") {
+					chips++
+					if message.LedgerRef != "reply" {
+						t.Errorf("chip attached to %q; want direct reply", message.LedgerRef)
+					}
+				}
+			}
+			if chips != 1 {
+				t.Fatalf("sent %d chips; want one across repeated delivery scans", chips)
+			}
+		})
+	}
+}
