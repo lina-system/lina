@@ -101,7 +101,7 @@ function setup(script, options = {}) {
     writeFileSync(join(configDir, 'whatsapp', 'creds.json'), '{}');
   }
   const client = new FakeClient(script);
-  const driver = whatsappDriver({ WhatsAppClient: class { constructor() { return client; } } }, { configDir, liveMs: 5 });
+  const driver = whatsappDriver({ WhatsAppClient: class { constructor() { return client; } } }, { configDir, liveMs: 5, chatsMs: 5 });
   return { configDir, client, driver };
 }
 
@@ -181,6 +181,28 @@ test('live messages reach the caller once, with their chat', async () => {
   const calls = client.calls.length;
   await new Promise(resolve => setTimeout(resolve, 30));
   assert.equal(client.calls.length, calls, 'the subscription kept polling after stop');
+});
+
+test('a chat started after the subscription is followed too', async () => {
+  const BOB = '15559876543@s.whatsapp.net';
+  const { driver, client } = setup({
+    chats: [{ id: ADA, name: 'Ada', type: 'individual' }],
+    messages: [message('m-1', ADA)],
+  });
+  await driver.signInState();
+  const events = [];
+  const stop = driver.live(event => events.push(event));
+  const before = client.calls.length;
+  await waitFor(() => client.calls.slice(before).includes('getMessages'), 'the live seed');
+  // A conversation that did not exist when the subscription started.
+  client.chats.push({ id: BOB, name: 'Bob', type: 'individual' });
+  client.push(BOB, message('b-1', BOB, { at: '2026-10-24T09:00:00.000Z', text: 'old' }));
+  await waitFor(() => client.calls.slice(before).filter(name => name === 'listChats').length >= 2, 'the chat refresh');
+  client.push(BOB, message('b-2', BOB, { at: '2026-10-24T09:03:00.000Z', text: 'new' }));
+  await waitFor(() => events.length === 1, 'the message from the new chat');
+  assert.equal(events[0].chat, BOB);
+  assert.equal(events[0].message.id, 'b-2');
+  stop();
 });
 
 test('a forbidden account fails sign-in with that cause', async () => {

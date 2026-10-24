@@ -152,6 +152,9 @@ func (c *child) deliverLine(line []byte) {
 	sink := c.live
 	c.mu.Unlock()
 	if sink != nil {
+		// A failed admission is not fatal here: the message stays in the
+		// platform's buffer and the scheduled read admits it with its own
+		// error handling. The frame itself has already been checked.
 		_ = sink(converted)
 	}
 }

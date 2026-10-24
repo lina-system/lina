@@ -19,6 +19,9 @@ import { Refusal, type Author, type Chat, type Driver, type LiveEvent, type Mess
 const PAGE = 200;
 const BUFFER = 500;
 const POLL_MS = 1_000;
+// CHATS_MS is how often the subscription re-lists chats, so a conversation
+// started after it subscribed is followed too.
+const CHATS_MS = 30_000;
 
 type Summary = {
   id: string;
@@ -107,6 +110,7 @@ export function whatsappDriver(sdk: unknown, options: DriverOptions): Driver {
   const { WhatsAppClient } = sdk as Sdk;
   const authDir = join(options.configDir, 'whatsapp');
   const pollMs = options.liveMs ?? POLL_MS;
+  const chatsMs = options.chatsMs ?? CHATS_MS;
   const now = options.now ?? (() => new Date());
 
   let client: Client | null = null;
@@ -308,6 +312,7 @@ export function whatsappDriver(sdk: unknown, options: DriverOptions): Driver {
       let stopped = false;
       const known = new Map<string, Set<string>>();
       let timer: NodeJS.Timeout | null = null;
+      let listedAt = 0;
 
       // The subscription starts from what is already buffered: those messages
       // reach Core through the scheduled page read, not as live events. A
@@ -315,11 +320,19 @@ export function whatsappDriver(sdk: unknown, options: DriverOptions): Driver {
       // the buffer, and the next page read carries it.
       const seed = async (): Promise<void> => {
         const value = await connectedClient();
-        const chats = await value.listChats();
-        for (const chat of chats) {
+        listedAt = now().getTime();
+        for (const chat of await value.listChats()) {
           if (stopped) return;
-          const entries = await readBuffer(chat.id);
-          known.set(chat.id, new Set(entries.map(entry => entry.id)));
+          known.set(chat.id, new Set((await readBuffer(chat.id)).map(entry => entry.id)));
+        }
+      };
+
+      // refresh follows a chat started after the subscription: it joins with
+      // what it already holds, so only later messages arrive as live events.
+      const refresh = async (value: Client): Promise<void> => {
+        for (const chat of await value.listChats()) {
+          if (stopped || known.has(chat.id)) continue;
+          known.set(chat.id, new Set((await readBuffer(chat.id)).map(entry => entry.id)));
         }
       };
 
@@ -327,6 +340,10 @@ export function whatsappDriver(sdk: unknown, options: DriverOptions): Driver {
         if (stopped) return;
         try {
           const self = await me();
+          if (now().getTime() - listedAt >= chatsMs) {
+            listedAt = now().getTime();
+            await refresh(await connectedClient());
+          }
           for (const [chat, seen] of known) {
             const entries = await readBuffer(chat);
             for (const entry of entries) {

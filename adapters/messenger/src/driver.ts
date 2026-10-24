@@ -11,6 +11,10 @@ export type DriverOptions = {
   // liveMs is how often a driver whose platform pushes nothing new re-reads
   // what it has. A driver with a real push subscription ignores it.
   liveMs?: number;
+  // chatsMs is how often a live subscription re-lists chats, so a conversation
+  // started after it subscribed is followed too. A driver without live events
+  // ignores it.
+  chatsMs?: number;
   now?: () => Date;
 };
 

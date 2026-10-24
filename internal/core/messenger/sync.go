@@ -96,7 +96,6 @@ func liveKey(source Source) string { return source.Platform + "\x00" + source.Ac
 // live events. A subscription whose source is no longer connected is
 // cancelled; a platform whose subscription ends is retried on the next
 // interval, and one without live events is never started.
-
 func (s *Service) reconcileLive(ctx context.Context) {
 	sources, err := s.store.allSources(ctx)
 	if err != nil {
@@ -169,7 +168,7 @@ func (s *Service) watch(ctx context.Context, source Source, token uint64) {
 
 // deliverLive admits one pushed event. A chat the source has not listed yet is
 // listed first; if it is still absent the event is dropped, because the next
-// page read of that chat covers it and a rising interval cannot lose it.
+// page read of that chat covers it before the cursor moves past it.
 func (s *Service) deliverLive(ctx context.Context, source Source, adapter Adapter, event Event) error {
 	if event.Chat == "" || (event.Message == nil) == (event.Deletion == nil) {
 		return fmt.Errorf("%w: live event", ErrInvalid)
