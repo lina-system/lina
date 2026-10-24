@@ -65,6 +65,9 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 		return results
 	}
 	for _, source := range sources {
+		if _, owned := s.adapterFor(source); !owned {
+			continue
+		}
 		if source.State != StateConnected && source.State != StateFailing {
 			continue
 		}

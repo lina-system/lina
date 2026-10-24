@@ -928,3 +928,29 @@ func TestTransientSourceFailureRetriesOnItsNextInterval(t *testing.T) {
 		t.Fatalf("source did not recover: %+v %v", rows, err)
 	}
 }
+
+func TestScheduledReaderLeavesUnownedSourcesUntouched(t *testing.T) {
+	f := newFixture(t)
+	owned := f.connect(t)
+	other := owned
+	other.Platform = "teams"
+	other.Adapter = "teams"
+	other.Account = "work"
+	if err := f.store.Connect(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": &fakeAdapter{}}, time.Minute)
+	service.SyncAll(t.Context(), &f.now)
+	rows, err := f.store.Sources(t.Context(), "person")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("sources: %+v", rows)
+	}
+	for _, row := range rows {
+		if row.State != messenger.StateConnected || row.Failure != "" {
+			t.Fatalf("reader changed another source: %+v", row)
+		}
+	}
+}
