@@ -276,6 +276,107 @@ func TestMessengerExtractionNoRecordsMakesNoBatch(t *testing.T) {
 	}
 }
 
+// An import the person started with learning off states its newest record as
+// the floor. That record and anything sharing its time stay outside the learned
+// range, so the opt-out is not undone by the floor's own comparison.
+func TestMessengerExtractionImportWithLearningOff(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	admitMessages(t, store, source,
+		messengerMessage("history", messenger.RoutePerson, start.Add(-2*time.Hour), "I lived in Busan."),
+		messengerMessage("mine", messenger.RoutePerson, start.Add(time.Minute), "I prefer jasmine tea."),
+	)
+	if err := store.SetLearningWatermark(t.Context(), messengerTestPerson, source.Platform, source.Account, start.Add(time.Minute), true); err != nil {
+		t.Fatal(err)
+	}
+	if batch := prepareMessenger(t, db); len(batch.Utterances) != 0 {
+		t.Fatalf("learning-disabled import was read: %+v", batch.Utterances)
+	}
+}
+
+// A source with learning off only advances its own cursor. It must not hold
+// back the batch another source prepared, or one switch would stop learning
+// everywhere.
+func TestMessengerExtractionDisabledSourceKeepsOthersLearning(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	second := messenger.Source{Person: messengerTestPerson, Platform: "fixture", Account: "acct-2",
+		Mode: messenger.ModeOfficial, Adapter: "fixture", State: messenger.StateConnected, ConnectedAt: start}
+	if err := store.Connect(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertChats(t.Context(), second, []messenger.Chat{{ID: "dm", Name: "Direct", Kind: "direct"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetSourceLearn(t.Context(), messengerTestPerson, second.Platform, second.Account, false); err != nil {
+		t.Fatal(err)
+	}
+	admitMessages(t, store, source,
+		messengerMessage("mine", messenger.RoutePerson, start.Add(time.Minute), "I prefer jasmine tea."),
+	)
+	admitMessages(t, store, second,
+		messengerMessage("off", messenger.RoutePerson, start.Add(time.Minute), "I live on Mars."),
+	)
+	batch := prepareMessenger(t, db)
+	if len(batch.Utterances) != 1 || len(batch.Sources) != 2 {
+		t.Fatalf("batch: %+v", batch)
+	}
+	items := []Item{{Kind: Preference, Content: "Prefers jasmine tea", Subject: Subject{Kind: Person, ID: messengerTestPerson},
+		Basis: Stated, Evidence: batch.Utterances[0].Events}}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		return ApplyMessengerExtraction(t.Context(), tx, batch, items, messengerResolve(db))
+	}); err != nil {
+		t.Fatalf("disabled source blocked the batch: %v", err)
+	}
+}
+
+// A chat that became more private after preparation rebuilds its batch instead
+// of writing the scope it was prepared under.
+func TestMessengerExtractionRebuildsOnChatScopeChange(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	admitMessages(t, store, source,
+		messengerMessage("mine", messenger.RoutePerson, start.Add(time.Minute), "I prefer jasmine tea."),
+	)
+	batch := prepareMessenger(t, db)
+	if len(batch.Utterances) != 1 {
+		t.Fatalf("utterances: %+v", batch.Utterances)
+	}
+	if err := store.SetChatScope(t.Context(), messengerTestPerson, source.Platform, source.Account, "dm", "private"); err != nil {
+		t.Fatal(err)
+	}
+	items := []Item{{Kind: Preference, Content: "Prefers jasmine tea", Subject: Subject{Kind: Person, ID: messengerTestPerson},
+		Basis: Stated, Evidence: batch.Utterances[0].Events}}
+	err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		return ApplyMessengerExtraction(t.Context(), tx, batch, items, messengerResolve(db))
+	})
+	if !errors.Is(err, ErrJobConflict) {
+		t.Fatalf("scope change applied: %v", err)
+	}
+}
+
+// An edit that arrives after preparation replaces the record. The prepared
+// event is no longer the live record, so the batch rebuilds from the edit
+// instead of learning the superseded text.
+func TestMessengerExtractionRebuildsOnEditedRecord(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	admitMessages(t, store, source,
+		messengerMessage("mine", messenger.RoutePerson, start.Add(time.Minute), "I prefer jasmine tea."),
+	)
+	batch := prepareMessenger(t, db)
+	if len(batch.Utterances) != 1 {
+		t.Fatalf("utterances: %+v", batch.Utterances)
+	}
+	edited := messengerMessage("mine", messenger.RoutePerson, start.Add(time.Minute), "I prefer green tea.")
+	edited.Edited = start.Add(2 * time.Minute)
+	admitMessages(t, store, source, edited)
+	items := []Item{{Kind: Preference, Content: "Prefers jasmine tea", Subject: Subject{Kind: Person, ID: messengerTestPerson},
+		Basis: Stated, Evidence: batch.Utterances[0].Events}}
+	err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		return ApplyMessengerExtraction(t.Context(), tx, batch, items, messengerResolve(db))
+	})
+	if !errors.Is(err, ErrJobConflict) {
+		t.Fatalf("edited record applied: %v", err)
+	}
+}
+
 // An import the person started with learning on moves the watermark back and
 // resets progress, so older history becomes input once.
 func TestMessengerExtractionImportWithLearning(t *testing.T) {
@@ -287,7 +388,7 @@ func TestMessengerExtractionImportWithLearning(t *testing.T) {
 	if batch := prepareMessenger(t, db); len(batch.Utterances) != 1 {
 		t.Fatalf("history before the watermark was read: %+v", batch.Utterances)
 	}
-	if err := store.SetLearningWatermark(t.Context(), messengerTestPerson, source.Platform, source.Account, start.Add(-3*time.Hour)); err != nil {
+	if err := store.SetLearningWatermark(t.Context(), messengerTestPerson, source.Platform, source.Account, start.Add(-2*time.Hour), false); err != nil {
 		t.Fatal(err)
 	}
 	batch := prepareMessenger(t, db)

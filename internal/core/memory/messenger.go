@@ -46,8 +46,10 @@ type MessengerSourceProgress struct {
 	Platform  string `json:"platform"`
 	Account   string `json:"account"`
 	Watermark string `json:"watermark"`
-	After     int64  `json:"after"`
-	Through   int64  `json:"through"`
+	// Exclusive marks a floor whose own instant is not learned input.
+	Exclusive bool  `json:"exclusive,omitempty"`
+	After     int64 `json:"after"`
+	Through   int64 `json:"through"`
 }
 
 // MessengerBatch is prepared from a bounded ledger prefix across sources.
@@ -86,6 +88,10 @@ type messengerChatRow struct {
 // this person's sources. Non-person records only advance progress. Through is
 // the source's committed ledger position, independent of the job's task
 // sequence. No utterance means no model task should be enqueued.
+//
+// The watermark is a time floor. A record at exactly the floor is read, except
+// for a learning-off import, whose own last record is the floor and stays
+// outside the learned range.
 func (s *Store) PrepareMessengerExtraction(ctx context.Context, person string, limit, contextLimit int, window time.Duration, resolve ResolveEvidence) (MessengerBatch, error) {
 	batch := MessengerBatch{Person: person}
 	if s == nil || s.db == nil || !present(person) || limit < 1 || limit > 1000 || contextLimit < 0 || contextLimit > 8 || window < 0 || resolve == nil {
@@ -101,10 +107,10 @@ func (s *Store) PrepareMessengerExtraction(ctx context.Context, person string, l
 		}
 		type sourceRow struct {
 			platform, account, watermark, connected string
-			learn                                   bool
+			learn, exclusive                        bool
 			after                                   int64
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT s.platform,s.account,s.learning_watermark,s.connected_at,s.learn,
+		rows, err := tx.QueryContext(ctx, `SELECT s.platform,s.account,s.learning_watermark,s.connected_at,s.learn,s.learn_after,
  coalesce((SELECT c.through FROM messenger_learning_cursor c WHERE c.platform=s.platform AND c.account=s.account),0)
 FROM messenger_source s WHERE s.person=? ORDER BY s.platform,s.account`, person)
 		if err != nil {
@@ -113,7 +119,7 @@ FROM messenger_source s WHERE s.person=? ORDER BY s.platform,s.account`, person)
 		var sources []sourceRow
 		for rows.Next() {
 			var source sourceRow
-			if err := rows.Scan(&source.platform, &source.account, &source.watermark, &source.connected, &source.learn, &source.after); err != nil {
+			if err := rows.Scan(&source.platform, &source.account, &source.watermark, &source.connected, &source.learn, &source.exclusive, &source.after); err != nil {
 				rows.Close()
 				return err
 			}
@@ -130,7 +136,7 @@ FROM messenger_source s WHERE s.person=? ORDER BY s.platform,s.account`, person)
 			if remaining == 0 {
 				break
 			}
-			progress := MessengerSourceProgress{Platform: source.platform, Account: source.account, Watermark: source.watermark, After: source.after, Through: source.after}
+			progress := MessengerSourceProgress{Platform: source.platform, Account: source.account, Watermark: source.watermark, Exclusive: source.exclusive, After: source.after, Through: source.after}
 			if !source.learn {
 				// Learning off: the records are not read, and the cursor passes
 				// them so turning it back on does not learn them late.
@@ -154,10 +160,11 @@ JOIN conv_event e ON e.id=m.event
 JOIN messenger_chat c ON c.platform=m.platform AND c.account=m.account AND c.chat=m.chat
 WHERE m.platform=? AND m.account=? AND m.state='live' AND e.rowid>?
  AND json_extract(e.origin,'$.kind')='messenger' AND e.speaker_kind='person' AND coalesce(e.person_id,'')=?
- AND c.learn=1 AND c.scope<>? AND julianday(e.occurred_at)>=julianday(?)
+ AND c.learn=1 AND c.scope<>?
+ AND (CASE WHEN ? THEN julianday(e.occurred_at)>julianday(?) ELSE julianday(e.occurred_at)>=julianday(?) END)
  AND EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=e.id)
  AND e.replay_of IS NULL AND NOT EXISTS(SELECT 1 FROM ev_rel r WHERE r.event_id=e.id AND r.kind='view_of')
-ORDER BY e.rowid LIMIT ?`, source.platform, source.account, source.after, person, string(NeverLeaves), floorText, limit)
+ORDER BY e.rowid LIMIT ?`, source.platform, source.account, source.after, person, string(NeverLeaves), source.exclusive, floorText, floorText, limit)
 			if err != nil {
 				return fmt.Errorf("messenger records %s/%s: %w", source.platform, source.account, err)
 			}
@@ -429,17 +436,25 @@ func checkPreparedMessenger(ctx context.Context, tx *canon.Tx, batch MessengerBa
 	if epoch != batch.Revocation {
 		return ErrJobConflict
 	}
+	// A source that supplies no utterance only advances its own cursor past the
+	// records it may not read, so its switch is not required to be on. A source
+	// that supplied evidence must still be learning-enabled.
+	supplying := map[string]bool{}
+	for _, utterance := range batch.Utterances {
+		supplying[utterance.Platform+"\x00"+utterance.Account] = true
+	}
 	for _, source := range batch.Sources {
 		var watermark string
-		var learn bool
+		var learn, exclusive bool
 		var cursor int64
-		err := tx.QueryRowContext(ctx, `SELECT s.learning_watermark,s.learn,
+		err := tx.QueryRowContext(ctx, `SELECT s.learning_watermark,s.learn,s.learn_after,
  coalesce((SELECT c.through FROM messenger_learning_cursor c WHERE c.platform=s.platform AND c.account=s.account),0)
-FROM messenger_source s WHERE s.person=? AND s.platform=? AND s.account=?`, batch.Person, source.Platform, source.Account).Scan(&watermark, &learn, &cursor)
+FROM messenger_source s WHERE s.person=? AND s.platform=? AND s.account=?`, batch.Person, source.Platform, source.Account).Scan(&watermark, &learn, &exclusive, &cursor)
 		if err != nil {
 			return ErrJobConflict
 		}
-		if watermark != source.Watermark || cursor != source.After || !learn {
+		if watermark != source.Watermark || exclusive != source.Exclusive || cursor != source.After ||
+			!learn && supplying[source.Platform+"\x00"+source.Account] {
 			return ErrJobConflict
 		}
 	}
@@ -452,7 +467,7 @@ FROM messenger_source s WHERE s.person=? AND s.platform=? AND s.account=?`, batc
 		var scope string
 		err := tx.QueryRowContext(ctx, "SELECT learn,scope FROM messenger_chat WHERE platform=? AND account=? AND chat=?",
 			utterance.Platform, utterance.Account, utterance.Chat).Scan(&learn, &scope)
-		if err != nil || !learn || scope == string(NeverLeaves) {
+		if err != nil || !learn || scope != string(utterance.Scope) {
 			return ErrJobConflict
 		}
 		holder := messengerHolder(utterance.Platform, utterance.Account)
@@ -469,6 +484,16 @@ FROM messenger_source s WHERE s.person=? AND s.platform=? AND s.account=?`, batc
 				return err
 			}
 			if visible != 1 {
+				return ErrJobConflict
+			}
+			// An edit replaces the record's event and leaves the old revision
+			// visible. A prepared event that is no longer the live record was
+			// superseded after preparation, so the batch rebuilds from the edit.
+			var current int
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM messenger_record WHERE event=? AND state='live'", ref.ID).Scan(&current); err != nil {
+				return err
+			}
+			if current != 1 {
 				return ErrJobConflict
 			}
 			origin, err := resolve(ctx, tx, ref)

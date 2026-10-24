@@ -124,8 +124,9 @@ per-agent conversation job. It has its own budget, cadence and adoption record
 - `PrepareMessengerExtraction` reads this person's sources in one snapshot. A
   source's learning watermark is a time floor set when it connects; its
   `messenger_learning_cursor` row is the committed ledger position. Only live,
-  visible, canonical `person` records at or after the floor are eligible. The
-  source switch, the chat switch and a `never-leaves` chat narrow it further.
+  visible, canonical `person` records at or after the floor are eligible, except
+  that a learning-off import's floor excludes its own instant. The source
+  switch, the chat switch and a `never-leaves` chat narrow it further.
 - A source or chat with learning off is not read: its cursor passes the records
   that arrived in that window, so turning learning back on does not learn them
   late. A `never-leaves` chat is skipped the same way.
@@ -136,9 +137,11 @@ per-agent conversation job. It has its own budget, cadence and adoption record
   one agent holds (shared history, relationship, emotion observation) are
   refused, as are non-stated bases and a nonempty holder, scope or source agent.
 - `ApplyMessengerExtraction` rechecks the epoch, every prepared record, the
-  chat and source switches, and each source cursor before writing. It commits
-  the items and the scanned source cursors together. An obsolete batch is
-  consumed without writing or advancing cursors.
+  chat switch and scope, the source watermark and cursor, and that each
+  prepared record is still the live record of its message, before writing. A
+  source that supplied no utterance may be learning-off; it only contributes
+  skip progress. It commits the items and the scanned source cursors together.
+  An obsolete batch is consumed without writing or advancing cursors.
 
 The messenger write path uses `insertKind{messenger: true}`: every evidence
 origin must be a messenger record held by one of the batch's sources, and the

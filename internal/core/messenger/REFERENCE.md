@@ -141,8 +141,10 @@ are tracked by #1070 and the per-platform issues.
 
 `messenger_source.learning_watermark` is a time floor: `Connect` sets it to the
 connection time for a new source and preserves it on a later registration. An
-import the person starts with learning on moves it back with
-`SetLearningWatermark`, which also resets the source's cursor.
+import moves it with `SetLearningWatermark`, which also resets the source's
+cursor: back to its oldest message when the person turned learning on, and to
+its newest message with `learn_after` set when they left it off, so the import's
+own last record stays outside the learned range.
 
 `messenger_learning_cursor.through` is the committed ledger position the
 extraction job has scanned for that source. It is independent of the watermark,
@@ -154,7 +156,7 @@ narrows it per chat. `messenger_chat.scope` carries the chat's sensitivity class
 is never learning input. A disabled source or chat still advances the learning
 cursor past what arrived while it was off, so re-enabling does not learn that
 window late. SQLite refuses `ALTER TABLE ADD COLUMN` with a CHECK
-under canon's writer authorizer, so the two added columns are validated by the
+under canon's writer authorizer, so the added switches are validated by the
 store instead of by a table constraint.
 
 Sender profile emails, when supplied by an adapter, are stored as evidence in

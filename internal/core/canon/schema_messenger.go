@@ -148,15 +148,19 @@ END;
 
 // MessengerLearningSchema adds the learning switches and progress used by the
 // messenger extraction job. A source keeps a learning watermark: the time it
-// connected, or the earliest time an import the person allowed learning for
-// covers. The cursor is the source's committed ledger position; the two are
-// separate because a first fill or an import may admit old records after the
-// connection without making them learning input.
+// connected, or the end of an import the person left learning off for. The
+// cursor is the source's committed ledger position; the two are separate
+// because a first fill or an import may admit old records after the connection
+// without making them learning input.
 const MessengerLearningSchema = `
 -- SQLite refuses ALTER TABLE ADD COLUMN with CHECK under canon's writer
 -- authorizer, so these two switches are checked by the messenger store.
 ALTER TABLE messenger_source ADD COLUMN learn INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE messenger_chat ADD COLUMN scope TEXT NOT NULL DEFAULT 'local';
+-- learn_after makes the watermark an exclusive floor, for an import that
+-- covered history the person left out of learning: its own last record must not
+-- become input at the boundary.
+ALTER TABLE messenger_source ADD COLUMN learn_after INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE messenger_learning_cursor (
  platform TEXT NOT NULL, account TEXT NOT NULL, through INTEGER NOT NULL DEFAULT 0 CHECK(through>=0),
  PRIMARY KEY(platform,account),

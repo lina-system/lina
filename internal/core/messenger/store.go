@@ -386,16 +386,18 @@ func (s *Store) SetSourceLearn(ctx context.Context, person, platform, account st
 	})
 }
 
-// SetLearningWatermark moves the source's learning floor, for an import the
-// person started with learning on. Progress resets so the imported range is
-// read once from its start.
-func (s *Store) SetLearningWatermark(ctx context.Context, person, platform, account string, at time.Time) error {
+// SetLearningWatermark moves the source's learning floor and resets progress,
+// so the range the import states is read once. after makes the floor exclusive:
+// an import the person left learning off states its own last record as the
+// floor, and that record stays outside the learned range.
+func (s *Store) SetLearningWatermark(ctx context.Context, person, platform, account string, at time.Time, after bool) error {
 	if !validName(person) || !validName(platform) || !validName(account) || at.IsZero() {
 		return ErrInvalid
 	}
 	text := at.UTC().Format(time.RFC3339Nano)
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET learning_watermark=? WHERE person=? AND platform=? AND account=?", text, person, platform, account)
+		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET learning_watermark=?,learn_after=? WHERE person=? AND platform=? AND account=?",
+			text, boolInt(after), person, platform, account)
 		if err != nil {
 			return err
 		}
