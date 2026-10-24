@@ -907,7 +907,11 @@ After answering a question and sending Esc, alpha acceptance waits for a complet
 connected conversation frame with the composer cursor and footer. The installed-Core
 question journey uses the same barrier. An idle worker may have no card while its
 continuation starts or after it finishes; the owner journey still requires a
-delivered result and an independently verified artifact. Card checks hold the worker
+delivered result and an independently verified artifact. That result is visible
+when a suffix of the committed reply, after the conversation Markdown render,
+is on the frame and is not only the request. List markers use the surface
+action glyph, and a link contributes its label, so a bulleted ending or a
+Markdown link still counts. Card checks hold the worker
 at an unanswered request and wait for its name, documented elapsed time and current
 activity. Recorder regressions cover the overlay, split redraw and delayed progress.
 
