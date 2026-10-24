@@ -17,7 +17,6 @@ import (
 )
 
 func TestSecretsDoNotReachRunRecordsTranscriptsMaterialsOrNextRequest(t *testing.T) {
-	t.Parallel()
 	toolSecret := "sk-proj-" + strings.Repeat("A7", 24)
 	resultSecret := "sk-proj-" + strings.Repeat("B8", 24)
 	followSecret := "sk-proj-" + strings.Repeat("C9", 24)

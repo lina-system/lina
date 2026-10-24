@@ -10,7 +10,6 @@ import (
 )
 
 func TestLiveTaskList(t *testing.T) {
-	t.Parallel()
 	db, _ := listDB(t)
 	s := work.New(db)
 	task := work.Task{ID: "task-1", AgentID: "agent-1", ConversationID: "conversation-1", Title: "Produce report", Done: "report exists", ArtifactRoots: []string{"/work/task-1"}}

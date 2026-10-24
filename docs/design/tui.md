@@ -307,7 +307,7 @@ Regions:
   rows when idle.
 - Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
-- Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints. The count is Core's count of progress lines, sent with them; the TUI draws it and counts no rows. It is hidden when Core reports zero and, for a Core that sends no count, drawn from the cards the TUI shows.
+- Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
 
 Once the focused conversation's snapshot is known to have no items, its header
 shows the token-based `lina.` wordmark, the agent name and the connection word.
@@ -617,7 +617,7 @@ overlay in Korean and English with Unicode and ASCII glyphs.
 - The diagram is schematic: it fixes order and content, not glyphs or widths.
 - The first row is the name and, right-aligned, the elapsed time since its work started, from Core's start time and the clock offset of T-06 rule 4: `0m` to `59m`, then `1h 05m`, then `2d 04h`. A done card stops at its finish. The elapsed time is never cut; the name is truncated at a grapheme boundary with an ellipsis.
 - The second row, indented two cells, is Core's Now: what the 일 is doing right now, in a few words ([work-and-delegation.md](work-and-delegation.md#progress-line)). It is truncated the same way and never wraps.
-- A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too. The tasks and runs of an 일 are its rows, drawn in its stage list or its Details, and never cards of their own (Core marks them `row`).
+- A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too.
 - Cards keep Core's order: waiting on the person, running, waiting on something outside, done. Done cards fold into one row. When the cards do not fit, the last row (`…`, or `...` in ASCII) gives the number of hidden cards and, when any of them waits on the person, how many. Cards that wait on the person are hidden last. The numbers always equal the hidden cards.
 - The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time. Its timer uses the next elapsed-minute boundary and the existing Core clock offset. An absent start stays unknown. Snapshot replacement and live updates share the same typed card projection; neither changes conversation focus or the reading anchor.
 

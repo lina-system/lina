@@ -64,7 +64,6 @@ func promotionCrashService(t *testing.T, root string, epoch uint64) (*runs.Servi
 }
 
 func TestKillAfterPromotionAdmissionPublishesHandleAndResumesOnce(t *testing.T) {
-	t.Parallel()
 	if root := os.Getenv("LINA_PROMOTION_CRASH_ROOT"); root != "" {
 		service, db := promotionCrashService(t, root, 1)
 		o := origin()

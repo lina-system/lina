@@ -11,13 +11,7 @@ type Summary struct {
 }
 
 func Digest(waiting []string, entries []Entry) Summary {
-	lines := 0
-	for _, e := range entries {
-		if !e.Row {
-			lines++
-		}
-	}
-	d := Summary{Lines: []string{}, Total: len(waiting) + lines}
+	d := Summary{Lines: []string{}, Total: len(waiting) + len(entries)}
 	add := func(s string) {
 		if len(d.Lines) < 5 {
 			d.Lines = append(d.Lines, strings.Join(strings.Fields(s), " "))
@@ -27,10 +21,6 @@ func Digest(waiting []string, entries []Entry) Summary {
 		add(line)
 	}
 	for _, e := range entries {
-		// A row is drawn inside its line, never as a digest entry of its own.
-		if e.Row {
-			continue
-		}
 		v := e.Line
 		name := v.Name
 		if v.State != "" {

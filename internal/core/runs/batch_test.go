@@ -29,7 +29,6 @@ func (s *batchStream) Close() error        { return nil }
 // A deferred submission names itself in the run's request evidence, which is
 // what the ledger and the provider replay read.
 func TestBackgroundJobRecordsBatchIdentity(t *testing.T) {
-	t.Parallel()
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		complete := answer(runs.Artifact{Body: "report", Done: true}).(*stream)
 		return &batchStream{events: complete.events, batch: "batch-1"}, nil

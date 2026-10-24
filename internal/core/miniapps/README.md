@@ -15,10 +15,7 @@ and the client payloads are in
   app origin from the host it was reached on.
 - `boot` supplies the closed vocabulary: reads `todos` and `running`, and the
   request `todo.done` (which runs `write_record` as the owner agent under the
-  ordinary grant check). Before that write, Core drops the series anchor,
-  completed count, exhaustion and any earlier completion from its copy of the
-  to-do. `write_record` restores the counters from the saved record and records
-  the completion for this occurrence. Any other name is refused.
+  ordinary grant check). Any other name is refused.
 - Only the authenticated `mini_app_request` client operation records the
   person's allow, deny, keep, undo, restore and remove. The `mini_app` model tool
   can list, create, change and read history, and cannot record a decision.

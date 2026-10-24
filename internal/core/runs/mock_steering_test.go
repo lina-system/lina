@@ -14,7 +14,6 @@ import (
 )
 
 func TestMockConsumesAcceptedSteeringBeforePublication(t *testing.T) {
-	t.Parallel()
 	started, resume := make(chan struct{}), make(chan struct{})
 	var calls, published atomic.Int32
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) { return nil, runs.ErrInvalid }, func(c *runs.Config) {
@@ -61,7 +60,6 @@ func TestMockConsumesAcceptedSteeringBeforePublication(t *testing.T) {
 	}
 }
 func TestMockRefusesNewSteeringAfterPublicationFence(t *testing.T) {
-	t.Parallel()
 	checked, finish := make(chan struct{}), make(chan struct{})
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) { return nil, runs.ErrInvalid }, func(c *runs.Config) {
 		c.DrawMock = func(ctx context.Context, _ runs.Record, save func(json.RawMessage) error) (runs.Artifact, string, error) {

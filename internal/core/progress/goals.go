@@ -64,8 +64,7 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 		if err != nil {
 			return nil, err
 		}
-		// One manager runs one 일, so a managed goal is the 일 the person reads.
-		u := Unit{ID: g.ID, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages)}
+		u := Unit{ID: g.ID, Kind: "goal", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages)}
 		if u.Name == "" {
 			u.Name = design.Text(language, "progress.untitled")
 		}
@@ -138,41 +137,6 @@ func goalNow(g goal.Goal, stages []Stage, language design.Language) string {
 		return design.Text(language, "progress.waiting_word")
 	}
 	return design.Text(language, "progress.waiting_word")
-}
-
-// goalState is the 일 line's state in the running list words, which the count
-// reads. It is the most urgent step state in the order the stage list uses —
-// input needed, failed, stopped, working, waiting — then the goal's own state.
-// A line says landed only when the goal is done.
-func goalState(g goal.Goal, stages []Stage) string {
-	if g.State == goal.GoalBlocked || g.AttentionID != "" {
-		return "needs_input"
-	}
-	for _, observed := range []struct {
-		state StepState
-		word  string
-	}{
-		{StepNeedsInput, "needs_input"},
-		{StepFailed, "failed"},
-		{StepStopped, "stopped"},
-		{StepWorking, "in_progress"},
-		{StepWaiting, "waiting"},
-	} {
-		if len(stepsInState(stages, observed.state)) > 0 {
-			return observed.word
-		}
-	}
-	switch g.State {
-	case goal.GoalDone:
-		return "done"
-	case goal.GoalChecking:
-		return "ready_for_review"
-	case goal.GoalDefining, goal.GoalRunning, goal.GoalWaiting, goal.GoalStopped, goal.GoalBlocked:
-		// A blocked or stopped line is caught above or reads as waiting; neither
-		// invents a plan outcome the ledger does not hold.
-		return "waiting"
-	}
-	return "unknown"
 }
 
 // goalNext names the entry after the current one. The current entry is what the

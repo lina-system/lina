@@ -10,7 +10,6 @@ import (
 )
 
 func TestStartedLookupNeverAdmitsOrReleases(t *testing.T) {
-	t.Parallel()
 	s, _, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("lookup started model")
 		return nil, nil

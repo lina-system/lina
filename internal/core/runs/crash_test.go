@@ -59,7 +59,6 @@ func recoveredService(t *testing.T, root string, epoch uint64, stream loop.Strea
 	return s
 }
 func TestProcessDeathResumesOnceAndThenLandsPartial(t *testing.T) {
-	t.Parallel()
 	if root := os.Getenv("LINA_RUN_CRASH_ROOT"); root != "" {
 		epoch, err := strconv.ParseUint(os.Getenv("LINA_RUN_CRASH_EPOCH"), 10, 64)
 		if err != nil {

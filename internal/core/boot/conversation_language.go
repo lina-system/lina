@@ -12,15 +12,11 @@ import (
 	"github.com/thisisjun786/lina/internal/design"
 )
 
-// eventLanguage is the language recorded with an admitted event. Reading a
-// stored event never consults the process locale, so restart recovery keeps the
-// language chosen at admission. An event admitted before Core recorded it falls
-// back to its own script and then English.
 func eventLanguage(event ledger.Event) design.Language {
 	if event.Surface.Language != "" {
 		return design.Language(event.Surface.Language)
 	}
-	return design.ConversationLanguage(event.Body.Text(), design.English)
+	return design.ConversationLanguage(event.Body.Text(), design.EnvironmentLanguage(os.Getenv))
 }
 
 func (r *conversationRuntime) inputLanguage(ctx context.Context, text string) (design.Language, error) {
@@ -50,9 +46,7 @@ func (r *conversationRuntime) turnLanguage(ctx context.Context, turnID string) (
 		return tx.QueryRowContext(context.WithoutCancel(ctx), "SELECT input_event FROM turn_control WHERE turn_id=?", turnID).Scan(&input)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
-		// A turn with no durable input record has no admitted language. Use a
-		// fixed default so restart recovery never adopts the process locale.
-		return design.English, nil
+		return design.EnvironmentLanguage(os.Getenv), nil
 	}
 	if err != nil {
 		return "", err

@@ -303,10 +303,6 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 			state := protocol.RunningState(v.State)
 			line.State = &state
 		}
-		if entry.Row {
-			row := true
-			line.Row = &row
-		}
 		if v.Percent != nil {
 			percent := number(*v.Percent)
 			line.Percent = &percent
@@ -338,10 +334,6 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		rows = append(rows, protocol.ProgressRow{Ref: entry.Ref, Line: line})
 	}
 	cardOrder := workCardOrder(rows)
-	// The running count counts these lines, never their rows, so Core publishes
-	// it instead of leaving a client to count tasks (work-and-delegation.md#running-list).
-	counted := progress.CountLines(entries)
-	counts := protocol.ProgressCounts{Running: number(counted.Running), Waiting: number(counted.Waiting)}
 	// Track the complete list before the Home limit. A change below that limit
 	// must invalidate an open full waiting view even when Home looks identical.
 	full, err := json.Marshal(waitingRows(list))
@@ -353,7 +345,7 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 	list.Entries = list.Entries[:count]
 	waiting := waitingRows(list)
 	more := number(list.More)
-	return protocol.Progress{Rows: &rows, CardOrder: &cardOrder, Counts: &counts, Waiting: &waiting, WaitingMore: &more}, string(full), nil
+	return protocol.Progress{Rows: &rows, CardOrder: &cardOrder, Waiting: &waiting, WaitingMore: &more}, string(full), nil
 }
 func (r *conversationRuntime) publishOwnerViews(ctx context.Context) error {
 	v := r.ownerViews
@@ -363,7 +355,7 @@ func (r *conversationRuntime) publishOwnerViews(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	update := protocol.ProgressUpdate{Rows: p.Rows, CardOrder: p.CardOrder, Counts: p.Counts, Waiting: p.Waiting, WaitingMore: p.WaitingMore}
+	update := protocol.ProgressUpdate{Rows: p.Rows, CardOrder: p.CardOrder, Waiting: p.Waiting, WaitingMore: p.WaitingMore}
 	text := ownerText(p)
 	update.Text = &text
 	raw, err := json.Marshal(update)

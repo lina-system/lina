@@ -18,7 +18,6 @@ import (
 )
 
 func TestRunPersistenceMasksCredentials(t *testing.T) {
-	t.Parallel()
 	credential := "sk-proj-" + strings.Repeat("Synthetic", 5)
 	var round atomic.Int64
 	var work string
@@ -69,7 +68,6 @@ func TestRunPersistenceMasksCredentials(t *testing.T) {
 	}
 }
 func TestCompletedScratchCallIsNotReplayedAfterRetry(t *testing.T) {
-	t.Parallel()
 	var rounds, writes atomic.Int64
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		switch rounds.Add(1) {
@@ -110,7 +108,6 @@ func (m *flakyMaterials) SaveRunResult(ctx context.Context, id string, b []byte,
 }
 
 func TestLandingCanRetryWithoutCallingModelAgain(t *testing.T) {
-	t.Parallel()
 	var calls atomic.Int64
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		calls.Add(1)
@@ -139,7 +136,6 @@ type closeActionStream struct {
 
 func (s *closeActionStream) Close() error { s.closeAction(); return s.Stream.Close() }
 func TestFinalDrainSteeringIsConsumedExactlyOnce(t *testing.T) {
-	t.Parallel()
 	var service *runs.Service
 	var id string
 	var calls atomic.Int64
@@ -166,7 +162,6 @@ func TestFinalDrainSteeringIsConsumedExactlyOnce(t *testing.T) {
 }
 
 func TestInterruptedScratchIntentIsNotReexecuted(t *testing.T) {
-	t.Parallel()
 	entered := make(chan struct{})
 	var writes atomic.Int64
 	var config runs.Config

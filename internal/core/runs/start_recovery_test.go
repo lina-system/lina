@@ -37,7 +37,6 @@ func startReceipt(t *testing.T, s *runs.Service, o runs.Origin, c provider.ToolC
 	return receipt
 }
 func TestStartToolReceiptSurvivesRetryAndRestart(t *testing.T) {
-	t.Parallel()
 	var cfg runs.Config
 	s, db, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("start invoked model before release")
@@ -78,7 +77,6 @@ func TestStartToolReceiptSurvivesRetryAndRestart(t *testing.T) {
 	}
 }
 func TestStartToolRejectsConflictingBriefAndScopesCallIdentity(t *testing.T) {
-	t.Parallel()
 	s, db, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("unexpected model call")
 		return nil, nil
@@ -102,7 +100,6 @@ func TestStartToolRejectsConflictingBriefAndScopesCallIdentity(t *testing.T) {
 	}
 }
 func TestRecoverSchedulesReleasedQueueAndPreservesHolds(t *testing.T) {
-	t.Parallel()
 	var cfg runs.Config
 	s, db, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		return answer(runs.Artifact{Body: "recovered", Done: true}), nil
@@ -162,7 +159,6 @@ func TestRecoverSchedulesReleasedQueueAndPreservesHolds(t *testing.T) {
 }
 
 func TestPreparationCallbackNeverReceivesRawToolSecrets(t *testing.T) {
-	t.Parallel()
 	credential := "ghp_" + strings.Repeat("Synthetic", 5)
 	var round atomic.Int64
 	var prepared atomic.Int64
@@ -203,7 +199,6 @@ func TestPreparationCallbackNeverReceivesRawToolSecrets(t *testing.T) {
 }
 
 func TestCommittedStartReceiptSurvivesLaterBudgetHold(t *testing.T) {
-	t.Parallel()
 	var held atomic.Bool
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("unexpected execution")

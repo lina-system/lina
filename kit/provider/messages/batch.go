@@ -49,10 +49,9 @@ func (a *Adapter) batchApplies(ctx context.Context, r provider.Request) bool {
 }
 
 // batch submits one deferred request and reads its result. A refused or failed
-// submission, including an error from the initial batch request, a canceled
-// batch or an expired one reports served=false so the caller runs exactly one
-// normal request. Needs sign-in and a canceled call are returned instead: a
-// second request cannot fix them.
+// submission, a canceled batch or an expired one reports served=false so the
+// caller runs exactly one normal request. An authentication refusal is returned
+// instead: a second request cannot fix it.
 func (a *Adapter) batch(ctx context.Context, l lease.Lease, r provider.Request) (batchOutcome, error) {
 	var out batchOutcome
 	params, err := a.params(r)
@@ -75,14 +74,7 @@ func (a *Adapter) batch(ctx context.Context, l lease.Lease, r provider.Request) 
 	err = lease.Do(ctx, l, func(ctx context.Context) error {
 		raw, err := a.call(ctx, r.Credential, http.MethodPost, "messages/batches", payload)
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return err
-			}
-			var failure *provider.Failure
-			if errors.As(err, &failure) && failure.Kind == provider.NeedsSignIn {
-				return err
-			}
-			return nil
+			return err
 		}
 		var submitted struct {
 			ID string `json:"id"`

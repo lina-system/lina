@@ -39,10 +39,8 @@ submits one request under a fixed custom id, reads the status until the batch
 ends, and replays a succeeded message as the same item, tool-call and terminal
 sequence a stream produces. A refusal, an unknown state, a failure, an expiry or
 a cancelled batch reports no batch and the caller runs exactly one normal
-request, including when the initial batch submission itself fails. A
-needs-sign-in refusal and a canceled call are returned instead, because a
-second request cannot fix them. The batch id reaches the caller through
-`provider.Meta.Batch`.
+request. A needs-sign-in refusal is returned instead, because a second request
+cannot fix it. The batch id reaches the caller through `provider.Meta.Batch`.
 
 ### Verification
 

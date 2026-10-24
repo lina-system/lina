@@ -84,10 +84,6 @@ func (d *delegationRuntime) reconcileQuotaStop(rows []provider.QuotaRow, now tim
 		return true, rowReset
 	}
 	blocking, next := stop.hold(rows, now, allowRecovery)
-	if len(stop.limits) == 0 {
-		d.quotaStop = nil
-		return rowBlocked, rowReset
-	}
 	if !blocking && !rowBlocked {
 		d.quotaStop = nil
 		return false, rowReset
@@ -181,9 +177,7 @@ func (stop *inferredQuotaStop) adoptNewerResets(rows []provider.QuotaRow, now ti
 }
 
 // hold reports whether any stopped limit is still parked and the earliest
-// future reset among those that remain. A limit measured below the cap leaves
-// the stop for good, so a later snapshot without that measurement cannot park
-// it again.
+// future reset among those that remain.
 func (stop *inferredQuotaStop) hold(rows []provider.QuotaRow, now time.Time, allowRecovery bool) (bool, time.Time) {
 	latest := make(map[string]provider.QuotaRow, len(rows))
 	for _, row := range rows {
@@ -198,7 +192,6 @@ func (stop *inferredQuotaStop) hold(rows []provider.QuotaRow, now time.Time, all
 	for key, reset := range stop.limits {
 		row, ok := latest[key]
 		if allowRecovery && ok && row.Observed.After(stop.baseline) && quotaRowUnderCap(row) {
-			delete(stop.limits, key)
 			continue
 		}
 		deadline := reset

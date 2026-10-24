@@ -271,9 +271,6 @@ int lina_uninstall(const struct lina_host *host, const struct lina_paths *paths,
   host->remove_right(host->context, LINA_RIGHT_SELFTEST);
   host->remove_bundle(host->context, paths->bundle);
   host->remove_guard(host->context, paths->guard, paths->guard_plist);
-  // The rule no longer names LINA here, so nothing is left for a retry, and
-  // without the guard nothing would clear it before the next install.
-  host->remove_file(host->context, paths->restore_retry);
   host->remove_file(host->context, paths->backup);
   host->remove_file(host->context, paths->measured);
   host->log_line(host->context, "uninstalled");

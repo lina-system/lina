@@ -186,15 +186,6 @@ func (m miniAppEffects) arguments(ctx context.Context, req miniapps.EffectReques
 		}
 		todo := *row.Todo
 		todo.State = "completed"
-		// Core owns the series anchor, completed count, exhaustion and the
-		// completion record. write_record rejects them as arguments, restores the
-		// counters from the saved record and writes the completion for this occurrence.
-		todo.Completion = nil
-		if row.Todo.Repeat != nil {
-			repeat := *row.Todo.Repeat
-			repeat.Start, repeat.Completed, repeat.Exhausted = "", 0, false
-			todo.Repeat = &repeat
-		}
 		write := coreexec.RecordWrite{ID: row.ID, Revision: row.Revision, Kind: row.Kind, Title: row.Title, Note: row.Note, Todo: &todo}
 		raw, err := json.Marshal(write)
 		if err != nil {

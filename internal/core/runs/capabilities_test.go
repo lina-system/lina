@@ -12,7 +12,6 @@ import (
 )
 
 func TestRunCacheIdentityAndEvidenceSurviveRestart(t *testing.T) {
-	t.Parallel()
 	checkCtx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	var cfg runs.Config

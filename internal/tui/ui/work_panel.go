@@ -24,8 +24,7 @@ func projectWork(payload protocol.Payload) *state.WorkSummary {
 	clean := func(s string) string { return strings.Join(strings.Fields(sanitize.Display(s)), " ") }
 	for _, row := range *p.Rows {
 		v := row.Line
-		// A 목표 heading and the rows inside a line are drawn by their line.
-		if v.Kind == "goal" || v.Row != nil && *v.Row {
+		if v.Kind == "goal" {
 			continue
 		}
 		c := state.WorkCard{ID: row.Ref, Name: clean(v.Name)}
@@ -65,14 +64,7 @@ func projectWork(payload protocol.Payload) *state.WorkSummary {
 		}
 		cards = ordered
 	}
-	summary := &state.WorkSummary{Cards: cards}
-	// The running count follows Core's lines; it never counts these rows.
-	if p.Counts != nil {
-		running, _ := p.Counts.Running.Int64()
-		waiting, _ := p.Counts.Waiting.Int64()
-		summary.Counts = &state.WorkCount{Running: max(0, int(running)), Waiting: max(0, int(waiting))}
-	}
-	return summary
+	return &state.WorkSummary{Cards: cards}
 }
 
 func (m *shellModel) workCards() []state.WorkCard {

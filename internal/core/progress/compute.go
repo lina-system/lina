@@ -26,9 +26,6 @@ type Line struct {
 type Entry struct {
 	Ref  string
 	Line Line
-	// Row marks a row of a line: a task or run drawn inside an 일 or 목표. A row
-	// is not a line and the running count never counts it.
-	Row bool
 }
 
 // Unit contains observed work and source ownership, never a guessed plan.
@@ -54,35 +51,6 @@ func Compute(units []Unit) []Entry {
 		unit    Unit
 		line    Line
 		visible bool
-		row     bool
-	}
-	// A step's card is a row of the 일 that runs it, not a line of its own. The
-	// ledger links them by the step id the line's stage list already carries, so
-	// one manager with twelve steps adds one line and twelve rows.
-	owner := map[string]string{}
-	for _, u := range units {
-		for _, stage := range u.Stages {
-			for _, step := range stage.Steps {
-				if step.ID != "" {
-					owner[step.ID] = u.ID
-				}
-			}
-		}
-	}
-	// A step's card belongs to its 일 through the step id; a task card's own
-	// parent link belongs to the 목표 or 일 it was handed under.
-	type link struct {
-		parent string
-		step   bool
-	}
-	linkOf := func(u Unit) link {
-		if u.Parent != "" {
-			return link{parent: u.Parent}
-		}
-		if id := owner[u.ID]; id != "" {
-			return link{parent: id, step: true}
-		}
-		return link{}
 	}
 	rows := make(map[string]*row, len(units))
 	for _, u := range units {
@@ -99,25 +67,26 @@ func Compute(units []Unit) []Entry {
 			line.Stage = current.Label
 		}
 		landed := u.Landed || u.Done != nil && *u.Done
-		rows[u.ID] = &row{unit: u, line: line, visible: (u.Active || u.Waiting > 0 || landed && !u.Seen) && !(landed && u.Seen)}
+		rows[u.ID] = &row{u, line, (u.Active || u.Waiting > 0 || landed && !u.Seen) && !(landed && u.Seen)}
 	}
-	// A 목표 is visible through its own work, live children or a pending decision.
-	// Its children are 일 lines, so they stay lines and are counted; only the
-	// rows of a 일 are not lines.
+	// A goal is visible through its own work, live children or a pending decision.
 	for _, u := range units {
 		if u.Kind != "goal" {
 			continue
 		}
 		r := rows[u.ID]
+
 		r.visible = r.visible || u.Waiting > 0
 		for _, child := range units {
-			if linkOf(child).parent != u.ID || child.Kind == "goal" {
+			if child.Parent != u.ID || child.Kind != "project" {
 				continue
 			}
 			c := rows[child.ID]
+
 			if c.visible {
 				r.visible = true
 				r.line.Waiting += c.line.Waiting
+
 				if c.unit.Updated > r.unit.Updated {
 					r.unit.Updated = c.unit.Updated
 					r.line.JustFinished = c.line.JustFinished
@@ -125,6 +94,7 @@ func Compute(units []Unit) []Entry {
 				}
 			}
 		}
+
 	}
 	less := func(a, b *row) bool {
 		if (a.line.Waiting > 0) != (b.line.Waiting > 0) {
@@ -142,26 +112,21 @@ func Compute(units []Unit) []Entry {
 		if !r.visible {
 			continue
 		}
-		at := linkOf(u)
-		line := rows[at.parent]
-		if at.parent == "" || at.parent == u.ID || line == nil || !line.visible {
+		if parent := rows[u.Parent]; u.Kind == "project" && parent != nil && parent.visible && parent.unit.Kind == "goal" {
+			children[u.Parent] = append(children[u.Parent], r)
+		} else {
 			roots = append(roots, r)
-			continue
 		}
-		// A step of an 일 is a row of that 일. A task handed under a 목표 is its
-		// 일, a line of its own; a child of anything else is a row as well.
-		r.row = at.step || line.unit.Kind != "goal"
-		children[at.parent] = append(children[at.parent], r)
 	}
 	sort.Slice(roots, func(i, j int) bool { return less(roots[i], roots[j]) })
 	out := []Entry{}
 	for _, r := range roots {
-		out = append(out, Entry{Ref: r.unit.ID, Line: r.line, Row: r.row})
+		out = append(out, Entry{r.unit.ID, r.line})
 		group := children[r.unit.ID]
 		sort.Slice(group, func(i, j int) bool { return less(group[i], group[j]) })
 		for _, child := range group {
 			child.line.Depth = 1
-			out = append(out, Entry{Ref: child.unit.ID, Line: child.line, Row: child.row})
+			out = append(out, Entry{child.unit.ID, child.line})
 		}
 	}
 	return out
@@ -176,30 +141,4 @@ func currentStage(stages []Stage) (Stage, bool) {
 		}
 	}
 	return Stage{}, false
-}
-
-// Count is the running count by line state, as the status line shows it.
-type Count struct{ Running, Waiting int }
-
-// CountLines counts the lines of a projection, never their rows: an 일, a task
-// that is a goal of its own and a background run outside any 일 each count once
-// however many workers they hold. A 목표 line is a heading over its 일 and is
-// not counted. A line whose row waits on the person counts as waiting for them;
-// the others count by their state word. The same ledger gives the same count,
-// because it reads only the published lines.
-func CountLines(entries []Entry) Count {
-	count := Count{}
-	for _, entry := range entries {
-		line := entry.Line
-		if entry.Row || line.Kind == "goal" {
-			continue
-		}
-		switch {
-		case line.Waiting > 0 || line.State == "needs_input":
-			count.Waiting++
-		case line.State == "in_progress":
-			count.Running++
-		}
-	}
-	return count
 }
