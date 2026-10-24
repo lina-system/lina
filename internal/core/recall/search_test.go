@@ -212,6 +212,38 @@ func TestSearchQueuedMaterialEventFollowsKinds(t *testing.T) {
 	}
 }
 
+func TestSearchQueuedMaterialEventRanksBeforeLimit(t *testing.T) {
+	db := database(t)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,body)
+ VALUES('inline','conversation','owner','agent','person','{}','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','observed','{"kind":"native"}','도서관 메모')`)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES('material','conversation','owner','agent','person','{}','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','observed','{"kind":"native"}','asset',1)`)
+	read := func(context.Context, string) (string, error) { return "도서관 자료", nil }
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	if count(t, db, "SELECT count(*) FROM recall_pending WHERE source_id IN ('inline','material')") != 2 {
+		t.Fatal("both events must still be queued")
+	}
+	for _, tc := range []struct {
+		limit int
+		want  []string
+	}{
+		{1, []string{"material"}},
+		{0, []string{"material", "inline"}},
+	} {
+		hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관", Limit: tc.limit, EventText: read})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, hit := range hits {
+			ids = append(ids, hit.ID)
+		}
+		if !reflect.DeepEqual(ids, tc.want) {
+			t.Fatalf("limit %d: %v, want %v", tc.limit, ids, tc.want)
+		}
+	}
+}
+
 func TestSearchLineageKeepsEventAsItemCitation(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)

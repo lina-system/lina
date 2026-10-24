@@ -285,15 +285,16 @@ dedup AS (
   CASE WHEN c.kind='event' AND c.text_hash IS NOT NULL AND c.replay=0 THEN row_number() OVER (
    PARTITION BY c.conversation,c.text_hash ORDER BY julianday(c.occurred_at),c.source_id) ELSE 1 END AS twin
  FROM candidates c` + lineageFilter(withEvents) + `)
-SELECT kind,source_id,revision,occurred_at,holder,older FROM dedup WHERE twin=1 AND (?=1 OR older=0)
-ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianday(occurred_at) DESC, source_id`
+SELECT kind,source_id,revision,occurred_at,holder,older,CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END AS tier,score
+ FROM dedup WHERE twin=1 AND (?=1 OR older=0)
+ORDER BY tier, score, julianday(occurred_at) DESC, source_id`
 	args = append(args, boolInt(scope.History))
 	limit := query.Limit
 	if limit > 0 {
 		statement += " LIMIT ?"
 		args = append(args, limit+len(external))
 	}
-	var hits []Hit
+	var ranks []rankedHit
 	err := db.Read(ctx, func(tx *canon.Tx) error {
 		rows, err := tx.QueryContext(ctx, statement, args...)
 		if err != nil {
@@ -301,24 +302,35 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var h Hit
+			var r rankedHit
 			var occurred string
 			var older int
-			if err := rows.Scan(&h.Kind, &h.ID, &h.Revision, &occurred, &h.Holder, &older); err != nil {
+			if err := rows.Scan(&r.hit.Kind, &r.hit.ID, &r.hit.Revision, &occurred, &r.hit.Holder, &older, &r.tier, &r.score); err != nil {
 				return err
 			}
-			h.Older = older == 1
-			if h.OccurredAt, err = time.Parse(time.RFC3339Nano, occurred); err != nil {
-				h.OccurredAt = time.Time{}
+			r.hit.Older = older == 1
+			if r.hit.OccurredAt, err = time.Parse(time.RFC3339Nano, occurred); err != nil {
+				r.hit.OccurredAt = time.Time{}
 			}
-			hits = append(hits, h)
+			ranks = append(ranks, r)
 		}
 		return rows.Err()
 	})
 	if err != nil {
 		return nil, err
 	}
-	hits = append(hits, external...)
+	if len(external) > 0 {
+		// A queued material hit is an unscored candidate like any other queued
+		// source, so it takes the same place in the order before the limit.
+		for _, h := range external {
+			ranks = append(ranks, rankedHit{hit: h, tier: 2})
+		}
+		sort.SliceStable(ranks, func(i, j int) bool { return ranks[i].before(ranks[j]) })
+	}
+	hits := make([]Hit, 0, len(ranks))
+	for _, r := range ranks {
+		hits = append(hits, r.hit)
+	}
 	if limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}
@@ -326,6 +338,30 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 		return fuse(ctx, db, scope, query, hits)
 	}
 	return lineage(ctx, db, scope, hits)
+}
+
+// rankedHit carries the SQL order key of a match: tier, then score with NULL
+// first, then newer occurrence, then source id.
+type rankedHit struct {
+	hit   Hit
+	tier  int
+	score sql.NullFloat64
+}
+
+func (a rankedHit) before(b rankedHit) bool {
+	if a.tier != b.tier {
+		return a.tier < b.tier
+	}
+	if a.score.Valid != b.score.Valid {
+		return !a.score.Valid
+	}
+	if a.score.Valid && a.score.Float64 != b.score.Float64 {
+		return a.score.Float64 < b.score.Float64
+	}
+	if !a.hit.OccurredAt.Equal(b.hit.OccurredAt) {
+		return a.hit.OccurredAt.After(b.hit.OccurredAt)
+	}
+	return a.hit.ID < b.hit.ID
 }
 
 // pendingEventText reads the derived text of queued events whose body lives in
