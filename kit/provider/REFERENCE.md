@@ -47,3 +47,14 @@ retains its original digest. Replay restores metadata from new evidence.
 
 Verification uses synthetic adapters and installed headless Core. It does not
 claim live V1/V4 acceptance, cache savings or first-token improvements.
+
+### On-device Apple model
+
+`apple` is admitted with an empty optimization set. Its context size, tool
+calling, guided generation, and image input are a helper profile, not entries
+in `capabilities.json`. The helper protocol is one JSON line in and one JSON
+line out (`profile` or `complete`). Guided generation is the schema field;
+Core discards a schema miss and does not parse a code fence from this adapter.
+The Swift helper is `adapters/applefm`. Headless tests use a fixture with the
+same line protocol. The measured samples are in
+[apple-foundation-models.md](../../docs/research/apple-foundation-models.md).
