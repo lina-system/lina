@@ -147,6 +147,16 @@ func snapshotView(v *View) (State, error) {
 		}
 		s.Actions = append(s.Actions, x)
 	}
+	for _, r := range v.Records("limit") {
+		var x RunLimitRecord
+		if err := decodeLimit(r, &x); err != nil {
+			return s, err
+		}
+		if s.Limits == nil {
+			s.Limits = map[string]RunLimit{}
+		}
+		s.Limits[r.ID] = x.RunLimit
+	}
 	return s, nil
 }
 func (e *Engine) Snapshot(ctx context.Context) (State, error) {
@@ -231,7 +241,7 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 	if err := validateGoal(g); err != nil {
 		return err
 	}
-	if g.StepGraph != nil || g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || len(g.MergedRevisions) > 0 || g.Deployment != (Proof{}) || g.Verification != (Proof{}) || g.Rank != 0 || g.Paused {
+	if g.StepGraph != nil || g.DefinitionPending || g.AssessedFailure != "" || g.CheckRound != 0 || len(g.Checks) > 0 || g.State != "" || g.Revision != 0 || g.ManagerTurns != 0 || g.AttentionID != "" || g.BlockedReason != "" || len(g.Waits) > 0 || len(g.Evidence) > 0 || g.TargetRevision != "" || len(g.MergedRevisions) > 0 || g.Deployment != (Proof{}) || g.Verification != (Proof{}) || g.Rank != 0 || g.Paused || g.QueuePlace != 0 || g.QueueReason != "" {
 		return ErrInvalid
 	}
 	for _, t := range g.Tasks {
@@ -357,8 +367,18 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 				}
 			}
 		}
+		queue := map[string]QueuePlace{}
+		for _, q := range p.Queues {
+			queue[q.GoalID] = q
+		}
 		for i := range s.Goals {
 			g := &s.Goals[i]
+			// A goal's place and reason are this pass's projection: a goal that
+			// started, paused or ended carries neither.
+			g.QueuePlace, g.QueueReason = 0, ""
+			if q, ok := queue[g.ID]; ok && g.State != GoalDone && g.State != GoalStopped {
+				g.QueuePlace, g.QueueReason = q.Place, q.Reason
+			}
 			// A paused goal keeps its waits, including their deadlines, until it
 			// is resumed. Its in-progress step settles through its receipt.
 			waits := g.Waits
@@ -428,6 +448,17 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 				return err
 			}
 		}
+		// The pass records the limit it applied, so a client, the line and the
+		// next pass read the same number and reason.
+		for person, limit := range p.RunLimits {
+			record := RunLimitRecord{RunLimit: s.Limits[person], Current: limit.Current, Reason: limit.Reason}
+			if record.RunLimit.Value == 0 {
+				record.RunLimit = RunLimit{Automatic: true}
+			}
+			if err = put(v, "limit", person, record); err != nil {
+				return err
+			}
+		}
 		if len(v.changes) == 0 {
 			return errNoChange
 		}
@@ -490,12 +521,17 @@ func (e *Engine) Claim(ctx context.Context, id string) (Action, error) {
 					others = append(others, other)
 				}
 			}
-			eligible := false
 			now := e.cfg.Now()
-			for _, n := range s.Nodes {
-				if n.ID == a.NodeID && n.Workers[t.Worker] && n.QuotaReset[t.Worker] <= now.Unix() && Slots(n, others, a.Resources, now) > 0 {
-					eligible = true
-					break
+			// The person may have lowered the limit, or capacity may have fallen,
+			// since this award was derived. A goal that is now past the limit
+			// keeps no unstarted step; steps already running are untouched.
+			eligible := false
+			if !runLimitBlocks(s, g.Person, g.ID, a.ID, now) {
+				for _, n := range s.Nodes {
+					if n.ID == a.NodeID && n.Workers[t.Worker] && n.QuotaReset[t.Worker] <= now.Unix() && Slots(n, others, a.Resources, now) > 0 {
+						eligible = true
+						break
+					}
 				}
 			}
 			if !eligible {

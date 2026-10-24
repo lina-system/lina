@@ -21,8 +21,15 @@ a later read, progress check, or follow-up may name that existing item; any
 other item stays pending. In one response, `bind_input` commits before a later
 work call: the work call's scheduling key is the binding key, a newline, and
 its own target. Other targets still run beside that update. A model follow-up to a worker task uses the agent
-message path. `worker_input` and `worker_interrupt` resolve their session to
-that task before the person's choice is checked. A code goal tool resolves
+message path and the requesting conversation. An unrelated conversation is
+refused before delivery. `worker_input` and `worker_interrupt` resolve their session to
+that task before the person's choice is checked. `worker_interrupt` is a stop:
+a retained tie asks which task before cancellation. `submit_step_graph` starts
+work, so a retained tie asks which project before the graph is admitted.
+`build_mock` starts work, so a retained tie asks which target before the goal
+is admitted. A goal correction, a deferred tool call, and a refresh that can
+release dependent tasks start work. A remote agent call and an artifact handoff
+send. Cancelling a timer stops. Reads stay unclassified. A code goal tool resolves
 `goal_id` through the goal package's project record id before the same check.
 The binding snapshot includes that record as a project. `dispatch_code_goal`
 records a new project; the definition file keeps kind goal, and the snapshot
@@ -31,7 +38,9 @@ the person's choice. A goal id that does
 not resolve is refused. Steering execution uses the selected input's runtime, so a
 channel follow-up keeps that channel source and work preparation keeps that
 channel binding. A system turn that consumes person steering still offers
-binding.
+binding. A retained tie is not a settled
+reply target or the next focus. A reply that stays unresolved keeps that tie,
+so a later control asks before it runs.
 
 Target questions store their choice with the existing durable question record.
 Their resolution appends the selected or cancelled binding in the same transaction

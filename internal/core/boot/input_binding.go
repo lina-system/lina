@@ -92,7 +92,13 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 			return s, e
 		}
 		for _, c := range choices {
-			if c.Question == "" && !c.Cancelled {
+			// A retained tie or a pending question is still ambiguous. Clear the
+			// admission target so that fallback cannot become the next focus.
+			if c.Question != "" || len(c.Tied) > 1 {
+				s.Focus = binding.Target{Class: "none"}
+				continue
+			}
+			if !c.Cancelled {
 				s.Focus = c.Target
 				if c.CreatedID != "" {
 					s.Focus = binding.Target{Class: "existing", ID: c.CreatedID, Kind: c.Target.Kind}
@@ -381,7 +387,7 @@ func overlayChoiceTarget(base binding.Target, choices []binding.Choice) binding.
 	var settled binding.Target
 	have := false
 	for _, c := range choices {
-		if c.Cancelled || c.Question != "" {
+		if c.Cancelled || c.Question != "" || len(c.Tied) > 1 {
 			return binding.Target{}
 		}
 		target := c.Target

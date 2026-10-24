@@ -45,7 +45,8 @@
     "values/legacy_hello.json",
     "values/stop_run.json",
     "normal/work_switch_request.json",
-    "normal/work_control_request.json"
+    "normal/work_control_request.json",
+    "normal/work_limit_request.json"
   ],
   "output": [
     "hello.json",
@@ -92,9 +93,11 @@
     "values/legacy_hello.json",
     "values/stop_run.json",
     "normal/work_switch_request.json",
-    "normal/work_control_request.json"
+    "normal/work_control_request.json",
+    "normal/work_limit_request.json"
   ],
   "errors": [
+    "",
     "",
     "",
     "",
@@ -142,7 +145,7 @@
     ""
   ],
   "outcome": {
-    "accepted": 45,
+    "accepted": 46,
     "malformed": 0,
     "unknown_kinds": 0
   }

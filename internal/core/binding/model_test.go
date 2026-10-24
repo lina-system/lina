@@ -6,7 +6,7 @@ import "testing"
 func TestAskRequiresTieAndIrreversibleAction(t *testing.T) {
 	s := State{Items: []Item{{ID: "a", Kind: "task", State: "running"}, {ID: "b", Kind: "task", State: "running"}}}
 	a, b := Target{Class: "existing", Kind: "task", ID: "a"}, Target{Class: "existing", Kind: "task", ID: "b"}
-	for _, action := range []string{"read", "edit", "steer", "start", "send", "pay", "delete"} {
+	for _, action := range []string{"read", "edit", "steer", "start", "send", "pay", "delete", "stop"} {
 		c := Choice{Quote: "do that", Target: a, Tied: []Target{a, b}, Action: action}
 		if err := ValidateChoice(s, "do that", c); err != nil {
 			t.Fatal(err)

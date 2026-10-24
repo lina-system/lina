@@ -160,27 +160,26 @@ func parseDefinition(r DefinitionRecord, person, agent string) (Definition, erro
 }
 
 // ProjectRecordID is the project record that stores a goal's definition.
-// An empty goal id does not resolve.
+// A value that already uses that record id is kept. An empty id does not resolve.
 func ProjectRecordID(goalID string) (string, bool) {
 	if goalID == "" {
 		return "", false
 	}
+	if rest, ok := strings.CutPrefix(goalID, "goal:"); ok && rest != "" {
+		return goalID, true
+	}
 	return "goal:" + goalID, true
 }
 
-// ProgressRef is the progress-line id of a project record. The progress
-// projection keeps the bare goal id. A value that is not that record does
-// not resolve, so a bare goal id stays a goal id.
-func ProgressRef(recordID string) (string, bool) {
-	goalID, ok := strings.CutPrefix(recordID, "goal:")
-	if !ok {
+// GoalID accepts a goal id or its project record id.
+func GoalID(id string) (string, bool) {
+	if id == "" {
 		return "", false
 	}
-	canonical, ok := ProjectRecordID(goalID)
-	if !ok || canonical != recordID {
-		return "", false
+	if rest, ok := strings.CutPrefix(id, "goal:"); ok && rest != "" {
+		return rest, true
 	}
-	return goalID, true
+	return id, true
 }
 
 func (e *Engine) prepareDefinition(ctx context.Context, g *Goal) error {

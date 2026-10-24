@@ -310,22 +310,28 @@ func TestUnplannedRecordCorrectionStaysBlockedAcrossRestart(t *testing.T) {
 	}
 }
 
-func TestProgressRefUsesBareGoalID(t *testing.T) {
+func TestGoalIDStripsProjectRecord(t *testing.T) {
 	record, ok := ProjectRecordID("turn:input:goal")
 	if !ok || record != "goal:turn:input:goal" {
 		t.Fatalf("record = %q %v", record, ok)
 	}
-	ref, ok := ProgressRef(record)
-	if !ok || ref != "turn:input:goal" {
-		t.Fatalf("ref = %q %v", ref, ok)
+	id, ok := GoalID(record)
+	if !ok || id != "turn:input:goal" {
+		t.Fatalf("id = %q %v", id, ok)
 	}
-	if _, ok = ProgressRef("turn:input:goal"); ok {
-		t.Fatal("bare goal id resolved as a record")
+	id, ok = GoalID("turn:input:goal")
+	if !ok || id != "turn:input:goal" {
+		t.Fatalf("bare id = %q %v", id, ok)
 	}
-	if _, ok = ProgressRef("goal:"); ok {
-		t.Fatal("empty goal id resolved")
+	id, ok = GoalID("goal:")
+	if !ok || id != "goal:" {
+		t.Fatalf("empty record suffix = %q %v", id, ok)
 	}
-	if _, ok = ProgressRef(""); ok {
+	if _, ok = GoalID(""); ok {
 		t.Fatal("empty id resolved")
+	}
+	again, ok := ProjectRecordID(record)
+	if !ok || again != record {
+		t.Fatal("record id was prefixed twice")
 	}
 }
