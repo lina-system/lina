@@ -100,7 +100,10 @@ Each failure resets the pass count. A failure, pass and another failure within
 48 hours of the first failure marks the issue `flaky`; it stays open until the
 same recovery threshold is met. Commit order decides that sequence: a pass
 reported after both failures still counts when it sits between them. The
-observation window uses plan start times.
+observation window is the span of those three plan start times, at most 48
+hours. The reporter keeps the newest failure heads, at most 16, even when the
+stored heads are more than 48 hours apart, so a delayed failure between them
+can still complete the sequence.
 The label remains as history after recovery. The reporter creates the label if
 it is missing and preserves other labels.
 An unfinished test resets the recovery streak without creating a failure;
@@ -175,7 +178,7 @@ The executable path map is `scripts/verify/scope.mjs`. All paths under `internal
 
 | Change | Selection |
 | --- | --- |
-| Only explicitly listed root documents, Markdown directly under `docs/policy/`, `docs/design/` or `docs/research/`, JSON and Markdown records under `evidence/`, or PNG captures directly under `evidence/brand/` or `evidence/generated-ui/` | `docs`; no automation installation or test run. |
+| Only explicitly listed root documents, Markdown directly under `docs/policy/`, `docs/design/` or `docs/research/`, JSON and Markdown records under `evidence/`, PNG captures directly under `evidence/brand/`, `evidence/generated-ui/` or a terminal directory under `evidence/tui-spike/terminal-qa/`, or text captures directly under `evidence/tui-spike/terminal-qa/` | `docs`; no automation installation or test run. |
 | A verification script, `.github/workflows/*.yml` or `*.yaml`, `.node-version`, shared repository configuration, or a file under `native/` | `docs`, `automation`, and every registered Go component. |
 | Empty or unavailable diff | `docs`, `automation`, and every registered Go component; never assume documentation-only. |
 | An unmapped path in the changed paths or candidate tree | `docs`, `automation`, and every registered Go component, but the gate refuses to pass until its verification is registered. |
@@ -270,7 +273,7 @@ Diagnostics name the source file, line and violated rule. Behavioral fixtures ex
 
 [V7](../../evidence/v7-dev-loop.json) records budgets declared before measurement, an edit followed by `go build`, `go vet` and uncached `go test` for the affected Go package, and `node scripts/foundation.mjs --full`. The initial budgets are 20 seconds for the affected-package loop and 60 seconds for full verification including vulnerability and license scans. Records identify the source, tool versions, cache conditions, commands, durations and outcomes. An over-budget measurement remains a failure; it is not hidden by raising the budget after the run.
 
-JSON and Markdown under `evidence/`, and PNG captures directly under `evidence/brand/` and `evidence/generated-ui/`, are documents paths. Updating an evidence record alone selects `docs`; the record is historical evidence, not a replacement for running checks on a changed candidate. Executable files in that directory remain unmapped.
+JSON and Markdown under `evidence/`, PNG captures directly under `evidence/brand/`, `evidence/generated-ui/` and a terminal directory under `evidence/tui-spike/terminal-qa/`, and text captures directly under `evidence/tui-spike/terminal-qa/` are documents paths. Updating an evidence record alone selects `docs`; the record is historical evidence, not a replacement for running checks on a changed candidate. Executable files in that directory remain unmapped.
 
 ### Path mapping
 

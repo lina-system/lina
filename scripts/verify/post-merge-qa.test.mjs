@@ -152,6 +152,37 @@ test('flaky detection uses the 48-hour observation window, not delayed reporting
   }
 });
 
+test('a rerun of an intervening pass is flaky only when its start is inside the failure window', async () => {
+  for (const started of [epoch + 2 * hour, epoch + 100 * hour]) {
+    const mock = github();
+    const opts = options(mock);
+    await reconcileQA({ ...opts, ...fixture('fail', 1) });
+    await reconcileQA({ ...opts, ...fixture('fail', 3) });
+    const pass = fixture('pass', 2);
+    pass.plan = sealPlan({ ...pass.plan, started });
+    pass.records[0].digest = pass.plan.digest;
+    await reconcileQA({ ...opts, ...pass });
+    assert.equal(mock.issues[0].labels.includes('flaky'), started === epoch + 2 * hour);
+  }
+});
+
+test('a delayed intervening failure still marks flaky when an earlier mark has no close neighbor yet', async () => {
+  const mock = github();
+  const opts = options(mock);
+  const at = (result, n, started) => {
+    const input = fixture(result, n);
+    input.plan = sealPlan({ ...input.plan, started });
+    input.records[0].digest = input.plan.digest;
+    return input;
+  };
+  await reconcileQA({ ...opts, ...at('fail', 1, epoch + hour) });
+  await reconcileQA({ ...opts, ...at('fail', 5, epoch + 100 * hour) });
+  await reconcileQA({ ...opts, ...at('fail', 3, epoch + 3 * hour) });
+  await reconcileQA({ ...opts, ...at('pass', 2, epoch + 2 * hour) });
+  assert.ok(mock.issues[0].labels.includes('flaky'));
+  assert.equal(mock.issues[0].state, 'open');
+});
+
 test('a pass reported after both failures still marks flaky when commit order puts it between them', async () => {
   const marker = /<!-- foundation-qa:(\{[^\n]+\}) -->/;
   for (const elapsed of [48 * hour, 48 * hour + 1]) {
