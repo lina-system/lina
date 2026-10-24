@@ -177,6 +177,11 @@ type process struct {
 	platform, account string
 	cfg               Config
 	sequence          atomic.Uint64
+	// life is the process's own lifetime. A child started for one read lives
+	// as long as the session: a request that ends must not stop the child that
+	// also serves the account's live subscription.
+	life context.Context
+	end  context.CancelFunc
 
 	mu       sync.Mutex
 	child    *child
@@ -195,7 +200,8 @@ func newProcess(platform, account string, cfg Config) *process {
 	if cfg.RequestTimeout <= 0 {
 		cfg.RequestTimeout = 2 * time.Minute
 	}
-	return &process{platform: platform, account: account, cfg: cfg}
+	life, end := context.WithCancel(context.Background())
+	return &process{platform: platform, account: account, cfg: cfg, life: life, end: end}
 }
 
 // DataDir is the add-on's own data directory for one account:
@@ -297,6 +303,9 @@ func (p *process) live(ctx context.Context, deliver func(messenger.Event) error)
 		current.live = nil
 		current.liveEnd = nil
 		current.mu.Unlock()
+		// The reader is gone, so the subscription ends too. The account's
+		// process keeps serving its other reads.
+		p.stopLive(current)
 	}()
 	if err := p.call(ctx, "live", nil, nil); err != nil {
 		return err
@@ -309,6 +318,17 @@ func (p *process) live(ctx context.Context, deliver func(messenger.Event) error)
 	case <-current.done:
 		return errors.Join(ErrStopped, current.failure())
 	}
+}
+
+// stopLive ends the child's subscription. Its answer is not needed, and a child
+// that already died has nothing to stop.
+func (p *process) stopLive(current *child) {
+	id := fmt.Sprintf("r%d", p.sequence.Add(1))
+	line, err := json.Marshal(map[string]any{"id": id, "op": "stop"})
+	if err != nil {
+		return
+	}
+	_ = current.write(append(line, '\n'))
 }
 
 // acquire returns the running child, starting it if needed. A child that died
@@ -352,7 +372,7 @@ func (p *process) acquire(ctx context.Context) (*child, error) {
 		}
 		p.mu.Lock()
 		if p.child == nil && p.failure == nil && !p.closed {
-			next, err := p.start(ctx)
+			next, err := p.start()
 			if err != nil {
 				p.failures++
 				p.mu.Unlock()
@@ -398,7 +418,7 @@ func (p *process) wait(ctx context.Context) error {
 // retire records that a child without a successful call has exited.
 func (p *process) retire(current *child) { current.finish() }
 
-func (p *process) start(ctx context.Context) (*child, error) {
+func (p *process) start() (*child, error) {
 	dir := p.dataDir()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("%w: data directory", ErrStopped)
@@ -432,7 +452,7 @@ func (p *process) start(ctx context.Context) (*child, error) {
 			Env:        environment,
 		})}
 	}
-	childCtx, cancel := context.WithCancel(ctx)
+	childCtx, cancel := context.WithCancel(p.life)
 	exited := make(chan error, 1)
 	next := &child{done: make(chan struct{}), pending: map[string]chan wireResponse{}}
 	go func() {
@@ -462,7 +482,7 @@ func (p *process) start(ctx context.Context) (*child, error) {
 		cancel()
 		parentIn.Close()
 		parentOut.Close()
-		_ = owner.Close(context.WithoutCancel(ctx))
+		_ = owner.Close(context.WithoutCancel(p.life))
 		<-exited
 	}
 	next.write = func(line []byte) error {
@@ -550,6 +570,8 @@ func (p *process) Close(ctx context.Context) error {
 	current := p.child
 	p.child = nil
 	p.mu.Unlock()
+	// No child outlives its session, whether or not one is running now.
+	p.end()
 	if current == nil {
 		return nil
 	}

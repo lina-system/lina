@@ -45,6 +45,15 @@ function harness(t, driver = fixtureDriver(), runtime = {}) {
       for (let i = 0; i < 400 && lines.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
       return lines;
     },
+    // write sends a request without waiting for its answer, for requests that
+    // stay pending while another one is answered.
+    write(value) {
+      input.write(`${typeof value === 'string' ? value : JSON.stringify(value)}\n`);
+    },
+    async waitFor(predicate) {
+      for (let i = 0; i < 400 && !all.some(predicate); i++) await new Promise(resolve => setTimeout(resolve, 5));
+      return all.filter(predicate);
+    },
     lines: () => lines,
     all: () => all,
   };
@@ -168,6 +177,22 @@ test('live events reach the caller until the subscription stops', async t => {
   assert.deepEqual(h.lines().find(line => line.event === 'message').message.id, 'm-9');
   await h.send({ id: 's', op: 'stop' });
   assert.equal(h.driver.delivered.length, 1);
+});
+
+test('a stop while a subscription is still starting installs no subscription', async t => {
+  let release;
+  const opening = new Promise(resolve => { release = resolve; });
+  const driver = fixtureDriver();
+  // The driver opens only when the test allows it, so the stop arrives while
+  // the subscription is still starting.
+  const h = harness(t, driver, { open: () => opening.then(() => driver) });
+  h.write({ id: 'l', op: 'live' });
+  h.write({ id: 's', op: 'stop' });
+  await h.waitFor(line => line.id === 's');
+  release();
+  const [live] = await h.waitFor(line => line.id === 'l');
+  assert.deepEqual(live.result, { live: false });
+  assert.deepEqual(driver.calls.filter(call => call === 'live'), []);
 });
 
 test('a live subscription that ends on its own is reported once, by code', async t => {

@@ -268,7 +268,9 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				}
 			})))
 			defer server.Close()
-			h, bootstrap := installedConversationHarness(t, server.URL)
+			// Installation and the seeding boot get their own total; the body
+			// below extends the deadline for dispatch, restarts and assertions.
+			h, bootstrap := installedConversationHarnessWithin(t, 2*time.Minute, server.URL)
 			ids := seedCodingFixture(t, h, bootstrap, test.Preset)
 			if test.Choice == "rule" || test.Choice == "quota-windows" {
 				table := map[string]any{"provisional": true, "rules": []any{map[string]any{"worker": "codex", "tags": []string{repo}, "priority": 10}}}
@@ -305,7 +307,7 @@ func testHeadlessWorkerThroughInstalledCore(t *testing.T, scenarioPath string, p
 				p.command.Env = append(p.command.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "LINA_WORKER_FIXTURE="+fixture, "LINA_WORKER_CASE="+fixtureCase, "LINA_RESPONSES_BASE_URL="+server.URL+"/v1", "LINA_RESPONSES_MODEL=fixture-model", "LINA_RESPONSES_API_KEY=synthetic-key")
 				load.wrap(t, p)
 				p.start(t)
-				h.connectWithin(p, time.Minute).Close()
+				h.connect(p).Close()
 				waitCoreReady(t, h)
 				return p
 			}
