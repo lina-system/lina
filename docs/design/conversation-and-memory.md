@@ -397,7 +397,10 @@ own tool scope and current channel binding; it cannot borrow the original turn's
 permissions. A tool executed for that steering input uses the steering runtime
 and event, so a channel follow-up keeps that channel's source. A result
 tool rebuilt for that input keeps the turn's prepared reply shapes, so the
-speaking agent's work-method check commits with the revision. Reading a tied
+speaking agent's work-method check commits with the revision. When that input
+belongs to another conversation, the result grant uses the selected
+conversation's active turn, so a new result is checked and created there.
+Reading a tied
 candidate does not resolve the original ambiguity. A retained tie, including a
 read that has not asked a question, does not settle a reply or the next focus.
 A reply that stays unresolved keeps that tie, so a later control asks before it

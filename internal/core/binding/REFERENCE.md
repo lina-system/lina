@@ -33,7 +33,8 @@ The binding snapshot includes that record as a project. A goal id that does
 not resolve is refused. Steering execution uses the selected input's runtime, so a
 channel follow-up keeps that channel source. Result tools rebuilt for that
 input keep the turn's prepared reply shapes, so the work-method check commits
-with the revision. A retained tie is not a settled
+with the revision. When the selected input belongs to another conversation, the
+result grant uses that conversation's active turn. A retained tie is not a settled
 reply target or the next focus. A reply that stays unresolved keeps that tie,
 so a later control asks before it runs.
 
