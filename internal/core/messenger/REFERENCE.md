@@ -135,7 +135,7 @@ session as `channels.Retry`, not acknowledged: the scheduled read resumes past
 its cursor and cannot see that edit or deletion again. The session replays the
 dispatch after a bounded backoff and keeps the source connected.
 
-`NewServiceWith` resolves an adapter per source, so two accounts on one platform
+`NewServiceWithResolver` resolves an adapter per source, so two accounts on one platform
 never share an adapter's read state. `NewService` keeps the map form for
 platforms with one account.
 
@@ -150,6 +150,13 @@ which waits for the Discord developer policy reading; nothing here learns.
 The [Teams adapter](teams/README.md) polls Graph through Core. Other platforms
 are tracked by #1070 and the per-platform issues.
 
+The [Telegram adapter](telegram/REFERENCE.md) uses the same live admission path,
+with account-wide deletion namespaces and persistent update recovery.
+
 Sender profile emails, when supplied by an adapter, are stored as evidence in
 `messenger_author` with the source account and platform author ID. They do not
 change ledger attribution or create an automatic person merge.
+
+Live events and history pages serialize revision planning and commit through a
+cancellable, per-source admission lock. Platform requests happen outside that
+lock, so waiting for a provider does not hold up live admission.

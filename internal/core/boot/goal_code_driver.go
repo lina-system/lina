@@ -303,6 +303,8 @@ func (d *codeGoalDriver) checkCriterion(ctx context.Context, s goal.State, g goa
 			return o, goal.ErrInvalid
 		}
 		o, err = d.libraryProof(ctx, s, g, a)
+	case "research.citations", "research.rubric":
+		o, collected, err = d.researchCriterion(ctx, s, g, t, a)
 	case "step.read":
 		if a.Check.Kind != goal.ReadEvidence || a.Check.TaskID == "" || a.Check.Target != t.ID {
 			return o, goal.ErrInvalid
