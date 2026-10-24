@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -469,6 +470,16 @@ func (s *Store) pendingEffects(ctx context.Context, source Source, chat string) 
 // cursor and coverage in one canon transaction. Reading the same messages again
 // adds nothing. A message missing from a page changes nothing.
 func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from Cursor, page Page) (PageResult, error) {
+	return s.admitPage(ctx, source, chat, from, page, true)
+}
+
+// AdmitMessages admits messages the platform pushed, such as an edit, without
+// touching the chat's cursor or coverage: a pushed message is not a read.
+func (s *Store) AdmitMessages(ctx context.Context, source Source, chat string, messages []Message) (PageResult, error) {
+	return s.admitPage(ctx, source, chat, "", Page{Messages: messages}, false)
+}
+
+func (s *Store) admitPage(ctx context.Context, source Source, chat string, from Cursor, page Page, progress bool) (PageResult, error) {
 	if !validName(source.Person) || !validName(source.Platform) || !validName(source.Account) || !validName(chat) {
 		return PageResult{}, ErrInvalid
 	}
@@ -554,6 +565,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		result.Deleted = deleted
 	}
 	if len(plans) == 0 && len(repairs) == 0 {
+		if !progress {
+			return result, nil
+		}
 		// Nothing new: still record the completed read and advance the cursor.
 		return result, s.commitProgress(ctx, source, chat, from, page, 0)
 	}
@@ -563,6 +577,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 				if _, err := tx.ExecContext(ctx, `UPDATE messenger_record SET state='deleted',deleted_at=? WHERE platform=? AND account=? AND chat=? AND message=? AND state='live'`, s.now().UTC().Format(time.RFC3339Nano), source.Platform, source.Account, chat, id); err != nil {
 					return err
 				}
+			}
+			if !progress {
+				return nil
 			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, 0)
 		}); err != nil {
@@ -595,6 +612,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 				if _, err := tx.ExecContext(ctx, `UPDATE messenger_record SET state='deleted',deleted_at=? WHERE platform=? AND account=? AND chat=? AND message=? AND state='live'`, s.now().UTC().Format(time.RFC3339Nano), source.Platform, source.Account, chat, id); err != nil {
 					return err
 				}
+			}
+			if !progress {
+				return nil
 			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, len(plans))
 		}
@@ -822,6 +842,61 @@ func (s *Store) DeleteRecords(ctx context.Context, source Source, chat string, m
 		deletions = append(deletions, Deletion{Message: message, At: s.now()})
 	}
 	return s.deleteRecords(ctx, source, chat, deletions)
+}
+
+// DeleteSourceMessages applies a deletion the platform pushed without naming a
+// chat, such as updateDeleteMessages. Telegram keeps one message-id sequence
+// for the account's private chats and basic groups, so a pushed id belongs to
+// at most one of them; every chat the id is live in is cleared, as TDLib does.
+func (s *Store) DeleteSourceMessages(ctx context.Context, source Source, messages []string) (int, error) {
+	if len(messages) == 0 {
+		return 0, nil
+	}
+	chats, err := s.chatMessagesByID(ctx, source, messages)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	ordered := make([]string, 0, len(chats))
+	for chat := range chats {
+		ordered = append(ordered, chat)
+	}
+	sort.Strings(ordered)
+	for _, chat := range ordered {
+		ids := chats[chat]
+		n, err := s.DeleteRecords(ctx, source, chat, ids)
+		if err != nil {
+			return total, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
+func (s *Store) chatMessagesByID(ctx context.Context, source Source, messages []string) (map[string][]string, error) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(messages)), ",")
+	args := []any{source.Platform, source.Account}
+	for _, message := range messages {
+		args = append(args, message)
+	}
+	found := map[string][]string{}
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT chat,message FROM messenger_record
+WHERE platform=? AND account=? AND state='live' AND message IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var chat, message string
+			if err := rows.Scan(&chat, &message); err != nil {
+				return err
+			}
+			found[chat] = append(found[chat], message)
+		}
+		return rows.Err()
+	})
+	return found, err
 }
 
 // DeleteChat is the person's deletion of one chat's records.

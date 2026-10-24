@@ -62,9 +62,20 @@ pages advance the cursor only. `Store.Freshness` derives fresh, stale or gap fro
 the newest read and the adapter's declared interval and read window; nothing
 about freshness is stored.
 
-## Not in this increment
+## Live events
 
-Live events are on the adapter boundary and the service can deliver them, but no
-platform adapter ships yet (#1070 and the per-platform issues). Writes are
-recorded and matched here; the write verbs, grants and approvals belong to
-#1084. Learning from the person's own records is #1075.
+An adapter's pushed event reaches `Service.Apply`: an edit or new message is
+admitted with `AdmitMessages` (records only, no cursor or coverage, since a push
+is not a read), and a deletion travels through the retraction path. A deletion
+the platform sends without a chat is resolved by `DeleteSourceMessages` across
+the chats where the id is live. `Service.RunLive` subscribes each connected
+source that declares live events, and a per-source adapter is created once and
+shared by the sync loop and the subscription.
+
+## Adapters
+
+The Telegram adapter ships with Core (`internal/core/messenger/telegram`, see
+its REFERENCE.md); Core opens it through `MessengerConfig.Factory` with its own
+secret store. Other platforms arrive with their own issues (#1070 onward).
+Writes are recorded and matched here; the write verbs, grants and approvals
+belong to #1084. Learning from the person's own records is #1075.
