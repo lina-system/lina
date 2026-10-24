@@ -13,11 +13,5 @@
       "inventory",
       "diet_log"
     ]
-  },
-  "reply": {
-    "comparison": "verdict-then-table"
-  },
-  "fill": [
-    "reply.comparison"
-  ]
+  }
 }

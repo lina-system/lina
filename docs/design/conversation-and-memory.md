@@ -195,7 +195,7 @@ An agent dispatched to an external channel ([integrations.md](integrations.md#ch
 
 - The owner's own chat with an agent's bot is that agent's main conversation with the owner. A message the owner writes there is a turn like any other. Its events carry the channel as their surface, and the app and the TUI show the same history. A message that arrives while a turn runs is steering input ([runtime.md](runtime.md#conversation-loop)).
 - The installed gateway now admits private Discord and Telegram input through that shared coordinator. Channel receipts preserve native identities; consumed steering has a durable marker, and a send worker independently delivers committed replies and background results. Group bindings keep separate scoped lanes.
-- Undrained channel steering keeps its own scoped runner for a deferred follow-up. Sharing the main conversation does not widen that input's tools or personal-memory access; a changed binding is checked again before model and tool dispatch. A follow-up sent for that steering keeps the channel receipt, including when an app turn consumes it.
+- Undrained channel steering keeps its own scoped runner for a deferred follow-up. Sharing the main conversation does not widen that input's tools or personal-memory access; a changed binding is checked again before model and tool dispatch.
 - A paired owner's forwarded message retains the adapter's forwarded entry, channel surface and native source locator, with no person id. Initial requests, live steering and history after restart project it through the same untrusted external-evidence boundary. The forwarding owner's authentication does not make the forwarded body an owner instruction. Ordinary owner text keeps its person entry, even when its body claims another role or says it is forwarded.
 - A chat shared with other people is a channel conversation: a separate conversation of the bound agent with its own ledger, one per chat or topic. The agent reads it with its persona and the knowledge layers it reads anywhere, except where the binding's scope narrows them: the scope's memory field decides whether the person's memory may be used in that chat, and by default it may not be. The app shows such a conversation read-only, and the person writes in the platform.
 - A message from someone other than the paired owner is an event with the speaker kind external participant. It carries the platform's user id and no person id. It is external evidence: never the person's words, an instruction or an approval ([main-authority.md](main-authority.md#authorization)). By default the agent does not answer it. No memory item and no person model is written from it.
@@ -361,7 +361,7 @@ Every input of the person is bound to one target: the focus, another 목표, 일
 
 **Core rules.** The first rule that holds decides, and the binding records it. Rules read surface facts and state, never meaning.
 
-1. **Reply or card.** Input sent as a reply to a message, notice or card that belongs to an item, or typed in an item's thread or card, binds to that item.
+1. **Reply or card.** Input sent as a reply to a message, notice or card that belongs to an item, or typed in an item's thread or card, binds to that item. The item is that message's one current choice, including a single task or run created after admission. Several targets, or a target still waiting on the person, leave the reply unresolved.
 2. **Exact reference.** The message holds the id or link of exactly one open candidate, or its exact title or one of the person's names for it ([Names](preset-work-methods.md#names)), matched after NFC and case folding with Korean particles allowed. When two or more match, or the match is a finished item, the model chooses.
 3. **Offered option.** Exactly one open question to the person offered options, and the message is one of them by number or label, or a yes or no to a yes-or-no question. The binding goes to that question's item.
 
@@ -371,42 +371,51 @@ Word lists and timing do not bind. In the owner's data, status, memory and new-w
 
 **The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
 
-`bind_input` records one request per binding. Choices append system events to the
-admission binding; retries retain the same event and question. The tool tolerates
-the shapes a model naturally writes, because a rejected argument loses the whole
-message: a request ordinal is optional and omitted ordinals take message order,
-a target may be the candidate object, its exact id or title, `new` or `none`, and
-an excerpt that is absent or not an exact copy becomes the input text. An exact
-candidate id is bound before a leading kind name and colon are read as new work. A kind
-word is mapped to the stored kinds, an unknown kind becomes a to-do, and a parent
-that is not an open initiative or project is dropped. Only a target naming no
-candidate, or more than one, returns `field` and `reason` with the allowed ids so
-the model can correct the next call. A work tool may name `input_binding` to
-select a request or consumed steering input. Both tools accept the selector under
-`input_event_id`, `input` or `text`: absent means the current input, `current`
-means the turn's own input, and an exact copy of an input's text means that input.
-An event id is valid only for an event this turn consumed; it is never an
-arbitrary ledger lookup. Conflicting selectors are rejected.
+`bind_input` records request ordinals and exact input excerpts. Choices append
+system events to the admission binding; retries retain the same event and question.
+A work tool may name `input_binding` to select a request or consumed steering input.
+Both tools use optional `input_event_id`: omit it for the current input, or name
+an admitted event consumed by this turn. It is never an arbitrary ledger lookup.
+The legacy `input` field remains readable. The current input's text, ignoring
+case and spacing, means that input. When the turn has only that input, other
+prose in the selector means it too. An event-shaped id the turn did not consume
+is rejected. Conflicting selectors are rejected. Unknown binding fields are
+ignored. Invalid new targets return the field and reason, allowed kinds, and
+for a parent error the authorized open initiative/project IDs, so the model can
+correct the next call. A question about two new targets labels each choice with
+its kind and parent, so the options stay distinct.
+A single `prepare_work` or `schedule_work` receipt records the created task as
+that request's focus. Several created tasks stay unresolved. When the person
+has selected a new target and creation has recorded its id, a later record
+read, progress read, or follow-up of that created item stays on the same
+request. Naming a different item does not replace the person's choice.
+A resumed channel request recovers the original channel receipt through the
+answer's parent chain before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
-permissions. Reading a tied candidate does not resolve the original ambiguity.
+permissions. A tool executed for that steering input uses the steering runtime
+and event, so a channel follow-up keeps that channel's source. Reading a tied
+candidate does not resolve the original ambiguity. A retained tie, including a
+read that has not asked a question, does not settle a reply or the next focus.
+A reply that stays unresolved keeps that tie, so a later control asks before it
+runs.
 Current choices enter the
 ContextPacket and remain reconstructible from their ledger sources.
 
 **When to ask.** The agent asks which item only when both hold:
 
 - two targets still tie after the rules and its own reading;
-- a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, or send, pay or delete.
+- a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, stop a worker, or send, pay or delete.
 
-It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. Each answer names one target. A new-work answer names its kind and, when it has a parent, that parent, so two new targets stay distinct. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
+It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
 
-When it asks, Core keeps the instruction pending until the person explicitly selects a target or cancels it. Passing over the question, an unrelated turn or a deadline never applies the recommended pick. While the target is unresolved, Core does not deliver the instruction as a steer, start its work, or perform its send, payment or deletion. Unrelated conversation and independent work continue. Selecting a target resolves only the binding; execution still requires the usual state and authorization checks ([main-authority.md](main-authority.md#approval)). This exception also applies to the general skipped-question rule in [Applying the record](preset-work-methods.md#applying-the-record).
+When it asks, Core keeps the instruction pending until the person explicitly selects a target or cancels it. Passing over the question, an unrelated turn or a deadline never applies the recommended pick. While the target is unresolved, Core does not deliver the instruction as a steer, start its work (including a step graph or a mock build), stop its worker, or perform its send, payment or deletion. Unrelated conversation and independent work continue. Selecting a target resolves only the binding; execution still requires the usual state and authorization checks ([main-authority.md](main-authority.md#approval)). This exception also applies to the general skipped-question rule in [Applying the record](preset-work-methods.md#applying-the-record).
 
 Target questions use the existing question card and Waiting for me. Their
 recommendation is the first option, with no default action. A card answer or an
 exact offered label or number resolves only that request; declining or cancelling
 records its cancellation. An unrelated turn can proceed without resolving it.
-Core checks a retained tie again when a later tool would make it irreversible. Stopping a worker counts as steering the running task it controls, so that tie asks before cancellation. On the answer continuation, a work call that omits a request ordinal uses the answered request. An explicit ordinal keeps the request it names. When the person answers a channel-originated target question, the resumed instruction recovers the original channel receipt through the continuation's parent chain before a follow-up is delivered. Starting a run for a selected channel input keeps that channel receipt on the run, so a later check still uses the channel's tool permission. A follow-up to a worker task, including `worker_input` for a selected channel input, keeps the same receipt and is not delivered after that channel loses tool permission.
+Core checks a retained tie again when a later tool would make it irreversible. On an answer continuation, a work call that omits a request ordinal uses the answered request. An explicit ordinal keeps the request it names. Starting a run for a selected channel input keeps that channel receipt on the run, so a later check still uses the channel's tool permission. A follow-up sent with `worker_input` for a selected channel input keeps the same receipt and is not delivered after that channel loses tool permission.
 
 **Showing and moving.**
 
@@ -416,7 +425,7 @@ Core checks a retained tie again when a later tool would make it irreversible. S
 
 **Admission and context.** Native person input and its initial system binding event commit together, before acknowledgement or turn dispatch. The binding is structured canon metadata stored inline, including full candidate titles; large work metadata must not prevent admission or require filesystem I/O inside the transaction. Admission reads the prior binding and the last exchange through the retraction-visible projection, so a withdrawn input neither restores focus nor refreshes its age. A notice's run identity comes from its durable delivery record, never from a notice body that may be stored as a material. Retrying an input reuses that event; input admitted during a turn keeps its own event and supplies its binding at the next model round. A binding records `no-rule` and an unresolved choice when no Core rule holds, alongside a fresh-focus or none default. It does not authorize an action. Existing pending input from an earlier Core version receives a binding before preparation resumes.
 
-Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
+Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A code goal record is a project candidate under its record id. A prepared task whose record has no person id is included when its agent and conversation belong to that person. A task recorded for someone else is not. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
 
 Client input may carry optional `reply_to`, `card` and `thread` references. Core resolves them within the authenticated conversation and the person's work queue. Platform reply ids are resolved within their channel address. An unresolved or foreign reference supplies no rule. General questions may explicitly mark a yes-or-no form; free text is never inferred to be that form.
 

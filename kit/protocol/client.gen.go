@@ -63,6 +63,8 @@ const (
 	KindWorkSwitchResult     Kind = "work_switch_result"
 	KindWorkControlRequest   Kind = "work_control_request"
 	KindWorkControlResult    Kind = "work_control_result"
+	KindWorkLimitRequest     Kind = "work_limit_request"
+	KindWorkLimitResult      Kind = "work_limit_result"
 	KindAccountRequest       Kind = "account_request"
 	KindAccountResult        Kind = "account_result"
 	KindMemoryRequest        Kind = "memory_request"
@@ -762,6 +764,7 @@ type Progress struct {
 	CardOrder   *[]string       `json:"card_order,omitempty"`
 	Counts      *ProgressCounts `json:"counts,omitempty"`
 	Lanes       *[]WorkerLane   `json:"lanes,omitempty"`
+	Limit       *RunLimitState  `json:"limit,omitempty"`
 	NextCursor  *string         `json:"next_cursor,omitempty"`
 	Rows        *[]ProgressRow  `json:"rows,omitempty"`
 	Waiting     *[]WaitingRow   `json:"waiting,omitempty"`
@@ -830,6 +833,7 @@ type ProgressStageWorker struct {
 type ProgressUpdate struct {
 	CardOrder   *[]string       `json:"card_order,omitempty"`
 	Counts      *ProgressCounts `json:"counts,omitempty"`
+	Limit       *RunLimitState  `json:"limit,omitempty"`
 	Rows        *[]ProgressRow  `json:"rows,omitempty"`
 	Stream      *StreamMetadata `json:"stream,omitempty"`
 	Text        *string         `json:"text,omitempty"`
@@ -1014,6 +1018,19 @@ type Resync struct {
 type ResyncRequired struct {
 	Cursor StreamCursor `json:"cursor"`
 	Topic  string       `json:"topic"`
+}
+type RunLimitReason string
+
+const (
+	RunLimitReasonSlot  RunLimitReason = "slot"
+	RunLimitReasonQuota RunLimitReason = "quota"
+	RunLimitReasonLoad  RunLimitReason = "load"
+)
+
+type RunLimitState struct {
+	Automatic bool           `json:"automatic"`
+	Reason    RunLimitReason `json:"reason"`
+	Value     json.Number    `json:"value"`
 }
 type RunStatus struct {
 	Stream *StreamMetadata `json:"stream,omitempty"`
@@ -1603,6 +1620,15 @@ type WorkControlResult struct {
 	Rank      json.Number `json:"rank"`
 	State     string      `json:"state"`
 }
+type WorkLimitRequest struct {
+	Operation string       `json:"operation"`
+	Value     *json.Number `json:"value,omitempty"`
+}
+type WorkLimitResult struct {
+	Automatic bool           `json:"automatic"`
+	Limit     json.Number    `json:"limit"`
+	Reason    RunLimitReason `json:"reason"`
+}
 type WorkRequest struct {
 	AgentID       *string   `json:"agent_id,omitempty"`
 	Base          *string   `json:"base,omitempty"`
@@ -1719,6 +1745,8 @@ func (WorkSwitchRequest) isPayload()    {}
 func (WorkSwitchResult) isPayload()     {}
 func (WorkControlRequest) isPayload()   {}
 func (WorkControlResult) isPayload()    {}
+func (WorkLimitRequest) isPayload()     {}
+func (WorkLimitResult) isPayload()      {}
 func (AccountRequest) isPayload()       {}
 func (AccountResult) isPayload()        {}
 func (MemoryRequest) isPayload()        {}
@@ -1995,6 +2023,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		return p, err
 	case KindWorkControlResult:
 		var p WorkControlResult
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWorkLimitRequest:
+		var p WorkLimitRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWorkLimitResult:
+		var p WorkLimitResult
 		err := json.Unmarshal(data, &p)
 		return p, err
 	case KindAccountRequest:
@@ -2296,6 +2332,8 @@ const clientSchemaJSON = `{
         "work_switch_result",
         "work_control_request",
         "work_control_result",
+        "work_limit_request",
+        "work_limit_result",
         "account_request",
         "account_result",
         "memory_request",
@@ -3941,6 +3979,38 @@ const clientSchemaJSON = `{
       "if": {
         "properties": {
           "kind": {
+            "const": "work_limit_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_limit_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_limit_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_limit_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
             "const": "a2a_request"
           }
         }
@@ -5538,6 +5608,9 @@ const clientSchemaJSON = `{
         "waiting_more": {
           "type": "integer",
           "minimum": 0
+        },
+        "limit": {
+          "$ref": "#/$defs/run_limit_state"
         }
       },
       "required": [],
@@ -5576,6 +5649,9 @@ const clientSchemaJSON = `{
         "waiting_more": {
           "type": "integer",
           "minimum": 0
+        },
+        "limit": {
+          "$ref": "#/$defs/run_limit_state"
         }
       },
       "required": [],
@@ -9072,6 +9148,79 @@ const clientSchemaJSON = `{
         "state",
         "paused",
         "rank"
+      ],
+      "additionalProperties": false
+    },
+    "run_limit_reason": {
+      "type": "string",
+      "enum": [
+        "slot",
+        "quota",
+        "load"
+      ]
+    },
+    "run_limit_state": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "automatic": {
+          "type": "boolean"
+        },
+        "reason": {
+          "$ref": "#/$defs/run_limit_reason"
+        }
+      },
+      "required": [
+        "value",
+        "automatic",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "work_limit_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "limit_up",
+            "limit_down",
+            "limit_auto",
+            "limit_set"
+          ]
+        },
+        "value": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "work_limit_result": {
+      "type": "object",
+      "properties": {
+        "automatic": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason": {
+          "$ref": "#/$defs/run_limit_reason"
+        }
+      },
+      "required": [
+        "automatic",
+        "limit",
+        "reason"
       ],
       "additionalProperties": false
     },

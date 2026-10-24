@@ -30,7 +30,7 @@ func replayInstructions(format string, p agents.Preparation, tools []provider.To
 	case "agent-v1":
 		return text, nil
 	case "persona-tui-v1", "persona-tui-work-method-v1", "persona-tui-work-method-v2":
-		return assemble.PersonaCoreV1 + "\n" + assemble.TUIFormatting + "\n\n" + text, nil
+		return assemble.TUIComposition(text), nil
 	case "persona-v1":
 		return assemble.PersonaCoreV1 + "\n\n" + text, nil
 	default:

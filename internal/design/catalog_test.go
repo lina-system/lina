@@ -97,6 +97,8 @@ func TestCatalogCoversClosedWireCodes(t *testing.T) {
 					childPrefix = "running.state."
 				case "running_reason":
 					childPrefix = "running.reason."
+				case "run_limit_reason":
+					childPrefix = "run_limit.reason."
 				}
 				walk(child, childPrefix)
 			}

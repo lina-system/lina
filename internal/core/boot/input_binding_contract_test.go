@@ -3,7 +3,6 @@ package boot
 
 import (
 	"encoding/json"
-	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -58,53 +57,44 @@ func TestModelBindingContractTextInput(t *testing.T) {
 
 func TestModelBindingContractNewTargetRecovery(t *testing.T) {
 	for _, tc := range []struct {
-		name, target string
-		want         binding.Target
+		name, target, field, reason string
+		allowed                     []string
 	}{
-		{"kind", `{"class":"new","kind":"note"}`, binding.Target{Class: "new", Kind: "todo"}},
-		{"parent", `{"class":"new","kind":"todo","parent":"active-task"}`, binding.Target{Class: "new", Kind: "todo"}},
-		{"id", `{"class":"new","kind":"todo","id":"invented"}`, binding.Target{Class: "new", Kind: "todo"}},
-		{"named", `{"class":"new","kind":"todo","title":"Garden"}`, binding.Target{Class: "existing", ID: "garden", Kind: "project"}},
+		{"kind", `{"class":"new","kind":"note"}`, "target.kind", "unsupported_kind", []string{"initiative", "project", "todo", "task", "run"}},
+		{"parent", `{"class":"new","kind":"todo","parent":"active-task"}`, "target.parent", "invalid_parent", []string{"garden"}},
+		{"id", `{"class":"new","kind":"todo","id":"invented"}`, "target.id", "must_be_empty", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, p := turnRuntime(t)
 			now := time.Now().UTC()
 			c := intakereplay.Case{Version: 1, ID: "synthetic-new-target", Set: "hard", State: &binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Questions: []binding.Question{}, Surfaces: map[string]string{}, Items: []binding.Item{{ID: "garden", Kind: "project", Title: "Garden", State: "active", LastActivity: now}, {ID: "active-task", Kind: "task", Title: "Planting", State: "running", LastActivity: now}, {ID: "closed-project", Kind: "project", Title: "Finished", State: "completed", LastActivity: now}}}, Input: binding.Input{Text: "Save a garden task."}, Gold: []intakereplay.Gold{{Target: binding.Target{Class: "new", Kind: "todo"}}}}
-			p.steps = []turnStep{bindingCallStep("tolerant", `{"bindings":[{"quote":"Save a garden task.","target":`+tc.target+`}]}`), {events: turnText("Bound.")}}
-			got, err := ReplayIntakeModelCase(t.Context(), c, r.route)
-			if err != nil || len(got) != 1 || got[0].Decider != "model" || got[0].Target != tc.want {
-				t.Fatalf("new target: %+v %v", got, err)
+			fix := bindingCallStep("corrected", `{"bindings":[{"request":0,"quote":"Save a garden task.","target":{"class":"new","kind":"todo","parent":"garden"}}]}`)
+			fix.before = func(req provider.Request) {
+				result := bindingToolResult(t, req, "invalid")
+				// Inspect structured recovery fields, never error prose.
+				var detail struct {
+					Field              string   `json:"field"`
+					Reason             string   `json:"reason"`
+					Allowed            []string `json:"allowed"`
+					AllowedParentKinds []string `json:"allowed_parent_kinds"`
+				}
+				_ = json.Unmarshal(result.Output, &detail)
+				if result.Code != loop.Invalid || detail.Field != tc.field || detail.Reason != tc.reason || !slices.Equal(detail.Allowed, tc.allowed) {
+					t.Fatalf("uncorrectable new target error: code=%s detail=%+v", result.Code, detail)
+				}
+				if tc.name == "parent" && !slices.Equal(detail.AllowedParentKinds, []string{"initiative", "project"}) {
+					t.Fatalf("missing parent kinds: %+v", detail)
+				}
 			}
-			if len(p.requests) != 2 {
-				t.Fatalf("tolerable target cost %d requests", len(p.requests))
+			p.steps = []turnStep{bindingCallStep("invalid", `{"bindings":[{"request":0,"quote":"Save a garden task.","target":`+tc.target+`}]}`), fix, {events: turnText("Bound.")}}
+			got, err := ReplayIntakeModelCase(t.Context(), c, r.route)
+			if err != nil || len(got) != 1 || got[0].Decider != "model" || got[0].Target.Parent != "garden" {
+				t.Fatalf("recovery: %+v %v", got, err)
+			}
+			if len(p.requests) != 3 {
+				t.Fatalf("recovery took %d requests", len(p.requests))
 			}
 		})
-	}
-}
-
-// A target that names no open item, or names two, is the one argument Core
-// cannot guess. It returns the candidates so the model can correct the call.
-func TestModelBindingContractAmbiguousTargetCorrection(t *testing.T) {
-	r, p := turnRuntime(t)
-	now := time.Now().UTC()
-	c := intakereplay.Case{Version: 1, ID: "synthetic-ambiguous", Set: "hard", State: &binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Questions: []binding.Question{}, Surfaces: map[string]string{}, Items: []binding.Item{{ID: "garden", Kind: "project", Title: "Garden", State: "active", LastActivity: now}}}, Input: binding.Input{Text: "Plant the beds."}, Gold: []intakereplay.Gold{{Target: binding.Target{Class: "existing", ID: "garden", Kind: "project"}}}}
-	fix := bindingCallStep("corrected", `{"bindings":[{"target":"garden"}]}`)
-	fix.before = func(req provider.Request) {
-		result := bindingToolResult(t, req, "invented")
-		var detail struct {
-			Field   string   `json:"field"`
-			Reason  string   `json:"reason"`
-			Allowed []string `json:"allowed"`
-		}
-		_ = json.Unmarshal(result.Output, &detail)
-		if result.Code != loop.Invalid || detail.Field != "bindings[0].target" || detail.Reason != "unknown_target" || !slices.Equal(detail.Allowed, []string{"garden"}) {
-			t.Fatalf("uncorrectable target error: code=%s detail=%+v", result.Code, detail)
-		}
-	}
-	p.steps = []turnStep{bindingCallStep("invented", `{"bindings":[{"target":"kitchen"}]}`), fix, {events: turnText("Bound.")}}
-	got, err := ReplayIntakeModelCase(t.Context(), c, r.route)
-	if err != nil || len(got) != 1 || got[0].Target.ID != "garden" {
-		t.Fatalf("recovery: %+v %v", got, err)
 	}
 }
 
@@ -149,97 +139,5 @@ func TestModelBindingContractEventSelection(t *testing.T) {
 	result := questionCall(t, tools, "write_record", "event-write", map[string]any{"kind": "todo", "title": "Selected request", "note": "Current event.", "input_binding": map[string]any{"input_event_id": current.ID, "request": 0}})
 	if result.Code != loop.OK {
 		t.Fatal(result)
-	}
-}
-
-// The model writes binding arguments as it reads them. A target it names by id
-// or title, an excerpt it paraphrased, a message copy in the selector field and
-// extra metadata must all bind; only an unknown or ambiguous item is corrected
-// by the model.
-func TestModelBindingContractTolerantArguments(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		args func(text string) string
-		want binding.Target
-	}{
-		{"id-text", func(text string) string {
-			return `{"input_event_id":"` + text + `","bindings":{"quote":"` + text + `","target":"garden"}}`
-		}, binding.Target{Class: "existing", ID: "garden", Kind: "project"}},
-		{"title-text", func(string) string {
-			return `{"bindings":[{"target":"Garden","note":"ignored metadata"}]}`
-		}, binding.Target{Class: "existing", ID: "garden", Kind: "project"}},
-		{"new-kind", func(string) string {
-			return `{"bindings":[{"quote":"New task.","target":{"class":"new","kind":"to-do"}}]}`
-		}, binding.Target{Class: "new", Kind: "todo"}},
-		{"focus", func(string) string {
-			return `{"bindings":[{"target":{"class":"focus"}}]}`
-		}, binding.Target{Class: "none"}},
-		{"none", func(string) string {
-			return `{"bindings":[{"target":{"class":"none","kind":""}}]}`
-		}, binding.Target{Class: "none"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r, p := turnRuntime(t)
-			now := time.Now().UTC()
-			c := intakereplay.Case{Version: 1, ID: "synthetic-tolerant", Set: "hard", State: &binding.State{Clock: now, Focus: binding.Target{Class: "existing", ID: "garden", Kind: "project"}, FocusAgeSeconds: 60, Questions: []binding.Question{}, Surfaces: map[string]string{}, Items: []binding.Item{{ID: "garden", Title: "Garden", Kind: "project", State: "active", LastActivity: now}}}, Input: binding.Input{Text: "Plant the beds."}, Gold: []intakereplay.Gold{{Target: binding.Target{Class: "new", Kind: "todo"}}}}
-			p.steps = []turnStep{bindingCallStep("tolerant", tc.args("Plant the beds.")), {events: turnText("Bound."), before: func(req provider.Request) {
-				if result := bindingToolResult(t, req, "tolerant"); result.Code != loop.OK {
-					t.Fatalf("binding arguments rejected: %+v", result)
-				}
-			}}}
-			got, err := ReplayIntakeModelCase(t.Context(), c, r.route)
-			if err != nil || len(got) != 1 || got[0].Target != tc.want {
-				t.Fatalf("binding: %+v %v", got, err)
-			}
-		})
-	}
-}
-
-// A message with two requests gets one binding each even when the second target
-// is a plain id and no request ordinals are sent.
-func TestModelBindingContractMultipleRequestsWithoutOrdinals(t *testing.T) {
-	r, p := turnRuntime(t)
-	now := time.Now().UTC()
-	text := "Check the garden. Start a new task."
-	c := intakereplay.Case{Version: 1, ID: "synthetic-two-requests", Set: "hard", State: &binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Questions: []binding.Question{}, Surfaces: map[string]string{}, Items: []binding.Item{{ID: "garden", Title: "Garden", Kind: "project", State: "active", LastActivity: now}}}, Input: binding.Input{Text: text}, Gold: []intakereplay.Gold{{Target: binding.Target{Class: "existing", ID: "garden", Kind: "project"}}, {Target: binding.Target{Class: "new", Kind: "todo"}}}}
-	args, _ := json.Marshal(map[string]any{"bindings": []any{
-		map[string]any{"target": "garden"},
-		map[string]any{"target": map[string]string{"class": "new", "kind": "todo"}, "difference": "Other work."},
-	}})
-	p.steps = []turnStep{bindingCallStep("two", string(args)), {events: turnText("Bound.")}}
-	got, err := ReplayIntakeModelCase(t.Context(), c, r.route)
-	if err != nil || len(got) != 2 {
-		t.Fatalf("bindings: %+v %v", got, err)
-	}
-	if got[0].Target.ID != "garden" || got[1].Target.Class != "new" || got[1].Target.Kind != "todo" {
-		t.Fatalf("two requests bound as %+v", got)
-	}
-	if intakereplay.Score(c, got).Passed != 1 {
-		t.Fatalf("score: %+v", intakereplay.Score(c, got))
-	}
-}
-
-// The work-tool selector accepts the message text and common selector names.
-func TestModelBindingContractWorkSelectorShapes(t *testing.T) {
-	r, _ := turnRuntime(t)
-	create := questionPersonInput(t, r, "selector-create", "Save a garden task.")
-	receipt := questionCall(t, modelBindingTools(t, r, create), "write_record", "create", map[string]any{"kind": "todo", "title": "Garden beds", "note": "Plant seeds."})
-	if receipt.Code != loop.OK {
-		t.Fatal(receipt)
-	}
-	var saved struct{ ID string }
-	_ = json.Unmarshal(receipt.Output, &saved)
-	input := questionPersonInput(t, r, "selector-shapes", "Check the garden beds.")
-	for n, ref := range []any{
-		map[string]any{"input": input.Body.Text(), "request": 0},
-		map[string]any{"input_event_id": input.Body.Text()},
-		map[string]any{"text": "current"},
-		0,
-		input.Body.Text(),
-	} {
-		tools := modelBindingTools(t, r, input)
-		if result := questionCall(t, tools, "read_record", fmt.Sprint("shape-", n), map[string]any{"id": saved.ID, "input_binding": ref}); result.Code != loop.OK {
-			t.Fatalf("selector shape %d rejected: %+v", n, result)
-		}
 	}
 }
