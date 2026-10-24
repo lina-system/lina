@@ -178,7 +178,7 @@ func TestWorkerMailboxOfflineAddressAndUncertainDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.snapshot.State = worker.Dead
-	if err = e.ownerSteering(t.Context(), "uncertain", "must not repeat"); err == nil {
+	if err = e.ownerSteering(t.Context(), "uncertain", "must not repeat", nil); err == nil {
 		t.Fatal("uncertain delivery silently accepted")
 	}
 	p.snapshot.State = worker.Active
@@ -195,7 +195,7 @@ func TestWorkerMailboxHoldsInputUntilNativeDecisionResolves(t *testing.T) {
 	th := worker.Thread{ID: "waiting", TaskID: "task", AttemptID: "attempt", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}
 	p := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Waiting, Pending: []worker.Request{{ID: "approval", Method: "session/request_permission"}}}}, tier: "turn"}
 	e := &workerSession{origin: r, thread: th, adapter: p, scheduled: true}
-	if err := e.ownerSteering(t.Context(), "waiting-message", "follow-up after the decision"); err != nil {
+	if err := e.ownerSteering(t.Context(), "waiting-message", "follow-up after the decision", nil); err != nil {
 		t.Fatal(err)
 	}
 	event := worker.Event{Thread: th, Kind: worker.ToolCallEvent, ToolCall: &worker.ToolCall{ID: "tool", Namespace: "lina", Name: "read_projection", Arguments: json.RawMessage(`{}`)}}
@@ -217,7 +217,7 @@ func TestWorkerMailboxPushAfterAnswer(t *testing.T) {
 	th := worker.Thread{ID: "answer", TaskID: "task", AttemptID: "attempt", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}
 	p := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Waiting}}, tier: "push"}
 	e := &workerSession{origin: r, thread: th, adapter: p, scheduled: true, done: make(chan struct{}), close: func() error { return nil }}
-	if err := e.ownerSteering(t.Context(), "after-answer", "continue with the correction"); err != nil {
+	if err := e.ownerSteering(t.Context(), "after-answer", "continue with the correction", nil); err != nil {
 		t.Fatal(err)
 	}
 	p.snapshot.State = worker.Active
@@ -233,7 +233,7 @@ func TestWorkerMailboxPushOnResolvedEvent(t *testing.T) {
 	th := worker.Thread{ID: "resolved", TaskID: "task", AttemptID: "attempt", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1}
 	p := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Waiting, Pending: []worker.Request{{ID: "approval", Method: "item/commandExecution/requestApproval", Params: json.RawMessage(`{}`)}}}}, tier: "push", events: make(chan worker.Event)}
 	e := &workerSession{origin: r, thread: th, adapter: p, scheduled: true, done: make(chan struct{}), close: func() error { return nil }, approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}}
-	if err := e.ownerSteering(t.Context(), "while-waiting", "apply the correction"); err != nil {
+	if err := e.ownerSteering(t.Context(), "while-waiting", "apply the correction", nil); err != nil {
 		t.Fatal(err)
 	}
 	go e.observe()

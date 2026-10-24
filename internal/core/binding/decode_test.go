@@ -91,6 +91,36 @@ func TestNormalizeChoicesBoundsMetadata(t *testing.T) {
 	}
 }
 
+// A candidate id that begins with a stored kind name is still that item.
+// Kind-and-colon text is new work only when it is not an exact candidate id.
+func TestExactCandidateIDBeatsKindPrefix(t *testing.T) {
+	s := decodeState()
+	s.Items = append(s.Items, Item{ID: "task:a", Title: "Recovered", Kind: "task", State: "running", LastActivity: s.Clock})
+	text := "Continue the recovered task."
+	got, err := NormalizeChoices(s, text, []json.RawMessage{json.RawMessage(`{"target":"task:a"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Target{Class: "existing", ID: "task:a", Kind: "task"}
+	if len(got) != 1 || got[0].Target != want {
+		t.Fatalf("exact id: got %+v want %+v", got, want)
+	}
+	folded, err := NormalizeChoices(s, text, []json.RawMessage{json.RawMessage(`{"target":"Task:A"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(folded) != 1 || folded[0].Target != want {
+		t.Fatalf("folded id: got %+v want %+v", folded, want)
+	}
+	fresh, err := NormalizeChoices(s, text, []json.RawMessage{json.RawMessage(`{"target":"task:brand-new"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fresh) != 1 || fresh[0].Target != (Target{Class: "new", Kind: "task"}) {
+		t.Fatalf("kind shorthand: got %+v", fresh)
+	}
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
