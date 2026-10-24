@@ -23,33 +23,85 @@ type goalTaskList struct{}
 
 func goalTaskKey(goalID, taskID string) string { return goalID + "\x1f" + taskID }
 
-func (goalTaskList) Candidates(ctx context.Context, tx *canon.Tx, person string) ([]string, error) {
+func (s goalTaskList) Candidates(ctx context.Context, tx *canon.Tx, person string) ([]string, error) {
+	items, err := s.Items(ctx, tx, person)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	return ids, nil
+}
+
+// Items reads each goal, the goals' actions and the person's runs once for
+// all task rows.
+func (goalTaskList) Items(ctx context.Context, tx *canon.Tx, person string) ([]runs.ListCandidate, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT body FROM work_records WHERE kind='goal' ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var ids []string
+	var goals []goal.Goal
 	for rows.Next() {
 		var raw []byte
 		if err = rows.Scan(&raw); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		var g goal.Goal
 		if err = json.Unmarshal(raw, &g); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		if g.Person != person {
-			continue
+		if g.Person == person {
+			goals = append(goals, g)
 		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	var actions map[string][]goal.Action
+	var personRunList []personRun
+	var runsLoaded bool
+	load := goalTaskLoad{
+		actions: func(goalID, taskID string) ([]goal.Action, error) {
+			if actions == nil {
+				all, err := allGoalTaskActions(ctx, tx)
+				if err != nil {
+					return nil, err
+				}
+				actions = all
+			}
+			return actions[goalTaskKey(goalID, taskID)], nil
+		},
+		runs: func(string) ([]personRun, error) {
+			if !runsLoaded {
+				list, err := personRuns(ctx, tx, person)
+				if err != nil {
+					return nil, err
+				}
+				personRunList, runsLoaded = list, true
+			}
+			return personRunList, nil
+		},
+	}
+	var out []runs.ListCandidate
+	for _, g := range goals {
 		for _, task := range g.Tasks {
 			if task.ID == "" {
 				continue
 			}
-			ids = append(ids, goalTaskKey(g.ID, task.ID))
+			item, err := goalTaskItem(ctx, tx, g, task, load)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, runs.ListCandidate{ID: goalTaskKey(g.ID, task.ID), Item: item})
 		}
 	}
-	return ids, rows.Err()
+	return out, nil
 }
 
 func (goalTaskList) Read(ctx context.Context, tx *canon.Tx, id string) (runs.ListItem, error) {
@@ -69,39 +121,62 @@ func (goalTaskList) Read(ctx context.Context, tx *canon.Tx, id string) (runs.Lis
 		if task.ID != taskID {
 			continue
 		}
-		summary, state := goal.RunningRow(task)
-		item := runs.ListItem{Person: g.Person, Agent: g.Agent, Summary: summary, State: state}
-		if state == "working" {
-			if reason, ok := goal.RunningHold(g, task.ID); ok {
-				item.State = "waiting"
-				item.Reason = reason
-			}
-		}
-		if task.Kind != goal.BackgroundStep {
-			return item, nil
-		}
-		actions, err := goalTaskActions(ctx, tx, g.ID, task.ID)
-		if err != nil {
-			return runs.ListItem{}, err
-		}
-		runID, err := goalTaskRunID(ctx, tx, g.Person, goalTaskCalls(actions, task.Attempt, false))
-		if err != nil {
-			return runs.ListItem{}, err
-		}
-		if runID == "" {
-			return item, nil
-		}
-		runItem, err := (runs.RunListSource{}).Read(ctx, tx, runID)
-		if err != nil {
-			return runs.ListItem{}, err
-		}
-		if runItem.State == string(runs.Waiting) {
-			item.State = "waiting"
-			item.Reason = runItem.Reason
-		}
-		return item, nil
+		return goalTaskItem(ctx, tx, g, task, goalTaskLoad{
+			actions: func(goalID, taskID string) ([]goal.Action, error) { return goalTaskActions(ctx, tx, goalID, taskID) },
+			runs:    func(person string) ([]personRun, error) { return personRuns(ctx, tx, person) },
+		})
 	}
 	return runs.ListItem{}, sql.ErrNoRows
+}
+
+// goalTaskLoad supplies what a background step's row reads besides its goal.
+type goalTaskLoad struct {
+	actions func(goalID, taskID string) ([]goal.Action, error)
+	runs    func(person string) ([]personRun, error)
+}
+
+// goalTaskItem is one task's row. A background step whose run waits shows
+// that run's reason.
+func goalTaskItem(ctx context.Context, tx *canon.Tx, g goal.Goal, task goal.Task, load goalTaskLoad) (runs.ListItem, error) {
+	summary, state := goal.RunningRow(task)
+	item := runs.ListItem{Person: g.Person, Agent: g.Agent, Summary: summary, State: state}
+	if state == "working" {
+		if reason, ok := goal.RunningHold(g, task.ID); ok {
+			item.State = "waiting"
+			item.Reason = reason
+		}
+	}
+	if task.Kind != goal.BackgroundStep {
+		return item, nil
+	}
+	actions, err := load.actions(g.ID, task.ID)
+	if err != nil {
+		return runs.ListItem{}, err
+	}
+	calls := goalTaskCalls(actions, task.Attempt, false)
+	if g.Person == "" || len(calls) == 0 {
+		return item, nil
+	}
+	list, err := load.runs(g.Person)
+	if err != nil {
+		return runs.ListItem{}, err
+	}
+	runID, err := matchRunID(list, calls)
+	if err != nil {
+		return runs.ListItem{}, err
+	}
+	if runID == "" {
+		return item, nil
+	}
+	runItem, err := (runs.RunListSource{}).Read(ctx, tx, runID)
+	if err != nil {
+		return runs.ListItem{}, err
+	}
+	if runItem.State == string(runs.Waiting) {
+		item.State = "waiting"
+		item.Reason = runItem.Reason
+	}
+	return item, nil
 }
 
 // goalQuietWork hides a dispatch card that already has a goal-task row.
@@ -112,8 +187,15 @@ func (s goalQuietWork) Candidates(ctx context.Context, tx *canon.Tx, person stri
 	if err != nil {
 		return nil, err
 	}
+	steps, err := goalStepCards(ctx, tx, person)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]string, 0, len(ids))
 	for _, id := range ids {
+		if i := strings.LastIndexByte(id, ':'); i > 0 && steps[id[:i]] {
+			continue
+		}
 		goalCard, err := dispatchGoal(ctx, tx, id)
 		if err != nil {
 			return nil, err
@@ -123,6 +205,61 @@ func (s goalQuietWork) Candidates(ctx context.Context, tx *canon.Tx, person stri
 		}
 	}
 	return out, nil
+}
+
+// goalStepCards names the cards the person's goals dispatched for their tasks.
+// A card carries its dispatch's id, so a goal's worker actions are the link,
+// as progress reads them; the dispatch record is marked as a goal's only after
+// the card exists.
+func goalStepCards(ctx context.Context, tx *canon.Tx, person string) (map[string]bool, error) {
+	turns := map[string]string{}
+	rows, err := tx.QueryContext(ctx, "SELECT body FROM work_records WHERE kind='goal'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw []byte
+		var g goal.Goal
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(raw, &g); err != nil {
+			return nil, err
+		}
+		if g.Person == person && g.Turn != "" {
+			turns[g.ID] = g.Turn
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	rows, err = tx.QueryContext(ctx, "SELECT body FROM work_records WHERE kind='action'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cards := map[string]bool{}
+	for rows.Next() {
+		var raw []byte
+		var a goal.Action
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(raw, &a); err != nil {
+			return nil, err
+		}
+		turn, ok := turns[a.GoalID]
+		if !ok || a.TaskID == "" || !goal.WorkerAction(a.Kind) {
+			continue
+		}
+		source := a.ID
+		if a.ObserveActionID != "" {
+			source = a.ObserveActionID
+		}
+		cards[work.DispatchID(turn, source)] = true
+	}
+	return cards, rows.Err()
 }
 
 func (s goalQuietWork) Read(ctx context.Context, tx *canon.Tx, id string) (runs.ListItem, error) {
@@ -384,36 +521,74 @@ func goalTaskActions(ctx context.Context, tx *canon.Tx, goalID, taskID string) (
 	return actions, rows.Err()
 }
 
+// allGoalTaskActions groups every goal action by its goal and task.
+func allGoalTaskActions(ctx context.Context, tx *canon.Tx) (map[string][]goal.Action, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT body FROM work_records WHERE kind='action'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]goal.Action{}
+	for rows.Next() {
+		var body []byte
+		var action goal.Action
+		if err = rows.Scan(&body); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(body, &action); err != nil {
+			return nil, err
+		}
+		if action.GoalID != "" && action.TaskID != "" {
+			key := goalTaskKey(action.GoalID, action.TaskID)
+			out[key] = append(out[key], action)
+		}
+	}
+	return out, rows.Err()
+}
+
+type personRun struct {
+	id     string
+	record runs.Record
+}
+
+// personRuns reads the person's background runs that a step started.
+func personRuns(ctx context.Context, tx *canon.Tx, person string) ([]personRun, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT id, record FROM background_runs WHERE json_extract(record,'$.Origin.Person')=?", person)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []personRun
+	for rows.Next() {
+		var raw []byte
+		var item personRun
+		if err = rows.Scan(&item.id, &raw); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(raw, &item.record); err != nil {
+			return nil, err
+		}
+		if item.record.ID == item.id && item.record.Origin.Person == person && item.record.StartKey != "" {
+			out = append(out, item)
+		}
+	}
+	return out, rows.Err()
+}
+
 func goalTaskRunID(ctx context.Context, tx *canon.Tx, person string, calls []string) (string, error) {
 	if person == "" || len(calls) == 0 {
 		return "", nil
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT id, record FROM background_runs WHERE json_extract(record,'$.Origin.Person')=?", person)
+	list, err := personRuns(ctx, tx, person)
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
-	type stored struct {
-		id     string
-		record runs.Record
-	}
-	var runsForPerson []stored
-	for rows.Next() {
-		var raw []byte
-		var item stored
-		if err = rows.Scan(&item.id, &raw); err != nil {
-			return "", err
-		}
-		if err = json.Unmarshal(raw, &item.record); err != nil {
-			return "", err
-		}
-		if item.record.ID == item.id && item.record.Origin.Person == person && item.record.StartKey != "" {
-			runsForPerson = append(runsForPerson, item)
-		}
-	}
-	if err = rows.Err(); err != nil {
-		return "", err
-	}
+	return matchRunID(list, calls)
+}
+
+// matchRunID finds the run the first call started. Two runs for one call are
+// ambiguous.
+func matchRunID(runsForPerson []personRun, calls []string) (string, error) {
 	for _, call := range calls {
 		var matched string
 		for _, item := range runsForPerson {

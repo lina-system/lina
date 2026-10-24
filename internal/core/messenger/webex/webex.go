@@ -490,7 +490,7 @@ func (a *Adapter) Live(ctx context.Context, source messenger.SourceID, _ func(me
 
 // FetchAttachment reads one attachment the room's messages named. The URL must
 // be on the API origin, so a message can never send the bearer elsewhere.
-func (a *Adapter) FetchAttachment(ctx context.Context, source messenger.SourceID, chat, id string) (io.ReadCloser, error) {
+func (a *Adapter) FetchAttachment(ctx context.Context, source messenger.SourceID, chat, _, id string) (io.ReadCloser, error) {
 	if err := a.checkSource(ctx, source); err != nil {
 		return nil, err
 	}
