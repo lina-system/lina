@@ -1,0 +1,8 @@
+{
+  "outcome": "Prepare the trip notes",
+  "done": "The notes are in the materials",
+  "assumptions": ["The meeting is next week"],
+  "asks": ["Confirm the hotel payment"],
+  "person_tasks": ["Pack a bag"],
+  "statement": "The notes answer the request"
+}

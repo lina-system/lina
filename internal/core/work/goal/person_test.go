@@ -22,8 +22,20 @@ func TestStartLineNamesTheHandover(t *testing.T) {
 			t.Fatalf("start line missing %q: %s", part, line)
 		}
 	}
-	if strings.Contains(line, "\n") || strings.Contains(line, g.ID) || strings.Contains(line, "acceptance") {
+	if strings.Contains(line, "\n") || strings.Contains(line, "acceptance") || strings.Contains(line, "repo") {
 		t.Fatalf("start line leaked: %s", line)
+	}
+}
+
+func TestStartLineOmitsATechnicalAssumption(t *testing.T) {
+	g := oneGoal()
+	g.Assumptions = []string{"the trip is next week", "Pinned mock reference: mini_app"}
+	line, err := StartLine(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(line, "mini_app") || strings.Contains(line, "_") || !strings.Contains(line, "the trip is next week") || !strings.Contains(line, "kept with the goal") {
+		t.Fatalf("technical assumption spoken: %s", line)
 	}
 }
 

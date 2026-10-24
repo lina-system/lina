@@ -80,12 +80,15 @@ func (e *Engine) Revise(ctx context.Context, id, base, person, agent string, d D
 		// Preserve omitted fields from that canonical basis, not its old cache.
 		g.ServiceRepository = serviceRepository(Goal{ServiceTarget: g.ServiceTarget, ServiceRepository: current.ServiceRepository, Scope: current.Scope})
 		g.Summary, g.Done, g.Scope = d.Outcome, d.Done, d.Scope
-		g.Assumptions, g.Criteria, g.Decisions = d.Assumptions, d.Criteria, current.Decisions
+		g.Assumptions, g.Asks, g.PersonTasks, g.Criteria, g.Decisions = d.Assumptions, d.Asks, d.PersonTasks, d.Criteria, current.Decisions
 		if d.ServiceRepository != "" {
 			g.ServiceRepository = d.ServiceRepository
 		}
 		if !validServiceRepository(g) {
 			return receipt, ErrInvalid
+		}
+		if err := AcceptProse(g); err != nil {
+			return receipt, err
 		}
 		// Scope corrections retain old task projections until the manager
 		// interprets the new definition and their dispatched effects settle.
@@ -121,7 +124,7 @@ func definition(g Goal) Definition {
 			criteria = append(criteria, c)
 		}
 	}
-	return Definition{ServiceRepository: g.ServiceRepository, Outcome: g.Summary, Done: g.Done, Scope: g.Scope, Assumptions: g.Assumptions, Decisions: g.Decisions, Criteria: criteria}
+	return Definition{ServiceRepository: g.ServiceRepository, Outcome: g.Summary, Done: g.Done, Scope: g.Scope, Assumptions: g.Assumptions, Asks: g.Asks, PersonTasks: g.PersonTasks, Decisions: g.Decisions, Criteria: criteria}
 }
 func applyDefinition(g *Goal, d Definition) {
 	g.Summary = d.Outcome
@@ -130,6 +133,8 @@ func applyDefinition(g *Goal, d Definition) {
 	g.ServiceRepository = d.ServiceRepository
 	g.ServiceRepository = serviceRepository(*g)
 	g.Assumptions = d.Assumptions
+	g.Asks = d.Asks
+	g.PersonTasks = d.PersonTasks
 	g.Decisions = d.Decisions
 	g.Criteria = d.Criteria
 	g.Criteria = goalCriteria(*g)
