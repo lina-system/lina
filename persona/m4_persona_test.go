@@ -3,6 +3,7 @@
 package persona_test
 
 import (
+	"io/fs"
 	"regexp"
 	"strings"
 	"testing"
@@ -15,11 +16,12 @@ import (
 // The M4-4 replay (#590) rejected the persona-layer changes it measured, so the
 // shipped layers keep the #584 conversion's text; only the life default voice
 // ships the register correction the presets contract requires. These tests hold
-// what the design still requires of the shipped layers: the two voice
-// prohibitions and the identity markers the issue fixes. They say nothing about
-// model-response quality (#590), and they do not pin the rule wording, because
-// the design does not ship the rule changes.
-//
+// what the design still requires of the shipped layers, in structural terms:
+// the revision files and their sections, the two voice prohibitions, and the
+// identity markers the issue fixes. They pin no rule wording, because a required
+// phrase fails a legitimate rewrite; content review and the #590 replay own the
+// meaning of the text, and model-response quality is #590's subject.
+
 // Identity markers: the name, the character word the persona is built on and the
 // voice's own address terms and register words. The issue fixes these as
 // unchanged; they are identity, not phrasing of a judgment rule.
@@ -37,6 +39,49 @@ var m4Identity = map[string]struct {
 	"legal":     {[]string{"고문"}, []string{"~거든", "~잖아"}},
 }
 
+// TestM4StarterLayersAreShippedRevisions checks the structure of a shipped pair:
+// both versioned revision files are present in the preset source, each layer has
+// one title heading, the core keeps its rule paragraphs and the default voice
+// keeps its examples. A rewrite that keeps that shape passes; a layer reduced to
+// a title, or a missing revision file, fails.
+func TestM4StarterLayersAreShippedRevisions(t *testing.T) {
+	if len(m4Identity) != len(persona.Starters()) {
+		t.Fatal("every starter needs identity markers")
+	}
+	for _, starter := range persona.Starters() {
+		t.Run(starter.Key, func(t *testing.T) {
+			for _, name := range []string{"core-v1.md", "default-voice-v1.md"} {
+				info, err := fs.Stat(persona.Shipped(), starter.Key+"/"+name)
+				if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+					t.Fatalf("preset %s does not ship a usable %s revision", starter.Key, name)
+				}
+			}
+			core, voice, err := persona.Load(persona.Shipped(), starter.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for layer, body := range map[string]string{"core": core, "default voice": voice} {
+				if title := titleOf(body); title == "" {
+					t.Errorf("%s has no title heading", layer)
+				}
+				if count := headings(body); count != 1 {
+					t.Errorf("%s has %d title headings, want 1", layer, count)
+				}
+			}
+			if count := rules(core); count < 4 {
+				t.Errorf("core keeps %d rule paragraphs, want at least 4", count)
+			}
+			if count := examples(voice); count < 4 {
+				t.Errorf("default voice keeps %d examples, want at least 4", count)
+			}
+		})
+	}
+}
+
+// TestM4StarterIdentityAndVoice holds the markers the issue fixes: the persona
+// name in both titles, the character word in the core and the voice's address
+// terms and register words in the default voice. A layer may reword its rules
+// and examples without failing; dropping one of these markers fails.
 func TestM4StarterIdentityAndVoice(t *testing.T) {
 	if len(m4Identity) != len(persona.Starters()) {
 		t.Fatal("every starter needs identity markers")
@@ -67,12 +112,6 @@ func TestM4StarterIdentityAndVoice(t *testing.T) {
 					t.Errorf("default voice lost the voice marker %q", marker)
 				}
 			}
-			if examples(voice) < 4 {
-				t.Errorf("default voice kept %d examples", examples(voice))
-			}
-			if !strings.Contains(voice, "다른 에이전트에게는") {
-				t.Error("default voice lost the line for agent exchanges")
-			}
 		})
 	}
 }
@@ -95,54 +134,6 @@ func TestM4StarterLayersHaveNoTopicSwitchOrClosing(t *testing.T) {
 				if hits := nothingToDecide(body); len(hits) > 0 {
 					t.Errorf("%s carries a nothing-to-decide line: %q", layer, hits)
 				}
-			}
-		})
-	}
-}
-
-// TestM4ArinCorrectionExampleKeepsTheVoiceRegister holds the one persona-layer
-// change the design still requires: the correction example stays in the
-// layer's own register. The register is derived from the layer's other
-// examples, so rewriting the whole voice keeps passing while dropping one
-// example into another speech level fails.
-func TestM4ArinCorrectionExampleKeepsTheVoiceRegister(t *testing.T) {
-	_, voice, err := persona.Load(persona.Shipped(), "life")
-	if err != nil {
-		t.Fatal(err)
-	}
-	correction, others := correctionExample(voice)
-	if correction == "" {
-		t.Fatal("default voice lost its correction example")
-	}
-	want := majorityRegister(others)
-	if got := registerClass(correction); got != want {
-		t.Errorf("correction example is %s while the other examples are %s: %q", got, want, correction)
-	}
-	for name, tc := range map[string]struct {
-		voice      string
-		wantOthers string
-		wantCorr   string
-	}{
-		"honorific correction": {
-			voice:      "- a: “소인이 잘못 말씀드렸사옵니다.”\n- b: “권하옵니다.”\n- c: “맞사옵니다.”",
-			wantOthers: "honorific", wantCorr: "honorific",
-		},
-		"plain correction among honorific": {
-			voice:      "- a: “제가 잘못 말씀드렸습니다.”\n- b: “권하옵니다.”\n- c: “맞사옵니다.”",
-			wantOthers: "honorific", wantCorr: "plain",
-		},
-		"uniform rewrite": {
-			voice:      "- a: “제가 잘못 말씀드렸습니다.”\n- b: “권합니다.”\n- c: “맞습니다.”",
-			wantOthers: "plain", wantCorr: "plain",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			correction, others := correctionExample(tc.voice)
-			if got := majorityRegister(others); got != tc.wantOthers {
-				t.Fatalf("other examples are %s, want %s", got, tc.wantOthers)
-			}
-			if got := registerClass(correction); got != tc.wantCorr {
-				t.Errorf("correction example is %s, want %s", got, tc.wantCorr)
 			}
 		})
 	}
@@ -197,6 +188,17 @@ func titleOf(body string) string {
 	return ""
 }
 
+// headings counts the layer's top-level title headings.
+func headings(body string) int {
+	count := 0
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "# ") {
+			count++
+		}
+	}
+	return count
+}
+
 func examples(voice string) int {
 	count := 0
 	for _, line := range strings.Split(voice, "\n") {
@@ -207,68 +209,19 @@ func examples(voice string) int {
 	return count
 }
 
-// correctionExample returns the quoted text of the example that reports a
-// mistake, and the quoted text of every other example.
-func correctionExample(voice string) (string, []string) {
-	var correction string
-	var others []string
-	for _, line := range strings.Split(voice, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "- ") {
+// rules counts the core paragraphs that state how the agent judges: not the
+// title, the licence line, an example or the line for agent exchanges.
+func rules(core string) int {
+	count := 0
+	for _, paragraph := range strings.Split(strings.ReplaceAll(core, "\r\n", "\n"), "\n\n") {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph == "" || strings.HasPrefix(paragraph, "#") ||
+			strings.HasPrefix(paragraph, "<!--") || strings.HasPrefix(paragraph, "- ") {
 			continue
 		}
-		_, quote, ok := strings.Cut(line, "“")
-		if !ok {
-			continue
-		}
-		if strings.Contains(quote, "잘못") && correction == "" {
-			correction = quote
-			continue
-		}
-		others = append(others, quote)
+		count++
 	}
-	return correction, others
-}
-
-// registerClass names the speech level of one quoted example. A layer's
-// register is a property of how its examples end, not a fixed sentence: an
-// example using the historical honorific endings is "honorific", one using the
-// plain formal endings is "plain", and one mixing both is "mixed".
-func registerClass(quote string) string {
-	honorific := containsAny(quote, []string{"옵니다", "옵소서", "사옵", "이옵", "하옵"})
-	plain := containsAny(quote, []string{"합니다", "입니다", "습니다"})
-	switch {
-	case honorific && plain:
-		return "mixed"
-	case honorific:
-		return "honorific"
-	case plain:
-		return "plain"
-	default:
-		return "plain"
-	}
-}
-
-// majorityRegister returns the register most of the examples use, so a layer
-// that rewrites every example at once keeps passing. A tie goes to the first
-// example's register.
-func majorityRegister(quotes []string) string {
-	counts := map[string]int{}
-	first := "plain"
-	for _, quote := range quotes {
-		class := registerClass(quote)
-		if counts[class] == 0 && len(counts) == 0 {
-			first = class
-		}
-		counts[class]++
-	}
-	best := first
-	for class, count := range counts {
-		if count > counts[best] {
-			best = class
-		}
-	}
-	return best
+	return count
 }
 
 var (

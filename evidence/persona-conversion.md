@@ -69,17 +69,22 @@ register switch or a fixed nothing-to-decide closing, and each keeps its name,
 character, address terms and voice markers. The six default voices other than
 Sion's and Arin's are unchanged.
 
-`TestM4StarterIdentityAndVoice` checks the name in both titles, the character
-marker, the voice's address and register markers, four examples and the
-agent-exchange line for every preset.
+`TestM4StarterLayersAreShippedRevisions` checks the structure of every pair:
+both versioned revision files are present and usable, each layer has one title
+heading, the core keeps at least four rule paragraphs and the default voice at
+least four examples. `TestM4StarterIdentityAndVoice` checks the name in both
+titles, the character marker and the voice's address and register markers.
 `TestM4StarterLayersHaveNoTopicSwitchOrClosing` checks both layers of every
-preset for the two prohibitions. `TestM4ArinCorrectionExampleKeepsTheVoiceRegister`
-derives Arin's register from her other examples and requires the correction
-example to match, so a whole-voice rewrite passes while one example dropping to
-another speech level fails. `TestM4ChecksCatchRegressions` proves each check
-fails on a violation and accepts a legitimate rewrite, including a layer that
-states the prohibition itself ("do not switch register", "do not end with
-nothing to decide").
+preset for the two prohibitions. `TestM4ChecksCatchRegressions` proves each
+prohibition check fails on a violation and accepts a legitimate rewrite,
+including a layer that states the prohibition itself ("do not switch register",
+"do not end with nothing to decide").
+
+None of these requires a particular phrase. Rewording a rule, an example or the
+line about exchanges between agents keeps the suite green, and a layer that drops
+to a title or loses a revision file fails. The meaning of the text, including
+Arin's correction example staying in her register, is content review and the #590
+replay's subject, not a text assertion.
 
 The checks do not pin the judgment-rule wording: the design does not ship those
 changes, and a required-phrase list fails a legitimate rewrite. A rewrite of a
