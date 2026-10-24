@@ -222,12 +222,17 @@ func (h *hub) detach(m *member) {
 	}
 	m.close()
 	l := h.socket
-	h.socket = nil
+	changed := before != h.unionLocked()
+	if empty || changed {
+		// The socket this hub keeps has to be reachable for its next stop or
+		// intent change, so drop the reference only when it is acted on.
+		h.socket = nil
+	}
 	if empty {
 		if l != nil {
 			l.cancel()
 		}
-	} else if before != h.unionLocked() && l != nil {
+	} else if changed && l != nil {
 		l.handover()
 	}
 	h.mu.Unlock()
