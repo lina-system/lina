@@ -33,15 +33,6 @@ var ErrInvalid = errors.New("invalid_recall_query")
 // expand; the excerpt exists so a caller can choose without reading everything.
 const ExcerptRunes = 240
 
-// restrictedSummaries follows the restricted CTE: every summary that reaches a
-// restricted event through its citations, at any depth of the summary tree.
-const restrictedSummaries = `restricted_summary(id) AS (
-  SELECT c.view_id FROM cite c JOIN restricted r ON r.id=c.target_id
-  WHERE c.view_kind='summary' AND c.target_kind='event' AND c.dropped_revision IS NULL
-  UNION
-  SELECT c.view_id FROM cite c JOIN restricted_summary s ON s.id=c.target_id
-  WHERE c.view_kind='summary' AND c.target_kind='summary' AND c.dropped_revision IS NULL)`
-
 // FusionConstant is the reciprocal-rank constant used when vectors join the
 // full-text list. The value is fixed by measurement (#1040, #874).
 const FusionConstant = 60
@@ -201,11 +192,9 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	var with []string
 	var withArgs []any
 	if restricted {
-		with = append(with, `restricted AS (
-  SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
-  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
-   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves')))`, restrictedSummaries)
-		withArgs = append(withArgs, scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel))
+		fragment, args := restrictedSources(scope)
+		with = append(with, fragment)
+		withArgs = append(withArgs, args...)
 	}
 	if len(pairPhrases) > 0 {
 		with = append(with, `pair AS MATERIALIZED (SELECT rowid AS doc, bm25(recall_pair) AS score FROM recall_pair WHERE recall_pair MATCH ?)`)
@@ -278,7 +267,7 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 			return nil, err
 		}
 	}
-	statement := `WITH ` + strings.Join(with, ",\n") + `,
+	statement := `WITH RECURSIVE ` + strings.Join(with, ",\n") + `,
 candidates AS MATERIALIZED (
  SELECT d.id,d.kind,d.source_id,d.revision,d.occurred_at,d.holder,d.conversation,d.text_hash,d.replay,
   p.score AS score,(p.doc IS NOT NULL) AS paired,(t.doc IS NOT NULL) AS trigram,` + olderD + ` AS older
@@ -331,8 +320,8 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 	}
 	// Queued material hits are not in the FTS tables yet. Rank them with the
 	// indexed matches, by how many query terms they hold and then by time,
-	// before the limit. Appending them and then truncating drops every one
-	// once the indexed list already fills the limit.
+	// before the limit. Placing every one after the indexed list drops them
+	// once that list already fills the limit.
 	if len(external) > 0 {
 		cover, err := termCoverage(ctx, db, hits, terms)
 		if err != nil {
@@ -376,12 +365,9 @@ func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, rest
 	prefix := ""
 	var prefixArgs []any
 	if restricted {
-		prefix = `WITH restricted AS (
-  SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
-  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
-   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))),
-` + restrictedSummaries + ` `
-		prefixArgs = append(prefixArgs, scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel))
+		fragment, values := restrictedSources(scope)
+		prefix = "WITH RECURSIVE " + fragment + " "
+		prefixArgs = values
 	}
 	args = append(prefixArgs, args...)
 	var queued []Hit
@@ -595,6 +581,38 @@ func holderCondition(scope Scope, alias string) string {
 	return alias + ".holder IN (?,'all')"
 }
 
+// Follow protected memory to its evidence, then protect every current view
+// that depends on any of those sources. A replay copy or view_of event carries
+// its original's text, so protection also spreads both ways along those links
+// before anything cites them. Typed identities and UNION terminate cycles
+// without confusing equal ids belonging to different source kinds.
+func restrictedSources(scope Scope) (string, []any) {
+	return `sensitive(kind,id) AS (
+ SELECT 'memory',m.id FROM memory_item m WHERE m.person=?
+  AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))
+ UNION
+ SELECT c.target_kind,c.target_id FROM cite c JOIN sensitive s ON c.view_kind=s.kind AND c.view_id=s.id
+  WHERE c.dropped_revision IS NULL
+), copied(child,parent) AS MATERIALIZED (
+ SELECT e.id,e.replay_of FROM recall_doc d JOIN conv_event e ON e.id=d.source_id
+  WHERE d.person=? AND d.kind='event' AND d.replay=1 AND coalesce(e.replay_of,'')<>''
+ UNION ALL
+ SELECT e.id,e.replay_of FROM recall_pending q JOIN conv_event e ON e.id=q.source_id
+  WHERE q.kind='event' AND coalesce(e.replay_of,'')<>''
+ UNION ALL
+ SELECT event_id,target_id FROM ev_rel WHERE kind='view_of'
+), restricted(kind,id) AS (
+ SELECT kind,id FROM sensitive
+ UNION
+ SELECT c.view_kind,c.view_id FROM cite c JOIN restricted r ON c.target_kind=r.kind AND c.target_id=r.id
+  WHERE c.dropped_revision IS NULL
+ UNION
+ SELECT 'event',l.child FROM copied l JOIN restricted r ON r.kind='event' AND r.id=l.parent
+ UNION
+ SELECT 'event',l.parent FROM copied l JOIN restricted r ON r.kind='event' AND r.id=l.child
+)`, []any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel), scope.Person}
+}
+
 // scopeWhere applies the scope before matching. It is shared by the published
 // index and the still-queued sources so both see the same filters.
 func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias string) ([]string, []any) {
@@ -642,19 +660,9 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	if containsKind(kinds, Memory) {
 		where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item v WHERE v.id=`+alias+`.source_id AND v.valid_from<=?))`)
 		args = append(args, at)
-		if restricted {
-			where = append(where, `(`+alias+`.kind<>'memory' OR NOT EXISTS(SELECT 1 FROM memory_item s WHERE s.id=`+alias+`.source_id
-   AND ((?=1 AND s.scope IN ('private','never-leaves')) OR (?=1 AND s.scope='never-leaves'))))`)
-			args = append(args, boolInt(scope.Projection), boolInt(scope.ExternalModel))
-			where = append(where, `(`+alias+`.kind<>'memory' OR NOT EXISTS(SELECT 1 FROM cite c2 JOIN restricted r2 ON r2.id=c2.target_id
-   WHERE c2.view_kind='memory' AND c2.view_id=`+alias+`.source_id AND c2.dropped_revision IS NULL))`)
-		}
 	}
 	if restricted {
-		where = append(where, `(`+alias+`.kind<>'event' OR NOT EXISTS(SELECT 1 FROM restricted r WHERE r.id=`+alias+`.source_id))`)
-		where = append(where, `(`+alias+`.kind NOT IN ('summary','record') OR NOT EXISTS(SELECT 1 FROM cite c3
-   WHERE c3.view_kind=`+alias+`.kind AND c3.view_id=`+alias+`.source_id AND c3.dropped_revision IS NULL
-   AND (c3.target_kind='event' AND c3.target_id IN (SELECT id FROM restricted) OR c3.target_kind='summary' AND c3.target_id IN (SELECT id FROM restricted_summary))))`)
+		where = append(where, "NOT EXISTS(SELECT 1 FROM restricted r WHERE r.kind="+alias+".kind AND r.id="+alias+".source_id)")
 	}
 	return where, args
 }
@@ -802,18 +810,15 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 	// same predicate drops it, matching a full-text match.
 	older, olderArgs := olderExpr(kinds, at, "d")
 	if !scope.History {
-		where = append(where, older+"=0")
+		where = append(where, "("+older+")=0")
 		whereArgs = append(whereArgs, olderArgs...)
 	}
 	prefix := ""
 	var args []any
 	if restricted {
-		prefix = `WITH restricted AS (
-  SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
-  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
-   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))),
-` + restrictedSummaries + ` `
-		args = append(args, scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel))
+		fragment, prefixArgs := restrictedSources(scope)
+		prefix = "WITH RECURSIVE " + fragment + " "
+		args = append(args, prefixArgs...)
 	}
 	args = append(args, olderArgs...)
 	args = append(args, whereArgs...)

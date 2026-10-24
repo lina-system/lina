@@ -13,10 +13,12 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/compaction"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/recall"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/kit/secret"
 )
 
@@ -274,6 +276,38 @@ func TestSearchQueuedMaterialRanksBeforeLimit(t *testing.T) {
 	}
 }
 
+func TestSearchQueuedMaterialEventRanksBeforeLimit(t *testing.T) {
+	db := database(t)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,body)
+ VALUES('inline','conversation','owner','agent','person','{}','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','observed','{"kind":"native"}','도서관 메모')`)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES('material','conversation','owner','agent','person','{}','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','observed','{"kind":"native"}','asset',1)`)
+	read := func(context.Context, string) (string, error) { return "도서관 자료", nil }
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	if count(t, db, "SELECT count(*) FROM recall_pending WHERE source_id IN ('inline','material')") != 2 {
+		t.Fatal("both events must still be queued")
+	}
+	for _, tc := range []struct {
+		limit int
+		want  []string
+	}{
+		{1, []string{"material"}},
+		{0, []string{"material", "inline"}},
+	} {
+		hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관", Limit: tc.limit, EventText: read})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, hit := range hits {
+			ids = append(ids, hit.ID)
+		}
+		if !reflect.DeepEqual(ids, tc.want) {
+			t.Fatalf("limit %d: %v, want %v", tc.limit, ids, tc.want)
+		}
+	}
+}
+
 func hitIDs(hits []recall.Hit) []string {
 	ids := make([]string, 0, len(hits))
 	for _, hit := range hits {
@@ -419,6 +453,31 @@ func TestSearchParentSummaryOfProtectedEventStaysOut(t *testing.T) {
 	}
 }
 
+func TestSearchProtectedEventCopiesAndViewsStayOut(t *testing.T) {
+	db := database(t)
+	insert := func(id, body, replayOf string) {
+		write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,body,replay_of)
+ VALUES(?,'conversation','owner','agent','person','{"kind":"tui"}','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','recorded','{"kind":"native"}',?,nullif(?,''))`, id, body, replayOf)
+	}
+	insert("protected", "도서관 원본", "")
+	insert("public", "도서관 공개", "")
+	insert("indexed-view", "도서관 보기", "")
+	write(t, db, `INSERT INTO ev_rel(event_id,target_id,kind) VALUES('indexed-view','protected','view_of')`)
+	insert("copy", "도서관 사본", "protected")
+	remember(t, db, "agent", "", "도서관 비밀", memory.NeverLeaves, "protected")
+	drain(t, db)
+	insert("queued-view", "도서관 대기", "")
+	write(t, db, `INSERT INTO ev_rel(event_id,target_id,kind) VALUES('queued-view','protected','view_of')`)
+	if count(t, db, "SELECT count(*) FROM recall_pending WHERE source_id='queued-view'") != 1 {
+		t.Fatal("queued view must still be queued")
+	}
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}, ExternalModel: true, IncludeReplay: true}
+	ids := searchIDs(t, db, scope, "도서관", 0)
+	if !reflect.DeepEqual(ids, []string{"public"}) {
+		t.Fatalf("protected lineage reached external scope: %v", ids)
+	}
+}
+
 func TestSearchExcerptIsBoundedAndMasked(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)
@@ -529,5 +588,78 @@ func TestSearchVectorsFuseIntoTheRankedList(t *testing.T) {
 	}})
 	if err != nil || len(hits) != 2 {
 		t.Fatalf("fusion: %+v %v", hits, err)
+	}
+}
+
+func TestRestrictedSummaryAncestryBeforeLimit(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "protected", "private-conversation", "owner", "agent", "observatory private", base, "")
+	admitAt(t, db, "safe", "public-conversation", "owner", "agent", "observatory public", base, "")
+	store := compaction.New(db)
+	publish := func(id, conversation, text string, children []string, event string) {
+		frontier, err := store.Frontier(t.Context(), conversation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Publish(t.Context(), compaction.Proposal{Expected: frontier, ID: id, Children: children, Cover: []compaction.Coverage{{EventID: event}}, Output: compaction.Output{Text: text, Model: "fixture", PromptVersion: "1", BuiltAt: base, Dropped: "none"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("child", "private-conversation", "observatory private", nil, "protected")
+	admitAt(t, db, "later", "private-conversation", "owner", "agent", "later source", base.Add(time.Second), "")
+	publish("parent", "private-conversation", "observatory private", []string{"child"}, "later")
+	publish("public", "public-conversation", "observatory public "+strings.Repeat("context ", 30), nil, "safe")
+	protectedItem := remember(t, db, "agent", "", "observatory private", memory.NeverLeaves, "protected")
+	write(t, db, `UPDATE sum_node SET text=text`)
+	for _, indexed := range []bool{false, true} {
+		if indexed {
+			drain(t, db)
+		}
+		scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Summary}, ExternalModel: true}
+		if ids := searchIDs(t, db, scope, "observatory", 1); !reflect.DeepEqual(ids, []string{"public"}) {
+			t.Errorf("indexed=%v protected ancestor displaced visible result: %v", indexed, ids)
+		}
+		scope.ExternalModel = false
+		if ids := searchIDs(t, db, scope, "observatory", 0); len(ids) != 3 {
+			t.Errorf("local scope lost sources: %v", ids)
+		}
+	}
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Summary}, ExternalModel: true}
+	hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "no-lexical-match", Limit: 1, Vectors: func(context.Context, recall.Scope, string) ([]string, error) {
+		return []string{"parent", "public"}, nil
+	}})
+	if err != nil || len(hits) != 1 || hits[0].ID != "public" {
+		t.Fatalf("vector hook bypassed restricted ancestry: %v %v", hits, err)
+	}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "UPDATE memory_item SET scope='private',record=json_set(record,'$.scope','private') WHERE id=?", protectedItem)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ids := searchIDs(t, db, scope, "observatory", 0); len(ids) != 3 {
+		t.Fatalf("private memory was treated as never-leaves: %v", ids)
+	}
+	scope.Projection = true
+	if ids := searchIDs(t, db, scope, "observatory", 1); !reflect.DeepEqual(ids, []string{"public"}) {
+		t.Fatalf("projection exposed private ancestor: %v", ids)
+	}
+}
+
+func TestSearchExcerptUsesCanonicalDerivedSpans(t *testing.T) {
+	db := database(t)
+	body := "observatory private-value context"
+	at := time.Unix(1700000000, 0)
+	event, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "flagged", ConversationID: "conversation", AgentID: "agent", PersonID: "owner", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Body: body, SecretSpans: []secrets.Span{{Start: len("observatory "), End: len("observatory private-value"), Sensitivity: "secret"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits, err := recall.Search(t.Context(), db, nil, recall.Scope{Person: "owner", Agent: "agent", ExternalModel: true}, recall.Query{Text: "observatory"})
+	if err != nil || len(hits) != 1 {
+		t.Fatalf("search: %v %v", hits, err)
+	}
+	if hits[0].Excerpt != event.Body.DerivedText() {
+		t.Fatalf("excerpt differs from authorized derived text: %q", hits[0].Excerpt)
 	}
 }

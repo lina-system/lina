@@ -76,6 +76,15 @@ sources. General recall keeps its wider kind/speaker filters. Event bodies in
 materials have a nullable inline body; search resolves those through the bound
 reader or reports unavailable bytes without failing the whole result list.
 
+Restricted-source selection follows protected memory to its evidence, then
+walks current citations back to every dependent memory, record and summary.
+A replay copy or `view_of` event carries its original's text, so protection
+also spreads both ways along `replay_of` and `view_of` links, indexed or queued.
+Typed source identities preserve the boundary across nested summary children.
+The same scope predicate applies before limiting indexed, queued and vector-hook
+candidates. Internal reads retain their scope, while projection also excludes
+private evidence. The recursive union terminates citation cycles.
+
 Tests cover atomic native writes, queued sources and exclusions, generation
 fencing, batch bounds, migrations, records revisions, Korean parity, any-term
 ranking, queued material hits before the limit, identical-text collapse,
