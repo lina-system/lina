@@ -336,3 +336,26 @@ func TestVectorDeletionRollsBackWithSource(t *testing.T) {
 		t.Fatal("failed removal committed partially")
 	}
 }
+
+func TestFusionTiesUseKindWhenSourceIDsCollide(t *testing.T) {
+	db := database(t)
+	admit(t, db, "shared", "garden plants")
+	write(t, db, `INSERT INTO records_index VALUES('shared','inbox/shared.md','blob','revision');
+ INSERT INTO records_text VALUES('shared','owner','memo','active','garden plants','');
+ INSERT INTO records_activity VALUES('shared','2023-11-14T22:13:20Z');`)
+	drain(t, db)
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event, recall.Record}}
+	lexical, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "garden", Limit: 12})
+	if err != nil || len(lexical) != 2 {
+		t.Fatalf("lexical=%v err=%v", lexical, err)
+	}
+	query := func(context.Context, recall.Scope, string) ([]string, error) {
+		return []string{string(lexical[1].Kind) + "\x00shared", string(lexical[0].Kind) + "\x00shared"}, nil
+	}
+	for range 64 {
+		hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "garden", Limit: 12, Vectors: query})
+		if err != nil || len(hits) != 2 || hits[0].Kind != recall.Event || hits[1].Kind != recall.Record {
+			t.Fatalf("non-deterministic fusion tie: %v %v", hits, err)
+		}
+	}
+}

@@ -615,7 +615,10 @@ func fuse(ctx context.Context, db Canon, scope Scope, query Query, text []Hit) (
 		if !out[i].OccurredAt.Equal(out[j].OccurredAt) {
 			return out[i].OccurredAt.After(out[j].OccurredAt)
 		}
-		return out[i].ID < out[j].ID
+		if out[i].ID != out[j].ID {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Kind < out[j].Kind
 	})
 	if query.Limit > 0 && len(out) > query.Limit {
 		out = out[:query.Limit]
