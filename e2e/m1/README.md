@@ -65,6 +65,19 @@ Failure coverage also includes:
   fail. A check whose input the build does not publish yet reports missing
   input, never a pass.
 
+- `TestM3WorkPanelStages` supplies E6/E7 with collapsed and expanded views of
+  all five corpus graphs at 120x34 and 100x34 in both languages and glyph modes.
+  Real stub processes produce 101 checked artifacts. Each parallel group stays
+  on one numbered row, without a graph; worker rows appear only on expansion
+  and disappear when their steps land. Run it with `TestM3WorkPanelEventLatency`
+  for step-event timing and draft, focus and reading-position checks.
+
+- `TestM3WorkPanelLiveMatrix` starts 50 separate Codex protocol fixture
+  processes through installed Core. It records the 1/5/20/50-card matrix,
+  including three simultaneous person waits, then checks 50 activity updates,
+  worker-written results and Core completions. Its question-event timings are
+  separate from the step-event measurements above.
+
 - `TestM2WorkerDelayedCompletionOutput`: the model fixture selects the latest
   scenario input or worker result even when user-role ContextPacket evidence
   follows it. After recovery, a delayed first-turn completion arrives between

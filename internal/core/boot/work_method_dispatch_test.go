@@ -21,7 +21,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/exchange"
 	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
-	"github.com/thisisjun786/lina/persona"
 )
 
 func TestWorkMethodDispatchDisabled(t *testing.T) {
@@ -79,15 +78,19 @@ func TestWorkMethodGoalResultReturnsToRequester(t *testing.T) {
 	}
 }
 
+// installDispatchRecord gives the dev preset the record that owns code and
+// enables worker dispatch, for fixtures that exercise dispatch directly.
+func installDispatchRecord(t *testing.T, r *conversationRuntime) {
+	t.Helper()
+	method := `{"schema":1,"preset":"dev","tools":{"declare_first":["work","github","terminal"]},"workers":{"dispatch":true},"handoff":{"owns":["code","pull_request","worker_task"]}}`
+	if err := r.agents.UpdatePreset(t.Context(), agents.Preset{ID: "dev", WorkMethod: method}, r.person); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func workAgentFixture(t *testing.T, r *conversationRuntime) string {
 	t.Helper()
-	method, _, err := persona.LoadWorkMethod(persona.Shipped(), "dev")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = r.agents.UpdatePreset(t.Context(), agents.Preset{ID: "dev", WorkMethod: method}, r.person); err != nil {
-		t.Fatal(err)
-	}
+	installDispatchRecord(t, r)
 	all, err := r.agents.List(t.Context())
 	if err != nil {
 		t.Fatal(err)

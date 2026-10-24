@@ -1,0 +1,19 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "name": "Run limit, queue place and automatic reduction",
+  "test": "TestM3RunLimitInstalledCore",
+  "steps": [
+    "Start with the person's limit at one while the host carries three steps",
+    "Observe the first-ranked goal start and the other two wait with their place and the slot reason",
+    "Set the limit to two and observe the next goal in rank start",
+    "Set it back to one and observe that both running steps continue and the last goal still waits",
+    "Return the limit to automatic while the host reports heavy load and observe the limit fall with the load reason",
+    "Free the host and observe the last goal start under the automatic limit"
+  ],
+  "goals": [
+    { "id": "alpha", "summary": "Prepare the workshop", "step": "Draft the agenda" },
+    { "id": "beta", "summary": "Book the venue", "step": "Compare the halls" },
+    { "id": "gamma", "summary": "Plan the catering", "step": "List the dishes" }
+  ],
+  "quiet_ms": 700
+}

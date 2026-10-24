@@ -158,6 +158,30 @@ func parseDefinition(r DefinitionRecord, person, agent string) (Definition, erro
 	}
 	return d, nil
 }
+
+// ProjectRecordID is the project record that stores a goal's definition.
+// A value that already uses that record id is kept. An empty id does not resolve.
+func ProjectRecordID(goalID string) (string, bool) {
+	if goalID == "" {
+		return "", false
+	}
+	if rest, ok := strings.CutPrefix(goalID, "goal:"); ok && rest != "" {
+		return goalID, true
+	}
+	return "goal:" + goalID, true
+}
+
+// GoalID accepts a goal id or its project record id.
+func GoalID(id string) (string, bool) {
+	if id == "" {
+		return "", false
+	}
+	if rest, ok := strings.CutPrefix(id, "goal:"); ok && rest != "" {
+		return rest, true
+	}
+	return id, true
+}
+
 func (e *Engine) prepareDefinition(ctx context.Context, g *Goal) error {
 	if e.cfg.Records == nil {
 		return ErrInvalid
@@ -166,7 +190,11 @@ func (e *Engine) prepareDefinition(ctx context.Context, g *Goal) error {
 		return ErrInvalid
 	}
 	// Stable id makes an interrupted record publication recoverable on admission.
-	g.RecordID = "goal:" + g.ID
+	recordID, ok := ProjectRecordID(g.ID)
+	if !ok {
+		return ErrInvalid
+	}
+	g.RecordID = recordID
 	r, rev, err := e.cfg.Records.Read(ctx, g.RecordID)
 	if errors.Is(err, ErrDefinitionMissing) {
 		_, err = e.cfg.Records.Commit(ctx, DefinitionChange{ID: g.RecordID, Path: "projects/" + actionID(Action{GoalID: g.ID}) + ".md", Data: definitionBytes(*g)}, g.Person, g.Agent)
@@ -212,6 +240,14 @@ func (e *Engine) hydrate(g *Goal) error {
 	return nil
 }
 
+type goalSentenceRef struct {
+	ID             string `json:"id"`
+	Person         string `json:"person"`
+	Agent          string `json:"agent"`
+	RecordID       string `json:"record_id"`
+	RecordRevision string `json:"record_revision"`
+}
+
 // GoalSentences returns each goal's canonical sentence, keyed by goal id.
 // The execution ledger does not store that prose. A missing or unreadable
 // definition omits only that goal. A ledger failure, or any other records
@@ -226,7 +262,9 @@ func (e *Engine) GoalSentences(ctx context.Context) (map[string]string, error) {
 	}
 	titles := map[string]string{}
 	for _, row := range rows {
-		var g Goal
+		// The title is in its definition; decoding tasks and receipts here
+		// repeats execution work for every progress refresh.
+		var g goalSentenceRef
 		if err = json.Unmarshal(row.Body, &g); err != nil {
 			return nil, err
 		}
@@ -244,7 +282,7 @@ func (e *Engine) GoalSentences(ctx context.Context) (map[string]string, error) {
 	return titles, nil
 }
 
-func (e *Engine) goalSentence(ctx context.Context, g Goal) (string, error) {
+func (e *Engine) goalSentence(ctx context.Context, g goalSentenceRef) (string, error) {
 	if cached, ok := e.definitions.Load(definitionKey{g.RecordID, g.RecordRevision}); ok {
 		saved := cached.(savedDefinition)
 		if saved.revision == g.RecordRevision {

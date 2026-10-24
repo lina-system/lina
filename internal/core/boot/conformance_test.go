@@ -103,6 +103,7 @@ func TestConformanceUnavailableEvidenceBlocksBeforeScopeVerdict(t *testing.T) {
 			r, a, d := conformanceFixtureWithOutcome(t, "blocked_needs_input")
 			d.ChangedFiles = []string{"outside.txt"}
 			cause := "change_evidence_unavailable"
+			wantFindings := 0
 			switch kind {
 			case "code":
 				d.Code = "change_evidence_unavailable"
@@ -121,12 +122,16 @@ func TestConformanceUnavailableEvidenceBlocksBeforeScopeVerdict(t *testing.T) {
 				d.PR.Checks[0].Conclusion = "FAILURE"
 				d.ChangeEvidence = ""
 				cause = "merge_precondition"
+				wantFindings = 1
 			}
 			// A mechanical block must finish even without a provider or router.
 			callErr := r.runCodingManager(t.Context(), a, "delivery", &d)
 			got, err := review.New(r.db).Get(t.Context(), review.Key{Repository: "owner/repo", Number: 7, Head: d.PR.Head})
-			if callErr != nil || err != nil || got.State != "blocked" || got.Cause != cause || got.Verdict != "" || len(got.Findings) != 0 || got.Evidence == "" {
+			if callErr != nil || err != nil || got.State != "blocked" || got.Cause != cause || got.Verdict != "" || len(got.Findings) != wantFindings || got.Evidence == "" {
 				t.Fatalf("delivery error=%v stored review=%+v read error=%v", callErr, got, err)
+			}
+			if wantFindings == 1 && (got.Findings[0].ID != "core-check-1" || got.Findings[0].Severity != "P1" || got.Findings[0].File != review.CheckFile) {
+				t.Fatalf("failed check is not a P1 finding: %+v", got.Findings)
 			}
 			card, err := r.work.Get(t.Context(), a.ID)
 			if err != nil || card.State != "input_needed" || card.Verdict != "" || card.Applied || got.Receipt != card.Receipt.EventID || got.Generation != card.Run.Generation {
@@ -149,12 +154,12 @@ func TestConformanceMechanicalDecisionsSkipManagerAndRejectDuplicate(t *testing.
 	for _, kind := range []string{"scope", "checks"} {
 		t.Run(kind, func(t *testing.T) {
 			r, a, d := conformanceFixture(t)
-			verdict := "needs_changes"
+			verdict, finding := "needs_changes", "core-scope-1"
 			if kind == "scope" {
 				d.ChangedFiles = append(d.ChangedFiles, "outside.txt")
 			} else {
 				d.PR.Checks[0].Conclusion = "FAILURE"
-				verdict = ""
+				verdict, finding = "", "core-check-1"
 			}
 			// No provider route or router exists: mechanical decisions must not use one.
 			if err := r.runCodingManager(t.Context(), a, "delivery", &d); err != nil {
@@ -168,7 +173,7 @@ func TestConformanceMechanicalDecisionsSkipManagerAndRejectDuplicate(t *testing.
 				t.Fatalf("CI did not block: %+v", card)
 			}
 			got, err := review.New(r.db).Get(t.Context(), review.Key{Repository: "owner/repo", Number: 7, Head: d.PR.Head})
-			if err != nil || len(got.Findings) != 0 || got.Verdict != verdict {
+			if err != nil || got.Verdict != verdict || len(got.Findings) != 1 || got.Findings[0].ID != finding || got.Findings[0].Severity != "P1" {
 				t.Fatalf("mechanical result=%+v %v", got, err)
 			}
 			if err := r.runCodingManager(t.Context(), a, "delivery", &d); !errors.Is(err, review.ErrDuplicate) {
@@ -185,6 +190,10 @@ func TestConformanceFixGenerationChecksNewHeadWithoutReusingVerdict(t *testing.T
 		t.Fatal(err)
 	}
 	oldHead := d.PR.Head
+	first, err := review.New(r.db).Get(t.Context(), review.Key{Repository: "owner/repo", Number: 7, Head: oldHead})
+	if err != nil || first.Verdict != "needs_changes" || len(first.Findings) != 1 || first.Findings[0].File != "outside.txt" {
+		t.Fatalf("first review=%+v %v", first, err)
+	}
 	card, err := r.work.Get(t.Context(), a.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -210,6 +219,12 @@ func TestConformanceFixGenerationChecksNewHeadWithoutReusingVerdict(t *testing.T
 	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error { return work.FinishIn(t.Context(), tx, a.ID, run.ID, "completed", d.PR.Head) }); err != nil {
 		t.Fatal(err)
 	}
+	// A second review request for the pull request is refused, including a new
+	// head; only the head the one return produced continues the review.
+	if _, err = r.beginConformance(t.Context(), a, &d); !errors.Is(err, review.ErrDuplicate) {
+		t.Fatalf("second review request accepted: %v", err)
+	}
+	d.ReturnReceipt = first.Receipt
 	rr, err := r.beginConformance(t.Context(), a, &d)
 	if err != nil || rr.State != "checking" || rr.Generation != 2 {
 		t.Fatalf("new head did not get a check: %+v %v", rr, err)

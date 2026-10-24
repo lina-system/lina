@@ -209,7 +209,7 @@ body preservation, rendered text, provenance and recorded counts.
 
 The native result service is not a client wire implementation. Client body and
 save schemas, client result handlers and result-type negotiation remain required
-by [#419](https://github.com/thisisjun786/lina/issues/419). A native service or
+by [#419](https://github.com/lina-system/lina/issues/419). A native service or
 codec run cannot establish those client scenarios or their supported rows.
 
 ## Background result reads
@@ -269,7 +269,7 @@ conversations.
 
 | Capability | What the client can do |
 | --- | --- |
-| Conversation | Start a conversation with an agent, send a message, interrupt, read history, subscribe to events, receive connect and disconnect notices |
+| Conversation | Start a conversation with an agent, send a message, interrupt, read history, subscribe to events, receive connect and disconnect notices; read a message's binding chip and its move choices, move a binding, read the move count and export its replay cases |
 | Launcher | Send a one-line message to the last or a named agent's main conversation, receive its short form and a message locator ([Launcher capability](#launcher-capability)) |
 | Agent management | List the main's agents, create an agent from a preset or a description, rename, tune and delete an agent. LINA Core records each change with the person id. |
 | Work records | List, read, capture, edit, complete and reorder 목표 (goal), 일 (project), 할 일 (to-do), 계속 챙기는 것 (area) and memos; read the views (오늘 (today), 예정 (upcoming), 언제든 (anytime), 나중에 (later), the flow board) and the candidates; answer a proposal to add or split, and undo a promotion, an addition or an archive. Each is a request to LINA Core, and LINA Core computes the views. |
@@ -295,7 +295,7 @@ use a `task:` prefix and bind the execution generation; `running_get` with `open
 summary, and `dismiss` hides only landed cards. These read/open/dismiss operations
 do not submit worker receipts, start executions or write Core verdicts.
 
-Version 1.0 of `client` has at least these kinds: `hello` and `welcome`; starting a conversation; sending input; interrupting; reading history; subscribing to events; the stream events, which are an output delta, an item done and the turn state; an approval request and its answer; a question and its answer, where a question may carry a flat form (the name of the asking plugin and fields that are text, a number, yes or no, or a choice) and its answer is accept with the values, decline or cancel; a result, and the requests to read, edit and save one; the running list of background runs and delegated tasks with its updates, a stop and a follow-up; the background notice that delivers a landing into a conversation; the progress view with its changes and its digest; the waiting list, its changes and the answer to a row; a request for Details and its result; a readiness failure that names the preparation step that failed ([conversation-and-memory.md](conversation-and-memory.md)); agent management requests and their results; work record requests and their results; account requests and their results; memory requests and their results, including the progress of an import and a promotion batch; channel management requests, their results and channel state notices; agent talk log entries and their expansion; and an error. The Approval, Agent management, Work records, Memory, Accounts, Results, Progress, Waiting list, Details, Channels and Agent exchanges capabilities are part of version 1.0. Their payload fields are set in the schema (see Deferred).
+Version 1.0 of `client` has at least these kinds: `hello` and `welcome`; starting a conversation; sending input; interrupting; reading history; subscribing to events; the stream events, which are an output delta, an item done and the turn state; an approval request and its answer; a question and its answer, where a question may carry a flat form (the name of the asking plugin and fields that are text, a number, yes or no, or a choice) and its answer is accept with the values, decline or cancel; a result, and the requests to read, edit and save one; the running list of background runs and delegated tasks with its updates, a stop and a follow-up; the background notice that delivers a landing into a conversation; the progress view with its changes and its digest; the waiting list, its changes and the answer to a row; a request for Details and its result; a readiness failure that names the preparation step that failed ([conversation-and-memory.md](conversation-and-memory.md)); agent management requests and their results; work record requests and their results; account requests and their results; memory requests and their results, including the progress of an import and a promotion batch; channel management requests, their results and channel state notices; agent talk log entries and their expansion; and an error. The Approval, Agent management, Work records, Work commands, Memory, Accounts, Results, Progress, Waiting list, Details, Channels and Agent exchanges capabilities are part of version 1.0. Their payload fields are set in the schema (see Deferred).
 
 The `web` capability (1.0) uses `web_request` and `web_result` for [provider setup](web-tools.md#provider-setup). A request has required `operation` (`status`, `set`, or `clear`) and an optional `key`, accepted only for `set`. The key is limited to 512 bytes and never appears in the response, a stream or history. The result has `provider: "firecrawl"` and `configured: boolean`. Core binds the secret-store entry to the connection's owner and requires an eligible decider for set and clear. Invalid field combinations are malformed; credential changes during an active turn return unavailable. This capability is available without a model route and grants no tool or network authority.
 
@@ -696,6 +696,21 @@ callback address and expiry are checked in Core. Completion reports connection
 status, including unsupported tenant consent. Source records and coverage use
 the existing messenger store, independently of the client lifetime.
 
+### Webex source settings
+
+The owner-only `webex` 1.0 capability provides `webex_request` and
+`webex_result`. `configure` takes `platform: "webex"`, `client_id` and
+`client_secret`; `sign_in` takes `platform: "webex"`; `disconnect` takes the
+platform account ID. `list` returns source account IDs, states and sanitized
+failure causes. Every operation requires the owner's eligible decider at the
+current epoch. Secret values are input-only and never appear in results.
+
+Sign-in uses `sign_in_relay` on the same connection. Core retains PKCE, state
+and the ten-minute attempt; another connection cannot finish or replace it.
+`cannot_listen` selects the registered port 8400 and accepts a pasted callback
+URL. Completion reports `connected` and the verified platform account ID.
+The source reader continues independently of that client connection.
+
 ## Deferred
 
 - The JSON Schema to TypeScript type generator: chosen before the first LINA app work ([surfaces.md](surfaces.md#app-front-end)).
@@ -784,6 +799,46 @@ including release with active runs, return `stale_revision`; malformed records
 return `malformed`, absent tasks or switches return `out_of_scope`, and an
 ineligible connection returns `not_authorized`. Unknown or canceled outcomes
 are reconciled through status before explicit rollback; they never mean success.
+
+### Work commands
+
+The same negotiated `work` capability at version `1.0` installs
+`work_control_request` and `work_control_result` for the person's order, pause,
+resume and stop choices ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)).
+Every request has `operation` (`rank_up`, `rank_down`, `pause`, `resume` or
+`stop`) and the `goal_id` it concerns. Only an eligible owner connection may call
+it. Core takes the person and the input message identity from the authenticated
+transport, never from the payload.
+
+- `rank_up` and `rank_down`, `pause` and `resume` accept no other field.
+- `stop` requires `confirm`, and an absent or false `confirm` is `malformed`.
+
+The result returns the `goal_id`, the `operation`, the goal's lifecycle `state`,
+whether it is `paused`, and its `rank`. The command is recorded durably with the
+request's message identity and applies on the next scheduling pass; the result
+reports the committed projection and dispatches no effect. A resent message
+keeps one recorded command and its original instant, whatever the retry time,
+and a different choice under a used identity is refused. A choice that changes nothing, such as a move at the
+first or last place, a pause of a paused goal or a stop of a stopped goal,
+records no command and answers its current projection with effect state `none`;
+a recorded choice answers `applied`. A malformed field
+combination is `malformed`; a goal that does not exist or belongs to another
+person is `out_of_scope`; a command on a final goal returns `stale_revision`;
+during recovery the request returns `unavailable`. The progress topic publishes
+the changed line, its order and its Now as it does for any other work change.
+
+The same capability installs `work_limit_request` and `work_limit_result` for the
+person's run limit ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)).
+A request has `operation` (`limit_up`, `limit_down`, `limit_auto` or
+`limit_set`) and, only for `limit_set`, a `value` from 1 to 1024. Only an
+eligible owner connection may call it. `limit_up` and `limit_down` move one step
+from the limit the last pass applied, and `limit_auto` returns the limit to
+automatic. The result returns `automatic`, the applied `limit` and the `reason`
+the applied limit stands at (`slot`, `quota` or `load`). The choice is recorded
+with the request's message identity and applies on the next scheduling pass; a
+choice that changes nothing records no command and answers effect state `none`.
+The `progress` and `progress_update` payloads carry the same applied limit as
+`limit`, so a client shows what Core decided.
 
 ### Worker approval origin
 

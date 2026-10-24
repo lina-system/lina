@@ -25,6 +25,14 @@
         "subscribe",
         "output_delta",
         "item_done",
+        "binding_get",
+        "binding",
+        "binding_move",
+        "binding_move_result",
+        "binding_stats_get",
+        "binding_stats",
+        "binding_export",
+        "binding_export_result",
         "turn_state",
         "tool_activity",
         "approval_request",
@@ -60,6 +68,10 @@
         "work_result",
         "work_switch_request",
         "work_switch_result",
+        "work_control_request",
+        "work_control_result",
+        "work_limit_request",
+        "work_limit_result",
         "account_request",
         "account_result",
         "memory_request",
@@ -110,7 +122,9 @@
         "local_task",
         "local_task_result",
         "teams_request",
-        "teams_result"
+        "teams_result",
+        "webex_request",
+        "webex_result"
       ]
     },
     "message_id": {
@@ -419,6 +433,134 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/item_done"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_get"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_move"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_move"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_move_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_move_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_stats_get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_stats_get"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_stats"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_stats"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_export"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_export"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_export_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_export_result"
           }
         }
       }
@@ -1673,6 +1815,70 @@
       "if": {
         "properties": {
           "kind": {
+            "const": "work_control_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_control_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_limit_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_limit_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_limit_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_limit_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
             "const": "a2a_request"
           }
         }
@@ -2044,6 +2250,38 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/teams_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "webex_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/webex_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "webex_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/webex_result"
           }
         }
       }
@@ -2643,9 +2881,306 @@
         "person_id": {
           "type": "string",
           "minLength": 1
+        },
+        "binding": {
+          "$ref": "#/$defs/binding_chip"
         }
       },
       "required": [],
+      "additionalProperties": false
+    },
+    "binding_target": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "type": "string",
+          "enum": [
+            "existing",
+            "new",
+            "none"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "parent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "additionalProperties": false
+    },
+    "binding_candidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "kind",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "binding_chip": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "show": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        }
+      },
+      "required": [
+        "input_id",
+        "show",
+        "name",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "binding_get": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "input_id"
+      ],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chip": {
+          "$ref": "#/$defs/binding_chip"
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "candidates": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/binding_candidate"
+          }
+        },
+        "moves": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/binding_move_result"
+          }
+        }
+      },
+      "required": [
+        "input_id",
+        "chip",
+        "target",
+        "candidates",
+        "moves"
+      ],
+      "additionalProperties": false
+    },
+    "binding_move": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        }
+      },
+      "required": [
+        "input_id",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "binding_effect_outcome": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "item": {
+          "type": "string"
+        },
+        "moved": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "receipt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "item",
+        "moved"
+      ],
+      "additionalProperties": false
+    },
+    "binding_move_result": {
+      "type": "object",
+      "properties": {
+        "move_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "to": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "decider": {
+          "type": "string"
+        },
+        "effects": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/binding_effect_outcome"
+          }
+        }
+      },
+      "required": [
+        "move_id",
+        "input_id",
+        "from",
+        "to",
+        "decider",
+        "effects"
+      ],
+      "additionalProperties": false
+    },
+    "binding_decider_count": {
+      "type": "object",
+      "properties": {
+        "decider": {
+          "type": "string"
+        },
+        "bindings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "moves": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "per_hundred": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "decider",
+        "bindings",
+        "moves",
+        "per_hundred"
+      ],
+      "additionalProperties": false
+    },
+    "binding_stats_get": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "binding_stats": {
+      "type": "object",
+      "properties": {
+        "bindings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "moves": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "per_hundred": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deciders": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/binding_decider_count"
+          }
+        }
+      },
+      "required": [
+        "bindings",
+        "moves",
+        "per_hundred",
+        "deciders"
+      ],
+      "additionalProperties": false
+    },
+    "binding_export": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "binding_export_result": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": "string"
+        },
+        "cases": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "directory",
+        "cases"
+      ],
       "additionalProperties": false
     },
     "turn_state": {
@@ -3270,6 +3805,9 @@
         "waiting_more": {
           "type": "integer",
           "minimum": 0
+        },
+        "limit": {
+          "$ref": "#/$defs/run_limit_state"
         }
       },
       "required": [],
@@ -3308,6 +3846,9 @@
         "waiting_more": {
           "type": "integer",
           "minimum": 0
+        },
+        "limit": {
+          "$ref": "#/$defs/run_limit_state"
         }
       },
       "required": [],
@@ -3428,21 +3969,21 @@
       "additionalProperties": false
     },
     "waiting_answer": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -3920,14 +4461,14 @@
       "additionalProperties": false
     },
     "memory_import_progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "memory_promotion_batch": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -4108,7 +4649,7 @@
       "additionalProperties": false
     },
     "agent_talk_subscribe": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -4170,7 +4711,7 @@
       "additionalProperties": false
     },
     "task_cancel": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -4669,14 +5210,14 @@
       ]
     },
     "saved_reference": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "save_destination": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6732,6 +7273,154 @@
       ],
       "additionalProperties": false
     },
+    "work_control_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "confirm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation",
+        "goal_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_control_result": {
+      "type": "object",
+      "properties": {
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "defining",
+            "running",
+            "waiting",
+            "checking",
+            "done",
+            "stopped",
+            "blocked"
+          ]
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "goal_id",
+        "operation",
+        "state",
+        "paused",
+        "rank"
+      ],
+      "additionalProperties": false
+    },
+    "run_limit_reason": {
+      "type": "string",
+      "enum": [
+        "slot",
+        "quota",
+        "load"
+      ]
+    },
+    "run_limit_state": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "automatic": {
+          "type": "boolean"
+        },
+        "reason": {
+          "$ref": "#/$defs/run_limit_reason"
+        }
+      },
+      "required": [
+        "value",
+        "automatic",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "work_limit_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "limit_up",
+            "limit_down",
+            "limit_auto",
+            "limit_set"
+          ]
+        },
+        "value": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "work_limit_result": {
+      "type": "object",
+      "properties": {
+        "automatic": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason": {
+          "$ref": "#/$defs/run_limit_reason"
+        }
+      },
+      "required": [
+        "automatic",
+        "limit",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
     "work_switch_result": {
       "type": "object",
       "properties": {
@@ -8617,6 +9306,185 @@
         "operation"
       ],
       "additionalProperties": false
+    },
+    "webex_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "configure",
+            "sign_in",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "webex"
+          ]
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "client_secret": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "account": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "configure"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "platform",
+              "client_id",
+              "client_secret"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "sign_in"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "platform"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "disconnect"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "account"
+            ]
+          }
+        }
+      ]
+    },
+    "webex_source": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "connected",
+            "needs_sign_in",
+            "failing",
+            "unreachable",
+            "import_only",
+            "disconnected"
+          ]
+        },
+        "failure": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "account",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "webex_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "configure",
+            "sign_in",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "configured",
+            "connected",
+            "needs_sign_in",
+            "disconnected"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/webex_source"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "list"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sources"
+            ]
+          }
+        }
+      ]
     }
   }
 }

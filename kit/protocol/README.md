@@ -80,6 +80,13 @@ in its receive loop. `internal/clientapi.RequestDecoder` uses the strict codec a
 returns a typed `malformed` refusal without a partial request. Neither decoder
 negotiates versions, authorizes a request or implements application state.
 
+Frames already accepted by the strict codec return directly from `ClientDecoder`.
+Only frames that need compatibility handling take the projection path. This
+avoids rebuilding large known progress messages while retaining the same
+validation, additive-field behavior and per-frame counters. An allocation
+regression compares a 50-row progress update with the strict codec; conformance
+tests also exercise unknown fields, kinds, nested items and malformed frames.
+
 The reusable `conformance` package loads the
 [client 1.0 corpus](../../protocol/fixtures/client/1.0/README.md). `Suite.RoundTrip`
 accepts an implementation's codec; `Suite.Run` accepts its receive adapter and

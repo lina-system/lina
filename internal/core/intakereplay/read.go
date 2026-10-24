@@ -19,6 +19,27 @@ import (
 
 const maxLine = 1024 * 1024
 
+var (
+	ErrModelRoundLimit = errors.New("intake model round limit")
+	ErrModelReplay     = errors.New("intake model replay failed")
+)
+
+// Export only bounded categories, never provider errors containing case data.
+func runtimeReason(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "runtime_timeout"
+	case errors.Is(err, context.Canceled):
+		return "runtime_cancelled"
+	case errors.Is(err, ErrModelRoundLimit):
+		return "runtime_model_round_limit"
+	case errors.Is(err, ErrModelReplay):
+		return "runtime_model_failure"
+	default:
+		return "runtime_error"
+	}
+}
+
 type located struct {
 	Case
 	line int
@@ -254,20 +275,20 @@ func Run(ctx context.Context, r io.Reader, execute Executor, routers ...string) 
 	for _, entry := range cases {
 		c := entry.Case
 		results := []Result{}
-		failed := false
+		failure := ""
 		for _, router := range routers {
 			bindings, err := execute(ctx, c, router)
 			if err != nil {
-				failed = true
+				failure = runtimeReason(err)
 				break
 			}
 			m := Score(c, bindings)
 			results = append(results, Result{Line: entry.line, ID: c.ID, Set: c.Set, Router: router, Bindings: bindings, Score: &m})
 		}
-		if failed {
+		if failure != "" {
 			out.Excluded++
-			out.ExclusionReasons["runtime_error"]++
-			out.Results = append(out.Results, Result{Line: entry.line, ID: c.ID, Set: c.Set, Reason: "runtime_error"})
+			out.ExclusionReasons[failure]++
+			out.Results = append(out.Results, Result{Line: entry.line, ID: c.ID, Set: c.Set, Reason: failure})
 			continue
 		}
 		out.Scored++

@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/a2a"
 	"github.com/thisisjun786/lina/internal/core/accounts"
 	"github.com/thisisjun786/lina/internal/core/agents"
+	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -30,6 +31,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 	"github.com/thisisjun786/lina/internal/core/messenger/teams"
+	"github.com/thisisjun786/lina/internal/core/messenger/webex"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/results"
@@ -51,6 +53,9 @@ import (
 // conversationRuntime is boot's composition of existing stores and flows. The
 // model and all accepted work belong to Core, independent of client lifetime.
 type conversationRuntime struct {
+	inputJudge         atropos.Judge
+	inputCreationMu    sync.Mutex
+	inputMoveMu        sync.Mutex
 	publications       *publicationRuntime
 	externalTask       string
 	summaryPreparation conversationPreparation
@@ -85,6 +90,7 @@ type conversationRuntime struct {
 	dispatchMu      *sync.RWMutex
 	removals        *retract.Store
 	teams           *teams.Service
+	webex           *webex.Service
 	messenger       *messenger.Service
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
@@ -285,7 +291,7 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if route == nil {
 		r.identity.Topics = nil
 		r.identity.TopicCapabilities = nil
-	} else if err := addOperations(&r.identity, clientsrv.ConversationOperations(r.router), clientsrv.LauncherOperations(r.router), r.resultOperations()); err != nil {
+	} else if err := addOperations(&r.identity, clientsrv.ConversationOperations(r.router), clientsrv.LauncherOperations(r.router), bindingOperations(r.router), r.resultOperations()); err != nil {
 		return nil, err
 	}
 	r.vault, err = secrets.OpenFiles(root)
@@ -301,6 +307,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
+	if err = r.initWebex(relay, channelTransport); err != nil {
+		return nil, err
+	}
 	if err = r.initTeams(relay, channelTransport); err != nil {
 		return nil, err
 	}
@@ -340,10 +349,20 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err := addOperations(&r.identity, clientsrv.WorkOperations(r)); err != nil {
 		return nil, err
 	}
+	if err := addOperations(&r.identity, clientsrv.WorkControlOperations(r)); err != nil {
+		return nil, err
+	}
+	if err := addOperations(&r.identity, clientsrv.WorkLimitOperations(r)); err != nil {
+		return nil, err
+	}
 	if err = r.startWorkerLanes(); err != nil {
 		return nil, err
 	}
 	if err = r.startWorkWaiting(ctx); err != nil {
+		return nil, err
+	}
+	// Recovered runs can create agent views, which retain this shared runtime.
+	if err = r.startMiniApps(ctx, tailnetIP); err != nil {
 		return nil, err
 	}
 
@@ -425,9 +444,6 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err = r.startTimers(ctx); err != nil {
 		return nil, err
 	}
-	if err = r.startMiniApps(ctx, tailnetIP); err != nil {
-		return nil, err
-	}
 	if err = r.resumeWorkerCompletions(ctx); err != nil {
 		return nil, err
 	}
@@ -437,6 +453,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.webex != nil {
+		r.webex.Close()
+	}
 	if r.teams != nil {
 		r.teams.Close()
 	}

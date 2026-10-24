@@ -26,6 +26,14 @@ const (
 	KindSubscribe            Kind = "subscribe"
 	KindOutputDelta          Kind = "output_delta"
 	KindItemDone             Kind = "item_done"
+	KindBindingGet           Kind = "binding_get"
+	KindBinding              Kind = "binding"
+	KindBindingMove          Kind = "binding_move"
+	KindBindingMoveResult    Kind = "binding_move_result"
+	KindBindingStatsGet      Kind = "binding_stats_get"
+	KindBindingStats         Kind = "binding_stats"
+	KindBindingExport        Kind = "binding_export"
+	KindBindingExportResult  Kind = "binding_export_result"
 	KindTurnState            Kind = "turn_state"
 	KindToolActivity         Kind = "tool_activity"
 	KindApprovalRequest      Kind = "approval_request"
@@ -61,6 +69,10 @@ const (
 	KindWorkResult           Kind = "work_result"
 	KindWorkSwitchRequest    Kind = "work_switch_request"
 	KindWorkSwitchResult     Kind = "work_switch_result"
+	KindWorkControlRequest   Kind = "work_control_request"
+	KindWorkControlResult    Kind = "work_control_result"
+	KindWorkLimitRequest     Kind = "work_limit_request"
+	KindWorkLimitResult      Kind = "work_limit_result"
 	KindAccountRequest       Kind = "account_request"
 	KindAccountResult        Kind = "account_result"
 	KindMemoryRequest        Kind = "memory_request"
@@ -112,6 +124,8 @@ const (
 	KindLocalTaskResult      Kind = "local_task_result"
 	KindTeamsRequest         Kind = "teams_request"
 	KindTeamsResult          Kind = "teams_result"
+	KindWebexRequest         Kind = "webex_request"
+	KindWebexResult          Kind = "webex_result"
 )
 
 type A2aCallStatus struct {
@@ -271,6 +285,73 @@ type ApprovalRequest struct {
 type BackgroundNotice struct {
 	Stream *StreamMetadata `json:"stream,omitempty"`
 	Text   *string         `json:"text,omitempty"`
+}
+type Binding struct {
+	Candidates []BindingCandidate  `json:"candidates"`
+	Chip       BindingChip         `json:"chip"`
+	InputID    string              `json:"input_id"`
+	Moves      []BindingMoveResult `json:"moves"`
+	Target     BindingTarget       `json:"target"`
+}
+type BindingCandidate struct {
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	State string `json:"state"`
+	Title string `json:"title"`
+}
+type BindingChip struct {
+	InputID string        `json:"input_id"`
+	Name    string        `json:"name"`
+	Show    bool          `json:"show"`
+	Target  BindingTarget `json:"target"`
+}
+type BindingDeciderCount struct {
+	Bindings   json.Number `json:"bindings"`
+	Decider    string      `json:"decider"`
+	Moves      json.Number `json:"moves"`
+	PerHundred json.Number `json:"per_hundred"`
+}
+type BindingEffectOutcome struct {
+	Item    string  `json:"item"`
+	Kind    string  `json:"kind"`
+	Moved   bool    `json:"moved"`
+	Reason  *string `json:"reason,omitempty"`
+	Receipt *string `json:"receipt,omitempty"`
+}
+type BindingExport struct {
+}
+type BindingExportResult struct {
+	Cases     json.Number `json:"cases"`
+	Directory string      `json:"directory"`
+}
+type BindingGet struct {
+	InputID string `json:"input_id"`
+}
+type BindingMove struct {
+	InputID string        `json:"input_id"`
+	Target  BindingTarget `json:"target"`
+}
+type BindingMoveResult struct {
+	Decider string                 `json:"decider"`
+	Effects []BindingEffectOutcome `json:"effects"`
+	From    BindingTarget          `json:"from"`
+	InputID string                 `json:"input_id"`
+	MoveID  string                 `json:"move_id"`
+	To      BindingTarget          `json:"to"`
+}
+type BindingStats struct {
+	Bindings   json.Number           `json:"bindings"`
+	Deciders   []BindingDeciderCount `json:"deciders"`
+	Moves      json.Number           `json:"moves"`
+	PerHundred json.Number           `json:"per_hundred"`
+}
+type BindingStatsGet struct {
+}
+type BindingTarget struct {
+	Class  string  `json:"class"`
+	ID     *string `json:"id,omitempty"`
+	Kind   *string `json:"kind,omitempty"`
+	Parent *string `json:"parent,omitempty"`
 }
 type Capability struct {
 	Catalogs *[]string     `json:"catalogs,omitempty"`
@@ -568,6 +649,7 @@ type Interrupt struct {
 }
 type ItemDone struct {
 	AgentID  *string              `json:"agent_id,omitempty"`
+	Binding  *BindingChip         `json:"binding,omitempty"`
 	Details  *string              `json:"details,omitempty"`
 	EchoKey  *string              `json:"echo_key,omitempty"`
 	PersonID *string              `json:"person_id,omitempty"`
@@ -760,6 +842,7 @@ type Progress struct {
 	CardOrder   *[]string       `json:"card_order,omitempty"`
 	Counts      *ProgressCounts `json:"counts,omitempty"`
 	Lanes       *[]WorkerLane   `json:"lanes,omitempty"`
+	Limit       *RunLimitState  `json:"limit,omitempty"`
 	NextCursor  *string         `json:"next_cursor,omitempty"`
 	Rows        *[]ProgressRow  `json:"rows,omitempty"`
 	Waiting     *[]WaitingRow   `json:"waiting,omitempty"`
@@ -828,6 +911,7 @@ type ProgressStageWorker struct {
 type ProgressUpdate struct {
 	CardOrder   *[]string       `json:"card_order,omitempty"`
 	Counts      *ProgressCounts `json:"counts,omitempty"`
+	Limit       *RunLimitState  `json:"limit,omitempty"`
 	Rows        *[]ProgressRow  `json:"rows,omitempty"`
 	Stream      *StreamMetadata `json:"stream,omitempty"`
 	Text        *string         `json:"text,omitempty"`
@@ -1012,6 +1096,19 @@ type Resync struct {
 type ResyncRequired struct {
 	Cursor StreamCursor `json:"cursor"`
 	Topic  string       `json:"topic"`
+}
+type RunLimitReason string
+
+const (
+	RunLimitReasonSlot  RunLimitReason = "slot"
+	RunLimitReasonQuota RunLimitReason = "quota"
+	RunLimitReasonLoad  RunLimitReason = "load"
+)
+
+type RunLimitState struct {
+	Automatic bool           `json:"automatic"`
+	Reason    RunLimitReason `json:"reason"`
+	Value     json.Number    `json:"value"`
 }
 type RunStatus struct {
 	Stream *StreamMetadata `json:"stream,omitempty"`
@@ -1581,6 +1678,26 @@ type WebResult struct {
 	Configured bool   `json:"configured"`
 	Provider   string `json:"provider"`
 }
+type WebexRequest struct {
+	Account      *string `json:"account,omitempty"`
+	ClientID     *string `json:"client_id,omitempty"`
+	ClientSecret *string `json:"client_secret,omitempty"`
+	Operation    *string `json:"operation,omitempty"`
+	Platform     *string `json:"platform,omitempty"`
+}
+type WebexResult struct {
+	Account   *string        `json:"account,omitempty"`
+	Operation *string        `json:"operation,omitempty"`
+	Platform  *string        `json:"platform,omitempty"`
+	Sources   *[]WebexSource `json:"sources,omitempty"`
+	Status    *string        `json:"status,omitempty"`
+}
+type WebexSource struct {
+	Account  string  `json:"account"`
+	Failure  *string `json:"failure,omitempty"`
+	Platform string  `json:"platform"`
+	State    string  `json:"state"`
+}
 type Welcome struct {
 	Agents          []Agent      `json:"agents"`
 	Capabilities    []Capability `json:"capabilities"`
@@ -1588,6 +1705,27 @@ type Welcome struct {
 	MainID          string       `json:"main_id"`
 	PersonID        string       `json:"person_id"`
 	ProtocolVersion string       `json:"protocol_version"`
+}
+type WorkControlRequest struct {
+	Confirm   *bool  `json:"confirm,omitempty"`
+	GoalID    string `json:"goal_id"`
+	Operation string `json:"operation"`
+}
+type WorkControlResult struct {
+	GoalID    string      `json:"goal_id"`
+	Operation string      `json:"operation"`
+	Paused    bool        `json:"paused"`
+	Rank      json.Number `json:"rank"`
+	State     string      `json:"state"`
+}
+type WorkLimitRequest struct {
+	Operation string       `json:"operation"`
+	Value     *json.Number `json:"value,omitempty"`
+}
+type WorkLimitResult struct {
+	Automatic bool           `json:"automatic"`
+	Limit     json.Number    `json:"limit"`
+	Reason    RunLimitReason `json:"reason"`
 }
 type WorkRequest struct {
 	AgentID       *string   `json:"agent_id,omitempty"`
@@ -1668,6 +1806,14 @@ func (History) isPayload()              {}
 func (Subscribe) isPayload()            {}
 func (OutputDelta) isPayload()          {}
 func (ItemDone) isPayload()             {}
+func (BindingGet) isPayload()           {}
+func (Binding) isPayload()              {}
+func (BindingMove) isPayload()          {}
+func (BindingMoveResult) isPayload()    {}
+func (BindingStatsGet) isPayload()      {}
+func (BindingStats) isPayload()         {}
+func (BindingExport) isPayload()        {}
+func (BindingExportResult) isPayload()  {}
 func (TurnState) isPayload()            {}
 func (ToolActivity) isPayload()         {}
 func (ApprovalRequest) isPayload()      {}
@@ -1703,6 +1849,10 @@ func (WorkRequest) isPayload()          {}
 func (WorkResult) isPayload()           {}
 func (WorkSwitchRequest) isPayload()    {}
 func (WorkSwitchResult) isPayload()     {}
+func (WorkControlRequest) isPayload()   {}
+func (WorkControlResult) isPayload()    {}
+func (WorkLimitRequest) isPayload()     {}
+func (WorkLimitResult) isPayload()      {}
 func (AccountRequest) isPayload()       {}
 func (AccountResult) isPayload()        {}
 func (MemoryRequest) isPayload()        {}
@@ -1754,6 +1904,8 @@ func (LocalTask) isPayload()            {}
 func (LocalTaskResult) isPayload()      {}
 func (TeamsRequest) isPayload()         {}
 func (TeamsResult) isPayload()          {}
+func (WebexRequest) isPayload()         {}
+func (WebexResult) isPayload()          {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -1831,6 +1983,38 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		return p, err
 	case KindItemDone:
 		var p ItemDone
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingGet:
+		var p BindingGet
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBinding:
+		var p Binding
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingMove:
+		var p BindingMove
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingMoveResult:
+		var p BindingMoveResult
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingStatsGet:
+		var p BindingStatsGet
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingStats:
+		var p BindingStats
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingExport:
+		var p BindingExport
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingExportResult:
+		var p BindingExportResult
 		err := json.Unmarshal(data, &p)
 		return p, err
 	case KindTurnState:
@@ -1971,6 +2155,22 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		return p, err
 	case KindWorkSwitchResult:
 		var p WorkSwitchResult
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWorkControlRequest:
+		var p WorkControlRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWorkControlResult:
+		var p WorkControlResult
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWorkLimitRequest:
+		var p WorkLimitRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWorkLimitResult:
+		var p WorkLimitResult
 		err := json.Unmarshal(data, &p)
 		return p, err
 	case KindAccountRequest:
@@ -2177,6 +2377,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p TeamsResult
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindWebexRequest:
+		var p WebexRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWebexResult:
+		var p WebexResult
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -2235,6 +2443,14 @@ const clientSchemaJSON = `{
         "subscribe",
         "output_delta",
         "item_done",
+        "binding_get",
+        "binding",
+        "binding_move",
+        "binding_move_result",
+        "binding_stats_get",
+        "binding_stats",
+        "binding_export",
+        "binding_export_result",
         "turn_state",
         "tool_activity",
         "approval_request",
@@ -2270,6 +2486,10 @@ const clientSchemaJSON = `{
         "work_result",
         "work_switch_request",
         "work_switch_result",
+        "work_control_request",
+        "work_control_result",
+        "work_limit_request",
+        "work_limit_result",
         "account_request",
         "account_result",
         "memory_request",
@@ -2320,7 +2540,9 @@ const clientSchemaJSON = `{
         "local_task",
         "local_task_result",
         "teams_request",
-        "teams_result"
+        "teams_result",
+        "webex_request",
+        "webex_result"
       ]
     },
     "message_id": {
@@ -2629,6 +2851,134 @@ const clientSchemaJSON = `{
         "properties": {
           "payload": {
             "$ref": "#/$defs/item_done"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_get"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_move"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_move"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_move_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_move_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_stats_get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_stats_get"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_stats"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_stats"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_export"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_export"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_export_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_export_result"
           }
         }
       }
@@ -3883,6 +4233,70 @@ const clientSchemaJSON = `{
       "if": {
         "properties": {
           "kind": {
+            "const": "work_control_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_control_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_limit_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_limit_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_limit_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_limit_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
             "const": "a2a_request"
           }
         }
@@ -4254,6 +4668,38 @@ const clientSchemaJSON = `{
         "properties": {
           "payload": {
             "$ref": "#/$defs/teams_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "webex_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/webex_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "webex_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/webex_result"
           }
         }
       }
@@ -4853,9 +5299,306 @@ const clientSchemaJSON = `{
         "person_id": {
           "type": "string",
           "minLength": 1
+        },
+        "binding": {
+          "$ref": "#/$defs/binding_chip"
         }
       },
       "required": [],
+      "additionalProperties": false
+    },
+    "binding_target": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "type": "string",
+          "enum": [
+            "existing",
+            "new",
+            "none"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "parent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "additionalProperties": false
+    },
+    "binding_candidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "kind",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "binding_chip": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "show": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        }
+      },
+      "required": [
+        "input_id",
+        "show",
+        "name",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "binding_get": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "input_id"
+      ],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chip": {
+          "$ref": "#/$defs/binding_chip"
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "candidates": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/binding_candidate"
+          }
+        },
+        "moves": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/binding_move_result"
+          }
+        }
+      },
+      "required": [
+        "input_id",
+        "chip",
+        "target",
+        "candidates",
+        "moves"
+      ],
+      "additionalProperties": false
+    },
+    "binding_move": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        }
+      },
+      "required": [
+        "input_id",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "binding_effect_outcome": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "item": {
+          "type": "string"
+        },
+        "moved": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "receipt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "item",
+        "moved"
+      ],
+      "additionalProperties": false
+    },
+    "binding_move_result": {
+      "type": "object",
+      "properties": {
+        "move_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "to": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "decider": {
+          "type": "string"
+        },
+        "effects": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/binding_effect_outcome"
+          }
+        }
+      },
+      "required": [
+        "move_id",
+        "input_id",
+        "from",
+        "to",
+        "decider",
+        "effects"
+      ],
+      "additionalProperties": false
+    },
+    "binding_decider_count": {
+      "type": "object",
+      "properties": {
+        "decider": {
+          "type": "string"
+        },
+        "bindings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "moves": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "per_hundred": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "decider",
+        "bindings",
+        "moves",
+        "per_hundred"
+      ],
+      "additionalProperties": false
+    },
+    "binding_stats_get": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "binding_stats": {
+      "type": "object",
+      "properties": {
+        "bindings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "moves": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "per_hundred": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deciders": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/binding_decider_count"
+          }
+        }
+      },
+      "required": [
+        "bindings",
+        "moves",
+        "per_hundred",
+        "deciders"
+      ],
+      "additionalProperties": false
+    },
+    "binding_export": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "binding_export_result": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": "string"
+        },
+        "cases": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "directory",
+        "cases"
+      ],
       "additionalProperties": false
     },
     "turn_state": {
@@ -5480,6 +6223,9 @@ const clientSchemaJSON = `{
         "waiting_more": {
           "type": "integer",
           "minimum": 0
+        },
+        "limit": {
+          "$ref": "#/$defs/run_limit_state"
         }
       },
       "required": [],
@@ -5518,6 +6264,9 @@ const clientSchemaJSON = `{
         "waiting_more": {
           "type": "integer",
           "minimum": 0
+        },
+        "limit": {
+          "$ref": "#/$defs/run_limit_state"
         }
       },
       "required": [],
@@ -5638,21 +6387,21 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "waiting_answer": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6130,14 +6879,14 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "memory_import_progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "memory_promotion_batch": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6318,7 +7067,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "agent_talk_subscribe": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6380,7 +7129,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "task_cancel": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6879,14 +7628,14 @@ const clientSchemaJSON = `{
       ]
     },
     "saved_reference": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "save_destination": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -8942,6 +9691,154 @@ const clientSchemaJSON = `{
       ],
       "additionalProperties": false
     },
+    "work_control_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "confirm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation",
+        "goal_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_control_result": {
+      "type": "object",
+      "properties": {
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "defining",
+            "running",
+            "waiting",
+            "checking",
+            "done",
+            "stopped",
+            "blocked"
+          ]
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "goal_id",
+        "operation",
+        "state",
+        "paused",
+        "rank"
+      ],
+      "additionalProperties": false
+    },
+    "run_limit_reason": {
+      "type": "string",
+      "enum": [
+        "slot",
+        "quota",
+        "load"
+      ]
+    },
+    "run_limit_state": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "automatic": {
+          "type": "boolean"
+        },
+        "reason": {
+          "$ref": "#/$defs/run_limit_reason"
+        }
+      },
+      "required": [
+        "value",
+        "automatic",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "work_limit_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "limit_up",
+            "limit_down",
+            "limit_auto",
+            "limit_set"
+          ]
+        },
+        "value": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "work_limit_result": {
+      "type": "object",
+      "properties": {
+        "automatic": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reason": {
+          "$ref": "#/$defs/run_limit_reason"
+        }
+      },
+      "required": [
+        "automatic",
+        "limit",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
     "work_switch_result": {
       "type": "object",
       "properties": {
@@ -10827,6 +11724,185 @@ const clientSchemaJSON = `{
         "operation"
       ],
       "additionalProperties": false
+    },
+    "webex_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "configure",
+            "sign_in",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "webex"
+          ]
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "client_secret": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "account": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "configure"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "platform",
+              "client_id",
+              "client_secret"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "sign_in"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "platform"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "disconnect"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "account"
+            ]
+          }
+        }
+      ]
+    },
+    "webex_source": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "connected",
+            "needs_sign_in",
+            "failing",
+            "unreachable",
+            "import_only",
+            "disconnected"
+          ]
+        },
+        "failure": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "account",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "webex_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "configure",
+            "sign_in",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "configured",
+            "connected",
+            "needs_sign_in",
+            "disconnected"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/webex_source"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "list"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sources"
+            ]
+          }
+        }
+      ]
     }
   }
 }
