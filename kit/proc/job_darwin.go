@@ -219,19 +219,22 @@ func newProcess(c Command) (process, error) {
 // ownerDirectory resolves the directory a job receives. The helper runs in the
 // job's private directory, so an unset or relative directory is resolved here
 // against the owner's own before it is sent.
+//
+// The result is not cleaned: "link/.." must reach the kernel as written, so the
+// kernel follows the symlink itself and selects the same directory the command
+// would have selected without a job in between.
 func ownerDirectory(dir string) (string, error) {
 	if filepath.IsAbs(dir) {
 		return dir, nil
 	}
-	base := dir
-	if base == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		base = wd
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
 	}
-	return filepath.Abs(base)
+	if dir == "" {
+		return wd, nil
+	}
+	return strings.TrimSuffix(wd, "/") + "/" + dir, nil
 }
 
 // ownerEnvironment keeps an explicit environment explicit: a nil list is sent

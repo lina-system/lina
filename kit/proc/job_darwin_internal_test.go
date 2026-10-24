@@ -71,6 +71,11 @@ func TestOwnerResolvesTheJobDirectory(t *testing.T) {
 	if got, err := ownerDirectory("relative/dir"); err != nil || got != filepath.Join(wd, "relative/dir") {
 		t.Fatalf("relative directory = %q, %v", got, err)
 	}
+	// A symlink followed by ".." is resolved by the kernel, not lexically here:
+	// "link/.." must arrive uncleaned so it selects the symlink's parent.
+	if got, err := ownerDirectory("link/.."); err != nil || got != filepath.Join(wd, "link/..") || strings.HasSuffix(got, "/..") == false {
+		t.Fatalf("relative directory with a symlink = %q, %v", got, err)
+	}
 	if got, err := ownerDirectory("/tmp"); err != nil || got != "/tmp" {
 		t.Fatalf("absolute directory = %q, %v", got, err)
 	}
