@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgerr"
 	"github.com/gotd/td/tgtest"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 	"github.com/thisisjun786/lina/internal/core/messenger/telegram"
@@ -110,6 +111,70 @@ func TestRecoveryReplaysOfflineUpdatesAndCheckpointsAfterAdmission(t *testing.T)
 	defer mu.Unlock()
 	if len(common) != 4 || common[0] != 10 || common[1] != 10 || common[2] != 11 || common[3] != 12 || len(channel) != 2 || channel[0] != 10 || channel[1] != 12 {
 		t.Fatalf("checkpoints: common=%v channel=%v", common, channel)
+	}
+}
+
+// A channel the account left keeps no checkpoint that stops the account's
+// recovery: its permanent access error drops that channel alone.
+func TestRecoverySkipsAChannelTheAccountLeft(t *testing.T) {
+	s := newServer(t)
+	vault := newVault(t)
+	group := &tg.Channel{ID: 3003, Title: "Channel", Broadcast: true, Photo: &tg.ChatPhotoEmpty{}}
+	group.SetAccessHash(33)
+	var mu sync.Mutex
+	left := false
+	var channelCalls int
+	s.dispatcher.HandleFunc(tg.MessagesGetDialogsRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+		mu.Lock()
+		gone := left
+		mu.Unlock()
+		dialogs := []tg.DialogClass{&tg.Dialog{Peer: &tg.PeerUser{UserID: other.ID}, TopMessage: 3}}
+		chats := []tg.ChatClass{}
+		if !gone {
+			dialog := &tg.Dialog{Peer: &tg.PeerChannel{ChannelID: 3003}, TopMessage: 3}
+			dialog.SetPts(10)
+			dialogs = append(dialogs, dialog)
+			chats = append(chats, group)
+		}
+		return server.SendResult(req, &tg.MessagesDialogs{Dialogs: dialogs, Users: []tg.UserClass{self, other}, Chats: chats})
+	})
+	s.dispatcher.HandleFunc(tg.UpdatesGetChannelDifferenceRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+		mu.Lock()
+		channelCalls++
+		gone := left
+		mu.Unlock()
+		if gone {
+			return server.SendErr(req, tgerr.New(406, "CHANNEL_PRIVATE"))
+		}
+		return server.SendResult(req, &tg.UpdatesChannelDifferenceEmpty{Final: true, Pts: 10})
+	})
+	first := newAdapter(t, s, vault, nil)
+	signIn(t, first)
+	if _, err := first.ListChats(t.Context(), sourceID); err != nil {
+		t.Fatal(err)
+	}
+	none := func(messenger.Event) error { return nil }
+	if err := first.Recover(t.Context(), sourceID, none); err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+	mu.Lock()
+	left = true
+	mu.Unlock()
+	for range 2 {
+		next := newAdapter(t, s, vault, nil)
+		if _, err := next.ListChats(t.Context(), sourceID); err != nil {
+			t.Fatal(err)
+		}
+		if err := next.Recover(t.Context(), sourceID, none); err != nil {
+			t.Fatalf("a left channel stopped recovery: %v", err)
+		}
+		next.Close()
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if channelCalls != 1 {
+		t.Fatalf("channel difference requests = %d, want the one refused request", channelCalls)
 	}
 }
 

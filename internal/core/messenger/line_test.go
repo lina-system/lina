@@ -46,7 +46,7 @@ func (a *newestNAdapter) Members(context.Context, messenger.SourceID, string) ([
 func (a *newestNAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
 	return nil
 }
-func (a *newestNAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
+func (a *newestNAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 func (a *newestNAdapter) Capabilities() messenger.Capabilities {

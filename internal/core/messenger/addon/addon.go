@@ -176,7 +176,7 @@ func (a *Adapter) Live(ctx context.Context, id messenger.SourceID, deliver func(
 
 // FetchAttachment is not offered: the operation table carries attachment
 // metadata only.
-func (a *Adapter) FetchAttachment(_ context.Context, id messenger.SourceID, _, _ string) (io.ReadCloser, error) {
+func (a *Adapter) FetchAttachment(_ context.Context, id messenger.SourceID, _, _, _ string) (io.ReadCloser, error) {
 	if err := a.forAccount(id); err != nil {
 		return nil, err
 	}
