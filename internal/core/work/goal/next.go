@@ -144,26 +144,30 @@ type Goal struct {
 	Revision          int64               `json:"revision"`
 	Rank              int                 `json:"rank,omitempty"`
 	Paused            bool                `json:"paused,omitempty"`
-	ManagerTurns      int                 `json:"manager_turns"`
-	AttentionID       string              `json:"attention_id,omitempty"`
-	BlockedReason     string              `json:"blocked_reason,omitempty"`
-	CreatedAt         int64               `json:"created_at"`
-	Deadline          int64               `json:"deadline,omitempty"`
-	ID                string              `json:"id"`
-	Person            string              `json:"person"`
-	Agent             string              `json:"agent"`
-	Summary           string              `json:"-"`
-	Done              string              `json:"-"`
-	ServiceTarget     string              `json:"service_target"`
-	ServiceRepository string              `json:"service_repository,omitempty"`
-	NoServiceReason   string              `json:"no_service_reason"`
-	Tasks             []Task              `json:"tasks"`
-	TargetRevision    string              `json:"target_revision"`
-	MergedRevisions   map[string]string   `json:"merged_revisions,omitempty"`
-	Deployment        Proof               `json:"deployment"`
-	Verification      Proof               `json:"verification"`
-	Waits             []Wait              `json:"waits,omitempty"`
-	Evidence          []Proof             `json:"evidence,omitempty"`
+	// QueuePlace and QueueReason are the goal's last derived place among the
+	// goals waiting for a run slot, and that one reason. Zero means not queued.
+	QueuePlace        int               `json:"queue_place,omitempty"`
+	QueueReason       string            `json:"queue_reason,omitempty"`
+	ManagerTurns      int               `json:"manager_turns"`
+	AttentionID       string            `json:"attention_id,omitempty"`
+	BlockedReason     string            `json:"blocked_reason,omitempty"`
+	CreatedAt         int64             `json:"created_at"`
+	Deadline          int64             `json:"deadline,omitempty"`
+	ID                string            `json:"id"`
+	Person            string            `json:"person"`
+	Agent             string            `json:"agent"`
+	Summary           string            `json:"-"`
+	Done              string            `json:"-"`
+	ServiceTarget     string            `json:"service_target"`
+	ServiceRepository string            `json:"service_repository,omitempty"`
+	NoServiceReason   string            `json:"no_service_reason"`
+	Tasks             []Task            `json:"tasks"`
+	TargetRevision    string            `json:"target_revision"`
+	MergedRevisions   map[string]string `json:"merged_revisions,omitempty"`
+	Deployment        Proof             `json:"deployment"`
+	Verification      Proof             `json:"verification"`
+	Waits             []Wait            `json:"waits,omitempty"`
+	Evidence          []Proof           `json:"evidence,omitempty"`
 }
 
 type ActionKind string
@@ -221,6 +225,9 @@ type State struct {
 	Goals   []Goal   `json:"goals"`
 	Nodes   []Node   `json:"nodes"`
 	Actions []Action `json:"actions"`
+	// Limits holds each person's recorded run limit. A person with no record is
+	// automatic.
+	Limits map[string]RunLimit `json:"limits,omitempty"`
 }
 type Wait struct {
 	GoalID string `json:"goal_id"`
@@ -230,11 +237,15 @@ type Wait struct {
 	Until  int64  `json:"until"`
 }
 type Plan struct {
-	Frontier []FrontierStep
-	Actions  []Action
-	Waits    []Wait
-	Close    []string
-	Block    []string
+	// RunLimits is the limit this pass applied to each person, and Queues holds
+	// every goal waiting for a run slot with its place and one reason.
+	RunLimits map[string]LimitState
+	Frontier  []FrontierStep
+	Actions   []Action
+	Waits     []Wait
+	Queues    []QueuePlace
+	Close     []string
+	Block     []string
 }
 
 func finite(n float64) bool { return !math.IsNaN(n) && !math.IsInf(n, 0) }
@@ -378,6 +389,23 @@ func Derive(state State, now time.Time) (Plan, error) {
 	sort.Slice(goals, func(i, j int) bool { return goals[i].ID < goals[j].ID })
 	nodes := append([]Node(nil), state.Nodes...)
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	// The run limit is one value per person for the whole pass, read from the
+	// reports as they stand before this pass places anything. Goals already
+	// holding a run slot stay counted, so a lower limit stops nothing running.
+	personOf := map[string]string{}
+	plan.RunLimits = map[string]LimitState{}
+	for _, g := range goals {
+		personOf[g.ID] = g.Person
+	}
+	runningGoals := inProgressGoals(state.Actions, personOf)
+	for _, g := range goals {
+		if _, ok := plan.RunLimits[g.Person]; ok {
+			continue
+		}
+		plan.RunLimits[g.Person] = runLimitFor(state.Limits[g.Person], nodes, now, len(runningGoals[g.Person]))
+	}
+	queuedGoals := map[string]int{}
+	places := map[string]int{}
 	type candidate struct {
 		goal  Goal
 		task  Task
@@ -699,6 +727,20 @@ func Derive(state State, now time.Time) (Plan, error) {
 			add(g, t, kind, "", "")
 			continue
 		}
+		// A goal past the run limit starts no new step. Its place is the rank
+		// order of the goals waiting for a slot, and its reason is the one the
+		// limit fell to. A step of a goal that already holds a slot is not new
+		// work for the person's count, so it proceeds.
+		if workerAction(kind) && !runningGoals[g.Person][g.ID] && len(runningGoals[g.Person]) >= plan.RunLimits[g.Person].Current {
+			// One place per queued goal: its later ready steps share it.
+			if _, done := queuedGoals[g.ID]; !done {
+				places[g.Person]++
+				queuedGoals[g.ID] = places[g.Person]
+				plan.Queues = append(plan.Queues, QueuePlace{GoalID: g.ID, Reason: plan.RunLimits[g.Person].Reason, Place: places[g.Person]})
+			}
+			wait(g, t, "run_limit", "run_limit.changed")
+			continue
+		}
 		overlaps := false
 		for _, held := range occupied {
 			if held.goal == g.ID && held.task.ID == t.ID {
@@ -743,6 +785,14 @@ func Derive(state State, now time.Time) (Plan, error) {
 			continue
 		}
 		add(g, t, kind, t.Head, best)
+		if workerAction(kind) {
+			// The goal now holds a run slot for this pass, so its own later
+			// steps stay within the count and no other goal takes its place.
+			if runningGoals[g.Person] == nil {
+				runningGoals[g.Person] = map[string]bool{}
+			}
+			runningGoals[g.Person][g.ID] = true
+		}
 		occupied = append(occupied, areaLease{g.ID, t})
 	}
 	return plan, nil
