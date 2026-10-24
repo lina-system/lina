@@ -84,6 +84,8 @@ func (m *Memory) recallSources(ctx context.Context, scope memory.RecallScope, in
 			}
 			text := event.Body.DerivedText()
 			sources = append(sources, RecallSource{Citation: Citation{ID: "event:" + event.ID}, Text: text, Holder: memory.Holder(hit.Holder), Evidence: []memory.Evidence{{Kind: memory.Event, ID: event.ID, Precision: memory.Exact, SourceAgent: event.AgentID, OccurredAt: event.OccurredAt.Unix(), Quote: text}}})
+		case recall.Summary, recall.Record:
+			// recallSources only asks for events and memory items.
 		}
 	}
 	return sources, nil

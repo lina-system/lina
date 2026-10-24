@@ -699,6 +699,8 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 func citations(ctx context.Context, db Canon, hit Hit) ([]canon.Citation, error) {
 	var out []canon.Citation
 	switch hit.Kind {
+	case Event:
+		return nil, nil
 	case Memory, Summary:
 		revision, err := strconv.ParseInt(hit.Revision, 10, 64)
 		if err != nil {
