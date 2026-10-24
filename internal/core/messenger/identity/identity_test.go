@@ -81,6 +81,20 @@ func observe(t *testing.T, f *fixture, id identity.Identity, name string, identi
 	}
 }
 
+// observeAt records one sighting at the platform's time, which may be earlier
+// than when Core saw it.
+func observeAt(t *testing.T, f *fixture, id identity.Identity, seen time.Time, name string, identifiers ...identity.SeenIdentifier) {
+	t.Helper()
+	observation := identity.Observation{Identity: id, At: seen}
+	if name != "" {
+		observation.Names = []identity.NameSeen{{Value: name, At: seen}}
+	}
+	observation.Identifiers = identifiers
+	if err := f.store.Observe(t.Context(), observation); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func phone(value, source string) identity.SeenIdentifier {
 	return identity.SeenIdentifier{Kind: identity.Phone, Value: value, Source: source}
 }
@@ -132,7 +146,7 @@ func (f *fixture) itemIn(t *testing.T, subject, content, conversation string) me
 			Subject:  memory.Subject{Kind: memory.ThirdParty, ID: subject},
 			Evidence: []memory.Evidence{{Kind: memory.Event, ID: event, Precision: memory.Exact}},
 		}}, func(context.Context, *canon.Tx, memory.Evidence) (memory.Origin, error) {
-			return memory.Origin{Person: "person", Agent: "agent", Speaker: guard.Person, Scope: memory.Private, Quote: content}, nil
+			return memory.Origin{Person: "person", Agent: "agent", Speaker: guard.Person, Scope: memory.Private, Quote: content, OccurredAt: f.now.Unix()}, nil
 		})
 		return err
 	})
@@ -399,6 +413,365 @@ func TestRecycledNumberEndsTheEarlierValidity(t *testing.T) {
 	question, found, err := f.store.Question(t.Context(), imessage("+821066660001"))
 	if err != nil || !found || question.Reason != identity.ReasonIdentifierReused {
 		t.Fatalf("question = %+v found=%t err=%v", question, found, err)
+	}
+}
+
+// TestBackfilledSightingMovesTheCutoffBack covers evidence that arrives out of
+// order: a number seen on Discord in January moves to iMessage in March, and a
+// February sighting of the number arrives afterwards. The earlier link ends at
+// the earliest move, never at the later sighting, and what the link produced in
+// the newly invalid window is retracted and queued again for that identity.
+func TestBackfilledSightingMovesTheCutoffBack(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660001"
+	people := identity.StaticPeople{{Record: "person-old", Identifiers: []identity.SeenIdentifier{
+		{Kind: identity.Phone, Value: number, Source: "Discord profile 2020"},
+	}}}
+	f := newFixture(t, people)
+	jan := time.Date(2026, 1, 10, 9, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
+	mar := time.Date(2026, 3, 10, 9, 0, 0, 0, time.UTC)
+	f.now = jan
+	observe(t, f, discord("d-old"), "Old owner", phone(number, "Discord profile"))
+	earlier := links(t, f, discord("d-old"))
+	if len(earlier) != 1 {
+		t.Fatalf("links = %d, want the Discord link", len(earlier))
+	}
+	f.now = mar
+	observe(t, f, imessage(number), "New owner", phone(number, "iMessage profile"))
+	if got := links(t, f, discord("d-old")); len(got) != 1 || !got[0].ValidThrough.Equal(mar) {
+		t.Fatalf("the Discord link did not end at the March sighting: %+v", got)
+	}
+	// Learning about the sender wrote an item from a February message.
+	f.now = feb
+	item := f.item(t, "person-old", "an item from February")
+	if err := f.store.RecordArtifact(t.Context(), earlier[0].ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The February sighting arrives after the March one, as a backfill does.
+	f.now = mar.Add(time.Hour)
+	observeAt(t, f, imessage(number), feb, "New owner", phone(number, "iMessage profile"))
+
+	got := links(t, f, discord("d-old"))
+	if len(got) != 1 {
+		t.Fatalf("links = %d, want the Discord link", len(got))
+	}
+	if !got[0].ValidThrough.Equal(feb) {
+		t.Fatalf("valid through = %v, want the earlier February sighting", got[0].ValidThrough)
+	}
+	if got[0].ValidThrough.After(mar) {
+		t.Fatal("the cutoff moved later than the March sighting")
+	}
+	for _, moment := range []time.Time{feb.Add(24 * time.Hour), mar.Add(-time.Second)} {
+		if got[0].Usable(moment) {
+			t.Fatalf("the link is usable at %v, inside the window the number had moved", moment)
+		}
+	}
+	if !got[0].Usable(jan.Add(24 * time.Hour)) {
+		t.Fatal("the link is not usable while the number was still Discord's")
+	}
+	if got[0].Revision != 3 {
+		t.Fatalf("revision = %d, want the create and the two cutoffs", got[0].Revision)
+	}
+	var action, signalSource, signalValue string
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		if err := tx.QueryRowContext(t.Context(), "SELECT action FROM identity_link_change WHERE link=? AND revision=?", got[0].ID, got[0].Revision).Scan(&action); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(t.Context(), "SELECT source,value FROM identity_link_signal WHERE link=? AND kind='phone' AND value=?", got[0].ID, number).Scan(&signalSource, &signalValue)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if action != "moved" || signalValue != number {
+		t.Fatalf("change = %q signal = %q/%q", action, signalSource, signalValue)
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("an item from the invalid window stayed visible")
+	}
+	requeues, err := f.store.Requeues(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeues) != 1 || requeues[0].Identity != discord("d-old") || !requeues[0].From.Equal(feb) {
+		t.Fatalf("requeues = %+v, want only the Discord identity from February", requeues)
+	}
+}
+
+// TestCutoffRepairRetractsDirectCitations covers an item that cites the link as
+// external evidence without an artifact row: when a backfilled move invalidates
+// the window the item falls in, the item is retracted like one the link
+// produced.
+func TestCutoffRepairRetractsDirectCitations(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660005"
+	people := identity.StaticPeople{{Record: "person-old", Identifiers: []identity.SeenIdentifier{
+		{Kind: identity.Phone, Value: number, Source: "Discord profile 2020"},
+	}}}
+	f := newFixture(t, people)
+	jan := time.Date(2026, 1, 10, 9, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
+	apr := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	may := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	f.now = jan
+	observe(t, f, discord("d-old"), "Old owner", phone(number, "Discord profile"))
+	got := links(t, f, discord("d-old"))
+	if len(got) != 1 {
+		t.Fatalf("links = %d, want the Discord link", len(got))
+	}
+	// A person's note from April cites the link as its external evidence.
+	f.now = apr
+	item := f.item(t, "person-old", "a note citing the link")
+	if err := f.db.Write(t.Context(), func(tx *canon.Tx) error {
+		return canon.ReplaceCitations(t.Context(), tx, "memory", item.ID, "2", []canon.Citation{{
+			Ordinal: 1, TargetKind: "external", TargetID: got[0].ID,
+			TargetRevision: "1", Precision: "event", Role: "cites",
+		}})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !visible(t, f, item.ID) {
+		t.Fatal("the note is not visible before the repair")
+	}
+	f.now = may
+	observeAt(t, f, imessage(number), feb, "New owner", phone(number, "iMessage profile"))
+
+	if after := links(t, f, discord("d-old")); len(after) != 1 || !after[0].ValidThrough.Equal(feb) {
+		t.Fatalf("links = %+v, want the Discord link ended at February", after)
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("a note citing the link inside the invalid window stayed visible")
+	}
+}
+
+// TestConfirmedLinkIsUnusableAfterTheNumberMoves pins the person's word to the
+// identifier's lifetime: a confirmed phone link ends when the number moves to
+// another identity, and nothing the link produced after the cutoff stays
+// attributed through it.
+func TestConfirmedLinkIsUnusableAfterTheNumberMoves(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660004"
+	people := identity.StaticPeople{{Record: "person-anna", Identifiers: []identity.SeenIdentifier{
+		{Kind: identity.Phone, Value: number, Source: "Discord profile 2026"},
+	}}}
+	f := newFixture(t, people)
+	jan := time.Date(2026, 1, 10, 9, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
+	apr := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	may := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	f.now = jan
+	observe(t, f, discord("d-anna"), "Anna", phone(number, "Discord profile"))
+	before := links(t, f, discord("d-anna"))
+	if len(before) != 1 {
+		t.Fatalf("links = %d, want the Discord link", len(before))
+	}
+	confirmed, err := f.store.Confirm(t.Context(), discord("d-anna"), "person-anna", "that is Anna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if confirmed.Class != identity.Confirmed || !confirmed.Usable(jan) {
+		t.Fatalf("confirmed link = %+v, want a usable confirmed link", confirmed)
+	}
+	// Extraction attributed an April item through the confirmed link.
+	f.now = apr
+	item := f.item(t, "person-anna", "an item from April")
+	if err := f.store.RecordArtifact(t.Context(), confirmed.ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The number moves in February; the sighting arrives in May.
+	f.now = may
+	observeAt(t, f, imessage(number), feb, "Someone else", phone(number, "iMessage profile"))
+
+	got := links(t, f, discord("d-anna"))
+	if len(got) != 1 || got[0].Class != identity.Confirmed {
+		t.Fatalf("links = %+v, want the confirmed link", got)
+	}
+	if !got[0].ValidThrough.Equal(feb) {
+		t.Fatalf("valid through = %v, want the February sighting", got[0].ValidThrough)
+	}
+	if got[0].Usable(feb) || got[0].Usable(apr) {
+		t.Fatal("the confirmed link is usable after the number moved")
+	}
+	if !got[0].Usable(jan.Add(24 * time.Hour)) {
+		t.Fatal("the confirmed link is not usable while the number was still Anna's")
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("an item from after the cutoff stayed visible")
+	}
+	var artifacts int
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM identity_artifact WHERE link=?", confirmed.ID).Scan(&artifacts)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if artifacts != 0 {
+		t.Fatalf("artifacts = %d, want nothing attributed through the link after the cutoff", artifacts)
+	}
+}
+
+// TestConfirmKeepsTheRecordedCutoff pins the other half of the same rule: the
+// person's answer settles which record the identity is, not how long the
+// identifier was theirs. Confirming a link whose number already moved must keep
+// the cutoff the move recorded and must not bring back what the move retracted.
+func TestConfirmKeepsTheRecordedCutoff(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660005"
+	people := identity.StaticPeople{{Record: "person-anna", Identifiers: []identity.SeenIdentifier{
+		{Kind: identity.Phone, Value: number, Source: "Discord profile 2026"},
+	}}}
+	f := newFixture(t, people)
+	jan := time.Date(2026, 1, 10, 9, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
+	apr := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	may := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	jun := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	f.now = jan
+	observe(t, f, discord("d-anna"), "Anna", phone(number, "Discord profile"))
+	confirmed, err := f.store.Confirm(t.Context(), discord("d-anna"), "person-anna", "that is Anna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The link produced an April item before the move was known.
+	f.now = apr
+	item := f.item(t, "person-anna", "an item from April")
+	if err := f.store.RecordArtifact(t.Context(), confirmed.ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The February sighting of the move arrives in May.
+	f.now = may
+	observeAt(t, f, imessage(number), feb, "Someone else", phone(number, "iMessage profile"))
+	// The person confirms the same link again in June.
+	f.now = jun
+	again, err := f.store.Confirm(t.Context(), discord("d-anna"), "person-anna", "still Anna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Class != identity.Confirmed || !again.ValidThrough.Equal(feb) {
+		t.Fatalf("confirmed link = %+v, want the February cutoff kept", again)
+	}
+	if again.Usable(feb) || again.Usable(apr) {
+		t.Fatal("confirming reopened the window the number moved out of")
+	}
+	if !again.Usable(jan.Add(24 * time.Hour)) {
+		t.Fatal("the confirmed link is not usable while the number was still Anna's")
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("confirming brought back an item from after the cutoff")
+	}
+}
+
+// TestCorrectKeepsTheRecordedCutoff covers the same rule for the other person
+// action that writes a confirmed link: moving the identity to another record
+// does not make the identifier theirs again after it moved.
+func TestCorrectKeepsTheRecordedCutoff(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660006"
+	people := identity.StaticPeople{
+		{Record: "person-anna", Identifiers: []identity.SeenIdentifier{
+			{Kind: identity.Phone, Value: number, Source: "Discord profile 2026"},
+		}},
+		{Record: "person-bella"},
+	}
+	f := newFixture(t, people)
+	jan := time.Date(2026, 1, 10, 9, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
+	apr := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	may := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	jun := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	f.now = jan
+	observe(t, f, discord("d-shared"), "Shared", phone(number, "Discord profile"))
+	got := links(t, f, discord("d-shared"))
+	if len(got) != 1 || got[0].Record != "person-anna" {
+		t.Fatalf("links = %+v, want the link to person-anna", got)
+	}
+	f.now = apr
+	item := f.item(t, "person-anna", "an item from April")
+	if err := f.store.RecordArtifact(t.Context(), got[0].ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The February sighting of the move arrives in May.
+	f.now = may
+	observeAt(t, f, imessage(number), feb, "Someone else", phone(number, "iMessage profile"))
+	// In June the person says the identity is Bella's.
+	f.now = jun
+	if _, err := f.store.Correct(t.Context(), got[0].ID, "person-bella"); err != nil {
+		t.Fatal(err)
+	}
+	corrected := links(t, f, discord("d-shared"))
+	if len(corrected) != 1 || corrected[0].Record != "person-bella" {
+		t.Fatalf("corrected link = %+v, want person-bella", corrected)
+	}
+	if !corrected[0].ValidThrough.Equal(feb) {
+		t.Fatalf("valid through = %v, want the February cutoff kept", corrected[0].ValidThrough)
+	}
+	if corrected[0].Usable(feb) || corrected[0].Usable(apr) {
+		t.Fatal("correcting reopened the window the number moved out of")
+	}
+	if !corrected[0].Usable(jan.Add(24 * time.Hour)) {
+		t.Fatal("the corrected link is not usable while the number was still Anna's")
+	}
+}
+
+// TestFirstCutoffRetractsWhatTheLinkProducedAfterIt covers the first cutoff on
+// a link that had no end yet. A Discord link made in January and an item it
+// produced in April are already recorded when a February iMessage sighting of
+// the number arrives in May. The first cutoff ends the link at February, so the
+// April item is inside an unbounded end and must not cite the link anymore, and
+// only that identity's messages from February are queued again.
+func TestFirstCutoffRetractsWhatTheLinkProducedAfterIt(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660003"
+	people := identity.StaticPeople{{Record: "person-old", Identifiers: []identity.SeenIdentifier{
+		{Kind: identity.Phone, Value: number, Source: "Discord profile 2020"},
+	}}}
+	f := newFixture(t, people)
+	jan := time.Date(2026, 1, 10, 9, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
+	apr := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	may := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	f.now = jan
+	observe(t, f, discord("d-old"), "Old owner", phone(number, "Discord profile"))
+	got := links(t, f, discord("d-old"))
+	if len(got) != 1 || !got[0].ValidThrough.IsZero() {
+		t.Fatalf("links = %+v, want one link with no end", got)
+	}
+	// Learning about the sender wrote an item from an April message.
+	f.now = apr
+	item := f.item(t, "person-old", "an item from April")
+	if err := f.store.RecordArtifact(t.Context(), got[0].ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The February sighting of the move arrives in May, after the item.
+	f.now = may
+	observeAt(t, f, imessage(number), feb, "New owner", phone(number, "iMessage profile"))
+
+	after := links(t, f, discord("d-old"))
+	if len(after) != 1 || !after[0].ValidThrough.Equal(feb) {
+		t.Fatalf("links = %+v, want the Discord link ended at February", after)
+	}
+	if after[0].Usable(apr) {
+		t.Fatal("the link is usable in April, after the number had moved")
+	}
+	if !after[0].Usable(jan.Add(24 * time.Hour)) {
+		t.Fatal("the link is not usable while the number was still Discord's")
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("an item from after the first cutoff stayed visible")
+	}
+	var artifacts int
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM identity_artifact WHERE link=? AND kind='item'", got[0].ID).Scan(&artifacts)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if artifacts != 0 {
+		t.Fatalf("artifacts = %d, want none citing the link after the cutoff", artifacts)
+	}
+	requeues, err := f.store.Requeues(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeues) != 1 || requeues[0].Identity != discord("d-old") || !requeues[0].From.Equal(feb) {
+		t.Fatalf("requeues = %+v, want only the Discord identity from February", requeues)
 	}
 }
 
@@ -698,15 +1071,15 @@ func TestSplitMovesOneIdentityAndItsItems(t *testing.T) {
 	}
 }
 
-// stopRemovals can forget only in its own later transaction. A repair must
-// refuse it and leave the link unchanged when items have to be retracted.
+// stopRemovals records that delivery was attempted and stopped. The link
+// change and its repair intent stay; a later recovery delivers the retraction.
 type stopRemovals struct{}
 
 func (stopRemovals) Forget(context.Context, retract.Request) error {
 	return errors.New("removal stopped")
 }
 
-func TestRepairDoesNotKeepALinkChangeWhenRetractionStops(t *testing.T) {
+func TestRepairKeepsIntentWhenRetractionStops(t *testing.T) {
 	t.Parallel()
 	for _, act := range []string{"remove", "correct", "confirm", "no removal path"} {
 		t.Run(act, func(t *testing.T) {
@@ -722,7 +1095,7 @@ func TestRepairDoesNotKeepALinkChangeWhenRetractionStops(t *testing.T) {
 			if len(before) != 1 || before[0].Record != "person-wrong" {
 				t.Fatalf("exact link = %+v", before)
 			}
-			item := f.item(t, "person-wrong", "repair rollback "+act)
+			item := f.item(t, "person-wrong", "repair pending "+act)
 			if err := f.store.RecordArtifact(t.Context(), before[0].ID, "item", item.ID); err != nil {
 				t.Fatal(err)
 			}
@@ -740,15 +1113,45 @@ func TestRepairDoesNotKeepALinkChangeWhenRetractionStops(t *testing.T) {
 			case "confirm":
 				_, err = f.store.Confirm(t.Context(), discord("d-repair"), "person-right", "that one")
 			}
-			if !errors.Is(err, identity.ErrInvalid) {
-				t.Fatalf("error = %v, want ErrInvalid", err)
+			if act == "no removal path" {
+				if !errors.Is(err, identity.ErrInvalid) {
+					t.Fatalf("error = %v, want ErrInvalid", err)
+				}
+			} else if err == nil || err.Error() != "removal stopped" {
+				t.Fatalf("error = %v, want the stopped removal", err)
 			}
 			got := links(t, f, discord("d-repair"))
-			if len(got) != 1 || got[0].Record != "person-wrong" || got[0].Class != identity.Exact || got[0].State != identity.Active {
-				t.Fatalf("link changed without a retraction: %+v", got)
+			switch act {
+			case "remove", "no removal path":
+				if len(got) != 1 || got[0].Record != "person-wrong" || got[0].State != identity.Removed {
+					t.Fatalf("removed link = %+v", got)
+				}
+			case "correct":
+				if len(got) != 1 || got[0].Record != "person-right" || got[0].Class != identity.Confirmed || got[0].State != identity.Active {
+					t.Fatalf("corrected link = %+v", got)
+				}
+			case "confirm":
+				var confirmed bool
+				for _, link := range got {
+					if link.Record == "person-right" && link.Class == identity.Confirmed && link.State == identity.Active {
+						confirmed = true
+					}
+				}
+				if !confirmed {
+					t.Fatalf("confirmed links = %+v", got)
+				}
 			}
 			if !visible(t, f, item.ID) {
-				t.Fatal("the item was hidden without a committed repair")
+				t.Fatal("a stopped removal hid the item")
+			}
+			var pending int
+			if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM identity_repair WHERE item=?", item.ID).Scan(&pending)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if pending != 1 {
+				t.Fatalf("pending repairs = %d, want the item still queued", pending)
 			}
 		})
 	}

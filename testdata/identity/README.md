@@ -11,6 +11,16 @@ no usable link is correct, and `self` for the person's own account, which is
 never linked as another person. Every planted ambiguity must make a link
 unusable and ask the person once.
 
+`at` is the time a source showed the identity. `observed_at` is when the matcher
+saw it, for evidence that arrives out of order: a backfill carries an earlier
+`at` and a later `observed_at`. Identities are observed in `observed_at` order,
+and the measures are taken after the last one.
+
+A `windows` entry names a period in which a link to a record must not be usable,
+with `from`, `until` and a one-line `why`. It is how the set pins the end of a
+link whose identifier moved: the end is the earliest sighting of the move, so a
+backfilled earlier sighting moves it back and never later.
+
 | Hard case from the research note | Where it is in the set |
 | --- | --- |
 | the same name for different people | `d-sam` against `p-sam-a` and `p-sam-b` |
@@ -18,6 +28,7 @@ unusable and ask the person once.
 | nickname changes over time | `d-ben` ("Ben", then "Benji") proposes `p-ben` |
 | a family phone shared by two people | `imessage//+821055550001` and `imessage//+821055550002` |
 | a recycled number | `d-old`, then `whatsapp//+821066660001` |
+| a move reported out of order | `discord//d-moved`, then `imessage//+821066660002` in March, then its February backfill; the `windows` entry pins the end at February |
 | a team mailbox | `slack/T-team/U-team` against `p-team-a` and `p-team-b` |
 | a contact card listing two people's numbers | `d-card` against `p-card-a` and `p-card-b` |
 | Slack ids in two workspaces | `slack/T-anna/U-anna` and `slack/T-other/U-anna` |

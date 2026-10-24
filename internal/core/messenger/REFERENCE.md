@@ -166,7 +166,9 @@ account's name. A later observation that omits the mark does not change it.
 The identity scope is the source's `workspace`, which the
 platform's ids are scoped by. After each sync pass the service asks identity to
 rematch identities that have no link, so a people record the person creates
-after the messages arrive still links without a restart.
+after the messages arrive still links without a restart. Core gives the same
+identity store to the sync loop, the Teams service and the Webex service, and
+the Teams worker rematches after each of its passes.
 
 Sender profile emails, when supplied by an adapter, are stored as evidence in
 `messenger_author` with the source account and platform author ID. They do not
