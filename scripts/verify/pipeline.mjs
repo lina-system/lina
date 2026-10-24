@@ -380,7 +380,10 @@ export async function runPipeline(root, plan, { jobs, log = console.error, run =
     return null;
   };
   let upstream = 'success';
-  const deadline = Date.now() + componentsTimeoutMs;
+  // Serial shards share one clock. A compile cap (-p) forces that mode, and
+  // the four unit shards then need longer than the overlapping twenty minutes.
+  const serial = jobs === 1 && /(?:^|\s)-p=\d+(?:\s|$)/.test(process.env.GOFLAGS ?? '');
+  const deadline = Date.now() + (serial ? 5_400_000 : componentsTimeoutMs);
   try {
     await Promise.all(Array.from({ length: Math.min(jobs, plan.tasks.length) }, async () => {
       for (;;) {
