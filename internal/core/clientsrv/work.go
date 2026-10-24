@@ -29,3 +29,31 @@ func WorkOperations(service WorkService) map[protocol.Kind]Operation {
 		return Result{Kind: protocol.KindWorkSwitchResult, Payload: answer, Effect: effect}, err
 	}}}
 }
+
+// WorkControlService records the person's order, pause, resume and stop choices.
+// It reports whether the choice changed the goal, so a choice that recorded
+// nothing is not answered as an applied effect.
+type WorkControlService interface {
+	WorkControl(context.Context, Session, protocol.WorkControlRequest, string) (protocol.WorkControlResult, bool, error)
+}
+
+// WorkControlOperations installs the control kinds under the negotiated work
+// capability. A control changes only the ledger projection; the next scheduling
+// pass applies it.
+func WorkControlOperations(service WorkControlService) map[protocol.Kind]Operation {
+	return map[protocol.Kind]Operation{protocol.KindWorkControlRequest: {Capability: WorkCapability, Handle: func(ctx context.Context, s Session, e protocol.Envelope) (Result, error) {
+		p, ok := e.Payload.(protocol.WorkControlRequest)
+		if !ok {
+			return Result{}, &OperationError{Code: protocol.ErrorMalformed}
+		}
+		if !s.CanDecide {
+			return Result{}, &OperationError{Code: protocol.ErrorNotAuthorized}
+		}
+		answer, applied, err := service.WorkControl(ctx, s, p, e.MessageID)
+		effect := protocol.EffectNone
+		if applied {
+			effect = protocol.EffectApplied
+		}
+		return Result{Kind: protocol.KindWorkControlResult, Payload: answer, Effect: effect}, err
+	}}}
+}

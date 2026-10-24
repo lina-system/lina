@@ -142,6 +142,8 @@ type Goal struct {
 	CheckRound        int64               `json:"check_round"`
 	State             GoalState           `json:"state"`
 	Revision          int64               `json:"revision"`
+	Rank              int                 `json:"rank,omitempty"`
+	Paused            bool                `json:"paused,omitempty"`
 	ManagerTurns      int                 `json:"manager_turns"`
 	AttentionID       string              `json:"attention_id,omitempty"`
 	BlockedReason     string              `json:"blocked_reason,omitempty"`
@@ -335,6 +337,16 @@ func validateGoalState(g Goal, pendingCorrection bool) error {
 	return nil
 }
 
+// goalRank orders ready placement. A goal admitted before ranks existed has no
+// rank; it is older than every ranked goal, because a new goal takes the last
+// rank, so it sorts first until a person's move gives it one.
+func goalRank(g Goal) int {
+	if g.Rank < 0 {
+		return 0
+	}
+	return g.Rank
+}
+
 func pending(actions []Action, goal, task string) bool {
 	for _, a := range actions {
 		if a.GoalID == goal && a.TaskID == task && a.State != "finished" {
@@ -371,6 +383,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 		task  Task
 		kind  ActionKind
 		depth int
+		rank  int
 	}
 	var ready []candidate
 	type areaLease struct {
@@ -389,12 +402,19 @@ func Derive(state State, now time.Time) (Plan, error) {
 			}
 		}
 		for _, t := range g.Tasks {
+			mergePending := false
 			for _, a := range state.Actions {
 				if a.GoalID == g.ID && a.TaskID == t.ID && a.Kind == Merge && a.State != "finished" {
+					mergePending = true
 					mergeSlots[t.Repository+"\x00"+t.Base] = true
 				}
 			}
 			if t.Stage != TaskReady && t.Stage != TaskDone && t.Stage != TaskMerged && t.Stage != TaskQAFailed {
+				// A stopped task releases its area only after both its worker
+				// and any already-dispatched merge have settled.
+				if g.State == GoalStopped && t.EffectsSettled && !mergePending {
+					continue
+				}
 				occupied = append(occupied, areaLease{g.ID, t})
 			}
 		}
@@ -432,6 +452,11 @@ func Derive(state State, now time.Time) (Plan, error) {
 	}
 	for _, g := range goals {
 		if g.State == GoalDone || g.State == GoalStopped {
+			continue
+		}
+		// A paused goal keeps its waits and its in-progress step, but derives no
+		// new step and no further input until the person resumes it.
+		if g.Paused {
 			continue
 		}
 		if g.DefinitionPending {
@@ -569,7 +594,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 			default:
 				return Plan{}, ErrInvalid
 			}
-			ready = append(ready, candidate{g, t, kind, depth(t.ID)})
+			ready = append(ready, candidate{g, t, kind, depth(t.ID), goalRank(g)})
 		}
 		if !allDone || pending(state.Actions, g.ID, "") {
 			continue
@@ -648,6 +673,9 @@ func Derive(state State, now time.Time) (Plan, error) {
 	}
 	sort.SliceStable(ready, func(i, j int) bool {
 		a, b := ready[i], ready[j]
+		if a.rank != b.rank {
+			return a.rank < b.rank
+		}
 		if deadline(a.goal) != deadline(b.goal) {
 			return deadline(a.goal) < deadline(b.goal)
 		}
