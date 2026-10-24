@@ -393,7 +393,9 @@ A resumed channel request recovers the original channel receipt through the
 answer's parent chain before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
-permissions. Reading a tied candidate does not resolve the original ambiguity.
+permissions. A tool executed for that steering input uses the steering runtime
+and event, so a channel follow-up keeps that channel's source. Reading a tied
+candidate does not resolve the original ambiguity.
 Current choices enter the
 ContextPacket and remain reconstructible from their ledger sources.
 

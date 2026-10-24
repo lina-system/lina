@@ -3,6 +3,7 @@ package boot
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,8 +12,11 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -235,6 +239,79 @@ func TestNewTargetQuestionLabelsStayDistinct(t *testing.T) {
 	}
 	if len(q.Choices) != 2 || q.Choices[0] == q.Choices[1] || !strings.Contains(q.Choices[0], "run") || !strings.Contains(q.Choices[0], "proj-a") || !strings.Contains(q.Choices[1], "proj-b") {
 		t.Fatalf("labels: %+v", q.Choices)
+	}
+}
+
+func TestFollowWorkKeepsAgentBudget(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dir := t.TempDir()
+	reserve := t.TempDir()
+	task := work.Task{ID: "followed-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Followed task", Done: "Done", ArtifactRoots: []string{dir}}
+	if err := r.work.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "followed-run", TaskID: task.ID, Generation: 1, Worker: "codex", ThreadID: "followed-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "followed-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "followed-thread", TaskID: task.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "followed-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	input := questionPersonInput(t, r, "follow-budget", "Check the followed task.")
+	tools := modelBindingTools(t, r, input)
+	if _, err := r.saveModelBinding(t.Context(), input, "binding-model:follow-budget", []binding.Choice{{Quote: input.Body.Text(), Target: binding.Target{Class: "existing", ID: task.ID, Kind: "task"}}}, "model"); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 13 {
+		got := questionCall(t, tools, "follow_work", fmt.Sprintf("follow-%d", i), map[string]string{"id": "task:" + task.ID + ":1", "text": "Continue the task"})
+		if i < 12 && got.Code != loop.OK {
+			t.Fatalf("follow %d: %+v", i, got)
+		}
+		if i == 12 && got.Code == loop.OK {
+			t.Fatal("another follow-up replenished the coordination allowance")
+		}
+	}
+	if strings.Contains(probe.text, `speaker_kind="person"`) {
+		t.Fatalf("model follow-up was stored as the person: %s", probe.text)
+	}
+}
+
+func TestFollowWorkUsesSelectedChannelSource(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{{ID: "channel-run", Title: "Channel run", Kind: "run", State: "running", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("follow-source", "follow-native")
+	tui := questionPersonInput(t, r, "tui-turn", "Continue in the app")
+	if _, err := view.saveModelBinding(t.Context(), steering, "binding-model:channel-follow", []binding.Choice{{Quote: steering.Body.Text(), Target: binding.Target{Class: "existing", ID: "channel-run", Kind: "run"}}}, "model"); err != nil {
+		t.Fatal(err)
+	}
+	s := &turnState{runtime: r, input: tui, turnID: "turn:" + tui.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "follow_work", "channel-follow", map[string]any{"id": "channel-run", "text": "Check the channel run", "input_binding": map[string]any{"input_event_id": steering.ID}})
+	if got.Code != loop.OK {
+		t.Fatalf("selected channel follow: %+v", got)
+	}
+	run, err := view.background.service.Get(t.Context(), "channel-run")
+	if err != nil || len(run.FollowSources) != 1 {
+		t.Fatalf("channel source missing: sources=%d err=%v", len(run.FollowSources), err)
 	}
 }
 

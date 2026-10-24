@@ -4,6 +4,7 @@ package boot
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
@@ -101,7 +102,17 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				if result := r.bindWorkCall(ctx, input, ref.Request, s.turnID, clean); result != nil {
 					return *result
 				}
-				result := tool.Execute(ctx, clean)
+				exec := tool
+				// A selected steering input keeps its runtime and channel source
+				// through execution, not only through the binding gate.
+				if (name == "follow_work" || name == "read_work_progress") && (r != s.runtime || input.ID != s.input.ID) {
+					prepared := map[string]loop.Tool{}
+					if _, err := r.prepareBindingWorkTools(s.turnID, &toolPreparation{event: input}, prepared); err != nil {
+						return bindingFailure(c.ID, err)
+					}
+					exec = prepared[name]
+				}
+				result := exec.Execute(ctx, clean)
 				if result.Code == loop.OK {
 					if err := r.recordCreatedBinding(ctx, input, ref.Request, s.turnID, clean, result); err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Unknown, Output: json.RawMessage(`{"code":"input_binding_receipt_failed"}`)}
@@ -318,6 +329,15 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					if err := authority.CheckPreset(ctx, r.db, r.epoch, authority.PolicyRequest{Key: "preset:follow:" + turnID + ":" + c.ID, Person: r.person, Agent: r.agent, TaskID: turnID, Tool: c.Name, Target: a.ID, Class: tools.WorkerEffect, Arguments: json.RawMessage(c.Arguments)}); err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}
+					event := ledger.Event{}
+					if preparation != nil {
+						event = preparation.event
+					}
+					if taskID, ok := workerFollowTask(a.ID); ok {
+						if _, err := r.work.Get(ctx, taskID); err == nil {
+							return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
+						}
+					}
 					var source json.RawMessage
 					if r.channelBinding != nil {
 						var e gateway.Inbound
@@ -341,11 +361,7 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 						}
 						source, _ = json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: e.Sender, Direct: e.Direct, Addressed: e.Addressed})
 					}
-					id := a.ID
-					if _, err := r.work.Get(ctx, id); err == nil {
-						id = "task:" + id
-					}
-					_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: id, Text: a.Text}}, source)
+					_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: a.ID, Text: a.Text}}, source)
 					if err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}
@@ -373,6 +389,58 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 		provider.ToolDecl(`{"type":"function","name":"read_work_progress","description":"Answer progress questions from the current item's progress line, never remembered status. Unknown stays unknown. Names the input's work target.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}}`),
 		provider.ToolDecl(`{"type":"function","name":"follow_work","description":"Send a follow-up to the named running task or background run under its existing controls. Resolve a risky target tie with bind_input first; a pending instruction must not be sent. This does not cancel work.","parameters":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}`),
 	}, nil
+}
+
+func workerFollowTask(id string) (string, bool) {
+	raw := id
+	prefixed := false
+	if rest, ok := strings.CutPrefix(raw, "task:"); ok {
+		raw, prefixed = rest, true
+	}
+	if i := strings.LastIndexByte(raw, ':'); i > 0 {
+		suffix := raw[i+1:]
+		if n, err := strconv.Atoi(suffix); err == nil && n >= 0 && strconv.Itoa(n) == suffix {
+			return raw[:i], true
+		}
+	}
+	if prefixed {
+		return raw, raw != ""
+	}
+	return id, id != ""
+}
+
+// followWorkerTask delivers a model follow-up as an agent message. The
+// coordination allowance replenishes once for the person input, not per call.
+func (r *conversationRuntime) followWorkerTask(ctx context.Context, input ledger.Event, turnID, callID, taskID, text string) loop.Result {
+	card, err := r.work.Get(ctx, taskID)
+	if err != nil || card.Run == nil || r.workers == nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	var entry *workerSession
+	for _, candidate := range r.workers.entries() {
+		if candidate.thread.ID == card.Run.ThreadID {
+			entry = candidate
+			break
+		}
+	}
+	if entry == nil || entry.adapter == nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	snap, err := entry.adapter.Snapshot(ctx, entry.thread)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	raw, _ := json.Marshal(workerArgs{Session: entry.thread.ID, Turn: snap.Thread.TurnID, Generation: snap.Thread.ProcessGeneration, Binding: snap.Thread.BindingEpoch, Text: text})
+	in, err := workerSchema("worker_input", raw)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	ctx = context.WithValue(ctx, workerCallIdentityKey{}, "binding-follow:"+turnID+":"+callID)
+	result, err := entry.origin.workerOperation(ctx, "worker_input", turnID, input, in)
+	if err != nil || result.State != tools.Applied {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	return loop.Result{ID: callID, Code: loop.OK, Output: json.RawMessage(`{"state":"submitted"}`)}
 }
 
 func createsBindingItem(name string) bool {
