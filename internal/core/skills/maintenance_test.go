@@ -26,6 +26,7 @@ func maintain(t *testing.T, s *Store, c Maintenance) (Applied, error) {
 	return a, err
 }
 func TestMaintenanceMergeUndoAndSuppression(t *testing.T) {
+	t.Parallel()
 	s, db, root := fixture(t, nil)
 	a := maintenanceSkill(t, s, "alpha", "Check input.")
 	b := maintenanceSkill(t, s, "beta", "Check output.")
@@ -79,6 +80,7 @@ func TestMaintenanceMergeUndoAndSuppression(t *testing.T) {
 	}
 }
 func TestMaintenancePruneBuiltinAndAtomicity(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, fstest.MapFS{"example/SKILL.md": {Data: []byte(document("Builtin procedure."))}})
 	a := maintenanceSkill(t, s, "alpha", "Obsolete procedure.")
 	b := maintenanceSkill(t, s, "beta", "Another procedure.")
@@ -113,6 +115,7 @@ func TestMaintenancePruneBuiltinAndAtomicity(t *testing.T) {
 }
 
 func TestMaintenanceRollbackAndUndoConflict(t *testing.T) {
+	t.Parallel()
 	s, db, _ := fixture(t, nil)
 	a := maintenanceSkill(t, s, "alpha", "Original A.")
 	b := maintenanceSkill(t, s, "beta", "Original B.")
@@ -153,6 +156,7 @@ func TestMaintenanceRollbackAndUndoConflict(t *testing.T) {
 }
 
 func TestMaintenanceProtectsPatchedBuiltinsAndUnchangedMergeTarget(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, fstest.MapFS{"example/SKILL.md": {Data: []byte(document("Builtin."))}})
 	overlay := apply(t, s, 0, "Changed builtin.")
 	if _, err := maintain(t, s, Maintenance{Kind: "prune", Target: overlay.Undo, Reason: "No."}); !errors.Is(err, ErrInvalid) {

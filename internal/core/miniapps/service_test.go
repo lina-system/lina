@@ -364,22 +364,6 @@ func originOfURL(t *testing.T, raw string) string {
 	return u.Scheme + "://" + u.Host
 }
 
-func originOf(t *testing.T, frameURL string) string {
-	t.Helper()
-	parts := strings.SplitN(frameURL, "/frame/", 2)
-	if len(parts) != 2 {
-		t.Fatalf("bad frame url %q", frameURL)
-	}
-	return parts[0]
-}
-func codeOf(t *testing.T, frameURL string) string {
-	t.Helper()
-	_, after, ok := strings.Cut(frameURL, "?code=")
-	if !ok {
-		t.Fatalf("frame url carries no code: %q", frameURL)
-	}
-	return after
-}
 func readAll(t *testing.T, resp *http.Response) string {
 	t.Helper()
 	defer resp.Body.Close()

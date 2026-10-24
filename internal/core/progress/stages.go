@@ -66,6 +66,7 @@ type Revision struct{ Steps []Step }
 // StageStep is one step of a stage, as the 일 view lists it. The id stays on
 // this side: a line holds no identity.
 type StageStep struct {
+	Session   string    `json:"-"`
 	StartedAt time.Time `json:"started_at,omitzero"`
 	ID        string    `json:"-"`
 	Name      string    `json:"name"`
@@ -371,7 +372,22 @@ func stagesForGoal(current goal.Goal, graphs []graphRevision, started map[string
 			revisions[i].Steps[j].StartedAt = started[revisions[i].Steps[j].ID]
 		}
 	}
-	return Stages(revisions, current.State, language)
+	stages, err := Stages(revisions, current.State, language)
+	if err != nil {
+		return nil, err
+	}
+	for i := range stages {
+		for j := range stages[i].Steps {
+			step := &stages[i].Steps[j]
+			for _, task := range current.Tasks {
+				if task.ID == step.ID {
+					step.Session = task.Session
+					break
+				}
+			}
+		}
+	}
+	return stages, nil
 }
 
 // cardStarts reads when each step started, which orders a parallel stage's
