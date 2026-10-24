@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/recall"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
 func admitAt(t *testing.T, db *canon.Store, id, conversation, person, agent, body string, at time.Time, replayOf string) {
@@ -319,5 +320,198 @@ func TestSearchVectorsFuseIntoTheRankedList(t *testing.T) {
 	}})
 	if err != nil || len(hits) != 2 {
 		t.Fatalf("fusion: %+v %v", hits, err)
+	}
+}
+
+// requeue drops the published document so the source is pending again, as it
+// is during import or recovery before the background drain.
+func requeue(t *testing.T, db *canon.Store, kind, id string) {
+	t.Helper()
+	write(t, db, "DELETE FROM recall_doc WHERE kind=? AND source_id=?", kind, id)
+	write(t, db, "INSERT OR IGNORE INTO recall_pending(kind, source_id) VALUES(?,?)", kind, id)
+}
+
+type queuedMaterials struct{ bodies map[ledger.Material]string }
+
+func (m *queuedMaterials) Prepare(_ context.Context, body secrets.Masked) (ledger.MaterialWrite, error) {
+	ref := ledger.Material{ID: "material-" + strings.Repeat("0", len(m.bodies)), Revision: 1}
+	if m.bodies == nil {
+		m.bodies = map[ledger.Material]string{}
+	}
+	return queuedMaterialWrite{store: m, ref: ref, body: body.Text()}, nil
+}
+
+type queuedMaterialWrite struct {
+	store *queuedMaterials
+	ref   ledger.Material
+	body  string
+}
+
+func (w queuedMaterialWrite) Insert(context.Context, *canon.Tx) (ledger.Material, error) {
+	w.store.bodies[w.ref] = w.body
+	return w.ref, nil
+}
+func (w queuedMaterialWrite) Close() error { return nil }
+func (m *queuedMaterials) Read(_ context.Context, ref ledger.Material) (string, error) {
+	body, ok := m.bodies[ref]
+	if !ok {
+		return "", ledger.ErrBytesUnavailable
+	}
+	return body, nil
+}
+
+func admitMaterial(t *testing.T, db *canon.Store, materials ledger.Materials, id, body string, at time.Time) {
+	t.Helper()
+	event, err := ledger.New(db, materials).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: id, ConversationID: "conversation", PersonID: "owner", AgentID: "agent", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Material.ID == "" {
+		t.Fatal("fixture stayed inline")
+	}
+}
+
+func materialText(materials *queuedMaterials) recall.ReadEvent {
+	return func(context.Context, string) (string, error) {
+		for _, body := range materials.bodies {
+			return body, nil
+		}
+		return "", ledger.ErrBytesUnavailable
+	}
+}
+
+func TestQueuedMaterialRanksBeforeLimit(t *testing.T) {
+	db := database(t)
+	materials := &queuedMaterials{}
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "indexed", "conversation", "owner", "agent", "산책", base.Add(time.Hour), "")
+	body := "도서관 산책 " + strings.Repeat("padding ", 4000)
+	admitMaterial(t, db, materials, "queued", body, base)
+	requeue(t, db, "event", "queued")
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관 산책", Limit: 1, EventText: materialText(materials)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].ID != "queued" {
+		t.Fatalf("queued material lost the limit: %+v", hits)
+	}
+	// Same text, opposite queue order: newer occurred_at wins, not insert order.
+	admitMaterial(t, db, materials, "older", "정원 산책 "+strings.Repeat("padding ", 4000), base)
+	admitMaterial(t, db, materials, "newer", "정원 산책 "+strings.Repeat("padding ", 4000), base.Add(2*time.Hour))
+	// Queue the older event first so a scan in insert order is not time order.
+	requeue(t, db, "event", "older")
+	requeue(t, db, "event", "newer")
+	ids := matchIDs(t, db, scope, "정원", 0, func(ctx context.Context, id string) (string, error) {
+		event, err := ledger.New(db, materials).Get(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		return event.Body.DerivedText(), nil
+	})
+	if len(ids) < 2 || ids[0] != "newer" || ids[1] != "older" {
+		t.Fatalf("queued material order: %v", ids)
+	}
+}
+
+func matchIDs(t *testing.T, db *canon.Store, scope recall.Scope, text string, limit int, read recall.ReadEvent) []string {
+	t.Helper()
+	hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: text, Limit: limit, EventText: read})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.ID)
+	}
+	return ids
+}
+
+func TestQueuedReplayCopyDoesNotHideIndexedEvents(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "original", "conversation", "owner", "agent", "같은 문장", base, "")
+	admitAt(t, db, "other", "other", "owner", "agent", "같은 문장", base.Add(time.Minute), "")
+	admitAt(t, db, "copy", "conversation", "owner", "agent", "같은 문장", base.Add(2*time.Minute), "original")
+	requeue(t, db, "event", "copy")
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}, IncludeReplay: true}
+	ids := searchIDs(t, db, scope, "같은", 0)
+	sort.Strings(ids)
+	if !reflect.DeepEqual(ids, []string{"original", "other"}) {
+		t.Fatalf("queued replay copy cleared recall: %v", ids)
+	}
+}
+
+func TestQueuedMaterialEventsStayOutOfOtherKinds(t *testing.T) {
+	db := database(t)
+	materials := &queuedMaterials{}
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "source", "conversation", "owner", "agent", "도서관에서 공부했다.", base, "")
+	item := remember(t, db, "agent", "", "도서관 기억", memory.Local, "source")
+	body := "도서관 원문 " + strings.Repeat("padding ", 4000)
+	admitMaterial(t, db, materials, "raw", body, base)
+	requeue(t, db, "event", "raw")
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Memory}}
+	hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관", EventText: materialText(materials)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hit := range hits {
+		if hit.Kind == recall.Event {
+			t.Fatalf("memory search returned a queued event: %+v", hits)
+		}
+	}
+	if len(hits) != 1 || hits[0].ID != item {
+		t.Fatalf("memory hit: %+v", hits)
+	}
+}
+
+func TestVectorCandidatesUseTheFullScope(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "public", "conversation", "owner", "agent", "도서관 산책", base, "")
+	admitAt(t, db, "basis", "conversation", "owner", "agent", "근거 문장", base.Add(time.Second), "")
+	admitAt(t, db, "open", "conversation", "owner", "agent", "별도 문장", base.Add(time.Minute), "")
+	admitAt(t, db, "copy", "conversation", "owner", "agent", "도서관 복사", base.Add(2*time.Second), "public")
+	secret := remember(t, db, "agent", "", "도서관 비밀", memory.NeverLeaves, "public")
+	future := remember(t, db, "agent", "", "도서관 이후", memory.Local, "basis")
+	drain(t, db)
+	vectors := func(_ context.Context, _ recall.Scope, _ string) ([]string, error) {
+		return []string{"copy", secret, future, "open"}, nil
+	}
+	external := recall.Scope{Person: "owner", Agent: "agent", ExternalModel: true, Kinds: []recall.Kind{recall.Event, recall.Memory}}
+	hits, err := recall.Match(t.Context(), db, external, recall.Query{Text: "없는말", Vectors: vectors})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, hit := range hits {
+		got[hit.ID] = true
+	}
+	if got[secret] || got["copy"] {
+		t.Fatalf("vector scope leaked: %+v", hits)
+	}
+	if !got["open"] || !got[future] {
+		t.Fatalf("visible vector hits dropped: %+v", hits)
+	}
+	late := external
+	late.Since = base.Add(time.Hour)
+	hits, err = recall.Match(t.Context(), db, late, recall.Query{Text: "없는말", Vectors: vectors})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hit := range hits {
+		if hit.Kind == recall.Event {
+			t.Fatalf("vector hit ignored the time filter: %+v", hits)
+		}
+	}
+	write(t, db, "UPDATE memory_item SET valid_from=? WHERE id=?", time.Now().Add(24*time.Hour).Unix(), future)
+	drain(t, db)
+	stale := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Memory}}
+	hits, err = recall.Match(t.Context(), db, stale, recall.Query{Text: "없는말", Vectors: func(context.Context, recall.Scope, string) ([]string, error) {
+		return []string{future}, nil
+	}})
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("vector hit ignored validity: %+v %v", hits, err)
 	}
 }

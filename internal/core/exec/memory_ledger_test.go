@@ -235,3 +235,31 @@ func TestRecallPersonFiltersBeforeLimit(t *testing.T) {
 		t.Fatalf("person evidence displaced by other sources: %v", ids)
 	}
 }
+
+func TestRecallPersonReadsQueuedMaterialBody(t *testing.T) {
+	db := memoryDB(t)
+	materials := &sourceMaterials{bodies: map[ledger.Material]string{}}
+	events := ledger.New(db, materials)
+	flow := NewMemory(db, materials, nil)
+	body := "observatory " + strings.Repeat("telescope ", 2000)
+	event, err := events.Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "large", ConversationID: "conversation", PersonID: "person", AgentID: "A", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Material.ID == "" {
+		t.Fatal("fixture not material-backed")
+	}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(t.Context(), "DELETE FROM recall_doc WHERE kind='event' AND source_id=?", event.ID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(t.Context(), "INSERT OR IGNORE INTO recall_pending(kind, source_id) VALUES('event',?)", event.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := flow.RecallPerson(t.Context(), memory.RecallScope{Person: "person", Agent: "A"}, PersonRecall{Question: "Where?", Query: "observatory", At: 100})
+	if err != nil || len(answer.Sources) != 1 || answer.Sources[0].ID != "event:large" || !strings.Contains(answer.Sources[0].Text, "observatory") {
+		t.Fatalf("queued material person recall: %+v %v", answer, err)
+	}
+}

@@ -48,7 +48,13 @@ func (m *Memory) recallSources(ctx context.Context, scope memory.RecallScope, in
 	if in.At > 0 {
 		query.Until = time.Unix(in.At, 0).Add(time.Second)
 	}
-	hits, err := recall.Match(ctx, m.db, query, recall.Query{Text: in.Query, Limit: RecallItemLimit})
+	hits, err := recall.Match(ctx, m.db, query, recall.Query{Text: in.Query, Limit: RecallItemLimit, EventText: func(ctx context.Context, id string) (string, error) {
+		event, err := m.events.Get(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		return event.Body.DerivedText(), nil
+	}})
 	if err != nil {
 		return nil, err
 	}

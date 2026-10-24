@@ -46,8 +46,11 @@ ties go to the newer `occurred_at`. A short term reaches memory items and
 records by a literal scan of the already scoped set. A source that is still
 queued keeps its text in canon; `Match` matches it there, so search does not
 wait for the background drain. A queued event whose body lives in material is
-read through the caller's `EventText` reader, which only `ledger.Store.Search`
-supplies. `recall_doc.text_hash` collapses events with
+read through the caller's `EventText` reader. Ledger search, live recall and
+person recall supply it. Those matches use the same pair, trigram and term
+order as published documents and are merged before the limit. A queued replay
+copy is excluded by its source id, so a missing document id cannot empty the
+list. Vector candidates use the same scope as the text path. `recall_doc.text_hash` collapses events with
 identical derived text inside one conversation to the earliest of them. A
 returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
