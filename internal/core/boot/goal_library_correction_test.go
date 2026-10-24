@@ -91,7 +91,7 @@ func (d *libraryCorrectionDriver) Execute(ctx context.Context, a work.Action) (w
 		if a.Kind == work.CheckCriterion {
 			o.Criterion = &work.CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &work.CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: o.Proof.Ref, Passed: o.Proof.Passed}
 		}
-	case work.Resume, work.RepairConflict, work.RepairQA, work.ContinueWorker, work.Deploy, work.Observe, work.Decide:
+	case work.Resume, work.RepairConflict, work.RepairQA, work.ContinueWorker, work.Deploy, work.Observe, work.Decide, work.ReadSource:
 		return o, fmt.Errorf("unexpected action: %s", a.Kind)
 	}
 	return o, nil
