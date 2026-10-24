@@ -12,7 +12,7 @@ import (
 
 const qaRuns = `[
       {"id": "foot", "terminal": "foot", "version": "1.25.0", "term": "foot", "transport": "local"},
-      {"id": "ssh-tmux", "terminal": "tmux", "version": "OpenSSH, tmux", "term": "xterm-256color", "transport": "ssh"}
+      {"id": "ssh-tmux", "terminal": "tmux", "version": "OpenSSH 10.2p1, tmux 3.6", "term": "xterm-256color", "transport": "ssh"}
     ]`
 
 const proposedMatrix = `{
@@ -88,8 +88,10 @@ func TestTerminalMatrixRequiresOwnerState(t *testing.T) {
 		"qa no deferral":     strings.Replace(proposedMatrix, `"owner_confirmation_deferred_to": 371,`, ``, 1),
 		"qa no runs":         strings.Replace(proposedMatrix, qaRuns, `[]`, 1),
 		"qa missing version": strings.Replace(proposedMatrix, `"version": "1.25.0", `, ``, 1),
-		"qa missing TERM":    strings.Replace(proposedMatrix, `"term": "foot", `, ``, 1),
-		"qa blank terminal":  strings.Replace(proposedMatrix, `"terminal": "tmux"`, `"terminal": " "`, 1),
+		"qa product-name version": strings.Replace(proposedMatrix,
+			`"version": "OpenSSH 10.2p1, tmux 3.6"`, `"version": "OpenSSH, tmux"`, 1),
+		"qa missing TERM":   strings.Replace(proposedMatrix, `"term": "foot", `, ``, 1),
+		"qa blank terminal": strings.Replace(proposedMatrix, `"terminal": "tmux"`, `"terminal": " "`, 1),
 		"qa unknown transport": strings.Replace(proposedMatrix,
 			`"transport": "local"`, `"transport": "pty"`, 1),
 		"qa duplicate id": strings.Replace(proposedMatrix, `"id": "ssh-tmux"`, `"id": "foot"`, 1),
