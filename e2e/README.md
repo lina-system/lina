@@ -252,13 +252,19 @@ go test -count=1 -v -timeout=12m ./e2e/m1 -run '^TestAlphaOwner'
 On Linux, the residency collector samples the installed Core's RSS and
 high-water mark once per second and checks its public protocol every minute.
 It rejects a process/epoch change, an exit, a missing counter, a sample gap over
-two seconds, or a peak above the predeclared 256 MiB budget. It records the source
-commit, source cleanliness and installed binary digest. Samples reach
+two seconds, or a peak above the predeclared 256 MiB budget. Each sample records
+its gap and read duration, the previous sample's read duration and snapshot of
+the latest completed background write and fsync (`File.Sync`) durations, plus
+memory and I/O pressure avg10 when the kernel exports them. Samples reach
 `resident.jsonl` on a separate goroutine, so a slow or stalled filesystem appears
-as `maximum_write_seconds` rather than as a sampling gap; the gap limit and the
-RSS budget are unchanged. The full run requires a
-clean source commit, the real model opt-in and 86,400 measured seconds; its TUI
-stays attached. The 65-second collector probe exercises a periodic health request and is always recorded as incomplete
+as `maximum_write_seconds` rather than blocking sampling. Background write
+latency includes fsync; `maximum_sync_seconds` records fsync alone. These
+observations do not attribute a sampling gap to background persistence or change
+the two-second limit or the 256 MiB budget. The result records the harness source
+commit separately from the installed product commit and binary digest.
+The full run requires a clean source commit, the real model opt-in and 86,400
+measured seconds; its TUI stays attached. The 65-second collector probe exercises
+a periodic health request and is always recorded as incomplete
 acceptance, even when the probe test succeeds. These are Linux Core measurements,
 not the separate two-platform V2 service-manager qualification.
 

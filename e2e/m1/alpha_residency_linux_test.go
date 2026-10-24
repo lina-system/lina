@@ -4,6 +4,7 @@ package e2e_test
 import (
 	"context"
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,10 +44,19 @@ func TestAlphaResidencyProbe(t *testing.T) {
 }
 
 type alphaResidentSample struct {
-	Elapsed float64 `json:"elapsed_seconds"`
-	RSS     uint64  `json:"rss_bytes"`
-	Peak    uint64  `json:"peak_rss_bytes"`
-	Start   string  `json:"process_start_ticks"`
+	Elapsed       float64  `json:"elapsed_seconds"`
+	RSS           uint64   `json:"rss_bytes"`
+	Peak          uint64   `json:"peak_rss_bytes"`
+	Start         string   `json:"process_start_ticks"`
+	Gap           float64  `json:"gap_seconds"`
+	Read          float64  `json:"read_seconds"`
+	PreviousRead  float64  `json:"previous_read_seconds"`
+	PreviousWrite float64  `json:"previous_write_seconds"`
+	PreviousSync  float64  `json:"previous_sync_seconds"`
+	MemorySome    *float64 `json:"memory_some_avg10,omitempty"`
+	MemoryFull    *float64 `json:"memory_full_avg10,omitempty"`
+	IOSome        *float64 `json:"io_some_avg10,omitempty"`
+	IOFull        *float64 `json:"io_full_avg10,omitempty"`
 }
 
 // alphaResidentSampleGap is the declared maximum gap between resource samples
@@ -62,29 +72,40 @@ type alphaResidencyRecorder struct {
 	now     func() time.Time
 	persist func([]alphaResidentSample) error
 
-	mu        sync.Mutex
-	pending   []alphaResidentSample
-	samples   int
-	persisted int
-	gap       float64
-	write     time.Duration
-	last      time.Time
-	start     string
-	peak      uint64
-	measured  float64
-	failure   error
+	mu          sync.Mutex
+	pending     []alphaResidentSample
+	samples     int
+	persisted   int
+	gap         float64
+	write       time.Duration
+	last        time.Time
+	start       string
+	peak        uint64
+	measured    float64
+	failure     error
+	gaps        residencyGapRecord
+	lastWrite   float64
+	lastSync    float64
+	maximumRead float64
+	maximumSync float64
 }
 
 type alphaResidencyMetrics struct {
-	Samples      int
-	Persisted    int
-	MaximumGap   float64
-	MaximumWrite float64
-	Peak         uint64
-	Measured     float64
+	Samples        int
+	Persisted      int
+	MaximumGap     float64
+	MaximumWrite   float64
+	Peak           uint64
+	Measured       float64
+	ReadBeforeGap  float64
+	WriteBeforeGap float64
+	SyncBeforeGap  float64
+	MaximumRead    float64
+	MaximumSync    float64
 }
 
 func (r *alphaResidencyRecorder) sample() error {
+	readStart := r.now()
 	reading, err := r.read()
 	if err != nil {
 		return err
@@ -104,6 +125,15 @@ func (r *alphaResidencyRecorder) sample() error {
 			r.failure = fmt.Errorf("resource sample gap %.3fs exceeds %.0fs", gap, alphaResidentSampleGap.Seconds())
 		}
 	}
+	reading.Read = now.Sub(readStart).Seconds()
+	if r.samples > 0 {
+		reading.Gap = now.Sub(r.last).Seconds()
+	}
+	reading.PreviousRead = r.gaps.read
+	reading.PreviousWrite = r.gaps.write
+	reading.PreviousSync = r.gaps.sync
+	r.gaps.note(reading.Gap, reading.Read, r.lastWrite, r.lastSync)
+	r.maximumRead = max(r.maximumRead, reading.Read)
 	r.last = now
 	r.samples++
 	r.peak = max(r.peak, reading.Peak)
@@ -128,6 +158,7 @@ func (r *alphaResidencyRecorder) flush() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.write = max(r.write, took)
+	r.lastWrite = took.Seconds()
 	if err != nil {
 		return err
 	}
@@ -139,12 +170,17 @@ func (r *alphaResidencyRecorder) metrics() alphaResidencyMetrics {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return alphaResidencyMetrics{
-		Samples:      r.samples,
-		Persisted:    r.persisted,
-		MaximumGap:   r.gap,
-		MaximumWrite: r.write.Seconds(),
-		Peak:         r.peak,
-		Measured:     r.measured,
+		Samples:        r.samples,
+		Persisted:      r.persisted,
+		MaximumGap:     r.gap,
+		MaximumWrite:   r.write.Seconds(),
+		Peak:           r.peak,
+		Measured:       r.measured,
+		ReadBeforeGap:  r.gaps.ReadBeforeMaximum,
+		WriteBeforeGap: r.gaps.WriteBeforeMaximum,
+		SyncBeforeGap:  r.gaps.SyncBeforeMaximum,
+		MaximumRead:    r.maximumRead,
+		MaximumSync:    r.maximumSync,
 	}
 }
 
@@ -191,6 +227,40 @@ func alphaReadResident(pid int) (alphaResidentSample, error) {
 		return sample, fmt.Errorf("missing resident counters")
 	}
 	return sample, nil
+}
+
+func alphaPressureAvg10(kind string) (some, full *float64) {
+	text, err := os.ReadFile("/proc/pressure/" + kind)
+	if err != nil {
+		return nil, nil
+	}
+	someValue, fullValue, ok := parsePressureAvg10(string(text))
+	if !ok {
+		return nil, nil
+	}
+	return &someValue, &fullValue
+}
+
+func alphaProductCommit(binary string) string {
+	if directory := os.Getenv("LINA_ALPHA_BUILD"); filepath.IsAbs(directory) {
+		var manifest struct {
+			Commit string `json:"source_commit"`
+		}
+		raw, err := os.ReadFile(filepath.Join(directory, "pinned-binaries.json"))
+		if err == nil && json.Unmarshal(raw, &manifest) == nil && len(manifest.Commit) == 40 {
+			return manifest.Commit
+		}
+	}
+	info, err := buildinfo.ReadFile(binary)
+	if err != nil {
+		return ""
+	}
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.revision" {
+			return setting.Value
+		}
+	}
+	return ""
 }
 
 // A stalled filesystem is the collector's own latency, not a sampling gap: the
@@ -330,7 +400,13 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 		Persisted       int       `json:"persisted_samples"`
 		Probes          int       `json:"health_probes"`
 		MaximumGap      float64   `json:"maximum_sample_gap_seconds"`
+		ReadBeforeGap   float64   `json:"read_seconds_before_maximum_gap"`
+		WriteBeforeGap  float64   `json:"write_seconds_before_maximum_gap"`
+		SyncBeforeGap   float64   `json:"sync_seconds_before_maximum_gap"`
+		MaximumRead     float64   `json:"maximum_read_seconds"`
 		MaximumWrite    float64   `json:"maximum_write_seconds"`
+		MaximumSync     float64   `json:"maximum_sync_seconds"`
+		ProductCommit   string    `json:"product_commit"`
 		Started         time.Time `json:"started_at"`
 		Ended           time.Time `json:"ended_at"`
 	}{Status: "incomplete", RequiredSeconds: 86400, Budget: alphaResidentBudget}
@@ -344,6 +420,8 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 			m := recorder.metrics()
 			report.Samples, report.Persisted = m.Samples, m.Persisted
 			report.MaximumGap, report.MaximumWrite = m.MaximumGap, m.MaximumWrite
+			report.ReadBeforeGap, report.WriteBeforeGap, report.SyncBeforeGap = m.ReadBeforeGap, m.WriteBeforeGap, m.SyncBeforeGap
+			report.MaximumRead, report.MaximumSync = m.MaximumRead, m.MaximumSync
 			report.Peak, report.MeasuredSeconds = max(report.Peak, m.Peak), m.Measured
 		}
 		report.Ended = time.Now().UTC()
@@ -373,6 +451,7 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 		t.Fatal(err)
 	}
 	report.ArtifactSHA256 = fmt.Sprintf("%x", sha256.Sum256(binary))
+	report.ProductCommit = alphaProductCommit(h.binary)
 	ctx, cancel := context.WithTimeout(t.Context(), duration+10*time.Minute)
 	defer cancel()
 	h.ctx = ctx
@@ -432,6 +511,8 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 			if err != nil {
 				return reading, err
 			}
+			reading.MemorySome, reading.MemoryFull = alphaPressureAvg10("memory")
+			reading.IOSome, reading.IOFull = alphaPressureAvg10("io")
 			reading.Elapsed = time.Since(begin).Seconds()
 			return reading, nil
 		},
@@ -441,7 +522,14 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 					return err
 				}
 			}
-			return samples.Sync()
+			syncStart := time.Now()
+			err := samples.Sync()
+			syncSeconds := time.Since(syncStart).Seconds()
+			recorder.mu.Lock()
+			recorder.lastSync = syncSeconds
+			recorder.maximumSync = max(recorder.maximumSync, syncSeconds)
+			recorder.mu.Unlock()
+			return err
 		},
 	}
 	sample := func() {
