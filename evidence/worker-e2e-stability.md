@@ -213,3 +213,77 @@ dv heavy -- env GOMAXPROCS=2 go test ./e2e/m1 -run '^TestM2DispatchedWorkArea$/^
 
 The final PR records the repeated verification of the combined CPU, socket-path
 and capacity-wakeup corrections, including every earlier failed measurement.
+
+## Packet frame regression and pass rate
+
+`TestM2WorkerChoice` and `TestM2WorkerQuotaWindows` were the two most frequent
+failures in the filing report, and they failed for one cause. `fbabe7cc`
+(feat(worker): frame messages and verify approval records, 2026-10-23 17:01 UTC)
+wrapped every worker input in a `<lina-message ...>` frame and updated the
+Antigravity, Claude and dependency fixtures to unwrap it, but not
+`e2e/m2/worker-choice-codex.mjs`. That fixture stored `p.input[0].text`, so its
+`second-packet` file held the frame while `first-packet` and `packet` held the
+body the other fixtures received. Both assertions compare those bytes:
+
+```text
+antigravity_test.go:443: fallback changed the packet            (quota fallback and double stop)
+antigravity_test.go:443: quota handoff changed the task packet  (quota windows)
+```
+
+Only a head that contained `fbabe7cc` could fail, and those were the heads that
+had merged current dev; the same branches passed before that merge. That is why
+the failures looked unrelated to the branches. `a372220a` (PR #1295) unwraps the
+frame in the Codex fixture and is in dev.
+
+### Pass rate before and after
+
+Both runs used the first shard of the repetition protocol above:
+`-count=30 -parallel=4 -timeout=60m` with `GOMAXPROCS=2`. The before run used
+current dev with one file reverted to its `a372220a^` content and nothing else;
+the after run used current dev unchanged. `TestM2WorkerQuotaPartialRecovery` is
+the control: it runs the same fixture in another mode and never compares packets.
+
+| Test | Before (no unwrap) | After (dev `5f8f2561`) |
+| --- | --- | --- |
+| `TestM2WorkerChoice` | 0/30 (0%) | 30/30 (100%) |
+| `TestM2WorkerQuotaWindows` | 0/30 (0%) | 30/30 (100%) |
+| `TestM2WorkerQuotaPartialRecovery` | 30/30 (100%) | 30/30 (100%) |
+
+The before run recorded 90 failed repetitions in 1051.5 seconds: 30
+`quota handoff changed the task packet` and 60 `fallback changed the packet`
+across the `quota-fallback` and `double-stop` cases. The after run passed all 90
+repetitions with no failure or skip in 786.1 seconds. Repetition cannot mask this
+defect: a head without the unwrap fails every attempt.
+
+### Verification on the merged head
+
+The pull-request head adds this document to `origin/dev` at `1fbda9fb`, so its
+code is that commit. The same first-shard command run on the merged head
+(`be257e76`) passed all 90 repetitions in 511.39 seconds of package execution,
+with no failure, skip or missing observation: `TestM2WorkerChoice` 30/30,
+`TestM2WorkerQuotaWindows` 30/30 and `TestM2WorkerQuotaPartialRecovery` 30/30.
+The two audited `internal/core/boot` tests also passed 5/5 on that head.
+
+### Audit of the most recent 100 pull-request CI runs
+
+A snapshot taken on 2026-10-23 covers the 100 most recent pull-request runs of
+the CI workflow, created between 16:45:57Z and 20:36:31Z: 82 success, 11 failure,
+five cancelled and two unfinished. Every failed run's log was inspected, and
+neither named test appears in any of them.
+
+Three tests failed on two or more distinct branches, and all three are unit
+tests, outside this issue's e2e scope:
+
+| Test | Branches | Current dev |
+| --- | --- | --- |
+| `TestCatalogCoversClosedWireCodes` | feat/765, feat/952, feat/1011 | 5/5 |
+| `TestCoreProcess` | feat/950, feat/952 | 5/5 |
+| `TestDelegatedGoalWorkerRetainsRequesterBinding` | feat/979, feat/980 | 5/5 |
+
+Each failing head changes the protocol or worker surface that the test
+enumerates: the host protocol in #1372, which adds the launcher codes the catalog
+test reports missing, and in #1317; generated card surfaces and conversation
+results in #1272 and #1270; worker steering and message guards in #1238 and
+#1239. These are deterministic branch-local mismatches, not a shared timing
+fault. Every other failing test ran on one branch only, so no other e2e test met
+the two-branch threshold.
