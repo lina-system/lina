@@ -18,8 +18,12 @@ import (
 func AttachCardStages(ctx context.Context, tx *canon.Tx, person string, cards, goals []Unit) error {
 	type key struct{ goal, agent string }
 	cache := map[key][]Stage{}
-	for _, g := range goals {
-		cache[key{g.ID, g.Agent}] = g.Stages
+	parents := map[key]*Unit{}
+	for i := range goals {
+		g := &goals[i]
+		k := key{g.ID, g.Agent}
+		cache[k] = g.Stages
+		parents[k] = g
 	}
 	for i := range cards {
 		c := &cards[i]
@@ -51,6 +55,19 @@ func AttachCardStages(ctx context.Context, tx *canon.Tx, person string, cards, g
 				}
 			}
 			cache[k] = stages
+		}
+		// An explicit child work item makes this a goal heading. A card for
+		// one of the goal's own steps stays a row of its managed project.
+		if g := parents[key{c.Parent, c.Agent}]; g != nil {
+			stepCard := false
+			for _, stage := range g.Stages {
+				for _, step := range stage.Steps {
+					stepCard = stepCard || step.ID == c.ID
+				}
+			}
+			if !stepCard {
+				g.Kind = "goal"
+			}
 		}
 		c.Stages = stages
 	}

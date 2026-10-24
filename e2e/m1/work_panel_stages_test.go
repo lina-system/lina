@@ -316,12 +316,15 @@ func TestM3WorkPanelStages(t *testing.T) {
 		return s.CursorHidden && panelCellRows(s, 0, 100)[1] == design.Text(design.English, "work.title")
 	})
 	projection := panelProjection(t, h)
-	fanIndex := 0
+	fanIndex := -1
 	for i, row := range projection {
 		if row.Ref == cards[3].ID {
 			fanIndex = i
 			break
 		}
+	}
+	if fanIndex < 0 {
+		t.Fatal("fan-out work is missing from Core card order")
 	}
 	h.keys(terminal, strings.Repeat("\x1b[B", fanIndex)+"\r")
 	waitScreen("fan stage list", func(s tuiterm.Snapshot) bool {
@@ -428,7 +431,7 @@ func awaitPanelStages(t *testing.T, h *harness, accept func([]protocol.ProgressR
 		}
 		latest = nil
 		for _, row := range *update.Rows {
-			if row.Line.Kind != "goal" {
+			if row.Line.Kind != "goal" && (row.Line.Row == nil || !*row.Line.Row) {
 				latest = append(latest, row)
 			}
 		}
