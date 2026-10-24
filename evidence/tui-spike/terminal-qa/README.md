@@ -15,6 +15,9 @@ IME composition check or the final library decision, which stay in #371.
   (`LINA_RESPONSES_MODEL=fixture-model`, dummy key). No real account or model.
 - Display: a private headless Sway 1.11 session (pixman renderer, Xwayland for
   X11 terminals) on Ubuntu 26.04. Screens were captured with `grim`.
+- SSH/tmux: `ssh -V` and `sshd -V` both reported OpenSSH 10.2p1
+  Ubuntu-2ubuntu3.8, and `tmux -V` reported tmux 3.6, on that Ubuntu 26.04 host.
+  `TERM` was `xterm-256color`.
 - Input: `wtype` for Wayland terminals, `xdotool type` for X11 terminals. The
   typed text reaches Core and is checked in the conversation ledger, not only on
   screen.
@@ -38,7 +41,7 @@ Verdicts: works / partial / fails. Only function is judged.
 | WezTerm (X11) | 20240203-110809-5046fc22 | xterm-256color | works | partial | works (truecolor) | works | works | works |
 | xterm (X11) | 407 | xterm | works | partial | partial (light profile) | works | works | works |
 | GNOME Terminal (Wayland) | 3.58.0, VTE 0.84 | xterm-256color | works | partial | partial (light profile) | works | works | works |
-| SSH (tmux PTY over `ssh -t`) | OpenSSH, tmux | xterm-256color | works | partial | n/a (text capture) | works | works | works |
+| SSH (tmux PTY over `ssh -t`) | OpenSSH 10.2p1 Ubuntu-2ubuntu3.8, tmux 3.6 | xterm-256color | works | partial | n/a (text capture) | works | works | works |
 | Apple Terminal (macOS) | 2.15 | — | not run | not run | not run | not run | not run | not run |
 | iTerm2, Ghostty (macOS) | not installed | — | — | — | — | — | — | — |
 
