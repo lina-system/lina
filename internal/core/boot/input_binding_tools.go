@@ -3,7 +3,9 @@ package boot
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -146,10 +148,11 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		return &result
 	}
 	// A reply that did not settle still has the parent's retained tie. A control
-	// action must ask before it uses the recommendation.
+	// action must ask before it uses the recommendation. A card action replies
+	// to the agent event that presented the card, which holds no choices.
 	if len(choice.Tied) < 2 && (choice.Target.Class == "" || choice.Target.Class == "none") && input.Surface.ReplyTo != "" {
 		parent, err := r.currentInputChoices(ctx, ledger.Event{ID: input.Surface.ReplyTo})
-		if err != nil {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			result := bindingFailure(c.ID, err)
 			return &result
 		}

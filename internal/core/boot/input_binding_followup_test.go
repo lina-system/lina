@@ -567,6 +567,33 @@ func TestReviseCodeGoalChecksChosenRecord(t *testing.T) {
 	}
 }
 
+// A card action replies to the agent event that presented the card, not to a
+// person input. That reply has no binding row to inherit a tie from.
+func TestCardActionToolSkipsAgentReplyTie(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	card, err := r.journal().Admit(t.Context(), guard.EntryAgent, ledger.Input{
+		ID: "agent-card", AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Choose a time.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	press, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "card-press", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui", ReplyTo: card.ID, Card: "card-1"}, OccurredAt: now.Add(time.Second), RecordedAt: now.Add(time.Second), TimeQuality: "observed",
+		Body: "Dentist appointment\nchoose: {\"slot\":[\"wed-1500\"]}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := modelBindingTools(t, r, press)
+	saved := questionCall(t, tools, "write_record", "save-choice", map[string]any{"kind": "memo", "title": "Appointment choice", "note": "Wednesday at 15:00"})
+	if saved.Code != loop.OK {
+		t.Fatalf("card action tool failed: %+v", saved)
+	}
+}
+
 func TestReplyToReadTieStaysUnresolved(t *testing.T) {
 	r, _ := turnRuntime(t)
 	reserve := t.TempDir()
