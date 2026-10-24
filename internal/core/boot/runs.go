@@ -275,13 +275,26 @@ func (r *conversationRuntime) authorizeRun(ctx context.Context, o runs.Origin, b
 	if err != nil {
 		return err
 	}
-	// These installed adapters read only the shared instruction catalog. Material
-	// references and write-capable adapters require their own authority wiring.
-	if len(b.Refs) != 0 {
-		return runs.ErrScope
+	// A follow-up may name the partial result it continues. That material must
+	// belong to this person. Write-capable adapters stay unwired.
+	if err = r.authorizeMaterialRefs(ctx, o.Person, b.Refs); err != nil {
+		return err
 	}
 	for _, name := range b.Allow {
 		if name != "skill_index" && name != "read_skill" {
+			return runs.ErrScope
+		}
+	}
+	return nil
+}
+
+func (r *conversationRuntime) authorizeMaterialRefs(ctx context.Context, person string, refs []runs.Ref) error {
+	for _, ref := range refs {
+		if ref.ID == "" || ref.Revision < 1 || r.assets == nil {
+			return runs.ErrScope
+		}
+		asset, err := r.assets.Get(ctx, ref.ID)
+		if err != nil || asset.Actor.PersonID != person || asset.TrashedAt != 0 || ref.Revision > asset.Revision {
 			return runs.ErrScope
 		}
 	}

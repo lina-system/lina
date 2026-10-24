@@ -498,7 +498,7 @@ func syntheticPasses(c panelCase, at time.Time) []panelSchedulePass {
 	passes = append(passes,
 		limitPass(3, 1, moved, nil),
 		limitPass(4, 3, moved, []string{moved[2]}),
-		panelSchedulePass{Seq: 5, At: at, Command: "limit", Limit: 0, Rank: moved, Running: moved[:5]},
+		panelSchedulePass{Seq: 5, At: at, Command: "limit", Limit: 5, Automatic: true, Rank: moved, Running: moved[:5]},
 	)
 	reasons, places := queued(moved, moved[:2], "quota", 2)
 	passes = append(passes, panelSchedulePass{Seq: 6, At: at, Limit: 2, Shortage: "quota", Rank: moved, Running: moved[:2], Reasons: reasons, Places: places})

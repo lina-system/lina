@@ -29,7 +29,7 @@ type scenarioClock struct{ now time.Time }
 // tuiCapabilities mirrors the offers in internal/tui/ui's shellCapabilities.
 // fakecore matches hello payloads exactly, so a capability the shell adds must
 // be added here too; the TUI e2e fails otherwise.
-var tuiCapabilities = []protocol.Capability{protocol.SurfaceResultsCapability(), {Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}}
+var tuiCapabilities = []protocol.Capability{protocol.SurfaceResultsCapability(), {Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}, {Name: "work", Version: "1.0"}}
 
 // Keep the shared conformance corpus unchanged. The TUI scenario explicitly
 // offers its implemented capabilities, which Core may grant or not. A refused

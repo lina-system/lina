@@ -61,8 +61,16 @@ func applyResearchPartial(g *Goal, t *Task, o Observation) error {
 		return ErrInvalid
 	}
 	if t.ResearchFollowUp == nil {
-		if len(o.Partial.Missing) == 0 || o.Partial.RunID == "" || o.Partial.MaterialID == "" || o.Partial.MaterialRevision < 1 {
+		if o.Partial.RunID == "" || o.Partial.MaterialID == "" || o.Partial.MaterialRevision < 1 {
 			return ErrInvalid
+		}
+		if len(o.Partial.Missing) == 0 {
+			if len(o.Partial.Unresolved) == 0 {
+				t.Stage = TaskNeedsPerson
+				t.EffectsSettled = true
+				return nil
+			}
+			return landResearchResult(g, t, o)
 		}
 		gap := append([]string(nil), o.Partial.Missing...)
 		follow := *t.Background
@@ -82,6 +90,10 @@ func applyResearchPartial(g *Goal, t *Task, o Observation) error {
 		t.EffectsSettled = true
 		return nil
 	}
+	return landResearchResult(g, t, o)
+}
+
+func landResearchResult(g *Goal, t *Task, o Observation) error {
 	proof := o.Proof
 	if proof.Revision == "" && o.Partial.MaterialID != "" {
 		proof.Revision = fmt.Sprintf("%s:%d", o.Partial.MaterialID, o.Partial.MaterialRevision)

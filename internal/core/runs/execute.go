@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"sync/atomic"
 
 	"github.com/thisisjun786/lina/internal/core/ledger"
@@ -80,6 +81,21 @@ func (s *Service) run(ctx context.Context, id string) error {
 	if len(cfg.Request.Items) == 0 {
 		b, _ := json.Marshal(r.Brief)
 		cfg.Request.Items = []provider.Item{item(string(b))}
+		for _, ref := range r.Brief.Refs {
+			reader, err := s.cfg.Assets.OpenRead(ctx, ref.ID, ref.Revision)
+			if err != nil {
+				return err
+			}
+			data, err := io.ReadAll(io.LimitReader(reader, 64<<10))
+			closeErr := reader.Close()
+			if err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				return err
+			}
+			cfg.Request.Items = append(cfg.Request.Items, item(string(data)))
+		}
 		if r.Promotion != nil {
 			gathered, _ := json.Marshal(r.Promotion)
 			cfg.Request.Items = append(cfg.Request.Items, item(string(gathered)))

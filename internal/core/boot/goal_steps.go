@@ -127,6 +127,16 @@ func (d *codeGoalDriver) backgroundStep(ctx context.Context, g goal.Goal, t goal
 		}
 		if r.State == runs.Landed {
 			if r.Outcome == runs.Partial && r.Material.ID != "" && r.Material.Revision >= 1 {
+				unresolved := false
+				for _, c := range r.Citations {
+					if !c.Resolved {
+						unresolved = true
+						break
+					}
+				}
+				if len(runs.PartialGap(r)) == 0 && !unresolved {
+					return goal.Observation{Status: goal.OutcomeNeedsPerson, Handle: id, EffectsSettled: true, Code: "background_incomplete"}, nil
+				}
 				return researchPartialObservation(r), nil
 			}
 			if r.Outcome != runs.Complete || r.Material.ID == "" || r.Material.Revision < 1 {
@@ -293,7 +303,7 @@ func (d *codeGoalDriver) readStepResult(ctx context.Context, s goal.State, g goa
 			if err != nil {
 				return goal.Proof{}, err
 			}
-			if found && r.State == runs.Landed && r.Outcome == runs.Complete && r.Material.ID == t.Result.Ref && fmt.Sprintf("%s:%d", r.Material.ID, r.Material.Revision) == t.Result.Revision {
+			if found && r.State == runs.Landed && backgroundResultAccepted(t, r) && r.Material.ID == t.Result.Ref && fmt.Sprintf("%s:%d", r.Material.ID, r.Material.Revision) == t.Result.Revision {
 				return t.Result, nil
 			}
 		}
@@ -316,4 +326,16 @@ func (d *codeGoalDriver) readStepResult(ctx context.Context, s goal.State, g goa
 	case goal.TaskStep, "":
 	}
 	return goal.Proof{}, goal.ErrNeedsPerson
+}
+
+func backgroundResultAccepted(t goal.Task, r runs.Record) bool {
+	switch r.Outcome {
+	case runs.Complete:
+		return true
+	case runs.Partial:
+		return goal.QuestionsHandled(t.ResearchGap, r.Artifact.Missing, researchOpen(r))
+	case runs.Failed, runs.Cancelled, runs.InputNeeded:
+		return false
+	}
+	return false
 }

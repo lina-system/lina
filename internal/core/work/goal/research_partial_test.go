@@ -167,3 +167,46 @@ func TestUnresolvedCitationHoldsTheDocumentCriterion(t *testing.T) {
 		t.Fatal("open question did not count as handled")
 	}
 }
+
+func TestCitationOnlyPartialLandsWithoutAnotherRun(t *testing.T) {
+	t.Parallel()
+	_, db := testJournal(t)
+	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Admit(t.Context(), oneGoal(researchTask("notes"))); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.NodeChanged(t.Context(), researchNode()); err != nil || e.Reconcile(t.Context()) != nil {
+		t.Fatal(err)
+	}
+	s, err := e.Snapshot(t.Context())
+	if err != nil || len(s.Actions) != 1 {
+		t.Fatal(err)
+	}
+	if _, err = e.Claim(t.Context(), s.Actions[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	partial := Observation{Status: OutcomePartial, EffectsSettled: true, Handle: "run-1", Proof: Proof{Revision: "mat:1", Ref: "mat"}, Partial: &ResearchPartial{RunID: "run-1", Unresolved: []string{"passage"}, MaterialID: "mat", MaterialRevision: 1}}
+	if err = e.Report(t.Context(), s.Actions[0].ID, 1, partial); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err = e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := s.Goals[0].Tasks[0]
+	assigns := 0
+	for _, a := range s.Actions {
+		if a.Kind == Assign {
+			assigns++
+		}
+	}
+	if task.Stage != TaskDone || task.ResearchFollowUp != nil || !task.Result.Passed || assigns != 1 {
+		t.Fatalf("citation-only partial started another run: %+v assigns=%d", task, assigns)
+	}
+}

@@ -4,14 +4,18 @@ package boot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
@@ -101,11 +105,21 @@ func TestGoalStepBackgroundUsesRecordedOrigin(t *testing.T) {
 // no receipt means no effect can have started.
 func TestGoalStepPartialFollowUpMarksTheQuestionOpen(t *testing.T) {
 	r := controlRuntime(t)
+	r.route = &modelpath.ResponsesConfig{}
 	var calls atomic.Int32
-	s, err := runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"), Authorize: func(context.Context, runs.Origin, runs.Brief) error { return nil }, Stream: func(_ context.Context, req provider.Request) (provider.Stream, error) {
+	s, err := runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"), Authorize: r.authorizeRun, Stream: func(_ context.Context, req provider.Request) (provider.Stream, error) {
 		n := calls.Add(1)
 		if n == 1 {
 			return bootAnswer(runs.Artifact{Body: "Notes so far.", Done: false, Missing: []string{"the fee"}}), nil
+		}
+		sawMaterial := false
+		for _, item := range req.Items {
+			if strings.Contains(string(item), "Notes so far.") {
+				sawMaterial = true
+			}
+		}
+		if !sawMaterial {
+			t.Errorf("follow-up did not receive the partial material")
 		}
 		var brief runs.Brief
 		if len(req.Items) == 0 || json.Unmarshal(req.Items[0], &struct {
@@ -156,6 +170,36 @@ func TestGoalStepPartialFollowUpMarksTheQuestionOpen(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("runs=%d", calls.Load())
+	}
+	task.ResearchGap = []string{"the fee"}
+	task.Stage = goal.TaskDone
+	task.Result = second.Proof
+	task.Result.Passed = true
+	proof, err := d.readStepResult(t.Context(), goal.State{Actions: []goal.Action{{ID: "follow", GoalID: g.ID, TaskID: task.ID, Kind: goal.Assign, State: "finished"}}}, g, task)
+	if err != nil || !proof.Passed || proof.Revision != second.Proof.Revision {
+		t.Fatalf("partial result was not readable: %+v %v", proof, err)
+	}
+}
+
+func TestAuthorizeRunAllowsOnlyThePersonsMaterial(t *testing.T) {
+	r := controlRuntime(t)
+	r.route = &modelpath.ResponsesConfig{}
+	owned, err := r.assets.SaveRunResult(t.Context(), "0123456789abcdef0123456789abcdef", []byte(`{"body":"notes"}`), assets.Actor{PersonID: r.person, AgentID: r.agent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := runs.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: "turn", Epoch: r.epoch}
+	brief := runs.Brief{Goal: "collect", Scope: "named sources", NotTouch: "files", Done: "report", Result: "document", Checks: []runs.Check{{Name: "report", Kind: runs.Claimed}}, Refs: []runs.Ref{{ID: owned.ID, Revision: owned.Revision}}}
+	if err = r.authorizeRun(t.Context(), origin, brief); err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := r.assets.SaveRunResult(t.Context(), "abcdef0123456789abcdef0123456789", []byte(`{"body":"other"}`), assets.Actor{PersonID: "someone-else", AgentID: r.agent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief.Refs = []runs.Ref{{ID: foreign.ID, Revision: foreign.Revision}}
+	if err = r.authorizeRun(t.Context(), origin, brief); !errors.Is(err, runs.ErrScope) {
+		t.Fatalf("foreign material: %v", err)
 	}
 }
 

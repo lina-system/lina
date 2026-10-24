@@ -188,6 +188,10 @@ func (s *managementSession) request(ctx context.Context, c shellClient, p protoc
 		id, err = c.Agent(ctx, p)
 	case protocol.MemoryRequest:
 		id, err = c.Memory(ctx, p)
+	case protocol.WorkControlRequest:
+		id, err = c.WorkControl(ctx, p)
+	case protocol.WorkLimitRequest:
+		id, err = c.WorkLimit(ctx, p)
 	}
 	if err == nil {
 		s.pending[id] = p
@@ -318,6 +322,9 @@ func (s *managementSession) response(ctx context.Context, c shellClient, e proto
 			m.conversation.pager.text += "\n\n" + design.Text(m.styles.options.Language, "running.next")
 		}
 
+	case protocol.WorkControlResult, protocol.WorkLimitResult:
+		// Core's progress update carries the change; the reply only closes the
+		// request, so the panel never draws a choice Core has not recorded.
 	case protocol.MemoryResult:
 		original, ok := request.(protocol.MemoryRequest)
 		if !ok || p.Operation == nil {

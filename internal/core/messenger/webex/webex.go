@@ -266,6 +266,9 @@ func (a *Adapter) ListChats(ctx context.Context, source messenger.SourceID) ([]m
 // Page reads one page of a room oldest first. Cursors walk backwards through
 // the room's history with beforeMessage, then stay on the newest page so later
 // messages and edits arrive; a finished backfill hands over to that newest page.
+// A room that was empty keeps an unanchored tail, and the next burst fills back
+// to the beginning before that anchor moves. A reply whose parent is on an
+// older page of the same backfill is returned with that parent.
 func (a *Adapter) Page(ctx context.Context, source messenger.SourceID, chat string, cursor messenger.Cursor) (messenger.Page, error) {
 	if err := a.checkSource(ctx, source); err != nil {
 		return messenger.Page{}, err
@@ -277,62 +280,112 @@ func (a *Adapter) Page(ctx context.Context, source messenger.SourceID, chat stri
 	if err != nil {
 		return messenger.Page{}, err
 	}
+	list, more, err := a.messagePage(ctx, chat, at.Before)
+	if err != nil {
+		return messenger.Page{}, err
+	}
+	if len(list.Items) == 0 {
+		if at.Mode == modeTail {
+			// Nothing newer. An unanchored tail stays unanchored.
+			return messenger.Page{Next: cursor}, nil
+		}
+		// The room's beginning, or a first read of an empty room. An empty
+		// room stores an unanchored tail so a later burst can fill.
+		return messenger.Page{Next: tailCursor(at.Newest)}, nil
+	}
+	// An anchored tail that still contains its anchor has nothing older to
+	// catch up. An unanchored tail, and a tail that overflowed, fill backwards.
+	if at.Mode == modeTail && at.Newest != "" && !(more && !containsID(list.Items, at.Newest)) {
+		messages, err := a.messages(ctx, chat, list.Items)
+		if err != nil {
+			return messenger.Page{}, err
+		}
+		reverse(messages)
+		return messenger.Page{Messages: messages, Next: tailCursor(list.Items[0].ID)}, nil
+	}
+	fill := at
+	if at.Mode == modeTail {
+		fill = anchor{Mode: modeFill, Newest: list.Items[0].ID, Stop: at.Newest}
+	}
+	return a.finishFill(ctx, chat, fill, list.Items, more)
+}
+
+// messagePage reads one Webex message page. more is true when the platform
+// names another page or the page is full, so a short final page can end the walk.
+func (a *Adapter) messagePage(ctx context.Context, chat, before string) (listPage, bool, error) {
 	query := url.Values{"roomId": {chat}, "max": {strconv.Itoa(a.pageSize)}}
-	if at.Before != "" {
-		query.Set("beforeMessage", at.Before)
+	if before != "" {
+		query.Set("beforeMessage", before)
 	}
 	var list listPage
 	target := a.base + "/v1/messages?" + query.Encode()
 	link, err := a.get(ctx, target, &list)
 	if err != nil {
-		return messenger.Page{}, err
+		return listPage{}, false, err
 	}
 	next, err := nextLink(link, target)
 	if err != nil {
-		return messenger.Page{}, err
+		return listPage{}, false, err
 	}
-	more := next != "" || len(list.Items) >= a.pageSize
-	if len(list.Items) == 0 {
-		if next != "" {
+	if len(list.Items) == 0 && next != "" {
+		return listPage{}, false, ErrMisconfigured
+	}
+	return list, next != "" || len(list.Items) >= a.pageSize, nil
+}
+
+// finishFill returns one backfill page. When a message replies to a parent this
+// read has not reached, it keeps requesting older pages until that parent is in
+// the page, the previous anchor is reached, or the room ends. The store records
+// a reply only when the parent is already admitted or in the same page, and a
+// later read of an unchanged reply does not repair the relation. Parents older
+// than the anchor are already admitted; the anchor itself is not returned again.
+func (a *Adapter) finishFill(ctx context.Context, chat string, at anchor, first []wireMessage, more bool) (messenger.Page, error) {
+	batches := [][]wireMessage{first}
+	oldest := first[len(first)-1].ID
+	seen := map[string]bool{oldest: true}
+	for missingParents(batches) && more && !containsMessage(batches, at.Stop) {
+		list, nextMore, err := a.messagePage(ctx, chat, oldest)
+		if err != nil {
+			return messenger.Page{}, err
+		}
+		if len(list.Items) == 0 {
+			more = false
+			break
+		}
+		oldest = list.Items[len(list.Items)-1].ID
+		if seen[oldest] {
 			return messenger.Page{}, ErrMisconfigured
 		}
-		if at.Mode == modeTail {
-			// Nothing newer: the read position stays where it was.
-			return messenger.Page{Next: cursor}, nil
+		seen[oldest] = true
+		batches = append(batches, list.Items)
+		more = nextMore
+	}
+	// The platform returns each page newest first. The joined page is oldest
+	// first, and a page that reached the previous anchor drops that anchor and
+	// anything older than it.
+	wire := make([]wireMessage, 0)
+	for i := len(batches) - 1; i >= 0; i-- {
+		for j := len(batches[i]) - 1; j >= 0; j-- {
+			wire = append(wire, batches[i][j])
 		}
-		// The room's beginning, or the message a catch-up walked back past.
-		return messenger.Page{Next: tailCursor(at.Newest)}, nil
 	}
-	messages, err := a.messages(ctx, chat, list.Items)
-	if err != nil {
-		return messenger.Page{}, err
-	}
-	// The platform returns newest first; a page of a chat is oldest first.
-	reverse(messages)
-	oldest := list.Items[len(list.Items)-1].ID
-	if at.Mode == modeTail {
-		if more && at.Newest != "" && !containsID(list.Items, at.Newest) {
-			// More arrived than one page holds: walk back to what was already
-			// read before moving the tail forward.
-			return messenger.Page{Messages: messages, Next: fillCursor(oldest, list.Items[0].ID, at.Newest), HasMore: true}, nil
-		}
-		return messenger.Page{Messages: messages, Next: tailCursor(list.Items[0].ID)}, nil
-	}
-	// A catch-up stops at the message the last read ended on: nothing at or
-	// older than it is new.
 	if at.Stop != "" {
-		for i, message := range messages {
-			if message.ID == at.Stop {
-				return messenger.Page{Messages: messages[i+1:], Next: tailCursor(at.Newest)}, nil
+		for i, item := range wire {
+			if item.ID == at.Stop {
+				wire = wire[i+1:]
+				break
 			}
 		}
 	}
+	messages, err := a.messages(ctx, chat, wire)
+	if err != nil {
+		return messenger.Page{}, err
+	}
 	newest := at.Newest
 	if newest == "" {
-		newest = list.Items[0].ID
+		newest = first[0].ID
 	}
-	if !more {
-		// The room's first read reached its beginning.
+	if !more || containsMessage(batches, at.Stop) {
 		return messenger.Page{Messages: messages, Next: tailCursor(newest)}, nil
 	}
 	return messenger.Page{Messages: messages, Next: fillCursor(oldest, newest, at.Stop), HasMore: true}, nil
@@ -654,6 +707,40 @@ func containsID(items []wireMessage, id string) bool {
 	for _, item := range items {
 		if item.ID == id {
 			return true
+		}
+	}
+	return false
+}
+
+func containsMessage(batches [][]wireMessage, id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, batch := range batches {
+		if containsID(batch, id) {
+			return true
+		}
+	}
+	return false
+}
+
+// missingParents reports a reply whose parent is on an older page this read
+// has not fetched yet. A parent that never appears was already admitted or is
+// gone; the walk stops at the anchor or the beginning and leaves it unresolved.
+func missingParents(batches [][]wireMessage) bool {
+	ids := make(map[string]bool)
+	for _, batch := range batches {
+		for _, item := range batch {
+			if item.ID != "" {
+				ids[item.ID] = true
+			}
+		}
+	}
+	for _, batch := range batches {
+		for _, item := range batch {
+			if item.ParentID != "" && !ids[item.ParentID] {
+				return true
+			}
 		}
 	}
 	return false
