@@ -136,6 +136,8 @@ type Goal struct {
 	AssessedFailure   string              `json:"assessed_failure,omitempty"`
 	Scope             GoalScope           `json:"-"`
 	Assumptions       []string            `json:"-"`
+	Asks              []string            `json:"-"`
+	PersonTasks       []string            `json:"-"`
 	Decisions         []GoalDecision      `json:"-"`
 	Criteria          []Criterion         `json:"-"`
 	Checks            []CriterionEvidence `json:"checks,omitempty"`

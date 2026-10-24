@@ -34,6 +34,8 @@ type Definition struct {
 	Done              string         `json:"done"`
 	Scope             GoalScope      `json:"scope"`
 	Assumptions       []string       `json:"assumptions,omitempty"`
+	Asks              []string       `json:"asks,omitempty"`
+	PersonTasks       []string       `json:"person_tasks,omitempty"`
 	Decisions         []GoalDecision `json:"decisions,omitempty"`
 	Criteria          []Criterion    `json:"criteria"`
 }
