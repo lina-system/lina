@@ -369,3 +369,23 @@ func TestSandboxedAddonProgramUsesItsPrivateDirectory(t *testing.T) {
 		t.Fatalf("sandbox: %v", err)
 	}
 }
+
+func TestChildExitUnblocksPendingRead(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	program := filepath.Join(root, "exit.mjs")
+	if err := os.WriteFile(program, []byte("process.stdin.once('data', () => process.exit(7));\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	value := addon.NewSession("kakaotalk", "account-1", addon.Config{Node: node, Program: program, StateRoot: root, Runner: plainRunner{}, RequestTimeout: 30 * time.Second})
+	defer value.Close(context.Background())
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	_, err = value.Adapter().ListChats(ctx, messenger.SourceID{Platform: "kakaotalk", Account: "account-1"})
+	if !errors.Is(err, addon.ErrStopped) {
+		t.Fatalf("child exited but pending read did not stop: %v", err)
+	}
+}

@@ -241,7 +241,7 @@ func TestM4MessengerAddonKilledMidPage(t *testing.T) {
 		t.Fatalf("records = %d, want 2", got)
 	}
 	for _, id := range []string{"m-1", "m-2"} {
-		if got := readCanon(t, root, `SELECT count(*) FROM messenger_record WHERE native_id=?`, id); got != 1 {
+		if got := readCanon(t, root, `SELECT count(*) FROM messenger_record WHERE message=?`, id); got != 1 {
 			t.Fatalf("record %s stored %d times", id, got)
 		}
 	}

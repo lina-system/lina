@@ -384,8 +384,18 @@ func (p *process) start(ctx context.Context) (*child, error) {
 	if err := os.Chmod(dir, 0700); err != nil {
 		return nil, fmt.Errorf("%w: data directory", ErrStopped)
 	}
-	childIn, parentIn := io.Pipe()
-	parentOut, childOut := io.Pipe()
+	// Pass file descriptors to exec, not in-memory pipes whose stdin copier
+	// can keep Wait blocked after the child has already exited.
+	childIn, parentIn, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	parentOut, childOut, err := os.Pipe()
+	if err != nil {
+		childIn.Close()
+		parentIn.Close()
+		return nil, err
+	}
 	owner := proc.NewOwner()
 	environment := p.environment(dir)
 	var runner Runner
@@ -402,6 +412,7 @@ func (p *process) start(ctx context.Context) (*child, error) {
 	}
 	childCtx, cancel := context.WithCancel(ctx)
 	exited := make(chan error, 1)
+	next := &child{done: make(chan struct{}), pending: map[string]chan wireResponse{}}
 	go func() {
 		l := lease.New(func() {})
 		defer l.Release()
@@ -416,14 +427,15 @@ func (p *process) start(ctx context.Context) (*child, error) {
 		if err == nil {
 			err = ErrStopped
 		}
-		childOut.CloseWithError(err)
-		childIn.CloseWithError(err)
+		next.mu.Lock()
+		if next.err == nil {
+			next.err = err
+		}
+		next.mu.Unlock()
+		childOut.Close()
+		childIn.Close()
 		exited <- err
 	}()
-	next := &child{
-		done:    make(chan struct{}),
-		pending: map[string]chan wireResponse{},
-	}
 	next.stop = func() {
 		cancel()
 		parentIn.Close()
