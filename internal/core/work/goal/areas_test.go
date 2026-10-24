@@ -7,6 +7,7 @@ import (
 )
 
 func TestDeriveSerializesOverlappingAreas(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		a, b    string
 		overlap bool
@@ -54,6 +55,7 @@ func TestDeriveSerializesOverlappingAreas(t *testing.T) {
 }
 
 func TestDeriveHoldsOverlappingAreaAcrossGoalsUntilLanding(t *testing.T) {
+	t.Parallel()
 	a, b := readyTask("a"), readyTask("b")
 	a.Area, b.Area = "src/**", "src/auth/**"
 	a.Stage = TaskBuilding

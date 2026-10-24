@@ -27,6 +27,7 @@ func reviseDuringAction(t *testing.T, e *Engine, records Definitions) {
 }
 
 func TestStaleCriterionResultDoesNotStopEngine(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	started := make(chan Action, 1)
 	release := make(chan struct{})
@@ -141,6 +142,7 @@ func TestStaleCriterionResultDoesNotStopEngine(t *testing.T) {
 }
 
 func TestStaleManagerPlanCannotClearCorrection(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {
@@ -171,6 +173,7 @@ func TestStaleManagerPlanCannotClearCorrection(t *testing.T) {
 }
 
 func TestWorkerRecoveryRequiresCurrentActionScope(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	action := claimOnlyAction(t, e, Assign)
 	if allowed, err := e.CanContinue(t.Context(), action.ID); err != nil || !allowed {

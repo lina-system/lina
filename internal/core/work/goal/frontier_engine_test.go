@@ -9,6 +9,7 @@ import (
 )
 
 func TestFrontierMixedGraphCommitsClaimsAndRestart(t *testing.T) {
+	t.Parallel()
 	e, db := graphFixture(t)
 	steps := []Step{
 		{ID: "bg-entry", Name: "Read catalog", Kind: BackgroundStep, Repository: "repo", Done: "bg-entry", Resources: Resources{CPU: 1, MemoryMB: 1, DiskMB: 1}, Background: &BackgroundBrief{Goal: "Read", Scope: "catalog", NotTouch: "files", Done: "bg-entry", Result: "notes", Checks: []BackgroundCheck{{Name: "bg-entry", Kind: "claimed"}}}},
@@ -93,6 +94,7 @@ func TestFrontierMixedGraphCommitsClaimsAndRestart(t *testing.T) {
 }
 
 func TestFrontierKindAdmissionRefusesMalformedWork(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		kind StepKind
