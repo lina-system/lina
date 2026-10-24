@@ -93,15 +93,29 @@ func toolRowsGate(t *testing.T, h *harness, release <-chan struct{}) (string, <-
 }
 
 func TestM1TUIToolRows(t *testing.T) {
-	for _, ascii := range []bool{false, true} {
-		t.Run(map[bool]string{false: "unicode", true: "ascii"}[ascii], func(t *testing.T) {
+	for _, variant := range []struct {
+		name, theme  string
+		ascii, plain bool
+		env          []string
+	}{
+		{"light-truecolor-unicode", "light", false, false, []string{"COLORTERM=truecolor"}},
+		{"dark-256-unicode", "dark", false, false, nil},
+		{"high-contrast-16-unicode", "high-contrast", false, false, []string{"TERM=vt100"}},
+		{"light-no-color-ascii", "light", true, true, []string{"NO_COLOR=1"}},
+		{"dark-no-color-ascii", "dark", true, true, []string{"NO_COLOR=1"}},
+		{"high-contrast-no-color-ascii", "high-contrast", true, true, []string{"NO_COLOR=1"}},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
 			text := func(key string) string { return design.Text(design.English, "tool."+key) }
 			listing, reading := tools.DisplayName("skill_index"), tools.DisplayName("read_skill")
 			marks := design.Dark()
-			runningMark, okMark, failedMark := marks.GlyphUnicodeToolRunning, marks.GlyphUnicodeToolOk, marks.GlyphUnicodeToolFailed
-			if ascii {
-				runningMark, okMark, failedMark = marks.GlyphAsciiToolRunning, marks.GlyphAsciiToolOk, marks.GlyphAsciiToolFailed
+			switch variant.theme {
+			case "light":
+				marks = design.Light()
+			case "high-contrast":
+				marks = design.HighContrast()
 			}
+			runningMark, okMark, failedMark := marks.Icon("working", variant.ascii), marks.Icon("success", variant.ascii), marks.Icon("error", variant.ascii)
 			running := runningMark + " " + text("running") + "  " + listing
 			ok := okMark + " " + text("ok") + "  " + listing
 			failed := failedMark + " " + text("failed") + "  " + reading
@@ -167,8 +181,9 @@ func TestM1TUIToolRows(t *testing.T) {
 			socket, ready := toolRowsGate(t, h, release)
 			original := h.socket
 			h.socket = socket
-			env := []string{"TERM=xterm-256color", "LC_ALL=en_US.UTF-8"}
-			if ascii {
+			env := []string{"TERM=xterm-256color", "LC_ALL=en_US.UTF-8", "LINA_THEME=" + variant.theme}
+			env = append(env, variant.env...)
+			if variant.ascii {
 				env = append(env, "LINA_GLYPHS=ascii")
 			}
 			terminal := h.startTerminalSize(env, false, true, 100, 34)
@@ -178,7 +193,11 @@ func TestM1TUIToolRows(t *testing.T) {
 			case <-h.ctx.Done():
 				t.Fatal("TUI not subscribed")
 			}
-			waitComposerReady(t, h, terminal)
+			if variant.plain {
+				waitPlainComposerReady(t, h, terminal)
+			} else {
+				waitComposerReady(t, h, terminal)
+			}
 			h.keys(terminal, "List fixture skills\r")
 			ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
 			screen, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool { return strings.Contains(screenText(s), running) })
@@ -194,6 +213,10 @@ func TestM1TUIToolRows(t *testing.T) {
 			waitScreen(t, h, terminal, failed)
 			waitScreen(t, h, terminal, "Tool failed as expected.")
 			t.Logf("observed completion: %s; %s", ok, failed)
+			if variant.plain && strings.Contains(string(terminal.screen.Bytes()), "\x1b") {
+				t.Fatal("NO_COLOR tool lifecycle emitted escape styling")
+			}
+			t.Logf("terminal capture:\n%s", screenText(terminal.screen.Snapshot()))
 			// A later turn rebuilds the request from stored conversation history.
 			client, conversation := conversationClient(t, h)
 			admittedTurn(t, h, client, conversation, "rows-history", "Check history.")

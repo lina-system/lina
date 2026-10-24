@@ -69,7 +69,32 @@ func decodeBindingRequest(raw string) (rawBindingRequest, error) {
 	if len(in.Bindings) == 0 || len(in.Bindings) > 32 {
 		return in, binding.ErrChoice
 	}
+	// Core pages inherited targets. A model-supplied later page is ignored,
+	// the same way as any binding field the tool does not declare.
+	for n, choice := range in.Bindings {
+		stripped, err := stripModelMore(choice)
+		if err != nil {
+			return in, err
+		}
+		in.Bindings[n] = stripped
+	}
 	return in, nil
+}
+
+func stripModelMore(raw json.RawMessage) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return raw, nil
+	}
+	if _, ok := fields["more"]; !ok {
+		return raw, nil
+	}
+	delete(fields, "more")
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func readInputChoices(ctx context.Context, tx *canon.Tx, input ledger.Event) ([]binding.Choice, error) {
@@ -229,34 +254,72 @@ func (s *turnState) selectedBindingInputValues(values ...string) (ledger.Event, 
 func inputEventIDSchema() map[string]string {
 	return map[string]string{"type": "string", "description": "Consumed input event ID; omit for current."}
 }
+
+// A person input owns the turn's binding. A system turn has no person input
+// unless it resumed a held request or consumed steering.
+func (s *turnState) hostedBindingInput() bool {
+	return s.input.SpeakerKind == guard.Person || s.bindingSource != nil || len(s.bindingInputs) > 0
+}
+
+// Whether an unqualified work call has a person input to bind. Consumed
+// steering is named explicitly, so it does not make the hosting system event
+// the default; without a default the call stays the turn's own tool.
+func (s *turnState) defaultBindingInput() bool {
+	return s.input.SpeakerKind == guard.Person || s.bindingSource != nil
+}
+
+// The input a binding call may select. Outside a person input the hosting
+// system event is never bindable by default; a consumed steering input or the
+// restored request must be named.
+func (s *turnState) bindingSelection(values ...string) (ledger.Event, *conversationRuntime, error) {
+	if strings.TrimSpace(firstString(values...)) == "" && s.bindingSource == nil && s.input.SpeakerKind != guard.Person {
+		return ledger.Event{}, nil, binding.ErrChoice
+	}
+	return s.selectedBindingInputValues(values...)
+}
+
+// A binding call's write target. A work call that names the same input gates on
+// it, so one response cannot start or steer work before the binding committed.
+// The prefix keeps this out of the origin and receipt namespaces.
+func bindingBarrier(inputID string) string { return "binding-gate:" + inputID }
 func (s *turnState) prepareInputBinding(declarations []provider.ToolDecl) []provider.ToolDecl {
 	if s.input.SpeakerKind != guard.Person {
 		if s.input.ScaffoldKind != "question_answer" {
 			return declarations
 		}
+		// Only the restoration of a held request's original input depends on
+		// the recorded binding. Steering consumed later in this turn stays
+		// selectable because the tools still register and wrap.
 		qid := strings.TrimSuffix(s.input.ID, ":answer")
 		q, err := waiting.NewConversationQuestions(s.runtime.db).Get(s.runtime.ctx, qid)
-		if err != nil || q.Binding == nil {
-			return declarations
+		if err == nil && q.Binding != nil {
+			if original, err := s.runtime.journal().Get(s.runtime.ctx, q.Input); err == nil {
+				s.bindingSource = &original
+				s.bindingRequest = q.Binding.Request
+			}
 		}
-		original, err := s.runtime.journal().Get(s.runtime.ctx, q.Input)
-		if err != nil {
-			return declarations
-		}
-		s.bindingSource = &original
-		s.bindingRequest = q.Binding.Request
 	}
 	s.bindings["bind_input"] = loop.Tool{
 		Validate: func(c provider.ToolCall) (string, error) {
-			_, err := decodeBindingRequest(c.Arguments)
-			return "input-binding:" + s.input.ID, err
+			in, err := decodeBindingRequest(c.Arguments)
+			if err != nil {
+				return "", err
+			}
+			if in.InputEventID == "" && in.Input == "" && in.Text == "" && !s.hostedBindingInput() {
+				return "", binding.ErrChoice
+			}
+			input, _, err := s.bindingSelection(in.InputEventID, in.Input, in.Text)
+			if err != nil {
+				return "", nil
+			}
+			return bindingBarrier(input.ID), nil
 		},
 		Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
 			in, err := decodeBindingRequest(c.Arguments)
 			if err != nil {
 				return bindingFailure(c.ID, err)
 			}
-			input, r, err := s.selectedBindingInputValues(in.InputEventID, in.Input, in.Text)
+			input, r, err := s.bindingSelection(in.InputEventID, in.Input, in.Text)
 			if err != nil {
 				return bindingFailure(c.ID, err)
 			}
@@ -370,23 +433,23 @@ func (r *conversationRuntime) saveInputBinding(ctx context.Context, input ledger
 		return nil, binding.ErrChoice
 	}
 	err = r.db.Write(ctx, func(tx *canon.Tx) error {
-		state, e := r.bindingState(ctx, tx, input)
-		if e != nil {
-			return e
-		}
-		choices, e := normalize(state)
-		if e != nil {
-			return e
-		}
 		// An immutable call is idempotent, including its originally pending card.
-		// Compare before request placement so a retry without an ordinal resolves
-		// to the same stored request.
+		// The stored batch is compared before the current snapshot rewrites it,
+		// so a parent that completed after the call does not change the retry.
 		var raw string
-		e = tx.QueryRowContext(ctx, `SELECT body FROM conv_event WHERE id=? AND parent_id=? AND scaffold_kind=?`, id, input.ID, modelBindingKind).Scan(&raw)
+		e := tx.QueryRowContext(ctx, `SELECT body FROM conv_event WHERE id=? AND parent_id=? AND scaffold_kind=?`, id, input.ID, modelBindingKind).Scan(&raw)
 		if e == nil {
 			var batch bindingBatch
 			if err := json.Unmarshal([]byte(raw), &batch); err != nil {
 				return err
+			}
+			state, e := r.bindingState(ctx, tx, input)
+			if e != nil {
+				return e
+			}
+			choices, e := normalize(retainStoredParents(state, batch.Bindings))
+			if e != nil {
+				return e
 			}
 			if len(batch.Bindings) != len(choices) {
 				return binding.ErrChoice
@@ -400,6 +463,14 @@ func (r *conversationRuntime) saveInputBinding(ctx context.Context, input ledger
 			return nil
 		}
 		if !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
+		state, e := r.bindingState(ctx, tx, input)
+		if e != nil {
+			return e
+		}
+		choices, e := normalize(state)
+		if e != nil {
 			return e
 		}
 		visible, e := waiting.ConversationQuestionVisible(ctx, tx, waiting.ConversationQuestion{Input: input.ID, Agent: r.agent})
@@ -594,6 +665,27 @@ func admissionDecider(decider string) bool {
 	return false
 }
 
+// retainStoredParents keeps a stored call's parent eligible for that comparison.
+// A project that completes later must not drop the parent the call recorded.
+func retainStoredParents(state binding.State, saved []binding.Choice) binding.State {
+	parents := map[string]bool{}
+	for _, choice := range saved {
+		if choice.Target.Class == "new" && choice.Target.Parent != "" {
+			parents[choice.Target.Parent] = true
+		}
+	}
+	if len(parents) == 0 {
+		return state
+	}
+	state.Items = slices.Clone(state.Items)
+	for n, item := range state.Items {
+		if parents[item.ID] && !binding.Open(item) && (item.Kind == "initiative" || item.Kind == "project") {
+			state.Items[n].State = "active"
+		}
+	}
+	return state
+}
+
 // sameChoice compares a retry with its stored batch. An omitted ordinal is
 // placed later, so it is not part of the comparison.
 func sameChoice(saved, incoming binding.Choice, ignoreRequest bool) bool {
@@ -612,7 +704,7 @@ func sameChoice(saved, incoming binding.Choice, ignoreRequest bool) bool {
 func bindInputDeclaration() provider.ToolDecl {
 	target := map[string]any{"type": "object", "properties": map[string]any{"class": map[string]any{"type": "string", "enum": []string{"existing", "new", "none"}}, "id": map[string]string{"type": "string", "description": "For existing: the candidate ID. Omit for new or none."}, "kind": map[string]string{"type": "string", "description": "For existing: copy the candidate kind. For new: initiative, project, todo, task or run (todo when omitted)."}, "parent": map[string]string{"type": "string", "description": "For new only: optional ID of an open initiative or project."}}, "required": []string{"class"}, "additionalProperties": false}
 	properties := map[string]any{"request": map[string]any{"type": "integer", "minimum": 0, "maximum": 31, "description": "Optional ordinal. Omit to place the binding in message order."}, "quote": map[string]string{"type": "string", "description": "Optional excerpt from the input; the input text is used when omitted."}, "target": target, "tied": map[string]any{"type": "array", "items": target, "minItems": 2, "maxItems": 5}, "action": map[string]any{"type": "string", "enum": []string{"read", "edit", "steer", "start", "send", "pay", "delete", "stop"}}, "close_matches": map[string]any{"type": "array", "items": map[string]string{"type": "string"}}, "difference": map[string]string{"type": "string"}}
-	raw, _ := json.Marshal(map[string]any{"type": "function", "name": "bind_input", "description": "Bind each request in the current input, in order from zero, to an authorized candidate, new (with kind and optional parent), or none. A target may be the candidate object, its exact ID or title, \"new\" or \"none\". A reply, card or thread reference settles the item before any name in the text; a name counts only as a whole word. A request to add something to an item is new work under it: bind new with that item as its parent. With no action or explicit choice, keep a fresh focus; otherwise none. A request to start something new binds new when no candidate matches. Split only when the input asks for several distinct things. Use tied only when two targets remain equally plausible after reading the input and context, recommended first, and name the intended action. Core holds irreversible ties for a target question; never execute a held request. Otherwise pick the most likely target without asking. For new work mark close existing matches and record why it differs, or bind to that existing item. This grants no authority. Omit input_event_id for the current input; it selects an admitted event only when binding consumed steering. Work-tool input_binding uses the same selector and defaults to request 0.", "parameters": map[string]any{"type": "object", "properties": map[string]any{"input_event_id": inputEventIDSchema(), "bindings": map[string]any{"type": "array", "minItems": 1, "maxItems": 32, "items": map[string]any{"type": "object", "properties": properties, "required": []string{"target"}, "additionalProperties": false}}}, "required": []string{"bindings"}, "additionalProperties": false}})
+	raw, _ := json.Marshal(map[string]any{"type": "function", "name": "bind_input", "description": "Bind each request in the current input, in order from zero, to an authorized candidate, new (with kind and optional parent), or none. A target may be the candidate object, its exact ID or title, \"new\" or \"none\". An exact candidate ID is bound even when it starts with a kind name. A reply, card or thread reference settles the item before any name in the text; a name counts only as a whole word. A request to add something to an item is new work under it: bind new with that item as its parent. With no action or explicit choice, keep a fresh focus; otherwise none. A request to start something new binds new when no candidate matches. Split only when the input asks for several distinct things. Use tied only when two targets remain equally plausible after reading the input and context, recommended first, and name the intended action. Core holds irreversible ties for a target question; never execute a held request. Otherwise pick the most likely target without asking. For new work mark close existing matches and record why it differs, or bind to that existing item. This grants no authority. Omit input_event_id for the current input; it selects an admitted event only when binding consumed steering. Work-tool input_binding uses the same selector and defaults to request 0.", "parameters": map[string]any{"type": "object", "properties": map[string]any{"input_event_id": inputEventIDSchema(), "bindings": map[string]any{"type": "array", "minItems": 1, "maxItems": 32, "items": map[string]any{"type": "object", "properties": properties, "required": []string{"target"}, "additionalProperties": false}}}, "required": []string{"bindings"}, "additionalProperties": false}})
 	return raw
 }
 
