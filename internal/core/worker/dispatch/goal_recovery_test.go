@@ -12,10 +12,13 @@ import (
 
 func TestGoalRecoveryReachesSchedulerWithoutConversationCall(t *testing.T) {
 	for _, tc := range []struct {
-		name                                                  string
-		goal, recovery, allowed, authError, canceled, unknown bool
-		wantClaim                                             bool
+		name                                                            string
+		goal, recovery, returned, allowed, authError, canceled, unknown bool
+		wantClaim                                                       bool
 	}{
+		{name: "authorized definition return", goal: true, returned: true, allowed: true, wantClaim: true},
+		{name: "stopped definition return", goal: true, returned: true},
+		{name: "paused definition return", goal: true, returned: true, authError: true},
 		{name: "authorized recovery", goal: true, recovery: true, allowed: true, wantClaim: true},
 		{name: "ordinary uncommitted call", recovery: true, allowed: true},
 		{name: "initial goal admission", goal: true, allowed: true},
@@ -35,6 +38,9 @@ func TestGoalRecoveryReachesSchedulerWithoutConversationCall(t *testing.T) {
 				if !tc.unknown && (r.State != "queued" || r.Recoveries != 1) {
 					t.Fatalf("recovery was not durably queueable: %+v", r)
 				}
+			}
+			if tc.returned {
+				r.ReturnReceipt = "correction"
 			}
 			r.Canceled = tc.canceled
 			if err := db.Write(t.Context(), func(tx *canon.Tx) error {
@@ -63,6 +69,18 @@ func TestGoalRecoveryReachesSchedulerWithoutConversationCall(t *testing.T) {
 			if (claims == 1) != tc.wantClaim || tc.wantClaim && (got.Wait != "host_capacity" || authorizations != 1) {
 				t.Fatalf("goal recovery never reached scheduling: claims=%d authorized=%d state=%s wait=%s recoveries=%d", claims, authorizations, got.State, got.Wait, got.Recoveries)
 			}
+			if tc.returned && tc.authError {
+				if got.State != "queued" || got.ReturnReceipt != "correction" {
+					t.Fatalf("pause lost queued correction: %+v", got)
+				}
+				// Resume retries the same queued correction and checks authority again.
+				s.cfg.AuthorizeRecovery = func(context.Context, Record) (bool, error) { authorizations++; return true, nil }
+				s.sync()
+				if claims != 1 || authorizations != 2 {
+					t.Fatalf("resume did not retry queued correction: claims=%d authorized=%d", claims, authorizations)
+				}
+			}
+
 		})
 	}
 }

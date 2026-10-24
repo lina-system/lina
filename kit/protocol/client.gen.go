@@ -61,6 +61,8 @@ const (
 	KindWorkResult           Kind = "work_result"
 	KindWorkSwitchRequest    Kind = "work_switch_request"
 	KindWorkSwitchResult     Kind = "work_switch_result"
+	KindWorkControlRequest   Kind = "work_control_request"
+	KindWorkControlResult    Kind = "work_control_result"
 	KindAccountRequest       Kind = "account_request"
 	KindAccountResult        Kind = "account_result"
 	KindMemoryRequest        Kind = "memory_request"
@@ -110,6 +112,8 @@ const (
 	KindMiniAppResult        Kind = "mini_app_result"
 	KindLocalTask            Kind = "local_task"
 	KindLocalTaskResult      Kind = "local_task_result"
+	KindTeamsRequest         Kind = "teams_request"
+	KindTeamsResult          Kind = "teams_result"
 )
 
 type A2aCallStatus struct {
@@ -797,8 +801,9 @@ type ProgressLine struct {
 	Waiting      json.Number      `json:"waiting"`
 }
 type ProgressRow struct {
-	Line ProgressLine `json:"line"`
-	Ref  string       `json:"ref"`
+	Line      ProgressLine         `json:"line"`
+	Ref       string               `json:"ref"`
+	StageRefs *[]ProgressStageRefs `json:"stage_refs,omitempty"`
 }
 type ProgressStage struct {
 	Kind   string               `json:"kind"`
@@ -807,10 +812,20 @@ type ProgressStage struct {
 	State  string               `json:"state"`
 	Steps  *[]ProgressStageStep `json:"steps,omitempty"`
 }
+type ProgressStageRefs struct {
+	Kind   string       `json:"kind"`
+	Number *json.Number `json:"number,omitempty"`
+	Steps  []string     `json:"steps"`
+}
 type ProgressStageStep struct {
-	Name      string  `json:"name"`
-	StartedAt *string `json:"started_at,omitempty"`
-	State     string  `json:"state"`
+	Name      string                 `json:"name"`
+	StartedAt *string                `json:"started_at,omitempty"`
+	State     string                 `json:"state"`
+	Workers   *[]ProgressStageWorker `json:"workers,omitempty"`
+}
+type ProgressStageWorker struct {
+	Name  string       `json:"name"`
+	State RunningState `json:"state"`
 }
 type ProgressUpdate struct {
 	CardOrder   *[]string       `json:"card_order,omitempty"`
@@ -1450,6 +1465,37 @@ type TaskStatus struct {
 	Stream *StreamMetadata `json:"stream,omitempty"`
 	Text   *string         `json:"text,omitempty"`
 }
+type TeamsChatStatus struct {
+	Embed bool   `json:"embed"`
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Learn bool   `json:"learn"`
+	Name  string `json:"name"`
+	Sync  bool   `json:"sync"`
+}
+type TeamsConnectionStatus struct {
+	Account  string `json:"account"`
+	ClientID string `json:"client_id"`
+	ID       string `json:"id"`
+	Reason   string `json:"reason"`
+	Status   string `json:"status"`
+	Tenant   string `json:"tenant"`
+}
+type TeamsRequest struct {
+	Chat      *string `json:"chat,omitempty"`
+	ClientID  *string `json:"client_id,omitempty"`
+	Embed     *bool   `json:"embed,omitempty"`
+	ID        *string `json:"id,omitempty"`
+	Learn     *bool   `json:"learn,omitempty"`
+	Operation string  `json:"operation"`
+	Sync      *bool   `json:"sync,omitempty"`
+	Tenant    *string `json:"tenant,omitempty"`
+}
+type TeamsResult struct {
+	Chats       *[]TeamsChatStatus       `json:"chats,omitempty"`
+	Connections *[]TeamsConnectionStatus `json:"connections,omitempty"`
+	Operation   string                   `json:"operation"`
+}
 type ToolActivity struct {
 	AgentID    *string              `json:"agent_id,omitempty"`
 	CallID     string               `json:"call_id"`
@@ -1544,6 +1590,18 @@ type Welcome struct {
 	MainID          string       `json:"main_id"`
 	PersonID        string       `json:"person_id"`
 	ProtocolVersion string       `json:"protocol_version"`
+}
+type WorkControlRequest struct {
+	Confirm   *bool  `json:"confirm,omitempty"`
+	GoalID    string `json:"goal_id"`
+	Operation string `json:"operation"`
+}
+type WorkControlResult struct {
+	GoalID    string      `json:"goal_id"`
+	Operation string      `json:"operation"`
+	Paused    bool        `json:"paused"`
+	Rank      json.Number `json:"rank"`
+	State     string      `json:"state"`
 }
 type WorkRequest struct {
 	AgentID       *string   `json:"agent_id,omitempty"`
@@ -1659,6 +1717,8 @@ func (WorkRequest) isPayload()          {}
 func (WorkResult) isPayload()           {}
 func (WorkSwitchRequest) isPayload()    {}
 func (WorkSwitchResult) isPayload()     {}
+func (WorkControlRequest) isPayload()   {}
+func (WorkControlResult) isPayload()    {}
 func (AccountRequest) isPayload()       {}
 func (AccountResult) isPayload()        {}
 func (MemoryRequest) isPayload()        {}
@@ -1708,6 +1768,8 @@ func (MiniAppRequest) isPayload()       {}
 func (MiniAppResult) isPayload()        {}
 func (LocalTask) isPayload()            {}
 func (LocalTaskResult) isPayload()      {}
+func (TeamsRequest) isPayload()         {}
+func (TeamsResult) isPayload()          {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -1927,6 +1989,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p WorkSwitchResult
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindWorkControlRequest:
+		var p WorkControlRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindWorkControlResult:
+		var p WorkControlResult
+		err := json.Unmarshal(data, &p)
+		return p, err
 	case KindAccountRequest:
 		var p AccountRequest
 		err := json.Unmarshal(data, &p)
@@ -2123,6 +2193,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p LocalTaskResult
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindTeamsRequest:
+		var p TeamsRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindTeamsResult:
+		var p TeamsResult
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -2216,6 +2294,8 @@ const clientSchemaJSON = `{
         "work_result",
         "work_switch_request",
         "work_switch_result",
+        "work_control_request",
+        "work_control_result",
         "account_request",
         "account_result",
         "memory_request",
@@ -2264,7 +2344,9 @@ const clientSchemaJSON = `{
         "mini_app_request",
         "mini_app_result",
         "local_task",
-        "local_task_result"
+        "local_task_result",
+        "teams_request",
+        "teams_result"
       ]
     },
     "message_id": {
@@ -3827,6 +3909,38 @@ const clientSchemaJSON = `{
       "if": {
         "properties": {
           "kind": {
+            "const": "work_control_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "work_control_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/work_control_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
             "const": "a2a_request"
           }
         }
@@ -4166,6 +4280,38 @@ const clientSchemaJSON = `{
         "properties": {
           "payload": {
             "$ref": "#/$defs/local_task_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "teams_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/teams_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "teams_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/teams_result"
           }
         }
       }
@@ -5550,21 +5696,21 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "waiting_answer": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6042,14 +6188,14 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "memory_import_progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "memory_promotion_batch": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6230,7 +6376,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "agent_talk_subscribe": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6292,7 +6438,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "task_cancel": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6791,14 +6937,14 @@ const clientSchemaJSON = `{
       ]
     },
     "saved_reference": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "save_destination": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -8472,11 +8618,56 @@ const clientSchemaJSON = `{
         "started_at": {
           "type": "string",
           "format": "date-time"
+        },
+        "workers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_stage_worker"
+          }
         }
       },
       "required": [
         "name",
         "state"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage_worker": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/running_state"
+        }
+      },
+      "required": [
+        "name",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "progress_stage_refs": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "steps"
       ],
       "additionalProperties": false
     },
@@ -8488,6 +8679,12 @@ const clientSchemaJSON = `{
         },
         "line": {
           "$ref": "#/$defs/progress_line"
+        },
+        "stage_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/progress_stage_refs"
+          }
         }
       },
       "required": [
@@ -8800,6 +8997,81 @@ const clientSchemaJSON = `{
       "required": [
         "operation",
         "switch_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_control_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "confirm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation",
+        "goal_id"
+      ],
+      "additionalProperties": false
+    },
+    "work_control_result": {
+      "type": "object",
+      "properties": {
+        "goal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "rank_up",
+            "rank_down",
+            "pause",
+            "resume",
+            "stop"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "defining",
+            "running",
+            "waiting",
+            "checking",
+            "done",
+            "stopped",
+            "blocked"
+          ]
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "goal_id",
+        "operation",
+        "state",
+        "paused",
+        "rank"
       ],
       "additionalProperties": false
     },
@@ -10557,6 +10829,135 @@ const clientSchemaJSON = `{
         "provider",
         "model",
         "served_id"
+      ],
+      "additionalProperties": false
+    },
+    "teams_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "configure",
+            "list",
+            "sign_in",
+            "disconnect",
+            "chats",
+            "switches"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "tenant": {
+          "type": "string"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "chat": {
+          "type": "string"
+        },
+        "sync": {
+          "type": "boolean"
+        },
+        "learn": {
+          "type": "boolean"
+        },
+        "embed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "teams_connection_status": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "tenant": {
+          "type": "string"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "tenant",
+        "client_id",
+        "account",
+        "status",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "teams_chat_status": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "sync": {
+          "type": "boolean"
+        },
+        "learn": {
+          "type": "boolean"
+        },
+        "embed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "sync",
+        "learn",
+        "embed"
+      ],
+      "additionalProperties": false
+    },
+    "teams_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "connections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/teams_connection_status"
+          }
+        },
+        "chats": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/teams_chat_status"
+          }
+        }
+      },
+      "required": [
+        "operation"
       ],
       "additionalProperties": false
     }

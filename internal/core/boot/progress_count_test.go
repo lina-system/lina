@@ -30,7 +30,7 @@ func TestProgressCountFollowsLinesNotRows(t *testing.T) {
 	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
 		for _, id := range []string{"day-a", "day-b", "day-c"} {
 			graph := steps(id)
-			g := goal.Goal{ID: id, Person: r.person, Agent: r.agent, Conversation: r.conversation, State: goal.GoalRunning, CreatedAt: 1_700_000_000,
+			g := goal.Goal{ID: id, Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: "turn:" + id, State: goal.GoalRunning, CreatedAt: 1_700_000_000,
 				StepGraph: &goal.StepGraph{GoalID: id, Revision: 1, Steps: graph}}
 			for _, step := range graph {
 				g.Tasks = append(g.Tasks, goal.Task{ID: step.ID, Name: step.Name, Stage: goal.TaskBuilding})
@@ -43,21 +43,31 @@ func TestProgressCountFollowsLinesNotRows(t *testing.T) {
 				return err
 			}
 			for _, step := range graph {
-				task := work.Task{ID: step.ID, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: step.Name}
-				run := work.Run{ID: step.ID + ":run", TaskID: step.ID, Generation: 1, Worker: "fixture", ThreadID: step.ID, TurnID: step.ID, NodeID: "local"}
+				// The step's worker action dispatches the work, and the card
+				// carries the dispatch's id, as runGoalWorker leaves it.
+				action := goal.Action{ID: "assign:" + step.ID, GoalID: id, TaskID: step.ID, Kind: goal.Assign, State: "running"}
+				body, err := json.Marshal(action)
+				if err != nil {
+					return err
+				}
+				if _, err = tx.ExecContext(t.Context(), "INSERT INTO work_records(kind,id,version,body) VALUES('action',?,1,?)", action.ID, body); err != nil {
+					return err
+				}
+				card := work.DispatchID(g.Turn, action.ID)
+				task := work.Task{ID: card, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: step.Name}
+				run := work.Run{ID: card + ":run", TaskID: card, Generation: 1, Worker: "fixture", ThreadID: card, TurnID: card, NodeID: "local"}
 				events := []work.Event{
-					{Key: step.ID + ":create", TaskID: step.ID, Kind: "created", Task: &task},
-					{Key: step.ID + ":start", TaskID: step.ID, Kind: "started", Run: &run},
+					{Key: card + ":create", TaskID: card, Kind: "created", Task: &task},
+					{Key: card + ":start", TaskID: card, Kind: "started", Run: &run},
 				}
-				card, err := work.Project(events)
+				projected, err := work.Project(events)
 				if err != nil {
 					return err
 				}
-				body, err := json.Marshal(card)
-				if err != nil {
+				if body, err = json.Marshal(projected); err != nil {
 					return err
 				}
-				if _, err = tx.ExecContext(t.Context(), "INSERT INTO work_cards(task_id,record) VALUES(?,?)", step.ID, body); err != nil {
+				if _, err = tx.ExecContext(t.Context(), "INSERT INTO work_cards(task_id,record) VALUES(?,?)", card, body); err != nil {
 					return err
 				}
 				for _, event := range events {
@@ -65,7 +75,7 @@ func TestProgressCountFollowsLinesNotRows(t *testing.T) {
 					if err != nil {
 						return err
 					}
-					if _, err = tx.ExecContext(t.Context(), "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", step.ID, event.Key, line); err != nil {
+					if _, err = tx.ExecContext(t.Context(), "INSERT INTO work_ledger(task_id,event_key,record) VALUES(?,?,?)", card, event.Key, line); err != nil {
 						return err
 					}
 				}

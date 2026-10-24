@@ -329,6 +329,38 @@
       "toolFailed": {
         "$type": "string",
         "$value": "×"
+      },
+      "stageDone": {
+        "$type": "string",
+        "$value": "✓"
+      },
+      "stageWorking": {
+        "$type": "string",
+        "$value": "●"
+      },
+      "stageWaiting": {
+        "$type": "string",
+        "$value": "○"
+      },
+      "stageNeedsInput": {
+        "$type": "string",
+        "$value": "!"
+      },
+      "stageFailed": {
+        "$type": "string",
+        "$value": "×"
+      },
+      "stageNext": {
+        "$type": "string",
+        "$value": "·"
+      },
+      "back": {
+        "$type": "string",
+        "$value": "‹"
+      },
+      "overflow": {
+        "$type": "string",
+        "$value": "…"
       }
     },
     "ascii": {
@@ -415,6 +447,38 @@
       "toolFailed": {
         "$type": "string",
         "$value": "x"
+      },
+      "stageDone": {
+        "$type": "string",
+        "$value": "+"
+      },
+      "stageWorking": {
+        "$type": "string",
+        "$value": "*"
+      },
+      "stageWaiting": {
+        "$type": "string",
+        "$value": "o"
+      },
+      "stageNeedsInput": {
+        "$type": "string",
+        "$value": "!"
+      },
+      "stageFailed": {
+        "$type": "string",
+        "$value": "x"
+      },
+      "stageNext": {
+        "$type": "string",
+        "$value": "."
+      },
+      "back": {
+        "$type": "string",
+        "$value": "<"
+      },
+      "overflow": {
+        "$type": "string",
+        "$value": "..."
       }
     }
   }

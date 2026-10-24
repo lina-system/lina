@@ -307,6 +307,7 @@ func (b *workerRuntime) retire(id string, e *workerSession) {
 	}
 	delete(b.sessions, id)
 	b.mu.Unlock()
+	e.stageSnapshot.Close()
 	if e.close != nil {
 		_ = e.close()
 	}
