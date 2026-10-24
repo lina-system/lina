@@ -228,6 +228,51 @@ func TestMessengerEvidenceCandidatesStayWithinThePendingBatch(t *testing.T) {
 	}
 }
 
+// A chat disabled before the learning schema existed keeps its opt-out across
+// the upgrade: the migration seeds its excluded interval, so records that
+// arrived while it was off are not dispatched even when learning returns before
+// the scanner runs.
+func TestMessengerExtractionUpgradeKeepsDisabledChatExcluded(t *testing.T) {
+	r, p, service, store, source, start := messengerExtractionFixture(t)
+	if err := store.SetSwitches(t.Context(), r.person, source.Platform, source.Account, "dm",
+		messenger.Switches{Sync: true, Learn: false, Embed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		// The chat was disabled before this schema, so no interval exists yet.
+		_, err := tx.ExecContext(t.Context(), "DELETE FROM messenger_learning_skip")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	admitMessenger(t, store, source,
+		messengerRecord("off", messenger.RoutePerson, start.Add(time.Minute), "I live on Mars."),
+	)
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), canon.MessengerLearningSeed)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetSwitches(t.Context(), r.person, source.Platform, source.Account, "dm",
+		messenger.Switches{Sync: true, Learn: true, Embed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.queueMessengerExtraction(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Aux(t.Context(), messengerDue(t, r, service)); !errors.Is(err, jobapi.ErrUnavailable) {
+		t.Fatalf("a record from the disabled interval was dispatched: %v", err)
+	}
+	if len(p.requests) != 0 {
+		t.Fatalf("calls=%d, want none", len(p.requests))
+	}
+	hits, err := r.memoryStore().Recall(t.Context(), memory.RecallScope{Agent: r.agent, Person: r.person}, memory.Query{At: time.Now().Unix()})
+	if err != nil || len(hits) != 0 {
+		t.Fatalf("memory: %+v %v", hits, err)
+	}
+}
+
 // A model that proposes the participant's line as a fact about the person is
 // refused, and the batch is not cached.
 func TestMessengerExtractionRefusesParticipantEvidence(t *testing.T) {

@@ -171,7 +171,12 @@ so a first fill with old message times advances progress without becoming input.
 `messenger_source.learn` is the source-wide switch, and `messenger_chat.learn`
 narrows it per chat. Turning either off writes the interval it excludes to
 `messenger_learning_skip` in the same transaction (`chat=''` for a whole
-source); turning it back on closes that interval. An interval excludes every
+source); turning it back on closes that interval. The migration seeds an open
+interval for every chat that is already disabled when the schema arrives,
+starting before its learning watermark (or at every admitted record when the
+source has none), so an upgrade cannot learn the window such a chat was disabled
+for; the seed skips a chat that already has an open interval, so a rerun adds
+nothing. An interval excludes every
 record in its ledger range even when the switch returns before the next scan, so
 the window the person opted out of is never learned late. Entering
 `never-leaves` states the same interval, and leaving it closes it. The chat
