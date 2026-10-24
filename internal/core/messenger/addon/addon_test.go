@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -206,6 +207,22 @@ func (oversized) Run(_ context.Context, _ lease.Lease, command sandbox.Command, 
 	return nil
 }
 
+// fixtureProgram is the recorded add-on program, found from this file so a
+// test binary started outside the package directory still finds it.
+func fixtureProgram(t *testing.T) string {
+	t.Helper()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate this test source")
+	}
+	program := filepath.Join(filepath.Dir(source), "..", "..", "..", "..", "adapters", "messenger", "fixture-main.ts")
+	program, err := filepath.Abs(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return program
+}
+
 // TestRealAddonProgramThroughTheSupervisor runs the add-on's own program. It
 // needs the person's Node.js but no SDK, network or credential.
 func TestRealAddonProgramThroughTheSupervisor(t *testing.T) {
@@ -214,10 +231,7 @@ func TestRealAddonProgramThroughTheSupervisor(t *testing.T) {
 	if err != nil {
 		t.Skip("node is absent")
 	}
-	program, err := filepath.Abs("../../../../adapters/messenger/fixture-main.ts")
-	if err != nil {
-		t.Fatal(err)
-	}
+	program := fixtureProgram(t)
 	if _, err := os.Stat(program); err != nil {
 		t.Fatal(err)
 	}

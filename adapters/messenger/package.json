@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
-  "engines": { "node": ">=22.13.0" },
+  "engines": { "node": ">=22.18.0" },
   "scripts": { "test": "node --test *.test.mjs", "start": "node main.ts" },
   "dependencies": {
     "agent-messenger": "2.39.1"
