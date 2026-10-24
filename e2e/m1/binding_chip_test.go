@@ -64,10 +64,12 @@ func TestM2BindingChipInstalledCore(t *testing.T) {
 	}
 	// One tap stands for Ctrl+B in a terminal: the list of other candidates.
 	h.keys(terminal, "\x02")
-	list := waitScreen(t, h, terminal, design.Text(design.English, "binding.title"))
+	// Core answers the list request after the overlay draws its title, so wait
+	// for the loaded choices rather than the pending frame.
+	list := waitScreen(t, h, terminal, design.Text(design.English, "binding.none"))
 	alphaSaveScreen(t, terminal, "binding-move-list-120x34", list, "")
 	text := screenText(list)
-	for _, want := range []string{design.Text(design.English, "binding.new"), design.Text(design.English, "binding.none")} {
+	for _, want := range []string{design.Text(design.English, "binding.title"), design.Text(design.English, "binding.new"), design.Text(design.English, "binding.none")} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("move list missing %q:\n%s", want, text)
 		}
