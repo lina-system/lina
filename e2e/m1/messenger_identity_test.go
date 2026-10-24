@@ -92,8 +92,9 @@ func TestM1SenderIdentityInInstalledCore(t *testing.T) {
 		}}},
 		"c1": {{page: messenger.Page{Next: "c1"}}},
 	}}
+	adapter.arm(t, h, "c1")
 	stop := runMessengerCore(t, h, adapter)
-	adapter.waitFor(t, "c1")
+	adapter.waitFor(t, h, "c1")
 	stop()
 
 	db, closeStore = installedAcceptanceStore(t, h)
@@ -134,8 +135,9 @@ func TestM1SenderIdentityInInstalledCore(t *testing.T) {
 	repository.Close()
 	closeStore()
 	empty := &scriptedAdapter{pages: map[string][]scriptedPage{"c1": {{page: messenger.Page{Next: "c1"}}}}}
+	empty.arm(t, h, "c1")
 	stop = runMessengerCore(t, h, empty)
-	empty.waitFor(t, "c1")
+	empty.waitFor(t, h, "c1")
 	stop()
 	db, closeStore = installedAcceptanceStore(t, h)
 	defer func() { closeStore() }()
@@ -197,8 +199,9 @@ func TestM1SenderIdentityInInstalledCore(t *testing.T) {
 	removals.Close()
 	closeStore()
 	restarted := &scriptedAdapter{pages: map[string][]scriptedPage{"c1": {{page: messenger.Page{Next: "c1"}}}}}
+	restarted.arm(t, h, "c1")
 	stop = runMessengerCore(t, h, restarted)
-	restarted.waitFor(t, "c1")
+	restarted.waitFor(t, h, "c1")
 	stop()
 	db, closeStore = installedAcceptanceStore(t, h)
 	if n := count("SELECT count(*) FROM identity_repair"); n != 0 {
