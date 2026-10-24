@@ -77,6 +77,10 @@ directory outside backups; nothing is written anywhere else. It declares
 again after a restart and drops what it already stored by message id. A message
 LINE reports as undecryptable is passed on with `decryptionFailed` and empty
 text, never as an empty message. A token LINE revoked reports `needs_sign_in`.
+A live stream that throws or closes without being stopped is not retried in
+the add-on: `serve.ts` writes one `{"event":"ended","error":<code>}` frame
+(`needs_sign_in` for a revoked session, which also drops the client) and Core's
+`Live` returns `ErrLiveEnded` with that cause.
 
 - Seen: agent-messenger 2.39.1 `src/platforms/line` — `getChats` merges joined
   group chats with message boxes and maps `user`/`group`/`room`/`square`;

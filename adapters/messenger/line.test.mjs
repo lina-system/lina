@@ -54,8 +54,10 @@ function sdkWith(behaviour = {}) {
       calls.messages.push({ chat, options });
       return behaviour.messages ?? [];
     }
-    async *streamEvents() {
+    async *streamEvents(signal) {
       yield* behaviour.events ?? [];
+      if (behaviour.streamError) throw behaviour.streamError;
+      if (behaviour.streamHolds) await new Promise(resolve => signal.addEventListener('abort', resolve));
     }
     close() {
       calls.closed++;
@@ -192,15 +194,82 @@ test('live events carry the same record shape as a page', async () => {
     events: [
       { kind: 'message', message: { raw: { id: '50', createdTime: Date.UTC(2026, 9, 24, 9, 5) }, from: { id: 'you' }, to: { id: 'me' }, text: null, decryption_error: { code: 'missing_e2ee_key' } } },
     ],
+    streamHolds: true,
   });
   const driver = lineDriver(sdk, { configDir: '/synthetic' });
   const events = [];
-  const stop = driver.live(event => events.push(event));
-  for (let i = 0; i < 100 && events.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  const delivered = deferred();
+  const ends = [];
+  const stop = driver.live(
+    event => {
+      events.push(event);
+      delivered.resolve();
+    },
+    error => ends.push(error),
+  );
+  await delivered.promise;
   stop();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(events.length, 1);
   assert.equal(events[0].event, 'message');
   assert.equal(events[0].message.id, '50');
   assert.equal(events[0].message.decryptionFailed, true);
   assert.equal(events[0].message.text, '');
+  assert.deepEqual(ends, [], 'a stopped subscription reports no end');
+});
+
+// liveEnd subscribes and resolves with the one error the driver reports when
+// the subscription ends without being stopped.
+async function liveEnd(driver) {
+  const ended = deferred();
+  const events = [];
+  driver.live(
+    event => events.push(event),
+    error => ended.resolve(error),
+  );
+  return { error: await ended.promise, events };
+}
+
+test('a live stream that fails reports its end with the cause', { timeout: 10_000 }, async () => {
+  const lost = Object.assign(new Error('socket hang up at /synthetic/host'), { code: 'ECONNRESET' });
+  const { sdk } = sdkWith({
+    credentials,
+    events: [{ kind: 'message', message: { raw: { id: '51', createdTime: Date.UTC(2026, 9, 24, 9, 6) }, from: { id: 'you' }, text: 'before' } }],
+    streamError: lost,
+  });
+  const driver = lineDriver(sdk, { configDir: '/synthetic' });
+  const { error, events } = await liveEnd(driver);
+  assert.equal(events.length, 1);
+  assert.equal(error, lost);
+  assert.equal(await driver.signInState(), 'signed_in', 'a network loss is not a sign-in problem');
+});
+
+test('a live stream LINE revokes reports needs_sign_in and drops the session', { timeout: 10_000 }, async () => {
+  let logins = 0;
+  const { sdk } = sdkWith({
+    credentials,
+    login: async () => {
+      logins++;
+      if (logins > 1) throw Object.assign(new Error('AUTHENTICATION_FAILED'), { code: 'AUTHENTICATION_FAILED' });
+    },
+    streamError: Object.assign(new Error('AUTHENTICATION_FAILED'), { code: 'AUTHENTICATION_FAILED' }),
+  });
+  const driver = lineDriver(sdk, { configDir: '/synthetic' });
+  const { error } = await liveEnd(driver);
+  assert.equal(error.code, 'needs_sign_in');
+  assert.equal(await driver.signInState(), 'needs_sign_in');
+});
+
+test('a live stream that closes on its own reports its end', { timeout: 10_000 }, async () => {
+  const { sdk } = sdkWith({ credentials });
+  const driver = lineDriver(sdk, { configDir: '/synthetic' });
+  const { error } = await liveEnd(driver);
+  assert.equal(error.code, 'live_ended');
+});
+
+test('a live subscription that cannot open reports needs_sign_in', { timeout: 10_000 }, async () => {
+  const { sdk } = sdkWith({});
+  const driver = lineDriver(sdk, { configDir: '/synthetic' });
+  const { error } = await liveEnd(driver);
+  assert.equal(error.code, 'needs_sign_in');
 });

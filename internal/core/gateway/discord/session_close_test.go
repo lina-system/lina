@@ -107,7 +107,7 @@ func TestSessionCloseRecovery(t *testing.T) {
 						}
 						continue
 					}
-					want := cursor{Session: "session-1", Seq: 2}
+					want := cursor{Session: "session-1", Seq: 2, Intents: baseIntents}
 					if n == 3 {
 						want.Seq = 3
 						if fresh {
