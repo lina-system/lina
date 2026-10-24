@@ -76,7 +76,7 @@ acceptance remains the T-08 spike gate.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
 - It uses only the client connection. Its types are the Go types generated from the schema ([host-protocol.md](host-protocol.md#schema-and-generated-types)).
 - Protocol errors and Core logs go to the status line and a log, never into the conversation ([host-protocol.md](host-protocol.md#client-connection)). `TEA_TRACE` and `TEA_DEBUG` stay unset, and panic output is masked.
-- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol`, the shared masking primitives in `kit/secret`, and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
+- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol`, the shared masking primitives in `kit/secret`, and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `/extension` and `/extension/ast` for table parsing, and `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
 - Trust: the socket's user check and the rule for who may decide an approval are Core's ([go-core.md](go-core.md), C-42). The TUI shows a refusal as a refusal and adds no rule of its own.
 - Parity with the LINA app comes from the shared conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)). The app is not designed here.
 
@@ -650,7 +650,7 @@ The panel boundary and elapsed-time column stay fixed even when a terminal joins
 emoji without mode 2027; correcting those columns preserves the composer cursor
 and emits nothing for an unchanged frame.
 
-**Adjusting.** On a selected card, Shift+Up and Shift+Down move the 일 up or down in priority, Space pauses or resumes it, and Delete asks to stop it: the card's second row asks for Enter to confirm, and any other key cancels. `-` and `+` lower and raise the run limit by one, and `0` returns it to automatic; the title shows the limit only when the person set one. These keys are not letters, so they work while a Korean input method is on. The TUI sends each choice to Core and changes nothing locally: a card moves, pauses or shows its place only when Core's update arrives ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)). While the panel has focus, the footer shows these keys as whole hints (T-10).
+**Adjusting.** On a selected card whose row names its goal, Shift+Up and Shift+Down move the 일 up or down in priority, Space pauses or resumes it, and Delete asks to stop it: the card's second row asks for Enter to confirm, and any other key cancels. The TUI sends the goal the row names, never the card's ref. A card without a goal, such as a background run or a conversation worker, takes none of these keys and the footer omits them. Space and Delete are Toggle keys here, so a held key cannot resume the pause it just set or cancel its own stop ask; Shift+Up, Shift+Down and the limit keys may repeat (T-10). `-` and `+` lower and raise the run limit by one, and `0` returns it to automatic; the title shows the limit only when the person set one. These keys are not letters, so they work while a Korean input method is on. The TUI sends each choice to Core and changes nothing locally: a card moves, pauses or shows its place only when Core's update arrives ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)). While the panel has focus, the footer shows these keys as whole hints (T-10).
 
 **Stage list.** Enter on a card opens the 일 view in the panel: a row with the 일's name and a back mark (`‹`, or `<` in ASCII), then one row per entry of its stage list ([work-and-delegation.md](work-and-delegation.md#stages)):
 
@@ -1147,8 +1147,8 @@ type Stream interface {
 - A block that closes is painted once, off the UI goroutine. A stale result is dropped. The visible change from plain to styled at close is accepted: rendering the whole tail on every flush grows quadratically.
 - `Seal()` at `item_done` replaces the stitched render once.
 - The conversation Markdown subset is bold, italic, inline code, ordered and
-  unordered lists (including nesting), fenced and indented code blocks, and
-  links. The UI adapter uses the pinned Goldmark parser, also used by Glamour,
+  unordered lists (including nesting), fenced and indented code blocks, links
+  and pipe tables. The UI adapter uses the pinned Goldmark parser, also used by Glamour,
   to produce semantic spans for closed blocks; `render` receives a parser
   callback and remains free of external dependencies. The shared `Measurer` wraps the visible text before
   the UI adds terminal styles. List continuations align under their content;
@@ -1158,7 +1158,15 @@ type Stream interface {
   with multiple syntax spans or no tokens; message-boundary trimming removes
   only paragraph spacing. Escaped syntax remains literal.
   Unsupported HTML blocks and inline HTML display their literal source text.
-  Tables use our own renderer.
+  Tables use our own renderer. A closed conversation table measures its visible
+  cells with the shared `Measurer`, aligns each column at its natural width and
+  honors left, center and right alignment from the delimiter row. Headers are
+  bold; cells retain inline styles. The delimiter row is not displayed. Wide
+  tables clip at the transcript's right edge with the typed clipped flag,
+  never wrapping a cell into another row or splitting a grapheme cluster.
+  Resizing reveals the retained content. An open table stays in the unstyled
+  streaming preview until a blank line or `item_done` closes it. Structured
+  result-table cards retain their separate horizontal-scroll contract.
 - Conversation spans use theme text, accent and surface tokens: bold and italic
   retain their attributes, code uses the surface background, and links use
   underlined accent text. Lists reuse the theme's action glyph (including the

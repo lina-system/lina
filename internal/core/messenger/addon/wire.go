@@ -8,6 +8,7 @@ package addon
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,9 +30,31 @@ type wireEvent struct {
 	Event    string        `json:"event"`
 	Message  *wireMessage  `json:"message"`
 	Deletion *wireDeletion `json:"deletion"`
+	Error    string        `json:"error"`
+}
+
+// An "ended" frame closes a live subscription the add-on did not stop on
+// request and names the cause's code. It carries nothing else.
+func (e wireEvent) checkEnded() error {
+	if e.Message != nil || e.Deletion != nil || e.Error == "" {
+		return fmt.Errorf("%w: live end", ErrUpstreamChanged)
+	}
+	return nil
+}
+
+// liveEnded is the error Live returns for an ended subscription. A session the
+// platform revoked needs sign-in; any other cause is the add-on's code.
+func liveEnded(cause string) error {
+	if cause == "needs_sign_in" {
+		return errors.Join(ErrLiveEnded, messenger.ErrNeedsSignIn)
+	}
+	return fmt.Errorf("%w: %s", ErrLiveEnded, cause)
 }
 
 func (e wireEvent) event() (messenger.Event, error) {
+	if e.Error != "" {
+		return messenger.Event{}, fmt.Errorf("%w: live event error", ErrUpstreamChanged)
+	}
 	switch e.Event {
 	case "message":
 		if e.Message == nil || e.Deletion != nil {
@@ -75,15 +98,16 @@ type wireAttachment struct {
 }
 
 type wireMessage struct {
-	ID          string           `json:"id"`
-	Author      wireAuthor       `json:"author"`
-	Route       string           `json:"route"`
-	At          string           `json:"at"`
-	Edited      string           `json:"edited"`
-	Text        string           `json:"text"`
-	ReplyTo     string           `json:"replyTo"`
-	Thread      string           `json:"thread"`
-	Attachments []wireAttachment `json:"attachments"`
+	ID               string           `json:"id"`
+	Author           wireAuthor       `json:"author"`
+	Route            string           `json:"route"`
+	At               string           `json:"at"`
+	Edited           string           `json:"edited"`
+	Text             string           `json:"text"`
+	DecryptionFailed bool             `json:"decryptionFailed"`
+	ReplyTo          string           `json:"replyTo"`
+	Thread           string           `json:"thread"`
+	Attachments      []wireAttachment `json:"attachments"`
 }
 
 func (m wireMessage) message() (messenger.Message, error) {
@@ -97,6 +121,9 @@ func (m wireMessage) message() (messenger.Message, error) {
 	route := messenger.Route(m.Route)
 	if !route.Valid() {
 		return messenger.Message{}, fmt.Errorf("%w: route %q", ErrUpstreamChanged, m.Route)
+	}
+	if m.DecryptionFailed && m.Text != "" {
+		return messenger.Message{}, fmt.Errorf("%w: decryption flag with text", ErrUpstreamChanged)
 	}
 	at, err := wireTime(m.At)
 	if err != nil {
@@ -115,7 +142,7 @@ func (m wireMessage) message() (messenger.Message, error) {
 	}
 	return messenger.Message{
 		ID: m.ID, Author: author, Route: route, At: at, Edited: edited,
-		Text: m.Text, ReplyTo: m.ReplyTo, Thread: m.Thread, Attachments: attachments,
+		Text: m.Text, DecryptionFailed: m.DecryptionFailed, ReplyTo: m.ReplyTo, Thread: m.Thread, Attachments: attachments,
 	}, nil
 }
 
@@ -164,6 +191,14 @@ type wirePage struct {
 	Next      string         `json:"next"`
 	HasMore   bool           `json:"hasMore"`
 	Through   string         `json:"through"`
+	Coverage  *wireCoverage  `json:"coverage"`
+}
+
+// wireCoverage is what a read covers when the platform serves no position that
+// outlives the process or a bounded range.
+type wireCoverage struct {
+	HistoryDepth          string `json:"historyDepth"`
+	CursorSurvivesRestart bool   `json:"cursorSurvivesRestart"`
 }
 
 func (p wirePage) page() (messenger.Page, error) {
@@ -190,6 +225,9 @@ func (p wirePage) page() (messenger.Page, error) {
 		return messenger.Page{}, err
 	}
 	page.Through = through
+	if p.Coverage != nil {
+		page.Coverage = &messenger.ReadCoverage{HistoryDepth: p.Coverage.HistoryDepth, CursorSurvivesRestart: p.Coverage.CursorSurvivesRestart}
+	}
 	return page, nil
 }
 

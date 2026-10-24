@@ -27,6 +27,16 @@ func VisibleMarkdown(source, bullet string) string {
 			out.WriteByte('\n')
 		}
 		out.WriteString(block.Prefix)
+		if block.Table != nil {
+			for i, row := range block.Table.Rows(int(^uint(0)>>1), render.Unicode{}) {
+				if i > 0 {
+					out.WriteByte('\n')
+				}
+				for _, span := range row.Spans {
+					out.WriteString(span.Text)
+				}
+			}
+		}
 		for _, span := range block.Spans {
 			out.WriteString(span.Text)
 		}

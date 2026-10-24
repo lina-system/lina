@@ -104,6 +104,37 @@ func workAgentFixture(t *testing.T, r *conversationRuntime) string {
 	return ""
 }
 
+func TestRejectedPersonLineDoesNotStopTheWorkRunner(t *testing.T) {
+	r := controlRuntime(t)
+	now := time.Now()
+	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "method-request-rejected", ConversationID: r.conversation, AgentID: r.agent, PersonID: r.person, Surface: ledger.Surface{Kind: "app"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Create the result"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := dispatch.Origin{Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: "turn:" + input.ID}
+	bad, err := r.assignCoding(t.Context(), origin, "method-goal-bad", "dispatch_code_goal", "fixture", json.RawMessage(`{"outcome":"Write result.txt"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	good, err := r.assignCoding(t.Context(), origin, "method-goal-good", "dispatch_code_goal", "fixture", json.RawMessage(`{"outcome":"Create the result"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goals := []goal.Goal{
+		{ID: bad.ID, Person: r.person, Agent: bad.Owner, Conversation: bad.Conversation, Turn: "coding:" + bad.ID, Summary: "Write result.txt", RecordRevision: "fixture", State: goal.GoalBlocked},
+		{ID: good.ID, Person: r.person, Agent: good.Owner, Conversation: good.Conversation, Turn: "coding:" + good.ID, Summary: "Create the result", RecordRevision: "fixture", State: goal.GoalBlocked},
+	}
+	if err = r.publishCodeGoals(t.Context(), goal.State{Goals: goals}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.journal().Get(t.Context(), "goal-result:"+codingID(bad.ID, string(goal.GoalBlocked), "fixture")); !errors.Is(err, ledger.ErrNotFound) {
+		t.Fatalf("rejected summary was published: %v", err)
+	}
+	if _, err = r.journal().Get(t.Context(), "goal-result:"+codingID(good.ID, string(goal.GoalBlocked), "fixture")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkMethodDispatchUsesPreparedSourceRecord(t *testing.T) {
 	r := controlRuntime(t)
 	dev := workAgentFixture(t, r)

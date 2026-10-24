@@ -2,7 +2,8 @@
 
 // The add-on's wire format: one JSON object per line, UTF-8, at most 8 MiB.
 // Core sends requests and reads responses; the only unsolicited frames are live
-// events, and only while a live subscription is active.
+// events, and only while a live subscription is active. A subscription that
+// ends on its own sends one last `{"event":"ended","error":<code>}` frame.
 
 export const PROTOCOL = 1;
 export const MAX_LINE = 8 * 1024 * 1024;
@@ -25,6 +26,10 @@ export type Message = {
   at: string;
   edited?: string;
   text: string;
+  // decryptionFailed marks a message the platform served but this account
+  // could not decrypt. It keeps the record with no text; it is never an empty
+  // message that reads as something the person wrote.
+  decryptionFailed?: boolean;
   replyTo?: string;
   thread?: string;
   attachments?: Attachment[];
@@ -32,7 +37,19 @@ export type Message = {
 
 export type Deletion = { message: string; at: string };
 
-export type Page = { messages: Message[]; deletions: Deletion[]; next: string; hasMore: boolean; through?: string };
+// Coverage states what a completed read covers when the platform serves no
+// position that outlives the process or a bounded range. Core stores it with the
+// chat's coverage; an absent one keeps the adapter's declared default.
+export type Coverage = { historyDepth: string; cursorSurvivesRestart: boolean };
+
+export type Page = {
+  messages: Message[];
+  deletions: Deletion[];
+  next: string;
+  hasMore: boolean;
+  through?: string;
+  coverage?: Coverage;
+};
 
 export type Capabilities = {
   historyDepth: string;
@@ -65,7 +82,9 @@ export type Driver = {
   page(chat: string, cursor: string): Promise<Page>;
   members(chat: string): Promise<Author[]>;
   whoami(): Promise<Author>;
-  live(deliver: (event: LiveEvent) => void): () => void;
+  // live calls ended once, with the cause, when the subscription stops without
+  // being stopped: a lost connection, a revoked session or a closed stream.
+  live(deliver: (event: LiveEvent) => void, ended: (error: unknown) => void): () => void;
 };
 
 // OPS is the whole dispatch table. Every entry is a read, a sign-in step or a

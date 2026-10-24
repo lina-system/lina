@@ -122,7 +122,7 @@ ON CONFLICT(platform,account) DO NOTHING`,
 	}
 	var stored Source
 	err = s.db.Read(ctx, func(tx *canon.Tx) error {
-		row := tx.QueryRowContext(ctx, `SELECT person,platform,account,mode,adapter,state,failure,learning_watermark,learn,accepted_terms,connected_at
+		row := tx.QueryRowContext(ctx, `SELECT person,platform,account,owner,mode,adapter,state,failure,learning_watermark,learn,accepted_terms,connected_at
 FROM messenger_source WHERE platform=? AND account=?`, source.Platform, source.Account)
 		value, err := scanSource(row)
 		stored = value

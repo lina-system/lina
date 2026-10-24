@@ -4,6 +4,7 @@ package webex
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/messenger"
@@ -100,9 +101,10 @@ func (r wireRoom) Kind() string {
 // Cursor layout. A cursor names one of two reads and the anchors the platform
 // needs for it:
 //
-//	webex/1/fill/<newest>/<before>          older messages, backwards
-//	webex/1/fill/<newest>/<before>/<stop>   catching up backwards to <stop>
-//	webex/1/tail/<newest>                   the newest page
+//	webex/1/fill/<newest>/<before>                         older messages, backwards
+//	webex/1/fill/<newest>/<before>/<stop>                  catching up backwards to <stop>
+//	webex/1/fill/<newest>/<before>/<stop>/<pending>        same, carrying replies
+//	webex/1/tail/<newest>                                  the newest page
 //
 // A fill walks back through a room's first read. When the room has no older
 // messages left it hands over to the tail, anchored on the newest message the
@@ -112,8 +114,10 @@ func (r wireRoom) Kind() string {
 // then walks backwards (a fill with a stop) until it reaches the message the
 // last read ended on, so nothing between them is skipped. A reply whose parent
 // is still on an older page of that walk is returned in the same page as the
-// parent. ids are base64url-encoded because a Webex id is base64 itself and may
-// contain '/'.
+// parent when both fit in one admission-sized page. A wider gap stores the
+// reply's id in <pending> and returns it with the page that reaches the
+// parent, or on the next page after that parent was committed. ids are
+// base64url-encoded because a Webex id is base64 itself and may contain '/'.
 const cursorPrefix = "webex/1/"
 
 const (
@@ -121,11 +125,41 @@ const (
 	modeTail = "tail"
 )
 
+// holdRef is a reply withheld until its parent can be admitted with it.
+type holdRef struct {
+	ID     string `json:"id"`
+	Parent string `json:"parent,omitempty"`
+}
+
+// walkPending is the part of a fill cursor that survives between pages: replies
+// still waiting on a parent, parents already committed for those replies, and
+// whether the platform walk itself has finished.
+type walkPending struct {
+	Hold     []holdRef `json:"hold,omitempty"`
+	Resolved []string  `json:"resolved,omitempty"`
+	Drain    bool      `json:"drain,omitempty"`
+}
+
+func (p walkPending) resolvedSet() map[string]bool {
+	set := make(map[string]bool, len(p.Resolved))
+	for _, id := range p.Resolved {
+		if id != "" {
+			set[id] = true
+		}
+	}
+	return set
+}
+
+func (p walkPending) empty() bool {
+	return len(p.Hold) == 0 && len(p.Resolved) == 0 && !p.Drain
+}
+
 type anchor struct {
-	Mode   string
-	Before string
-	Newest string
-	Stop   string
+	Mode    string
+	Before  string
+	Newest  string
+	Stop    string
+	Pending walkPending
 }
 
 func parseCursor(cursor messenger.Cursor) (anchor, error) {
@@ -143,12 +177,19 @@ func parseCursor(cursor messenger.Cursor) (anchor, error) {
 	at := anchor{Mode: parts[0], Newest: decode(parts[1])}
 	switch at.Mode {
 	case modeFill:
-		if len(parts) != 3 && len(parts) != 4 {
+		if len(parts) < 3 || len(parts) > 5 {
 			return anchor{}, messenger.ErrInvalid
 		}
 		at.Before = decode(parts[2])
-		if len(parts) == 4 {
+		if len(parts) >= 4 {
 			at.Stop = decode(parts[3])
+		}
+		if len(parts) == 5 {
+			pending, err := decodePending(parts[4])
+			if err != nil {
+				return anchor{}, err
+			}
+			at.Pending = pending
 		}
 	case modeTail:
 		if len(parts) != 2 {
@@ -161,11 +202,46 @@ func parseCursor(cursor messenger.Cursor) (anchor, error) {
 }
 
 func fillCursor(before, newest, stop string) messenger.Cursor {
+	return fillCursorPending(before, newest, stop, walkPending{})
+}
+
+func fillCursorPending(before, newest, stop string, pending walkPending) messenger.Cursor {
 	cursor := cursorPrefix + modeFill + "/" + encode(newest) + "/" + encode(before)
-	if stop != "" {
-		cursor += "/" + encode(stop)
+	blob := encodePending(pending)
+	if stop == "" && blob == "" {
+		return messenger.Cursor(cursor)
+	}
+	cursor += "/" + encode(stop)
+	if blob != "" {
+		cursor += "/" + blob
 	}
 	return messenger.Cursor(cursor)
+}
+
+func encodePending(pending walkPending) string {
+	if pending.empty() {
+		return ""
+	}
+	raw, err := json.Marshal(pending)
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func decodePending(text string) (walkPending, error) {
+	if text == "" || text == "-" {
+		return walkPending{}, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(text)
+	if err != nil {
+		return walkPending{}, messenger.ErrInvalid
+	}
+	var pending walkPending
+	if err := json.Unmarshal(raw, &pending); err != nil {
+		return walkPending{}, messenger.ErrInvalid
+	}
+	return pending, nil
 }
 
 func tailCursor(newest string) messenger.Cursor {
