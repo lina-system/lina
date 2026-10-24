@@ -1,28 +1,4 @@
 {
   "schema": 1,
-  "preset": "lina",
-  "tools": {
-    "declare_first": [
-      "to_do",
-      "mail",
-      "calendar",
-      "messaging_read",
-      "documents"
-    ]
-  },
-  "handoff": {
-    "owns": [
-      "schedule",
-      "to_do",
-      "mail",
-      "business_document",
-      "coordination"
-    ]
-  },
-  "ask": {
-    "form": "choices"
-  },
-  "fill": [
-    "ask.form"
-  ]
+  "preset": "lina"
 }

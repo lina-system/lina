@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/thisisjun786/lina/persona"
 )
 
-func TestReplayVariantsUseShippedTailoring(t *testing.T) {
+// The M4-4 replay measured the M4-3 tailoring and it did not ship, so the two
+// variants carry the same shipped triple and the comparison is a control: it can
+// only report `unchanged`. A snapshot baseline is what measures a later change.
+func TestReplayVariantsUseTheShippedTriple(t *testing.T) {
 	variants, err := replayVariants("")
 	if err != nil {
 		t.Fatal(err)
@@ -18,19 +22,44 @@ func TestReplayVariantsUseShippedTailoring(t *testing.T) {
 	if len(variants) != 2 || variants[0].Name != "baseline" || variants[1].Name != "tailored" {
 		t.Fatalf("variants=%v", variants)
 	}
-	dev, ok := variants[1].For("dev")
-	if !ok || dev.WorkMethod == persona.EmptyWorkMethod("dev") {
-		t.Fatalf("tailored dev record missing: %+v", dev)
-	}
-	before, _ := variants[0].For("dev")
-	if before.WorkMethod != persona.EmptyWorkMethod("dev") || before.Layers.Core != dev.Layers.Core {
-		t.Fatalf("baseline is not the shipped layers without the record: %+v", before)
-	}
 	for _, starter := range persona.Starters() {
-		if _, ok := variants[1].For(starter.Key); !ok {
+		tailored, ok := variants[1].For(starter.Key)
+		if !ok {
 			t.Fatalf("tailored variant lacks %s", starter.Key)
 		}
+		before, ok := variants[0].For(starter.Key)
+		if !ok {
+			t.Fatalf("baseline variant lacks %s", starter.Key)
+		}
+		if !sameMethod(t, tailored.WorkMethod, persona.EmptyWorkMethod(starter.Key), starter.Key) {
+			t.Fatalf("shipped %s record is not the empty record: %s", starter.Key, tailored.WorkMethod)
+		}
+		if !sameMethod(t, before.WorkMethod, tailored.WorkMethod, starter.Key) {
+			t.Fatalf("%s: baseline record differs from the shipped record", starter.Key)
+		}
+		if before.Layers != tailored.Layers {
+			t.Fatalf("%s: baseline layers differ from the shipped layers", starter.Key)
+		}
 	}
+}
+
+// sameMethod compares two records by parsed value: canonical JSON orders object
+// keys differently from the record literal a preset writes.
+func sameMethod(t *testing.T, a, b, key string) bool {
+	t.Helper()
+	var left, right map[string]any
+	first, err := persona.ParseWorkMethod([]byte(a), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := persona.ParseWorkMethod([]byte(b), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if json.Unmarshal([]byte(first), &left) != nil || json.Unmarshal([]byte(second), &right) != nil {
+		t.Fatal("record is not an object")
+	}
+	return reflect.DeepEqual(left, right)
 }
 
 func TestReplayVariantsReadASnapshot(t *testing.T) {

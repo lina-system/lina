@@ -1,18 +1,4 @@
 {
   "schema": 1,
-  "preset": "legal",
-  "tools": {
-    "declare_first": [
-      "documents",
-      "web_research",
-      "materials"
-    ]
-  },
-  "handoff": {
-    "owns": [
-      "contract_draft",
-      "tax_calculation",
-      "legal_review"
-    ]
-  }
+  "preset": "legal"
 }

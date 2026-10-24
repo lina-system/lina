@@ -236,9 +236,11 @@ Evidence: [Naming and language](../research/m4-owner-agent-sessions.md#naming-an
 
 ## Starter records and persona changes
 
-Each subsection gives the record values that differ from the defaults, the persona-layer changes, the evidence, and the replay cases. "Should change" names the corrected cases whose reply must now meet the case's expectation. "Must not change" names accepted cases that must still pass. The persona changes are applied to the shipped layers by the persona conversion (#584) and its revisions. They keep each persona's character, voice, judgment rules and examples, as [Presets](conversation-and-memory.md#presets) requires.
+Each subsection gives the record values that differ from the defaults, the persona-layer changes, the evidence, and the replay cases. "Should change" names the corrected cases whose reply must now meet the case's expectation. "Must not change" names accepted cases that must still pass. The persona changes were applied to the shipped layers by the persona conversion (#584) and its revisions; the paragraph after this one records why they are not in effect. They keep each persona's character, voice, judgment rules and examples, as [Presets](conversation-and-memory.md#presets) requires.
 
-Release validation requires all eight records and compares their effective values, including defaults, ownership and fill declarations, with the values in this contract. A schema-valid difference fails validation. JSON formatting, object-key order and writing a default explicitly do not change that comparison. Runtime publication still accepts schema-valid updates and agent fills under the versioning rules above.
+Release validation requires all eight records and compares their effective values, including defaults, ownership and fill declarations, with the values this contract expects to ship. A schema-valid difference fails validation. JSON formatting, object-key order and writing a default explicitly do not change that comparison. Runtime publication still accepts schema-valid updates and agent fills under the versioning rules above.
+
+The values in this section are measured, not shipped. The M4-4 replay (#590) played the M4-1 set per agent, three repeats per case, against the shipped triple and against a pre-M4-3 snapshot. No agent improved without another regressing in either comparison, so the ship rule under [Measurement](#measurement) rejects them: every shipped preset carries the empty record and the unchanged persona layers, and release validation therefore expects the empty record for all eight starters. The finding returns to M4-2, and the subsections below remain the design target rather than a description of what ships.
 
 ### system
 

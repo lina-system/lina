@@ -28,78 +28,78 @@ before and fail after as regressions, the ids that failed before and pass after,
 and a verdict (`improved`, `unchanged`, `regressed`, `worse`, `insufficient`). It
 holds case ids, check outcomes and counts only, so it can be committed.
 
-## One observed run
+## The observed run: the M4-1 replay set
 
-The M4-1 replay set is private and was not present on the host that built the
-runner: no agent session store, no Honcho store and no file carrying `role_id` was
-reachable from it. The owner-facing coding-worker logs were reachable, so this run
-rebuilt the worker part of the set from them, outside every repository, and left
-the eight agent roles unobserved. The case file is frozen by sha256; its builder
-and the exact selection rules are recorded with the private data.
+The M4-1 set is private and stays outside every repository: 583 rows in 9 files,
+one per agent role plus the coding workers. It was converted to 159 playable agent
+cases; the converter, the case file, the reports and the raw extracts stay with
+the private data, and no case or reply text entered this repository.
 
-- 63 cases for the dev agent, all from owner-typed turns in Codex worker
-  sessions: 60 accepted replies marked must-not-change, and 3 `done_claim`
-  corrections.
-- Every case declares only checks it can evidence: an accepted case only checks
-  its accepted reply passes, a correction case only checks its drawing reply
-  fails. Three correction pairs that showed no defect in the declared measures
-  were dropped and counted, never scored.
-- `--repeat 3`, one model (`gpt-6.1-sol`), one route; 0 cases excluded, 0
-  rejected, 0 injected turns dropped.
+The 159 cases: system 26, dev 30, knowledge 25, lina 22, life 20, creative 20,
+legal 11, investing 5. 136 are accepted replies marked must-not-change and 23 are
+corrections. All are Korean; reply types are status 140, comparison 18 and
+document 1. Declared checks: `language` 139, `no_question` 115, `no_internal`
+104, `length` 71. No case declares `done_evidence`, because no converted case
+carried a done claim. 172 turns, none injected.
 
-| Comparison | Baseline | Tailored | Regressions | Improvements | Verdict | Ships |
-| --- | --- | --- | --- | --- | --- | --- |
-| The record alone (shipped layers, empty record as baseline) | 26 / 189 runs | 26 / 189 runs | `worker-codex-020` | `worker-codex-007`, `worker-codex-042` | regressed | no |
-| The whole M4-3 change (pre-M4-3 snapshot `a4c25f15` as baseline) | 25 / 189 runs | 25 / 189 runs | none | none | unchanged | no |
+`--repeat 3`, one model, one route, two comparisons: the record alone (shipped
+layers with the empty record as baseline) and the whole M4-3 change (the pre-M4-3
+persona snapshot as baseline).
 
-Passes per check, record-alone comparison, baseline → tailored:
+| Agent | Cases | Record alone: base → tail | Verdict | Whole M4-3: base → tail | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| system | 26 | 61 → 62 | regressed | 57 → 57 | regressed |
+| lina | 22 | 60 → 58 | regressed | 58 → 58 | unchanged |
+| dev | 30 | 59 → 60 | regressed | 64 → 60 | regressed |
+| knowledge | 25 | 63 → 61 | regressed | 62 → 61 | worse |
+| life | 20 | 31 → 30 | worse | 31 → 32 | regressed |
+| creative | 8 / 13 | 21 → 23 | improved | 35 → 33 | regressed |
+| investing | 0 | 0 → 0 | insufficient | 0 → 0 | insufficient |
+| legal | 0 | 0 → 0 | insufficient | 0 → 0 | insufficient |
 
-| Check | Passes |
-| --- | --- |
-| `length` | 36 / 177 → 37 / 177 |
-| `language` | 91 / 186 → 97 / 186 |
-| `no_internal` | 42 / 78 → 42 / 78 |
-| `no_question` | 177 / 180 → 177 / 180 |
-| `done_evidence` | 1 / 9 → 1 / 9 |
+Regressions, record alone: `system-009`, `lina-012`, `dev-007`,
+`knowledge-001`, `knowledge-011`. Whole M4-3: `system-018`, `dev-007`,
+`life-014`, `creative-014`. Improvements, record alone: `system-015`,
+`system-026`, `dev-019`, `creative-002`; whole M4-3: `dev-019`, `knowledge-015`,
+`life-013`.
 
-Seen: the runner plays a private case file, applies the five checks, summarizes
-per agent and applies the ship rule; the report carries no case or reply text.
-On this data neither comparison improves the dev agent, so under the design's
-rule the M4-3 tailoring does not ship from this evidence, and the finding returns
-to M4-2.
+Passes per check, record alone, baseline → tailored: `length` 157/186 → 160/187,
+`language` 339/342 → 341/343, `no_internal` 252/255 → 252/255, `no_question`
+208/279 → 206/279. Whole M4-3: `length` 157/186 → 158/187, `language` 350/351 →
+349/352, `no_internal` 261/264 → 261/264, `no_question` 212/285 → 207/286.
 
-### Why the difference is this small
+Ship rule: `ships: false` in both comparisons. No agent improves without another
+regressing, and five to six roles regress in each. Under the design's rule the
+M4-3 tailoring does not ship.
 
-The three flips in the record-alone comparison sit on a threshold: one accepted
-case's replies averaged 289 characters before and 296 after against a
-300-character budget, and it lost one of three runs; two other cases crossed a
-length or language edge the other way. A 63-case set at three repeats cannot
-separate that from noise.
+## What this change does with the result
 
-The dev record carries `tools`, `workers` and `handoff` and no `reply` field, and
-a replay request declares no tools and creates no worker task. Those fields
-therefore change the request only as text inside the `<work_method>` block; the
-behaviour they govern is not exercised at all. The instructions and the reply-shape
-paragraph are present in both variants, because the empty record is still a
-record. What this method can measure is reply text, and for the dev agent the
-substance of M4-3 is its layer text, which is the second row.
+The tailoring is reverted in this pull request: every preset ships the empty
+record (`{"schema":1,"preset":"<key>"}`) and the unchanged persona layers, the
+release-validation expectations in `persona/release_work_method.go` follow, and
+`docs/design/preset-work-methods.md` records that the per-preset values are
+measured but not in effect. The finding returns to M4-2. The mechanism — the
+record, its loading, dispatch, reply shapes, ask settings, done evidence,
+hand-offs and names — stays; only the shipped values and layer text revert, and
+the boot and e2e fixtures install the record they need.
 
 ## Decisions
 
-1. **A case declares only checks it can evidence.** Without that rule the same 63
-   cases reported `improved` before calibration (23 → 27 passes) and `regressed`
-   after it, because a check the owner's own accepted reply fails marks accepted
-   behaviour as failure. The rule is now in the design contract.
+1. **A case declares only checks it can evidence.** An accepted case declares only
+   checks its accepted reply passes; a correction case only checks its drawing
+   reply fails. A check the owner's own accepted reply fails would mark the
+   behaviour he accepted as a failure, whatever the model writes. A pair that
+   meets neither rule is left out and counted, not scored.
 2. **No judge.** An accepted reply is not compared with a model's by similarity:
    there is no qualified judge in the repository, and an unqualified one is not
    evidence; the five mechanical checks are what the design names.
-3. **The result is reported, not reverted in this change.** Reverting the M4-3
-   records and layer text would be a separate change across eight presets, and
-   this run covers one role. The evidence and the finding go back to M4-2, and
-   the record-level conclusion stays as measured.
+3. **The result is reported and the change is reverted.** The report holds ids,
+   check outcomes and counts, so it can be committed while the case text stays
+   private; the revert is in the same pull request, as the issue's rule requires.
 4. **`--changed` is required, and the report names unobserved agents.** A report
-   with no changed agent has nothing to judge; starters without cases are listed
-   as unobserved, so their absence is visible rather than read as a pass.
+   with no changed agent has nothing to judge; starters without scored cases are
+   listed as unobserved or insufficient, so their absence is visible rather than
+   read as a pass.
 
 ## Limits
 
@@ -113,9 +113,16 @@ substance of M4-3 is its layer text, which is the second row.
 - `no_question` and `done_evidence` use marker lists in
   `internal/core/methodreplay/score.go`; a phrasing outside them is not detected.
   `language` ignores lines with fewer than ten letters.
-- Seven of the eight agents are unobserved: this run says nothing about their
-  tailoring, and the design forbids reading one role's cases as another's
-  evidence.
+- Investing (5 cases) and legal (11) scored nothing in either comparison: every
+  one of their cases was dropped as `model_error`, so they stay `insufficient` and
+  this run establishes nothing about those two roles.
+- Exclusions were 28 of 159 (record alone) and 23 of 159 (whole M4-3), all
+  `model_error`. Creative shows 8 cases in one comparison and 13 in the other for
+  that reason.
+- The two sweeps used a binary built from `e4b337c4` with `vcs.modified=true`. Its
+  tailored side carried the M4-3 records — both comparisons move, and a binary
+  shipping the empty record would report `unchanged` — but that build was not
+  reproduced from a clean revision.
 - Record fields about tools, worker dispatch and hand-offs are not exercised by a
   replay request, so the runner cannot measure them at all.
 - One model on one route at one time. It is not evidence about another model or a

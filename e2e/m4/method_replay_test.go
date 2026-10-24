@@ -4,6 +4,7 @@ package m4_test
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/thisisjun786/lina/persona"
 )
 
 // buildLina compiles the command under test once per scenario run. The harness
@@ -42,6 +45,9 @@ const (
 	// privateMarker appears only in the private case text and replies; a report
 	// that repeats it would leak replay data.
 	privateMarker = "PRIVATE-REPLAY-MARKER"
+	// baselineMarker marks the snapshot's dev core layer, so the fixture model
+	// can answer differently for the two variants without reading case text.
+	baselineMarker = "UNTAILORED-LAYER-MARKER"
 )
 
 func methodFixture(t *testing.T) *httptest.Server {
@@ -61,20 +67,43 @@ func methodFixture(t *testing.T) *httptest.Server {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if strings.Contains(body.Instructions, `"workers"`) {
-			if !strings.Contains(body.Instructions, `"preset":"dev"`) {
-				t.Errorf("tailored request lost its pinned record")
-			}
-			answerText(w, tailoredReply)
+		if strings.Contains(body.Instructions, baselineMarker) {
+			mu.Lock()
+			requests++
+			mu.Unlock()
+			answerText(w, baselineReply)
 			return
 		}
-		mu.Lock()
-		requests++
-		mu.Unlock()
-		answerText(w, baselineReply)
+		answerText(w, tailoredReply)
 	}))
 	t.Cleanup(server.Close)
 	return server
+}
+
+// methodBaseline writes an untailored triple for every starter and marks the dev
+// core layer. The shipped triple is the other side of the comparison, so the
+// measured difference is real preset data rather than a fixture shortcut.
+func methodBaseline(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, starter := range persona.Starters() {
+		if err := os.MkdirAll(filepath.Join(dir, starter.Key), 0700); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"core-v1.md", "default-voice-v1.md", "work-method-v1.json"} {
+			data, err := fs.ReadFile(persona.Shipped(), starter.Key+"/"+name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if starter.Key == "dev" && name == "core-v1.md" {
+				data = append([]byte(baselineMarker+"\n"), data...)
+			}
+			if err := os.WriteFile(filepath.Join(dir, starter.Key, name), data, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return dir
 }
 
 func answerText(w http.ResponseWriter, text string) {
@@ -100,16 +129,17 @@ func methodCases(t *testing.T) string {
 	return path
 }
 
-// TestMethodReplayThroughTheCommand measures the shipped tailoring through the
-// installed command: the dev agent improves, the life agent holds, and the
-// report carries scores and ids only.
+// TestMethodReplayThroughTheCommand measures one preset change through the
+// installed command: with a snapshot baseline the dev agent improves, the life
+// agent holds, and the report carries scores and ids only.
 func TestMethodReplayThroughTheCommand(t *testing.T) {
 	server := methodFixture(t)
 	cases := methodCases(t)
 	binary := buildLina(t)
+	baseline := methodBaseline(t)
 	run := func(changed string, wantExit int) map[string]any {
 		t.Helper()
-		cmd := exec.CommandContext(t.Context(), binary, "method-replay", cases, "--changed", changed)
+		cmd := exec.CommandContext(t.Context(), binary, "method-replay", cases, "--changed", changed, "--baseline", baseline)
 		cmd.Env = []string{
 			"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "TMPDIR=" + t.TempDir(),
 			"LINA_RESPONSES_BASE_URL=" + server.URL + "/v1", "LINA_RESPONSES_MODEL=fixture-model",
@@ -135,7 +165,7 @@ func TestMethodReplayThroughTheCommand(t *testing.T) {
 	if report["scored"] != float64(3) || report["excluded"] != float64(0) {
 		t.Fatalf("report: %v", report)
 	}
-	if report["baseline"] != "shipped-layers-without-record" {
+	if report["baseline"] != "snapshot" {
 		t.Fatalf("baseline: %v", report["baseline"])
 	}
 	agents := report["agents"].([]any)

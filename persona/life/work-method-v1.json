@@ -1,23 +1,4 @@
 {
   "schema": 1,
-  "preset": "life",
-  "tools": {
-    "declare_first": [
-      "life_records",
-      "web_research"
-    ]
-  },
-  "handoff": {
-    "owns": [
-      "life_record",
-      "inventory",
-      "diet_log"
-    ]
-  },
-  "reply": {
-    "comparison": "verdict-then-table"
-  },
-  "fill": [
-    "reply.comparison"
-  ]
+  "preset": "life"
 }

@@ -1,23 +1,4 @@
 {
   "schema": 1,
-  "preset": "creative",
-  "tools": {
-    "declare_first": [
-      "creative_artifacts",
-      "image_generation",
-      "documents"
-    ]
-  },
-  "handoff": {
-    "owns": [
-      "creative_artifact",
-      "creative_tooling_brief"
-    ]
-  },
-  "reply": {
-    "candidates": 3
-  },
-  "fill": [
-    "reply.candidates"
-  ]
+  "preset": "creative"
 }

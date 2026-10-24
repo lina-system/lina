@@ -1,20 +1,4 @@
 {
   "schema": 1,
-  "preset": "knowledge",
-  "tools": {
-    "declare_first": [
-      "people_records",
-      "wiki",
-      "messaging_read"
-    ]
-  },
-  "handoff": {
-    "owns": [
-      "people_record",
-      "wiki"
-    ]
-  },
-  "ask": {
-    "form": "choices"
-  }
+  "preset": "knowledge"
 }
