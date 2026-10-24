@@ -33,6 +33,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/messenger/teams"
 	"github.com/thisisjun786/lina/internal/core/messenger/webex"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/results"
 	"github.com/thisisjun786/lina/internal/core/retract"
@@ -106,6 +107,7 @@ type conversationRuntime struct {
 
 	materials        *conversationMaterials
 	miniApps         *miniAppRuntime
+	vectors          *recall.Vectors
 	recallStop       context.CancelFunc
 	recallDone       chan struct{}
 	assets           *assets.Store
@@ -298,6 +300,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	}
 	r.vault, err = secrets.OpenFiles(root)
 	if err != nil {
+		return nil, err
+	}
+	if err = r.initEmbeddings(ctx); err != nil {
 		return nil, err
 	}
 	r.accounts, err = accounts.Open(ctx, db, r.vault, accounts.ChatGPTRefresher(activities, transport))

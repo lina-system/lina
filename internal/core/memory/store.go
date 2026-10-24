@@ -21,9 +21,12 @@ type Canon interface {
 	Write(context.Context, func(*canon.Tx) error) error
 }
 type Store struct {
-	db     Canon
-	quotes QuoteReader
+	db      Canon
+	quotes  QuoteReader
+	vectors recall.VectorQuery
 }
+
+func (s *Store) WithVectors(query recall.VectorQuery) *Store { s.vectors = query; return s }
 
 func New(db Canon) *Store       { return &Store{db: db} }
 func normalize(s string) string { return strings.Join(strings.Fields(strings.ToLower(s)), " ") }
@@ -405,7 +408,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			Person: scope.Person, Agent: scope.Agent, Kinds: []recall.Kind{recall.Memory},
 			CommonOnly: scope.CommonOnly, History: q.History, At: q.At,
 			Projection: scope.Projection, ExternalModel: scope.ExternalModel,
-		}, recall.Query{Text: q.Text})
+		}, recall.Query{Text: q.Text, Vectors: s.vectors})
 		if err != nil {
 			return nil, err
 		}

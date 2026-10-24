@@ -67,6 +67,13 @@ func (w Worker) Once(ctx context.Context) error {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var failures []error
+	wg.Go(func() {
+		if err := w.embed(ctx); err != nil {
+			mu.Lock()
+			failures = append(failures, err)
+			mu.Unlock()
+		}
+	})
 	for _, item := range work {
 		wg.Go(func() {
 			if err := w.Step(ctx, item); err != nil {
@@ -98,6 +105,7 @@ func (w Worker) Run(ctx context.Context, interval time.Duration) error {
 	}()
 	var mu sync.Mutex
 	active := map[string]bool{}
+	wg.Go(func() { w.runEmbeddings(ctx, interval) })
 	for {
 		work, err := w.Reader.Ready(ctx, time.Now())
 		if ctx.Err() != nil {

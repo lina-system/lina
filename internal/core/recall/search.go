@@ -160,6 +160,16 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	if len(terms) == 0 {
 		return nil, nil
 	}
+	// Embed outside ranking and resolve failure before selecting the lexical
+	// candidate bound. With no usable vectors the original query is unchanged.
+	if query.Vectors != nil {
+		ids, err := query.Vectors(ctx, scope, query.Text)
+		if err != nil || len(ids) == 0 {
+			query.Vectors = nil
+		} else {
+			query.Vectors = func(context.Context, Scope, string) ([]string, error) { return ids, nil }
+		}
+	}
 	var pairPhrases, pairMatches, trigramPhrases []string
 	var shortTerms []string
 	for _, t := range terms {
@@ -288,6 +298,9 @@ SELECT kind,source_id,revision,occurred_at,holder,older FROM dedup WHERE twin=1 
 ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianday(occurred_at) DESC, source_id`
 	args = append(args, boolInt(scope.History))
 	limit := query.Limit
+	if query.Vectors != nil {
+		limit = VectorCandidates
+	}
 	if limit > 0 {
 		statement += " LIMIT ?"
 		args = append(args, limit+len(external))
@@ -318,7 +331,7 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 		return nil, err
 	}
 	hits = append(hits, external...)
-	if limit > 0 && len(hits) > limit {
+	if query.Vectors == nil && limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}
 	if query.Vectors != nil {
@@ -562,8 +575,11 @@ func lineage(ctx context.Context, db Canon, scope Scope, hits []Hit) ([]Hit, err
 // fuse merges the full-text list and the vector hook by reciprocal rank.
 func fuse(ctx context.Context, db Canon, scope Scope, query Query, text []Hit) ([]Hit, error) {
 	ids, err := query.Vectors(ctx, scope, query.Text)
-	if err != nil {
-		return nil, err
+	if err != nil || len(ids) == 0 {
+		if query.Limit > 0 && len(text) > query.Limit {
+			text = text[:query.Limit]
+		}
+		return lineage(ctx, db, scope, text)
 	}
 	type key struct {
 		kind Kind
@@ -616,15 +632,20 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		return nil, err
 	}
 	kinds := kindsOf(scope)
-	where := []string{"d.person=?", holderCondition(scope, "d"), "d.source_id IN (SELECT value FROM json_each(?))", "d.kind IN (" + placeholders(len(kinds)) + ")"}
-	args := []any{scope.Person}
-	if !scope.CommonOnly && scope.Agent != "" {
-		args = append(args, scope.Agent)
+	at := scope.At
+	if at == 0 {
+		at = time.Now().Unix()
 	}
-	args = append(args, encoded)
-	for _, kind := range kinds {
-		args = append(args, string(kind))
+	where, args := scopeWhere(scope, kinds, at, scope.Projection || scope.ExternalModel, "d")
+	where = append(where, "(d.source_id IN (SELECT value FROM json_each(?)) OR d.kind||char(0)||d.source_id IN (SELECT value FROM json_each(?)))")
+	args = append(args, encoded, encoded)
+	older, olderArgs := olderExpr(kinds, at, "d")
+	if !scope.History {
+		where = append(where, "("+older+")=0")
+		args = append(args, olderArgs...)
 	}
+	prefix, prefixArgs := restrictedCTE(scope)
+	args = append(append(prefixArgs, olderArgs...), args...)
 	order := map[string]int{}
 	for i, id := range ids {
 		if _, ok := order[id]; !ok {
@@ -633,7 +654,7 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 	}
 	var hits []Hit
 	err = db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT d.source_id,d.kind,d.revision,d.occurred_at,d.holder FROM recall_doc d
+		rows, err := tx.QueryContext(ctx, prefix+` SELECT d.source_id,d.kind,d.revision,d.occurred_at,d.holder,`+older+` FROM recall_doc d
    WHERE `+strings.Join(where, " AND "), args...)
 		if err != nil {
 			return err
@@ -642,9 +663,11 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		for rows.Next() {
 			var h Hit
 			var occurred string
-			if err := rows.Scan(&h.ID, &h.Kind, &h.Revision, &occurred, &h.Holder); err != nil {
+			var olderValue int
+			if err := rows.Scan(&h.ID, &h.Kind, &h.Revision, &occurred, &h.Holder, &olderValue); err != nil {
 				return err
 			}
+			h.Older = olderValue == 1
 			h.OccurredAt, _ = time.Parse(time.RFC3339Nano, occurred)
 			hits = append(hits, h)
 		}
@@ -653,7 +676,13 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 	if err != nil {
 		return nil, err
 	}
-	sort.SliceStable(hits, func(i, j int) bool { return order[hits[i].ID] < order[hits[j].ID] })
+	rank := func(h Hit) int {
+		if n, ok := order[string(h.Kind)+"\x00"+h.ID]; ok {
+			return n
+		}
+		return order[h.ID]
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return rank(hits[i]) < rank(hits[j]) })
 	return hits, nil
 }
 

@@ -47,7 +47,7 @@ func (m *Memory) recallSources(ctx context.Context, scope memory.RecallScope, in
 	if in.At > 0 {
 		query.Until = time.Unix(in.At, 0).Add(time.Second)
 	}
-	hits, err := recall.Match(ctx, m.db, query, recall.Query{Text: in.Query, Limit: RecallItemLimit})
+	hits, err := recall.Match(ctx, m.db, query, recall.Query{Text: in.Query, Limit: RecallItemLimit, Vectors: m.vectors})
 	if err != nil {
 		return nil, err
 	}
