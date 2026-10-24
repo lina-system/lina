@@ -173,7 +173,10 @@ func inputEventIDSchema() map[string]string {
 	return map[string]string{"type": "string", "description": "Consumed input event ID; omit for current."}
 }
 func (s *turnState) prepareInputBinding(declarations []provider.ToolDecl) []provider.ToolDecl {
-	if s.input.SpeakerKind != guard.Person && s.input.ScaffoldKind == "question_answer" {
+	if s.input.SpeakerKind != guard.Person {
+		if s.input.ScaffoldKind != "question_answer" {
+			return declarations
+		}
 		qid := strings.TrimSuffix(s.input.ID, ":answer")
 		q, err := waiting.NewConversationQuestions(s.runtime.db).Get(s.runtime.ctx, qid)
 		if err != nil || q.Binding == nil {

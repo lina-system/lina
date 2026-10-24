@@ -369,7 +369,7 @@ A rule decides the item, not what the message does to it. Whether the message an
 
 Word lists and timing do not bind. In the owner's data, status, memory and new-work words decided the target poorly, and so did arrival while the agent was busy: about four in ten of those messages were not steers. Input that arrives during a turn still reaches that turn as steering input ([runtime.md](runtime.md#conversation-loop)) and is bound like any other.
 
-**The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. When it appears before a work call in the same response, that update commits before the work call runs. Other targets in the response still run beside it. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
+**The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
 
 `bind_input` records request ordinals and exact input excerpts. Choices append
 system events to the admission binding; retries retain the same event and question.
@@ -389,18 +389,12 @@ that request's focus. Several created tasks stay unresolved. When the person
 has selected a new target and creation has recorded its id, a later record
 read, progress read, or follow-up of that created item stays on the same
 request. Naming a different item does not replace the person's choice.
-A code goal created for a new project stays on that choice. Its definition
-file keeps kind goal, and the snapshot presents the record as a project, so a
-later read or correction of the created record is the same identity.
 A resumed channel request recovers the original channel receipt through the
 answer's parent chain before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
 permissions. A tool executed for that steering input uses the steering runtime
-and event, so a channel follow-up keeps that channel's source and work
-preparation keeps that channel's binding. A system turn that consumes
-person steering still offers binding; a call that stays on the system
-event does not borrow the person's target gate. Reading a tied
+and event, so a channel follow-up keeps that channel's source. Reading a tied
 candidate does not resolve the original ambiguity. A retained tie, including a
 read that has not asked a question, does not settle a reply or the next focus.
 A reply that stays unresolved keeps that tie, so a later control asks before it
