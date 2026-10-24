@@ -375,6 +375,9 @@ Word lists and timing do not bind. In the owner's data, status, memory and new-w
 `bind_input` records request ordinals and exact input excerpts. Choices append
 system events to the admission binding; retries retain the same event and question.
 A work tool may name `input_binding` to select a request or consumed steering input.
+When one response binds and acts on the same input, the work call runs only after
+`bind_input` committed the choice or the pending target question. Calls for other
+inputs or other targets keep running in parallel.
 Both tools use optional `input_event_id`: omit it for the current input, or name
 an admitted event consumed by this turn. It is never an arbitrary ledger lookup.
 The legacy `input` field remains readable. The current input's text, ignoring

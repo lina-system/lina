@@ -173,34 +173,65 @@ func (s *turnState) selectedBindingInput(id, legacy string) (ledger.Event, *conv
 func inputEventIDSchema() map[string]string {
 	return map[string]string{"type": "string", "description": "Consumed input event ID; omit for current."}
 }
+
+// A person input owns the turn's binding. A system turn has no person input
+// unless it resumed a held request or consumed steering.
+func (s *turnState) hostedBindingInput() bool {
+	return s.input.SpeakerKind == guard.Person || s.bindingSource != nil || len(s.bindingInputs) > 0
+}
+
+// The input a binding call may select. Outside a person input the hosting
+// system event is never bindable by default; a consumed steering input or the
+// restored request must be named.
+func (s *turnState) bindingSelection(id, legacy string) (ledger.Event, *conversationRuntime, error) {
+	if id == "" && legacy == "" && s.bindingSource == nil && s.input.SpeakerKind != guard.Person {
+		return ledger.Event{}, nil, binding.ErrChoice
+	}
+	return s.selectedBindingInput(id, legacy)
+}
+
+// A binding call's write target. A work call that names the same input gates on
+// it, so one response cannot start or steer work before the binding committed.
+// The prefix keeps this out of the origin and receipt namespaces.
+func bindingBarrier(inputID string) string { return "binding-gate:" + inputID }
 func (s *turnState) prepareInputBinding(declarations []provider.ToolDecl) []provider.ToolDecl {
 	if s.input.SpeakerKind != guard.Person {
 		if s.input.ScaffoldKind != "question_answer" {
 			return declarations
 		}
+		// Only the restoration of a held request's original input depends on
+		// the recorded binding. Steering consumed later in this turn stays
+		// selectable because the tools still register and wrap.
 		qid := strings.TrimSuffix(s.input.ID, ":answer")
 		q, err := waiting.NewConversationQuestions(s.runtime.db).Get(s.runtime.ctx, qid)
-		if err != nil || q.Binding == nil {
-			return declarations
+		if err == nil && q.Binding != nil {
+			if original, err := s.runtime.journal().Get(s.runtime.ctx, q.Input); err == nil {
+				s.bindingSource = &original
+				s.bindingRequest = q.Binding.Request
+			}
 		}
-		original, err := s.runtime.journal().Get(s.runtime.ctx, q.Input)
-		if err != nil {
-			return declarations
-		}
-		s.bindingSource = &original
-		s.bindingRequest = q.Binding.Request
 	}
 	s.bindings["bind_input"] = loop.Tool{
 		Validate: func(c provider.ToolCall) (string, error) {
-			_, err := decodeBindingRequest(c.Arguments)
-			return "input-binding:" + s.input.ID, err
+			in, err := decodeBindingRequest(c.Arguments)
+			if err != nil {
+				return "", err
+			}
+			if in.InputEventID == "" && in.Input == "" && !s.hostedBindingInput() {
+				return "", binding.ErrChoice
+			}
+			input, _, err := s.bindingSelection(in.InputEventID, in.Input)
+			if err != nil {
+				return "", nil
+			}
+			return bindingBarrier(input.ID), nil
 		},
 		Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
 			in, err := decodeBindingRequest(c.Arguments)
 			if err != nil {
 				return bindingFailure(c.ID, err)
 			}
-			input, r, err := s.selectedBindingInput(in.InputEventID, in.Input)
+			input, r, err := s.bindingSelection(in.InputEventID, in.Input)
 			if err != nil {
 				return bindingFailure(c.ID, err)
 			}

@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
+	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/intakereplay"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/turn"
@@ -417,5 +419,83 @@ func TestSelectedNewTargetResolvesToCreatedIdentity(t *testing.T) {
 	run, err := r.background.service.Get(t.Context(), "spawned-run")
 	if err != nil || len(run.FollowUps) != 1 {
 		t.Fatalf("follow-up missing: notes=%d err=%v", len(run.FollowUps), err)
+	}
+}
+
+// A system turn that resumes an ordinary question has no held request, but it
+// can still consume person steering. The model must be able to bind it, and a
+// work call that names it must carry the steering input through the gate.
+func TestOrdinaryQuestionAnswerKeepsBindingForSteering(t *testing.T) {
+	r, _ := turnRuntime(t)
+	root := questionPersonInput(t, r, "ordinary-question", "Ask me which format to use")
+	tools, _ := questionBindings(t, r, root, agents.ProjectWorkMethod(agents.Preparation{}, agents.State{}))
+	asked := questionCall(t, tools, "ask_question", "format", waiting.QuestionDraft{Question: "Which format?", Recommendation: "Table", Default: "table"})
+	if asked.Code != loop.OK {
+		t.Fatalf("ask: %+v", asked)
+	}
+	var q waiting.ConversationQuestion
+	if json.Unmarshal(asked.Output, &q) != nil || q.ID == "" || q.Binding != nil {
+		t.Fatalf("question: %s", asked.Output)
+	}
+	route := r.route
+	r.route = nil
+	defer func() { r.route = route }()
+	revision, value := "1", "table"
+	values := protocol.FormValues{"answer": {String: &value}}
+	answer := protocol.QuestionAnswer{CardID: &q.ID, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}
+	if outcome, err := r.answerConversationQuestion(t.Context(), r.person, answer, "answer"); err != nil || outcome != protocol.DecisionOutcomeResolved {
+		t.Fatalf("answer: %s %v", outcome, err)
+	}
+	resumed, err := r.journal().Get(t.Context(), q.ID+":answer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.SpeakerKind == guard.Person {
+		t.Fatal("the answer turn is not a system turn")
+	}
+	steering := questionPersonInput(t, r, "steering-input", "Use the second format instead")
+	prepare := func(inputs map[string]acceptedSteering) *turnState {
+		t.Helper()
+		s := &turnState{runtime: r, input: resumed, turnID: "turn:" + resumed.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: inputs}
+		declarations, err := r.prepareBindingWorkTools(s.turnID, &toolPreparation{event: resumed}, s.bindings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.prepareInputBinding(declarations)
+		return s
+	}
+	bound := prepare(map[string]acceptedSteering{steering.ID: {event: steering}})
+	if _, ok := bound.bindings["bind_input"]; !ok {
+		t.Fatal("a resumed ordinary question dropped bind_input for its steering")
+	}
+	bind := func(turn *turnState, args string) (string, error) {
+		t.Helper()
+		return turn.bindings["bind_input"].Validate(provider.ToolCall{ID: "bind", Name: "bind_input", Arguments: args})
+	}
+	gate := func(turn *turnState, args string) string {
+		t.Helper()
+		return turn.bindings["read_work_progress"].Gate(provider.ToolCall{ID: "progress", Name: "read_work_progress", Arguments: args})
+	}
+	// The work call names the steering input, so it waits for the binding call
+	// that binds that same input.
+	request := `{"bindings":[{"quote":"Use the second format instead","target":{"class":"none"}}],"input_event_id":"` + steering.ID + `"}`
+	barrier, err := bind(bound, request)
+	if err != nil || barrier != "binding-gate:"+steering.ID {
+		t.Fatalf("steering binding target: %q %v", barrier, err)
+	}
+	if got := gate(bound, `{"id":"worker-1","input_binding":{"input_event_id":"`+steering.ID+`"}}`); got != barrier {
+		t.Fatalf("work call did not gate on the steering binding: %q", got)
+	}
+	bare := prepare(nil)
+	// The hosting system event is not a person input, so binding it by default
+	// is refused and a call that names no input runs without a gate.
+	if _, err = bind(bare, `{"bindings":[{"quote":"table","target":{"class":"none"}}]}`); err == nil {
+		t.Fatal("an answer turn bound its own system event")
+	}
+	if got := gate(bare, `{"id":"worker-1"}`); got != "" {
+		t.Fatalf("a turn without a person input gated work on %q", got)
+	}
+	if got := questionCall(t, bare.bindings, "read_work_progress", "progress", map[string]string{"id": "worker-1"}); got.Code == loop.Denied {
+		t.Fatalf("a turn without a person input denied its work call: %+v", got)
 	}
 }
