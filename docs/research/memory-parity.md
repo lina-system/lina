@@ -132,7 +132,7 @@ Model path:
 
 - **The Claude adapter refuses the pinned runtime's built-ins** ([#1108](https://github.com/thisisjun786/lina/issues/1108)): every request failed.
 - **`claudeproc` hangs after its context ends** ([#1109](https://github.com/thisisjun786/lina/issues/1109)): a timed-out depth-1 call never returns.
-- **No gateway route** ([#1110](https://github.com/thisisjun786/lina/issues/1110)): the model gateway Hermes used is not a route LINA can take.
+- **No gateway route** ([#1110](https://github.com/thisisjun786/lina/issues/1110)): the model gateway Hermes used is not a route LINA can take. Resolved in the design: a confirmed gateway base URL and key are served as a Claude API-key route, not by the subscription adapter ([runtime](../design/runtime.md#claude)).
 
 Compaction:
 
