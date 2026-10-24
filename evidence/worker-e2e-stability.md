@@ -255,6 +255,15 @@ across the `quota-fallback` and `double-stop` cases. The after run passed all 90
 repetitions with no failure or skip in 786.1 seconds. Repetition cannot mask this
 defect: a head without the unwrap fails every attempt.
 
+### Verification on the merged head
+
+The pull-request head adds this document to `origin/dev` at `fec22685`, so its
+code is that commit. The same first-shard command run on the merged head
+(`a6f6244b`) passed all 90 repetitions in 475.97 seconds of package execution,
+with no failure, skip or missing observation: `TestM2WorkerChoice` 30/30,
+`TestM2WorkerQuotaWindows` 30/30 and `TestM2WorkerQuotaPartialRecovery` 30/30.
+The two audited `internal/core/boot` tests also passed 5/5 on that head.
+
 ### Audit of the most recent 100 pull-request CI runs
 
 A snapshot taken on 2026-10-23 covers the 100 most recent pull-request runs of
@@ -278,5 +287,3 @@ results in #1272 and #1270; worker steering and message guards in #1238 and
 #1239. These are deterministic branch-local mismatches, not a shared timing
 fault. Every other failing test ran on one branch only, so no other e2e test met
 the two-branch threshold.
-
-
