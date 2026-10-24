@@ -25,7 +25,7 @@ import (
 
 // Redirect is what the client relayed from the sign-in browser: the code and
 // the state the authorization server returned, or the error fields of a
-// refused sign-in. Core judges neither.
+// refused sign-in. Core validates these against its pending attempt.
 type Redirect struct {
 	Code, State, Iss string
 	Error            string
@@ -107,13 +107,21 @@ func (a *Adapter) CompleteSignIn(ctx context.Context, redirect Redirect) (Accoun
 	}
 	if redirect.URL != "" {
 		parsed, err := url.Parse(redirect.URL)
-		if err != nil || parsed.Scheme != "http" || !loopback(parsed.Host) {
+		if err != nil || parsed.Scheme+"://"+parsed.Host+parsed.Path != pending.Redirect || parsed.User != nil || parsed.Fragment != "" {
 			return Account{}, ErrMisconfigured
 		}
-		query := parsed.Query()
-		redirect = Redirect{Code: query.Get("code"), State: query.Get("state"), Error: query.Get("error"), ErrorDescription: query.Get("error_description")}
+		query, err := url.ParseQuery(parsed.RawQuery)
+		if err != nil {
+			return Account{}, ErrMisconfigured
+		}
+		for _, values := range query {
+			if len(values) != 1 {
+				return Account{}, ErrMisconfigured
+			}
+		}
+		redirect = Redirect{Iss: query.Get("iss"), Code: query.Get("code"), State: query.Get("state"), Error: query.Get("error"), ErrorDescription: query.Get("error_description")}
 	}
-	if redirect.Error != "" || redirect.Code == "" || redirect.State != pending.State {
+	if redirect.Error != "" || redirect.Code == "" || redirect.State != pending.State || redirect.Iss != "" && redirect.Iss != a.base {
 		return Account{}, messenger.ErrNeedsSignIn
 	}
 	tokens, err := a.exchange(ctx, url.Values{
@@ -125,18 +133,37 @@ func (a *Adapter) CompleteSignIn(ctx context.Context, redirect Redirect) (Accoun
 	if err != nil {
 		return Account{}, err
 	}
+
+	// Validate the new token's identity before replacing a connected account.
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, a.base+"/v1/people/me", nil)
+	if err != nil {
+		return Account{}, ErrMisconfigured
+	}
+	if err := secret.InjectHeader(request.Header, "Authorization", "Bearer ", tokens.Access()); err != nil {
+		return Account{}, err
+	}
+	response, err := a.client.Do(request)
+	if err != nil {
+		return Account{}, errors.New("webex profile unavailable")
+	}
+	defer response.Body.Close()
+	var profile wirePerson
+	if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&profile) != nil || profile.ID == "" {
+		return Account{}, ErrMisconfigured
+	}
+	if a.expected != "" && profile.ID != a.expected {
+		return Account{}, messenger.ErrInvalid
+	}
+	account := Account{ID: profile.ID, Name: profile.DisplayName}
+	if len(profile.Emails) > 0 {
+		account.Email = profile.Emails[0]
+	}
 	if err := a.vault.PutTokens(TokenKey(a.person), tokens); err != nil {
 		return Account{}, err
 	}
 	a.mu.Lock()
-	a.account, a.haveMe = Account{}, false
+	a.account, a.haveMe = account, true
 	a.mu.Unlock()
-	account, err := a.me(ctx)
-	if err != nil {
-		// The tokens are good; only the profile read failed. Keep them and let
-		// the next read resolve the account.
-		return Account{}, err
-	}
 	return account, nil
 }
 
@@ -233,9 +260,7 @@ func (a *Adapter) exchange(ctx context.Context, form url.Values) (secrets.Tokens
 	form.Set("client_id", id)
 	form.Set("client_secret", shared)
 	encoded := form.Encode()
-	// The form is the only place these values appear; it is cleared once the
-	// request has been built.
-	defer clear([]byte(encoded))
+	// Credentials are sent only in this origin-bound token request.
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, a.base+"/v1/access_token", strings.NewReader(encoded))
 	if err != nil {
 		return secrets.Tokens{}, ErrMisconfigured
@@ -243,7 +268,7 @@ func (a *Adapter) exchange(ctx context.Context, form url.Values) (secrets.Tokens
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response, err := a.client.Do(request)
 	if err != nil {
-		return secrets.Tokens{}, err
+		return secrets.Tokens{}, errors.New("webex token endpoint unavailable")
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
@@ -254,24 +279,19 @@ func (a *Adapter) exchange(ctx context.Context, form url.Values) (secrets.Tokens
 	if response.StatusCode != http.StatusOK {
 		var refused wireError
 		if json.Unmarshal(raw, &refused) == nil && refused.Error != "" {
-			if refused.Error == "invalid_grant" {
+			if refused.Error == "invalid_grant" || refused.Error == "invalid_client" || refused.Error == "unauthorized_client" {
 				return secrets.Tokens{}, errRefused
 			}
-			return secrets.Tokens{}, fmt.Errorf("webex token: %s", refused.Error)
+			return secrets.Tokens{}, errors.New("webex token rejected")
 		}
 		return secrets.Tokens{}, fmt.Errorf("webex token status %d", response.StatusCode)
 	}
 	var token wireToken
-	if json.Unmarshal(raw, &token) != nil || token.Access == "" || token.ExpiresIn <= 0 || strings.ContainsAny(token.Access+token.Refresh, "\x00\r\n") {
+	if json.Unmarshal(raw, &token) != nil || token.Access == "" || token.Refresh == "" || token.ExpiresIn <= 0 || token.ExpiresIn > 366*24*3600 || strings.ContainsAny(token.Access+token.Refresh, "\x00\r\n") {
 		return secrets.Tokens{}, fmt.Errorf("webex token response shape")
 	}
 	expires := a.now().Add(time.Duration(token.ExpiresIn) * time.Second)
 	return secrets.NewTokensUntil(token.Access, token.Refresh, expires), nil
-}
-
-func loopback(host string) bool {
-	name, _, _ := strings.Cut(host, ":")
-	return name == "127.0.0.1" || name == "[::1]" || name == "localhost"
 }
 
 // reveal reads one credential for a form body. kit/secret offers only header

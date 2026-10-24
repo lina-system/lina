@@ -100,8 +100,8 @@ func (r wireRoom) Kind() string {
 // Cursor layout. A cursor names one of two reads and the anchors the platform
 // needs for it:
 //
-//	webex/1/fill/<before>/<newest>          older messages, backwards
-//	webex/1/fill/<before>/<newest>/<stop>   catching up backwards to <stop>
+//	webex/1/fill/<newest>/<before>          older messages, backwards
+//	webex/1/fill/<newest>/<before>/<stop>   catching up backwards to <stop>
 //	webex/1/tail/<newest>                   the newest page
 //
 // A fill walks back through a room's first read. When the room has no older

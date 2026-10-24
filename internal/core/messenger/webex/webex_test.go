@@ -20,6 +20,8 @@ import (
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
+var source = messenger.SourceID{Platform: "webex", Account: "person-1"}
+
 const (
 	person       = "person:test"
 	accessOne    = "synthetic-access-1"
@@ -187,7 +189,7 @@ func TestPageReadsOlderMessages(t *testing.T) {
 	adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
 	signIn(t, adapter)
 
-	first, err := adapter.Page(t.Context(), "room-1", "")
+	first, err := adapter.Page(t.Context(), source, "room-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,14 +206,14 @@ func TestPageReadsOlderMessages(t *testing.T) {
 		t.Fatalf("route/author = %s/%s", first.Messages[0].Route, first.Messages[0].Author.ID)
 	}
 
-	second, err := adapter.Page(t.Context(), "room-1", first.Next)
+	second, err := adapter.Page(t.Context(), source, "room-1", first.Next)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(second.Messages) != 2 || second.Messages[0].ID != "m-1" || second.Messages[1].ID != "m-2" {
 		t.Fatalf("second page = %#v, want m-1 then m-2", second.Messages)
 	}
-	third, err := adapter.Page(t.Context(), "room-1", second.Next)
+	third, err := adapter.Page(t.Context(), source, "room-1", second.Next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +228,7 @@ func TestPageReadsOlderMessages(t *testing.T) {
 	// The finished backfill hands over to the tail, which reads the newest
 	// page. Re-serving what was already read is how an edit arrives; the store
 	// ignores a message it already holds.
-	tail, err := adapter.Page(t.Context(), "room-1", third.Next)
+	tail, err := adapter.Page(t.Context(), source, "room-1", third.Next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,14 +272,14 @@ func TestPageTailAdmitsNewMessagesAndEdits(t *testing.T) {
 	adapter, _ := newAdapter(t, srv.URL, c, rec, func(cfg *webex.Config) { cfg.PageSize = 3 })
 	signIn(t, adapter)
 
-	backfill, err := adapter.Page(t.Context(), "room-1", "")
+	backfill, err := adapter.Page(t.Context(), source, "room-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if backfill.HasMore {
 		t.Fatal("a partial page announced older messages")
 	}
-	page, err := adapter.Page(t.Context(), "room-1", backfill.Next)
+	page, err := adapter.Page(t.Context(), source, "room-1", backfill.Next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +301,7 @@ func TestPageTailAdmitsNewMessagesAndEdits(t *testing.T) {
 	// A second tail read returns the same newest page, which carries the edit
 	// of m-4 so a later edit is picked up; the store admits only the newer
 	// revision.
-	next, err := adapter.Page(t.Context(), "room-1", page.Next)
+	next, err := adapter.Page(t.Context(), source, "room-1", page.Next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +339,7 @@ func TestRateLimitHonoursRetryAfter(t *testing.T) {
 	adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
 	signIn(t, adapter)
 
-	chats, err := adapter.ListChats(t.Context())
+	chats, err := adapter.ListChats(t.Context(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +372,7 @@ func TestRefreshBeforeExpiryRotatesStoredTokens(t *testing.T) {
 	signIn(t, adapter)
 	c.advance(15 * 24 * time.Hour)
 
-	if _, err := adapter.ListChats(t.Context()); err != nil {
+	if _, err := adapter.ListChats(t.Context(), source); err != nil {
 		t.Fatal(err)
 	}
 	tokens, err := vault.GetTokens(webex.TokenKey(person))
@@ -427,7 +429,7 @@ func TestRevokedTokenNeedsSignIn(t *testing.T) {
 	signIn(t, adapter)
 	c.advance(15 * 24 * time.Hour)
 
-	state, err := adapter.SignIn(t.Context())
+	state, err := adapter.SignIn(t.Context(), source)
 	if err != nil {
 		t.Fatalf("SignIn returned an error instead of a state: %v", err)
 	}
@@ -437,7 +439,7 @@ func TestRevokedTokenNeedsSignIn(t *testing.T) {
 	if _, err := vault.GetTokens(webex.TokenKey(person)); !errors.Is(err, secrets.ErrNotFound) {
 		t.Fatalf("revoked tokens remain: %v", err)
 	}
-	if _, err := adapter.ListChats(t.Context()); !errors.Is(err, messenger.ErrNeedsSignIn) {
+	if _, err := adapter.ListChats(t.Context(), source); !errors.Is(err, messenger.ErrNeedsSignIn) {
 		t.Fatalf("ListChats error = %v, want needs sign in", err)
 	}
 }
@@ -471,7 +473,7 @@ func TestUnauthorizedRefreshesOnce(t *testing.T) {
 	adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
 	signIn(t, adapter)
 
-	if _, err := adapter.ListChats(t.Context()); err != nil {
+	if _, err := adapter.ListChats(t.Context(), source); err != nil {
 		t.Fatal(err)
 	}
 	if len(rec.auth) != 2 || rec.auth[0] != "Bearer "+accessOne || rec.auth[1] != "Bearer "+accessTwo {
@@ -497,7 +499,7 @@ func TestListChatsFollowsLink(t *testing.T) {
 	defer srv.Close()
 	adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
 	signIn(t, adapter)
-	chats, err := adapter.ListChats(t.Context())
+	chats, err := adapter.ListChats(t.Context(), source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +519,7 @@ func TestAttachmentsStayOnWebexHosts(t *testing.T) {
 	defer srv.Close()
 	adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
 	signIn(t, adapter)
-	if _, err := adapter.FetchAttachment(t.Context(), "room-1", "https://example.com/file.png"); err == nil {
+	if _, err := adapter.FetchAttachment(t.Context(), source, "room-1", "https://example.com/file.png"); err == nil {
 		t.Fatal("an attachment from another host was fetched")
 	}
 }
@@ -552,7 +554,7 @@ func TestTailCatchUpKeepsEveryMessage(t *testing.T) {
 	signIn(t, adapter)
 
 	// The last read ended at m-1; more than one page arrived since.
-	page, err := adapter.Page(t.Context(), "room-1", webex.TailCursorForTest("m-1"))
+	page, err := adapter.Page(t.Context(), source, "room-1", webex.TailCursorForTest("m-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -562,14 +564,14 @@ func TestTailCatchUpKeepsEveryMessage(t *testing.T) {
 	if !page.HasMore || !strings.HasPrefix(string(page.Next), "webex/1/fill/") || !strings.HasSuffix(string(page.Next), "/"+webex.EncodeForTest("m-1")) {
 		t.Fatalf("the catch-up cursor lost its stop: %q", page.Next)
 	}
-	next, err := adapter.Page(t.Context(), "room-1", page.Next)
+	next, err := adapter.Page(t.Context(), source, "room-1", page.Next)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ids := messageIDs(next.Messages); strings.Join(ids, ",") != "m-2" {
 		t.Fatalf("second catch-up page = %v, want only m-2 above the stop", ids)
 	}
-	if next.HasMore || string(next.Next) != string(webex.TailCursorForTest("m-2")) {
+	if next.HasMore || string(next.Next) != string(webex.TailCursorForTest("m-4")) {
 		t.Fatalf("catch-up did not hand over to the tail: %q", next.Next)
 	}
 }
@@ -592,4 +594,106 @@ func messageIDs(messages []messenger.Message) []string {
 		ids = append(ids, message.ID)
 	}
 	return ids
+}
+
+func TestReadRejectsAnotherAccount(t *testing.T) {
+	rec := &recorder{}
+	c := &clock{at: time.Now()}
+	srv := signInServer(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("account crossed into API read")
+		http.NotFound(w, r)
+	})
+	defer srv.Close()
+	adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
+	signIn(t, adapter)
+	if _, err := adapter.ListChats(t.Context(), messenger.SourceID{Platform: "webex", Account: "other"}); !errors.Is(err, messenger.ErrInvalid) {
+		t.Fatal(err)
+	}
+}
+
+func TestSignInRejectsWrongIssuerAndPastedDestination(t *testing.T) {
+	for _, kind := range []string{"issuer", "port", "path", "duplicate-state"} {
+		t.Run(kind, func(t *testing.T) {
+			rec := &recorder{}
+			c := &clock{at: time.Now()}
+			srv := signInServer(t, rec, func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
+			defer srv.Close()
+			adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
+			if err := adapter.Configure(t.Context(), clientID, clientSecret); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := adapter.BeginSignIn(t.Context(), 32123)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, _ := url.Parse(raw)
+			state := parsed.Query().Get("state")
+			redirect := webex.Redirect{Code: "code", State: state, Iss: "https://other.example"}
+			if kind != "issuer" {
+				target := "http://127.0.0.1:32123/auth/callback?code=code&state=" + state
+				switch kind {
+				case "port":
+					target = strings.Replace(target, ":32123", ":32124", 1)
+				case "path":
+					target = strings.Replace(target, "/auth/callback", "/other", 1)
+				case "duplicate-state":
+					target += "&state=" + state
+				}
+				redirect = webex.Redirect{URL: target}
+			}
+			if _, err := adapter.CompleteSignIn(t.Context(), redirect); err == nil {
+				t.Fatal("invalid callback accepted")
+			}
+			if len(rec.forms) != 0 {
+				t.Fatal("invalid callback exchanged a code")
+			}
+		})
+	}
+}
+
+func TestPagingRejectsForeignCollectionAndLoops(t *testing.T) {
+	for _, suffix := range []string{"/v1/people/me", "/v1/rooms?max=2"} {
+		t.Run(suffix, func(t *testing.T) {
+			rec := &recorder{}
+			c := &clock{at: time.Now()}
+			var base string
+			srv := signInServer(t, rec, func(w http.ResponseWriter, r *http.Request) {
+				if len(rec.paths) > 2 {
+					http.Error(w, "loop", 500)
+					return
+				}
+				rec.add(r.URL.String())
+				w.Header().Set("Link", "<"+base+suffix+">; rel=\"next\"")
+				w.Write([]byte(`{"items":[{"id":"room","type":"group"}]}`))
+			})
+			defer srv.Close()
+			base = srv.URL
+			adapter, _ := newAdapter(t, base, c, rec, nil)
+			signIn(t, adapter)
+			if _, err := adapter.ListChats(t.Context(), source); err == nil {
+				t.Fatal("invalid pagination accepted")
+			}
+			if len(rec.paths) > 1 {
+				t.Fatal("repeated page fetched")
+			}
+		})
+	}
+}
+
+func TestPartialPageFollowsHistoryLink(t *testing.T) {
+	rec := &recorder{}
+	c := &clock{at: time.Now()}
+	var base string
+	srv := signInServer(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", "<"+base+"/v1/messages?roomId=room-1&beforeMessage=m-2>; rel=\"next\"")
+		w.Write([]byte(`{"items":[{"id":"m-2","roomId":"room-1","personId":"person-2","created":"2026-10-20T12:00:00Z","text":"partial page"}]}`))
+	})
+	defer srv.Close()
+	base = srv.URL
+	adapter, _ := newAdapter(t, base, c, rec, nil)
+	signIn(t, adapter)
+	page, err := adapter.Page(t.Context(), source, "room-1", "")
+	if err != nil || !page.HasMore {
+		t.Fatalf("older history lost: %+v %v", page, err)
+	}
 }

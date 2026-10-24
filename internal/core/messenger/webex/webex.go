@@ -67,11 +67,10 @@ var ErrMisconfigured = errors.New("webex_misconfigured")
 // StatusError is a refusal by the Webex API.
 type StatusError struct {
 	Status int
-	Body   string
 }
 
 func (e *StatusError) Error() string {
-	return fmt.Sprintf("webex status %d: %s", e.Status, strings.TrimSpace(e.Body))
+	return fmt.Sprintf("webex status %d", e.Status)
 }
 
 // RetryError reports a rate limit whose wait is longer than one read may hold.
@@ -94,6 +93,8 @@ type Account struct {
 type Config struct {
 	// Person is the owner of the credentials and of the source.
 	Person string
+	// Account pins a previously connected platform identity.
+	Account string
 	// Vault is Core's secret store. Only Core reads it.
 	Vault *secrets.Store
 	// BaseURL overrides Webex's origin in tests. Production leaves it empty.
@@ -114,6 +115,7 @@ type Config struct {
 
 // Adapter reads one person's Webex account.
 type Adapter struct {
+	expected string
 	person   string
 	vault    *secrets.Store
 	base     string
@@ -166,9 +168,10 @@ func New(cfg Config) (*Adapter, error) {
 		sleep = wait
 	}
 	return &Adapter{
-		person: cfg.Person,
-		vault:  cfg.Vault,
-		base:   base,
+		person:   cfg.Person,
+		expected: cfg.Account,
+		vault:    cfg.Vault,
+		base:     base,
 		client: &http.Client{
 			Transport: transport,
 			Timeout:   60 * time.Second,
@@ -214,7 +217,13 @@ func ClientIDKey(person string) secrets.Key {
 // SignIn reports whether the source can read. It replaces the access token when
 // the recorded expiry is close, so a dead refresh token shows as needs sign-in
 // before any read fails.
-func (a *Adapter) SignIn(ctx context.Context) (messenger.SignInState, error) {
+func (a *Adapter) SignIn(ctx context.Context, source messenger.SourceID) (messenger.SignInState, error) {
+	if err := a.checkSource(ctx, source); err != nil {
+		if errors.Is(err, messenger.ErrNeedsSignIn) {
+			return messenger.NeedsSignIn, nil
+		}
+		return messenger.Failing, err
+	}
 	if _, err := a.access(ctx); err != nil {
 		if errors.Is(err, messenger.ErrNeedsSignIn) {
 			return messenger.NeedsSignIn, nil
@@ -226,10 +235,18 @@ func (a *Adapter) SignIn(ctx context.Context) (messenger.SignInState, error) {
 
 // ListChats lists the person's rooms, oldest activity last, following the
 // platform's Link header across pages.
-func (a *Adapter) ListChats(ctx context.Context) ([]messenger.Chat, error) {
+func (a *Adapter) ListChats(ctx context.Context, source messenger.SourceID) ([]messenger.Chat, error) {
+	if err := a.checkSource(ctx, source); err != nil {
+		return nil, err
+	}
 	var chats []messenger.Chat
 	next := a.base + "/v1/rooms?max=" + strconv.Itoa(a.pageSize)
+	seen := map[string]bool{}
 	for next != "" {
+		if seen[next] {
+			return nil, ErrMisconfigured
+		}
+		seen[next] = true
 		var page roomsPage
 		link, err := a.get(ctx, next, &page)
 		if err != nil {
@@ -238,7 +255,10 @@ func (a *Adapter) ListChats(ctx context.Context) ([]messenger.Chat, error) {
 		for _, room := range page.Items {
 			chats = append(chats, messenger.Chat{ID: room.ID, Name: room.Title, Kind: room.Kind()})
 		}
-		next = nextLink(link, a.base)
+		next, err = nextLink(link, next)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return chats, nil
 }
@@ -246,7 +266,10 @@ func (a *Adapter) ListChats(ctx context.Context) ([]messenger.Chat, error) {
 // Page reads one page of a room oldest first. Cursors walk backwards through
 // the room's history with beforeMessage, then stay on the newest page so later
 // messages and edits arrive; a finished backfill hands over to that newest page.
-func (a *Adapter) Page(ctx context.Context, chat string, cursor messenger.Cursor) (messenger.Page, error) {
+func (a *Adapter) Page(ctx context.Context, source messenger.SourceID, chat string, cursor messenger.Cursor) (messenger.Page, error) {
+	if err := a.checkSource(ctx, source); err != nil {
+		return messenger.Page{}, err
+	}
 	if chat == "" {
 		return messenger.Page{}, messenger.ErrInvalid
 	}
@@ -259,10 +282,20 @@ func (a *Adapter) Page(ctx context.Context, chat string, cursor messenger.Cursor
 		query.Set("beforeMessage", at.Before)
 	}
 	var list listPage
-	if _, err := a.get(ctx, a.base+"/v1/messages?"+query.Encode(), &list); err != nil {
+	target := a.base + "/v1/messages?" + query.Encode()
+	link, err := a.get(ctx, target, &list)
+	if err != nil {
 		return messenger.Page{}, err
 	}
+	next, err := nextLink(link, target)
+	if err != nil {
+		return messenger.Page{}, err
+	}
+	more := next != "" || len(list.Items) >= a.pageSize
 	if len(list.Items) == 0 {
+		if next != "" {
+			return messenger.Page{}, ErrMisconfigured
+		}
 		if at.Mode == modeTail {
 			// Nothing newer: the read position stays where it was.
 			return messenger.Page{Next: cursor}, nil
@@ -278,7 +311,7 @@ func (a *Adapter) Page(ctx context.Context, chat string, cursor messenger.Cursor
 	reverse(messages)
 	oldest := list.Items[len(list.Items)-1].ID
 	if at.Mode == modeTail {
-		if len(list.Items) >= a.pageSize && at.Newest != "" && !containsID(list.Items, at.Newest) {
+		if more && at.Newest != "" && !containsID(list.Items, at.Newest) {
 			// More arrived than one page holds: walk back to what was already
 			// read before moving the tail forward.
 			return messenger.Page{Messages: messages, Next: fillCursor(oldest, list.Items[0].ID, at.Newest), HasMore: true}, nil
@@ -290,7 +323,7 @@ func (a *Adapter) Page(ctx context.Context, chat string, cursor messenger.Cursor
 	if at.Stop != "" {
 		for i, message := range messages {
 			if message.ID == at.Stop {
-				return messenger.Page{Messages: messages[i+1:], Next: tailCursor(list.Items[0].ID)}, nil
+				return messenger.Page{Messages: messages[i+1:], Next: tailCursor(at.Newest)}, nil
 			}
 		}
 	}
@@ -298,7 +331,7 @@ func (a *Adapter) Page(ctx context.Context, chat string, cursor messenger.Cursor
 	if newest == "" {
 		newest = list.Items[0].ID
 	}
-	if len(list.Items) < a.pageSize {
+	if !more {
 		// The room's first read reached its beginning.
 		return messenger.Page{Messages: messages, Next: tailCursor(newest)}, nil
 	}
@@ -306,33 +339,49 @@ func (a *Adapter) Page(ctx context.Context, chat string, cursor messenger.Cursor
 }
 
 // Members lists the people in a room.
-func (a *Adapter) Members(ctx context.Context, chat string) ([]messenger.Author, error) {
+func (a *Adapter) Members(ctx context.Context, source messenger.SourceID, chat string) ([]messenger.Author, error) {
+	if err := a.checkSource(ctx, source); err != nil {
+		return nil, err
+	}
 	if chat == "" {
 		return nil, messenger.ErrInvalid
 	}
 	var members []messenger.Author
 	next := a.base + "/v1/memberships?max=" + strconv.Itoa(a.pageSize) + "&roomId=" + url.QueryEscape(chat)
+	seen := map[string]bool{}
 	for next != "" {
+		if seen[next] {
+			return nil, ErrMisconfigured
+		}
+		seen[next] = true
 		var page membershipsPage
 		link, err := a.get(ctx, next, &page)
 		if err != nil {
 			return nil, err
 		}
 		for _, member := range page.Items {
-			members = append(members, messenger.Author{ID: member.PersonID, Name: member.Name()})
+			members = append(members, messenger.Author{ID: member.PersonID, Name: member.Name(), Email: member.PersonEmail})
 		}
-		next = nextLink(link, a.base)
+		next, err = nextLink(link, next)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return members, nil
 }
 
 // Live reports no events: a person's Webex token has no push channel that Core
 // may hold open, so the source is read on its schedule.
-func (a *Adapter) Live(context.Context, func(messenger.Event) error) error { return nil }
+func (a *Adapter) Live(ctx context.Context, source messenger.SourceID, _ func(messenger.Event) error) error {
+	return a.checkSource(ctx, source)
+}
 
 // FetchAttachment reads one attachment the room's messages named. The URL must
 // be on the API origin, so a message can never send the bearer elsewhere.
-func (a *Adapter) FetchAttachment(ctx context.Context, chat, id string) (io.ReadCloser, error) {
+func (a *Adapter) FetchAttachment(ctx context.Context, source messenger.SourceID, chat, id string) (io.ReadCloser, error) {
+	if err := a.checkSource(ctx, source); err != nil {
+		return nil, err
+	}
 	if chat == "" {
 		return nil, messenger.ErrInvalid
 	}
@@ -343,7 +392,7 @@ func (a *Adapter) FetchAttachment(ctx context.Context, chat, id string) (io.Read
 	if err != nil {
 		return nil, messenger.ErrInvalid
 	}
-	response, err := a.send(ctx, request, false)
+	response, err := a.send(ctx, request, true)
 	if err != nil {
 		return nil, err
 	}
@@ -379,7 +428,7 @@ func (a *Adapter) Capabilities() messenger.Capabilities {
 
 func (a *Adapter) sameOrigin(raw string) error {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" {
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
 		return messenger.ErrInvalid
 	}
 	base, err := url.Parse(a.base)
@@ -399,8 +448,8 @@ func (a *Adapter) messages(ctx context.Context, chat string, items []wireMessage
 	}
 	out := make([]messenger.Message, 0, len(items))
 	for _, item := range items {
-		if item.ID == "" || item.RoomID != "" && item.RoomID != chat {
-			continue
+		if item.ID == "" || item.PersonID == "" || item.Created == "" || item.RoomID != "" && item.RoomID != chat {
+			return nil, ErrMisconfigured
 		}
 		at, err := parseTime(item.Created)
 		if err != nil {
@@ -408,7 +457,7 @@ func (a *Adapter) messages(ctx context.Context, chat string, items []wireMessage
 		}
 		message := messenger.Message{
 			ID:      item.ID,
-			Author:  messenger.Author{ID: item.PersonID, Name: item.PersonEmail},
+			Author:  messenger.Author{ID: item.PersonID, Name: item.PersonEmail, Email: item.PersonEmail},
 			Route:   messenger.RouteParticipant,
 			At:      at,
 			Text:    item.Body(),
@@ -486,8 +535,12 @@ func (a *Adapter) get(ctx context.Context, rawurl string, out any) (string, erro
 // rate limit the platform asks for. A refresh that the platform refuses marks
 // the source needs sign-in; nothing is retried with another credential.
 func (a *Adapter) send(ctx context.Context, request *http.Request, retryable bool) (*http.Response, error) {
+	if err := a.sameOrigin(request.URL.String()); err != nil {
+		return nil, err
+	}
 	var last error
-	for attempt := range maxAttempts {
+	refreshed := false
+	for range maxAttempts {
 		tokens, err := a.access(ctx)
 		if err != nil {
 			return nil, err
@@ -501,19 +554,29 @@ func (a *Adapter) send(ctx context.Context, request *http.Request, retryable boo
 		}
 		response, err := a.client.Do(outgoing)
 		if err != nil {
-			return nil, err
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, errors.New("webex request unavailable")
 		}
 		switch {
 		case response.StatusCode >= 200 && response.StatusCode < 300:
 			return response, nil
-		case response.StatusCode == http.StatusUnauthorized && retryable && attempt == 0:
+		case response.StatusCode == http.StatusUnauthorized && retryable && !refreshed:
+			refreshed = true
 			drain(response)
 			if _, err := a.refresh(ctx, true); err != nil {
 				return nil, err
 			}
 			last = &StatusError{Status: http.StatusUnauthorized}
 			continue
-		case response.StatusCode == http.StatusTooManyRequests && retryable:
+		case response.StatusCode == http.StatusUnauthorized:
+			drain(response)
+			if err := a.vault.Delete(TokenKey(a.person)); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+				return nil, err
+			}
+			return nil, messenger.ErrNeedsSignIn
+		case (response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusLocked) && retryable:
 			after := retryAfter(response.Header, a.now())
 			drain(response)
 			if after > maxRetryWait {
@@ -525,9 +588,8 @@ func (a *Adapter) send(ctx context.Context, request *http.Request, retryable boo
 			last = &RetryError{After: after}
 			continue
 		default:
-			raw, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
-			response.Body.Close()
-			return nil, &StatusError{Status: response.StatusCode, Body: string(raw)}
+			drain(response)
+			return nil, &StatusError{Status: response.StatusCode}
 		}
 	}
 	if last == nil {
@@ -562,37 +624,30 @@ func retryAfter(header http.Header, now time.Time) time.Duration {
 
 // nextLink reads the Link header's next page. It keeps the API origin, so a
 // response can never move the bearer to another host.
-func nextLink(header, base string) string {
+func nextLink(header, current string) (string, error) {
 	for _, part := range strings.Split(header, ",") {
 		fields := strings.Split(part, ";")
-		if len(fields) < 2 {
+		next := false
+		for _, field := range fields[1:] {
+			if strings.TrimSpace(field) == `rel="next"` {
+				next = true
+			}
+		}
+		if !next {
 			continue
 		}
 		target := strings.TrimSpace(fields[0])
 		if !strings.HasPrefix(target, "<") || !strings.HasSuffix(target, ">") {
-			continue
+			return "", ErrMisconfigured
 		}
-		rel := false
-		for _, field := range fields[1:] {
-			if strings.TrimSpace(field) == `rel="next"` {
-				rel = true
-			}
+		parsed, err := url.Parse(strings.TrimSuffix(strings.TrimPrefix(target, "<"), ">"))
+		base, baseErr := url.Parse(current)
+		if err != nil || baseErr != nil || parsed.User != nil || parsed.Fragment != "" || !strings.EqualFold(parsed.Host, base.Host) || parsed.Scheme != base.Scheme || parsed.Path != base.Path || parsed.Query().Get("roomId") != base.Query().Get("roomId") {
+			return "", ErrMisconfigured
 		}
-		if !rel {
-			continue
-		}
-		target = strings.TrimSuffix(strings.TrimPrefix(target, "<"), ">")
-		parsed, err := url.Parse(target)
-		if err != nil {
-			return ""
-		}
-		section, err := url.Parse(base)
-		if err != nil || !strings.EqualFold(parsed.Host, section.Host) || parsed.Scheme != section.Scheme {
-			return ""
-		}
-		return target
+		return parsed.String(), nil
 	}
-	return ""
+	return "", nil
 }
 
 func containsID(items []wireMessage, id string) bool {
@@ -616,7 +671,7 @@ func parseTime(value string) (time.Time, error) {
 	}
 	at, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("webex time %q: %w", value, err)
+		return time.Time{}, ErrMisconfigured
 	}
 	return at, nil
 }
@@ -634,3 +689,20 @@ func attachmentName(raw string) string {
 	}
 	return name
 }
+
+// checkSource binds every read to the account authenticated by these tokens.
+func (a *Adapter) checkSource(ctx context.Context, source messenger.SourceID) error {
+	if source.Platform != Platform || source.Account == "" {
+		return messenger.ErrInvalid
+	}
+	account, err := a.me(ctx)
+	if err != nil {
+		return err
+	}
+	if account.ID != source.Account {
+		return messenger.ErrInvalid
+	}
+	return nil
+}
+
+var _ messenger.Adapter = (*Adapter)(nil)

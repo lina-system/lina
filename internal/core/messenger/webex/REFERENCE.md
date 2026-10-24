@@ -13,7 +13,7 @@ Read on 2026-10-24; nothing was run against a real account.
 **Seen.**
 
 - Webex publishes an OpenAPI description of its messaging API
-  (`webex/webex-openapi-specs`, `public-spec/webex-messaging.json`). The
+  ([webex/webex-openapi-specs](https://github.com/webex/webex-openapi-specs/blob/main/public-spec/webex-messaging.json), `public-spec/webex-messaging.json`). The
   endpoints this adapter uses are `/rooms`, `/messages`, `/memberships` and
   `/people/me`, plus `/v1/authorize` and `/v1/access_token` for sign-in.
 - `/messages` takes `roomId`, `max` (up to 100), `before` (ISO 8601 time) and
@@ -27,7 +27,8 @@ Read on 2026-10-24; nothing was run against a real account.
   person's `id`, `displayName` and `emails`.
 - Rate limiting is HTTP 429 with `Retry-After` in seconds; the API docs state
   the same for 423. The API follows RFC 5988 link headers.
-- The developer docs describe an OAuth 2.0 authorization-code flow against
+- The [integration docs](https://developer.webex.com/docs/integrations) and
+  [Login with Webex](https://developer.webex.com/docs/login-with-webex) describe an OAuth 2.0 authorization-code flow against
   `https://webexapis.com/v1/authorize` and `https://webexapis.com/v1/access_token`,
   with `code_challenge`/`code_challenge_method=S256` supported and recommended,
   a registered redirect URI that must match the request, and a token response
@@ -42,22 +43,25 @@ Read on 2026-10-24; nothing was run against a real account.
 
 **Inferred.**
 
-- `beforeMessage` is the only stable history cursor a person's integration can
-  use; a time cursor would repeat or skip messages that share a timestamp. This
+- `beforeMessage` provides an identity-based history cursor; a time cursor would repeat or skip messages that share a timestamp. This
   port therefore walks back with `beforeMessage` and keeps the newest message
   id as its tail anchor.
 - An edit is not a separate event on this API: a re-read of a message that now
   has `updated` later than the stored revision is the edit
   (`Capabilities.Edits`). Webex reports no deletions, so an absent message is
   never a deletion (`Capabilities.Deletions` is false).
-- A person's token has no push channel that Core may hold open, so the source
-  is read on its schedule (`LiveEvents` is false).
+- This implementation uses polling rather than Webex webhooks, which need a
+  reachable inbound endpoint (`LiveEvents` is false).
 - Webex requires the redirect URI to match the registered one, including the
   loopback port. The client reports the port it listens on, and the person
   registers `http://127.0.0.1:<port>/auth/callback` in their integration.
 
 **Unknown.**
 
+- Live registration and consent in an actual Webex tenant were not tested.
+  Public docs require an exact redirect match and show loopback examples, but
+  do not establish acceptance by every integration or organization. The client
+  uses a registered fixed port, and pasted callbacks use the same address.
 - Whether an org policy can withhold scopes the person approved, and what
   status the API returns then. Any non-401/429 refusal is reported as the
   source's failure cause, which is the designed fallback.
@@ -91,9 +95,9 @@ is a source failure and is retried on the next read.
 
 ## Cursors
 
-    webex/1/fill/<before>/<newest>/<stop>
+    webex/1/fill/<newest>/<before>
+    webex/1/fill/<newest>/<before>/<stop>
     webex/1/tail/<newest>
-    webex/1/tail/<newest>/<stop>
 
 A fill walks back through a room's first read. When the room has no older
 messages left it hands over to the tail, anchored on the newest message the
@@ -110,3 +114,33 @@ platform's own pacing. A wait longer than a minute, or a limit that outlasts the
 read's attempts, ends that read with the source failing and the rate limit as
 its cause; the cursor is untouched, and the next read that succeeds clears the
 cause.
+
+
+## Running Core and setup
+
+The `webex` capability is installed in Core's normal boot. `lina webex --socket
+<socket>` reads one JSON settings request from stdin and prints its result.
+The client owns a fixed loopback listener on port 8400; it never silently chooses
+another port when that port is busy.
+
+1. Create your own integration in the Webex developer portal. Register
+   `http://127.0.0.1:8400/auth/callback` and enable `spark:rooms_read`,
+   `spark:messages_read`, `spark:memberships_read`, and `spark:people_read`.
+2. Send `{"operation":"configure","platform":"webex","client_id":"...",
+   "client_secret":"..."}` through stdin. Do not put the secret in shell
+   arguments, conversation input or the repository. Core keeps it in its secret
+   store; any temporary request file must be private and removed after use.
+3. Send `{"operation":"sign_in","platform":"webex"}`. The installed client
+   opens the system browser. For a remote terminal, save this non-secret request
+   in a file and use `--request <file> --paste`; open the printed URL and paste
+   the final callback URL. A failed loopback navigation is expected in paste
+   mode; copy the address. The registered callback must still match exactly.
+4. `{"operation":"list"}` reports state. To disconnect, send
+   `{"operation":"disconnect","account":"<platform account ID>"}`.
+
+One connected account is supported initially. Reauthentication cannot change
+its platform identity. Disconnect before configuring a different integration
+or account. Failed reads retry every five minutes; revoked credentials require
+sign-in. No actual account, model provider, browser session, or private message
+was used for verification. Synthetic headless acceptance exercises the client,
+Core boot, relay, refresh, paging, canon, restart, rate limit and disconnect.
