@@ -19,6 +19,25 @@ and `README.md`, inspected before implementing the adapter.
   pooling and idle shutdown belong to #168. The SDK and its platform runtime are
   installed by the person from this lockfile, never redistributed by LINA.
 
+## Model gateway
+
+Reference: the vendor command's settings login (an `apiKeyHelper` and
+`ANTHROPIC_BASE_URL`) observed on the #849 parity host, and the Messages API
+adapter of #882.
+
+- **Seen:** the vendor command there signed in through `apiKeyHelper` and
+  `ANTHROPIC_BASE_URL`. With those two values added to the adapter's scratch
+  environment, the same gateway answered LINA's Claude calls; the parity note
+  records the counts ([memory parity](../../docs/research/memory-parity.md)).
+- **Inferred:** that login is an API-key account for an Anthropic-compatible
+  endpoint, not a subscription login. The subscription adapter cannot use it
+  because it loads no settings and passes no key or base-URL variable. The
+  Messages adapter reaches the same gateway with the confirmed base URL and key,
+  and those two values are all a gateway setup supplies.
+- **Unknown:** which gateway implementations keep thinking signatures, cache
+  marks and the batch endpoint; whether a gateway's key is long-lived. An
+  endpoint that does not speak the Messages API is not a Claude route.
+
 ## Implementation notes
 
 Design authority: [Go Core](../../docs/design/go-core.md) and the contracts it cites.

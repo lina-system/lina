@@ -18,6 +18,11 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// Three installed-Core restarts wait out the TUI's retry ladder, which starts
+// at one second and doubles to the 32-second cap, so the scenario needs a total
+// that covers three outages at that cap plus installation and its assertions.
+const reconnectScenarioTimeout = 12 * operationTimeout
+
 func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 	t.Parallel()
 
@@ -48,7 +53,7 @@ func TestM1TUIAgentReconnectInstalledCore(t *testing.T) {
 		emitResponse(w, fmt.Sprintf("%s-%d", scenario.Reply, calls.Add(1)), true)
 	}))
 	defer provider.Close()
-	h, start := installedConversationHarness(t, provider.URL)
+	h, start := installedConversationHarnessWithin(t, reconnectScenarioTimeout, provider.URL)
 	core := start(true)
 	client, err := clientapi.DialWithCapabilities(h.ctx, h.socket, "test", []protocol.Capability{{Name: "agents", Version: "1.0"}})
 	if err != nil {

@@ -165,6 +165,7 @@ func (c *channelRuntime) admitChannelInput(ctx context.Context, shared *conversa
 	answer := protocol.ItemDone{Text: &text, Speaker: &speaker, AgentID: &input.AgentID}
 	if input.SpeakerKind == guard.Person {
 		answer.PersonID = &input.PersonID
+		answer.Binding = shared.chipFor(ctx, input)
 	}
 	if err = shared.publish(ctx, protocol.KindItemDone, id, answer); err != nil {
 		return err
@@ -243,6 +244,33 @@ func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationR
 	}); err != nil {
 		return err
 	}
+	chipLine := ""
+	// A control command is not a message about an item; its reply carries
+	// only the control answer.
+	claimed := 0
+	if err := view.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT count(*) FROM channel_steering WHERE inbox_id=?", inboxNumber(parent)).Scan(&claimed)
+	}); err != nil {
+		return err
+	}
+	if claimed == 0 {
+		if input, err := view.journal().Get(ctx, parent); err == nil {
+			if chip := view.chipFor(ctx, input); chip != nil && chip.Show {
+				chipLine = channelChipText(chip)
+			}
+		}
+	}
+	// Attach the chip to a direct reply, never a worker follow-up.
+	replyID := ""
+	for _, id := range ids {
+		item, err := view.journal().Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if item.ParentID == parent && item.SpeakerKind == guard.Agent {
+			replyID = id
+		}
+	}
 	for _, id := range ids {
 		item, err := view.journal().Get(ctx, id)
 		if err != nil {
@@ -277,6 +305,11 @@ func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationR
 		parts, err := shape(text, summary, link)
 		if err != nil {
 			return err
+		}
+		// One line under the reply names the item the person's message is
+		// about and how to reach the move list.
+		if chipLine != "" && id == replyID {
+			parts = append(parts, chipLine)
 		}
 		if err = c.store.Enqueue(ctx, channels.Message{ID: "channel-reply:" + id, Address: event.Address, Agent: in.agent, LedgerRef: id, ReplyTo: in.native, Parts: parts}); err != nil {
 			return err
