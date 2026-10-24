@@ -27,9 +27,10 @@ func TestSemanticPaletteProfiles(t *testing.T) {
 					return lipgloss.Color(strconv.Itoa(c.ANSI256))
 				case TrueColor:
 					return lipgloss.Color(c.Hex)
-				default:
+				case Monochrome:
 					return lipgloss.NoColor{}
 				}
+				return lipgloss.NoColor{}
 			}
 			for _, tc := range []struct {
 				name   string
