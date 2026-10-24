@@ -187,11 +187,8 @@ func complete(c CaseResult, repeat int) bool {
 // configured three repeats; fewer runs can still be scored, but they do not decide.
 func ship(changed []string, agents []AgentSummary, repeat int) Ship {
 	result := Ship{Changed: append([]string(nil), changed...)}
-	if repeat < 3 {
-		result.Reasons = append(result.Reasons, "fewer than three repeats")
-	}
 	if len(changed) == 0 {
-		result.Reasons = append(result.Reasons, "no changed agent named")
+		result.Reasons = []string{"no changed agent named"}
 		return result
 	}
 	observed := map[string]bool{}
@@ -225,6 +222,9 @@ func ship(changed []string, agents []AgentSummary, repeat int) Ship {
 		if len(a.Regressions) > 0 {
 			result.Reasons = append(result.Reasons, a.Agent+": regressed other agent")
 		}
+	}
+	if repeat < 3 {
+		result.Reasons = append(result.Reasons, "fewer than three repeats")
 	}
 	result.Ships = len(result.Reasons) == 0
 	return result

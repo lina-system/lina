@@ -12,7 +12,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/provider"
-	"github.com/thisisjun786/lina/persona"
 )
 
 type fakeAdapter struct {
@@ -96,18 +95,13 @@ func TestPlayerSendsLayersAndDropsInjectedTurns(t *testing.T) {
 	}
 }
 
-func TestInstructionsUseTheStarterDisplayName(t *testing.T) {
-	for _, starter := range persona.Starters() {
-		text, err := Instructions(Preset{Layers: agents.Layers{Core: "core"}, WorkMethod: `{"schema":1,"preset":"` + starter.Key + `"}`}, starter.Key)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(text, `"name":"`+starter.Name+`"`) {
-			t.Fatalf("%s: instructions lack the shipped name %s", starter.Key, starter.Name)
-		}
-		if starter.Name != starter.Key && strings.Contains(text, `"name":"`+starter.Key+`"`) {
-			t.Fatalf("%s: instructions use the preset key as the name", starter.Key)
-		}
+func TestInstructionsUseTheStarterName(t *testing.T) {
+	text, err := Instructions(Preset{Layers: agents.Layers{Core: "core text"}}, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, `"name":"Sion"`) || strings.Contains(text, `"name":"dev"`) {
+		t.Fatalf("instructions identify the role key: %s", text)
 	}
 }
 

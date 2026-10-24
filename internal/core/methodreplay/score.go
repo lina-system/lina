@@ -57,8 +57,7 @@ func chars(text string) int {
 
 // proseLines returns visible lines outside fenced code blocks. Code samples are
 // not the person's prose, so questions, identifiers and language there do not
-// count against the reply. The fence kept is the whole opening run, so a
-// three-backtick line inside a four-backtick block does not end it.
+// count against the reply.
 func proseLines(text string) []string {
 	var out []string
 	fence := ""
@@ -197,9 +196,7 @@ func doneEvidence(lines []string) bool {
 	return false
 }
 
-// language requires every visible prose line of ten or more letters to be in
-// the person's language. Korean needs Hangul. English is Latin letters, so
-// Hangul, Han, kana, Cyrillic and any other non-Latin script fail an English line.
+// language requires every visible prose line to be in the person's language.
 func language(lines []string, want string) bool {
 	for _, line := range lines {
 		letters, hangul := 0, 0
