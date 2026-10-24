@@ -4,7 +4,9 @@ package runs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/kit/materials"
@@ -65,6 +67,9 @@ func (s *Service) land(ctx context.Context, r *Record, outcome Outcome) error {
 		outcome = Partial
 		r.Artifact.Missing = append(r.Artifact.Missing, "Further effects await a separate authorized decision.")
 	}
+	if r.Brief.FollowOf != "" && outcome == Partial {
+		markOpenQuestions(&r.Artifact)
+	}
 	if r.Artifact.Body != "" || len(r.Checkpoint) > 0 {
 		body, err := json.Marshal(struct {
 			Type       string
@@ -100,3 +105,45 @@ func (s *Service) land(ctx context.Context, r *Record, outcome Outcome) error {
 	return s.save(ctx, *r, false)
 }
 func checkpointBytes(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
+
+// markOpenQuestions records each still-missing question in the result, with
+// the reason the follow-up gave. A reasonless gap is left unmarked.
+func markOpenQuestions(a *Artifact) {
+	reason := strings.TrimSpace(a.OpenReason)
+	if reason == "" || len(a.Missing) == 0 || openQuestionsCover(a.Open, a.Missing) {
+		return
+	}
+	var b strings.Builder
+	b.WriteString(a.Body)
+	if a.Body != "" && !strings.HasSuffix(a.Body, "\n") {
+		b.WriteByte('\n')
+	}
+	a.Open = nil
+	for _, q := range a.Missing {
+		q = strings.TrimSpace(q)
+		if q == "" {
+			continue
+		}
+		a.Open = append(a.Open, OpenQuestion{Question: q, Reason: reason})
+		fmt.Fprintf(&b, "- %s: %s\n", q, reason)
+	}
+	if len(a.Open) == 0 {
+		return
+	}
+	a.Body = b.String()
+}
+
+func openQuestionsCover(open []OpenQuestion, missing []string) bool {
+	have := map[string]bool{}
+	for _, item := range open {
+		if strings.TrimSpace(item.Question) != "" && strings.TrimSpace(item.Reason) != "" {
+			have[item.Question] = true
+		}
+	}
+	for _, q := range missing {
+		if !have[strings.TrimSpace(q)] {
+			return false
+		}
+	}
+	return len(missing) > 0
+}
