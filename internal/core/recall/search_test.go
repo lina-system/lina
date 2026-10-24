@@ -348,6 +348,22 @@ func TestSearchMaterialEventExcerpt(t *testing.T) {
 	}
 }
 
+func TestSearchExcerptAppliesStoredSecretSpans(t *testing.T) {
+	db := database(t)
+	body := "도서관 hiddenneedle 다음"
+	write(t, db, eventSQL, "flagged", body)
+	write(t, db, "INSERT INTO ev_span VALUES('flagged',?,?, 'secret')", len("도서관 "), len("도서관 hiddenneedle"))
+	drain(t, db)
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	results, err := recall.Search(t.Context(), db, nil, scope, recall.Query{Text: "도서관"})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("search: %+v %v", results, err)
+	}
+	if strings.Contains(results[0].Excerpt, "hiddenneedle") {
+		t.Fatalf("flagged secret in excerpt: %s", results[0].Excerpt)
+	}
+}
+
 func TestSearchVectorsFuseIntoTheRankedList(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)

@@ -839,7 +839,12 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 			}
 			return text, nil
 		}
-		return body.String, nil
+		// Stored secret spans are not always a credential shape. Mask them
+		// before the excerpt is built, or the flagged bytes stay visible.
+		if !body.Valid {
+			return "", nil
+		}
+		return maskDerived(body.String, spans)
 	case Memory:
 		var text string
 		err := db.Read(ctx, func(tx *canon.Tx) error {
