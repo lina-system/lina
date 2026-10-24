@@ -12,18 +12,20 @@ Glamour 2.0.1 (sealed blocks only), and Ultraviolet at
 `v0.0.0-20261008173134-6b8d4baf91b4`. The exact module graph and checksums live
 in [go.mod](../../go.mod) and [go.sum](../../go.sum).
 
-[terminals.json](terminals.json) records the real-terminal matrix in format 2.
+[terminals.json](terminals.json) records the real-terminal matrix in format 3.
 The list is proposed: owner confirmation is still pending and is tracked as the
 first Done-when item of [follow-up #371](https://github.com/thisisjun786/lina/issues/371).
 The record therefore has `"status": "proposed"`, that issue in `deferred_to` and
 a null `confirmed_list`. Confirmation, the actual product of the installed LINA
 OS default, and each terminal's product version and `TERM` are recorded there
 before #87's real-terminal runs. A confirmed matrix sets `"status": "confirmed"`
-and fills `confirmed_list` with those observed products.
+and fills `confirmed_list` with those observed products, each entry carrying the
+observed `version` and `term`; proposed entries cannot carry either field.
 
 `spike.ReadTerminalMatrix` validates the record: format and status, a nonempty
-proposed list, unique entries, an explicit SSH flag, and coverage of a macOS
-terminal, the Linux (Omarchy) desktop and one SSH terminal. `TestRecordedTerminalMatrixIsValid`
+proposed list, unique entries, an explicit SSH flag, an observed `version` and
+`term` on every confirmed entry, and coverage of a macOS terminal, the Linux
+(Omarchy) desktop and one SSH terminal. `TestRecordedTerminalMatrixIsValid`
 applies it to this file. The matrix contains no device names, addresses or user
 data, and it covers Apple Terminal's known probe differences.
 
