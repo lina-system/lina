@@ -14,6 +14,6 @@
     {"name": "two-syllable-inside-longer-word", "text": "서관", "ids": ["import-library", "literal-quote", "native-library"]},
     {"name": "no-match", "text": "바다", "ids": []},
     {"name": "literal-quote", "text": "\"도서관\"", "ids": ["literal-quote"]},
-    {"name": "operators-are-literal", "text": "도서관 OR 공부", "ids": []}
+    {"name": "operators-are-literal-any-term", "text": "도서관 OR 공부", "ids": ["import-library", "import-study", "literal-quote", "native-library", "native-study"]}
   ]
 }
