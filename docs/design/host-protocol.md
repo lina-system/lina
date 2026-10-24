@@ -209,7 +209,7 @@ body preservation, rendered text, provenance and recorded counts.
 
 The native result service is not a client wire implementation. Client body and
 save schemas, client result handlers and result-type negotiation remain required
-by [#419](https://github.com/thisisjun786/lina/issues/419). A native service or
+by [#419](https://github.com/lina-system/lina/issues/419). A native service or
 codec run cannot establish those client scenarios or their supported rows.
 
 ## Background result reads
