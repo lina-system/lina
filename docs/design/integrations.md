@@ -586,7 +586,8 @@ only that bot's session/sequence cursor before reconnecting with Identify,
 including a close received before Hello. Native receipts, pairing and bindings
 survive; other transport closes retain the cursor for Resume.
 The privileged message-content intent is requested only for an explicit
-`all_messages` binding; changing that requirement reconnects the session.
+`all_messages` binding or a bot-mode messenger source, which cannot read a
+guild's words without it; changing that requirement reconnects the session.
 Native message and interaction IDs remain deduplicated across sessions and
 restarts. Bot-authored input cannot begin a conversation. Guild thread ancestry
 comes from channel metadata, so the most specific thread binding wins.

@@ -79,6 +79,7 @@ func Migrations() []Migration {
 		{Version: 64, SQL: MiniAppsSchema},
 		{Version: 65, SQL: MessengerSchema},
 		{Version: 66, SQL: EventErasureSchema},
+		{Version: 67, SQL: MessengerOwnerSchema},
 	}
 }
 

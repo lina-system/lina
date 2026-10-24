@@ -44,6 +44,11 @@ they do not establish current acceptance or change the contracts.
 Its `coder/websocket` transport is pinned at v1.8.15; REST calls use the fixed Discord v10 origin without redirects or automatic effect retries.
 The shared catalog appends Discord presentations and pending buttons plus consumed channel steering at migration 32, leaving migrations 1–31 unchanged.
 The optional channel control `platform` field defaults to Telegram.
+One Gateway session runs per bot token inside one Core's canon: `Listen` joins
+that session, so a channel connection and a bot-mode messenger source on the
+same token receive every event from one socket (#1079). The session identifies
+with the union of its subscribers' intents and reconnects with a fresh Identify
+when that union changes; a Resume keeps the intents it identified with.
 Discord connection verifies the bot identity before replacing its credential or worker.
 Gateway close 4007/4009 clears that bot's durable session/sequence cursor before the existing supervisor retries with Identify.
 This also applies before Hello.

@@ -62,9 +62,23 @@ pages advance the cursor only. `Store.Freshness` derives fresh, stale or gap fro
 the newest read and the adapter's declared interval and read window; nothing
 about freshness is stored.
 
-## Not in this increment
+## Live events
 
-Live events are on the adapter boundary and the service can deliver them, but no
-platform adapter ships yet (#1070 and the per-platform issues). Writes are
-recorded and matched here; the write verbs, grants and approvals belong to
-#1084. Learning from the person's own records is #1075.
+`AdmitEvent` admits one pushed message or deletion through the same admission
+path as a page, and writes no cursor or coverage: a live event is newer than the
+last complete read, and the next page admits it again without adding anything.
+`Service` starts one live reader per connected source, after the source's first
+sync, and re-joins the platform's session with bounded backoff after a failure.
+A source that needs a new sign-in gets no live reader.
+
+`NewServiceWith` resolves an adapter per source, so two accounts on one platform
+never share an adapter's read state. `NewService` keeps the map form for
+platforms with one account.
+
+## Platform adapters
+
+`internal/core/messenger/discord` reads the servers of a bot the person added
+(#1079). It shares the Gateway session with a channel connection on the same
+token. Writes are recorded and matched here; the write verbs, grants and
+approvals belong to #1084. Learning from the person's own records is #1075,
+which waits for the Discord developer policy reading; nothing here learns.

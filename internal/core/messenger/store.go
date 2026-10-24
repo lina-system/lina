@@ -21,6 +21,10 @@ var (
 	ErrInvalid      = errors.New("invalid_messenger_source")
 	ErrNotFound     = sql.ErrNoRows
 	ErrNotConnected = errors.New("messenger_source_not_connected")
+	// ErrTextUnavailable reports that the platform will not give this adapter
+	// message text, such as Discord without the message-content intent. The
+	// source states the cause instead of storing records whose bodies are empty.
+	ErrTextUnavailable = errors.New("messenger_text_unavailable")
 )
 
 // Removals is the one retraction path. Deleted records are hidden through it and
@@ -73,10 +77,10 @@ func (s *Store) Connect(ctx context.Context, source Source) error {
 		at = s.now()
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
-VALUES(?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(platform,account) DO UPDATE SET person=excluded.person,mode=excluded.mode,adapter=excluded.adapter,state=excluded.state,failure=excluded.failure,learning_watermark=excluded.learning_watermark,accepted_terms=excluded.accepted_terms`,
-			source.Person, source.Platform, source.Account, string(source.Mode), source.Adapter, string(source.State), source.Failure, source.LearningWatermark, terms, at.UTC().Format(time.RFC3339Nano))
+		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(platform,account) DO UPDATE SET person=excluded.person,owner=excluded.owner,mode=excluded.mode,adapter=excluded.adapter,state=excluded.state,failure=excluded.failure,learning_watermark=excluded.learning_watermark,accepted_terms=excluded.accepted_terms`,
+			source.Person, source.Platform, source.Account, source.Owner, string(source.Mode), source.Adapter, string(source.State), source.Failure, source.LearningWatermark, terms, at.UTC().Format(time.RFC3339Nano))
 		return err
 	})
 }
@@ -131,7 +135,7 @@ func (s *Store) Sources(ctx context.Context, person string) ([]Source, error) {
 	}
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
 FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 		if err != nil {
 			return err
@@ -152,7 +156,7 @@ FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 	var source Source
 	var mode, state, terms, connected string
-	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &terms, &connected); err != nil {
+	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &source.Owner, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &terms, &connected); err != nil {
 		return Source{}, err
 	}
 	source.Mode, source.State = Mode(mode), State(state)
@@ -182,7 +186,7 @@ func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 func (s *Store) allSources(ctx context.Context) ([]Source, error) {
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
 FROM messenger_source ORDER BY platform,account`)
 		if err != nil {
 			return err
@@ -446,6 +450,48 @@ WHERE platform=? AND account=? AND chat=? AND state<>'failed' AND (client_id IN 
 // PageResult reports one committed page.
 type PageResult struct {
 	Added, Updated, Deleted, Waiting int
+}
+
+// AdmitEvent commits one live event without moving the chat's cursor or its
+// coverage: a live event is newer than the last page, and the next page read
+// admits it again through the ordinary path, which adds nothing twice.
+func (s *Store) AdmitEvent(ctx context.Context, source Source, event Event) (PageResult, error) {
+	if !validName(event.Chat) {
+		return PageResult{}, ErrInvalid
+	}
+	if (event.Message == nil) == (event.Deletion == nil) {
+		return PageResult{}, ErrInvalid
+	}
+	from, err := s.chatCursor(ctx, source, event.Chat)
+	if err != nil {
+		return PageResult{}, err
+	}
+	page := Page{Next: from, HasMore: true}
+	if event.Message != nil {
+		page.Messages = []Message{*event.Message}
+	}
+	if event.Deletion != nil {
+		page.Deletions = []Deletion{*event.Deletion}
+	}
+	result, err := s.AdmitPage(ctx, source, event.Chat, from, page)
+	return result, err
+}
+
+// chatCursor reads the chat's committed cursor. A chat the source has not
+// listed has no cursor and takes live events only after a page read.
+func (s *Store) chatCursor(ctx context.Context, source Source, chat string) (Cursor, error) {
+	var cursor Cursor
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		var text string
+		err := tx.QueryRowContext(ctx, "SELECT cursor FROM messenger_chat WHERE platform=? AND account=? AND chat=?",
+			source.Platform, source.Account, chat).Scan(&text)
+		cursor = Cursor(text)
+		return err
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return cursor, err
 }
 
 // ErrPageWaiting reports a page held back because an own-account message matches

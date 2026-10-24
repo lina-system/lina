@@ -35,6 +35,7 @@ type Adapter struct {
 	approvals    *authority.Service
 	token        secret.Secret
 	http         *http.Client
+	transport    http.RoundTripper
 	mu           sync.Mutex
 	interactions map[string]string
 }
@@ -44,7 +45,6 @@ var snowflake = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 var errUnavailable = errors.New("discord_unavailable")
 var errResponse = errors.New("discord_invalid_response")
 var errTooLong = errors.New("discord_too_long")
-var sessions sync.Map
 
 func New(c Config) (*Adapter, error) {
 	if c.Bot.Platform != "discord" || !snowflake.MatchString(c.Bot.Account) || c.DB == nil || c.Epoch == 0 {
@@ -58,7 +58,7 @@ func New(c Config) (*Adapter, error) {
 	if tr == nil {
 		tr = http.DefaultTransport.(*http.Transport).Clone()
 	}
-	return &Adapter{bot: c.Bot, db: c.DB, store: channels.New(c.DB), epoch: c.Epoch, approvals: c.Approvals, token: c.Token, http: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return errUnavailable }}, interactions: map[string]string{}}, nil
+	return &Adapter{bot: c.Bot, db: c.DB, store: channels.New(c.DB), epoch: c.Epoch, approvals: c.Approvals, token: c.Token, http: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return errUnavailable }}, transport: tr, interactions: map[string]string{}}, nil
 }
 func (a *Adapter) Close() { a.http.CloseIdleConnections() }
 func (a *Adapter) Caps() gateway.Capabilities {

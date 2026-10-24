@@ -98,8 +98,10 @@ type Deletion struct {
 	At      time.Time
 }
 
-// Event is one live event the platform pushed: a message or a deletion.
+// Event is one live event the platform pushed: a message or a deletion, in the
+// chat it happened in.
 type Event struct {
+	Chat     string
 	Message  *Message
 	Deletion *Deletion
 }
@@ -176,9 +178,13 @@ type Terms struct {
 
 // Source is one account on one platform.
 type Source struct {
-	Person            string
-	Platform          string
-	Account           string
+	Person   string
+	Platform string
+	Account  string
+	// Owner is the person's own numeric user id on the platform, confirmed when
+	// the source was connected. A bot-mode source reads a bot's servers, so only
+	// this id proves that a message is the person's.
+	Owner             string
 	Mode              Mode
 	Adapter           string
 	State             State
