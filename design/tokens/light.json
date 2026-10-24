@@ -117,6 +117,226 @@
           "ansi16": 7
         }
       }
+    },
+    "onAccent": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "alpha": 1,
+        "hex": "#FFFFFF"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 231,
+          "ansi16": 15
+        }
+      }
+    },
+    "success": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.09019608,
+          0.38823529,
+          0.23921569
+        ],
+        "alpha": 1,
+        "hex": "#17633D"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 22,
+          "ansi16": 0
+        }
+      }
+    },
+    "warning": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.50196078,
+          0.31372549,
+          0.0
+        ],
+        "alpha": 1,
+        "hex": "#805000"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 94,
+          "ansi16": 1
+        }
+      }
+    },
+    "error": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.67843137,
+          0.16078431,
+          0.25098039
+        ],
+        "alpha": 1,
+        "hex": "#AD2940"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 124,
+          "ansi16": 1
+        }
+      }
+    },
+    "unknown": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.38431373,
+          0.41176471,
+          0.47058824
+        ],
+        "alpha": 1,
+        "hex": "#626978"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 241,
+          "ansi16": 0
+        }
+      }
+    },
+    "diffAdded": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.09019608,
+          0.38823529,
+          0.23921569
+        ],
+        "alpha": 1,
+        "hex": "#17633D"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 22,
+          "ansi16": 0
+        }
+      }
+    },
+    "diffRemoved": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.67843137,
+          0.16078431,
+          0.25098039
+        ],
+        "alpha": 1,
+        "hex": "#AD2940"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 124,
+          "ansi16": 1
+        }
+      }
+    },
+    "diffAddedBackground": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.88627451,
+          0.94509804,
+          0.90980392
+        ],
+        "alpha": 1,
+        "hex": "#E2F1E8"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 231,
+          "ansi16": 15
+        }
+      }
+    },
+    "diffRemovedBackground": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.98823529,
+          0.90588235,
+          0.9254902
+        ],
+        "alpha": 1,
+        "hex": "#FCE7EC"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 231,
+          "ansi16": 15
+        }
+      }
+    },
+    "focus": {
+      "$type": "color",
+      "$value": "{color.accent}"
+    },
+    "border": {
+      "$type": "color",
+      "$value": "{color.muted}"
+    },
+    "selection": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          0.51372549,
+          0.54117647,
+          0.60784314
+        ],
+        "alpha": 1,
+        "hex": "#838A9B"
+      },
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 243,
+          "ansi16": 0
+        }
+      }
+    },
+    "onSelection": {
+      "$type": "color",
+      "$value": "{color.text}",
+      "$extensions": {
+        "lina.terminal": {
+          "ansi256": 16,
+          "ansi16": 15
+        }
+      }
+    },
+    "working": {
+      "$type": "color",
+      "$value": "{color.accent}"
+    },
+    "waiting": {
+      "$type": "color",
+      "$value": "{color.accent}"
+    },
+    "disabled": {
+      "$type": "color",
+      "$value": "{color.muted}"
     }
   },
   "type": {
