@@ -78,6 +78,9 @@ type Query struct {
 	// Vectors is optional. When set, its list is fused with full-text ranking
 	// by reciprocal rank before the limit.
 	Vectors VectorQuery
+	// EventText resolves the derived text of a queued event whose body lives in
+	// material. Match calls it only for sources the index has not published yet.
+	EventText ReadEvent
 }
 
 // Hit is one ranked document before its excerpt and citations are read.
@@ -177,6 +180,7 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 		return nil, nil
 	}
 	kinds := kindsOf(scope)
+	lineageEvents := containsKind(kinds, Event)
 	at := scope.At
 	if at == 0 {
 		at = time.Now().Unix()
@@ -209,45 +213,8 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	} else {
 		with = append(with, `pairhit AS (SELECT NULL AS doc WHERE 0)`)
 	}
-	where := []string{"d.person=?", holderCondition(scope)}
-	var whereArgs []any
-	whereArgs = append(whereArgs, scope.Person)
-	if !scope.CommonOnly && scope.Agent != "" {
-		whereArgs = append(whereArgs, scope.Agent)
-	}
-	where = append(where, "d.kind IN ("+placeholders(len(kinds))+")")
-	for _, kind := range kinds {
-		whereArgs = append(whereArgs, string(kind))
-	}
-	if scope.Conversation != "" {
-		where = append(where, "d.conversation=?")
-		whereArgs = append(whereArgs, scope.Conversation)
-	}
-	if !scope.Since.IsZero() {
-		where = append(where, "julianday(d.occurred_at)>=julianday(?)")
-		whereArgs = append(whereArgs, scope.Since.UTC().Format(time.RFC3339Nano))
-	}
-	if !scope.Until.IsZero() {
-		where = append(where, "julianday(d.occurred_at)<julianday(?)")
-		whereArgs = append(whereArgs, scope.Until.UTC().Format(time.RFC3339Nano))
-	}
-	if scope.SpeakerKind != "" {
-		where = append(where, "d.speaker_kind=?")
-		whereArgs = append(whereArgs, string(scope.SpeakerKind))
-	}
-	if scope.Origin != "" {
-		where = append(where, "json_extract(d.origin,'$.kind')=?")
-		whereArgs = append(whereArgs, scope.Origin)
-	}
-	if !scope.IncludeReplay {
-		where = append(where, "d.replay=0")
-	}
-	lineageEvents := containsKind(kinds, Event)
-	if lineageEvents {
-		where = append(where, `(d.kind<>'event' OR EXISTS(SELECT 1 FROM conv_event e WHERE e.id=d.source_id
-   AND coalesce(e.scaffold_kind,'')<>'reply_check'))`)
-	}
 	var match []string
+	var matchArgs []any
 	if len(pairMatches) > 0 {
 		match = append(match, "ph.doc IS NOT NULL")
 	}
@@ -259,40 +226,57 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 		for _, short := range shortTerms {
 			literal = append(literal, `(d.kind='memory' AND EXISTS(SELECT 1 FROM memory_item m WHERE m.id=d.source_id AND instr(lower(m.content),?)>0))
    OR (d.kind='record' AND EXISTS(SELECT 1 FROM records_text r WHERE r.id=d.source_id AND instr(lower(r.title||char(10)||r.note),?)>0))`)
-			whereArgs = append(whereArgs, short, short)
+			matchArgs = append(matchArgs, short, short)
 		}
 		match = append(match, "("+strings.Join(literal, " OR ")+")")
 	}
-	where = append(where, "("+strings.Join(match, " OR ")+")")
-	if containsKind(kinds, Memory) {
-		where = append(where, `(d.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item v WHERE v.id=d.source_id AND v.valid_from<=?))`)
-		whereArgs = append(whereArgs, at)
-		if restricted {
-			where = append(where, `(d.kind<>'memory' OR NOT EXISTS(SELECT 1 FROM memory_item s WHERE s.id=d.source_id
-   AND ((?=1 AND s.scope IN ('private','never-leaves')) OR (?=1 AND s.scope='never-leaves'))))`)
-			whereArgs = append(whereArgs, boolInt(scope.Projection), boolInt(scope.ExternalModel))
-			where = append(where, `(d.kind<>'memory' OR NOT EXISTS(SELECT 1 FROM cite c2 JOIN restricted r2 ON r2.id=c2.target_id
-   WHERE c2.view_kind='memory' AND c2.view_id=d.source_id AND c2.dropped_revision IS NULL))`)
+	indexWhere, indexArgs := scopeWhere(scope, kinds, at, restricted, "d")
+	indexWhere = append(indexWhere, "("+strings.Join(match, " OR ")+")")
+	indexArgs = append(indexArgs, matchArgs...)
+	// A source that is still queued keeps its text in canon. Matching it here
+	// keeps search behavior independent of when the background drain runs.
+	var pendingMatch []string
+	var pendingArgs []any
+	for _, t := range terms {
+		if t.runes >= 3 || t.pair {
+			pendingMatch = append(pendingMatch, "instr(lower(s.body),?)>0")
+			pendingArgs = append(pendingArgs, strings.ToLower(t.text))
+			continue
+		}
+		pendingMatch = append(pendingMatch, "(s.kind IN ('memory','record') AND instr(lower(s.body),?)>0)")
+		pendingArgs = append(pendingArgs, strings.ToLower(t.text))
+	}
+	pendingWhere, queuedArgs := scopeWhere(scope, kinds, at, restricted, "s")
+	pendingWhere = append(pendingWhere,
+		"NOT EXISTS(SELECT 1 FROM recall_doc x WHERE x.kind=s.kind AND x.source_id=s.source_id)",
+		"(s.body IS NOT NULL AND ("+strings.Join(pendingMatch, " OR ")+"))")
+	queuedArgs = append(queuedArgs, pendingArgs...)
+	olderD, olderDArgs := olderExpr(kinds, at, "d")
+	olderS, olderSArgs := olderExpr(kinds, at, "s")
+	args := append([]any{}, withArgs...)
+	args = append(args, olderDArgs...)
+	args = append(args, indexArgs...)
+	args = append(args, olderSArgs...)
+	args = append(args, queuedArgs...)
+	var external []Hit
+	if query.EventText != nil {
+		var err error
+		external, err = pendingEventText(ctx, db, scope, at, restricted, terms, query.EventText)
+		if err != nil {
+			return nil, err
 		}
 	}
-	if restricted {
-		where = append(where, `(d.kind<>'event' OR NOT EXISTS(SELECT 1 FROM restricted r WHERE r.id=d.source_id))`)
-		where = append(where, `(d.kind NOT IN ('summary','record') OR NOT EXISTS(SELECT 1 FROM cite c3 JOIN restricted r3 ON r3.id=c3.target_id
-   WHERE c3.view_kind=d.kind AND c3.view_id=d.source_id AND c3.dropped_revision IS NULL))`)
-	}
-	var older = "0"
-	var olderArgs []any
-	if containsKind(kinds, Memory) {
-		older = `CASE WHEN d.kind='memory' THEN (SELECT CASE WHEN (m.valid_until<>0 AND m.valid_until<=?) OR EXISTS(SELECT 1 FROM memory_item n WHERE n.supersedes=m.id AND n.valid_from<=?) THEN 1 ELSE 0 END FROM memory_item m WHERE m.id=d.source_id) ELSE 0 END`
-		olderArgs = append(olderArgs, at, at)
-	}
-	args := append(append(withArgs, olderArgs...), whereArgs...)
 	statement := `WITH ` + strings.Join(with, ",\n") + `,
 candidates AS MATERIALIZED (
  SELECT d.id,d.kind,d.source_id,d.revision,d.occurred_at,d.holder,d.conversation,d.text_hash,d.replay,
-  p.score AS score,(p.doc IS NOT NULL) AS paired,(t.doc IS NOT NULL) AS trigram,` + older + ` AS older
+  p.score AS score,(p.doc IS NOT NULL) AS paired,(t.doc IS NOT NULL) AS trigram,` + olderD + ` AS older
  FROM recall_doc d LEFT JOIN pair p ON p.doc=d.id LEFT JOIN trig t ON t.doc=d.id LEFT JOIN pairhit ph ON ph.doc=d.id
- WHERE ` + strings.Join(where, "\n AND ") + `
+ WHERE ` + strings.Join(indexWhere, "\n AND ") + `
+ UNION ALL
+ SELECT NULL AS id,s.kind,s.source_id,s.revision,s.occurred_at,s.holder,s.conversation,NULL AS text_hash,s.replay,
+  NULL AS score,0 AS paired,0 AS trigram,` + olderS + ` AS older
+ FROM recall_source s JOIN recall_pending q ON q.kind=s.kind AND q.source_id=s.source_id
+ WHERE ` + strings.Join(pendingWhere, "\n AND ") + `
 ),
 ` + lineageCTE(lineageEvents) + `
 dedup AS (
@@ -306,7 +290,7 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 	limit := query.Limit
 	if limit > 0 {
 		statement += " LIMIT ?"
-		args = append(args, limit)
+		args = append(args, limit+len(external))
 	}
 	var hits []Hit
 	err := db.Read(ctx, func(tx *canon.Tx) error {
@@ -333,10 +317,82 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 	if err != nil {
 		return nil, err
 	}
+	hits = append(hits, external...)
+	if limit > 0 && len(hits) > limit {
+		hits = hits[:limit]
+	}
 	if query.Vectors != nil {
 		return fuse(ctx, db, scope, query, hits)
 	}
 	return lineage(ctx, db, scope, hits)
+}
+
+// pendingEventText reads the derived text of queued events whose body lives in
+// material, so a caller with material access sees them before the background
+// drain publishes them. The scan is bounded by the queue, never the corpus.
+func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, restricted bool, terms []term, readEvent ReadEvent) ([]Hit, error) {
+	var lowered []string
+	for _, t := range terms {
+		if t.runes >= 3 || t.pair {
+			lowered = append(lowered, strings.ToLower(t.text))
+		}
+	}
+	if len(lowered) == 0 {
+		return nil, nil
+	}
+	where, args := scopeWhere(scope, []Kind{Event}, at, restricted, "s")
+	where = append(where,
+		"NOT EXISTS(SELECT 1 FROM recall_doc x WHERE x.kind=s.kind AND x.source_id=s.source_id)",
+		"s.body IS NULL")
+	prefix := ""
+	var prefixArgs []any
+	if restricted {
+		prefix = `WITH restricted AS (
+  SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
+  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
+   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))) `
+		prefixArgs = append(prefixArgs, scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel))
+	}
+	args = append(prefixArgs, args...)
+	var queued []Hit
+	err := db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, prefix+`SELECT s.source_id,s.revision,s.occurred_at,s.holder
+ FROM recall_source s JOIN recall_pending q ON q.kind=s.kind AND q.source_id=s.source_id
+ WHERE `+strings.Join(where, "\n AND "), args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var h Hit
+			var occurred string
+			if err := rows.Scan(&h.ID, &h.Revision, &occurred, &h.Holder); err != nil {
+				return err
+			}
+			h.Kind = Event
+			h.OccurredAt, _ = time.Parse(time.RFC3339Nano, occurred)
+			queued = append(queued, h)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Hit, 0, len(queued))
+	for _, h := range queued {
+		text, err := readEvent(ctx, h.ID)
+		if err != nil {
+			continue
+		}
+		text = strings.ToLower(text)
+		for _, term := range lowered {
+			if strings.Contains(text, term) {
+				out = append(out, h)
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 // lineageCTE walks each candidate event's replay_of and view_of chain. A
@@ -365,11 +421,77 @@ func lineageFilter(enabled bool) string {
 	return ` WHERE c.kind<>'event' OR c.id NOT IN (SELECT d.id FROM candidates d JOIN derived x ON x.id=d.source_id)`
 }
 
-func holderCondition(scope Scope) string {
+func holderCondition(scope Scope, alias string) string {
 	if scope.CommonOnly || scope.Agent == "" {
-		return "d.holder='all'"
+		return alias + ".holder='all'"
 	}
-	return "d.holder IN (?,'all')"
+	return alias + ".holder IN (?,'all')"
+}
+
+// scopeWhere applies the scope before matching. It is shared by the published
+// index and the still-queued sources so both see the same filters.
+func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias string) ([]string, []any) {
+	where := []string{alias + ".person=?", holderCondition(scope, alias)}
+	var args []any
+	args = append(args, scope.Person)
+	if !scope.CommonOnly && scope.Agent != "" {
+		args = append(args, scope.Agent)
+	}
+	where = append(where, alias+".kind IN ("+placeholders(len(kinds))+")")
+	for _, kind := range kinds {
+		args = append(args, string(kind))
+	}
+	if scope.Conversation != "" {
+		where = append(where, alias+".conversation=?")
+		args = append(args, scope.Conversation)
+	}
+	if !scope.Since.IsZero() {
+		where = append(where, "julianday("+alias+".occurred_at)>=julianday(?)")
+		args = append(args, scope.Since.UTC().Format(time.RFC3339Nano))
+	}
+	if !scope.Until.IsZero() {
+		where = append(where, "julianday("+alias+".occurred_at)<julianday(?)")
+		args = append(args, scope.Until.UTC().Format(time.RFC3339Nano))
+	}
+	if scope.SpeakerKind != "" {
+		where = append(where, alias+".speaker_kind=?")
+		args = append(args, string(scope.SpeakerKind))
+	}
+	if scope.Origin != "" {
+		where = append(where, "json_extract("+alias+".origin,'$.kind')=?")
+		args = append(args, scope.Origin)
+	}
+	if !scope.IncludeReplay {
+		where = append(where, alias+".replay=0")
+	}
+	if containsKind(kinds, Event) {
+		where = append(where, `(`+alias+`.kind<>'event' OR EXISTS(SELECT 1 FROM conv_event e WHERE e.id=`+alias+`.source_id
+   AND coalesce(e.scaffold_kind,'')<>'reply_check'))`)
+	}
+	if containsKind(kinds, Memory) {
+		where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item v WHERE v.id=`+alias+`.source_id AND v.valid_from<=?))`)
+		args = append(args, at)
+		if restricted {
+			where = append(where, `(`+alias+`.kind<>'memory' OR NOT EXISTS(SELECT 1 FROM memory_item s WHERE s.id=`+alias+`.source_id
+   AND ((?=1 AND s.scope IN ('private','never-leaves')) OR (?=1 AND s.scope='never-leaves'))))`)
+			args = append(args, boolInt(scope.Projection), boolInt(scope.ExternalModel))
+			where = append(where, `(`+alias+`.kind<>'memory' OR NOT EXISTS(SELECT 1 FROM cite c2 JOIN restricted r2 ON r2.id=c2.target_id
+   WHERE c2.view_kind='memory' AND c2.view_id=`+alias+`.source_id AND c2.dropped_revision IS NULL))`)
+		}
+	}
+	if restricted {
+		where = append(where, `(`+alias+`.kind<>'event' OR NOT EXISTS(SELECT 1 FROM restricted r WHERE r.id=`+alias+`.source_id))`)
+		where = append(where, `(`+alias+`.kind NOT IN ('summary','record') OR NOT EXISTS(SELECT 1 FROM cite c3 JOIN restricted r3 ON r3.id=c3.target_id
+   WHERE c3.view_kind=`+alias+`.kind AND c3.view_id=`+alias+`.source_id AND c3.dropped_revision IS NULL))`)
+	}
+	return where, args
+}
+
+func olderExpr(kinds []Kind, at int64, alias string) (string, []any) {
+	if !containsKind(kinds, Memory) {
+		return "0", nil
+	}
+	return `CASE WHEN ` + alias + `.kind='memory' THEN (SELECT CASE WHEN (m.valid_until<>0 AND m.valid_until<=?) OR EXISTS(SELECT 1 FROM memory_item n WHERE n.supersedes=m.id AND n.valid_from<=?) THEN 1 ELSE 0 END FROM memory_item m WHERE m.id=` + alias + `.source_id) ELSE 0 END`, []any{at, at}
 }
 
 func boolInt(v bool) int {
@@ -494,7 +616,7 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		return nil, err
 	}
 	kinds := kindsOf(scope)
-	where := []string{"d.person=?", holderCondition(scope), "d.source_id IN (SELECT value FROM json_each(?))", "d.kind IN (" + placeholders(len(kinds)) + ")"}
+	where := []string{"d.person=?", holderCondition(scope, "d"), "d.source_id IN (SELECT value FROM json_each(?))", "d.kind IN (" + placeholders(len(kinds)) + ")"}
 	args := []any{scope.Person}
 	if !scope.CommonOnly && scope.Agent != "" {
 		args = append(args, scope.Agent)

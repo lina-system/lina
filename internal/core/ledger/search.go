@@ -67,7 +67,13 @@ func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchHit, error) 
 	hits, err := recall.Match(ctx, s.db, recall.Scope{
 		Person: q.PersonID, Agent: q.AgentID, Kinds: []recall.Kind{recall.Event},
 		Since: q.Since, Until: q.Until, SpeakerKind: q.SpeakerKind, Origin: q.Origin, IncludeReplay: q.IncludeReplay,
-	}, recall.Query{Text: text, Limit: q.Limit})
+	}, recall.Query{Text: text, Limit: q.Limit, EventText: func(ctx context.Context, id string) (string, error) {
+		event, err := s.Get(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		return event.Body.DerivedText(), nil
+	}})
 	if err != nil {
 		return nil, err
 	}

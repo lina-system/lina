@@ -39,11 +39,15 @@ messenger windows belong to later steps.
 
 `recall.Match` applies scope (person, holder, conversation, kinds, time, speaker,
 origin, replay, visibility class), matches, ranks and limits without reading a
-source body. Query terms are literal, whitespace split, at most eight, and any
-term may match. Documents holding more terms come first by BM25 over the pair
-table; documents found only through the trigram table follow; ties go to the
-newer `occurred_at`. A short term reaches memory items and records by a literal
-scan of the already scoped set. `recall_doc.text_hash` collapses events with
+published source body. Query terms are literal, whitespace split, at most
+eight, and any term may match. Documents holding more terms come first by BM25
+over the pair table; documents found only through the trigram table follow;
+ties go to the newer `occurred_at`. A short term reaches memory items and
+records by a literal scan of the already scoped set. A source that is still
+queued keeps its text in canon; `Match` matches it there, so search does not
+wait for the background drain. A queued event whose body lives in material is
+read through the caller's `EventText` reader, which only `ledger.Store.Search`
+supplies. `recall_doc.text_hash` collapses events with
 identical derived text inside one conversation to the earliest of them. A
 returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
