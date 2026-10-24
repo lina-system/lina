@@ -58,6 +58,11 @@ type Config struct {
 	// Runner starts the child. It is a test seam; production leaves it nil and
 	// uses the OS sandbox.
 	Runner Runner
+	// SingleAccount names platforms where LINA supports one account per main.
+	// The add-on then keeps one session and one data directory for the whole
+	// platform, so a source's account may change from the pending sign-in to
+	// the platform's own user id without losing the stored session.
+	SingleAccount []string
 }
 
 // Runner starts a confined child and blocks until it exits. env is the
