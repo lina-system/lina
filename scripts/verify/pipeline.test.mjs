@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { developmentRepository, sandbox } from '../test-fixture.mjs';
 import { selectFoundation, finishFoundation } from '../foundation.mjs';
-import { aggregate, executeTask, runPipeline, sealPlan, validatePlan, writeJSON } from './pipeline.mjs';
+import { aggregate, executeTask, goTestTimings, runPipeline, sealPlan, validatePlan, writeJSON } from './pipeline.mjs';
 
 function fixture(t) {
   const sb = sandbox(t);
@@ -188,4 +188,31 @@ func TestCrash(t *testing.T) { panic("forced package failure") }
   const records = plan.tasks.map(other => ({ ...record, id: other.id, kind: other.kind,
     result: other.id === task.id ? 'failure' : 'success' }));
   assert.equal(finishFoundation(work, plan, aggregate(plan, records), { note: false }).result, 'failure');
+});
+
+test('scenario timings charge parallel subtest work to its top-level test', () => {
+  const events = [
+    { Package: 'p', Action: 'run', Test: 'TestParallel' },
+    { Package: 'p', Action: 'pass', Test: 'TestParallel/a', Elapsed: 2 },
+    { Package: 'p', Action: 'pass', Test: 'TestParallel/b', Elapsed: 3 },
+    { Package: 'p', Action: 'pass', Test: 'TestParallel', Elapsed: 0.1 },
+    { Package: 'p', Action: 'run', Test: 'TestSequential' },
+    { Package: 'p', Action: 'pass', Test: 'TestSequential/a', Elapsed: 2 },
+    { Package: 'p', Action: 'pass', Test: 'TestSequential', Elapsed: 2.5 },
+    { Package: 'p', Action: 'run', Test: 'TestNested' },
+    { Package: 'p', Action: 'run', Test: 'TestNested/a' },
+    { Package: 'p', Action: 'pass', Test: 'TestNested/a/b', Elapsed: 4 },
+    { Package: 'p', Action: 'pass', Test: 'TestNested/a', Elapsed: 0.1 },
+    { Package: 'p', Action: 'pass', Test: 'TestNested', Elapsed: 0.1 },
+    { Package: 'p', Action: 'skip', Test: 'TestSkipped' },
+    { Package: 'p', Action: 'pass', Elapsed: 10 },
+  ].map(event => JSON.stringify(event)).join('\n');
+  const timings = goTestTimings(events);
+  const seconds = name => timings.find(timing => timing.test === name)?.seconds;
+  assert.equal(seconds('TestParallel'), 5, 'parallel children run after their parent');
+  assert.equal(seconds('TestSequential'), 2.5, 'a sequential parent already covers its children');
+  assert.equal(seconds('TestNested'), 4, 'nested parallel children still reach the top-level test');
+  assert.equal(seconds('TestSkipped'), 0);
+  assert.deepEqual(timings.filter(timing => !timing.test), [{ package: 'p', seconds: 10, result: 'pass' }]);
+  assert.equal(timings.length, 5, 'subtests are charged to their top-level test, not listed separately');
 });

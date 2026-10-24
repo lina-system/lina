@@ -137,6 +137,49 @@ function goTimeoutOutput(pkg, output) {
   }
 }
 
+// Go reports a parallel subtest's elapsed time on the subtest, not on the
+// parent that started it, so a scenario that delegates its work to t.Parallel
+// children reports almost no top-level time. Charge each top-level test the
+// larger of its own elapsed time and the sum of its children's charges: a
+// sequential parent already covers its children, a parallel one does not.
+export function goTestTimings(output) {
+  const packages = new Map();
+  for (const line of output.split('\n')) {
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (!event?.Package || !['pass', 'fail', 'skip'].includes(event.Action)) continue;
+    if (!packages.has(event.Package)) packages.set(event.Package, { elapsed: 0, result: null, tests: new Map() });
+    const pkg = packages.get(event.Package);
+    if (!event.Test) {
+      pkg.elapsed = event.Elapsed ?? 0;
+      pkg.result = event.Action;
+      continue;
+    }
+    pkg.tests.set(event.Test, { elapsed: event.Elapsed ?? 0, result: event.Action });
+  }
+  const timings = [];
+  for (const [name, pkg] of packages) {
+    if (pkg.result) timings.push({ package: name, seconds: pkg.elapsed, result: pkg.result });
+    const charges = new Map();
+    const charge = test => {
+      if (charges.has(test)) return charges.get(test);
+      const prefix = test + '/';
+      let children = 0;
+      for (const other of pkg.tests.keys()) {
+        if (other.startsWith(prefix) && !other.slice(prefix.length).includes('/')) children += charge(other);
+      }
+      const value = Math.max(pkg.tests.get(test)?.elapsed ?? 0, children);
+      charges.set(test, value);
+      return value;
+    };
+    for (const [test, record] of pkg.tests) {
+      if (test.includes('/')) continue;
+      timings.push({ package: name, test, seconds: charge(test), result: record.result });
+    }
+  }
+  return timings;
+}
+
 // Keep test identity and bounded diagnostic lines for post-merge QA. Nested
 // failures belong to one top-level scenario, not separate duplicate issues.
 export function goTestOutcomes(output) {
@@ -199,14 +242,11 @@ export async function executeTask(root, plan, id, log = console.error) {
   else outcome = await runAsync(process.execPath, [join(root, 'scripts/verify/check-' + task.kind + '.mjs')],
     { cwd: root, env: cleanEnv(), timeoutMs: timeouts[task.kind] });
   const finished = Date.now();
-  const timings = [];
-  for (const line of outcome.output.split('\n')) {
-    let event;
-    try { event = JSON.parse(line); } catch { /* Command headers and ordinary output are retained on failure. */ }
-    if (event?.Package && ['pass', 'fail', 'skip'].includes(event.Action) && (!event.Test || !event.Test.includes('/'))) {
-      timings.push({ package: event.Package, test: event.Test, seconds: event.Elapsed ?? 0, result: event.Action });
-    }
-    if (outcome.status === 0) {
+  const timings = goTestTimings(outcome.output);
+  if (outcome.status === 0) {
+    for (const line of outcome.output.split('\n')) {
+      let event;
+      try { event = JSON.parse(line); } catch { /* Command headers and ordinary output are retained on failure. */ }
       const text = event?.Output ?? line;
       if (/^ok\s+\S+\s+\d+\.\d+s/.test(text)) log(text.trimEnd());
     }
