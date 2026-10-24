@@ -323,3 +323,165 @@ func TestStopReleasesUndispatchedAwards(t *testing.T) {
 		t.Fatalf("stopped goal still holds the slot: %d free", got)
 	}
 }
+
+// A resent message keeps the command it committed even when the retry reaches
+// Core at a later second; the ledger holds one event and the goal keeps its
+// state.
+func TestResentCommandCommitsOnceAcrossClockTicks(t *testing.T) {
+	_, db := testJournal(t)
+	now := int64(100)
+	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(now, 0) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := oneGoal(readyTask("a"))
+	if err = e.Admit(t.Context(), g); err != nil {
+		t.Fatal(err)
+	}
+	command := GoalCommand{ID: "retry-pause", Goal: "g", Person: "person", Command: CommandPause}
+	if _, changed, err := e.Command(t.Context(), command); err != nil || !changed {
+		t.Fatalf("pause = %v %v", changed, err)
+	}
+	now = 400
+	if _, changed, err := e.Command(t.Context(), command); err != nil || !changed {
+		t.Fatalf("resend = %v %v, want the committed command", changed, err)
+	}
+	if count := commandEvents(t, db, "goal.command"); count != 1 {
+		t.Fatalf("resent command recorded %d events, want 1", count)
+	}
+	if got := goalByID(t, e, "g"); !got.Paused {
+		t.Fatal("resend changed the paused goal")
+	}
+	// A different command under the same identity is refused, not applied.
+	if _, _, err := e.Command(t.Context(), GoalCommand{ID: "retry-pause", Goal: "g", Person: "person", Command: CommandStop, Confirmed: true}); err == nil {
+		t.Fatal("a second command reused one message identity")
+	}
+}
+
+// A confirmed stop is final: a claimed planning action that settles afterwards
+// keeps its receipt and never reopens the goal.
+func TestStopIsFinalAgainstALatePlanReport(t *testing.T) {
+	_, db := testJournal(t)
+	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := oneGoal(readyTask("a"))
+	if err = e.Admit(t.Context(), g); err != nil {
+		t.Fatal(err)
+	}
+	// A person's correction makes the goal wait for a manager plan.
+	admitted := goalByID(t, e, "g")
+	if _, err = e.Revise(t.Context(), "g", admitted.RecordRevision, "person", "agent", Definition{Outcome: "complete the project again", Done: "all changes run", Scope: admitted.Scope, Criteria: admitted.Criteria}); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err := e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := ""
+	for _, a := range s.Actions {
+		if a.GoalID == "g" && a.Kind == PlanGoal {
+			plan = a.ID
+		}
+	}
+	if plan == "" {
+		t.Fatal("no queued correction plan")
+	}
+	if _, err = e.Claim(t.Context(), plan); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = e.Command(t.Context(), GoalCommand{ID: "stop-g", Goal: "g", Person: "person", Command: CommandStop, Confirmed: true}); err != nil {
+		t.Fatal(err)
+	}
+	// The manager's late plan would satisfy the correction.
+	if err = e.Report(t.Context(), plan, 1, Observation{Status: OutcomeSucceeded, EffectsSettled: true, Tasks: []Task{readyTask("a")}}); err != nil {
+		t.Fatalf("late plan report: %v", err)
+	}
+	if got := goalByID(t, e, "g"); got.State != GoalStopped || len(got.Waits) != 0 {
+		t.Fatalf("late plan reopened the stopped goal: %+v", got)
+	}
+	after, err := e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range after.Actions {
+		if a.GoalID == "g" && a.State != "finished" {
+			t.Fatalf("stopped goal still holds action %q in state %q", a.ID, a.State)
+		}
+	}
+}
+
+// Pausing a goal also stops its automatic worker recovery: only the current
+// turn may finish.
+func TestPausedGoalRefusesRecoveryAuthorization(t *testing.T) {
+	e, _ := twoGoalEngine(t)
+	if err := e.NodeChanged(t.Context(), readyNode("n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err := e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assign := ""
+	for _, a := range s.Actions {
+		if a.GoalID == "first" && a.Kind == Assign {
+			assign = a.ID
+		}
+	}
+	if assign == "" {
+		t.Fatal("no queued assignment for the first goal")
+	}
+	if _, err = e.Claim(t.Context(), assign); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = e.Command(t.Context(), GoalCommand{ID: "pause-first", Goal: "first", Person: "person", Command: CommandPause}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := e.CanContinue(t.Context(), assign); err != nil || ok {
+		t.Fatalf("recovery authorization = %v %v, want refusal for the paused goal", ok, err)
+	}
+}
+
+// A stopped goal's settled result no longer holds its write area, so another
+// goal touching the same area starts on the next pass. An unsettled effect
+// keeps its lease until it is read.
+func TestStoppedGoalReleasesSettledArea(t *testing.T) {
+	stopped := readyTask("a")
+	stopped.Stage = TaskDelivered
+	stopped.EffectsSettled = true
+	first := oneGoal(stopped)
+	first.ID, first.CreatedAt, first.State = "first", 100, GoalStopped
+	other := readyTask("b")
+	other.Area = stopped.Area
+	second := oneGoal(other)
+	second.ID, second.CreatedAt = "second", 101
+	plan, err := Derive(State{Goals: []Goal{first, second}, Nodes: []Node{readyNode("n")}}, time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := planAssignments(plan); len(got) != 1 || got[0] != "b" {
+		t.Fatalf("derived %v, want the other goal's step", got)
+	}
+	for _, w := range plan.Waits {
+		if w.Reason == "area" {
+			t.Fatalf("settled result of a stopped goal still holds its area: %+v", plan.Waits)
+		}
+	}
+	// An effect whose outcome is still unknown keeps the lease.
+	stopped.EffectsSettled = false
+	first.Tasks[0] = stopped
+	plan, err = Derive(State{Goals: []Goal{first, second}, Nodes: []Node{readyNode("n")}}, time.Unix(100, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := planAssignments(plan); len(got) != 0 {
+		t.Fatalf("unsettled effect released its area: %v", got)
+	}
+}

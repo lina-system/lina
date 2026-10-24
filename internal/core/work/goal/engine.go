@@ -572,6 +572,19 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		if a.State == "finished" {
 			return ErrConflict
 		}
+		// A confirmed stop is final. A report that arrives afterwards settles its
+		// receipt and reservation; it never reopens the goal or its tasks, so a
+		// late planning result cannot restart the work the person stopped.
+		if g.State == GoalStopped {
+			if t != nil {
+				t.EffectsSettled = o.EffectsSettled
+				if err = put(v, "goal", g.ID, g); err != nil {
+					return err
+				}
+			}
+			a.State = "finished"
+			return put(v, "action", id, a)
+		}
 		switch o.Status {
 		case OutcomeQuota:
 			if t == nil || !reserves(a) || !o.EffectsSettled || o.QuotaReset <= e.cfg.Now().Unix() {
@@ -1134,7 +1147,10 @@ func (e *Engine) CanContinue(ctx context.Context, id string) (bool, error) {
 		}
 		for _, g := range state.Goals {
 			if g.ID == a.GoalID {
-				return g.State != GoalDone && g.State != GoalStopped && !staleInputs(g, a), nil
+				// A paused goal starts no new execution, including the automatic
+				// replacement of a failed worker; its existing effect is still
+				// observed and settled.
+				return g.State != GoalDone && g.State != GoalStopped && !g.Paused && !staleInputs(g, a), nil
 			}
 		}
 	}

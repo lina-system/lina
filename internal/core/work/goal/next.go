@@ -408,6 +408,11 @@ func Derive(state State, now time.Time) (Plan, error) {
 				}
 			}
 			if t.Stage != TaskReady && t.Stage != TaskDone && t.Stage != TaskMerged && t.Stage != TaskQAFailed {
+				// A stopped goal derives no merge, so a settled result holds no
+				// write area. An unsettled effect keeps its lease until it is read.
+				if g.State == GoalStopped && t.EffectsSettled {
+					continue
+				}
 				occupied = append(occupied, areaLease{g.ID, t})
 			}
 		}
