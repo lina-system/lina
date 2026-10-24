@@ -14,6 +14,8 @@ type Signal struct {
 	ActionID string `json:"action_id,omitempty"`
 	GoalID   string `json:"goal_id,omitempty"`
 	TaskID   string `json:"task_id,omitempty"`
+	// Wake is a plugin change signal for one outside wait.
+	Wake string `json:"wake,omitempty"`
 }
 
 // Signal persists an integration's change hint. It carries no instructions or
@@ -21,8 +23,24 @@ type Signal struct {
 // An action-id hint for an authorization wait retries Authorize, not approval;
 // the trusted authority must still grant the exact action before Execute runs.
 func (e *Engine) Signal(ctx context.Context, s Signal) error {
-	if s.ID == "" || (s.ActionID == "") == (s.GoalID == "" || s.TaskID == "") {
+	if s.ID == "" {
 		return ErrInvalid
+	}
+	if s.Wake != "" {
+		if s.ActionID != "" || s.GoalID == "" {
+			return ErrInvalid
+		}
+	} else if (s.ActionID == "") == (s.GoalID == "" || s.TaskID == "") {
+		return ErrInvalid
+	}
+	if s.Wake != "" {
+		err := e.journal.Update(ctx, Transition{ID: "signal:" + s.ID, Kind: "integration.changed", At: 1, Data: encode(s)}, func(v *View) error {
+			return e.applyWaitSignal(v, s)
+		})
+		if errors.Is(err, errNoChange) {
+			return nil
+		}
+		return err
 	}
 	sum := sha256.Sum256(encode(s))
 	err := e.journal.Update(ctx, Transition{ID: "signal:" + s.ID, Kind: "integration.changed", At: 1, Data: encode(s)}, func(v *View) error {
