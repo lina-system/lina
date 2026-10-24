@@ -717,7 +717,9 @@ The harness and its self-test live in `TestM3WorkPanelEvaluation` and
 the graph corpus and the name corpus. The driver acts as the fixture manager: it
 admits each 일's graph through Core's goal engine as a step-graph revision, then
 records the 일's work with a stub worker session against that goal. It reads
-Core's own card order, card fields and projected stage list as its oracle — the
+the managed goal as the project card and its worker task as a detail row;
+person waits are recorded on the owning goal step in the journal before
+startup. Core's own card order, card fields and projected stage list are its oracle — the
 stage list must match the corpus graph in steps, depth and parallel groups, so a
 lost blocker fails the run — and records every settled 120x34 frame in both
 languages and glyph modes. A check whose input the build does not publish yet is
