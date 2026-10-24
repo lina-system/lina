@@ -653,6 +653,92 @@ func TestReplyToReadTieStaysUnresolved(t *testing.T) {
 	}
 }
 
+func TestTiedChoiceClearsAdmissionFocus(t *testing.T) {
+	r, _ := turnRuntime(t)
+	reserve := t.TempDir()
+	first := work.Task{ID: "focus-a", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Alpha", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	second := work.Task{ID: "focus-b", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Beta", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	for _, task := range []work.Task{first, second} {
+		if err := r.work.Create(t.Context(), task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "focus-a-run", TaskID: first.ID, Generation: 1, Worker: "codex", ThreadID: "focus-a-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "focus-a-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "focus-a-thread", TaskID: first.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "focus-a-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	seed := questionPersonInput(t, r, "focus-seed", first.Title)
+	seeded, err := r.journal().Get(t.Context(), inputBindingID(seed.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seededDecision binding.Decision
+	if err = json.Unmarshal([]byte(seeded.Body.Text()), &seededDecision); err != nil {
+		t.Fatal(err)
+	}
+	if seededDecision.Target.ID != first.ID {
+		t.Fatalf("admission did not settle on A: %+v", seededDecision)
+	}
+	text := "check its progress"
+	parent := questionPersonInput(t, r, "focus-tie", text)
+	admitted, err := r.journal().Get(t.Context(), inputBindingID(parent.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var admittedDecision binding.Decision
+	if err = json.Unmarshal([]byte(admitted.Body.Text()), &admittedDecision); err != nil {
+		t.Fatal(err)
+	}
+	if admittedDecision.Target.ID != first.ID {
+		t.Fatalf("fresh focus did not keep A: %+v", admittedDecision)
+	}
+	tools := modelBindingTools(t, r, parent)
+	a := binding.Target{Class: "existing", Kind: "task", ID: first.ID}
+	b := binding.Target{Class: "existing", Kind: "task", ID: second.ID}
+	if got := questionCall(t, tools, "bind_input", "read-tie", bindingRequest{Bindings: []binding.Choice{{Quote: text, Target: a, Tied: []binding.Target{a, b}, Action: "read"}}}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	now := time.Now().UTC()
+	reply, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "focus-stop", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui", ReplyTo: parent.ID}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "stop it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(t.Context(), inputBindingID(reply.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Unresolved || decision.Rule == "reply-or-card" || decision.FocusFresh || decision.Target.ID == first.ID || decision.Target.ID == second.ID {
+		t.Fatalf("tied choice kept admission focus: %+v", decision)
+	}
+	replyTools := modelBindingTools(t, r, reply)
+	stopped := questionCall(t, replyTools, "worker_interrupt", "stop-focus", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "quote": "stop it"})
+	if stopped.Code != loop.Denied || !strings.Contains(string(stopped.Output), "input_target_pending") || probe.interrupts != 0 {
+		t.Fatalf("reply interrupted A without a target question: %+v interrupts=%d", stopped, probe.interrupts)
+	}
+}
+
 func TestInterruptTieAsksBeforeCancel(t *testing.T) {
 	r, _ := turnRuntime(t)
 	reserve := t.TempDir()

@@ -92,8 +92,13 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 			return s, e
 		}
 		for _, c := range choices {
-			// A retained tie is still ambiguous. Its recommendation is not focus.
-			if c.Question == "" && !c.Cancelled && len(c.Tied) < 2 {
+			// A retained tie or a pending question is still ambiguous. Clear the
+			// admission target so that fallback cannot become the next focus.
+			if c.Question != "" || len(c.Tied) > 1 {
+				s.Focus = binding.Target{Class: "none"}
+				continue
+			}
+			if !c.Cancelled {
 				s.Focus = c.Target
 				if c.CreatedID != "" {
 					s.Focus = binding.Target{Class: "existing", ID: c.CreatedID, Kind: c.Target.Kind}
