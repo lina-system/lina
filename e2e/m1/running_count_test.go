@@ -13,6 +13,8 @@ import (
 
 	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -24,8 +26,9 @@ import (
 
 type runningCountScenario struct {
 	Goals []struct {
-		ID    string
-		Steps []string
+		ID      string
+		Outcome string
+		Steps   []string
 	}
 	Run struct {
 		Goal string
@@ -139,8 +142,14 @@ func seedRunningCount(t *testing.T, h *harness, scenario runningCountScenario) {
 	}
 	conversation := "main:" + agent
 	at := time.Now().UTC().Add(-time.Hour)
+	journal := ledger.New(db, nil)
 	for _, day := range scenario.Goals {
-		g := goal.Goal{ID: day.ID, Person: person, Agent: agent, Conversation: conversation, Turn: "turn:" + day.ID, Summary: "Day " + day.ID, Done: "The day is planned", NoServiceReason: "plan",
+		// Each 일 answers the person's turn that handed it over; Core says the
+		// start line under that turn.
+		if _, err = journal.Admit(h.ctx, guard.EntryOwner, ledger.Input{ID: day.ID, ConversationID: conversation, AgentID: agent, PersonID: person, Surface: ledger.Surface{Kind: "tui"}, OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Locator: "handover-" + day.ID, Body: day.Outcome}); err != nil {
+			t.Fatal(err)
+		}
+		g := goal.Goal{ID: day.ID, Person: person, Agent: agent, Conversation: conversation, Turn: "turn:" + day.ID, Summary: day.Outcome, Done: "The day is planned", NoServiceReason: "plan",
 			Scope:    goal.GoalScope{Repositories: []string{"fixture"}, Includes: day.ID},
 			Criteria: []goal.Criterion{{ID: "outcome", Statement: "The day is planned", Check: goal.CriterionCheck{Kind: goal.RunEvidence, Method: "acceptance", Target: "fixture"}}}}
 		if err = engine.Admit(h.ctx, g); err != nil {
