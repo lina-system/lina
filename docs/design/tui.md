@@ -683,8 +683,9 @@ without moving focus or changing the draft.
 
 Within an expanded entry, Up and Down visit its steps before the next entry.
 Step selection follows the opaque ref supplied beside the display line, even
-when the name or position changes. Ctrl+O on a step shows that step's Details;
-closing the pager returns to the same selection. Expanded steps put person
+when the name or position changes. Ctrl+O on a step shows that step's Details.
+While Details stay open, that ref is read from the stage that currently holds
+it. Closing the pager returns to the same selection. Expanded steps put person
 waits first, then working, waiting and remaining history. A step and its worker
 rows stay together when scrolling, with a count of steps hidden on either side.
 Worker state words use the client's language; worker rows disappear on collapse
@@ -748,9 +749,10 @@ person waits are recorded on the owning goal step in the journal before
 startup. Core's own card order, card fields and projected stage list are its oracle — the
 stage list must match the corpus graph in steps, depth and parallel groups, so a
 lost blocker fails the run — and records every settled 120x34 frame in both
-languages and glyph modes. A check whose input the build does not publish yet is
-reported as missing and never as a pass: E6 and E7 need the opened 일 view of
-#770, and E11 to E14 the scheduling passes of #772 and #773. E4 and E8 to E9
+languages and glyph modes. A check whose input a recording does not supply is
+reported as missing and never as a pass. E6 and E7 run separately in
+`TestM3WorkPanelStages`; E11 to E14 need scheduling-pass recordings from #772
+and #773. E4 and E8 to E9
 also run in `TestM3WorkPanelEventLatency`: 50 live corpus graphs remain in
 progress while 50 of the fan-out graph’s 82 parallel steps land. Each stub
 worker writes a result before Core accepts its observation. Eight PTYs observe
@@ -1425,6 +1427,8 @@ its terminal-restoration paths.
 
 LN-85 delivers the harness and scenario validation. [#86](https://github.com/thisisjun786/lina/issues/86)
 records the proposed terminal matrix in `evidence/tui-spike/terminals.json`.
+A confirmed matrix records each terminal's observed product version and `TERM`;
+a proposed entry cannot carry either field.
 Owner confirmation of that list is still pending and is the first Done-when item
 of [follow-up #371](https://github.com/thisisjun786/lina/issues/371), which also
 owns the confirmed matrix, owner-run S1–S7 and S9–S11 evidence and the final

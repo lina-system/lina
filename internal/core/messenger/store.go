@@ -707,6 +707,12 @@ func thirdPartyTag(plan recordPlan) ([]secrets.Span, error) {
 
 func (s *Store) writeRecord(ctx context.Context, tx *canon.Tx, source Source, chat string, plan recordPlan, event ledger.Event) error {
 	message := plan.message
+	if message.Author.ID != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_author(platform,account,author,name,email) VALUES(?,?,?,?,?)
+ON CONFLICT(platform,account,author) DO UPDATE SET name=excluded.name,email=excluded.email`, source.Platform, source.Account, message.Author.ID, message.Author.Name, message.Author.Email); err != nil {
+			return err
+		}
+	}
 	occurred := event.OccurredAt.UTC().Format(time.RFC3339Nano)
 	edited := ""
 	if !message.Edited.IsZero() {

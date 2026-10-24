@@ -81,7 +81,7 @@ func (m AdapterModel) Complete(ctx context.Context, l lease.Lease, call Call) (C
 	if len(call.Schema) > 0 {
 		object, err := applefm.ValidateObject(call.Schema, json.RawMessage(stripFence(strings.TrimSpace(text))))
 		if err != nil {
-			return Completion{}, applefm.ErrSchemaMiss
+			return Completion{Usage: stream.Meta().Usage}, applefm.ErrSchemaMiss
 		}
 		return Completion{Object: object, Usage: stream.Meta().Usage}, nil
 	}
