@@ -2,6 +2,7 @@
 package boot
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -608,29 +609,29 @@ func (r *conversationRuntime) moveEditedRecord(ctx context.Context, effect bindi
 			receipt = "restored+applied"
 		}
 	}
-	if _, err = r.records.CommitBatch(ctx, changes, records.Actor{Person: r.person, Agent: r.agent}); err != nil {
+	published, err := r.records.CommitBatch(ctx, changes, records.Actor{Person: r.person, Agent: r.agent})
+	if err != nil {
 		outcome.Reason = "stale"
 		return outcome, nil, nil
 	}
 	outcome.Moved, outcome.Receipt = true, receipt
+	// The publication's revision belongs to this effect. A later read can
+	// observe a write that landed after the records lock was released.
 	next := effect
 	if applied != nil {
-		_, rev, err := r.records.Read(ctx, to.ID)
-		if err != nil {
-			return outcome, nil, nil
-		}
 		next.Target, next.RecordID = to.ID, to.ID
-		next.BeforeBody, next.BeforeRevision, next.AfterRevision = beforeBody, beforeRev, rev
-		if payload := relocatedEditPayload(to.ID, applied.Data); len(payload) > 0 {
+		next.BeforeBody, next.BeforeRevision = beforeBody, beforeRev
+		next.AfterRevision = published
+		if bytes.Equal(applied.Data, beforeBody) {
+			next.AfterRevision = beforeRev
+		}
+		if payload := relocatedEditPayload(to.ID, applied.Data, effect.Payload); len(payload) > 0 {
 			next.Payload = payload
 		}
 		return outcome, &next, nil
 	}
-	if _, rev, err := r.records.Read(ctx, effect.RecordID); err == nil {
-		next.AfterRevision = rev
-		return outcome, &next, nil
-	}
-	return outcome, nil, nil
+	next.AfterRevision = published
+	return outcome, &next, nil
 }
 
 // moveEditRepo stages the validated target write for the same publication as
@@ -698,11 +699,16 @@ func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Ef
 
 // relocatedEditPayload describes the edit as it now sits on the destination,
 // so a later move diffs against that item rather than the original one.
-func relocatedEditPayload(id string, data []byte) []byte {
+// A text-only edit stays text-only: adding the destination's stored to-do
+// would replay fields the person did not change, including ones a write rejects.
+func relocatedEditPayload(id string, data, original []byte) []byte {
 	kind, title, note, _, _ := recordParts(data)
 	write := coreexec.RecordWrite{ID: id, Kind: kind, Title: title, Note: note}
-	if todo, _, _, err := records.ReadTodo(data); err == nil && todo != nil {
-		write.Todo = todo
+	var previous coreexec.RecordWrite
+	if json.Unmarshal(original, &previous) == nil && previous.Todo != nil {
+		if todo, _, _, err := records.ReadTodo(data); err == nil && todo != nil {
+			write.Todo = todo
+		}
 	}
 	raw, err := json.Marshal(write)
 	if err != nil {

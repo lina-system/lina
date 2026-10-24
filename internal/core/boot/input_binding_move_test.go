@@ -694,6 +694,15 @@ func TestBindingMoveFollowsCurrentLocation(t *testing.T) {
 	if got, _ := readRecord(t, r, "pots"); got != "Pots|Water them daily." {
 		t.Errorf("second destination missed the edit: %s", got)
 	}
+	var payload string
+	if err = r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT payload FROM binding_effects WHERE input_event=? AND kind=?", input, binding.EffectEdit).Scan(&payload)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(payload, `"todo"`) {
+		t.Errorf("text-only edit gained a to-do on replay: %s", payload)
+	}
 }
 
 func TestBindingMoveFollowsCurrentSteer(t *testing.T) {
