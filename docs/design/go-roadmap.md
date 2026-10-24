@@ -157,7 +157,7 @@ Acceptance evidence for #56:
 | Layout follows the contract. | The same assembly test checks persona layers, catalog, summary and history, ordered context groups, current input and stable tool order. [Prepared-identity coverage](../../internal/core/assemble/persona_identity_test.go) also checks that persona instructions occur once and count toward the request budget. |
 | Every failing preparation step shows one plain line and sends no request. | `TestPreparationStopsAtEachFailedStep` in [turn](../../internal/core/turn/preparation_test.go) checks all four steps, their order, one public line and zero provider calls. `TestPreparationCommitFailureAndSignIn` covers acknowledgement and request-evidence failures and the sign-in offer. |
 | The ContextPacket is never stored. | `TestAssemblyThroughDurableTurnNeverStoresPacket` in [turn](../../internal/core/turn/assembly_test.go) exercises real ledger commits, provider dispatch, a later turn and SQLite reopen; it checks stored references, output-only turn records and absence of the packet body from database/WAL bytes. |
-| All sub-issues are closed. | [#57](https://github.com/thisisjun786/lina/issues/57) and [#58](https://github.com/thisisjun786/lina/issues/58) are closed. |
+| All sub-issues are closed. | [#57](https://github.com/lina-system/lina/issues/57) and [#58](https://github.com/lina-system/lina/issues/58) are closed. |
 
 Run the issue's package checks with `go test ./internal/core/ledger/... ./internal/core/canon/... ./internal/core/guard/... ./internal/core/assemble/... ./internal/core/turn/...`. These establish the package contracts above; they do not measure live-provider quality.
 
@@ -388,8 +388,8 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Done when: a final result message ends the turn; exit without one is a failure; a receipt built from the final result and the pull request is marked adapter-derived; nothing is installed into the user's tool.
 - Depends on: G2-04. Design refs: C-29; [work-and-delegation.md](work-and-delegation.md#completion-signals).
 
-**G2-07 Manager conformance check, one return, merge or close.** One check per delivered head against the work definition; one return for a missed definition, then merge or close.
-- Done when: a second check request for the same head is refused, while a fix generation with a new head gets one check; a failing required check is a Core-computed merge precondition that blocks without a verified verdict or P1 finding; missing or oversized change evidence finishes the review as blocked without a verdict or findings, even with an out-of-area path; with available evidence, a write-area violation is a Core-computed scope miss (`needs_changes`) without a model call; prose alone stores no verdict or finding. The worker owns CI and review fixes. Only a missed done condition, scope or design reference goes back once; a remaining gap closes the PR and leaves the task blocked.
+**G2-07 Manager conformance check, one return, merge or close.** One review per pull request against the work definition; one return for a missed definition, then merge or close.
+- Done when: a second review request for the same pull request is refused, while the head produced by the one return continues that review once; a failing required check is a Core-computed merge precondition that blocks without a verified verdict and is recorded as a P1 finding; missing or oversized change evidence finishes the review as blocked without a verdict or findings, even with an out-of-area path; with available evidence, a write-area violation is a Core-computed scope miss (`needs_changes`) with a P1 finding per path, kept within the 256-finding schema limit, and no model call; paths beyond that limit stay in the scope evidence; prose alone stores no verdict or finding. The worker owns CI and review fixes. Only a missed done condition, scope or design reference goes back once; a remaining gap closes the PR and leaves the task blocked.
 - Delivery increment (#144): a missed definition returns once with only P0/P1 ids; the same task/worktree/worker produces a new generation. A residual gap or terminal CI/review failure closes with its reason and blocks without verification. The existing merge service records application only after confirmation, releasing waiting work. `e2e/m2/delivery.json` covers return, merge, close and restart through installed Core.
 - Depends on: G2-02, G2-18, G2-19. Design refs: C-58; [work-and-delegation.md](work-and-delegation.md#judgment-and-delivery).
 
@@ -410,51 +410,51 @@ Failure injections: `kill -9` at every statement boundary of task, completion ev
 - Parent acceptance (#139): the merge scenario also moves the head between PR identity and review reads, requires one refreshed observation and blocks admission until explicit head acceptance. Unit cases cover repeated head movement, a return to the original head and a failed refresh.
 - Depends on: G1-05, G1-07. Design refs: C-58; [integrations.md](integrations.md#github).
 
-**G2-30 ACP client.** Generated Agent Client Protocol version 1 types and the stdio client in `kit/acp`, shared by the ACP workers and the Grok provider ([#746](https://github.com/thisisjun786/lina/issues/746)).
+**G2-30 ACP client.** Generated Agent Client Protocol version 1 types and the stdio client in `kit/acp`, shared by the ACP workers and the Grok provider ([#746](https://github.com/lina-system/lina/issues/746)).
 - Done when: version 1 is accepted and any other version refused; prompts, updates, every stop reason, a permission answer, a cancel and a load replay round-trip through the generated types; unknown variants keep their JSON; regeneration reproduces the committed types.
 - Depends on: G2-04. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
 
-**G2-31 ACP worker adapter.** One `worker.Adapter` for every ACP worker: profiles, start, prompt, progress, completion and cancel, wired into `dispatch_work` ([#747](https://github.com/thisisjun786/lina/issues/747)).
+**G2-31 ACP worker adapter.** One `worker.Adapter` for every ACP worker: profiles, start, prompt, progress, completion and cancel, wired into `dispatch_work` ([#747](https://github.com/lina-system/lina/issues/747)).
 - Done when: a dispatched task runs in its worktree on a synthetic ACP agent to an adapter-derived receipt; process exit with an open prompt is a failure; a cancel is final only on the `cancelled` reply; LINA's model credential is absent from the child.
 - Depends on: G2-30, G2-18. Design refs: C-29, C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
 
-**G2-32 ACP approvals and questions.** Permission requests and form questions to the originating conversation ([#748](https://github.com/thisisjun786/lina/issues/748)).
+**G2-32 ACP approvals and questions.** Permission requests and form questions to the originating conversation ([#748](https://github.com/lina-system/lina/issues/748)).
 - Done when: the agent writes only after the owner's once answer arrives as `allow_once`; deny returns `reject_once`; `allow_always` and `reject_always` are never sent; a cancel answers pending requests with `cancelled`.
 - Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#approvals).
 
-**G2-33 Work tools for ACP workers.** `lina worker-tools`, a per-session stdio MCP server named in `session/new` ([#749](https://github.com/thisisjun786/lina/issues/749)).
+**G2-33 Work tools for ACP workers.** `lina worker-tools`, a per-session stdio MCP server named in `session/new` ([#749](https://github.com/lina-system/lina/issues/749)).
 - Done when: the four `lina` tools are listed from the one session server; a receipt is bound to its session's turn, generation and epoch; a foreign or late token is refused; the worker's own configuration is unchanged.
 - Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#lina-tools-for-workers).
 
-**G2-34 ACP typed failures and quota.** Errors, stop reasons, the session-failure extension and named vendor rate-limit metadata ([#750](https://github.com/thisisjun786/lina/issues/750)).
+**G2-34 ACP typed failures and quota.** Errors, stop reasons, the session-failure extension and named vendor rate-limit metadata ([#750](https://github.com/lina-system/lina/issues/750)).
 - Done when: -32000 is needs sign-in; a reported rate limit or exhausted quota parks the worker and hands the packet on once; a Claude Code rate-limit event becomes a quota row; silence stays unknown.
 - Depends on: G2-31. Design refs: C-57, C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
 
-**G2-35 ACP once-only recovery.** Restart once in the same worktree and resume or load the recorded session ([#751](https://github.com/thisisjun786/lina/issues/751)).
+**G2-35 ACP once-only recovery.** Restart once in the same worktree and resume or load the recorded session ([#751](https://github.com/lina-system/lina/issues/751)).
 - Done when: after `kill -9` of the agent the recorded session is loaded once and the task finishes; replayed history is not new progress; a second death becomes a decision row.
 - Depends on: G2-08, G2-31. Design refs: C-29, C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
 
-**G2-36 Claude Code through ACP.** The pinned `claude-agent-acp` program, installed on first use without optional packages, always running the person's `claude` ([#752](https://github.com/thisisjun786/lina/issues/752)).
+**G2-36 Claude Code through ACP.** The pinned `claude-agent-acp` program, installed on first use without optional packages, always running the person's `claude` ([#752](https://github.com/lina-system/lina/issues/752)).
 - Done when: the program installs from its lockfile with integrity checked and no optional package; the profile runs the person's `claude` path and records its version; a missing `claude` makes only this worker unsupported.
 - Depends on: G2-31, G2-32. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#claude-code-through-acp).
 
-**G2-37 Cursor through ACP.** `cursor-agent acp` on the ACP adapter; replaces G3-10 ([#210](https://github.com/thisisjun786/lina/issues/210)).
+**G2-37 Cursor through ACP.** `cursor-agent acp` on the ACP adapter; replaces G3-10 ([#210](https://github.com/lina-system/lina/issues/210)).
 - Done when: the version comes from `cursor-agent --version`; -32000 is needs sign-in and delegation moves on; a synthetic signed-in session reaches an adapter-derived receipt.
 - Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
 
-**G2-38 Gemini CLI through ACP.** `gemini --acp` on the ACP adapter, separate from the Gemini provider ([#753](https://github.com/thisisjun786/lina/issues/753)).
+**G2-38 Gemini CLI through ACP.** `gemini --acp` on the ACP adapter, separate from the Gemini provider ([#753](https://github.com/lina-system/lina/issues/753)).
 - Done when: install detects `gemini` and records its version; -32000 is needs sign-in; a synthetic signed-in session reaches an adapter-derived receipt.
 - Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
 
-**G2-39 Grok through ACP.** The person's `grok` command as an ACP worker, separate from the Grok provider ([#759](https://github.com/thisisjun786/lina/issues/759)).
+**G2-39 Grok through ACP.** The person's `grok` command as an ACP worker, separate from the Grok provider ([#759](https://github.com/lina-system/lina/issues/759)).
 - Done when: the version comes from `grok --version` and `--always-approve` is never passed; -32000 is needs sign-in; a synthetic signed-in session reaches an adapter-derived receipt, recording only the version and capabilities of the handshake.
 - Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
 
-**G2-40 Added ACP workers.** Any other ACP agent the person names by command and arguments ([#754](https://github.com/thisisjun786/lina/issues/754)).
+**G2-40 Added ACP workers.** Any other ACP agent the person names by command and arguments ([#754](https://github.com/lina-system/lina/issues/754)).
 - Done when: an added profile is loaded, shown as unverified and receives a task; a malformed one is refused with its cause; it cannot replace a built-in name.
 - Depends on: G2-31. Design refs: C-60; [work-and-delegation.md](work-and-delegation.md#acp-adapter).
 
-**G2-41 Worker evaluation.** The same small task through every worker connection, scored per dimension ([#760](https://github.com/thisisjun786/lina/issues/760)).
+**G2-41 Worker evaluation.** The same small task through every worker connection, scored per dimension ([#760](https://github.com/lina-system/lina/issues/760)).
 - Done when: the evidence record marks every candidate observed, blocked or not observed with versions and per-dimension results, and names the connection kept for Claude Code.
 - Depends on: G2-32, G2-34, G2-35, G2-36, G2-37, G2-38, G2-39. Design refs: [worker-protocols.md](../research/worker-protocols.md#evaluation-defined-before-building).
 
@@ -589,31 +589,31 @@ first-use installation, quota projection and idle process management.
 - Done when: a new request goes to another connected account when a subscription is near its limit and a one-line event is written; a started request is never resent; unknown quota is not treated as zero; pay-per-use is not started beyond the set budget.
 - Depends on: G2-25, G2-26. Design refs: C-48; [runtime.md](runtime.md#connected-accounts-and-automatic-setup).
 
-**G2-42 Provider capabilities.** Capability set per model, cache identity, layout marks and the evidence of what each request used ([#877](https://github.com/thisisjun786/lina/issues/877)).
+**G2-42 Provider capabilities.** Capability set per model, cache identity, layout marks and the evidence of what each request used ([#877](https://github.com/lina-system/lina/issues/877)).
 - Depends on: G1-08, G1-10. Design refs: C-43; [runtime.md](runtime.md#provider-capabilities).
 
-**G2-43 ContextPacket after the input.** The request layout puts the person's input before the ContextPacket ([#878](https://github.com/thisisjun786/lina/issues/878)).
+**G2-43 ContextPacket after the input.** The request layout puts the person's input before the ContextPacket ([#878](https://github.com/lina-system/lina/issues/878)).
 - Depends on: G1-10, G1-39. Design refs: C-11; [conversation-and-memory.md](conversation-and-memory.md#request-layout).
 
-**G2-44 Provider replay.** A fixed replay per provider that reports cache reads, writes, plain input and first-token time ([#879](https://github.com/thisisjun786/lina/issues/879)).
+**G2-44 Provider replay.** A fixed replay per provider that reports cache reads, writes, plain input and first-token time ([#879](https://github.com/lina-system/lina/issues/879)).
 - Depends on: G2-42, G1-39. Design refs: [runtime.md](runtime.md#provider-capabilities).
 
-**G2-45 ChatGPT cache identity.** `prompt_cache_key` per conversation once V1 accepts it ([#880](https://github.com/thisisjun786/lina/issues/880)).
+**G2-45 ChatGPT cache identity.** `prompt_cache_key` per conversation once V1 accepts it ([#880](https://github.com/lina-system/lina/issues/880)).
 - Depends on: G2-42, G2-43, G2-44, G1-31. Design refs: C-44; [runtime.md](runtime.md#requests).
 
-**G2-46 Claude history blocks and cache marks.** One block per earlier turn with LINA's mark, 1-hour lifetime ([#881](https://github.com/thisisjun786/lina/issues/881)).
+**G2-46 Claude history blocks and cache marks.** One block per earlier turn with LINA's mark, 1-hour lifetime ([#881](https://github.com/lina-system/lina/issues/881)).
 - Depends on: G2-26, G2-42, G2-43, G2-44. Design refs: C-45; [runtime.md](runtime.md#provider-capabilities).
 
-**G2-47 Claude API-key route.** A model-API adapter over the Messages API beside the subscription route, with LINA's marks and batches ([#882](https://github.com/thisisjun786/lina/issues/882)).
+**G2-47 Claude API-key route.** A model-API adapter over the Messages API beside the subscription route, with LINA's marks and batches ([#882](https://github.com/lina-system/lina/issues/882)).
 - Depends on: G1-08, G2-42, G2-43, G2-44. Design refs: [runtime.md](runtime.md#providers).
 
-**G2-48 Gemini batch and flex.** Background jobs on Gemini's Batch and Flex tiers, with fallback to a normal request ([#883](https://github.com/thisisjun786/lina/issues/883)).
+**G2-48 Gemini batch and flex.** Background jobs on Gemini's Batch and Flex tiers, with fallback to a normal request ([#883](https://github.com/lina-system/lina/issues/883)).
 - Depends on: G2-27, G2-42, G2-44. Design refs: [runtime.md](runtime.md#provider-capabilities).
 
-**G2-49 Grok prompt order.** Cache-friendly prompts on the `grok` command route ([#884](https://github.com/thisisjun786/lina/issues/884)).
+**G2-49 Grok prompt order.** Cache-friendly prompts on the `grok` command route ([#884](https://github.com/lina-system/lina/issues/884)).
 - Depends on: G2-28, G2-42, G2-43, G2-44. Design refs: C-46; [runtime.md](runtime.md#provider-capabilities).
 
-**G2-50 Cache-aware compaction.** Early compaction when the cache has expired, and a summary request that reuses the cached prefix ([#885](https://github.com/thisisjun786/lina/issues/885)).
+**G2-50 Cache-aware compaction.** Early compaction when the cache has expired, and a summary request that reuses the cached prefix ([#885](https://github.com/lina-system/lina/issues/885)).
 - Depends on: G1-15, G1-38, G2-42, G2-43, G2-44. Design refs: [conversation-and-memory.md](conversation-and-memory.md#compaction-and-resume).
 
 ## LINA 3
@@ -641,7 +641,7 @@ Failure injections: a Node disconnect, a silent partition, a Node reboot, a revo
 - Done when: a catalog file with a bad signature or an older version is rejected; each registration mode is exercised by a fixture in order; the first request asks the scopes the manifest or the 401 challenge names, and an `insufficient_scope` answer asks the earlier scopes together with the new ones; a 401 refreshes once; `invalid_grant` shows needs sign-in; the connect card is a labeled block in the TUI and a question from a plugin appears as prompts.
 - Depends on: G1-18, G1-21, G1-31, G3-01. Design refs: C-34, T-14; [integrations.md](integrations.md#oauth-for-mcp-servers).
 
-**G3-19 A2A design.** Publishing a LINA agent as an A2A agent and calling remote A2A agents; design only, before any code ([#756](https://github.com/thisisjun786/lina/issues/756)).
+**G3-19 A2A design.** Publishing a LINA agent as an A2A agent and calling remote A2A agents; design only, before any code ([#756](https://github.com/lina-system/lina/issues/756)).
 - Done when: the contract states what a published agent offers and how a LINA agent or Node calls a remote one under a grant, citing the A2A version it targets, and its implementation issues are filed.
 - Depends on: G3-01. Design refs: [worker-protocols.md](../research/worker-protocols.md#a2a); [integrations.md](integrations.md).
 
@@ -675,7 +675,7 @@ This epic also folds in the owner's Node direction, which is not yet in the cont
 - Done when: overlapping areas are never in flight together; a dependent is released only after the predecessor is confirmed merged; a task nothing depends on never waits; a waiting task shows exactly one reason; an unmergeable pull request goes back once to its worker; the developer view shows one lane for each worker, folded to one line by default.
 - Depends on: G2-02, G2-07, G2-18. Design refs: C-57, T-14; [work-and-delegation.md](work-and-delegation.md#parallel-hand-off).
 
-**G3-10 Cursor adapter.** Moved to LINA 2 as G2-37: Cursor runs through the ACP adapter, carried by [#210](https://github.com/thisisjun786/lina/issues/210). The id is not reused.
+**G3-10 Cursor adapter.** Moved to LINA 2 as G2-37: Cursor runs through the ACP adapter, carried by [#210](https://github.com/lina-system/lina/issues/210). The id is not reused.
 
 **G3-16 Antigravity adapter.** Headless child; success from the pull request.
 - Implementation evidence: `internal/core/worker/antigravity`, Core's durable

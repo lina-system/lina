@@ -11,23 +11,27 @@ import (
 )
 
 const (
-	matrixFormat    = 2
+	matrixFormat    = 3
 	platformMacOS   = "macos"
 	platformOmarchy = "linux-omarchy"
 )
 
-// TerminalEntry names one terminal in the spike gate. A version is observed
-// during the run and is never recorded here from a proposal.
+// TerminalEntry names one terminal in the spike gate. A proposed entry carries
+// only the proposal; the version and TERM are observed on the terminal and are
+// recorded only in a confirmed entry.
 type TerminalEntry struct {
-	ID       string `json:"id"`
-	Platform string `json:"platform"`
-	Terminal string `json:"terminal"`
-	SSH      *bool  `json:"ssh"`
+	ID       string  `json:"id"`
+	Platform string  `json:"platform"`
+	Terminal string  `json:"terminal"`
+	SSH      *bool   `json:"ssh"`
+	Version  *string `json:"version"`
+	Term     *string `json:"term"`
 }
 
 // TerminalMatrix records the real terminals for the T-08 gate. The proposed
 // list is always present. A proposed matrix names the issue that owns the
-// owner's confirmation; only a confirmed matrix carries the confirmed list.
+// owner's confirmation; only a confirmed matrix carries the confirmed list,
+// whose entries record the observed product version and TERM.
 type TerminalMatrix struct {
 	Format        int             `json:"format"`
 	Status        string          `json:"status"`
@@ -79,7 +83,29 @@ func (m TerminalMatrix) Validate() error {
 		if err := validateEntries("confirmed", m.ConfirmedList); err != nil {
 			return err
 		}
+		if err := confirmsProposal(m.ProposedList, m.ConfirmedList); err != nil {
+			return err
+		}
 		return coversGate(m.ConfirmedList)
+	}
+	return nil
+}
+
+// confirmsProposal requires the confirmed list to confirm the recorded proposal:
+// the same terminal ids, with the observed product replacing the placeholder.
+func confirmsProposal(proposed, confirmed []TerminalEntry) error {
+	want := make(map[string]bool, len(proposed))
+	for _, entry := range proposed {
+		want[entry.ID] = true
+	}
+	for _, entry := range confirmed {
+		if !want[entry.ID] {
+			return fmt.Errorf("confirmed terminal id was not proposed: %s", entry.ID)
+		}
+		delete(want, entry.ID)
+	}
+	for id := range want {
+		return fmt.Errorf("proposed terminal id is missing from the confirmed list: %s", id)
 	}
 	return nil
 }
@@ -92,6 +118,19 @@ func validateEntries(kind string, entries []TerminalEntry) error {
 		}
 		if entry.Platform != platformMacOS && entry.Platform != platformOmarchy {
 			return fmt.Errorf("%s terminal entry has an unknown platform: %s", kind, entry.Platform)
+		}
+		switch kind {
+		case "proposed":
+			if entry.Version != nil || entry.Term != nil {
+				return fmt.Errorf("proposed terminal entry cannot carry an observed version or TERM: %s", entry.ID)
+			}
+		case "confirmed":
+			if entry.Version == nil || strings.TrimSpace(*entry.Version) == "" {
+				return fmt.Errorf("confirmed terminal entry needs an observed version: %s", entry.ID)
+			}
+			if entry.Term == nil || strings.TrimSpace(*entry.Term) == "" {
+				return fmt.Errorf("confirmed terminal entry needs an observed TERM: %s", entry.ID)
+			}
 		}
 		if seen[entry.ID] {
 			return fmt.Errorf("duplicate %s terminal id: %s", kind, entry.ID)

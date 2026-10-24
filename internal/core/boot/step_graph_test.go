@@ -3,6 +3,7 @@ package boot
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/records"
@@ -67,5 +68,25 @@ func TestManagerStepGraphTool(t *testing.T) {
 	foreign.prepareGoalWorkTools("foreign-turn", nil, outside)
 	if got := outside["read_step_graph"].Execute(t.Context(), provider.ToolCall{Arguments: `{"goal_id":"turn:goal"}`}); got.Code == loop.OK {
 		t.Fatal("foreign manager read the graph")
+	}
+	record := strings.Replace(valid, `"goal_id":"turn:goal"`, `"goal_id":"goal:turn:goal"`, 1)
+	if got := submit(record); got.Code != loop.OK || string(got.Output) != saved {
+		t.Fatalf("record id submit missed the bare goal: %+v", got)
+	}
+	for _, name := range []string{"submit_step_graph", "read_step_graph"} {
+		raw := record
+		if name == "read_step_graph" {
+			raw = `{"goal_id":"goal:turn:goal"}`
+		}
+		key, err := bindings[name].Validate(provider.ToolCall{ID: name, Name: name, Arguments: raw})
+		if err != nil || key != "goal:turn:goal" {
+			t.Fatalf("%s key for the project record: %q %v", name, key, err)
+		}
+	}
+	if got := bindings["read_step_graph"].Execute(t.Context(), provider.ToolCall{ID: "read-record", Arguments: `{"goal_id":"goal:turn:goal"}`}); got.Code != loop.OK || string(got.Output) != saved {
+		t.Fatalf("record id read missed the bare goal: %+v", got)
+	}
+	if got := outside["read_step_graph"].Execute(t.Context(), provider.ToolCall{Arguments: `{"goal_id":"goal:turn:goal"}`}); got.Code == loop.OK {
+		t.Fatal("foreign manager read the graph through its project record")
 	}
 }

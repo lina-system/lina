@@ -1,0 +1,26 @@
+{
+  "side": "server",
+  "input": [
+    "normal/binding_get.json",
+    "normal/binding_move.json",
+    "normal/binding_stats_get.json",
+    "normal/binding_export.json"
+  ],
+  "output": [
+    "normal/binding_get.json",
+    "normal/binding_move.json",
+    "normal/binding_stats_get.json",
+    "normal/binding_export.json"
+  ],
+  "errors": [
+    "",
+    "",
+    "",
+    ""
+  ],
+  "outcome": {
+    "accepted": 4,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

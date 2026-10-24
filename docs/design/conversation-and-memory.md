@@ -215,7 +215,7 @@ A messenger source ([integrations.md](integrations.md#messengers)) brings the pe
 - The person's own messages are the person's words. They feed memory like the person's turns in the app, within the cost bounds of [Learning the person](#learning-the-person). Items learned from them take the default layer of their kind and have no source agent; the kinds held by one agent (shared history, relationship, emotion observation) do not arise from them.
 - Other people's messages are external evidence with the `third_party` tag, never an instruction or an approval. They become memory only about their sender, and only when the sender is matched to a known person with high confidence ([Sender identity](#sender-identity)). An unmatched or ambiguous sender stays search-only.
 - Text is masked at admission like any native event. An attachment is kept as metadata; its bytes enter LINA only when the person imports it.
-- An edit is a new event that `supersedes` the earlier one. Search shows the newest, and the earlier stays as history. Replies and thread membership are the relations `replies_to` and `in_thread`.
+- An edit is a new event that `supersedes` the earlier one. Search shows the newest, and the earlier stays as history. Replies and thread membership are the relations `replies_to` and `in_thread`, including when the root and the reply are admitted in the same read.
 - A deletion the platform reports hides the record at once through the one retraction path. Its text then follows the trash rule: 30 days, then permanent deletion with a tombstone that keeps the legacy reference. A message missing from a later read is never a deletion.
 - Messenger records reach a turn only as the result of a tool call that asks for them, as external evidence with their origin. They never enter a ContextPacket on their own.
 - The person deletes records, a chat or a whole source's records like any conversation content (see "Deleting a conversation"). The tombstone keeps the legacy reference, so a later sync or import does not bring the content back.
@@ -356,12 +356,13 @@ Every input of the person is bound to one target: the focus, another 목표, 일
 
 **Focus and candidates.**
 
+- An input sets the next focus only when all its current choices settle on the same item, including a single created identity. Distinct targets, a retained tie, a pending target question or a cancelled choice leave no focus; request order never selects a winner.
 - The focus ages. After 60 minutes without an exchange (a starting value) it is no longer the default and is offered as one candidate among the rest. In the owner's data a message sent within ten minutes continued the current topic about 70 percent of the time; after an hour, about 20 percent.
 - Core ranks at most eight candidates: the focus; items with a question to the person open in this conversation; tasks and runs started from it that are running or waiting; items the message names; then the person's most recently active 목표, 일 and 할 일. Each carries its id, title, kind, state and last activity, and they enter item 7.3 of the request layout.
 
 **Core rules.** The first rule that holds decides, and the binding records it. Rules read surface facts and state, never meaning.
 
-1. **Reply or card.** Input sent as a reply to a message, notice or card that belongs to an item, or typed in an item's thread or card, binds to that item.
+1. **Reply or card.** Input sent as a reply to a message, notice or card that belongs to an item, or typed in an item's thread or card, binds to that item. The item is that message's one current choice, including a single task or run created after admission. Several targets, or a target still waiting on the person, leave the reply unresolved.
 2. **Exact reference.** The message holds the id or link of exactly one open candidate, or its exact title or one of the person's names for it ([Names](preset-work-methods.md#names)), matched after NFC and case folding with Korean particles allowed. When two or more match, or the match is a finished item, the model chooses.
 3. **Offered option.** Exactly one open question to the person offered options, and the message is one of them by number or label, or a yes or no to a yes-or-no question. The binding goes to that question's item.
 
@@ -371,24 +372,87 @@ Word lists and timing do not bind. In the owner's data, status, memory and new-w
 
 **The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
 
+`bind_input` records request ordinals and exact input excerpts. Choices append
+system events to the admission binding; retries retain the same event and question.
+A work tool may name `input_binding` to select a request or consumed steering input.
+Both tools use optional `input_event_id`: omit it for the current input, or name
+an admitted event consumed by this turn. It is never an arbitrary ledger lookup.
+The legacy `input` field remains readable. The current input's text, ignoring
+case and spacing, means that input. When the turn has only that input, other
+prose in the selector means it too. An event-shaped id the turn did not consume
+is rejected. Conflicting selectors are rejected. Unknown binding fields are
+ignored. Invalid new targets return the field and reason, allowed kinds, and
+for a parent error the authorized open initiative/project IDs, so the model can
+correct the next call. A question about two new targets labels each choice with
+its kind and parent, so the options stay distinct.
+A single `prepare_work` or `schedule_work` receipt records the created task as
+that request's focus. Several created tasks stay unresolved. When the person
+has selected a new target and creation has recorded its id, a later record
+read, progress read, or follow-up of that created item stays on the same
+request. Naming a different item does not replace the person's choice.
+A resumed channel request recovers the original channel receipt through the
+answer's parent chain before a follow-up is delivered.
+Its ordinary authority and state checks still run. A steering input retains its
+own tool scope and current channel binding; it cannot borrow the original turn's
+permissions. A tool executed for that steering input uses the steering runtime
+and event, so a channel follow-up keeps that channel's source. Reading a tied
+candidate does not resolve the original ambiguity. A retained tie, including a
+read that has not asked a question, does not settle a reply or the next focus.
+A reply that stays unresolved keeps that tie, so a later control asks before it
+runs.
+An unresolved follow-up after an input with several settled targets also keeps
+those targets for the control check. A tool's session argument alone does not
+choose between them: stopping a worker asks which item before any interrupt.
+When more targets remain than one question can list, Core asks again for the
+rest before it runs the instruction.
+Current choices enter the
+ContextPacket and remain reconstructible from their ledger sources.
+
 **When to ask.** The agent asks which item only when both hold:
 
 - two targets still tie after the rules and its own reading;
-- a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, or send, pay or delete.
+- a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, stop a worker, or send, pay or delete.
 
 It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
 
-When it asks, Core keeps the instruction pending until the person explicitly selects a target or cancels it. Passing over the question, an unrelated turn or a deadline never applies the recommended pick. While the target is unresolved, Core does not deliver the instruction as a steer, start its work, or perform its send, payment or deletion. Unrelated conversation and independent work continue. Selecting a target resolves only the binding; execution still requires the usual state and authorization checks ([main-authority.md](main-authority.md#approval)). This exception also applies to the general skipped-question rule in [Applying the record](preset-work-methods.md#applying-the-record).
+A question offers at most five answers. When an inherited set is larger, Core
+keeps the instruction pending and pages the targets. Each page shows four
+targets and one answer that asks the next page, until the last page shows the
+remaining targets. Choosing a listed target resolves only that request.
+Choosing the next page does not run the instruction and does not drop the
+remaining targets. Cancelling or declining cancels the request. The model
+names at most five tied targets and cannot supply the targets Core holds for
+a later page.
+
+Core decides whether a steer must ask from the whole inherited set, including
+targets held for a later page. A running, working, waiting, or needs-input
+task or run anywhere in that set keeps the instruction pending.
+
+A retained read keeps every inherited target, including targets held for a
+later page. A later steer or stop still asks from that whole set.
+
+A later page belongs to the same person, agent, and conversation as the
+question it continues.
+
+When it asks, Core keeps the instruction pending until the person explicitly selects a target or cancels it. Passing over the question, an unrelated turn or a deadline never applies the recommended pick. While the target is unresolved, Core does not deliver the instruction as a steer, start its work (including a step graph or a mock build), stop its worker, or perform its send, payment or deletion. Unrelated conversation and independent work continue. Selecting a target resolves only the binding; execution still requires the usual state and authorization checks ([main-authority.md](main-authority.md#approval)). This exception also applies to the general skipped-question rule in [Applying the record](preset-work-methods.md#applying-the-record).
+
+Target questions use the existing question card and Waiting for me. Their
+recommendation is the first option, with no default action. A card answer or an
+exact offered label or number resolves only that request; declining or cancelling
+records its cancellation. An unrelated turn can proceed without resolving it.
+Core checks a retained tie again when a later tool would make it irreversible.
 
 **Showing and moving.**
 
 - A binding that leaves the focus, returns to an aged focus or creates an item shows as a one-line chip on the person's message, naming the item. A binding to a fresh focus shows nothing.
 - One tap on the chip lists the other candidates, "new" and "none". Choosing one moves the binding: Core appends a rebinding event and moves what the turn did to the right item ([work-and-delegation.md](work-and-delegation.md#messages-about-work)). The move is the label of that choice in Jev's material and in the replay set.
-- An effect that already left the person cannot be moved, which is why the agent asks first for those.
+- An effect that already left the person cannot be moved, which is why the agent asks first for those. A move lists such an effect as not moved, with the reason.
+- The chip is available wherever the message is shown, including channel replies, and it follows a later choice. A surface without a pointer reaches the same list with one key or one short reply.
+- Core counts moves per hundred bindings by the decider that made the original pick, and each move becomes a Jev label and one exportable replay case. Both are canon: they survive a restart. A retry returns the original move receipt. The corrected choice becomes the active binding in the same commit as the move. Replay keeps the original input and admission facts, excluding personal name memories.
 
 **Admission and context.** Native person input and its initial system binding event commit together, before acknowledgement or turn dispatch. The binding is structured canon metadata stored inline, including full candidate titles; large work metadata must not prevent admission or require filesystem I/O inside the transaction. Admission reads the prior binding and the last exchange through the retraction-visible projection, so a withdrawn input neither restores focus nor refreshes its age. A notice's run identity comes from its durable delivery record, never from a notice body that may be stored as a material. Retrying an input reuses that event; input admitted during a turn keeps its own event and supplies its binding at the next model round. A binding records `no-rule` and an unresolved choice when no Core rule holds, alongside a fresh-focus or none default. It does not authorize an action. Existing pending input from an earlier Core version receives a binding before preparation resumes.
 
-Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
+Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A code goal record is a project candidate under its record id. A prepared task whose record has no person id is included when its agent and conversation belong to that person. A task recorded for someone else is not. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
 
 Client input may carry optional `reply_to`, `card` and `thread` references. Core resolves them within the authenticated conversation and the person's work queue. Platform reply ids are resolved within their channel address. An unresolved or foreign reference supplies no rule. General questions may explicitly mark a yes-or-no form; free text is never inferred to be that form.
 
@@ -404,6 +468,14 @@ is launched. Temporary state is removed after each pair. The replay-only
 baselines do not change ordinary conversation intake.
 
 `lina intake-replay --core <cases.jsonl>` runs the production admission binding and candidate ranking, with the fixture's persisted clock, prior focus and surface facts. It reports the same per-set and per-decider scores. The ordinary command retains the two historical baselines for comparison.
+
+`lina intake-replay --model <cases.jsonl>` uses an explicitly configured model
+route and the production `bind_input` tool in that isolated runtime. It offers
+only the ranked candidates, recent context and binding tool, never work execution,
+gold labels or the original agent's choice. The command sends private case text
+to the configured route only when this model mode is selected. Its scores remain
+separate from the deterministic baselines; a synthetic run cannot establish the
+private-set acceptance thresholds.
 
 The two baselines are **focus-only** (always the recorded focus, including an
 aged focus) and **rules-then-focus** (the three explicit-fact rules above, then
@@ -737,6 +809,7 @@ Core's `observe_health` currently observes records-index head and row-count cons
 Core mechanisms it relies on: the to-do record and the candidate objects of [work-and-delegation.md](work-and-delegation.md#the-to-do-record), the undo log, reconciliation of the 오늘 (today) view against linked threads, a cross-channel thread ledger, a decision store and per-class rejection counters.
 
 1. Candidates come from what the person says and from sources the person does not tick off (chat, mail, calendar), not only from "add" commands.
+   A proposal equivalent to an open to-do remains a pending candidate under the records admission checks. The input-binding duplicate guard does not discard that proposal or create a new work binding for it.
 2. A 할 일 (to-do) is a named object plus an action. An unknown state becomes "check the status of X".
 3. Areas come from the person's own classification statements, stored as rules and applied by default. What the person says must never be mixed stays separate.
 4. Reversible writes (add, edit, complete, re-date, label, note) are done at once and reported in one line with an undo handle. Sending in the person's name, calendar changes, deletion, money, publishing and sharing a file link show the full content and wait for a yes.
@@ -1251,7 +1324,7 @@ Imported observations, card lines and legacy summaries stay outside recall, Cont
 
 ### Importing a Hermes install
 
-Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The remaining Hermes import work in [#115](https://github.com/thisisjun786/lina/issues/115), its sub-issues and [#320](https://github.com/thisisjun786/lina/issues/320) keeps its scope under this framing ([#330](https://github.com/thisisjun786/lina/issues/330)). No other source adapter is implemented by this change.
+Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The Hermes import work in [#115](https://github.com/lina-system/lina/issues/115), its sub-issues and [#320](https://github.com/lina-system/lina/issues/320) landed in `internal/addons/importer/hermes` and the `lina import-hermes` command under this framing ([#330](https://github.com/lina-system/lina/issues/330)). No other source adapter is implemented by this change.
 
 The adapter lives outside Core in `internal/addons/importer/hermes`. The explicit `lina import-hermes` command is its installed entry point; no onboarding or ordinary conversation starts it. Importing remains optional.
 
@@ -1383,7 +1456,7 @@ Settled choices:
 
 ### Importing a murmur store
 
-murmur is the owner's earlier store of KakaoTalk, Discord and iMessage messages. Its importer follows [Memory importer add-ons](#memory-importer-add-ons), with these differences, because a messenger chat goes on after the import. The mapping and the move are in [messengers.md](../research/messengers.md#murmur-mapped-onto-core).
+murmur is the owner's earlier store of KakaoTalk, Discord and iMessage messages. Its importer follows [Memory importer add-ons](#memory-importer-add-ons), with these differences, because a messenger chat goes on after the import. The mapping and the move are in [messengers.md](../research/messengers.md#murmur-mapped-onto-core). The adapter lives outside Core in `internal/addons/importer/murmur`; the explicit `lina import-murmur` command is its installed entry point, and no onboarding or ordinary conversation starts it.
 
 - **Source.** A stopped murmur data home that the person hands over: its spool and config, copied with a hash check. Its derived database, vectors and model cache are not read. The schema gate accepts spool event version 1 with the message fields of murmur's model and refuses anything else.
 - **Destination.** Messenger records of the matching source: KakaoTalk, Discord or iMessage. A source the person has not connected is created in the import-only state. The records are not sealed; live records of the same chat join them by key. For one KakaoTalk key, the archive value wins over the live value, as in murmur.
@@ -1431,7 +1504,7 @@ A restore never brings back a retracted or deleted item, or deleted conversation
 - The bound on the part of a result's text that the model sees, and the size limit of a preview's file bytes held in the ledger: set by measurement during implementation acceptance of the conversation engine.
 - The reply budgets, the size of a tuning step and the reaction classes: starting values set in Reply shape, tuned by measurement with real use and kept per person.
 - Episode format version 1 and its manifest are defined under [Episode export](#episode-export).
-- The fusion constant of `recall` ranking and any weight per kind: starting values set on the [parity set](https://github.com/thisisjun786/lina/issues/849) during implementation acceptance of the shared index, recorded with each change ([research](../research/unified-store.md#recall-quality)).
+- The fusion constant of `recall` ranking and any weight per kind: starting values set on the [parity set](https://github.com/lina-system/lina/issues/849) during implementation acceptance of the shared index, recorded with each change ([research](../research/unified-store.md#recall-quality)).
 
 [lcm-store]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/store.py
 [lcm-compaction]: https://github.com/electricsheephq/lcm-x/blob/709099b3a397a7893a7abae8802ebe7bf605f79e/compaction.py

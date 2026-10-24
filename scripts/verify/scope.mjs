@@ -18,7 +18,7 @@ export function registryFor(cwd) {
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
   const core = existsSync(join(cwd, 'internal/core')) ? ['./internal/core/...'] : [];
-  const addonDirectories = ['internal/addons/importer/hermes/'];
+  const addonDirectories = ['internal/addons/importer/hermes/', 'internal/addons/importer/murmur/'];
   const addonPackages = addonDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
   const skills = existsSync(join(cwd, 'skills')) ? ['./skills/...'] : [];

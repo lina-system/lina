@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
@@ -190,4 +191,24 @@ func TestDeletionRequiresCommittedIntentAndIsIdempotent(t *testing.T) {
 	}
 	end := s.BeginTurn()
 	end()
+}
+
+func TestTokenExpirySurvivesStorageAndLegacyRecords(t *testing.T) {
+	s := tokenStore(t)
+	key := secrets.Key{Person: "person", Service: "webex", Name: "tokens"}
+	expires := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	if err := s.PutTokens(key, secrets.NewTokensUntil("access", "refresh", expires)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetTokens(key)
+	if err != nil || !got.Expires().Equal(expires) {
+		t.Fatalf("expiry lost: %v %v", got.Expires(), err)
+	}
+	if err := s.Put(key, []byte(`{"access":"old","refresh":"old-refresh"}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.GetTokens(key)
+	if err != nil || !got.Expires().IsZero() {
+		t.Fatalf("legacy record: %v", err)
+	}
 }

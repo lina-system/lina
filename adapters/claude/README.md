@@ -20,8 +20,11 @@ Core accepts an explicit route through `LINA_CLAUDE_NODE` (absolute Node path),
 `LINA_CLAUDE_ADAPTER` (absolute `main.ts` path) and `LINA_CLAUDE_MODEL`. It refuses
 partial configuration and simultaneous Responses/Claude routes. A subscription
 token, if supplied, uses `CLAUDE_CODE_OAUTH_TOKEN`; otherwise the SDK may use the
-person's existing command login. Core passes an allowlisted environment. Neither
-competing credentials nor Node injection variables reach the child. Automatic
+command's own OAuth login. It never loads the command's settings, so a gateway
+login there (an `apiKeyHelper` or `ANTHROPIC_BASE_URL`) is not used: a gateway is
+a Claude API-key route with a confirmed base URL and key. Core passes an
+allowlisted environment. Neither competing credentials nor Node injection
+variables reach the child. Automatic
 account discovery, verified first-use installation, quota projection and the
 account-scoped idle process manager remain #168's work. This initial explicit
 route starts a fresh adapter for each request and joins it when the stream closes.

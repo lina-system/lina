@@ -5,11 +5,9 @@ package dispatch
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"path"
 	"path/filepath"
@@ -354,7 +352,7 @@ func (s *Service) Tool(origin Origin) loop.Tool {
 	}}
 }
 func admissionID(origin Origin, callID string) string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(origin.Turn+"\x00"+callID)))
+	return work.DispatchID(origin.Turn, callID)
 }
 
 // The first snapshot wins even when identical calls resolve a moving branch
@@ -497,7 +495,9 @@ func (s *Service) sync() {
 					continue
 				}
 			}
-			if r.Recoveries > 0 && s.cfg.AuthorizeRecovery != nil {
+			// A definition return starts another execution just as recovery does.
+			// Transient refusals (including goal pause) retain the queued work.
+			if (r.Recoveries > 0 || r.ReturnReceipt != "") && s.cfg.AuthorizeRecovery != nil {
 				allowed, err := s.cfg.AuthorizeRecovery(s.ctx, r)
 				if err != nil {
 					continue

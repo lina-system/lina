@@ -26,8 +26,18 @@ func Return(r Record) (ReturnPayload, error) {
 // Reason preserves finding identities in the close explanation.
 func (p ReturnPayload) Reason() string {
 	text := p.Evidence
-	for _, f := range p.Findings {
-		text += "\n" + f.Severity + " " + f.ID + " (" + f.File + "): " + f.Claim
+	for _, line := range ReasonLines(p.Findings) {
+		text += "\n" + line
 	}
 	return text
+}
+
+// ReasonLines renders findings as saved reason lines, keeping their ids so a
+// return and a close name the same evidence.
+func ReasonLines(findings []Finding) []string {
+	var lines []string
+	for _, f := range findings {
+		lines = append(lines, f.Severity+" "+f.ID+" ("+f.File+"): "+f.Claim)
+	}
+	return lines
 }

@@ -61,7 +61,9 @@
     "values/references_and_max_epoch.json",
     "normal/restart_status.json",
     "normal/stop_result.json",
-    "normal/work_switch_result.json"
+    "normal/work_switch_result.json",
+    "normal/work_control_result.json",
+    "normal/work_limit_result.json"
   ],
   "output": [
     "welcome.json",
@@ -124,9 +126,13 @@
     "values/references_and_max_epoch.json",
     "normal/restart_status.json",
     "normal/stop_result.json",
-    "normal/work_switch_result.json"
+    "normal/work_switch_result.json",
+    "normal/work_control_result.json",
+    "normal/work_limit_result.json"
   ],
   "errors": [
+    "",
+    "",
     "",
     "",
     "",
@@ -190,7 +196,7 @@
     ""
   ],
   "outcome": {
-    "accepted": 61,
+    "accepted": 63,
     "malformed": 0,
     "unknown_kinds": 0
   }

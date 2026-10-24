@@ -254,6 +254,109 @@ func TestOwnWriteReturnsAsAgentRecord(t *testing.T) {
 	}
 }
 
+// A channel root and its replies can arrive on one page, with the reply listed
+// first. The reply still records replies_to and in_thread to that root.
+func TestSamePageRootAndReplyKeepRelations(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	root := message("root", messenger.RouteParticipant, f.now, "thread root")
+	reply := message("reply", messenger.RouteParticipant, f.now.Add(time.Minute), "answer")
+	reply.ReplyTo = "root"
+	reply.Thread = "root"
+	orphan := message("orphan", messenger.RouteParticipant, f.now.Add(2*time.Minute), "no root")
+	orphan.ReplyTo = "missing"
+	orphan.Thread = "missing"
+	result, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{reply, orphan, root}, Next: "c1",
+	})
+	if err != nil || result.Added != 3 {
+		t.Fatalf("admit: %+v %v", result, err)
+	}
+	rootEvent := f.eventsFor(t, source, "dm-1", "root")
+	replyEvent := f.eventsFor(t, source, "dm-1", "reply")
+	if !relationTargets(replyEvent, "replies_to", rootEvent.ID) || !relationTargets(replyEvent, "in_thread", rootEvent.ID) {
+		t.Fatalf("reply relations: %+v", replyEvent.Relations)
+	}
+	orphanEvent := f.eventsFor(t, source, "dm-1", "orphan")
+	if len(orphanEvent.Relations) != 0 {
+		t.Fatalf("missing target still linked: %+v", orphanEvent.Relations)
+	}
+	later := message("later", messenger.RouteParticipant, f.now.Add(3*time.Minute), "after")
+	later.ReplyTo = "root"
+	later.Thread = "root"
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "c1", messenger.Page{
+		Messages: []messenger.Message{later}, Next: "c2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	laterEvent := f.eventsFor(t, source, "dm-1", "later")
+	if !relationTargets(laterEvent, "replies_to", rootEvent.ID) || !relationTargets(laterEvent, "in_thread", rootEvent.ID) {
+		t.Fatalf("committed root: %+v", laterEvent.Relations)
+	}
+}
+
+// A stored root edited on the same page as a new reply is linked once, to the
+// revision this page admits.
+func TestReplyLinksOneRevisionOfEditedRoot(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	root := message("root", messenger.RouteParticipant, f.now, "thread root")
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{root}, Next: "c1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	edited := root
+	edited.Text = "thread root, edited"
+	edited.Edited = f.now.Add(time.Minute)
+	reply := message("reply", messenger.RouteParticipant, f.now.Add(2*time.Minute), "answer")
+	reply.ReplyTo = "root"
+	reply.Thread = "root"
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "c1", messenger.Page{
+		Messages: []messenger.Message{reply, edited}, Next: "c2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rootEvent := f.eventsFor(t, source, "dm-1", "root")
+	replyEvent := f.eventsFor(t, source, "dm-1", "reply")
+	if len(replyEvent.Relations) != 2 || !relationTargets(replyEvent, "replies_to", rootEvent.ID) || !relationTargets(replyEvent, "in_thread", rootEvent.ID) {
+		t.Fatalf("reply relations: %+v, root %s", replyEvent.Relations, rootEvent.ID)
+	}
+}
+
+func relationTargets(event ledger.Event, kind, target string) bool {
+	for _, relation := range event.Relations {
+		if relation.Kind == kind && relation.TargetID == target {
+			return true
+		}
+	}
+	return false
+}
+
+// Two messages that reply to each other still commit. A cycle keeps the one
+// relation that can name an event already written.
+func TestMutualRepliesOnOnePageStillCommit(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	first := message("a", messenger.RouteParticipant, f.now, "first")
+	second := message("b", messenger.RouteParticipant, f.now.Add(time.Minute), "second")
+	first.ReplyTo, first.Thread = "b", "b"
+	second.ReplyTo, second.Thread = "a", "a"
+	result, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{first, second}, Next: "c1",
+	})
+	if err != nil || result.Added != 2 {
+		t.Fatalf("admit: %+v %v", result, err)
+	}
+	a := f.eventsFor(t, source, "dm-1", "a")
+	b := f.eventsFor(t, source, "dm-1", "b")
+	aToB := relationTargets(a, "replies_to", b.ID)
+	bToA := relationTargets(b, "replies_to", a.ID)
+	if aToB == bToA {
+		t.Fatalf("cycle kept both or neither: a=%+v b=%+v", a.Relations, b.Relations)
+	}
+}
+
 // An edit is a new event that supersedes the earlier one; the earlier stays.
 func TestEditSupersedesAndEarlierStays(t *testing.T) {
 	f := newFixture(t)
@@ -482,21 +585,21 @@ type fakeAdapter struct {
 	calls     int
 }
 
-func (a *fakeAdapter) SignIn(context.Context) (messenger.SignInState, error) {
+func (a *fakeAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
 	if a.fail != nil {
 		return messenger.Failing, a.fail
 	}
 	return messenger.SignedIn, nil
 }
 
-func (a *fakeAdapter) ListChats(context.Context) ([]messenger.Chat, error) {
+func (a *fakeAdapter) ListChats(context.Context, messenger.SourceID) ([]messenger.Chat, error) {
 	if a.fail != nil {
 		return nil, a.fail
 	}
 	return a.chats, nil
 }
 
-func (a *fakeAdapter) Page(_ context.Context, _ string, cursor messenger.Cursor) (messenger.Page, error) {
+func (a *fakeAdapter) Page(_ context.Context, _ messenger.SourceID, _ string, cursor messenger.Cursor) (messenger.Page, error) {
 	a.requested = append(a.requested, cursor)
 	if a.fail != nil {
 		return messenger.Page{}, a.fail
@@ -511,9 +614,13 @@ func (a *fakeAdapter) Page(_ context.Context, _ string, cursor messenger.Cursor)
 	return page, nil
 }
 
-func (a *fakeAdapter) Members(context.Context, string) ([]messenger.Author, error) { return nil, nil }
-func (a *fakeAdapter) Live(context.Context, func(messenger.Event) error) error     { return nil }
-func (a *fakeAdapter) FetchAttachment(context.Context, string, string) (io.ReadCloser, error) {
+func (a *fakeAdapter) Members(context.Context, messenger.SourceID, string) ([]messenger.Author, error) {
+	return nil, nil
+}
+func (a *fakeAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
+	return nil
+}
+func (a *fakeAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 func (a *fakeAdapter) Capabilities() messenger.Capabilities {
@@ -660,5 +767,190 @@ func TestPermanentDeletionErasesTheText(t *testing.T) {
 	}
 	if got.Body.Text() != "" {
 		t.Fatalf("the ledger still returns %q", got.Body.Text())
+	}
+}
+
+// Two sources on one platform, such as a Discord bot and a personal account,
+// must read through the adapter each source records. Sharing the platform
+// adapter would write one account's chats under the other account.
+func TestSourcesOnOnePlatformUseTheirOwnAdapter(t *testing.T) {
+	f := newFixture(t)
+	bot := f.source()
+	bot.Account = "bot"
+	bot.Adapter = "discord-bot"
+	personal := f.source()
+	personal.Account = "personal"
+	personal.Mode = messenger.ModeUnofficial
+	personal.Adapter = "discord-personal"
+	personal.AcceptedTerms = &messenger.Terms{Person: "person", At: f.now, Text: "terms forbid automating an account"}
+	for _, source := range []messenger.Source{bot, personal} {
+		if err := f.store.Connect(t.Context(), source); err != nil {
+			t.Fatal(err)
+		}
+	}
+	botAdapter := &fakeAdapter{chats: []messenger.Chat{{ID: "server-1", Kind: "channel"}}, pages: map[string][]messenger.Page{
+		"": {{Messages: []messenger.Message{message("bot-m", messenger.RouteAutomation, f.now, "from the bot")}, Next: "end"}},
+	}}
+	personalAdapter := &fakeAdapter{chats: []messenger.Chat{{ID: "dm-personal", Kind: "direct"}}, pages: map[string][]messenger.Page{
+		"": {{Messages: []messenger.Message{message("personal-m", messenger.RoutePerson, f.now, "from the person")}, Next: "end"}},
+	}}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{
+		"discord-bot": botAdapter, "discord-personal": personalAdapter,
+	}, time.Hour)
+	if _, err := service.Sync(t.Context(), bot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Sync(t.Context(), personal); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='bot' AND message='bot-m'"); n != 1 {
+		t.Fatalf("bot records = %d", n)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='personal' AND message='personal-m'"); n != 1 {
+		t.Fatalf("personal records = %d", n)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='bot' AND message='personal-m'"); n != 0 {
+		t.Fatal("the personal message was stored on the bot account")
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_chat WHERE account='personal' AND chat='server-1'"); n != 0 {
+		t.Fatal("the bot chat was stored on the personal account")
+	}
+}
+
+// One adapter implementation may serve several accounts. Each call names the
+// account, and the records stay under that account.
+func TestAdapterCallsNameTheSourceAccount(t *testing.T) {
+	f := newFixture(t)
+	first := f.source()
+	first.Account = "account-a"
+	second := f.source()
+	second.Account = "account-b"
+	for _, source := range []messenger.Source{first, second} {
+		if err := f.store.Connect(t.Context(), source); err != nil {
+			t.Fatal(err)
+		}
+	}
+	adapter := &accountAdapter{pages: map[string]messenger.Message{
+		"account-a": message("m-a", messenger.RoutePerson, f.now, "alpha"),
+		"account-b": message("m-b", messenger.RoutePerson, f.now, "beta"),
+	}}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Hour)
+	results := service.SyncAll(t.Context(), &f.now)
+	if len(results) != 2 {
+		t.Fatalf("synced %d sources: %+v", len(results), results)
+	}
+	if len(adapter.seen) != 2 || adapter.seen[0].Account == adapter.seen[1].Account {
+		t.Fatalf("accounts seen: %+v", adapter.seen)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='account-a' AND message='m-a'"); n != 1 {
+		t.Fatalf("account-a records = %d", n)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='account-b' AND message='m-b'"); n != 1 {
+		t.Fatalf("account-b records = %d", n)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='account-a' AND message='m-b'"); n != 0 {
+		t.Fatal("account-b's message was stored on account-a")
+	}
+}
+
+// accountAdapter returns a different message per source account and records
+// every account it was asked about.
+type accountAdapter struct {
+	pages map[string]messenger.Message
+	seen  []messenger.SourceID
+}
+
+func (a *accountAdapter) SignIn(_ context.Context, id messenger.SourceID) (messenger.SignInState, error) {
+	a.seen = append(a.seen, id)
+	return messenger.SignedIn, nil
+}
+func (a *accountAdapter) ListChats(_ context.Context, id messenger.SourceID) ([]messenger.Chat, error) {
+	return []messenger.Chat{{ID: "dm-" + id.Account, Kind: "direct"}}, nil
+}
+func (a *accountAdapter) Page(_ context.Context, id messenger.SourceID, _ string, _ messenger.Cursor) (messenger.Page, error) {
+	return messenger.Page{Messages: []messenger.Message{a.pages[id.Account]}, Next: "end"}, nil
+}
+func (a *accountAdapter) Members(context.Context, messenger.SourceID, string) ([]messenger.Author, error) {
+	return nil, nil
+}
+func (a *accountAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
+	return nil
+}
+func (a *accountAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
+	return nil, errors.New("no attachments")
+}
+func (a *accountAdapter) Capabilities() messenger.Capabilities { return messenger.Capabilities{} }
+
+// Revocation can be discovered after SignIn, during any authenticated read.
+type revokedReadAdapter struct {
+	fakeAdapter
+	stage string
+}
+
+func (a *revokedReadAdapter) ListChats(ctx context.Context, id messenger.SourceID) ([]messenger.Chat, error) {
+	if a.stage == "chats" {
+		return nil, messenger.ErrNeedsSignIn
+	}
+	return []messenger.Chat{{ID: "dm-1", Kind: "direct"}}, nil
+}
+func (a *revokedReadAdapter) Page(context.Context, messenger.SourceID, string, messenger.Cursor) (messenger.Page, error) {
+	return messenger.Page{}, messenger.ErrNeedsSignIn
+}
+func TestRevokedReadNeedsSignInWithoutMovingCursor(t *testing.T) {
+	for _, stage := range []string{"chats", "page"} {
+		t.Run(stage, func(t *testing.T) {
+			f := newFixture(t)
+			f.connect(t)
+			service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": &revokedReadAdapter{stage: stage}}, time.Minute)
+			service.SyncAll(t.Context(), &f.now)
+			sources, err := f.store.Sources(t.Context(), "person")
+			if err != nil || len(sources) != 1 || sources[0].State != messenger.StateNeedsSignIn {
+				t.Fatalf("state: %+v %v", sources, err)
+			}
+			chats, err := f.store.Chats(t.Context(), "person", "discord", "account-1")
+			if err != nil || len(chats) != 1 || chats[0].Cursor != "" {
+				t.Fatalf("cursor changed: %+v %v", chats, err)
+			}
+		})
+	}
+}
+func TestTransientSourceFailureRetriesOnItsNextInterval(t *testing.T) {
+	f := newFixture(t)
+	f.connect(t)
+	adapter := &fakeAdapter{fail: errors.New("temporary outage")}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Minute)
+	service.SyncAll(t.Context(), &f.now)
+	adapter.fail = nil
+	f.now = f.now.Add(time.Minute)
+	service.SyncAll(t.Context(), &f.now)
+	rows, err := f.store.Sources(t.Context(), "person")
+	if err != nil || rows[0].State != messenger.StateConnected || rows[0].Failure != "" {
+		t.Fatalf("source did not recover: %+v %v", rows, err)
+	}
+}
+
+func TestScheduledReaderLeavesUnownedSourcesUntouched(t *testing.T) {
+	f := newFixture(t)
+	owned := f.connect(t)
+	other := owned
+	other.Platform = "teams"
+	other.Adapter = "teams"
+	other.Account = "work"
+	if err := f.store.Connect(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": &fakeAdapter{}}, time.Minute)
+	service.SyncAll(t.Context(), &f.now)
+	rows, err := f.store.Sources(t.Context(), "person")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("sources: %+v", rows)
+	}
+	for _, row := range rows {
+		if row.State != messenger.StateConnected || row.Failure != "" {
+			t.Fatalf("reader changed another source: %+v", row)
+		}
 	}
 }

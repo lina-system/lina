@@ -1,0 +1,26 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "name": "Rank, pause, resume and stop commands applied on the next pass",
+  "test": "TestM3WorkCommandsInstalledCore",
+  "steps": [
+    "Admit two goals that each have a ready step while the host reports no free slot",
+    "Move the first goal down and read the swapped order on the progress topic",
+    "Free one slot and observe the higher-ranked goal's step start",
+    "Pause the waiting goal, free a second slot and observe no new step",
+    "Resume the goal and observe its step start",
+    "Stop the other goal with confirmation and observe it leave the progress topic"
+  ],
+  "goals": [
+    {
+      "id": "first",
+      "summary": "Prepare the workshop",
+      "step": "Draft the agenda"
+    },
+    {
+      "id": "second",
+      "summary": "Book the venue",
+      "step": "Compare the halls"
+    }
+  ],
+  "quiet_ms": 500
+}

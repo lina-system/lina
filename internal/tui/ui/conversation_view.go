@@ -42,7 +42,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		}
 		return strings.Join(rows, "\n")
 	}
-	if m.conversation.workFocused && plan.SidePane.Height == 0 {
+	if m.conversation.workFocused && !m.conversation.pager.open && plan.SidePane.Height == 0 {
 		for i, line := range m.workPanelRows(plan.Conversation.Width, plan.Conversation.Height) {
 			rows[plan.Conversation.Y+i] = line
 		}
@@ -152,6 +152,21 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		if b.InlineReply {
 			body = append(body, plainRow(design.Text(m.styles.options.Language, "reply.open_pager")))
 		}
+		// One line names the item this message is about, only when the binding
+		// left the fresh focus, returned to an aged one or made a new item.
+		if person && b.Binding != nil && b.Binding.Show {
+			label := design.Text(m.styles.options.Language, "binding.none")
+			switch b.Binding.Target.Class {
+			case "existing":
+				label = fmt.Sprintf(design.Text(m.styles.options.Language, "binding.chip"), sanitize.Display(b.Binding.Name))
+			case "new":
+				label = design.Text(m.styles.options.Language, "binding.new")
+				if b.Binding.Name != "" {
+					label = fmt.Sprintf(design.Text(m.styles.options.Language, "binding.chip"), sanitize.Display(b.Binding.Name))
+				}
+			}
+			body = append(body, plainRow(render.Truncate(label, max(0, plan.Conversation.Width-len(indent)), render.Unicode{})))
+		}
 		if len(body) == 0 && !slices.ContainsFunc(groups, func(group toolGroup) bool { return group.calls[0].Anchor == b.ID }) {
 			continue
 		}
@@ -204,22 +219,31 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 	start := m.conversationStart(anchors, len(transcript), plan.Conversation.Height)
 	m.conversation.viewport.overflow = len(transcript) > plan.Conversation.Height
 	rows[plan.Status.Y] = m.conversationFooter(showNotice)
-	for y, line := range transcript[start:] {
-		if y >= plan.Conversation.Height {
-			break
+	if m.conversation.move.open {
+		for y, line := range m.moveRows(plan.Conversation.Width) {
+			if y >= plan.Conversation.Height {
+				break
+			}
+			rows[plan.Conversation.Y+y] = clip(line)
 		}
-		styles := m.styles
-		if line.person {
-			styles.Text = styles.Muted
-		}
-		prefix := ""
-		if line.prefix != "" {
-			prefix = m.styles.Accent.Render(line.prefix)
-		}
-		rows[plan.Conversation.Y+y] = clip(prefix + styles.markdownRow(line.body))
-		if line.muted {
-			width := plan.Conversation.Width - (render.Unicode{}).Width(line.prefix)
-			rows[plan.Conversation.Y+y] = clip(prefix + m.styles.Muted.Render(render.Truncate(line.body.Spans[0].Text, width, render.Unicode{})))
+	} else {
+		for y, line := range transcript[start:] {
+			if y >= plan.Conversation.Height {
+				break
+			}
+			styles := m.styles
+			if line.person {
+				styles.Text = styles.Muted
+			}
+			prefix := ""
+			if line.prefix != "" {
+				prefix = m.styles.Accent.Render(line.prefix)
+			}
+			rows[plan.Conversation.Y+y] = clip(prefix + styles.markdownRow(line.body))
+			if line.muted {
+				width := plan.Conversation.Width - (render.Unicode{}).Width(line.prefix)
+				rows[plan.Conversation.Y+y] = clip(prefix + m.styles.Muted.Render(render.Truncate(line.body.Spans[0].Text, width, render.Unicode{})))
+			}
 		}
 	}
 	drawTopic := func(topic string, region layout.Rect) {

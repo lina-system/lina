@@ -25,7 +25,7 @@ process exit. Results are never cached. Verbose batch output identifies the
 active scenario if the shared components deadline expires. Packages without
 test files still receive their normal build, vet and analyzer checks.
 
-PR #559's [CI run 39825375534](https://github.com/thisisjun786/lina/actions/runs/39825375534)
+PR #559's [CI run 39825375534](https://github.com/lina-system/lina/actions/runs/39825375534)
 exhausted the 895-second components budget: the first acceptance batch passed
 in 240.206 seconds, and the second was terminated after its remaining 331.116
 seconds. Reusing the candidate's compiled test binary removes the repeated Go
@@ -33,7 +33,7 @@ package loading and linking for enumeration and each batch. A real regression
 requires one compilation while executing every test, subtest, example and fuzz
 seed once. The component and per-batch deadlines remain unchanged.
 
-[Run 39835581651](https://github.com/thisisjun786/lina/actions/runs/39835581651)
+[Run 39835581651](https://github.com/lina-system/lina/actions/runs/39835581651)
 subsequently reached a batch's six-minute diagnostic timeout while
 `TestM3WebSocketInstalledCore` had run for two seconds. The growing corpus now
 uses four disjoint batches to leave more room below that deadline. Compilation
@@ -43,7 +43,7 @@ of preparation: the former two-batch layout reaches the diagnostic timeout,
 while four batches each take 180 seconds and finish in the same total 870
 seconds. This regression explicitly retains the original 895-second budget, independently
 of the later shared-budget change on dev described below. In
-[run 39844541882](https://github.com/thisisjun786/lina/actions/runs/39844541882),
+[run 39844541882](https://github.com/lina-system/lina/actions/runs/39844541882),
 the four batches took 103.420, 62.245, 107.837 and 107.949 seconds; the full
 foundation gate passed in 697 seconds within the original budget.
 
@@ -216,7 +216,7 @@ Whenever a Go component is selected and `internal/archtest/` exists, `components
 
 The test enforces the import rules in [go-core.md C-40](../design/go-core.md#processes-binaries-and-packages) on production Go source in both modules, including inactive platform and build-tag variants. It parses imports and syntax without loading imported dependencies. Test harnesses (`*_test.go`), `testdata`, vendored trees, hidden directories and `node_modules` are excluded. Command smoke tests can therefore build and launch their binaries independently of the product's process wrappers.
 
-- Memory importer add-ons stay outside production Core and default package dependencies. The sole installed-entry exception is `cmd/lina/import_hermes.go` importing the exact `internal/addons/importer/hermes` package; other command files and other adapters remain refused.
+- Memory importer add-ons stay outside production Core and default package dependencies. The only installed-entry exceptions are one command per adapter: `cmd/lina/import_hermes.go` importing the exact `internal/addons/importer/hermes` package and `cmd/lina/import_murmur.go` importing the exact `internal/addons/importer/murmur` package. Other command files and other adapters remain refused.
 - Core package families and their descendants use the C-40 layer table. A package under `internal/core` absent from that table fails as unmapped. Imports between different families must go strictly downward, including the ban on imports between L3 stores. Imports within one family are allowed; Go checks cycles.
 - Moirai follows the separate C-40 worker layers: job API, read-only reader, runtime and command. It cannot import Core, providers or secret packages; SQLite imports belong only to its reader. Core may import only the worker job API contract.
 - Kit cannot import the root module. Charm imports (`github.com/charmbracelet/` and `charm.land/`) belong only to `internal/tui/term` and `internal/tui/ui`. Only `internal/tui/ui` may import the pinned Goldmark root, `ast`, `text` and `util` packages for semantic Markdown projection; the exception does not admit other external libraries or Goldmark subpackages.
@@ -258,9 +258,9 @@ Component registration implements the `components` gate. The separate `dependenc
 
 Each Go shard shares a 1195-second command budget across its commands, leaving five seconds for diagnostics and cleanup. The local executor also bounds all shard execution together at 1200 seconds. Go environment queries, token checks and command usage checks have a 30-second limit; module verification and protocol generation have a 120-second limit. Builds, vet, the exhaustive analyzer and uncached tests may use the remaining shared budget, so a progressing module test run can exceed 120 seconds as its package count grows. Every command's limit is capped by the remaining budget; it never resets between commands or modules. Output does not extend the overall deadline. A subprocess timeout fails verification and reports the command, its arguments, elapsed time and assigned budget.
 
-On PR #298, [CI run 39659531710](https://github.com/thisisjun786/lina/actions/runs/39659531710) exhausted the former 595-second components budget after about 200 seconds of setup, builds and analysis and 395 seconds of module compilation and tests. Completed packages passed, including exchanges; end-to-end verification was still unfinished. That change used an 895-second budget while retaining its then-current four-minute package timeout and individual operation deadlines. Build-only and automation budgets remain unchanged.
+On PR #298, [CI run 39659531710](https://github.com/lina-system/lina/actions/runs/39659531710) exhausted the former 595-second components budget after about 200 seconds of setup, builds and analysis and 395 seconds of module compilation and tests. Completed packages passed, including exchanges; end-to-end verification was still unfinished. That change used an 895-second budget while retaining its then-current four-minute package timeout and individual operation deadlines. Build-only and automation budgets remain unchanged.
 
-On PR #485, [CI run 39783991019](https://github.com/thisisjun786/lina/actions/runs/39783991019)
+On PR #485, [CI run 39783991019](https://github.com/lina-system/lina/actions/runs/39783991019)
 reached the six-minute e2e package limit while the 108-test suite was still
 progressing through shortcut fixtures (the current subtest had just started).
 No assertion failed before the package watchdog fired. The component check used
@@ -272,7 +272,7 @@ e2e suite after 200 seconds of setup and requires every scenario to run once
 while the enclosing component guard holds.
 
 
-On PR #398, [CI run 39682857682](https://github.com/thisisjun786/lina/actions/runs/39682857682) reached the four-minute end-to-end package limit while an installed-Core scenario had run for nine seconds and its current subtest for one second. That change raised the package-wide diagnostic deadline to six minutes while preserving individual operation deadlines and the then-current fifteen-minute guard. A controlled-clock test verifies that a progressing five-minute package fits after compilation, while the existing hung-command tests retain the shared guard.
+On PR #398, [CI run 39682857682](https://github.com/lina-system/lina/actions/runs/39682857682) reached the four-minute end-to-end package limit while an installed-Core scenario had run for nine seconds and its current subtest for one second. That change raised the package-wide diagnostic deadline to six minutes while preserving individual operation deadlines and the then-current fifteen-minute guard. A controlled-clock test verifies that a progressing five-minute package fits after compilation, while the existing hung-command tests retain the shared guard.
 
 Build regression fixtures also share a 595-second allowance across their build CLI calls, including both cross-build targets, under automation's 600-second watchdog. They pass the remaining budget to `scripts/build.mjs --timeout-ms <milliseconds>`, reserving one second for the CLI to report failures before its wrapper expires. The build script defaults to 595 seconds when invoked directly. Its inner Go builds share the remaining deadline, with environment queries capped at 30 seconds and module verification and metadata generation at 120 seconds. Inner commands and the fixture wrapper use the same timeout diagnostics.
 
@@ -343,7 +343,7 @@ use scripted runtime events and the real SDK's MCP registration without model
 calls. Every command must succeed; missing signatures and invalid attestations
 fail the check. The root and external program npm projects have independent lockfiles. The Claude ACP project runs `npm ci --ignore-scripts --omit=dev --omit=optional` and signature audit; its integration tests live in Go under `e2e/m2/`.
 
-PR #523's [CI run 39785658738](https://github.com/thisisjun786/lina/actions/runs/39785658738)
+PR #523's [CI run 39785658738](https://github.com/lina-system/lina/actions/runs/39785658738)
 reached the six-minute package limit while the current TUI lifecycle scenario
 had run for two seconds. That branch initially used a ten-minute package diagnostic deadline. The
 legacy acceptance batching from #127 covers that corpus with four disjoint
@@ -351,7 +351,7 @@ six-minute batches inside the shared components budget described above.
 Individual operation deadlines and acceptance assertions remain in force;
 timeout or missing observations still fail verification.
 
-On PR #569, [CI run 39831123978](https://github.com/thisisjun786/lina/actions/runs/39831123978)
+On PR #569, [CI run 39831123978](https://github.com/lina-system/lina/actions/runs/39831123978)
 passed its first acceptance batch in 245.6 seconds, then reached the second
 batch's six-minute diagnostic deadline during `TestM2UpdateDataOperations`;
 the current `slow-backup` subtest had run for 24 seconds. No assertion failed.
@@ -363,7 +363,7 @@ clock regression models a 400-second group of long scenarios alongside shorter
 ones and requires the full corpus to finish under the unchanged package and
 shared deadlines.
 
-The next [CI run 39834045143](https://github.com/thisisjun786/lina/actions/runs/39834045143)
+The next [CI run 39834045143](https://github.com/lina-system/lina/actions/runs/39834045143)
 passed the first two batches in 251.7 and 234.3 seconds. Cold setup, builds,
 analysis and ordinary tests had already consumed about 300 seconds, so the
 895-second command budget left only 103.9 seconds for the final batch and

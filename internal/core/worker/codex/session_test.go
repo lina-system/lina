@@ -21,6 +21,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
 		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "proc-job" {
+		os.Exit(proc.JobMain(os.Args[2:], os.Stderr))
+	}
 	if os.Getenv("LINA_CODEX_FIXTURE") != "" && len(os.Args) > 1 {
 		if os.Args[1] == "--version" {
 			fmt.Println("codex-cli 99.0.0")

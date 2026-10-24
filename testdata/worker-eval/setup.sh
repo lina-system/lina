@@ -14,9 +14,20 @@ seed)
 	git -C "$dir" init -q --initial-branch=main
 	git -C "$dir" config user.name "Worker Evaluation"
 	git -C "$dir" config user.email "worker-eval@example.invalid"
+	# The seed commit is pinned. Ignore ambient identity, signing, line endings
+	# and hooks so every caller reproduces the same commit.
+	git -C "$dir" config commit.gpgsign false
+	git -C "$dir" config core.autocrlf false
+	mkdir -p "$dir/.git/hooks-empty"
+	git -C "$dir" config core.hooksPath "$dir/.git/hooks-empty"
 	git -C "$dir" add -A
-	GIT_AUTHOR_DATE=2026-10-23T00:00:00Z GIT_COMMITTER_DATE=2026-10-23T00:00:00Z \
-		git -C "$dir" commit -q -m "fixture: seed"
+	GIT_AUTHOR_NAME='Worker Evaluation' \
+	GIT_AUTHOR_EMAIL='worker-eval@example.invalid' \
+	GIT_COMMITTER_NAME='Worker Evaluation' \
+	GIT_COMMITTER_EMAIL='worker-eval@example.invalid' \
+	GIT_AUTHOR_DATE='2026-10-23T00:00:00Z' \
+	GIT_COMMITTER_DATE='2026-10-23T00:00:00Z' \
+		git -C "$dir" commit -q --no-verify -m "fixture: seed"
 	git -C "$dir" rev-parse HEAD
 	;;
 run)

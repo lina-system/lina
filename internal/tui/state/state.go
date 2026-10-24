@@ -19,6 +19,7 @@ type Msg interface{ isMsg() }
 type Cmd func(context.Context) Msg
 
 type Block struct {
+	Binding                  *protocol.BindingChip
 	SurfaceControls          *protocol.SurfaceControls
 	ResultID, ResultRevision string
 	ResultPaged              bool
@@ -61,6 +62,25 @@ type WorkCard struct {
 	Started, Finished time.Time
 	State             protocol.RunningState
 	Waiting           int
+	Stages            []WorkStage
+}
+
+// Stage numbers, labels and states are Core's display projection. The client
+// never reconstructs a graph or a stage from the card's activity.
+type WorkStage struct {
+	Kind, Number, Label, State string
+	Steps                      []WorkStageStep
+}
+
+type WorkStageStep struct {
+	ID, Name, State string
+	Started         time.Time
+	Workers         []WorkStageWorker
+}
+
+type WorkStageWorker struct {
+	Name  string
+	State protocol.RunningState
 }
 
 // WaitingSummary is display-only. Answer identities remain on decision cards.
@@ -206,25 +226,41 @@ type ResyncRequest struct {
 }
 type Interrupt struct{}
 type InterruptRequest struct{ Gen uint64 }
+
+// BindingGetRequest asks Core for the binding chip, the move list and the
+// moves already recorded for one person input.
+type BindingGetRequest struct {
+	Gen     uint64
+	InputID string
+}
+
+// BindingMoveRequest moves one input's binding to the chosen target.
+type BindingMoveRequest struct {
+	Gen     uint64
+	InputID string
+	Target  protocol.BindingTarget
+}
 type Tick struct{ Now time.Time }
 
-func (Snapshot) isMsg()         {}
-func (Delta) isMsg()            {}
-func (ItemDone) isMsg()         {}
-func (StreamAdvance) isMsg()    {}
-func (Frame) isMsg()            {}
-func (Select) isMsg()           {}
-func (Fold) isMsg()             {}
-func (Scroll) isMsg()           {}
-func (Notice) isMsg()           {}
-func (EditDraft) isMsg()        {}
-func (Send) isMsg()             {}
-func (SendRequest) isMsg()      {}
-func (SendResult) isMsg()       {}
-func (ResyncRequest) isMsg()    {}
-func (Interrupt) isMsg()        {}
-func (InterruptRequest) isMsg() {}
-func (Tick) isMsg()             {}
+func (Snapshot) isMsg()           {}
+func (Delta) isMsg()              {}
+func (ItemDone) isMsg()           {}
+func (StreamAdvance) isMsg()      {}
+func (Frame) isMsg()              {}
+func (Select) isMsg()             {}
+func (Fold) isMsg()               {}
+func (Scroll) isMsg()             {}
+func (Notice) isMsg()             {}
+func (EditDraft) isMsg()          {}
+func (Send) isMsg()               {}
+func (SendRequest) isMsg()        {}
+func (BindingGetRequest) isMsg()  {}
+func (BindingMoveRequest) isMsg() {}
+func (SendResult) isMsg()         {}
+func (ResyncRequest) isMsg()      {}
+func (Interrupt) isMsg()          {}
+func (InterruptRequest) isMsg()   {}
+func (Tick) isMsg()               {}
 
 func cloneDraft(d Draft) Draft { d.Attachments = slices.Clone(d.Attachments); return d }
 func (s State) clone() State {

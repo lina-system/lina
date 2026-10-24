@@ -221,7 +221,7 @@ func Serve(ctx context.Context, l lease.Lease, task Task, deps Deps) (Outcome, e
 			return Outcome{}, err
 		}
 		if errors.Is(err, applefm.ErrSchemaMiss) {
-			completion = Completion{}
+			completion = Completion{Usage: completion.Usage}
 			reason = ReasonSchemaMiss
 		}
 		model = deps.Main
