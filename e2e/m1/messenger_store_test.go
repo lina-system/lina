@@ -26,26 +26,7 @@ func TestM1MessengerStoreInstalledCore(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t, "")
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	bundle := makeInstallBundle(t, t.TempDir(), executable, executable)
-	provenance, err := os.ReadFile(filepath.Join(bundle, "manifest.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, dir := range []string{"canon", "system/bin", "system/core"} {
-		if err := os.MkdirAll(filepath.Join(h.root, dir), 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(h.root, "system/bin/manifest.json"), provenance, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(h.root, "system/core/main.json"), []byte(`{"main_id":"messenger-host"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
+	installMessengerBundle(t, h)
 
 	start := time.Date(2026, 10, 24, 9, 0, 0, 0, time.UTC)
 	text := "join https://example.com/cb?token=synthetic-abc&next=/home"
@@ -165,6 +146,158 @@ func TestM1MessengerStoreInstalledCore(t *testing.T) {
 	}
 }
 
+// installMessengerBundle installs this test executable as Core and the client
+// of a fresh state root, with the main identity the messenger harness uses.
+func installMessengerBundle(t *testing.T, h *harness) {
+	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := makeInstallBundle(t, t.TempDir(), executable, executable)
+	provenance, err := os.ReadFile(filepath.Join(bundle, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"canon", "system/bin", "system/core"} {
+		if err := os.MkdirAll(filepath.Join(h.root, dir), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(h.root, "system/bin/manifest.json"), provenance, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.root, "system/core/main.json"), []byte(`{"main_id":"messenger-host"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestM1MessengerStoreRetriesAFailingSource proves the running Core reads a
+// source again after a transient page error: the source comes back to
+// connected, the recovered page's record and its attachment metadata are in
+// canon, and the chat's cursor committed past the page.
+func TestM1MessengerStoreRetriesAFailingSource(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t, "")
+	installMessengerBundle(t, h)
+	start := time.Date(2026, 10, 24, 9, 0, 0, 0, time.UTC)
+	source := messenger.Source{Person: "person:messenger-host", Platform: "fixture", Account: "account-1",
+		Mode: messenger.ModeOfficial, Adapter: "fixture", State: messenger.StateConnected, ConnectedAt: start}
+	db, closeStore := installedAcceptanceStore(t, h)
+	if err := messenger.Open(db, nil, nil).Connect(h.ctx, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := messenger.Open(db, nil, nil).UpsertChats(h.ctx, source, []messenger.Chat{{ID: "dm-1", Name: "Direct", Kind: "direct"}}); err != nil {
+		t.Fatal(err)
+	}
+	closeStore()
+
+	recovered := message("m-1", messenger.RouteParticipant, start, "after the retry")
+	recovered.Attachments = []messenger.Attachment{{ID: "a-1", Name: "report.pdf", MIMEType: "application/pdf", Size: 1200}}
+	adapter := &retryAdapter{failures: 2, page: messenger.Page{Messages: []messenger.Message{recovered}, Next: "c1"}}
+	stop := runMessengerCore(t, h, adapter)
+	adapter.waitFor(t, "c1")
+	stop()
+
+	if adapter.failuresLeft() != 0 || len(adapter.seen()) < 3 {
+		t.Fatalf("reads = %v, failures left %d; want two refusals and a recovery", adapter.seen(), adapter.failuresLeft())
+	}
+	db, closeStore = installedAcceptanceStore(t, h)
+	defer closeStore()
+	count := func(query string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := db.Read(h.ctx, func(tx *canon.Tx) error {
+			return tx.QueryRowContext(h.ctx, query, args...).Scan(&n)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := count("SELECT count(*) FROM messenger_source WHERE state='connected' AND failure=''"); n != 1 {
+		t.Fatalf("recovered sources = %d, want the failing source read again", n)
+	}
+	if n := count("SELECT count(*) FROM messenger_record WHERE message='m-1' AND state='live'"); n != 1 {
+		t.Fatal("the recovered page's record was not admitted")
+	}
+	if n := count("SELECT count(*) FROM messenger_attachment WHERE message='m-1' AND attachment='a-1' AND name='report.pdf' AND size=1200"); n != 1 {
+		t.Fatal("the attachment metadata was not stored with the record")
+	}
+	if n := count("SELECT count(*) FROM messenger_chat WHERE chat='dm-1' AND cursor='c1'"); n != 1 {
+		t.Fatal("the cursor did not commit past the recovered page")
+	}
+}
+
+// retryAdapter refuses the first reads and then serves one page, recording every
+// cursor it was asked for.
+type retryAdapter struct {
+	mu       sync.Mutex
+	failures int
+	page     messenger.Page
+	asked    []messenger.Cursor
+}
+
+func (a *retryAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
+	return messenger.SignedIn, nil
+}
+
+func (a *retryAdapter) ListChats(context.Context, messenger.SourceID) ([]messenger.Chat, error) {
+	return []messenger.Chat{{ID: "dm-1", Name: "Direct", Kind: "direct"}}, nil
+}
+
+func (a *retryAdapter) Page(_ context.Context, _ messenger.SourceID, _ string, cursor messenger.Cursor) (messenger.Page, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.asked = append(a.asked, cursor)
+	if a.failures > 0 {
+		a.failures--
+		return messenger.Page{}, errors.New("platform refused")
+	}
+	return a.page, nil
+}
+
+func (a *retryAdapter) Members(context.Context, messenger.SourceID, string) ([]messenger.Author, error) {
+	return nil, nil
+}
+func (a *retryAdapter) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
+	return nil
+}
+func (a *retryAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
+	return nil, errors.New("no attachments")
+}
+func (a *retryAdapter) Capabilities() messenger.Capabilities {
+	return messenger.Capabilities{Edits: true, Deletions: true}
+}
+
+func (a *retryAdapter) failuresLeft() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.failures
+}
+
+func (a *retryAdapter) seen() []messenger.Cursor {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]messenger.Cursor(nil), a.asked...)
+}
+
+// waitFor waits until the adapter has been asked for the named cursor.
+func (a *retryAdapter) waitFor(t *testing.T, cursor messenger.Cursor) {
+	t.Helper()
+	deadline := time.Now().Add(operationTimeout)
+	for time.Now().Before(deadline) {
+		for _, asked := range a.seen() {
+			if asked == cursor {
+				time.Sleep(50 * time.Millisecond)
+				return
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("adapter was not asked for cursor %q", cursor)
+}
+
 func message(id string, route messenger.Route, at time.Time, text string) messenger.Message {
 	return messenger.Message{ID: id, Route: route, At: at, Text: text, Author: messenger.Author{ID: "author-" + id, Name: "someone"}}
 }
@@ -177,7 +310,7 @@ func edited(id string, route messenger.Route, at time.Time, text string, edited 
 
 // runMessengerCore starts Core in this process with the scripted adapter and
 // returns a stop function that waits for an orderly shutdown.
-func runMessengerCore(t *testing.T, h *harness, adapter *scriptedAdapter) func() {
+func runMessengerCore(t *testing.T, h *harness, adapter messenger.Adapter) func() {
 	t.Helper()
 	ctx, cancel := context.WithCancel(h.ctx)
 	done := make(chan error, 1)
