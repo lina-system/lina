@@ -12,7 +12,7 @@ func TestSummaryTablesPublishAtomically(t *testing.T) {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO sum_node
   (id,conversation_id,level,model,prompt_version,built_at,start_at,end_at,epoch,status,text,dropped,revision)
   VALUES('summary','conversation',0,'model','v1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',0,'ready','summary','',1);
-  INSERT INTO sum_cover(node_id,event_id,ordinal,reason) VALUES('summary','missing-event',0,'');`)
+  INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,precision,role) VALUES('summary','summary','1',0,'event','missing-event','0','event','covers');`)
 		return err
 	})
 	if err == nil {

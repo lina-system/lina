@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/retract"
 )
 
@@ -24,9 +25,7 @@ func TestSearchRecoveryKeepsOtherHiddenAncestors(t *testing.T) {
 	}
 	// Give the joined item two independent ancestor paths before any removal.
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(t.Context(), `UPDATE memory_item SET record=json_insert(record,
- '$.evidence[#]',json_object('kind','item','id',?),
- '$.evidence[#]',json_object('kind','item','id',?)) WHERE id=?`, second.ID, first.ID, joined.ID)
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,precision,role) VALUES('memory',?,'1',1,'memory',?,'1','none','cites'),('memory',?,'1',2,'memory',?,'1','none','cites')`, joined.ID, second.ID, joined.ID, first.ID)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -70,16 +69,12 @@ func TestSearchRecoveryKeepsOtherHiddenAncestors(t *testing.T) {
 	// postings must still be fenced through its retained removal target.
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
 		for _, id := range []string{child.ID, joined.ID, grandchild.ID} {
-			if _, err := tx.ExecContext(t.Context(), `INSERT INTO memory_search_text(sequence,item_id,body)
- SELECT sequence,id,normalized FROM memory_item WHERE id=?`, id); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(t.Context(), "INSERT INTO memory_search_bigram(gram,item_id) VALUES('도서',?)", id); err != nil {
+			if err := recall.IndexText(t.Context(), tx, "memory", id, "도서관"); err != nil {
 				return err
 			}
 		}
 		var count int
-		if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM memory_search_bigram WHERE item_id IN (?,?,?)`, child.ID, joined.ID, grandchild.ID).Scan(&count); err != nil {
+		if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM recall_doc WHERE kind='memory' AND source_id IN (?,?,?)`, child.ID, joined.ID, grandchild.ID).Scan(&count); err != nil {
 			return err
 		}
 		if count != 0 {
@@ -89,7 +84,11 @@ func TestSearchRecoveryKeepsOtherHiddenAncestors(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	assertSearchWrites(t, db, 3, 0, 2)
+	assertSearchWrites(t, db, 0, 0, 2)
+	// A descendant can still be deleted after its cited ancestor is erased.
+	if err := removals.Delete(t.Context(), request(child.ID)); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestSearchRefreshDeduplicatesCyclicEvidence(t *testing.T) {
@@ -103,8 +102,7 @@ func TestSearchRefreshDeduplicatesCyclicEvidence(t *testing.T) {
 	// Imported or older data can contain cycles. Both graph walks must terminate
 	// and touch each document once even when the root is reachable from itself.
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(t.Context(), `UPDATE memory_item SET record=json_insert(record,
- '$.evidence[#]',json_object('kind','item','id',?)) WHERE id=?`, child.ID, root.ID)
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,precision,role) VALUES('memory',?,'1',1,'memory',?,'1','none','cites')`, root.ID, child.ID)
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -213,13 +211,14 @@ const searchProbeItemSQL = `INSERT INTO memory_item
 
 func countSearchWrites(t *testing.T, db *canon.Store) {
 	t.Helper()
+	drainIndex(t, db)
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
 		// BEFORE INSERT also counts ignored attempts: they still run the expensive
 		// visibility fence. AFTER DELETE counts rows actually removed.
 		_, err := tx.ExecContext(t.Context(), `CREATE TEMP TABLE search_writes(operation TEXT);
-CREATE TEMP TRIGGER count_search_insert BEFORE INSERT ON main.memory_search_text BEGIN
+CREATE TEMP TRIGGER count_search_insert BEFORE INSERT ON main.recall_doc WHEN NEW.kind='memory' BEGIN
  INSERT INTO search_writes VALUES('insert'); END;
-CREATE TEMP TRIGGER count_search_delete AFTER DELETE ON main.memory_search_text BEGIN
+CREATE TEMP TRIGGER count_search_delete AFTER DELETE ON main.recall_doc WHEN OLD.kind='memory' BEGIN
  INSERT INTO search_writes VALUES('delete'); END;`)
 		return err
 	}); err != nil {
@@ -229,6 +228,7 @@ CREATE TEMP TRIGGER count_search_delete AFTER DELETE ON main.memory_search_text 
 
 func assertSearchWrites(t *testing.T, db *canon.Store, inserts, deletes, remaining int) {
 	t.Helper()
+	drainIndex(t, db)
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
 		for _, check := range []struct {
 			query string
@@ -236,7 +236,7 @@ func assertSearchWrites(t *testing.T, db *canon.Store, inserts, deletes, remaini
 		}{
 			{"SELECT count(*) FROM search_writes WHERE operation='insert'", inserts},
 			{"SELECT count(*) FROM search_writes WHERE operation='delete'", deletes},
-			{"SELECT count(*) FROM memory_search_text", remaining},
+			{"SELECT count(*) FROM recall_doc WHERE kind='memory'", remaining},
 		} {
 			var got int
 			if err := tx.QueryRowContext(t.Context(), check.query).Scan(&got); err != nil {
@@ -250,8 +250,8 @@ func assertSearchWrites(t *testing.T, db *canon.Store, inserts, deletes, remaini
 		// correct row count cannot conceal a different set of recalled items.
 		var difference int
 		if err := tx.QueryRowContext(t.Context(), `SELECT
- (SELECT count(*) FROM (SELECT item_id FROM memory_search_text EXCEPT SELECT id FROM retract_visible_memory WHERE state='active'))
- + (SELECT count(*) FROM (SELECT id FROM retract_visible_memory WHERE state='active' EXCEPT SELECT item_id FROM memory_search_text))`).Scan(&difference); err != nil {
+ (SELECT count(*) FROM (SELECT source_id FROM recall_doc WHERE kind='memory' EXCEPT SELECT id FROM retract_visible_memory WHERE state='active'))
+ + (SELECT count(*) FROM (SELECT id FROM retract_visible_memory WHERE state='active' EXCEPT SELECT source_id FROM recall_doc WHERE kind='memory'))`).Scan(&difference); err != nil {
 			return err
 		}
 		if difference != 0 {

@@ -46,14 +46,18 @@ person. `PersonMemory` keeps only memory items whose subject is the person,
 before ranking and the limit; `recall_person` and person-only memory search set
 it. Vector candidates go through the same scope predicates and the same
 restricted-event list before fusion. Query terms are literal, whitespace split,
-at most eight, and any term may match. Documents holding more terms come first
-by BM25 over the pair table; documents found only through the trigram table follow;
-ties go to the newer `occurred_at`. A short term reaches memory items and
-records by a literal scan of the already scoped set. A source that is still
+at most eight, and any term may match. Pair hits come before trigram-only hits.
+Within a tier, documents holding more of the query's terms come first, then
+BM25 over the pair table, then the newer `occurred_at`. A missing BM25 score
+sorts first, matching SQLite's order for a NULL score. A short term reaches
+memory items and records by a literal scan of the already scoped set. A source that is still
 queued keeps its text in canon; `Match` matches it there, so search does not
 wait for the background drain. A queued event whose body lives in material is
-read through the caller's `EventText` reader, which only `ledger.Store.Search`
-supplies. `recall_doc.text_hash` collapses events with
+read through the caller's `EventText` reader. Ledger search, live recall and
+person recall supply it. Those matches join the same order and are merged
+before the limit. A queued replay copy is excluded by its source id, so a
+missing document id cannot empty the list. Vector candidates use the same
+scope as the text path. `recall_doc.text_hash` collapses events with
 identical derived text inside one conversation to the earliest of them. A
 returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
@@ -65,6 +69,13 @@ Memory items, events and records are the same list: `exec.Memory` asks `Match`
 for events and items together, materializes the item set in one scoped read, and
 reads an event's text only for the results that remain. Its cost follows the
 hits, not the number of person events.
+
+Person-model queries set `EventSpeakerKind` and `PersonMemory`, so only the
+person's own events and person-subject memory items are candidates, before
+ranking and the limit, including queued sources. Other memory items stay
+eligible for a general recall. General recall keeps its wider kind/speaker filters. Event bodies in
+materials have a nullable inline body; search resolves those through the bound
+reader or reports unavailable bytes without failing the whole result list.
 
 Tests cover atomic native writes, queued sources and exclusions, generation
 fencing, batch bounds, migrations, records revisions, Korean parity, any-term

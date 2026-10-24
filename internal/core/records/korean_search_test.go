@@ -124,32 +124,31 @@ func TestKoreanRecordSearchExistingInstallation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Inspect before records.Open can rebuild anything: the migration itself
-	// must index existing text without advancing the published record revision.
+	s, err = Open(root, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Startup rebuilds derived documents without advancing the published record revision.
 	if err = db.Read(t.Context(), func(tx *canon.Tx) error {
 		var head, tokenizer, fallback string
 		var trigrams, bigrams int
 		if err := tx.QueryRowContext(t.Context(), "SELECT head FROM records_state").Scan(&head); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(t.Context(), "SELECT tokenizer,fallback FROM search_index_config WHERE name='records_korean'").Scan(&tokenizer, &fallback); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT tokenizer,fallback FROM search_index_config WHERE name='recall'").Scan(&tokenizer, &fallback); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM records_korean_fts WHERE records_korean_fts MATCH ?", canon.TrigramPhrase("도서관")).Scan(&trigrams); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_text WHERE recall_text MATCH ?", canon.TrigramPhrase("도서관")).Scan(&trigrams); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM records_korean_bigram WHERE gram='연필'").Scan(&bigrams); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_pair WHERE recall_pair MATCH '연필'").Scan(&bigrams); err != nil {
 			return err
 		}
-		if head != rev || tokenizer != "trigram" || fallback != "hangul_bigram" || trigrams != 1 || bigrams != 1 {
+		if head != rev || tokenizer != "trigram" || fallback != "hangul_pair_words_v1" || trigrams != 1 || bigrams != 1 {
 			t.Errorf("migration: head=%s tokenizer=%s fallback=%s trigrams=%d bigrams=%d", head, tokenizer, fallback, trigrams, bigrams)
 		}
 		return nil
 	}); err != nil {
-		t.Fatal(err)
-	}
-	s, err = Open(root, db)
-	if err != nil {
 		t.Fatal(err)
 	}
 	for _, search := range []string{"연필", "도서관"} {

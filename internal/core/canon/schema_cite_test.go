@@ -34,7 +34,7 @@ VALUES('m','person','all','world','','fact','fact','local','active',0,0,'',0,'{}
 			return err
 		}
 		// The first pointer persists, another is removed and later re-added.
-		evidence := []map[string]any{{"kind": "event", "id": "first", "precision": "event", "quote": "original"}, {"kind": "material", "id": "asset", "revision": 7, "precision": "session"}}
+		evidence := []map[string]any{{"kind": "event", "id": "first", "precision": "event", "quote": "original", "source_agent": "agent", "occurred_at": 123}, {"kind": "material", "id": "asset", "revision": 7, "precision": "session"}}
 		for rev := 1; rev <= 4; rev++ {
 			refs := append([]map[string]any{}, evidence...)
 			if rev == 2 {
@@ -114,6 +114,21 @@ VALUES('m','person','all','world','','fact','fact','local','active',0,0,'',0,'{}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("citation pointers\ngot: %q\nwant: %q", got, want)
 		}
+		var agent string
+		var at, embedded int
+		if err := tx.QueryRowContext(t.Context(), "SELECT source_agent,occurred_at FROM cite WHERE view_kind='memory' AND view_id='m' AND ordinal=0").Scan(&agent, &at); err != nil {
+			return err
+		}
+		if agent != "agent" || at != 123 {
+			t.Errorf("source metadata changed: %s %d", agent, at)
+		}
+		if err := tx.QueryRowContext(t.Context(), `SELECT (SELECT count(*) FROM memory_revision WHERE json_type(record,'$.evidence') IS NOT NULL)+(SELECT count(*) FROM memory_item WHERE json_type(record,'$.evidence') IS NOT NULL)+(SELECT count(*) FROM memory_person_brief b,json_each(b.record,'$.sentences') s WHERE json_type(s.value,'$.citations') IS NOT NULL)`).Scan(&embedded); err != nil {
+			return err
+		}
+		if embedded != 0 {
+			t.Errorf("migration retained %d provenance copies", embedded)
+		}
+
 		var start, end int
 		if err := tx.QueryRowContext(t.Context(), "SELECT span_start,span_end FROM cite WHERE view_kind='memory' AND target_id='first'").Scan(&start, &end); err != nil {
 			return err

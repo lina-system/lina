@@ -176,10 +176,10 @@ func TestKoreanSearchMigrationAndMetadata(t *testing.T) {
 	}
 	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
 		var tokenizer, fallback string
-		if err := tx.QueryRowContext(t.Context(), "SELECT tokenizer,fallback FROM search_index_config WHERE name='ledger'").Scan(&tokenizer, &fallback); err != nil {
+		if err := tx.QueryRowContext(t.Context(), "SELECT tokenizer,fallback FROM search_index_config WHERE name='recall'").Scan(&tokenizer, &fallback); err != nil {
 			return err
 		}
-		if tokenizer != "trigram" || fallback != "hangul_bigram" {
+		if tokenizer != "trigram" || fallback != "hangul_pair_words_v1" {
 			t.Fatalf("metadata: %q %q", tokenizer, fallback)
 		}
 		var pending int

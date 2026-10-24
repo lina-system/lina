@@ -226,6 +226,19 @@ func buildOldGeneration(t *testing.T, root string, scenario oldGeneration) strin
 		t.Fatal(err)
 	}
 	seedOldGeneration(t, db, root, scenario)
+	// The fixture still stores provenance only in the old revision JSON. Adapt
+	// that data for the current removal resolver while constructing its journal.
+	// A TEMP view is connection-local and never enters the backup snapshot.
+	if err := db.Write(ctx, func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE TEMP VIEW cite AS
+ SELECT 'memory' AS view_kind,r.item_id AS view_id,
+ CASE json_extract(e.value,'$.kind') WHEN 'item' THEN 'memory' ELSE json_extract(e.value,'$.kind') END AS target_kind,
+ json_extract(e.value,'$.id') AS target_id
+ FROM memory_revision r,json_each(r.record,'$.evidence') e`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	removals, err := retract.Open(ctx, retract.Config{Canon: db, Root: root})
 	if err != nil {

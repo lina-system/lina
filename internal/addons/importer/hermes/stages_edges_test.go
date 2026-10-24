@@ -252,7 +252,7 @@ func TestImportSidecarsAndSensitiveBodies(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCount(t, db, "import_event_span", 1)
-	assertCount(t, db, "ledger_search_text", 0)
+	assertCount(t, db, "recall_doc", 0)
 	if _, err = p.Verify(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}

@@ -265,7 +265,7 @@ func insert(ctx context.Context, tx *canon.Tx, in Write, resolve ResolveEvidence
 		var raw []byte
 		var old Item
 		if err = rows.Scan(&raw); err == nil {
-			err = json.Unmarshal(raw, &old)
+			err = DecodeItem(ctx, tx, raw, &old)
 		}
 		if err != nil {
 			break
@@ -356,12 +356,12 @@ func readItem(ctx context.Context, tx *canon.Tx, id string) (Item, error) {
 	if err := tx.QueryRowContext(ctx, "SELECT record FROM memory_item WHERE id=?", id).Scan(&raw); err != nil {
 		return item, err
 	}
-	err := json.Unmarshal(raw, &item)
+	err := DecodeItem(ctx, tx, raw, &item)
 	return item, err
 }
 
-// Recall returns current, scoped records through the trigram and Hangul bigram
-// indexes. The person/holder/validity set is materialized before text matching.
+// Recall returns current, scoped records through the shared recall index.
+// The person/holder/validity set is materialized before text matching.
 func (s *Store) Recall(ctx context.Context, scope RecallScope, q Query) ([]Hit, error) {
 	return s.recall(ctx, scope, q, false, false)
 }
@@ -446,9 +446,9 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
    AND (?=0 OR m.scope='local') AND (?=0 OR m.scope<>'never-leaves') AND (?=0 OR m.standing=1)
    AND (?=0 OR m.subject_kind='person')
    AND (?=0 OR (m.holder=? AND m.subject_kind='person' AND m.subject_id=? AND json_extract(m.record,'$.kind')='relationship'))
-   AND NOT EXISTS(SELECT 1 FROM json_each(m.record,'$.evidence') refs
-    JOIN json_each(?) blocked ON blocked.key=json_extract(refs.value,'$.id')
-    WHERE json_extract(refs.value,'$.kind')='event')
+   AND NOT EXISTS(SELECT 1 FROM cite refs
+    JOIN json_each(?) blocked ON blocked.key=refs.target_id
+    WHERE refs.view_kind='memory' AND refs.view_id=m.id AND refs.dropped_revision IS NULL AND refs.target_kind='event')
    AND (?='' OR json_extract(m.record,'$.kind')=?)
    ), eligible AS MATERIALIZED (SELECT * FROM candidates WHERE ? OR NOT older)
    SELECT e.record,e.older FROM eligible e WHERE `+match+` AND (?='' OR e.priority < (SELECT max(sequence) FROM memory_revision WHERE item_id=?)
@@ -464,7 +464,7 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 			if err := rows.Scan(&raw, &hit.Older); err != nil {
 				return err
 			}
-			if err := json.Unmarshal(raw, &hit.Item); err != nil {
+			if err := DecodeItem(ctx, tx, raw, &hit.Item); err != nil {
 				return err
 			}
 

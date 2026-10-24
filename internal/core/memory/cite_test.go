@@ -49,37 +49,22 @@ func TestCitationMergeStoresOnlyNewEvidence(t *testing.T) {
 	assertMemoryCitations(t, db)
 }
 
-// Every historical pointer must be represented once at its revision, and every
-// citation interval must correspond to at least one retained revision pointer.
+// Every interval belongs to a retained revision and stored revisions contain no evidence copies.
 func assertMemoryCitations(t *testing.T, db *canon.Store) {
 	t.Helper()
-	err := db.Read(t.Context(), func(tx *canon.Tx) error {
-		var missing, extra int
-		pointer := `SELECT r.item_id,r.revision,e.key AS ordinal,
- CASE json_extract(e.value,'$.kind') WHEN 'item' THEN 'memory' ELSE json_extract(e.value,'$.kind') END AS kind,
- json_extract(e.value,'$.id') AS id,CAST(coalesce(json_extract(e.value,'$.revision'),0) AS TEXT) AS target_revision
- FROM memory_revision r,json_each(r.record,'$.evidence') e`
-		actual := `SELECT c.view_id,r.revision,c.ordinal,c.target_kind,c.target_id,c.target_revision
- FROM cite c JOIN memory_revision r ON r.item_id=c.view_id AND r.revision>=CAST(c.added_revision AS INTEGER)
- AND (c.dropped_revision IS NULL OR r.revision<CAST(c.dropped_revision AS INTEGER)) WHERE c.view_kind='memory'`
-		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM ("+pointer+" EXCEPT "+actual+")").Scan(&missing); err != nil {
+	if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		var orphan, embedded int
+		if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM cite c WHERE view_kind='memory' AND NOT EXISTS(SELECT 1 FROM memory_revision r WHERE r.item_id=c.view_id AND r.revision=CAST(c.added_revision AS INTEGER))`).Scan(&orphan); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM ("+actual+" EXCEPT "+pointer+")").Scan(&extra); err != nil {
+		if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM memory_revision WHERE json_type(record,'$.evidence') IS NOT NULL`).Scan(&embedded); err != nil {
 			return err
 		}
-		if missing != 0 || extra != 0 {
-			t.Errorf("memory citation parity: missing=%d extra=%d", missing, extra)
-		}
-		if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM cite c WHERE view_kind='memory' AND NOT EXISTS(SELECT 1 FROM memory_revision r WHERE r.item_id=c.view_id AND r.revision=CAST(c.added_revision AS INTEGER))`).Scan(&extra); err != nil {
-			return err
-		}
-		if extra != 0 {
-			t.Errorf("orphan citation intervals=%d", extra)
+		if orphan != 0 || embedded != 0 {
+			t.Errorf("orphan intervals=%d embedded evidence=%d", orphan, embedded)
 		}
 		return nil
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

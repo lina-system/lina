@@ -730,7 +730,11 @@ WHERE m.person=? AND m.id IN (
 			items = append(items, id)
 			continue
 		}
-		for _, evidence := range item.Evidence {
+		evidence, err := memory.EvidenceAt(ctx, tx, "memory", id, item.Revision)
+		if err != nil {
+			return nil, err
+		}
+		for _, evidence := range evidence {
 			if inWindow(from, through, evidence.OccurredAt) {
 				items = append(items, id)
 				break

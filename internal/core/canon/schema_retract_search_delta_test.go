@@ -6,7 +6,7 @@ import "testing"
 func TestSelectiveRetractionSearchUpgrade(t *testing.T) {
 	t.Parallel()
 	cfg := storeConfig(t)
-	all := Migrations()
+	all := migrationsBefore(t, storeContractSchema)
 	for i, migration := range all {
 		if migration.SQL == retractSearchDeltaSchema {
 			cfg.Migrations = all[:i]

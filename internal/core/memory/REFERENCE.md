@@ -114,3 +114,18 @@ Installed-Core acceptance runs a real `remember_name` tool call against a
 scripted provider and resolves its material-backed evidence through management
 before and after restart. Package fixtures cover import, legacy revisions,
 secret spans, cross-agent reads and tombstones.
+
+### Provenance contract step
+
+The contract migration removes evidence arrays from item and revision JSON.
+`DecodeItem` and `EvidenceAt` rebuild the requested revision from `cite`, which
+also retains the evidence's source agent and timestamp. `marshalRecord` never
+persists the reconstructed array. A person-brief sentence stores only its
+citation count; `readBrief` restores the ordered references from `cite`.
+Retraction checks new citations in the source transaction and follows all
+historical intervals when recording extraction exclusions. An already erased
+ancestor is identified through its retained removal target.
+
+The repeated-statement regression checks 50, 100 and 200 revisions using stored
+bytes and citation/revision counts. It makes no timing assertion. Older-schema
+restore remains covered by the backup package's generated fixture and CLI test.

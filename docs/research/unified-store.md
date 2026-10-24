@@ -202,6 +202,43 @@ memory content derived from a person event. The corpus has no records; record
 projection/revision behavior is covered by its package tests. Private imported
 corpora and the full post-merge acceptance suite were not run for this measure.
 
+### Contract step measurement (#876)
+
+The generated 100-turn store benchmark was run once at each of `b50b79a7`
+(the switched readers with the old shapes) and `da5ff6de0` (the contract step),
+with `GOMAXPROCS=4` and `-benchtime=1x`. Each loaded 1,830 events, 100 memory
+items and 4,235,070 source bytes through the real writers into a fresh scratch
+canon. Both held 1,932 shared documents and passed all 60 recall parity queries.
+These are synthetic storage measurements, not the owner's recall-quality set.
+
+| Allocation, bytes | Before | After |
+| --- | ---: | ---: |
+| Canon file, including free pages | 30,887,936 | 16,891,904 |
+| Free pages | 151,552 | 438,272 |
+| Search indexes and their metadata | 23,334,912 | 9,084,928 |
+| Shared trigram FTS | 7,151,616 | 7,151,616 |
+| Shared pair FTS | 892,928 | 892,928 |
+
+`dbstat` attributed **14,249,984 bytes** to the 33 retired index trees and
+their SQLite indexes, exactly the reduction in total search allocation. The
+remaining file-size difference includes non-search tables and free pages. An
+existing database keeps freed pages for reuse; this migration does not run
+`VACUUM`. No private installation or activation backup was used in this run.
+
+The repeated-statement regression stores 200 revisions and 200 citation
+intervals, with no embedded evidence array in any revision. Its counted record
+and citation payload grows from 17,447 bytes at 50 merges to 34,650 at 100 and
+69,250 at 200. It checks rows and bytes, not elapsed time. The pre-contract
+regression failed with an evidence array in every revision and roughly fourfold
+growth each time the number of merges doubled.
+
+The generated pre-citation generation restores through the current CLI with
+the same provenance and visible recall and with later removals applied. The
+installed-Core topic-recall scenario also passes recall, expansion, restart and
+digest-checked replay. These checks do not satisfy the release requirement for
+14 days of stable switched readers on the owner's install or identify the
+verified activation generation. Those remain required before shipping step 7.
+
 ### Index size
 
 | Database (same 44 MB of derived text) | Total | Index part | Index bytes per text byte |

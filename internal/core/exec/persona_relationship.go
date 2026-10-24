@@ -49,7 +49,7 @@ func (p *Persona) RecordRelationship(ctx context.Context, scope PersonaScope, in
 		}
 		if err == nil {
 			var old memory.Item
-			if err := json.Unmarshal(raw, &old); err != nil {
+			if err := memory.DecodeItem(ctx, tx, raw, &old); err != nil {
 				return err
 			}
 			if old.Content == in.Quote {
