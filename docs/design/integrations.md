@@ -874,6 +874,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 - Each chat is fresh, stale (no complete read within its interval) or in a gap (the time since its last complete read passed the platform's read window, so messages may be lost). A gap is shown on the source and told to the person once. An archive import can fill it later.
 - Rates are the adapter's: it honours the platform's retry-after and keeps its cursor.
 - A failing source never blocks conversation or another source.
+- Before retiring murmur, the person checks at least seven days of overlapping collection with the [comparison command](conversation-and-memory.md#importing-a-murmur-store), reviews coverage gaps, and confirms their search, transcript and people queries. Zero missing IDs is required but does not certify the read coverage by itself. Only the person stops murmur's timer and MCP; its data home remains for at least 30 days after cutover.
 
 ### Writes by grant
 
