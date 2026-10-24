@@ -285,6 +285,116 @@ func TestAlphaResidencyRejectsReplacedCore(t *testing.T) {
 	}
 }
 
+// A 24-hour measurement cannot share the temporary directory with unrelated
+// work: its cleanup removes the running Core's socket and turns an environment
+// accident into a product failure.
+func TestAlphaResidencyRequiresPrivateStateParent(t *testing.T) {
+	t.Parallel()
+	temp := "/tmp"
+	for _, tc := range []struct {
+		name   string
+		parent string
+		want   string
+	}{
+		{"unset", "", "requires an absolute LINA_ALPHA_STATE"},
+		{"relative", "state", "requires an absolute LINA_ALPHA_STATE"},
+		{"shared-temp", "/tmp/lina", "inside the shared temporary directory"},
+		{"temp-itself", "/tmp", "inside the shared temporary directory"},
+		{"private", "/scratch/acceptance", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := alphaResidencyStateParent(tc.parent, temp)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("a private parent was rejected: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v, want %q", err, tc.want)
+			}
+		})
+	}
+	// A parent that resolves through a symlink into the temporary directory is
+	// still shared, and the probe run keeps its ordinary temporary root.
+	if err := alphaResidencyStateParent("/tmp", "/tmp"); err == nil {
+		t.Fatal("the temporary directory was accepted as a private parent")
+	}
+	// The parent may not exist yet: an ancestor symlink into the temporary
+	// directory still makes it shared.
+	base := t.TempDir()
+	shared := filepath.Join(base, "shared")
+	if err := os.MkdirAll(shared, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(shared, alias); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	if err := alphaResidencyStateParent(filepath.Join(alias, "new"), shared); err == nil {
+		t.Fatal("a not-yet-created parent under a symlink into the temporary directory was accepted")
+	}
+	if err := alphaResidencyStateParent(filepath.Join(base, "private", "new"), shared); err != nil {
+		t.Fatalf("a private parent that does not exist yet was rejected: %v", err)
+	}
+}
+
+// alphaResidencyStateParent checks the declared parent of the long run's state
+// root. A 24-hour measurement owned by one process cannot share the temporary
+// directory: unrelated cleanup there removes the running Core's socket and
+// ends the run as an environment accident, not a product fault.
+func alphaResidencyStateParent(parent, temp string) error {
+	if parent == "" || !filepath.IsAbs(parent) {
+		return fmt.Errorf("24-hour residency requires an absolute LINA_ALPHA_STATE parent (got %q)", parent)
+	}
+	within, err := alphaWithinDirectory(parent, temp)
+	if err != nil {
+		return err
+	}
+	if within {
+		return fmt.Errorf("24-hour residency state parent %s is inside the shared temporary directory %s", parent, temp)
+	}
+	return nil
+}
+
+// alphaWithinDirectory reports whether path is temp or lies under it. The
+// parent may not exist yet, so the longest existing ancestor is resolved and
+// the missing components are appended: an ancestor symlink still decides where
+// the new directory will land.
+func alphaWithinDirectory(path, temp string) (bool, error) {
+	resolve := func(p string) (string, error) {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return "", err
+		}
+		missing := ""
+		for {
+			if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+				return filepath.Join(resolved, missing), nil
+			}
+			parent := filepath.Dir(abs)
+			if parent == abs {
+				return filepath.Join(abs, missing), nil
+			}
+			missing = filepath.Join(filepath.Base(abs), missing)
+			abs = parent
+		}
+	}
+	path, err := resolve(path)
+	if err != nil {
+		return false, err
+	}
+	temp, err = resolve(temp)
+	if err != nil {
+		return false, err
+	}
+	relative, err := filepath.Rel(temp, path)
+	if err != nil {
+		return false, nil
+	}
+	return relative == "." || !strings.HasPrefix(relative, ".."+string(filepath.Separator)), nil
+}
+
 type fakeClock struct {
 	mu  sync.Mutex
 	now time.Time
@@ -303,6 +413,11 @@ func (c *fakeClock) Advance(d time.Duration) {
 }
 
 func alphaResidency(t *testing.T, duration time.Duration) int {
+	if duration >= 24*time.Hour {
+		if err := alphaResidencyStateParent(os.Getenv("LINA_ALPHA_STATE"), os.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	directory := os.Getenv("LINA_ALPHA_CAPTURES")
 	if !filepath.IsAbs(directory) {
 		t.Fatal("absolute LINA_ALPHA_CAPTURES directory required")
@@ -389,6 +504,11 @@ func alphaResidency(t *testing.T, duration time.Duration) int {
 		defer cancel()
 		c, err := clientapi.DialWithCapabilities(ctx, h.socket, "alpha-residency", []protocol.Capability{{Name: "conversation", Version: "1.0"}})
 		if err != nil {
+			// A missing state root means the run's own storage was removed. Say
+			// so instead of reporting it as Core refusing to answer.
+			if _, statErr := os.Stat(h.root); statErr != nil {
+				return fmt.Errorf("residency state root %s disappeared: %w", h.root, statErr)
+			}
 			return fmt.Errorf("residency handshake failed: %w", err)
 		}
 		defer c.Close()

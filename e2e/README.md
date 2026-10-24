@@ -245,6 +245,13 @@ for the operator to inspect that exact request and write `once` to its matching
 `.answer` file, then uses the TUI's normal selection and confirmation controls.
 It never automatically approves generated commands or changes worker settings.
 
+`LINA_ALPHA_STATE` names the parent of each scenario's private state root; the
+default is the temporary directory. A 24-hour run requires an absolute parent
+outside the shared temporary directory, because unrelated cleanup of that
+directory removes a running Core's state root and socket. When the parent is
+named, its own disappearance is reported as the failure instead of an
+unavailable Core.
+
 ```sh
 go test -count=1 -v -timeout=12m ./e2e/m1 -run '^TestAlphaOwner'
 ```
