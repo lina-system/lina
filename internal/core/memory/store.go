@@ -368,11 +368,12 @@ func (s *Store) Recall(ctx context.Context, scope RecallScope, q Query) ([]Hit, 
 
 // Items materializes the items of a ranked id set from the shared index in one
 // scoped read, in that order. Queries by identity never scan the item set.
-func (s *Store) Items(ctx context.Context, scope RecallScope, ids []string, at int64, history bool) ([]Hit, error) {
+// personOnly keeps items whose subject is the person, which recall_person requires.
+func (s *Store) Items(ctx context.Context, scope RecallScope, ids []string, at int64, history, personOnly bool) ([]Hit, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	hits, err := s.recall(ctx, scope, Query{IDs: ids, At: at, History: history, Limit: len(ids)}, false, false)
+	hits, err := s.recall(ctx, scope, Query{IDs: ids, At: at, History: history, Limit: len(ids), PersonOnly: personOnly}, false, false)
 	if err != nil {
 		return nil, err
 	}

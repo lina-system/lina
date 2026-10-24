@@ -176,6 +176,31 @@ func TestRememberLargeSourceAndReplayKeepsOneLineage(t *testing.T) {
 	}
 }
 
+func TestRecallPersonOmitsNonPersonSubjects(t *testing.T) {
+	db := memoryDB(t)
+	events := ledger.New(db, nil)
+	flow := NewMemory(db, nil, nil)
+	_, err := events.Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "event", ConversationID: "conversation", AgentID: "A", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: time.Unix(10, 0), RecordedAt: time.Unix(10, 0), TimeQuality: "observed", Body: "likes tea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	person := rememberInput("likes tea")
+	person.Item.Evidence[0].ID = "event"
+	if _, err := flow.Remember(t.Context(), person); err != nil {
+		t.Fatal(err)
+	}
+	world := rememberInput("the world likes tea too")
+	world.Item.Subject = memory.Subject{Kind: memory.World}
+	world.Item.Evidence[0].ID = "event"
+	if _, err := flow.Remember(t.Context(), world); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := flow.RecallPerson(t.Context(), memory.RecallScope{Agent: "A", Person: "person"}, PersonRecall{Question: "What drink?", Query: "tea", At: 100})
+	if err != nil || len(answer.Sources) != 1 || !strings.HasPrefix(answer.Sources[0].ID, "memory:") || strings.Contains(answer.Sources[0].Text, "world") {
+		t.Fatalf("non-person subject admitted: %+v %v", answer, err)
+	}
+}
+
 func TestRecallPersonRanksOnlyItemsAboutThePerson(t *testing.T) {
 	db := memoryDB(t)
 	events := ledger.New(db, nil)

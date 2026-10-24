@@ -61,7 +61,7 @@ func (m *Memory) recallSources(ctx context.Context, scope memory.RecallScope, in
 			memoryIDs = append(memoryIDs, hit.ID)
 		}
 	}
-	items, err := m.store.Items(ctx, scope, memoryIDs, in.At, in.History)
+	items, err := m.store.Items(ctx, scope, memoryIDs, in.At, in.History, true)
 	if err != nil {
 		return nil, err
 	}
