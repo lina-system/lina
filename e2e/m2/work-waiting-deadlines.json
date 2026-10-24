@@ -26,6 +26,15 @@
         "send"
       ],
       "Default": "do_not_act"
+    },
+    {
+      "ID": "booking",
+      "Prompt": "Pay for the booking?",
+      "Recommendation": "do_not_act",
+      "Reason": "outside_effect",
+      "Irreversible": true,
+      "Choices": ["do_not_act", "pay"],
+      "Default": "do_not_act"
     }
   ],
   "stopped_goal": "stopped-goal"

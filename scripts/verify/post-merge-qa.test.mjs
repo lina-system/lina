@@ -152,6 +152,58 @@ test('flaky detection uses the 48-hour observation window, not delayed reporting
   }
 });
 
+test('a rerun of an intervening pass is flaky only when its start is inside the failure window', async () => {
+  for (const started of [epoch + 2 * hour, epoch + 100 * hour]) {
+    const mock = github();
+    const opts = options(mock);
+    await reconcileQA({ ...opts, ...fixture('fail', 1) });
+    await reconcileQA({ ...opts, ...fixture('fail', 3) });
+    const pass = fixture('pass', 2);
+    pass.plan = sealPlan({ ...pass.plan, started });
+    pass.records[0].digest = pass.plan.digest;
+    await reconcileQA({ ...opts, ...pass });
+    assert.equal(mock.issues[0].labels.includes('flaky'), started === epoch + 2 * hour);
+  }
+});
+
+test('a delayed intervening failure still marks flaky when an earlier mark has no close neighbor yet', async () => {
+  const mock = github();
+  const opts = options(mock);
+  const at = (result, n, started) => {
+    const input = fixture(result, n);
+    input.plan = sealPlan({ ...input.plan, started });
+    input.records[0].digest = input.plan.digest;
+    return input;
+  };
+  await reconcileQA({ ...opts, ...at('fail', 1, epoch + hour) });
+  await reconcileQA({ ...opts, ...at('fail', 5, epoch + 100 * hour) });
+  await reconcileQA({ ...opts, ...at('fail', 3, epoch + 3 * hour) });
+  await reconcileQA({ ...opts, ...at('pass', 2, epoch + 2 * hour) });
+  assert.ok(mock.issues[0].labels.includes('flaky'));
+  assert.equal(mock.issues[0].state, 'open');
+});
+
+test('a pass reported after both failures still marks flaky when commit order puts it between them', async () => {
+  const marker = /<!-- foundation-qa:(\{[^\n]+\}) -->/;
+  for (const elapsed of [48 * hour, 48 * hour + 1]) {
+    const mock = github();
+    const opts = options(mock);
+    await reconcileQA({ ...opts, ...fixture() });
+    const later = fixture('fail', 3);
+    later.plan = sealPlan({ ...later.plan, started: epoch + hour + elapsed });
+    later.records[0].digest = later.plan.digest;
+    await reconcileQA({ ...opts, ...later });
+    await reconcileQA({ ...opts, ...fixture('pass', 2) });
+    assert.equal(mock.issues[0].labels.includes('flaky'), elapsed === 48 * hour);
+    assert.equal(mock.issues[0].state, 'open');
+    const state = JSON.parse(marker.exec(mock.issues[0].body)[1]);
+    assert.equal(state.passes, 0, 'a pass before the latest failure is not recovery');
+    if (elapsed !== 48 * hour) continue;
+    for (const n of [4, 5, 6]) await reconcileQA({ ...opts, ...fixture('pass', n) });
+    assert.equal(mock.issues[0].state, 'closed');
+  }
+});
+
 test('a failure resets the consecutive pass count and skipped heads do not count', async () => {
   const mock = github();
   const opts = options(mock);
@@ -623,6 +675,42 @@ test('three newer completed passing heads prevent a late older failure from open
   mock.publish(fixture('pass', 3));
   await reconcileQA({ ...options(mock), ...fixture() });
   assert.equal(mock.issues.length, 0, 'the completed descendant run already proves recovery');
+});
+
+test('partial descendant passes are kept when an older failure is reported late', async () => {
+  const mock = github();
+  const marker = /<!-- foundation-qa:(\{[^\n]+\}) -->/;
+  mock.publish(fixture('pass', 2));
+  mock.publish(fixture('pass', 3));
+  await reconcileQA({ ...options(mock), ...fixture() });
+  assert.equal(mock.issues.length, 1);
+  assert.equal(mock.issues[0].state, 'open');
+  const read = () => JSON.parse(marker.exec(mock.issues[0].body)[1]);
+  assert.equal(read().passes, 2);
+  assert.equal(read().lastHead, head(3));
+  assert.equal(read().result, 'pass');
+  assert.equal(read().reportHead, head(1));
+  assert.equal(read().reportResult, 'fail');
+  await reconcileQA({ ...options(mock), ...fixture('pass', 4) });
+  assert.equal(mock.issues[0].state, 'closed');
+  assert.equal(read().passes, 3);
+});
+
+test('a descendant failure limits historical recovery and still records flakiness', async () => {
+  const mock = github();
+  const marker = /<!-- foundation-qa:(\{[^\n]+\}) -->/;
+  mock.publish(fixture('pass', 2));
+  mock.publish(fixture('fail', 4));
+  mock.publish(fixture('pass', 5));
+  await reconcileQA({ ...options(mock), ...fixture() });
+  const read = () => JSON.parse(marker.exec(mock.issues[0].body)[1]);
+  assert.equal(mock.issues[0].state, 'open');
+  assert.equal(read().passes, 1);
+  assert.ok(mock.issues[0].labels.includes('flaky'));
+  await reconcileQA({ ...options(mock), ...fixture('pass', 2) });
+  assert.equal(read().passes, 1, 'a pass before the later failure does not extend the streak');
+  for (const n of [6, 7]) await reconcileQA({ ...options(mock), ...fixture('pass', n) });
+  assert.equal(mock.issues[0].state, 'closed');
 });
 
 test('only a later descendant pass for the same branch and test proves recovery', async () => {
