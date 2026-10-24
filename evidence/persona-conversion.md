@@ -96,14 +96,19 @@ conversion shipped (`persona/testdata/m4-baseline`, copied from that revision):
 - `TestM4StarterIdentityAndVoice` requires the persona name in both titles, the
   character marker, the address terms and register markers, four examples and
   the line for agent exchanges.
-- `TestM4StarterLayersHaveNoTopicSwitchOrClosing` rejects a sentence that ties a
-  register to a topic and any sentence that reports a decision with nothing left
-  in it, in either layer. Register chosen by what a sentence does stays allowed.
+- `TestM4StarterLayersHaveNoTopicSwitchOrClosing` rejects a sentence that
+  instructs a register change on a topic and a sentence that closes on a
+  decision with nothing left in it, in either layer. A sentence that forbids
+  either is allowed, as are register chosen by what a sentence does and a
+  statement that the voice does not change: the check looks for an instruction
+  to do the prohibited thing, so a layer may state the prohibition itself.
 - `TestM4ChecksCatchRegressions` drives each helper with synthetic fixtures: a
   reworded rule and a rule replaced by another pass; an unchanged layer, a
   dropped rule, a core change landing in an example and a stubbed core fail; a
   topic switch and a nothing-to-decide line are found while stable voice,
-  role-based register and open decisions are not.
+  role-based register, open decisions and the design's own prohibitions
+  ("말투를 바꾸지 않고", "정할 일이 없다는 문구로 끝내지 않는다", "Do not end a
+  reply with nothing to decide") are not.
 
 A check without a wording list cannot tell whether a changed paragraph still
 says what the design asks; a word list can, but it fails a legitimate rewrite,
@@ -116,4 +121,8 @@ structural check for the same reason.
 Mutation run against the shipped layers: rewording Lina's source-reading rule
 (묻기 전에 → 질문하기에 앞서, with the rest of the sentence rewritten) passed;
 reverting the knowledge core to its #584 text failed; an added topic register
-switch in Arin's voice failed; the suite passed again after restoring the files.
+switch in Arin's voice failed; Arin's rule rewritten as "말투를 바꾸지 않고
+사극 존대를 그대로" passed; a nothing-to-decide closing in her core
+("정할 일은 없사옵니다") failed and the same statement as a prohibition
+("정할 일이 없다는 문구로 답을 끝내지 않사옵니다") passed; the suite passed
+again after restoring the files.

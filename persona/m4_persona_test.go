@@ -161,6 +161,8 @@ func TestM4ChecksCatchRegressions(t *testing.T) {
 		"stable voice":              {body: "주제가 무거워도 말투는 그대로다. 안전 내용만 분명히 전한다.", hits: 0},
 		"register by sentence role": {body: "결론, 약속과 결정은 합니다체로 말하고 설명은 해요체로 푼다.", hits: 0},
 		"correction example":        {body: "소인이 잘못 말씀드렸사옵니다. 다시 확인했사옵니다.", hits: 0},
+		"forbidden switch":          {body: "건강, 결제와 예약, 완료 보고와 실수처럼 정확해야 하는 순간에도 말투를 바꾸지 않고 사극 존대를 그대로 쓰며 필요한 내용을 또렷하게 전하옵니다.", hits: 0},
+		"topic switch per topic":    {body: "건강 이야기는 격식체로, 잡담은 반말로 쓴다.", hits: 1},
 	} {
 		t.Run("register/"+name, func(t *testing.T) {
 			if hits := topicRegisterSwitches(tc.body); len(hits) != tc.hits {
@@ -172,11 +174,13 @@ func TestM4ChecksCatchRegressions(t *testing.T) {
 		body string
 		hits int
 	}{
-		"korean closing":  {body: "끝났어. 정할 일은 없어.", hits: 1},
-		"english closing": {body: "All clear. Nothing to decide now.", hits: 1},
-		"open decision":   {body: "남은 결정은 두 가지야.", hits: 0},
-		"work still open": {body: "정할 것이 남아 있다.", hits: 0},
-		"negated advisal": {body: "결정을 미루라는 말은 하지 않는다.", hits: 0},
+		"korean closing":             {body: "끝났어. 정할 일은 없어.", hits: 1},
+		"english closing":            {body: "All clear. Nothing to decide now.", hits: 1},
+		"open decision":              {body: "남은 결정은 두 가지야.", hits: 0},
+		"work still open":            {body: "정할 것이 남아 있다.", hits: 0},
+		"negated advisal":            {body: "결정을 미루라는 말은 하지 않는다.", hits: 0},
+		"forbidden closing":          {body: "정할 일이 없다는 고정 문구로 답변을 끝내지 않는다.", hits: 0},
+		"forbidden closing, english": {body: "Do not end a reply with nothing to decide.", hits: 0},
 	} {
 		t.Run("closing/"+name, func(t *testing.T) {
 			if hits := nothingToDecide(tc.body); len(hits) != tc.hits {
@@ -283,38 +287,52 @@ func rules(current []string) int {
 }
 
 var (
-	sentenceBreak = regexp.MustCompile(`[.!?。！？\n]+`)
-	englishEmpty  = regexp.MustCompile(`(?i)nothing\s+(left\s+)?to\s+decide|no\s+decision\s+to\s+make`)
+	sentenceBreak   = regexp.MustCompile(`[.!?。！？\n]+`)
+	englishEmpty    = regexp.MustCompile(`(?i)nothing\s+(left\s+)?to\s+decide|no\s+decision\s+to\s+make`)
+	englishNegation = regexp.MustCompile(`(?i)\b(do\s+not|don't|never|avoid|no\s+need\s+to)\b`)
+	// "없" states the emptiness; "없이" ("without") is a negation and no claim.
+	koreanEmptiness = regexp.MustCompile(`없(?:[^이]|$)`)
 )
 
-// topicRegisterSwitches reports sentences that tie a topic to a different
-// register. Register chosen by what the sentence does (a conclusion, an
-// explanation) is voice and stays allowed, as does restating that the voice does
-// not change.
+// topicRegisterSwitches reports sentences that instruct the agent to use a
+// different register on some topic. Register chosen by what a sentence does (a
+// conclusion, an explanation) is voice and stays allowed, and so is a sentence
+// that forbids the switch: the check looks for an instruction to do it.
 func topicRegisterSwitches(body string) []string {
 	topics := []string{"건강", "의료", "결제", "예약", "법률", "법적", "법령", "투자", "장애", "사고", "실수", "민감", "심각", "진지", "잡담", "완료", "구매", "환불"}
 	switches := []string{"말투를 바꾸", "말씨를 바꾸", "어투를 바꾸", "말투를 전환", "격식체로", "존댓말로", "반말로", "사극체로", "평어로", "합니다체로", "해요체로", "달리 말한", "달리 쓴"}
 	var hits []string
 	for _, sentence := range sentenceBreak.Split(body, -1) {
-		if containsAny(sentence, topics) && containsAny(sentence, switches) {
+		if containsAny(sentence, topics) && containsAny(sentence, switches) && instructed(sentence) {
 			hits = append(hits, strings.TrimSpace(sentence))
 		}
 	}
 	return hits
 }
 
-// nothingToDecide reports a decision with nothing left in it. The empty state
-// belongs to the Waiting for me view, never to a reply or a persona layer.
+// nothingToDecide reports a sentence that tells the agent to close on a
+// decision with nothing left in it. The empty state belongs to the Waiting for
+// me view, never to a reply or a persona layer.
 func nothingToDecide(body string) []string {
 	decisions := []string{"결정", "정할", "판단할"}
-	negations := []string{"없다", "없어", "없습니다", "없네", "없음", "없지"}
 	var hits []string
 	for _, sentence := range sentenceBreak.Split(body, -1) {
-		if englishEmpty.MatchString(sentence) || (containsAny(sentence, decisions) && containsAny(sentence, negations)) {
+		if englishEmpty.MatchString(sentence) && instructed(sentence) ||
+			containsAny(sentence, decisions) && koreanEmptiness.MatchString(sentence) && instructed(sentence) {
 			hits = append(hits, strings.TrimSpace(sentence))
 		}
 	}
 	return hits
+}
+
+// instructed reports whether a sentence asks for something rather than
+// forbidding it. A layer may state the prohibition itself ("do not switch
+// register", "do not end with a nothing-to-decide line"), so a negated predicate
+// carries no violation. "없" is not a negation here: it is the emptiness the
+// closing line states.
+func instructed(sentence string) bool {
+	return !containsAny(sentence, []string{"않", "말고", "금지", "마라", "말아", "아니라", "대신", "배제"}) &&
+		!englishNegation.MatchString(sentence)
 }
 
 func containsAny(text string, candidates []string) bool {
