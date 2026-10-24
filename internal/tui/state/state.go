@@ -67,7 +67,10 @@ type WorkLimit struct {
 type WorkCount struct{ Running, Waiting int }
 
 type WorkCard struct {
-	ID, Name, Now     string
+	ID, Name, Now string
+	// GoalID is the goal Core names for a goal line. Other cards have none and
+	// accept no goal command.
+	GoalID            string
 	Started, Finished time.Time
 	State             protocol.RunningState
 	Waiting           int
