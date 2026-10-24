@@ -42,6 +42,7 @@ func (m *Memory) recallSources(ctx context.Context, scope memory.RecallScope, in
 	query := recall.Scope{
 		Person: scope.Person, Agent: scope.Agent, Kinds: kinds,
 		CommonOnly: scope.CommonOnly, History: in.History, At: in.At,
+		PersonOnly: true,
 		Projection: scope.Projection, ExternalModel: scope.ExternalModel,
 	}
 	if in.At > 0 {

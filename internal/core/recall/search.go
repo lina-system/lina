@@ -50,6 +50,9 @@ type Scope struct {
 	SpeakerKind  guard.SpeakerKind
 	Origin       string
 	CommonOnly   bool
+	// PersonOnly restricts person-model queries to person-authored events and
+	// person-subject memory items, before ranking and the result limit.
+	PersonOnly bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
 	// with its lineage, so it surfaces only when its original is not a
 	// candidate: a copy appears only when asked, through its original.
@@ -457,6 +460,10 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 		where = append(where, alias+".speaker_kind=?")
 		args = append(args, string(scope.SpeakerKind))
 	}
+	if scope.PersonOnly {
+		where = append(where, `((`+alias+`.kind='event' AND `+alias+`.speaker_kind='person')
+ OR (`+alias+`.kind='memory' AND EXISTS(SELECT 1 FROM memory_item m WHERE m.id=`+alias+`.source_id AND m.subject_kind='person')))`)
+	}
 	if scope.Origin != "" {
 		where = append(where, "json_extract("+alias+".origin,'$.kind')=?")
 		args = append(args, scope.Origin)
@@ -757,7 +764,7 @@ func maskDerived(text string, spans []secrets.Span) (string, error) {
 func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (string, error) {
 	switch hit.Kind {
 	case Event:
-		var body string
+		var body sql.NullString
 		var material sql.NullString
 		var spans []secrets.Span
 		err := db.Read(ctx, func(tx *canon.Tx) error {
@@ -795,7 +802,10 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 			}
 			return text, nil
 		}
-		return body, nil
+		if !body.Valid {
+			return "", ErrBytesUnavailable
+		}
+		return body.String, nil
 	case Memory:
 		var text string
 		err := db.Read(ctx, func(tx *canon.Tx) error {
