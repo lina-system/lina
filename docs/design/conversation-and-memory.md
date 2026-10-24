@@ -356,6 +356,7 @@ Every input of the person is bound to one target: the focus, another 목표, 일
 
 **Focus and candidates.**
 
+- An input sets the next focus only when all its current choices settle on the same item, including a single created identity. Distinct targets, a retained tie, a pending target question or a cancelled choice leave no focus; request order never selects a winner.
 - The focus ages. After 60 minutes without an exchange (a starting value) it is no longer the default and is offered as one candidate among the rest. In the owner's data a message sent within ten minutes continued the current topic about 70 percent of the time; after an hour, about 20 percent.
 - Core ranks at most eight candidates: the focus; items with a question to the person open in this conversation; tasks and runs started from it that are running or waiting; items the message names; then the person's most recently active 목표, 일 and 할 일. Each carries its id, title, kind, state and last activity, and they enter item 7.3 of the request layout.
 
@@ -369,7 +370,7 @@ A rule decides the item, not what the message does to it. Whether the message an
 
 Word lists and timing do not bind. In the owner's data, status, memory and new-work words decided the target poorly, and so did arrival while the agent was busy: about four in ten of those messages were not steers. Input that arrives during a turn still reaches that turn as steering input ([runtime.md](runtime.md#conversation-loop)) and is bound like any other.
 
-**The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. When it appears before a work call in the same response, that update commits before the work call runs. Other targets in the response still run beside it. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
+**The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
 
 `bind_input` records request ordinals and exact input excerpts. Choices append
 system events to the admission binding; retries retain the same event and question.
@@ -407,6 +408,9 @@ candidate does not resolve the original ambiguity. A retained tie, including a
 read that has not asked a question, does not settle a reply or the next focus.
 A reply that stays unresolved keeps that tie, so a later control asks before it
 runs.
+An unresolved follow-up after an input with several settled targets also keeps
+those targets for the control check. A tool's session argument alone does not
+choose between them: stopping a worker asks which item before any interrupt.
 Current choices enter the
 ContextPacket and remain reconstructible from their ledger sources.
 
