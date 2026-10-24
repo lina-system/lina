@@ -9,7 +9,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
-	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -54,7 +53,7 @@ func TestProgressCountFollowsLinesNotRows(t *testing.T) {
 				if _, err = tx.ExecContext(t.Context(), "INSERT INTO work_records(kind,id,version,body) VALUES('action',?,1,?)", action.ID, body); err != nil {
 					return err
 				}
-				card := dispatch.GoalWorkID(goalOrigin(g), action.ID)
+				card := work.DispatchID(g.Turn, action.ID)
 				task := work.Task{ID: card, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: step.Name}
 				run := work.Run{ID: card + ":run", TaskID: card, Generation: 1, Worker: "fixture", ThreadID: card, TurnID: card, NodeID: "local"}
 				events := []work.Event{

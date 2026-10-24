@@ -31,12 +31,6 @@ func (s *Service) GoalRecord(ctx context.Context, origin Origin, action string) 
 	return r, err
 }
 
-// GoalWorkID is the id of the dispatch, and so of the work card, that a goal
-// action starts. An action that observes another names that action's dispatch.
-func GoalWorkID(origin Origin, action string) string {
-	return admissionID(origin, action)
-}
-
 // RunGoal is the trusted goal runner's entry after its durable action claim.
 // It shares admission, preset checks, manager assignment and the worker adapter
 // with dispatch_work. The action key never restarts running or uncertain work.

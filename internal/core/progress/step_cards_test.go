@@ -12,7 +12,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
-	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/internal/design"
 )
 
@@ -54,11 +53,10 @@ func TestDispatchedStepCardsAreRowsOfTheirGoal(t *testing.T) {
 		{ID: "observe-two", GoalID: "g", TaskID: "two", Kind: goal.Assign, State: "running", ObserveActionID: "assign-two"},
 		{ID: "inspect-one", GoalID: "g", TaskID: "one", Kind: goal.InspectPR, State: "queued"},
 	}
-	origin := dispatch.Origin{Person: g.Person, Agent: g.Agent, Conversation: g.Conversation, Turn: g.Turn}
 	started := map[string]time.Time{
-		dispatch.GoalWorkID(origin, "assign-one"): time.Unix(2_000, 0).UTC(),
-		dispatch.GoalWorkID(origin, "assign-two"): time.Unix(1_000, 0).UTC(),
-		"loose": time.Unix(3_000, 0).UTC(),
+		work.DispatchID(g.Turn, "assign-one"): time.Unix(2_000, 0).UTC(),
+		work.DispatchID(g.Turn, "assign-two"): time.Unix(1_000, 0).UTC(),
+		"loose":                               time.Unix(3_000, 0).UTC(),
 	}
 	if err = db.Write(t.Context(), func(tx *canon.Tx) error {
 		raw, err := json.Marshal(g)
@@ -133,7 +131,7 @@ func TestDispatchedStepCardsAreRowsOfTheirGoal(t *testing.T) {
 		byRef[entry.Ref] = entry
 	}
 	for _, action := range []string{"assign-one", "assign-two"} {
-		id := dispatch.GoalWorkID(origin, action)
+		id := work.DispatchID(g.Turn, action)
 		if entry, ok := byRef[id]; !ok || !entry.Row || entry.Line.Depth != 1 {
 			t.Errorf("card of %s = %+v (present %v), want a row of the goal's line", action, entry, ok)
 		}

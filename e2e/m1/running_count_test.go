@@ -17,7 +17,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
-	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/internal/design"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
@@ -184,7 +183,6 @@ func seedRunningCount(t *testing.T, h *harness, scenario runningCountScenario) {
 	// reaches its rows through the goal's actions.
 	if err = db.Write(h.ctx, func(tx *canon.Tx) error {
 		for _, day := range scenario.Goals {
-			origin := dispatch.Origin{Person: person, Agent: agent, Conversation: conversation, Turn: "turn:" + day.ID}
 			for i, name := range day.Steps {
 				action := goal.Action{ID: "assign:" + stepID(day.ID, i), GoalID: day.ID, TaskID: stepID(day.ID, i), Kind: goal.Assign, State: "running"}
 				body, err := json.Marshal(action)
@@ -194,7 +192,7 @@ func seedRunningCount(t *testing.T, h *harness, scenario runningCountScenario) {
 				if _, err = tx.ExecContext(h.ctx, "INSERT INTO work_records(kind,id,version,body) VALUES('action',?,1,?)", action.ID, body); err != nil {
 					return err
 				}
-				id := dispatch.GoalWorkID(origin, action.ID)
+				id := work.DispatchID("turn:"+day.ID, action.ID)
 				task := work.Task{ID: id, PersonID: person, AgentID: agent, ConversationID: conversation, Title: name, Done: "Produce " + name}
 				run := work.Run{ID: id + ":run", TaskID: id, Generation: 1, Worker: "fixture", ThreadID: id, TurnID: id, NodeID: "local"}
 				events := []work.Event{

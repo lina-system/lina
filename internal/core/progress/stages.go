@@ -13,7 +13,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
-	"github.com/thisisjun786/lina/internal/core/worker/dispatch"
 	"github.com/thisisjun786/lina/internal/design"
 )
 
@@ -392,7 +391,6 @@ func stepCards(ctx context.Context, tx *canon.Tx, g goal.Goal) (map[string][]str
 		return nil, err
 	}
 	defer rows.Close()
-	origin := dispatch.Origin{Person: g.Person, Agent: g.Agent, Conversation: g.Conversation, Turn: g.Turn}
 	out := map[string][]string{}
 	seen := map[string]bool{}
 	for rows.Next() {
@@ -412,7 +410,7 @@ func stepCards(ctx context.Context, tx *canon.Tx, g goal.Goal) (map[string][]str
 		if a.ObserveActionID != "" {
 			source = a.ObserveActionID
 		}
-		card := dispatch.GoalWorkID(origin, source)
+		card := work.DispatchID(g.Turn, source)
 		if !seen[card] {
 			seen[card] = true
 			out[a.TaskID] = append(out[a.TaskID], card)
