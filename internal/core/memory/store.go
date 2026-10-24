@@ -404,7 +404,6 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 		found, err := recall.Match(ctx, s.db, recall.Scope{
 			Person: scope.Person, Agent: scope.Agent, Kinds: []recall.Kind{recall.Memory},
 			CommonOnly: scope.CommonOnly, History: q.History, At: q.At,
-			PersonOnly: q.PersonOnly,
 			Projection: scope.Projection, ExternalModel: scope.ExternalModel,
 			PersonMemory: q.PersonOnly || relationship,
 		}, recall.Query{Text: q.Text})
@@ -533,6 +532,10 @@ func (s *Store) RestrictedEvents(ctx context.Context, scope RecallScope) (map[st
 	err := s.db.Read(ctx, func(tx *canon.Tx) error { var err error; ids, err = restrictedEvents(ctx, tx, scope); return err })
 	return ids, err
 }
+
+// A protected source stays protected when another holder has a common copy.
+// Only event ids leave this query; candidate records still use RecallScope.
+// The rule is recall's, so live reads and search exclude the same events.
 func restrictedEvents(ctx context.Context, tx *canon.Tx, scope RecallScope) (map[string]bool, error) {
 	ids := map[string]bool{}
 	cte, args := recall.RestrictionCTE(recall.Scope{Person: scope.Person, Projection: scope.Projection, ExternalModel: scope.ExternalModel})

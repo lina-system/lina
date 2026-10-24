@@ -97,7 +97,9 @@ Synthetic package tests and `e2e/m1/memory-jobs.json` exercise these operations 
 
 `RestrictedEvents` returns the event ids that the person's `private` and
 `never-leaves` items rest on, so a common item or a raw ledger read cannot
-bypass another holder's scope. It reads them from the current `cite` rows of
+bypass another holder's scope. It uses recall's `RestrictionCTE`, the event part
+of the rule recall search applies, so the set also holds every replay copy and
+`view_of` event linked to that evidence. It reads the current `cite` rows of
 those items instead of decoding every record's evidence JSON; only ids leave
 the query. Removal and recovery keep those rows current, and an erased item's
 own citation history is deleted with it.

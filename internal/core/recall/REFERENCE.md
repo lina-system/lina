@@ -52,9 +52,13 @@ ties go to the newer `occurred_at`. A short term reaches memory items and
 records by a literal scan of the already scoped set. A source that is still
 queued keeps its text in canon; `Match` matches it there, so search does not
 wait for the background drain. A queued event whose body lives in material is
-read through the caller's `EventText` reader, which only `ledger.Store.Search`
-supplies. `recall_doc.text_hash` collapses events with
-identical derived text inside one conversation to the earliest of them. A
+read through the caller's `EventText` reader, which `ledger.Store.Search` and
+the live recall tool supply; it is read only when the requested kinds include
+events, and it ranks with the other queued sources before the limit. `recall_doc.text_hash` collapses events with
+identical derived text inside one conversation to the earliest of them. An
+event whose `replay_of` or `view_of` chain reaches another candidate is
+represented by that candidate, matched by source id so a queued event without
+an index row collapses the same way. A
 returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
 its lineage counts once: a copy appears when its original is out of scope.
@@ -66,14 +70,19 @@ for events and items together, materializes the item set in one scoped read, and
 reads an event's text only for the results that remain. Its cost follows the
 hits, not the number of person events.
 
-Person-model queries set `PersonOnly`, which filters person-authored events and
-person-subject memory items before ranking and the limit, including queued
-sources. General recall keeps its wider kind/speaker filters. Event bodies in
+Person-model queries set `EventSpeakerKind` and `PersonMemory` to filter
+person-authored events and person-subject memory items before ranking and the
+limit, including queued sources. General recall keeps its wider kind/speaker filters. Event bodies in
 materials have a nullable inline body; search resolves those through the bound
 reader or reports unavailable bytes without failing the whole result list.
 
 Restricted-source selection follows protected memory to its evidence, then
 walks current citations back to every dependent memory, record and summary.
+Protected evidence follows replay and `view_of` links to original sources;
+protection then reaches their dependent views, indexed or queued, without
+restricting those views' independent sources.
+`RestrictedEvents` returns the event ids of that set, so a live read by id,
+such as `expand`, refuses exactly the events search leaves out.
 Typed source identities preserve the boundary across nested summary children.
 The same scope predicate applies before limiting indexed, queued and vector-hook
 candidates. Internal reads retain their scope, while projection also excludes

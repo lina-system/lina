@@ -160,6 +160,90 @@ func TestSearchOneHitPerIdenticalTextAndReplayOptIn(t *testing.T) {
 	}
 }
 
+func TestSearchQueuedViewCountsWithItsSource(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "source", "conversation", "owner", "agent", "도서관 원문", base, "")
+	admitAt(t, db, "other", "conversation", "owner", "agent", "도서관 산책", base.Add(time.Second), "")
+	write(t, db, eventSQL, "view", "도서관 보기")
+	write(t, db, "INSERT INTO ev_rel(event_id,target_id,kind,ordinal) VALUES('view','source','view_of',0)")
+	if n := count(t, db, "SELECT count(*) FROM recall_pending WHERE source_id='view'"); n != 1 {
+		t.Fatalf("view not queued: %d", n)
+	}
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	ids := searchIDs(t, db, scope, "도서관", 0)
+	sort.Strings(ids)
+	if !reflect.DeepEqual(ids, []string{"other", "source"}) {
+		t.Fatalf("queued view: %v", ids)
+	}
+	drain(t, db)
+	ids = searchIDs(t, db, scope, "도서관", 0)
+	sort.Strings(ids)
+	if !reflect.DeepEqual(ids, []string{"other", "source"}) {
+		t.Fatalf("published view: %v", ids)
+	}
+}
+
+func TestSearchQueuedMaterialEventFollowsKinds(t *testing.T) {
+	db := database(t)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES('material','conversation','owner','agent','person','{}','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','observed','{"kind":"native"}','asset',1)`)
+	read := func(context.Context, string) (string, error) { return "도서관 자료", nil }
+	for _, tc := range []struct {
+		kinds []recall.Kind
+		want  []string
+	}{
+		{[]recall.Kind{recall.Memory, recall.Summary, recall.Record}, nil},
+		{[]recall.Kind{recall.Event}, []string{"material"}},
+		{nil, []string{"material"}},
+	} {
+		scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: tc.kinds}
+		hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관", EventText: read})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, hit := range hits {
+			ids = append(ids, hit.ID)
+		}
+		if !reflect.DeepEqual(ids, tc.want) {
+			t.Fatalf("kinds %v: %v, want %v", tc.kinds, ids, tc.want)
+		}
+	}
+}
+
+func TestSearchQueuedMaterialEventRanksBeforeLimit(t *testing.T) {
+	db := database(t)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,body)
+ VALUES('inline','conversation','owner','agent','person','{}','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','observed','{"kind":"native"}','도서관 메모')`)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES('material','conversation','owner','agent','person','{}','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','observed','{"kind":"native"}','asset',1)`)
+	read := func(context.Context, string) (string, error) { return "도서관 자료", nil }
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	if count(t, db, "SELECT count(*) FROM recall_pending WHERE source_id IN ('inline','material')") != 2 {
+		t.Fatal("both events must still be queued")
+	}
+	for _, tc := range []struct {
+		limit int
+		want  []string
+	}{
+		{1, []string{"material"}},
+		{0, []string{"material", "inline"}},
+	} {
+		hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관", Limit: tc.limit, EventText: read})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, hit := range hits {
+			ids = append(ids, hit.ID)
+		}
+		if !reflect.DeepEqual(ids, tc.want) {
+			t.Fatalf("limit %d: %v, want %v", tc.limit, ids, tc.want)
+		}
+	}
+}
+
 func TestSearchLineageKeepsEventAsItemCitation(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)
@@ -240,6 +324,52 @@ func TestSearchSummaryHitCarriesItsEvents(t *testing.T) {
 	}
 	if len(results[0].Citations) != 1 || results[0].Citations[0].TargetID != "event" || results[0].Citations[0].Role != "covers" {
 		t.Fatalf("summary did not point at its events: %+v", results[0].Citations)
+	}
+}
+
+func TestSearchParentSummaryOfProtectedEventStaysOut(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "event", "conversation", "owner", "agent", "도서관에서 공부했다.", base, "")
+	write(t, db, `INSERT INTO sum_node(id,conversation_id,level,model,prompt_version,built_at,start_at,end_at,epoch,status,text,dropped,revision)
+ VALUES('child','conversation',0,'fixture','1','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z',0,'ready','도서관 하위','',1),
+ ('parent','conversation',1,'fixture','1','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z',0,'ready','상위 요약문','',1);
+ INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role)
+ VALUES('summary','child','1',0,'event','event','0',NULL,NULL,'event','covers'),
+ ('summary','parent','1',0,'summary','child','1',NULL,NULL,'session','covers')`)
+	drain(t, db)
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Summary}, ExternalModel: true}
+	if ids := searchIDs(t, db, scope, "요약문", 0); !reflect.DeepEqual(ids, []string{"parent"}) {
+		t.Fatalf("parent summary before protection: %v", ids)
+	}
+	remember(t, db, "agent", "", "도서관 비밀", memory.NeverLeaves, "event")
+	if ids := searchIDs(t, db, scope, "요약문", 0); len(ids) != 0 {
+		t.Fatalf("parent of protected event reached external scope: %v", ids)
+	}
+}
+
+func TestSearchProtectedEventCopiesAndViewsStayOut(t *testing.T) {
+	db := database(t)
+	insert := func(id, body, replayOf string) {
+		write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,body,replay_of)
+ VALUES(?,'conversation','owner','agent','person','{"kind":"tui"}','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','recorded','{"kind":"native"}',?,nullif(?,''))`, id, body, replayOf)
+	}
+	insert("protected", "도서관 원본", "")
+	insert("public", "도서관 공개", "")
+	insert("indexed-view", "도서관 보기", "")
+	write(t, db, `INSERT INTO ev_rel(event_id,target_id,kind) VALUES('indexed-view','protected','view_of')`)
+	insert("copy", "도서관 사본", "protected")
+	remember(t, db, "agent", "", "도서관 비밀", memory.NeverLeaves, "protected")
+	drain(t, db)
+	insert("queued-view", "도서관 대기", "")
+	write(t, db, `INSERT INTO ev_rel(event_id,target_id,kind) VALUES('queued-view','protected','view_of')`)
+	if count(t, db, "SELECT count(*) FROM recall_pending WHERE source_id='queued-view'") != 1 {
+		t.Fatal("queued view must still be queued")
+	}
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}, ExternalModel: true, IncludeReplay: true}
+	ids := searchIDs(t, db, scope, "도서관", 0)
+	if !reflect.DeepEqual(ids, []string{"public"}) {
+		t.Fatalf("protected lineage reached external scope: %v", ids)
 	}
 }
 

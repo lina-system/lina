@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -150,7 +151,9 @@ func eventValue(e ledger.Event) Event {
 
 // visible gates original sources before reading content. Forgotten evidence and
 // copies follow canon's existing revocation projection; scope is checked across
-// holders so a common copy cannot launder a private source into an export.
+// holders so a common copy cannot launder a private source into an export, and
+// by recall's projection rule so a replay copy or view of protected evidence
+// is left out like the evidence itself.
 func visible(ctx context.Context, tx *canon.Tx, scope Scope, id string) error {
 	if err := sourceRestriction(ctx, tx, scope, "event", id); err != nil {
 		return err
@@ -165,6 +168,13 @@ func visible(ctx context.Context, tx *canon.Tx, scope Scope, id string) error {
 		return err
 	}
 	if n != 1 {
+		return Exclusion("restricted_content")
+	}
+	restricted, err := recall.RestrictedEvents(ctx, tx, recall.Scope{Person: scope.Person, Projection: true})
+	if err != nil {
+		return err
+	}
+	if restricted[id] {
 		return Exclusion("restricted_content")
 	}
 	return nil
