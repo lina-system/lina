@@ -44,8 +44,8 @@ func (m *Memory) recallSources(ctx context.Context, scope memory.RecallScope, in
 		Person: scope.Person, Agent: scope.Agent, Kinds: kinds,
 		EventSpeakerKind: guard.Person,
 		CommonOnly:       scope.CommonOnly, History: in.History, At: in.At,
-		PersonOnly: true,
 		Projection: scope.Projection, ExternalModel: scope.ExternalModel,
+		PersonMemory: true,
 	}
 	if in.At > 0 {
 		query.Until = time.Unix(in.At, 0).Add(time.Second)

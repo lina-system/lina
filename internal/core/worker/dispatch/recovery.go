@@ -26,6 +26,7 @@ func recoveryRecord(r Record) Record {
 	if send {
 		r.Recoveries = next.Retries
 		r.RecoveryThread = r.Thread
+		r.FreshSession = snap.Finish.Code == worker.TextCallFailure
 		r.RecoveryWorker = r.WorkerName()
 		r.Tried = nil
 		r.Packet = ""
@@ -160,13 +161,19 @@ func (s *Service) startAttempt(ctx context.Context, l lease.Lease, adapter worke
 		}
 	}
 	spec := worker.StartSpec{TaskID: r.ID, AttemptID: attemptID, Workdir: dir, TaskPacket: worker.FrameMessage(r.Owner, "agent", r.ID, attemptID+":start", r.Packet), ApprovalKey: s.cfg.ApprovalKey}
+	if adapter.Capabilities().Require(worker.WorkTools) == nil {
+		spec.Tools = worker.WorkToolDeclarations()
+	}
+	if r.FreshSession {
+		return adapter.Start(ctx, l, spec)
+	}
 	if reader, ok := adapter.(attemptRecoverer); ok && r.Recoveries == 1 && r.RecoveryThread != nil && r.RecoveryWorker == adapter.Name() && len(r.Tried) == 1 {
 		return reader.RecoverAttempt(ctx, l, spec, *r.RecoveryThread)
 	}
 	if reader, ok := adapter.(resumable); ok && r.RecoveryThread != nil && r.RecoveryWorker == adapter.Name() && len(r.Tried) == 1 {
 		old := *r.RecoveryThread
 		old.AttemptID = attemptID
-		th, err := reader.Recover(ctx, old, dir, nil)
+		th, err := reader.Recover(ctx, old, dir, spec.Tools)
 		if err != nil {
 			return worker.Thread{}, err
 		}

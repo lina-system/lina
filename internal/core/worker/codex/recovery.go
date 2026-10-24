@@ -50,6 +50,7 @@ func (s *Session) Recover(ctx context.Context, t worker.Thread, workdir string, 
 	t.BindingEpoch++
 	s.started = true
 	s.tools = declared
+	s.toolDeclarations = tools
 	s.snapshot = worker.ThreadSnapshot{Thread: t, State: worker.Unknown, Worker: s.Name(), Version: s.version, Workdir: workdir, Capabilities: s.Capabilities()}
 	s.mu.Unlock()
 	var response wire.V2ThreadResumeResponse
@@ -75,6 +76,11 @@ func (s *Session) Reconcile(ctx context.Context, t worker.Thread) (worker.Thread
 	err := s.bound(t, true)
 	result := s.snapshot
 	revision := s.revision
+	if err == nil && s.textHandled {
+		result := s.textSnapshot()
+		s.mu.Unlock()
+		return result, nil
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return result, err
@@ -109,10 +115,12 @@ func (s *Session) Reconcile(ctx context.Context, t worker.Thread) (worker.Thread
 				}
 			}
 			result.EffectsKnown = result.Finish != nil && turn.Items != nil
+			var assistant worker.TurnText
 			for _, item := range turn.Items {
 				switch {
 				case item.AgentMessage != nil:
 					result.Output = item.AgentMessage.Text
+					assistant.Add(item.AgentMessage.ID, item.AgentMessage.Text, true)
 				case item.UserMessage != nil, item.Plan != nil, item.Reasoning != nil, item.ContextCompaction != nil:
 				default:
 					result.EffectsKnown = false
@@ -121,12 +129,26 @@ func (s *Session) Reconcile(ctx context.Context, t worker.Thread) (worker.Thread
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			if revision != s.revision || s.bound(t, true) != nil {
-				return result, errors.New("Codex changed during reconciliation")
+				return worker.ThreadSnapshot{}, errors.New("Codex changed during reconciliation")
 			}
 			result.Pending = s.pendingRequests()
 			if len(result.Pending) > 0 {
 				result.EffectsKnown = false
 				result.State = worker.Waiting
+			}
+			// A read can observe the terminal boundary before its notification.
+			// Classify the full assistant message under the same lock, so that
+			// neither readback nor the later notification leaks or dispatches twice.
+			if result.Finish != nil && result.Finish.Status == worker.Done && result.EffectsKnown && !s.realTool && result.State != worker.Active && len(result.Pending) == 0 &&
+				(assistant.Overflow || worker.DetectTextCall(assistant.Text(), "end_turn", false, s.toolDeclarations).Detected) {
+				s.text = assistant
+				s.finished[t.TurnID] = false
+				if s.finishEvents == nil {
+					s.finishEvents = map[string]bool{}
+				}
+				s.finishEvents[t.TurnID] = true
+				_, err := s.finishText(result.Finish)
+				return s.textSnapshot(), err
 			}
 			if result.Finish != nil && result.State != worker.Active && result.State != worker.Waiting {
 				s.finished[t.TurnID] = true
