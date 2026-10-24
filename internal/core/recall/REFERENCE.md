@@ -38,7 +38,10 @@ retraction indexes keep their own triggers until the contract step. Messenger wi
 
 `recall.Match` applies scope (person, holder, conversation, kinds, time, speaker,
 origin, replay, visibility class), matches, ranks and limits without reading a
-published source body. `EventSpeaker` restricts event candidates without
+published source body. A zero limit means no limit. `ledger.Store.Search`
+applies its default of 20 before calling `Match`. Memory search materializes
+the ranked ids, drops rows its own scope filters exclude, and applies the
+caller's limit to the order that remains. `EventSpeaker` restricts event candidates without
 dropping memory items, summaries or records; `recall_person` sets it to
 `person`. Query terms are literal, whitespace split, at most
 eight, and any term may match. Documents holding more terms come first by BM25

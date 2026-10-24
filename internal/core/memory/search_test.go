@@ -2,6 +2,7 @@
 package memory
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/recall"
 )
 
 func TestKoreanIndexedRecall(t *testing.T) {
@@ -92,8 +94,18 @@ func TestKoreanRecallKeepsScopeValidityAndHistory(t *testing.T) {
 			t.Fatalf("current scope: %v %v", hits, err)
 		}
 		hits, err = s.Recall(t.Context(), scope, Query{Text: text, At: 100, History: true})
-		if err != nil || len(hits) != 2 || hits[0].ID != old.ID || !hits[0].Older || hits[1].ID != current.ID {
+		if err != nil || len(hits) != 2 {
 			t.Fatalf("history scope: %v %v", hits, err)
+		}
+		older := map[string]bool{}
+		for _, hit := range hits {
+			older[hit.ID] = hit.Older
+		}
+		if marked, ok := older[old.ID]; !ok || !marked {
+			t.Fatalf("history missing older item: %v", hits)
+		}
+		if marked, ok := older[current.ID]; !ok || marked {
+			t.Fatalf("history missing current item: %v", hits)
 		}
 	}
 }
@@ -241,5 +253,24 @@ func TestKoreanRecallCannotBypassAnotherHoldersProtectedEvent(t *testing.T) {
 		if err != nil || !ids[protected.Item.Evidence[0].ID] {
 			t.Fatalf("shared event deny set missing restriction: %v %v", ids, err)
 		}
+	}
+}
+
+func TestRecallKeepsMatchRankUnderLimit(t *testing.T) {
+	t.Parallel()
+	db := database(t)
+	older := commit(t, db, proposal("A", "alpha shared token in the older note"))
+	newer := commit(t, db, proposal("A", "beta shared token in the newer note"))
+	store := New(db).WithVectors(func(context.Context, recall.Scope, string) ([]string, error) {
+		return []string{older.ID}, nil
+	})
+	scope := RecallScope{Agent: "A", Person: "person"}
+	hits, err := store.Recall(t.Context(), scope, Query{Text: "shared token", At: 100, Limit: 1})
+	if err != nil || len(hits) != 1 || hits[0].ID != older.ID {
+		t.Fatalf("limit kept revision order: %+v %v", hits, err)
+	}
+	hits, err = store.Recall(t.Context(), scope, Query{Text: "shared token", At: 100, Limit: 1, After: older.ID})
+	if err != nil || len(hits) != 1 || hits[0].ID != newer.ID {
+		t.Fatalf("rank cursor: %+v %v", hits, err)
 	}
 }

@@ -1852,7 +1852,7 @@ func (s RecallScope) Holders() []Holder  // the agent and "all"; filtered before
 ```
 
 The memory store keeps the current item and immutable revision snapshots in canon.
-`RecallScope` also binds the person and whether the read is a projection or goes to an external model; SQL excludes other holders and people before text matching or a result limit.
+`RecallScope` also binds the person and whether the read is a projection or goes to an external model; SQL excludes other holders and people before text matching or a result limit. A text query materializes the shared index's ranked ids and applies the caller's limit in that order, including continuation from `after`.
 Local views can read the person's named scope classes; projections exclude `private` and `never-leaves`.
 External model calls exclude `never-leaves`; raw ledger fallback and other items citing the same protected event cannot bypass that restriction.
 Protected event ids are collected across the person's holders without exposing those holders' records, then applied to the authorized candidates.

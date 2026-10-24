@@ -4,6 +4,7 @@ package ledger_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"sort"
@@ -353,5 +354,27 @@ func TestSearchReturnsLongReplyOnceIncludingLegacyCards(t *testing.T) {
 	hits, err = store.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: "unique recall needle"})
 	if err != nil || len(hits) != 1 || hits[0].ID != source.ID {
 		t.Fatalf("recall: %+v %v", hits, err)
+	}
+}
+
+func TestSearchOmittedLimitDefaultsToTwenty(t *testing.T) {
+	t.Parallel()
+	db, _ := database(t)
+	store := ledger.New(db, nil)
+	for i := 0; i < 21; i++ {
+		in := input(fmt.Sprintf("needle-%02d", i))
+		in.Body = fmt.Sprintf("shared needle number %02d", i)
+		admit(t, store, guard.EntryOwner, in)
+	}
+	hits, err := store.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: "shared needle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 20 {
+		t.Fatalf("omitted limit returned %d hits, want 20", len(hits))
+	}
+	bounded, err := store.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: "shared needle", Limit: 21})
+	if err != nil || len(bounded) != 21 {
+		t.Fatalf("explicit limit: %d %v", len(bounded), err)
 	}
 }
